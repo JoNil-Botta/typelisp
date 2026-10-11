@@ -327,6 +327,97 @@
         [rp : (Ptr u8) (ptr-offset (string-data right) right-start)]
         (string.string-bytes-eq lp rp len)))))
 
+;: The parts of `src` its payload form drops: each dropped range's first byte
+;: and exact text, in source order. With the payload form they determine `src`
+;: exactly, so a batch keeps them, not the whole text, as the proof that a
+;: module matched its embedded copy (#8765).
+(defstruct CompilerEmbeddedStdlibDroppedSpans
+  (starts (__tl_dyn-array i64))
+  (texts (__tl_dyn-array String))
+  (count i64))
+
+(defenum CompilerEmbeddedStdlibMaybeDropped
+  (NoDropped)
+  (SomeDropped CompilerEmbeddedStdlibDroppedSpans))
+
+(define (compiler-embedded-stdlib-dropped-spans [src : (& src str)]) : CompilerEmbeddedStdlibMaybeDropped
+  (match (compiler-embedded-stdlib-inline-test-ranges src)
+    [(Unscannable) (NoDropped)]
+    [(Ranges ranges count)
+      (let
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [texts : (__tl_dyn-array String) (__tl_make-array String count)]
+        [k : i64 0]
+        (while (< k count)
+          (let
+            [start : i64 (array-ref ranges (* k 2))]
+            [end : i64 (array-ref ranges (+ (* k 2) 1))]
+            (set! (array-ref starts k) start)
+            (set!
+              (array-ref texts k)
+              (string.substring src start (+ (- end start) 1))))
+          (set! k (+ k 1)))
+        (SomeDropped (CompilerEmbeddedStdlibDroppedSpans starts texts count)))]))
+
+(define (compiler-embedded-stdlib-line-break-count [text : (& text str)]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [j : i64 0]
+    [breaks : i64 0]
+    (while (< j n)
+      (let
+        [b : char (__tl_string_ref text j)]
+        (when (or (= b '\n') (= b '\r')) (set! breaks (+ breaks 1))))
+      (set! j (+ j 1)))
+    breaks))
+
+;: Whether `src` is exactly the text `dropped` was taken from, given that
+;: text's payload form `blanked`: the payload keeps a dropped range's line
+;: breaks only, so the text is `blanked`'s kept spans interleaved with the
+;: dropped texts at their starts. Compared in place, a word at a time, with no
+;: scan of `src`.
+(define (compiler-embedded-stdlib-source-matches-dropped?
+  [src : (& src str)]
+  [blanked : (& blanked str)]
+  [dropped : (& dropped CompilerEmbeddedStdlibDroppedSpans)]) : bool
+  (let
+    [n : i64 (string-length src)]
+    [m : i64 (string-length blanked)]
+    [copied : i64 0]
+    [at : i64 0]
+    [k : i64 0]
+    [ok : bool true]
+    (while (and ok (< k dropped.count))
+      (let
+        [start : i64 (array-ref dropped.starts k)]
+        [len : i64 (string-length (& (array-ref dropped.texts k)))]
+        [kept : i64 (- start copied)]
+        ;; The dropped text first: its bound check keeps `start` inside `src`.
+        (if (and
+          (>= kept 0)
+          (compiler-embedded-stdlib-span-eq?
+            (& (array-ref dropped.texts k))
+            0
+            src
+            start
+            len)
+          (compiler-embedded-stdlib-span-eq? src copied blanked at kept))
+          (begin
+            (set!
+              at
+              (+
+                at
+                kept
+                (compiler-embedded-stdlib-line-break-count
+                  (& (array-ref dropped.texts k)))))
+            (set! copied (+ start len)))
+          (set! ok false)))
+      (set! k (+ k 1)))
+    (and
+      ok
+      (= (+ at (- n copied)) m)
+      (compiler-embedded-stdlib-span-eq? src copied blanked at (- n copied)))))
+
 ;: Whether `src` as its payload embeds it equals `blanked`, without building
 ;: that text (#8731): each kept span of `src` is compared in place against
 ;: `blanked` a word at a time, and each dropped range's line breaks byte by

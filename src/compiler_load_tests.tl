@@ -1,6 +1,7 @@
 ;; compiler_load_tests.tl - White-box tests for the source and import loader:
 ;; module and import resolution, includes, the embedded stdlib, package
 ;; manifests, session caches and state isolation, and the lazy-import observer.
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -69,10 +70,8 @@
             (* (array-length slots) 2))]
         [bigger : (__tl_dyn-array load.CompilerLoadLazyQualifiedObserverFrame)
           (__tl_make-array load.CompilerLoadLazyQualifiedObserverFrame capacity)]
-        [index : i64 0]
-        (while (< index len)
-          (set! (array-ref bigger index) (array-ref slots index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref bigger index) (array-ref slots index)))
         (set! slots bigger)))
     (set! (array-ref slots len) frame)
     (load.CompilerLoadLazyQualifiedObserverStack slots (+ len 1))))
@@ -131,8 +130,7 @@
   [want : String]) : bool
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -143,8 +141,7 @@
                 (ast.ast-extern-metadata-symbol (& (deref metadata)))
                 (string.copy want))
               (return true))]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     false))
 
 (define (compiler-load-surface-summary-requires-eager?
@@ -655,18 +652,17 @@
   [imports : (& imports load.CompilerLoadSurfaceImportList)]
   [kind-code : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (load.compiler-load-surface-import-list-count imports))
+    (for [index
+      (iterator.range 0 (load.compiler-load-surface-import-list-count imports))]
       (if (=
         (compiler-load-surface-import-kind-code
           (__tl-project-field
             (load.compiler-load-surface-import-list-at imports index)
             kind))
         kind-code)
-        (set! count (+ count 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (compiler-load-surface-import-has?
@@ -675,13 +671,13 @@
   [import-path : String]
   [alias : String]
   [default-alias : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-import-list-count imports))
-      (let
-        [import-edge : load.CompilerLoadSurfaceImport
-          (load.compiler-load-surface-import-list-at imports index)]
-        (if (and
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-import-list-count imports))]
+    (let
+      [import-edge : load.CompilerLoadSurfaceImport
+        (load.compiler-load-surface-import-list-at imports index)]
+      (when
+        (and
           (=
             (compiler-load-surface-import-kind-code import-edge.kind)
             kind-code)
@@ -690,127 +686,117 @@
           (compiler-load-surface-maybe-string-eq?
             import-edge.default-alias
             default-alias))
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-kind-count
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [kind-code : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
+    (for [index
+      (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
       (if (=
         (compiler-load-surface-decl-kind-code
           (__tl-project-field
             (load.compiler-load-surface-decl-list-at decls index)
             kind))
         kind-code)
-        (set! count (+ count 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (compiler-load-surface-decl-has?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [kind-code : i64]
   [name : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (and
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and
           (= (compiler-load-surface-decl-kind-code decl.kind) kind-code)
           (string.eq (ci.intern-str decl.name) name))
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-in-module?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [name : String]
   [module : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (and
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and
           (string.eq (ci.intern-str decl.name) name)
           (string.eq (ci.intern-str decl.module) module))
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-generated?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [name : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (and
-          (string.eq (ci.intern-str decl.name) name)
-          decl.has-generated-meta)
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and (string.eq (ci.intern-str decl.name) name) decl.has-generated-meta)
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-unsafe?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [name : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (and (string.eq (ci.intern-str decl.name) name) decl.was-unsafe)
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and (string.eq (ci.intern-str decl.name) name) decl.was-unsafe)
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-cleanup?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [name : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (and (string.eq (ci.intern-str decl.name) name) decl.has-cleanup)
-          (return true)
-          (set! index (+ index 1)))))
-    false))
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and (string.eq (ci.intern-str decl.name) name) decl.has-cleanup)
+        (return true))))
+  false)
 
 (define (compiler-load-surface-decl-must-use?
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [name : String]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : load.CompilerLoadSurfaceDecl
-          (load.compiler-load-surface-decl-list-at decls index)]
-        (if (string.eq (ci.intern-str decl.name) name)
-          (return (compiler-load-surface-signature-must-use? decl.signature))
-          (set! index (+ index 1)))))
-    false))
+  (for [index
+    (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : load.CompilerLoadSurfaceDecl
+        (load.compiler-load-surface-decl-list-at decls index)]
+      (when
+        (string.eq (ci.intern-str decl.name) name)
+        (return (compiler-load-surface-signature-must-use? decl.signature)))))
+  false)
 
 (define (compiler-load-surface-macro-result-count
   [decls : (& decls load.CompilerLoadSurfaceDeclList)]
   [result-code : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (load.compiler-load-surface-decl-list-count decls))
+    (for [index
+      (iterator.range 0 (load.compiler-load-surface-decl-list-count decls))]
       (let
         [decl : load.CompilerLoadSurfaceDecl
           (load.compiler-load-surface-decl-list-at decls index)]
@@ -819,9 +805,8 @@
           (=
             (compiler-load-surface-macro-result-kind-code decl.macro-result)
             result-code))
-          (set! count (+ count 1))
-          unit)
-        (set! index (+ index 1))))
+          (+= count 1)
+          unit)))
     count))
 
 (define (compiler-load-surface-summary-shape-ok?
@@ -933,7 +918,7 @@
                     (set! found true))
                   unit)]
               [_ unit])
-            (set! index (+ index 1))))
+            (+= index 1)))
         found)]))
 
 (define (compiler-load-surface-summary-smoke-ok?) : bool
@@ -1354,7 +1339,7 @@
           (ast.ast-decl-path-list-get (& left) index "")
           (ast.ast-decl-path-list-get (& right) index ""))
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (define (compiler-load-decl-module-lists-eq?
@@ -1371,7 +1356,7 @@
           (ast_tests.ast-decl-module-list-get (& left) index "")
           (ast_tests.ast-decl-module-list-get (& right) index ""))
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (define (compiler-load-diagnostics-eq?
@@ -4217,6 +4202,132 @@
     (load.compiler-load-session-state-use! previous-state)
     ok))
 
+;; #8765: a batch's retained stdlib proofs match exactly the disk text they
+;; were made from, survive the per-entry provenance reset, are replaced per
+;; suffix, grow past their first slots, and are kept only while retention is
+;; on. The test payload embeds no stdlib copy, so the proof is checked against
+;; the payload form directly.
+(define (compiler-load-proof-matches?
+  [state : (& state load.CompilerLoadSessionState)]
+  [suffix : String]
+  [text : String]) : bool
+  (let
+    [blanked : String
+      (ces.compiler-embedded-stdlib-payload-source (string.copy text))]
+    (load.compiler-load-session-state-stdlib-proof-matches?
+      state
+      (& suffix)
+      (& text)
+      (& blanked))))
+
+(define (compiler-load-retained-stdlib-proofs-ok?) : bool
+  (let
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-session-state-new)]
+    [suffix : String "proof_probe.tl"]
+    [text : String ";; Why.\n(define kept : i64 1)\n(test t (check kept))\n"]
+    [edited : String ";; Why.\n(define kept : i64 1)\n(test t (check 2))\n"]
+    [_off : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& text))]
+    [off-count : i64
+      (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+    [off-match : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    [_on : unit
+      (load.compiler-load-session-state-retain-stdlib-proofs! (& state))]
+    [_proved : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& text))]
+    [same-text : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    ;; An edit inside a dropped test still has the same payload form, but it
+    ;; is not the proved text.
+    [edited-text : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy edited))]
+    [other-suffix : bool
+      (compiler-load-proof-matches?
+        (& state)
+        "proof_other.tl"
+        (string.copy text))]
+    [_next-entry : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (load.compiler-load-global-shared-view state))]
+    [after-reset : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    [_replace : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& edited))]
+    [replaced-count : i64
+      (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+    [replaced-new : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy edited))]
+    [replaced-old : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    (for [index (iterator.range 0 20)]
+      (let
+        [grown-suffix : String
+          (str_cat.str-cat "proof_" (string.int->string index) ".tl")]
+        (load.compiler-load-session-state-retain-stdlib-proof!
+          (& state)
+          (& grown-suffix)
+          (& text))))
+    (let
+      [grown-count : i64
+        (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+      [first-grown : bool
+        (compiler-load-proof-matches? (& state) "proof_0.tl" (string.copy text))]
+      [last-grown : bool
+        (compiler-load-proof-matches?
+          (& state)
+          "proof_19.tl"
+          (string.copy text))]
+      [_release : unit
+        (load.compiler-load-session-state-release-stdlib-proofs! (& state))]
+      [released-count : i64
+        (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+      [released-match : bool
+        (compiler-load-proof-matches? (& state) "proof_0.tl" (string.copy text))]
+      (and
+        (= off-count 0)
+        (not off-match)
+        same-text
+        (not edited-text)
+        (not other-suffix)
+        after-reset
+        (= replaced-count 1)
+        replaced-new
+        (not replaced-old)
+        (= grown-count 21)
+        first-grown
+        last-grown
+        (= released-count 0)
+        (not released-match)))))
+
 (define (compiler-load-session-embedded-provenance-isolation-ok?) : bool
   (let
     [previous-state : load.CompilerLoadSessionState
@@ -4706,7 +4817,7 @@
           (&mut decoy)
           (& (str_cat.str-cat "plain" (string.int->string decoy-index))))
         unit)
-      (set! decoy-index (+ decoy-index 1)))
+      (+= decoy-index 1))
     (let
       [decoy-len : i64 (ci.intern-compat-state-pool-len (& decoy))]
       (ci.intern-compat-state-install! decoy)
@@ -4948,15 +5059,12 @@
   [state : (& state load.CompilerLoadSessionState)]
   [offset : i64]
   [depth : i64]) : unit
-  (let
-    [level : i64 0]
-    (while (< level depth)
-      (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-        state
-        (compiler-load-lazy-qualified-observer-test-root offset level)
-        (compiler-load-lazy-qualified-observer-test-secondary-root offset level))
-      (compiler-load-lazy-qualified-observer-test-configure! state offset level)
-      (set! level (+ level 1)))))
+  (for [level (iterator.range 0 depth)]
+    (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+      state
+      (compiler-load-lazy-qualified-observer-test-root offset level)
+      (compiler-load-lazy-qualified-observer-test-secondary-root offset level))
+    (compiler-load-lazy-qualified-observer-test-configure! state offset level)))
 
 ;; Crosses six geometric capacity boundaries, then pops two independently
 ;; owned states in an interleaved order. Every frame field is varied so a
@@ -4996,7 +5104,7 @@
         state-b
         offset-b
         level)
-      (set! level (+ level 1)))
+      (+= level 1))
     (set! level (- depth 1))
     (while (and ok (>= level 0))
       (let
@@ -5039,7 +5147,7 @@
                   offset-b
                   (- level 1)))))
           unit)
-        (set! level (- level 1))))
+        (-= level 1)))
     ;; A reset from a deep live stack must discard its backing slots rather
     ;; than leave an arena-owned array reachable through the session state.
     (compiler-load-lazy-qualified-observer-test-push-depth!
@@ -5658,6 +5766,9 @@
     (compiler-load-session-embedded-provenance-isolation-ok?)
     (return
       (io.panic "compiler-load: embedded provenance isolation smoke mismatch")))
+  (unless
+    (compiler-load-retained-stdlib-proofs-ok?)
+    (return (io.panic "compiler-load: retained stdlib proofs mismatch")))
   (unless
     (compiler-load-canonical-stdlib-path-claims-ok?)
     (return (io.panic "compiler-load: canonical stdlib path claims mismatch")))

@@ -62,9 +62,16 @@
   (end-line i64)
   (end-col i64))
 
+;; What a lexer or reader error is about. The parser reports each kind under
+;; its own diagnostic code; the message text never decides it.
+(defenum SourceErrorKind
+  (TokenError)
+  (DelimiterError))
+
 (defstruct SourceError
   (message String)
-  (span SourceSpan))
+  (span SourceSpan)
+  (kind SourceErrorKind))
 
 (define (source-span-new
   [start-line : i64]
@@ -73,8 +80,11 @@
   [end-col : i64]) : SourceSpan
   (SourceSpan start-line start-col end-line end-col))
 
-(define (source-error-new [message : String] [span : SourceSpan]) : SourceError
-  (SourceError message span))
+(define (source-error-new
+  [message : String]
+  [span : SourceSpan]
+  [kind : SourceErrorKind]) : SourceError
+  (SourceError message span kind))
 
 (define (span-start-line [span : SourceSpan]) : i64
   span.start-line)
@@ -93,6 +103,9 @@
 
 (define (source-error-span [err : SourceError]) : SourceSpan
   err.span)
+
+(define (source-error-kind [err : SourceError]) : SourceErrorKind
+  err.kind)
 
 (define (merge-spans [start : SourceSpan] [end : SourceSpan]) : SourceSpan
   (SourceSpan

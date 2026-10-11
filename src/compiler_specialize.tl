@@ -884,14 +884,10 @@
       0
       count)
     (spec-template-shadow-copy-range (&mut next-depths) (& data.depths) 0 count)
-    (SpecTemplateShadowStateData
-      next-slots
-      next-parents
-      next-depths
-      data.counts
-      data.scratch
-      data.len
-      data.active-head)))
+    (set! data.slots next-slots)
+    (set! data.parents next-parents)
+    (set! data.depths next-depths)
+    data))
 
 (define (spec-template-shadow-state-grow-scratch
   [data : SpecTemplateShadowStateData]
@@ -900,14 +896,8 @@
     [next : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ (* (array-length data.scratch) 2) 8))]
     (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
-    (SpecTemplateShadowStateData
-      data.slots
-      data.parents
-      data.depths
-      data.counts
-      next
-      data.len
-      data.active-head)))
+    (set! data.scratch next)
+    data))
 
 (define (spec-template-shadow-state-depth
   [data : (& data SpecTemplateShadowStateData)]

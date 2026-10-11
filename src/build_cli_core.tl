@@ -2043,9 +2043,8 @@
 (define (build-package-graph-state-add-order
   [state : BuildPackageGraphState]
   [node : BuildPackageGraphNode]) : BuildPackageGraphState
-  (BuildPackageGraphState
-    state.seen
-    (build-package-graph-node-vec-push state.order node)))
+  (set! state.order (build-package-graph-node-vec-push state.order node))
+  state)
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
@@ -3159,21 +3158,25 @@
             (if (match mode
               [(Avx2) true]
               [_ false])
-              (BuildPackageTlciCallableCollector
-                collector.items
-                "build: :spmd-callable is not supported with --backend-mode avx2")
-              (BuildPackageTlciCallableCollector
-                (build-package-tlci-callable-insert
-                  (build-package-tlci-callable
-                    package-name
-                    module
-                    name
-                    params
-                    ret
-                    specializations
-                    mode)
-                  collector.items)
-                collector.error))]))]
+              (begin
+                (set!
+                  collector.error
+                  "build: :spmd-callable is not supported with --backend-mode avx2")
+                collector)
+              (begin
+                (set!
+                  collector.items
+                  (build-package-tlci-callable-insert
+                    (build-package-tlci-callable
+                      package-name
+                      module
+                      name
+                      params
+                      ret
+                      specializations
+                      mode)
+                    collector.items))
+                collector))]))]
     [(Unsafe inner-box)
       (build-package-tlci-collect-decl-callable
         (ast.ast-decl-box-shared-view inner-box)
@@ -4459,12 +4462,12 @@
 (define (build-package-rollback-disposition-add-error
   [rollback : BuildPackageRollbackDisposition]
   [message : String]) : BuildPackageRollbackDisposition
-  (BuildPackageRollbackDisposition
-    rollback.backups
-    rollback.len
+  (set!
+    rollback.errors
     (if (= (string.string-length rollback.errors) 0)
       message
-      (str_cat.str-cat rollback.errors "\n" message))))
+      (str_cat.str-cat rollback.errors "\n" message)))
+  rollback)
 
 (define (build-package-rollback-recovery-required?
   [rollback : BuildPackageRollbackDisposition]) : bool

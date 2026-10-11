@@ -1407,7 +1407,9 @@
       (ctfe-env-arena-push!
         (&mut (__tl-box-place store))
         (CtfeEnvBinding name-id value ty env.head mutable-local))]
-    (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state)))
+    (set! env.head index)
+    (set! env.syntax-pools syntax-pools)
+    env))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -1650,13 +1652,9 @@
         (while (< index len)
           (set! (array-ref grown index) (array-ref slots index))
           (set! index (+ index 1)))
-        (CtfeReflectInfoList
-          grown
-          items.index
-          len
-          items.aligns
-          items.aliases
-          items.alias-scope)))))
+        (set! items.slots grown)
+        (set! items.len len)
+        items))))
 
 (define (ctfe-reflect-info-list-contains-key-id?
   [items : CtfeReflectInfoList]
@@ -3809,13 +3807,8 @@
 (define (ctfe-reflect-info-list-in-scope
   [infos : CtfeReflectInfoList]
   [module-id : i64]) : CtfeReflectInfoList
-  (CtfeReflectInfoList
-    infos.slots
-    infos.index
-    infos.len
-    infos.aligns
-    infos.aliases
-    module-id))
+  (set! infos.alias-scope module-id)
+  infos)
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : ast.AstNodePoolContext]

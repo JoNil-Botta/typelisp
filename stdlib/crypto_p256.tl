@@ -638,7 +638,8 @@
 
 ;: `-P`: (X : -Y : Z).
 (define (point-negate [a : P256Point]) : P256Point
-  (P256Point a.x (field-negate a.y) a.z))
+  (set! a.y (field-negate a.y))
+  a)
 
 ;: Projective equality: X1 Z2 = X2 Z1 and Y1 Z2 = Y2 Z1.
 (define (point-eq? [a : P256Point] [b : P256Point]) : bool

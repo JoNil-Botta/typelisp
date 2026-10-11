@@ -372,9 +372,7 @@
 
 (define (compiler-sframe-v3-rule-offset [rule : (& rule CompilerSframeV3Rule)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(Implicit _ offset) offset]
-    [(Register _ _ offset) offset]
-    [(Fixed offset) offset]
+    [(or (Implicit _ offset) (Register _ _ offset) (Fixed offset)) offset]
     [_ 0]))
 
 (define (compiler-sframe-v3-rule-omitted-valid?
@@ -1013,8 +1011,7 @@
 (define (compiler-sframe-v3-rule-has-row-data?
   [rule : (& rule CompilerSframeV3Rule)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view rule)
-    [(Implicit _ _) true]
-    [(Register _ _ _) true]
+    [(or (Implicit _ _) (Register _ _ _)) true]
     [_ false]))
 
 (define (compiler-sframe-v3-flex-data-rule-valid?

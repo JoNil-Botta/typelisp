@@ -510,7 +510,7 @@
         [_ (Err "package-lock: lockfile must start with `typelisp-lock`")])]
     [_ (Err "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
-(define (package-lock-parse [source : String]) : ResultPackageLockFile
+(define (package-lock-parse [source : (& str)]) : ResultPackageLockFile
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultPackageLockFile
@@ -903,7 +903,7 @@
               "stage-validate"
               path
               "staged bytes differ from the complete canonical lock"))
-          (match (package-lock-parse actual)
+          (match (package-lock-parse (& actual))
             [(Err message)
               (Err
                 (package-lock-transaction-error "stage-validate" path message))]
@@ -1091,7 +1091,7 @@
 (define (package-lock-transaction-commit
   [snapshot : PackageLockSnapshot]
   [source : String]) : ResultPackageLockCommit
-  (match (package-lock-parse (string.copy source))
+  (match (package-lock-parse (& (string.copy source)))
     [(Err message)
       (Err (package-lock-transaction-error "validate" snapshot.path message))]
     [(Ok _)

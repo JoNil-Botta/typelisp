@@ -75,7 +75,7 @@
           (set!
             assignments
             (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment i (Register (array-ref homes i)))
+              (& (reg.CompilerRegAssignment i (Register (array-ref homes i))))
               assignments)))
         (set! i (+ i 1))))
     (set!

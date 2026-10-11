@@ -48,7 +48,7 @@
       (ir.compiler-ir-blocks
         (smoke-cfg-index-test-block label 11)
         (smoke-cfg-index-test-block label 22))]
-    [index : opt.OptCfgIndex (opt.opt-cfg-index-build blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
     [active-first : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-find-block index label))]
     [replacement-blocks : ir.CompilerIrBlockList
@@ -61,7 +61,7 @@
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
       (opt.opt-cfg-index-build
-        (ir.compiler-ir-blocks (smoke-cfg-index-test-block other-label 33)))]
+        (& (ir.compiler-ir-blocks (smoke-cfg-index-test-block other-label 33))))]
     [stale-first : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-find-block index label))]
     [missing : i64
@@ -875,7 +875,7 @@
               (Case 0 (ir.compiler-ir-label "arm")))
             (ir.compiler-ir-label "default")
             (ir.compiler-ir-label "trap"))]
-        (opt.opt-inline-clone-multiblock-instr instr "cloned" (Nil) 0 10))]
+        (opt.opt-inline-clone-multiblock-instr instr "cloned" (& (Nil)) 0 10))]
     [cloned-pending-total : ir.CompilerIrInstr
       (let
         [instr
@@ -886,7 +886,7 @@
               (Case 0 (ir.compiler-ir-label "arm")))
             (ir.compiler-ir-label "default")
             (ir.compiler-ir-label-none))]
-        (opt.opt-inline-clone-multiblock-instr instr "pending" (Nil) 0 10))]
+        (opt.opt-inline-clone-multiblock-instr instr "pending" (& (Nil)) 0 10))]
     [preheader-forwarded-total : ir.CompilerIrInstr
       (opt.opt-loop-preheaders-retarget-instr
         (TotalEnumSwitch
@@ -1077,7 +1077,7 @@
           (ir.compiler-ir-block-list-view dense-blocks)
           (ir.compiler-ir-label "cmp3"))
         7]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function dense))) 8]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& dense))))) 8]
       [(not
           (=
             (let
@@ -1109,7 +1109,7 @@
             3
             (ir.compiler-ir-label "case2")))
         60]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function sparse))) 61]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& sparse))))) 61]
       [(not
           (=
             (let
@@ -1179,7 +1179,7 @@
           (ir.compiler-ir-block-list-view prefix-blocks)
           (ir.compiler-ir-label "cmp2"))
         21]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function prefix))) 22]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& prefix))))) 22]
       ;; Idempotence: rerunning the pass must not rewrite the rewritten head.
       [(not
           (=
@@ -1206,7 +1206,7 @@
             (ir.compiler-ir-label "fallback")))
         27]
       [(not (opt-switch-test-block-starts-with-mov? bare-entry)) 28]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function bare))) 29]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& bare))))) 29]
       ;; The vm_run shape: head compare on the raw var, middle compares on
       ;; the prefix Mov's copy; resolution unifies them and the chain forms.
       [(not
@@ -1223,7 +1223,8 @@
             (ir.compiler-ir-label "fallback")))
         33]
       [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function copy-head))) 35]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& copy-head)))))
+        35]
       ;; Switch formation carries an explicit pending total-enum proof with the
       ;; classic final fallthrough. Only the dedicated late pass consumes it,
       ;; adds the final table case, and installs the trap default.
@@ -1264,7 +1265,8 @@
         46]
       [(not (opt-switch-test-total-trap-ok? total-late-blocks total-trap-label))
         47]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function total-late))) 48]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& total-late)))))
+        48]
       [(not
           (=
             (let
@@ -1375,7 +1377,8 @@
             9
             (ir.compiler-ir-label "fallback")))
         74]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function long-sparse))) 75]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& long-sparse)))))
+        75]
       [(not
           (=
             (let
@@ -1423,7 +1426,7 @@
           (ir.compiler-ir-block-list-view hop-blocks)
           (ir.compiler-ir-label "cmp4"))
         84]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop))) 85]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& hop))))) 85]
       ;; Idempotence: the fused head is a Switch, not a compare, so a second
       ;; run finds nothing left to fuse.
       [(not
@@ -1455,7 +1458,8 @@
             (ir.compiler-ir-block-list-view hop-fallback-blocks)
             (ir.compiler-ir-label "hop")))
         89]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-fallback))) 90]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& hop-fallback)))))
+        90]
       ;; A forwarding block something else also reaches cannot be deleted, so
       ;; the chain stops in front of it and it stays where it is.
       [(not
@@ -1475,7 +1479,8 @@
             (ir.compiler-ir-block-list-view hop-shared-blocks)
             (ir.compiler-ir-label "hop")))
         94]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function hop-shared))) 95]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& hop-shared)))))
+        95]
       ;; A repeated tag stops the chain instead of refusing it.
       [(not
           (=
@@ -1494,7 +1499,8 @@
             (ir.compiler-ir-block-list-view repeat-tag-blocks)
             (ir.compiler-ir-label "cmp4")))
         99]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function repeat-tag))) 100]
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& repeat-tag)))))
+        100]
       ;; A forwarding arm is followed to the body it forwards to; the empty
       ;; block goes with the chain.
       [(not
@@ -1513,7 +1519,9 @@
           (ir.compiler-ir-block-list-view forwarded-arm-blocks)
           (ir.compiler-ir-label "forward"))
         103]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-arm))) 104]
+      [(not
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& forwarded-arm)))))
+        104]
       ;; A phi in the body has to name the edge it came in on, so that
       ;; forwarding block stays and the case keeps naming it.
       [(not
@@ -1533,7 +1541,9 @@
             (ir.compiler-ir-block-list-view forwarded-phi-arm-blocks)
             (ir.compiler-ir-label "forward")))
         107]
-      [(not (opt.opt-verify-ok? (opt.opt-verify-function forwarded-phi-arm)))
+      [(not
+          (opt.opt-verify-ok?
+            (& (opt.opt-verify-function (& forwarded-phi-arm)))))
         108]
       [else 42])))
 
@@ -1553,7 +1563,7 @@
             (opt.opt-type-eq
               (ast.ast-node-pool-reader-type-segment-bases)
               mov-ty
-              ty))
+              (& ty)))
           (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty))]
       [_ (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty)])))
 
@@ -1581,11 +1591,11 @@
             (opt.opt-type-eq
               (ast.ast-node-pool-reader-type-segment-bases)
               cast-from
-              from-ty)
+              (& from-ty))
             (opt.opt-type-eq
               (ast.ast-node-pool-reader-type-segment-bases)
               cast-to
-              to-ty))
+              (& to-ty)))
           (smoke-cast-dst-var-types-from?
             instrs
             (+ index 1)
@@ -1861,10 +1871,12 @@
     [walked-blocks : ir.CompilerIrBlockList
       (opt.opt-bounds-dom-blocks-with-context
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
-        (smoke-rotated-bce-params)
+        (&
+          (opt.opt-cfg-context-build
+            (opt.compiler-opt-global-shared-view blocks)))
+        (& (smoke-rotated-bce-params))
         6
-        blocks)]
+        (& blocks))]
     (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view walked-blocks))))
 
 (define (smoke-rotated-literal-bce-self-test) : i64
@@ -2180,7 +2192,7 @@
                 (ot.opt-count-phi-blocks
                   (ir.compiler-ir-block-list-view blocks)))]
             [(not (smoke-inline-phi-loop-repaired? blocks)) 61]
-            [(not (opt.opt-inline-structure-ok? blocks)) 62]
+            [(not (opt.opt-inline-structure-ok? (& blocks))) 62]
             [else 42]))]
       [(No) 10])))
 
@@ -2231,7 +2243,7 @@
                     "inline_branch")
                   0)
                 (smoke-inline-phi-loop-repaired? blocks)
-                (opt.opt-inline-structure-ok? blocks)
+                (opt.opt-inline-structure-ok? (& blocks))
                 (ot.opt-span-lookup-ok?
                   optimized-spans
                   (ot.opt-test-symbol "main")
@@ -2308,7 +2320,7 @@
                 (ir.compiler-ir-block-list-view blocks)
                 "external_helper")
               1)
-            (opt.opt-inline-structure-ok? blocks)))]
+            (opt.opt-inline-structure-ok? (& blocks))))]
       [(No) false])))
 
 (define (smoke-inline-phi-predecessor-self-test) : i64
@@ -2464,8 +2476,8 @@
             ret
             frame
             (opt.opt-dce-block-list-array
-              (opt.opt-collect-blocks-uses-array frame blocks)
-              blocks)
+              (& (opt.opt-collect-blocks-uses-array frame blocks))
+              (& blocks))
             function-abi)])]
     [multi-use : ir.CompilerIrFunction
       (match (smoke-c27-compare-function true)
@@ -2476,8 +2488,8 @@
             ret
             frame
             (opt.opt-dce-block-list-array
-              (opt.opt-collect-blocks-uses-array frame blocks)
-              blocks)
+              (& (opt.opt-collect-blocks-uses-array frame blocks))
+              (& blocks))
             function-abi)])]
     [converted-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks converted)]
@@ -2561,8 +2573,8 @@
             ret
             frame
             (opt.opt-dce-block-list-array
-              (opt.opt-collect-blocks-uses-array frame blocks)
-              blocks)
+              (& (opt.opt-collect-blocks-uses-array frame blocks))
+              (& blocks))
             function-abi)])]
     (opt.opt-function-blocks func)))
 
@@ -2598,8 +2610,8 @@
       (smoke-c27-mask-dce-blocks (smoke-c27-mask-compare-function (I64 1) Eq 1))]
     [twice : ir.CompilerIrBlockList
       (opt.opt-dce-block-list-array
-        (opt.opt-collect-blocks-uses-array 4 once)
-        once)]
+        (& (opt.opt-collect-blocks-uses-array 4 once))
+        (& once))]
     (and
       (=
         (smoke-c27-count-binop (ir.compiler-ir-block-list-view twice) BitTestNe)

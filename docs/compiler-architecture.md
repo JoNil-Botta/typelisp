@@ -981,9 +981,19 @@ has no input arena and reads the tiny-leaf stage's arena in place.
 The checked inliner's literal-argument scan borrows dense block storage directly.
 It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer
-literal, even after a duplicate makes specialization ineligible. Keep traversal
+or string literal, even after a duplicate makes specialization ineligible. String
+literal flags select parallel text lanes; adopting a site copies its text, and
+unpublishing a caller clears those lanes before its scratch phase is rewound.
+Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
+
+The constant-length rewrite also recognizes literal String descriptors. Their
+read-only length word contains the byte length, including for empty and UTF-8
+text. It folds only i64 loads from that slot. Both a literal-backed variable
+and the GEP destination must have one definition, counting parameters, and
+neither may have its address taken. Other fields, offsets and load types retain
+their memory operations. Literal lengths do not depend on global initialization.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),

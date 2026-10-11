@@ -58922,6 +58922,143 @@
     [(BinOp 8 (Lt) (Var 4) _ _) true]
     [_ false]))
 
+;; --- string literal lengths (#8795) ------------------------------------------
+;;
+;; One block through CL-1's rewrite. Positives: a length-slot load off a var
+;; whose only definition is a `Mov` of a literal (`%2`, 4), off a literal base
+;; directly (`%4`, 9), and the `(I64 8) (U8)` spelling of the slot (`%14`, 4).
+;; Negatives keep their `Load`: a var with two definitions (`%7`), an
+;; address-taken var (`%11`), the data slot (`%13`), and a gep destination
+;; that is defined twice (`%17`). Narrow and floating loads keep their memory
+;; interpretation. Empty and UTF-8 literals use byte lengths; parameter
+;; definitions and address-taken gep destinations disqualify the corresponding
+;; vars. IR text cannot represent String operands, so only the literal
+;; producers are constructed directly before the instruction-text suffix.
+(define (opt-sl-test-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs-with-tail
+        (irt.instrs
+          "%1 = gep %0, 1 : i64
+           %2 = load %1 : i64
+           %4 = load %3 : i64
+           %6 = gep %5, 1 : i64
+           %7 = load %6 : i64
+           %9 = addr_of %8
+           %10 = gep %8, 1 : i64
+           %11 = load %10 : i64
+           %12 = gep %0, 0 : u8
+           %13 = load %12 : u64
+           %15 = gep %0, 8 : u8
+           %14 = load %15 : i64
+           %16 = gep %0, 1 : i64
+           %16 = gep %5, 1 : i64
+           %17 = load %16 : i64
+           %18 = load %1 : u8
+           %19 = load %1 : f64
+           %21 = gep %20, 1 : i64
+           %22 = load %21 : i64
+           %24 = gep %23, 1 : i64
+           %25 = load %24 : i64
+           %27 = gep %26, 1 : i64
+           %28 = load %27 : i64
+           %29 = gep %0, 1 : i64
+           %30 = addr_of %29
+           %31 = load %29 : i64
+           %33 = gep %0, 2 : i64
+           %34 = load %33 : i64
+           %36 = gep %35, 1 : i64
+           %37 = load %36 : i64
+           return")
+        (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))
+        (ir.CompilerIrInstr.Gep 3 (String "wxyz12345") (I64 1) (I64))
+        (ir.CompilerIrInstr.Mov 5 (String "ab") (Str))
+        (ir.CompilerIrInstr.Mov 5 (String "abc") (Str))
+        (ir.CompilerIrInstr.Mov 8 (String "abcd") (Str))
+        (ir.CompilerIrInstr.Mov 20 (String "") (Str))
+        (ir.CompilerIrInstr.Mov 23 (String "å🙂") (Str))
+        (ir.CompilerIrInstr.Mov 26 (String "abcd") (Str))))))
+
+;; The literal the rewrite put in `dst`'s definition, or -1 when it is still a
+;; `Load` (or anything else).
+(define (opt-sl-test-folded
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [dst : i64]) : i64
+  (match (ir.compiler-ir-block-list-view blocks)
+    [(slice block & _)
+      (match block
+        [(Block _ instrs) (opt-sl-test-folded-in instrs dst)])]
+    [(slice) -2]))
+
+(define (opt-sl-test-folded-in
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [dst : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (< index (ir.compiler-ir-instr-seq-count instrs))
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (when
+          (= (ir.compiler-ir-instr-dst (& instr)) dst)
+          (match instr
+            [(Mov _ (I64 n) _) (set! found n)]
+            [_ (set! found -1)])))
+      (set! index (+ index 1)))
+    found))
+
+(define (opt-sl-test-unpublish) : i64
+  ;; A later scan can overwrite a String flag without overwriting its text.
+  (opt.opt-inline-checked-literal-string-set! 0 "old")
+  (opt.opt-inline-checked-literal-string-set! 1 "integer")
+  (opt.opt-inline-checked-literal-set! 1 7)
+  (opt.opt-inline-checked-literal-string-set! 31 "last")
+  (opt.opt-inline-checked-adopt-literals!)
+  (opt.opt-inline-checked-clear-literals-from! 0)
+  (opt.opt-inline-checked-literal-scan-set! 0 0 0)
+  (opt.opt-inline-checked-literal-scan-blocks! (& (opt-sl-test-blocks)) 23)
+  (opt.opt-inline-checked-unpublish-strings!)
+  (if (and
+    (string.eq (array-ref opt.opt-inline-checked-current-literal-strings 0) "")
+    (string.eq (array-ref opt.opt-inline-checked-current-literal-strings 1) "")
+    (string.eq (array-ref opt.opt-inline-checked-target-literal-strings 31) "")
+    (string.eq (array-ref opt.opt-inline-checked-literal-scan-string 0) "")
+    (= (array-ref opt.opt-inline-checked-target-literals 62) 0)
+    (= (array-ref opt.opt-inline-checked-target-literals 2) 1))
+    42
+    160))
+
+(define (compiler-optimize-string-literal-length-self-test) : i64
+  (let
+    [summaries : opt.OptProgramSummaries
+      (opt.opt-program-summaries-empty-for false)]
+    [rewritten : ir.CompilerIrBlockList
+      (opt.opt-const-length-rewrite-summary-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-test-symbol "sl_fn")
+        (& summaries)
+        (irt.params "overlap=%26:str, unknown=%35:str")
+        38
+        (opt-sl-test-blocks))]
+    (cond
+      [(not (= (opt-sl-test-folded (& rewritten) 2) 4)) 10]
+      [(not (= (opt-sl-test-folded (& rewritten) 4) 9)) 20]
+      [(not (= (opt-sl-test-folded (& rewritten) 14) 4)) 30]
+      [(not (= (opt-sl-test-folded (& rewritten) 7) -1)) 40]
+      [(not (= (opt-sl-test-folded (& rewritten) 11) -1)) 50]
+      [(not (= (opt-sl-test-folded (& rewritten) 13) -1)) 60]
+      [(not (= (opt-sl-test-folded (& rewritten) 17) -1)) 70]
+      [(not (= (opt-sl-test-folded (& rewritten) 18) -1)) 80]
+      [(not (= (opt-sl-test-folded (& rewritten) 19) -1)) 90]
+      [(not (= (opt-sl-test-folded (& rewritten) 22) 0)) 100]
+      [(not (= (opt-sl-test-folded (& rewritten) 25) 6)) 110]
+      [(not (= (opt-sl-test-folded (& rewritten) 28) -1)) 120]
+      [(not (= (opt-sl-test-folded (& rewritten) 31) -1)) 130]
+      [(not (= (opt-sl-test-folded (& rewritten) 34) -1)) 140]
+      [(not (= (opt-sl-test-folded (& rewritten) 37) -1)) 150]
+      [else (opt-sl-test-unpublish)])))
+
 (define (compiler-optimize-latch-sink-self-test) : i64
   (let
     [l1 : ir.CompilerIrFunction (opt-ls-test-l1)]
@@ -64300,6 +64437,13 @@
     (compiler-optimize-copy-call-self-test)
     42
     "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+
+(test
+  string-literal-length-fold
+  (test.assert-i64-eq
+    (compiler-optimize-string-literal-length-self-test)
+    42
+    "a length-slot load off a string literal, directly or through a var whose only definition is a Mov of it, folds to the literal's byte length; a var with two definitions, an address-taken var, the data slot and a twice-defined gep keep their Load"))
 
 (test
   latch-increment-sink

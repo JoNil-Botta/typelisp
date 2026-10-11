@@ -19,9 +19,10 @@
   [var : i64]
   [spelling : String]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      var
-      (Register (cabi.compiler-abi-register-id-from-spelling spelling)))
+    (&
+      (regalloc.CompilerRegAssignment
+        var
+        (Register (cabi.compiler-abi-register-id-from-spelling spelling))))
     table))
 
 (define (seh-oracle-function

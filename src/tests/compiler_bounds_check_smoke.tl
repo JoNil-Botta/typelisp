@@ -63,7 +63,7 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
     (match (compiler_optimize.optimize-program-with-spans-and-level
-      (bounds-check-smoke-program)
+      (& (bounds-check-smoke-program))
       (ir.compiler-source-spans-empty)
       2)
       [(Program optimized _) optimized])

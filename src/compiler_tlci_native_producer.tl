@@ -8495,7 +8495,7 @@
     target)
     [(Ok program spans)
       (match (compiler_optimize.optimize-program-with-spans-and-level
-        program
+        (& program)
         spans
         (embedded-native-opt-level))
         [(Program optimized optimized-spans) (Ok optimized optimized-spans)])]

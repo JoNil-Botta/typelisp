@@ -118,6 +118,11 @@
         result))))
 
 (define (witness! [graph : (&mut graph Graph)] [callee : i64] [global : i64]) : words.Vec
+  ;; No call path can write a global without a direct writer. Recheck this
+  ;; sparse index on every query so adding a writer still invalidates absence.
+  (when
+    (= (ids.get-value-or (& graph.writers) global 0) 0)
+    (return (words.new)))
   (let
     [summary : (__tl_dyn-array i64) (summary! graph global)]
     [path : words.Vec (words.new)]

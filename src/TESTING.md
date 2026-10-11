@@ -55,6 +55,17 @@ The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
 
+## Persistent lifetime memo
+
+The `lifetime-outlives-memo-*` inline tests in
+`src/tests/compiler_typecheck_core_tests.tl` cover lexical ordering and shadowing,
+more distinct lifetime pairs than memo slots, local environment cache layers,
+invalid/missing lifetimes, interleaved jobs, allocation under a retired decoy
+arena, job reset/destruction, reused function scratch, and explicit structural
+session reset while the installed interner stays unchanged. Run them at opt0,
+opt1 and opt2. The normal safety and integration corpora keep reference coercion
+and arena-escape diagnostics covered through the compiler entry points.
+
 ## Intern ID provenance
 
 The ID provenance contract is stated at the top of

@@ -4,6 +4,7 @@
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as diag)
 (import compiler_load as load)
+(import compiler_intern as ci)
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
@@ -17,8 +18,20 @@
   (match (parser.parse-ast-source-diagnostic
     (string.copy (& entry))
     (cat.str-cat prefix suffix))
-    [(Ok program)
+    [(Ok parsed)
       (let
+        ;; Imported source prefixes contain module markers absent from the
+        ;; symbol index. Keep that boundary in every cache reuse test.
+        [program : ast.AstProgram
+          (match parsed
+            [(Program boxed)
+              (ast.ast-program
+                (ast.ast-decl-list-prepend-builder
+                  (ast.AstDecl.Module (ci.intern ""))
+                  (ast.ast-decl-list-prepend-builder
+                    (ast.AstDecl.Module (ci.intern ""))
+                    (ast.ast-decl-list-box-shared-view boxed))))])]
+        [prefix-count : i64 (+ count 2)]
         [length : i64
           (match (tc.tc-global-shared-view program)
             [(Program decls)
@@ -27,11 +40,11 @@
                   (ast.ast-decl-list-box-shared-view decls)]
                 (ast.ast-decl-list-len (& items)))])]
         [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
-        (for [index (iterator.range count length)]
+        (for [index (iterator.range prefix-count length)]
           (set!
             paths
             (ast.ast-decl-root-path-cons (string.copy (& entry)) paths)))
-        (for [index (iterator.range 0 count)]
+        (for [index (iterator.range 0 prefix-count)]
           (set!
             paths
             (ast.ast-decl-root-path-cons
@@ -83,7 +96,7 @@
     "second pure prefix checks")
   (test.assert-true
     (> (tc.tc-prefix-snapshot-cache-hit-count-value) 0)
-    "context-independent prefix still hits")
+    "module markers preserve context-independent prefix hits")
   (finish-cache!))
 
 (test

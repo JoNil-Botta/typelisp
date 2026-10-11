@@ -159,7 +159,9 @@ to its source while an escaping reference still protects that source. Pattern
 scope exit restores captured outer root states for shadowed names; clearing a
 pattern local must not erase an incoming or escaping loan of the hidden owner.
 
-Global call effects share the borrow checker's live place facts. The check
+Global call effects share the borrow checker's live place facts. Global roots
+and callees use the ordinary source-name resolver for aliases and full dotted
+module paths, with lexical binders taking precedence. The check
 runs after argument validation and before call-scoped facts are discarded,
 so auto-borrows, earlier returned references and borrowed match arms remain
 visible. `compiler_global_effects` computes each queried global's least

@@ -20,6 +20,7 @@
 (import compiler_module_name as module_name)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
+(import compiler_expand_query as expand)
 (import compiler_semantic_index)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
@@ -11558,66 +11559,127 @@
       (lsp-write-error id -32600 "Document not found")
       (Continue docs)]))
 
-;; tl/expandMacro - Find the form at cursor position and return its text
-;; Returns the top-level form by name.
-;; Full macro expansion would require compiler macro expansion integration.
+;; One `tl/expandMacro` frame: the macro, its defining source and the
+;; invocation range in the document.
+(define (lsp-expand-frame-json
+  [text : (& text str)]
+  [frame : expand.CompilerExpandFrame]) : json.Json
+  (lsp-json-object3
+    "macro"
+    (JsonString frame.macro-name)
+    "definedIn"
+    (JsonString frame.module-path)
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-position-from-byte-line-col text frame.start-line frame.start-col)
+      "end"
+      (lsp-position-from-byte-line-col text frame.end-line frame.end-col))))
+
+(define (lsp-expand-frames-json
+  [text : (& text str)]
+  [frames : (& frames expand.CompilerExpandFrames)]) : json.Json
+  (let
+    [items : json.JsonSeq (json.list-empty)]
+    [index : i64 (- frames.len 1)]
+    (while (>= index 0)
+      (set!
+        items
+        (lsp-json-list-cons
+          (lsp-expand-frame-json
+            text
+            (expand.compiler-expand-frame-ref frames index))
+          items))
+      (set! index (- index 1)))
+    (lsp-json-array items)))
+
+;; tl/expandMacro - The checked expansion of the innermost macro invocation at
+;; `position`, answered by the same query as `typelisp expand` (#7067) over the
+;; document's current text. The response names the selected macro and lists
+;; every enclosing invocation from the outermost inward.
 (define (lsp-handle-tl-expand-macro
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls params docs)
-    [(Found path text _ decls)
-      (match (lsp-json-string-field params "name")
-        [(Ok name)
-          (let
-            [i : i64 0]
-            [n : i64 (lsp_decl_vec.len (& decls))]
-            [found-idx : i64 -1]
-            (while (and (< i n) (= found-idx -1))
-              (let
-                [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-                (if (string.eq entry.name name)
-                  (set! found-idx i)
-                  (set! i (+ i 1)))))
-            (if (= found-idx -1)
-              (begin
-                (lsp-write-error id -32600 "Form not found")
-                (Continue docs))
-              (let
-                [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get
-                    (& decls)
-                    found-idx
-                    (lsp-decl-entry-fallback))]
-                [start-off : i64
-                  (lsp-offset-at-position
-                    text
-                    (- entry.form-start-line 1)
-                    (- entry.form-start-col 1))]
-                [end-off : i64
-                  (lsp-offset-at-position
-                    text
-                    (- entry.form-end-line 1)
-                    (- entry.form-end-col 1))]
-                [result : String
-                  (string.substring text start-off (- end-off start-off))]
-                (lsp-write-response
-                  id
-                  (lsp-json-object2
-                    "success"
-                    (JsonBool true)
-                    "text"
-                    (JsonString result)))
-                (Continue docs))))]
-        [(Missing)
-          (lsp-write-error id -32600 "Missing name parameter")
-          (Continue docs)])]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  (match (lsp-get-document
+    (owned_view.compiler-owned-shared-view params)
+    (owned_view.compiler-owned-shared-view docs))
+    [(Found path text _)
+      (let
+        [pos-key : String "position"]
+        (match (json.object-get params (& pos-key))
+          [(JsonFound position)
+            (let
+              [line0 : i64 (lsp-json-int-field-default position "line" 0)]
+              [char0 : i64 (lsp-json-int-field-default position "character" 0)]
+              [byte-lc : LspLineCol
+                (lsp-byte-line-col-at-offset
+                  text
+                  (lsp-offset-at-position text line0 char0))]
+              (match (expand.compiler-expand-source-at
+                path
+                (owned_view.compiler-owned-shared-view text)
+                stdlib-roots
+                (lsp-language-cfgs)
+                byte-lc.line
+                byte-lc.col
+                expand.compiler-expand-default-max-bytes)
+                [(Expanded frames expansion truncated _)
+                  (let
+                    [selected : expand.CompilerExpandFrame
+                      (expand.compiler-expand-frame-ref
+                        (& frames)
+                        (- frames.len 1))]
+                    (lsp-write-response
+                      id
+                      (lsp-json-object
+                        (lsp-json-member
+                          "success"
+                          (JsonBool true)
+                          (lsp-json-member
+                            "macro"
+                            (JsonString selected.macro-name)
+                            (lsp-json-member
+                              "definedIn"
+                              (JsonString selected.module-path)
+                              (lsp-json-member
+                                "frames"
+                                (lsp-expand-frames-json (& text) (& frames))
+                                (lsp-json-member
+                                  "expansion"
+                                  (JsonString expansion)
+                                  (lsp-json-member
+                                    "truncated"
+                                    (JsonBool truncated)
+                                    (json.member-list-empty)))))))))
+                    (Continue docs))]
+                [(NotFound _)
+                  (lsp-write-response
+                    id
+                    (lsp-json-object2
+                      "success"
+                      (JsonBool false)
+                      "error"
+                      (JsonString "No macro invocation at this position")))
+                  (Continue docs)]
+                [(Failed _)
+                  (lsp-write-response
+                    id
+                    (lsp-json-object2
+                      "success"
+                      (JsonBool false)
+                      "error"
+                      (JsonString
+                        "The document does not load; run tl/check for its diagnostics")))
+                  (Continue docs)]))]
+          [(JsonMissing)
+            (lsp-write-error id -32600 "Missing position parameter")
+            (Continue docs)]))]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
       (Continue docs)]))
 
-;; tl/check - Typecheck a document and return success/error JSON response
 (define (lsp-check-cache-valid?
   [check-cache : lsp_vector_families.LspCheckCache]) : bool
   (match check-cache
@@ -13640,7 +13702,15 @@
     [(string.eq method "tl/move")
       (lsp-handle-tl-structural-move id params docs)]
     [(string.eq method "tl/expandMacro")
-      (lsp-handle-tl-expand-macro id params docs)]
+      (let
+        [tool-result : LspDocumentHandleResult
+          (Continue (owned_view.compiler-owned-shared-view docs))]
+        (lsp-typecheck-tool-session-before!)
+        (set!
+          tool-result
+          (lsp-handle-tl-expand-macro id params docs stdlib-roots))
+        (lsp-typecheck-tool-session-after!)
+        tool-result)]
     [(string.eq method "tl/check")
       (lsp-handle-tl-check id params docs stdlib-roots)]
     [(string.eq method "tl/getType")

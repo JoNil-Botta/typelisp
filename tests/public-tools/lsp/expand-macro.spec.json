@@ -2,6 +2,10 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"text\""}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/when\"", "raw_contains": "\"definedIn\":\"stdlib/core_macros.tl\"", "raw_contains": "\"frames\":[{\"macro\":\"stdlib.core_macros/for\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":5,\"character\":4},\"end\":{\"line\":7,\"character\":33}}},{\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":6,\"character\":6},\"end\":{\"line\":7,\"character\":32}}}]", "raw_contains": "\"expansion\":\"(if (> i 0)\\n  (begin\\n    (set! total (+ total i)))\\n  unit)\"", "raw_contains": "\"truncated\":false", "raw_not_contains": "\"text\""},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/for\"", "raw_contains": "__for_index", "raw_not_contains": "\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"frames\""},
+    {"jsonpath_id": 4, "raw_contains": "\"success\":false", "raw_contains": "\"error\":\"No macro invocation at this position\""},
+    {"jsonpath_id": 5, "raw_contains": "\"error\"", "raw_contains": "Missing position parameter"},
+    {"jsonpath_id": 6, "raw_contains": "\"error\"", "raw_contains": "Document not found"}
   ]
 }

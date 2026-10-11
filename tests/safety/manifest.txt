@@ -249,6 +249,7 @@ global_call_nominal_enum_reject|check-fail|tests/safety/global_call_nominal_enum
 global_call_for_owned_shadow_ok|run-exit|tests/safety/global_call_for_owned_shadow_ok.tl|1|-
 global_call_foreach_shadow_ok|run-exit|tests/safety/global_call_foreach_shadow_ok.tl|1|-
 global_call_c_extern_ok|check-ok|tests/safety/global_call_c_extern_ok.tl|-|-
+inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|-|while global `held` is borrowed: it may assign `held` (via observe -> install!)
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-

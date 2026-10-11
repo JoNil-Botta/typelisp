@@ -62,6 +62,11 @@ unused generated imports to reach the resolver for both result kinds.
 
 ## Global call borrow effects
 
+The original `inline_aggregate_global_live_borrow_reject.tl` escape shape
+is rejected by the public check/compile corpus on Linux and Windows targets
+at opt0, opt1 and opt2. Its valid borrow-ending counterpart remains in the
+native integration matrix and has the same result at every level.
+
 `compiler_global_effects_tests.tl` covers recursive witnesses, nonwriting SCCs,
 indirect unions, positive/negative cache invalidation and deep-copy survival
 after collector scratch retirement. The `global_call_*` safety rows exercise

@@ -301,12 +301,26 @@
 ;; Numeric type ids are meaningful only within one type-pool segment table, so
 ;; the owner identity travels with the cache instead of following whichever
 ;; compatibility pool is currently installed in the process.
+(defstruct TcLifetimeOutlivesMemoEntry
+  (store i64)
+  (head i64)
+  (value-lifetime i64)
+  (target-lifetime i64)
+  (session-owner i64)
+  (session-generation i64)
+  (intern-owner i64)
+  (intern-generation i64)
+  (store-epoch i64)
+  (job-epoch i64)
+  (result bool))
+
 (defstruct TcTypeResolutionCacheStateData
   (owner-arena i64)
   (slots (__tl_dyn-array i64))
   (epoch i64)
   (type-pool-owner-id i64)
-  (type-segment-bases i64))
+  (type-segment-bases i64)
+  (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry)))
 
 (defstruct TcTypeResolutionCacheState
   (address i64))
@@ -841,7 +855,8 @@
         (__tl_make-array i64 0)
         1
         0
-        0))
+        0
+        (__tl_make-array TcLifetimeOutlivesMemoEntry 0)))
     (TcTypeResolutionCacheState
       (cast
         (unsafe
@@ -17032,7 +17047,97 @@
         target-signature
         signature-marker-id)]))
 
+;; The persistent spine is immutable below each (store, head) snapshot.
+;; Store epochs reject addresses reused after scratch retirement; structural
+;; owner/generation and installed intern owner/generation reject recycled ids.
+;; Entries retain only scalars in the existing job-owned resolution cache, whose
+;; epoch also invalidates them on a job reset. Collisions only replace a slot.
+(define tc-outlives-memo-capacity : i64
+  1024)
+
+(define (tc-outlives-memo-storage-ensure! [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).outlives-slots) 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (set!
+            (deref data).outlives-slots
+            (__tl_make-array
+              TcLifetimeOutlivesMemoEntry
+              tc-outlives-memo-capacity)))))))
+
+(define (tc-outlives-memo-slot [head : i64] [value : i64] [target : i64]) : i64
+  (bit-and
+    (bit-xor
+      (bit-xor (* head 2654435761) (shr head 21))
+      (bit-xor (* value 40503) (* target 9973)))
+    (- tc-outlives-memo-capacity 1)))
+
 (define (tc-lifetime-outlives-lifetime-persistent-id?
+  [env : TcTypeEnv]
+  [value-lifetime-id : i64]
+  [target-lifetime-id : i64]) : bool
+  (if (or (< value-lifetime-id 0) (< target-lifetime-id 0))
+    false
+    (if (= value-lifetime-id target-lifetime-id)
+      true
+      (let
+        [state : TcTypeResolutionCacheState
+          (tc-type-env-type-resolution-cache-state env)]
+        [_storage : unit (tc-outlives-memo-storage-ensure! state)]
+        [data : TcTypeResolutionCacheStateData
+          (tc-type-resolution-cache-state-data state)]
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session env)]
+        [owner : i64 (cis.intern-structural-session-owner session)]
+        [session-generation : i64
+          (cis.intern-structural-session-current-reset-generation session)]
+        [intern-owner : i64 (ci.intern-active-table-id)]
+        [intern-generation : i64 (ci.intern-generation)]
+        [epoch : i64 (+ tc-type-env-store-epoch 1)]
+        [slot : i64
+          (tc-outlives-memo-slot env.head value-lifetime-id target-lifetime-id)]
+        [entry : (& data TcLifetimeOutlivesMemoEntry)
+          (& (array-ref data.outlives-slots slot))]
+        (if (and
+          (= entry.store-epoch epoch)
+          (= entry.job-epoch data.epoch)
+          (= entry.head env.head)
+          (= entry.store env.store)
+          (= entry.value-lifetime value-lifetime-id)
+          (= entry.target-lifetime target-lifetime-id)
+          (= entry.session-owner owner)
+          (= entry.session-generation session-generation)
+          (= entry.intern-owner intern-owner)
+          (= entry.intern-generation intern-generation))
+          entry.result
+          (let
+            [result : bool
+              (tc-lifetime-outlives-lifetime-persistent-scan-id?
+                env
+                value-lifetime-id
+                target-lifetime-id)]
+            (set!
+              (array-ref data.outlives-slots slot)
+              (TcLifetimeOutlivesMemoEntry
+                env.store
+                env.head
+                value-lifetime-id
+                target-lifetime-id
+                owner
+                session-generation
+                intern-owner
+                intern-generation
+                epoch
+                data.epoch
+                result))
+            result))))))
+
+(define (tc-lifetime-outlives-lifetime-persistent-scan-id?
   [env : TcTypeEnv]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]) : bool

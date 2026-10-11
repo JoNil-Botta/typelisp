@@ -697,8 +697,15 @@ A global's IR initializer takes one of three forms:
 
 Mutable typecheck caches, indexes and traversal state belong to the compiler
 job's `TcJobState`, never to process-wide cells, so resetting or destroying one
-job cannot disturb another. A value that is a pure function of intern ids is
-not cached at all: a stdlib comptime syntax type is recognised by decomposing
+job cannot disturb another. Persistent lifetime-outlives answers use lazy fixed
+storage in the job's existing type-resolution cache. Entries retain scalar
+store/head and lifetime identities only; store retirement epochs, structural
+session owner/reset generation, installed intern owner/generation and the job's
+reset epoch
+reject stale or reused identities. Allocation always selects the job owner
+arena, including when a function scratch arena is current.
+
+A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that

@@ -99,6 +99,32 @@ stderr empty
 stdout contains "tab\tquote\"backslash\\newline\n"
 stdout contains '\''
 
+# A valid expansion can contain a move-aware resource scope that reader syntax
+# cannot express. Its diagnostic rendering obeys the same byte limit.
+case expand-max-bytes-render-error
+file scoped.tl
+(import stdlib.comptime)
+
+(define (cleanup [value : i64]) : unit
+  unit)
+
+(defmacro (scoped) : Expr
+  (comptime.expr-resource-scope "owned" `42 `cleanup `7 true))
+
+(define (main) : i64
+  (scoped))
+end-file
+cwd {{dir}}
+run expand scoped.tl --at 10:4
+stderr empty
+stdout contains ; expansion cannot be rendered:
+stdout contains move-aware resource scope
+stdout not-contains truncated
+run expand scoped.tl --at 10:4 --max-bytes 12
+stderr empty
+stdout contains ; truncated: the expansion is longer than 12 bytes
+stdout not-contains expansion cannot be rendered
+
 # A rendering longer than --max-bytes stops there and says so.
 case expand-max-bytes
 file long.tl

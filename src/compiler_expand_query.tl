@@ -368,14 +368,12 @@
                     false)))]
             [(Err _) out]))]
       [(Err diag)
-        (CompilerExpandText
-          (text_buf.append
-            (text_buf.empty)
-            (str_cat.str-cat
-              "; expansion cannot be rendered: "
-              (cdiag.compiler-diagnostic-message (deref diag))))
-          max-bytes
-          false)])))
+        (compiler-expand-text-append!
+          (&mut out)
+          (str_cat.str-cat
+            "; expansion cannot be rendered: "
+            (cdiag.compiler-diagnostic-message (deref diag))))
+        out])))
 
 ;; --- the query -------------------------------------------------------------
 (define (compiler-expand-select

@@ -17,6 +17,9 @@
   {"jsonrpc":"2.0","id":16,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":32}}},
   {"jsonrpc":"2.0","id":17,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":33}}},
   {"jsonrpc":"2.0","id":18,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":34}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl","version":2},"contentChanges":[{"text":"(define (main) : i64 (begin (when false unit) 41))\n"}]}},
+  {"jsonrpc":"2.0","id":19,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":0,"character":29}}},
+  {"jsonrpc":"2.0","id":20,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":6,"character":8}}},
   {"jsonrpc":"2.0","id":7,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

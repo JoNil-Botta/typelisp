@@ -272,3 +272,47 @@ step second-source
 run expand plain.tl other.tl --at 2:4
 exit 1
 stderr contains expand: unexpected argument other.tl
+
+# Query inputs follow the same cfg, target and import-root selection as check.
+case expand-cfg-and-target
+file cfg-target.tl
+(cfg expand-inspection-feature (defmacro (chosen) : Expr `11))
+(cfg (not expand-inspection-feature) (defmacro (chosen) : Expr `12))
+(cfg target-linux (defmacro (platform) : Expr `21))
+(cfg target-windows (defmacro (platform) : Expr `22))
+(define (main) : i64 (+ (chosen) (platform)))
+end-file
+cwd {{dir}}
+run expand cfg-target.tl --at 5:26
+stderr empty
+stdout after ^expansion:$
+next-line ^12$
+run expand cfg-target.tl --at 5:26 --cfg expand-inspection-feature
+stderr empty
+stdout after ^expansion:$
+next-line ^11$
+run expand cfg-target.tl --at 5:35 --target linux-x86_64
+stderr empty
+stdout after ^expansion:$
+next-line ^21$
+run expand cfg-target.tl --at 5:35 --target windows-x86_64 --cfg expand-inspection-feature
+stderr empty
+stdout after ^expansion:$
+next-line ^22$
+
+case expand-stdlib-root
+file library/inspection_lib.tl
+(defmacro (imported) : Expr
+  `33)
+end-file
+file roots.tl
+(import inspection_lib)
+(define (main) : i64 (inspection_lib.imported))
+end-file
+cwd {{dir}}
+run expand roots.tl --at 2:23 --stdlib-root library
+stderr empty
+stdout contains macro: inspection_lib/imported
+stdout contains inspection_lib.tl
+stdout after ^expansion:$
+next-line ^33$

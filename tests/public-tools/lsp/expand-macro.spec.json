@@ -17,6 +17,8 @@
     {"jsonpath_id": 15, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
     {"jsonpath_id": 16, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/when\""},
     {"jsonpath_id": 17, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/for\"", "raw_not_contains": "\"macro\":\"stdlib.core_macros/when\""},
-    {"jsonpath_id": 18, "raw_contains": "\"success\":false", "raw_contains": "No macro invocation at this position"}
+    {"jsonpath_id": 18, "raw_contains": "\"success\":false", "raw_contains": "No macro invocation at this position"},
+    {"jsonpath_id": 19, "raw_contains": "\"frames\":[{\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":0,\"character\":28},\"end\":{\"line\":0,\"character\":45}}}]", "raw_contains": "(if false", "raw_not_contains": "(> i 0)"},
+    {"jsonpath_id": 20, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"}
   ]
 }

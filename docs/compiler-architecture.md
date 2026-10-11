@@ -959,6 +959,15 @@ its operands directly only when those operands are literals or have one
 definition; otherwise the edge extracts the original group value. Escaping
 group joins retain their aggregate representation.
 
+Before scalar SSA, `self_address` forwards whole-value loads through read-only
+addresses of register-value locals and parameters. Each load becomes a move
+at its own position, so intervening reassignment remains visible. All addresses
+of one variable must have a single definition and only matching-type load uses;
+an escaping sibling address rejects the whole variable. Allocation results,
+conflicting definitions and unknown or grouped representations remain untouched.
+The pass removes the now-unused addresses in the same rewrite and invalidates
+the block context before SSA rebuilds it. It stays outside frozen inline pricing.
+
 The multiblock inliner admits known one-word nominal results and register groups
 within the group splitter's word limit, using the installed program
 representation index. Unknown representations stay out of line. CFG cleanup

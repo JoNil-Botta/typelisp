@@ -76406,3 +76406,228 @@
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
       "an addition cannot fault")))
+
+(define (opt-self-address-test-run [input : (& input ir.CompilerIrFunction)]) : opt.OptFunctionPassResult
+  (opt.opt-self-address-function-pass
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (& (ir.compiler-ir-representation-index-empty))
+    (owned_view.compiler-owned-reference-shared-view input)))
+
+(define (opt-self-address-test-refused [text : String]) : unit
+  (let
+    [input : ir.CompilerIrFunction (irt.func text)]
+    (match (opt-self-address-test-run (& input))
+      [(Result out changed?)
+        (test.assert-true
+          (not changed?)
+          "unsafe self-address forwarding refuses")
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& input)
+            (& out))
+          "a refused function keeps every original instruction")])))
+
+(test
+  self-address-load-forwarding
+  (let
+    [input : ir.CompilerIrFunction
+      (irt.func
+        "function @self_address(value=%0:i64, again=%1:bool) -> i64 vars 8 {
+entry:
+  %2 = addr_of %0
+  %3 = load %2 : i64
+  %0 = mov 9 : i64
+  %4 = addr_of %0
+  %5 = load %2 : i64
+  %6 = load %4 : i64
+  branch %1, loop, exit
+loop:
+  %0 = mov %3 : i64
+  %7 = load %2 : i64
+  jump exit
+exit:
+  return %0
+}")]
+    (match (opt-self-address-test-run (& input))
+      [(Result out changed?)
+        (test.assert-true changed? "both read-only addresses disappear")
+        (test.assert-true
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& (opt.opt-function-blocks out))
+            (&
+              (irt.blocks
+                "entry:
+  %3 = mov %0 : i64
+  %0 = mov 9 : i64
+  %5 = mov %0 : i64
+  %6 = mov %0 : i64
+  branch %1, loop, exit
+loop:
+  %0 = mov %3 : i64
+  %7 = mov %0 : i64
+  jump exit
+exit:
+  return %0")))
+          "each load reads its own position, across reassignment and blocks")
+        (let
+          [ssa : ir.CompilerIrFunction
+            (opt.opt-ssa-construct-function
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (& out))]
+          (test.assert-true
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& ssa))))
+            "forwarded mutable storage can be renamed and verified"))
+        (match (opt-self-address-test-run (& out))
+          [(Result _ changed-again?)
+            (test.assert-true (not changed-again?) "forwarding is idempotent")])])))
+
+(test
+  self-address-escape-refusals
+  (let
+    [uses : (Array String 11)
+      (array
+        "%4 = gep %2, 0 : i64"
+        "store_ptr %2, 7 : i64"
+        "%4 = call escape(%2) : i64"
+        "%4 = mov %2 : (Ptr i64)"
+        "%4 = phi [%2, entry] : (Ptr i64)"
+        "%4 = addr_of %2"
+        "copy_bytes %5, %2, 8"
+        "store_ptr %5, %2 : (Ptr i64)"
+        "%4 = call* %2() : i64"
+        "%2 = mov %5 : (Ptr i64)"
+        "return %2")]
+    (for [index (iterator.range 0 (array-length uses))]
+      (opt-self-address-test-refused
+        (str_cat.str-cat
+          "function @escape(value=%0:i64, other=%5:(Ptr i64)) -> i64 vars 8 {
+entry:
+  %2 = addr_of %0
+  %3 = load %2 : i64
+  "
+          (clone (array-ref uses index))
+          "
+  return %3
+}")))
+    (opt-self-address-test-refused
+      "function @sibling(value=%0:i64) -> i64 vars 5 {
+entry:
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  %3 = addr_of %0
+  store_ptr %3, 9 : i64
+  return %2
+}")
+    (opt-self-address-test-refused
+      "function @duplicate(value=%0:i64, other=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = addr_of %0
+  %2 = addr_of %1
+  %3 = load %2 : i64
+  return %3
+}")
+    (opt-self-address-test-refused
+      "function @parameter(value=%0:i64, pointer=%2:(Ptr i64)) -> i64 vars 4 {
+entry:
+  %2 = addr_of %0
+  %3 = load %2 : i64
+  return %3
+}")))
+
+(test
+  self-address-type-refusals
+  (let
+    [defs : (Array String 5)
+      (array
+        "%0 = alloc i64"
+        "%0 = mov 1 : i32"
+        "%0 = mov unit : unit"
+        "%0 = mov 1 : UnknownSelfAddressType"
+        "%0 = pack [1, 2] : (Tuple i64 i64)")]
+    (for [index (iterator.range 0 (array-length defs))]
+      (opt-self-address-test-refused
+        (str_cat.str-cat
+          "function @invalid() -> i64 vars 4 {
+entry:
+  "
+          (clone (array-ref defs index))
+          "
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  return %2
+}")))
+    (opt-self-address-test-refused
+      "function @punned(value=%0:String) -> i64 vars 4 {
+entry:
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  return %2
+}")
+    (opt-self-address-test-refused
+      "function @mixed(value=%0:i64) -> i64 vars 4 {
+entry:
+  %0 = mov true : bool
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  return %2
+}")
+    (opt-self-address-test-refused
+      "function @mixed_pack(value=%0:i64) -> i64 vars 4 {
+entry:
+  %0 = pack [1, 2] : (Tuple i64 i64)
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  return %2
+}")
+    (opt-self-address-test-refused
+      "function @missing() -> i64 vars 4 {
+entry:
+  %1 = addr_of %0
+  %2 = load %1 : i64
+  return %2
+}")))
+
+(test
+  self-address-representations
+  (let
+    [types : (Array String 4)
+      (array
+        "String"
+        "(__tl_dyn-array i64)"
+        "SelfAddressWord"
+        "(Tuple i64 i64)")]
+    (for [index (iterator.range 0 4)]
+      (let
+        [ty : String (clone (array-ref types index))]
+        [input : ir.CompilerIrFunction
+          (irt.func
+            (str_cat.str-cat
+              "function @representation(value=%0:"
+              (clone ty)
+              ") -> "
+              (clone ty)
+              " vars 3 {
+entry:
+  %1 = addr_of %0
+  %2 = load %1 : "
+              ty
+              "
+  return %2
+}"))]
+        [representations : ir.CompilerIrRepresentationIndex
+          (opt-ssa-representation-index-for-function (& input))]
+        (match (opt.opt-self-address-function-pass
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& representations)
+          (opt.compiler-opt-global-shared-view input))
+          [(Result out changed?)
+            (test.assert-true
+              (= changed? (< index 3))
+              "known register handles forward; groups stay intact")
+            (when
+              changed?
+              (test.assert-true
+                (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+                "forwarded single-definition handles verify"))])))))

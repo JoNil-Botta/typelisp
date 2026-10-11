@@ -13846,6 +13846,184 @@
           (opt_i64_i64_map.with-capacity 64)
           (opt-ssa-var-types-new))))))
 
+;; A read-only address of register storage can be read as the variable at the
+;; load's position, including after reassignment. All addresses of that storage
+;; must be load-only: an escaping sibling address could otherwise write it.
+;; Alloc names a memory object rather than a register value and stays excluded.
+(defstruct OptSelfAddressPlan
+  (facts OptSsaFacts)
+  (addresses opt_i64_i64_map.Map)
+  (bad opt_i64_i64_map.Map))
+
+(define (opt-instr-addr-of? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(AddrOf _ _) true]
+    [_ false]))
+
+(define (opt-self-address-note-def!
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [plan : (&mut plan OptSelfAddressPlan)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (set!
+    plan.facts
+    (match (compiler-opt-global-shared-view instr)
+      [(AddrOf dst src)
+        (opt_i64_i64_map.insert-ref! (&mut plan.addresses) dst src)
+        (opt-ssa-facts-add-def-bad
+          (owned_view.compiler-owned-reference-shared-view (& plan.facts))
+          dst)]
+      [(Alloc dst _)
+        (opt-ssa-facts-add-def-bad
+          (owned_view.compiler-owned-reference-shared-view (& plan.facts))
+          dst)]
+      [(Pack dst _ ty)
+        (opt-ssa-facts-add-def-ty
+          type-segment-bases
+          representations
+          (owned_view.compiler-owned-reference-shared-view (& plan.facts))
+          dst
+          (& ty))]
+      [_
+        (opt-ssa-facts-add-instr
+          type-segment-bases
+          representations
+          (owned_view.compiler-owned-reference-shared-view (& plan.facts))
+          (& instr))])))
+
+(define (opt-self-address-source?
+  [plan : (& plan OptSelfAddressPlan)]
+  [address : i64]) : bool
+  (match (opt_i64_i64_map.get (& plan.addresses) address)
+    [(LookupMissing) false]
+    [(LookupFound source)
+      (match (& plan.facts)
+        [(Facts counts bad types)
+          (and
+            (= (opt-ssa-count counts address) 1)
+            (not (opt-used-contains bad source))
+            (not (opt-used-contains (& plan.bad) source))
+            (match (opt-ssa-var-types-lookup types source)
+              [(Some _) true]
+              [(No) false]))])]))
+
+(define (opt-self-address-reject-use!
+  [plan : (&mut plan OptSelfAddressPlan)]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(Var var)
+      (match (opt_i64_i64_map.get (& plan.addresses) var)
+        [(LookupFound source)
+          (opt_i64_i64_map.insert-ref! (&mut plan.bad) source 1)]
+        [(LookupMissing) unit])]
+    [_ unit]))
+
+(define (opt-self-address-note-use!
+  [type-segment-bases : i64]
+  [plan : (&mut plan OptSelfAddressPlan)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(AddrOf dst src)
+      ;; AddrOf's raw storage slot is deliberately outside the operand API.
+      (opt-self-address-reject-use! plan (Scalar) (Var src))
+      (unless
+        (opt-self-address-source? plan dst)
+        (opt_i64_i64_map.insert-ref! (&mut plan.bad) src 1))]
+    [(Load _ (Var address) ty)
+      (match (opt_i64_i64_map.get (& plan.addresses) address)
+        [(LookupMissing) unit]
+        [(LookupFound source)
+          (unless
+            (and
+              (opt-self-address-source? plan address)
+              (match (& plan.facts)
+                [(Facts _ _ types)
+                  (match (opt-ssa-var-types-lookup types source)
+                    [(Some source-ty)
+                      (opt-type-eq type-segment-bases (& source-ty) (& ty))]
+                    [(No) false])]))
+            (opt_i64_i64_map.insert-ref! (&mut plan.bad) source 1))])]
+    [_
+      (ir.compiler-ir-instr-visit-uses instr opt-self-address-reject-use! plan)]))
+
+(define (opt-self-address-removable?
+  [plan : (& plan OptSelfAddressPlan)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(AddrOf dst _) (opt-self-address-source? plan dst)]
+    [_ false]))
+
+(define (opt-self-address-rewrite-seq
+  [plan : (& plan OptSelfAddressPlan)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [out : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+    (for [index (iterator.range 0 instrs.len)]
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (unless
+          (opt-self-address-removable?
+            plan
+            (compiler-opt-global-shared-view instr))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut out)
+            (match (compiler-opt-global-shared-view instr)
+              [(Load dst (Var address) ty)
+                (if (opt-self-address-source? plan address)
+                  (match (opt_i64_i64_map.get (& plan.addresses) address)
+                    [(LookupFound source) (Mov dst (Var source) ty)]
+                    [(LookupMissing) instr])
+                  instr)]
+              [_ instr])))))
+    (ir.compiler-ir-instr-builder-to-seq out)))
+
+(define (opt-self-address-function-pass
+  [type-segment-bases : i64]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-function-blocks func)]
+    [frame : i64 (opt-function-frame func)]
+    ;; Avoid type/definition tables for the usual address-free function.
+    (unless
+      (opt-blocks-any? blocks opt-instr-addr-of?)
+      (return (Result func false)))
+    (let
+      [plan : OptSelfAddressPlan
+        (OptSelfAddressPlan
+          (opt-ssa-facts-add-params
+            type-segment-bases
+            representations
+            (& (opt-function-params func))
+            (&
+              (Facts
+                (opt_i64_i64_map.with-capacity 16)
+                (opt_i64_i64_map.with-capacity 16)
+                (opt-ssa-var-types-new))))
+          (opt_i64_i64_map.with-capacity 16)
+          (opt_i64_i64_map.with-capacity 16))]
+      (opt-blocks-visit
+        blocks
+        opt-self-address-note-def!
+        type-segment-bases
+        representations
+        (&mut plan))
+      (opt-blocks-visit
+        blocks
+        opt-self-address-note-use!
+        type-segment-bases
+        (&mut plan))
+      (if (opt-blocks-any? blocks opt-self-address-removable? (& plan))
+        (Result
+          (opt-function-with-frame-blocks
+            func
+            frame
+            (opt-blocks-map-seq blocks opt-self-address-rewrite-seq (& plan)))
+          true)
+        (Result func false)))))
+
 (define (opt-ssa-candidate? [facts : (& facts OptSsaFacts)] [var : i64]) : bool
   (match facts
     [(Facts counts bad types)
@@ -98437,6 +98615,17 @@
                 (if (= frame (opt-pass-frame s))
                   s
                   (opt-pass-with-cfg-func split s))]))))]
+    [s
+      (opt-stage
+        "self_address"
+        (opt-live-only
+          s
+          (opt-pass-with-result
+            (opt-self-address-function-pass
+              type-segment-bases
+              (& summaries.representations)
+              (opt-pass-func s))
+            s)))]
     ;; Register-value SSA construction feeds the verifier-gated dominator
     ;; passes below. Unsupported cases fall back to the original function, so
     ;; the optimization path remains safe.

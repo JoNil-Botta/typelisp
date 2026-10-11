@@ -121,6 +121,12 @@ wildcard, string-path diagnostics, and editor integration coverage.
 
 ## Optimizer dense block scans
 
+The `self-address-*` optimizer tests pin forwarding at each load's position,
+SSA verification, idempotence, escaping sibling addresses, pointer redefinition,
+type mismatches and unsupported storage representations. The native
+`self_address_loads` case runs at opt0/1/2 on both hosts and exercises tail-recursive
+String/array parameters, mutable locals, and a write through a sibling address.
+
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`
 compares linked, dense and mixed blocks across growth, empty inputs and
 retained rescans. It checks the two forward root passes, single-source

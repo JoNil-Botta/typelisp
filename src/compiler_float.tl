@@ -63,14 +63,7 @@
 
 (define (compiler-finite-cast-integer-type? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8)) true]
     [_ false]))
 
 (define (compiler-finite-cast-int-or-char-type? [ty : ast.AstType]) : bool
@@ -82,8 +75,7 @@
 
 (define (compiler-finite-cast-float-type? [ty : ast.AstType]) : bool
   (match ty
-    [(F64) true]
-    [(F32) true]
+    [(or (F64) (F32)) true]
     [_ false]))
 
 (define (compiler-finite-cast-normalize-i64 [value : i64] [ty : ast.AstType]) : i64
@@ -205,25 +197,17 @@
     [(U64) 18446744073709551616.0]
     [(U32) 4294967296.0]
     [(U16) 65536.0]
-    [(U8) 256.0]
-    [(Char) 256.0]
+    [(or (U8) (Char)) 256.0]
     [_ 0.0]))
 
 (define (compiler-finite-cast-signed-target? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
+    [(or (I64) (I32) (I16) (I8)) true]
     [_ false]))
 
 (define (compiler-finite-cast-unsigned-target? [ty : ast.AstType]) : bool
   (match ty
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
-    [(Char) true]
+    [(or (U64) (U32) (U16) (U8) (Char)) true]
     [_ false]))
 
 (define (compiler-finite-cast-float-in-target-range?

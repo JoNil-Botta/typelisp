@@ -121,7 +121,7 @@
   ;; ABI-independent statement of the property the constraint encodes.
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
     Windows
-    (win-param-preassign-safe-div-function))
+    (& (win-param-preassign-safe-div-function)))
     [(Plan assignments ineligible _ _ _)
       (and
         (not (liveness.compiler-live-set-contains? ineligible 1))

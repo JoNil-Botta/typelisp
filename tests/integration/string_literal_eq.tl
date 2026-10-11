@@ -33,6 +33,9 @@
 (define (is-17 [s : (& s str)]) : bool
   (string.eq s "abcdefghijklmnopq"))
 
+(define (is-utf8 [s : (& s str)]) : bool
+  (string.eq s "å🙂"))
+
 (define (is-4-local [s : (& s str)]) : bool
   (let
     [literal : String "%rbx"]
@@ -72,6 +75,10 @@
     (check is-4 "%raxx" false)
     (check is-4-local "%rbx" true)
     (check is-4-local "%rax" false)
+    (check is-utf8 "å🙂" true)
+    (check is-utf8 "a🙂" false)
+    (check is-utf8 "å🙃" false)
+    (check is-utf8 "å" false)
     (check is-7 "abcdefg" true)
     (check is-7 "abcdefh" false)
     (check is-7 "xbcdefg" false)
@@ -88,5 +95,5 @@
     (check is-17 "abcdefghijklmnop" false)))
 
 (define (main) : i64
-  ;; 34 checks; every one passing scores 34, offset to the corpus's 42.
-  (+ (score) 8))
+  ;; 38 checks; every one passing scores 38, offset to the corpus's 42.
+  (+ (score) 4))

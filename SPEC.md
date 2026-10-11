@@ -2139,6 +2139,13 @@ including an inclusive range that ends at the largest `i64`, but no iterator
 state is constructed and no protocol function is called per item. An annotated
 clause uses the protocol.
 
+When that source is a direct call of `stdlib.iterator.range` or
+`range-inclusive` itself, as `comptime.expr-binding-clause-init-callee` reports
+it, the loop counts from the call's two arguments and no range value is built.
+The start and then the end are each evaluated once, as `i64`. A call of any
+other function, including a local or user function named `range`, takes the
+path above.
+
 A single unannotated clause over a counted range or a borrowed array, `Slice`,
 `__tl_dyn-array`, or slots/len struct expands to one index-driven `while`
 whose body advances the index before the user body, so `continue` moves to the
@@ -6449,6 +6456,22 @@ returns the cloned result. The result surface and source-region stripping match
 clone-out is explicit through `with-escape` for reusable first-class scratch
 arenas and `with-scratch` for one-shot scratch work.
 
+**Scratch body region:** the scratch arena is rewound (`with-escape`) or
+destroyed (`with-scratch`) when the form exits, so the checker checks the body
+under a fresh anonymous region scoped to the form, as it does a `with-arena`
+body. Body allocations carry that region, and the region checks reject (E0205)
+a body allocation that would outlive the form: stored into a binding, field or
+container declared outside the body or into a global, captured by a lambda,
+returned with `return`, or carried by a `try` error exit whose error payload is
+heap data. A `try` Ok value keeps its operand's region, as a `match` binding
+does. `in-arena` inside the body keeps the body region unless its arena names
+an owner region, as inside `with-arena`. The region is never a branded or
+owned scratch arena's own region, which outlives the rewind. Unlike a
+`with-arena` body, a body allocation may be passed by value to an ordinary
+function: the check covers the body's own stores and exits, not what a callee
+does with an argument. The form's result still leaves cloned, without region
+tags.
+
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
 typecheck as bare `arena.Arena` or branded `(arena.Arena r)` from
@@ -8758,7 +8781,8 @@ uses conservative loop-body summaries.
 written lifetime name. Its scratch arena is a first-class arena handle, and
 the only supported escape from it is the form's clone step: the result leaves
 the form cloned into the saved enclosing arena, without the scratch region
-tag.
+tag. Its body, like a `with-scratch` body, is checked under an anonymous region
+scoped to the form, so the other exits of a body allocation are rejected.
 
 Atomic arenas are shareable allocation owners, not synchronization primitives
 for the values allocated inside them. A value owned by an atomic arena may

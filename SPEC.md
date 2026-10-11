@@ -9958,8 +9958,10 @@ loaded file's own path, line and column for `.load`.
   internal TypeLisp rule only and does not authorize borrowed Slice parameters
   in C `extern` declarations.
 - Callers reserve 32 bytes of shadow space before each call.
-- The CRT owns process startup; Windows output emits `main` and no Linux
-  `_tl_start` wrapper.
+- Windows executables define user `main` and use the compiler-owned freestanding
+  `_tl_start` image entry, linked with `/ENTRY:_tl_start` and `/NODEFAULTLIB`.
+  The runtime's platform import libraries are `kernel32.lib` and `ntdll.lib`.
+  Section 6.2 defines argv construction, the main fiber stack, and termination.
 
 ### 11.3 Data layout
 

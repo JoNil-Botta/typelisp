@@ -59097,17 +59097,15 @@
             ;; var can have -- register, spill slot, remat, plain slot -- is
             ;; loadable by the same scalar loader the general lowering would have
             ;; used on it (compiler-backend-bit-test-load-mask).
+            ;; A successor with phis takes its copies on an edge block behind
+            ;; the jcc (compiler-backend-gep-load-cmp-branch-emit), as a fused
+            ;; compare's do.
             (not
               (string.eq
                 (compiler-backend-bit-test-count-reg
                   (compiler-backend-global-shared-view ctx)
                   count)
-                ""))
-            (not
-              (compiler-backend-branch-needs-phi-copies?
-                ctx.function-state
-                true-label
-                false-label)))
+                "")))
             (Some mask count true-label false-label (+ index 2) dst guard?)
             (No))]
         [_ (No)])]
@@ -59241,7 +59239,7 @@
         mask
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view mask-reg))]
-    [head : String
+    [test-asm : String
       (str_cat.str-cat
         (if guard?
           (compiler-backend-shift-guard-asm
@@ -59252,15 +59250,17 @@
             ctx.backend-state)
           "")
         load-mask
-        (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n")
-        (compiler-backend-emit-compare-branch-jumps
-          (compiler-backend-global-shared-view ctx.function)
-          true-label
-          false-label
-          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+        (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n"))]
+    [head : String
+      (try
+        (compiler-backend-gep-load-cmp-branch-emit
+          (compiler-backend-global-shared-view ctx)
+          test-asm
           "jb"
           "jae"
-          ctx.backend-state))]
+          true-label
+          false-label
+          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)))]
     (compiler-backend-asm-append
       out
       (compiler-backend-emergency-wrap head ctx.backend-state))

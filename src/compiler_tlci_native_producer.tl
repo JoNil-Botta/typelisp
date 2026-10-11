@@ -11,6 +11,7 @@
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
 ;; the dispatch route keeps its counted interpreted fallback.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types)
 (import compiler_diagnostic)
@@ -119,7 +120,7 @@
     (while (and (< found 0) (>= index 0))
       (if (string.eq (array-ref embedded-native-data-local-names index) name)
         (set! found index)
-        (set! index (- index 1))))
+        (-= index 1)))
     (if (< found 0)
       ""
       (array-ref
@@ -147,7 +148,7 @@
     (while (and (< found 0) (>= index 0))
       (if (string.eq (array-ref embedded-native-local-names index) name)
         (set! found index)
-        (set! index (- index 1))))
+        (-= index 1)))
     found))
 
 ;; Bind `name` into the next session slot; returns the slot, or -1 when the
@@ -252,7 +253,7 @@
           (if (= pname name-id)
             (set! found index)
             unit)])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define embedded-stdlib-tlci-native-report-count : (__tl_dyn-array i64)
@@ -331,7 +332,7 @@
     (while (and (not found) (< index len))
       (if (string.eq (& (array-ref items index)) item)
         (set! found true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (embedded-native-full-string-set-add!
@@ -380,9 +381,7 @@
 (define (embedded-native-fallback-reason-note! [reason : String]) : unit
   (if embedded-native-full-blocker-diagnostic-active
     (begin
-      (set!
-        embedded-native-full-blocker-events
-        (+ embedded-native-full-blocker-events 1))
+      (+= embedded-native-full-blocker-events 1)
       (when
         (and
           (>= embedded-native-full-blocker-len embedded-native-full-blocker-cap)
@@ -529,9 +528,9 @@
       (while (<= (+ index needle-len) limit)
         (if (string.is-string-prefix-at text needle index)
           (begin
-            (set! count (+ count 1))
-            (set! index (+ index needle-len)))
-          (set! index (+ index 1)))))
+            (+= count 1)
+            (+= index needle-len))
+          (+= index 1))))
     count))
 
 (define (tlci-native-macro-capture-slot
@@ -546,7 +545,7 @@
         (__tl-project-field (array-ref captures.slots index) identity)
         identity)
         (set! found index)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 ;; Instance-proof producer result: callers across import spellings match on
@@ -867,9 +866,8 @@
 (define (embedded-native-escape-string [text : String]) : String
   (let
     [out : String ""]
-    [index : i64 0]
     [length : i64 (string.string-length text)]
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (let
         [c : char (string.string-ref text index)]
         (cond
@@ -879,8 +877,7 @@
           [(= c '\t') (set! out (str_cat.str-cat out "\\t"))]
           [(= c '\r') (set! out (str_cat.str-cat out "\\r"))]
           [else
-            (set! out (str_cat.str-cat out (string.substring text index 1)))])
-        (set! index (+ index 1))))
+            (set! out (str_cat.str-cat out (string.substring text index 1)))])))
     out))
 
 ;; Push one neutral host-op call, keeping operation order stable across the
@@ -1983,8 +1980,8 @@
                         "0"
                         "0"
                         "0")
-                      (set! opened (+ opened 2))
-                      (set! index (+ index 1)))))]
+                      (+= opened 2)
+                      (+= index 1))))]
               [_
                 (embedded-native-fallback-reason-note!
                   "template-splice:non-variable")
@@ -2006,7 +2003,7 @@
                     "0"
                     "0")
                   (set! opened (+ opened item-opened 1))
-                  (set! index (+ index 1)))))])))
+                  (+= index 1))))])))
     (if ok
       opened
       -1)))
@@ -2084,7 +2081,6 @@
                     [pat-arg-opened : i64
                       (embedded-native-pattern-list-ops
                         (& pat-args)
-                        0
                         ops
                         ops-count
                         0)]
@@ -2126,7 +2122,7 @@
                       "0"
                       "0")
                     (set! opened (+ opened pat-opened body-opened 2))
-                    (set! index (+ index 1)))))))]
+                    (+= index 1))))))]
         [_ (set! ok false)]))
     (if ok
       opened
@@ -2182,7 +2178,7 @@
         [name : String (ci.intern-str name-id)]
         [args : compiler_ast_types.AstPatternList (deref args-box)]
         [arg-opened : i64
-          (embedded-native-pattern-list-ops (& args) 0 ops ops-count 0)]
+          (embedded-native-pattern-list-ops (& args) ops ops-count 0)]
         (if (< arg-opened 0)
           -1
           (begin
@@ -2199,12 +2195,10 @@
 
 (define (embedded-native-pattern-list-ops
   [args : (& args compiler_ast_types.AstPatternList)]
-  [index : i64]
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]
   [opened : i64]) : i64
-  (if (>= index args.len)
-    opened
+  (for [index (iterator.range 0 args.len)]
     (let
       [item-opened : i64
         (embedded-native-pattern-ops
@@ -2215,13 +2209,9 @@
           ops
           ops-count)]
       (if (< item-opened 0)
-        -1
-        (embedded-native-pattern-list-ops
-          args
-          (+ index 1)
-          ops
-          ops-count
-          (+ opened item-opened))))))
+        (return -1)
+        (set! opened (+ opened item-opened)))))
+  opened)
 
 ;; Scalar AstType ordinal contract shared with the host callback consumer;
 ;; the embedded image and its consumer are always the same source-bound
@@ -2318,8 +2308,8 @@
   [lifetimes : (& lifetimes compiler_ast_types.AstLifetimeList)]) : String
   (let
     [payload : String (ci.intern-str name)]
-    [index : i64 0]
-    (while (< index (compiler_ast_types.ast-lifetime-list-len lifetimes))
+    (for [index
+      (iterator.range 0 (compiler_ast_types.ast-lifetime-list-len lifetimes))]
       (set!
         payload
         (str_cat.str-cat
@@ -2329,8 +2319,7 @@
             (compiler_ast_types.ast-lifetime-list-get
               lifetimes
               index
-              (compiler_ast_types.ast-lifetime-fallback)))))
-      (set! index (+ index 1)))
+              (compiler_ast_types.ast-lifetime-fallback))))))
     payload))
 
 (define (embedded-native-template-type-ops
@@ -2559,8 +2548,8 @@
   [params : (& params compiler_ast_types.AstParamList)]) : String
   (let
     [payload : String ""]
-    [index : i64 0]
-    (while (< index (compiler_ast_types.ast-param-list-len params))
+    (for [index
+      (iterator.range 0 (compiler_ast_types.ast-param-list-len params))]
       (match (compiler_ast_types.ast-param-list-get
         params
         index
@@ -2576,8 +2565,7 @@
                   0))
               ":"
               (ci.intern-str name)
-              "\n"))])
-      (set! index (+ index 1)))
+              "\n"))]))
     payload))
 
 (define (embedded-native-template-lambda-param-type-ops
@@ -2737,8 +2725,8 @@
                 chunk
                 ")\n"
                 "        unit)\n"))))
-        (set! start (+ start chunk-count))
-        (set! chunk-index (+ chunk-index 1))))
+        (+= start chunk-count)
+        (+= chunk-index 1)))
     (set!
       out
       (str_cat.str-cat
@@ -4259,7 +4247,7 @@
       (< cursor (string.string-length line))
       (>= (string.string-ref line cursor) '0')
       (<= (string.string-ref line cursor) '9'))
-      (set! cursor (+ cursor 1)))
+      (+= cursor 1))
     (if (or (= cursor digits-start) (> (- cursor digits-start) 18))
       -1
       cursor)))
@@ -4291,7 +4279,7 @@
           (embedded-native-batch-char (bit-and magnitude 63))
           digits))
       (set! magnitude (shr magnitude 6))
-      (set! count (+ count 1)))
+      (+= count 1))
     (str_cat.str-cat
       (embedded-native-batch-char
         (+
@@ -4309,16 +4297,16 @@
   [end : i64]) : i64
   (let
     [negative : bool (= (string.string-ref line start) '-')]
-    [index : i64
-      (if negative
-        (+ start 1)
-        start)]
     [value : i64 0]
-    (while (< index end)
+    (for [index
+      (iterator.range
+        (if negative
+          (+ start 1)
+          start)
+        end)]
       (set!
         value
-        (+ (* value 10) (- (cast (string.string-ref line index) : i64) 48)))
-      (set! index (+ index 1)))
+        (+ (* value 10) (- (cast (string.string-ref line index) : i64) 48))))
     (if negative
       (- 0 value)
       value)))
@@ -4352,10 +4340,10 @@
       ok
       (< cursor length)
       (not (= (string.string-ref line cursor) ' ')))
-      (set! cursor (+ cursor 1)))
+      (+= cursor 1))
     (set! name (string.substring line name-start (- cursor name-start)))
     (if (and ok (string.is-string-prefix-at line (& session-infix) cursor))
-      (set! cursor (+ cursor (string.string-length session-infix)))
+      (+= cursor (string.string-length session-infix))
       (set! ok false))
     (while (and ok (< arg 3))
       (if (string.is-string-prefix-at
@@ -4365,9 +4353,7 @@
         (let
           [raw : String ""]
           [done : bool false]
-          (set!
-            cursor
-            (+ cursor (string.string-length embedded-native-name-arg-prefix)))
+          (+= cursor (string.string-length embedded-native-name-arg-prefix))
           (while (and ok (not done))
             (cond
               [(>= cursor length) (set! ok false)]
@@ -4386,12 +4372,12 @@
                           [(= escaped 't') "\t"]
                           [(= escaped 'r') "\r"]
                           [else (string.substring line (+ cursor 1) 1)])))
-                    (set! cursor (+ cursor 2))))]
+                    (+= cursor 2)))]
               [else
                 (set!
                   raw
                   (str_cat.str-cat raw (string.substring line cursor 1)))
-                (set! cursor (+ cursor 1))]))
+                (+= cursor 1)]))
           (if (and
             ok
             (< arg 2)
@@ -4401,11 +4387,7 @@
               (& embedded-native-name-arg-suffix)
               cursor))
             (begin
-              (set!
-                cursor
-                (+
-                  cursor
-                  (string.string-length embedded-native-name-arg-suffix)))
+              (+= cursor (string.string-length embedded-native-name-arg-suffix))
               (set! pending-length (string.string-length raw))
               (set!
                 tokens
@@ -4429,12 +4411,12 @@
                 tokens
                 (str_cat.str-cat tokens (embedded-native-batch-int value)))
               (set! cursor end)))))
-      (set! arg (+ arg 1))
+      (+= arg 1)
       (cond
         [(not ok) unit]
         [(< arg 3)
           (if (and (< cursor length) (= (string.string-ref line cursor) ' '))
-            (set! cursor (+ cursor 1))
+            (+= cursor 1)
             (set! ok false))]
         [(not
             (and
@@ -4456,7 +4438,7 @@
     [found : i64 -1]
     (while (and (< found 0) (< index count))
       (when (string.eq (& (array-ref names index)) name) (set! found index))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; Render `count` op lines from `start` as the nested status chain: each op
@@ -4503,7 +4485,7 @@
                       (if (< slot 0)
                         (begin
                           (set! (array-ref names name-count) name)
-                          (set! name-count (+ name-count 1))
+                          (+= name-count 1)
                           (- name-count 1))
                         slot)]
                     (set!
@@ -4512,8 +4494,8 @@
                         records
                         (embedded-native-batch-char op)
                         tokens))
-                    (set! record-count (+ record-count 1))
-                    (set! cursor (+ cursor 1)))))]
+                    (+= record-count 1)
+                    (+= cursor 1))))]
             [(EmbeddedNativeBatchOpNone) (set! open false)]))
         (if (< record-count 2)
           (begin
@@ -4526,11 +4508,10 @@
                   (owned_view.compiler-owned-array-element-shared-view
                     ops
                     index))))
-            (set! index (+ index 1)))
+            (+= index 1))
           (let
             [batch : String (embedded-native-batch-int name-count)]
-            [name-index : i64 0]
-            (while (< name-index name-count)
+            (for [name-index (iterator.range 0 name-count)]
               (let
                 [name : String
                   (owned_view.compiler-owned-array-element-shared-view
@@ -4543,8 +4524,7 @@
                     (embedded-native-batch-int
                       (tlci_core.tlci-host-callback-row-index (& name)))
                     (embedded-native-batch-int (string.string-length name))
-                    name))
-                (set! name-index (+ name-index 1))))
+                    name))))
             (set!
               batch
               (str_cat.str-cat
@@ -4564,10 +4544,10 @@
                         (owned_view.compiler-owned-shared-view batch)))
                     (string.int->string (string.string-length batch))
                     "0"))))
-            (set! index (+ index 1))
+            (+= index 1)
             (while (< index cursor)
               (set! out (str_cat.str-cat out "  (begin (begin\n"))
-              (set! index (+ index 1)))))))
+              (+= index 1))))))
     out))
 
 (define (embedded-native-ops-open-text
@@ -8240,48 +8220,43 @@
       (set! embedded-native-full-blocker-diagnostic-active false))))
 
 (define (embedded-native-full-blocker-render! [identity : String]) : unit
-  (let
-    [blocker-index : i64 0]
-    [walked-index : i64 0]
-    (if (= embedded-native-full-blocker-len 0)
+  (if (= embedded-native-full-blocker-len 0)
+    (embedded-native-full-report-append!
+      (owned_view.compiler-owned-shared-view identity)
+      "blocked"
+      "unreported")
+    (for [blocker-index (iterator.range 0 embedded-native-full-blocker-len)]
       (embedded-native-full-report-append!
         (owned_view.compiler-owned-shared-view identity)
         "blocked"
-        "unreported")
-      (while (< blocker-index embedded-native-full-blocker-len)
+        (string.copy
+          (& (array-ref embedded-native-full-blockers blocker-index))))))
+  (when
+    embedded-native-full-blocker-overflow
+    (embedded-native-full-report-append!
+      (owned_view.compiler-owned-shared-view identity)
+      "blocked"
+      "diagnostic-capacity-exceeded"))
+  (for [walked-index (iterator.range 0 embedded-native-full-walked-len)]
+    (let
+      [capability : String
+        (string.copy (& (array-ref embedded-native-full-walked walked-index)))]
+      (when
+        (not
+          (embedded-native-full-string-set-contains?
+            (& embedded-native-full-blockers)
+            embedded-native-full-blocker-len
+            capability))
         (embedded-native-full-report-append!
           (owned_view.compiler-owned-shared-view identity)
-          "blocked"
-          (string.copy
-            (& (array-ref embedded-native-full-blockers blocker-index))))
-        (set! blocker-index (+ blocker-index 1))))
-    (when
-      embedded-native-full-blocker-overflow
-      (embedded-native-full-report-append!
-        (owned_view.compiler-owned-shared-view identity)
-        "blocked"
-        "diagnostic-capacity-exceeded"))
-    (while (< walked-index embedded-native-full-walked-len)
-      (let
-        [capability : String
-          (string.copy (& (array-ref embedded-native-full-walked walked-index)))]
-        (when
-          (not
-            (embedded-native-full-string-set-contains?
-              (& embedded-native-full-blockers)
-              embedded-native-full-blocker-len
-              capability))
-          (embedded-native-full-report-append!
-            (owned_view.compiler-owned-shared-view identity)
-            "walked"
-            capability))
-        (set! walked-index (+ walked-index 1))))
-    (when
-      embedded-native-full-walked-overflow
-      (embedded-native-full-report-append!
-        identity
-        "walked"
-        "diagnostic-capacity-exceeded"))))
+          "walked"
+          capability))))
+  (when
+    embedded-native-full-walked-overflow
+    (embedded-native-full-report-append!
+      identity
+      "walked"
+      "diagnostic-capacity-exceeded")))
 
 ;; The extern text of every host callback the generated entries may call, one
 ;; declaration per `tlci_core.tlci-host-callback-table` row, assembled once at
@@ -8331,7 +8306,6 @@
   (let
     [out : source_buf.ByteBufBuilder (source_buf.byte-buf-builder-new)]
     [count : i64 (array-length names)]
-    [index : i64 0]
     [native-count : i64 0]
     [partial-count : i64 0]
     [interpreted-arms : i64 0]
@@ -8345,7 +8319,7 @@
     (source_buf.byte-buf-builder-append-string
       (&mut out)
       (embedded-native-host-externs))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [slot : i64
           (tlci-native-macro-capture-slot
@@ -8417,15 +8391,14 @@
               (embedded-native-count-occurrences
                 body-text
                 (string.copy (& embedded-native-interpreted-arm-marker)))]
-            (set! native-count (+ native-count 1))
-            (set! interpreted-arms (+ interpreted-arms arm-sites))
-            (when (> arm-sites 0) (set! partial-count (+ partial-count 1)))
+            (+= native-count 1)
+            (+= interpreted-arms arm-sites)
+            (when (> arm-sites 0) (+= partial-count 1))
             (source_buf.byte-buf-builder-append-string
               (&mut out)
               (embedded-native-fuel-open))
             (source_buf.byte-buf-builder-append-string (&mut out) body-text)
-            (source_buf.byte-buf-builder-append-string (&mut out) ")))\n")))
-        (set! index (+ index 1))))
+            (source_buf.byte-buf-builder-append-string (&mut out) ")))\n")))))
     (set! (array-ref embedded-stdlib-tlci-native-report-count 0) native-count)
     (set!
       (array-ref embedded-stdlib-tlci-native-report-partial-count 0)
@@ -8452,7 +8425,7 @@
           (set! ok false)
           (begin
             (set! (array-ref out index) offset)
-            (set! index (+ index 1))))))
+            (+= index 1)))))
     (if ok
       out
       (__tl_make-array i64 0))))

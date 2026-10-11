@@ -1,5 +1,6 @@
 ;; Exercise address factoring with real whole-function use counts and explicit
 ;; register homes. A second block keeps an otherwise adjacent offset live.
+(import stdlib.iterator)
 (import compiler_backend as backend)
 (import compiler_backend_tests as fixtures)
 (import compiler_ir_types as ir)
@@ -66,18 +67,15 @@
         [(= mode 19) abi.compiler-reg-id-r14]
         [(= mode 22) abi.compiler-reg-id-r12]
         [else abi.compiler-reg-id-r15]))
-    (let
-      [i : i64 0]
-      (while (< i 4)
-        ;; A missing assignment is a stack home.
-        (unless
-          (= mode (+ i 6))
-          (set!
-            assignments
-            (reg.compiler-reg-assignments-prepend
-              (reg.CompilerRegAssignment i (Register (array-ref homes i)))
-              assignments)))
-        (set! i (+ i 1))))
+    (for [i (iterator.range 0 4)]
+      ;; A missing assignment is a stack home.
+      (unless
+        (= mode (+ i 6))
+        (set!
+          assignments
+          (reg.compiler-reg-assignments-prepend
+            (reg.CompilerRegAssignment i (Register (array-ref homes i)))
+            assignments))))
     (set!
       (array-ref slots 0)
       (ir.CompilerIrInstr.BinOp
@@ -254,18 +252,12 @@
 (test
   factored_address_liveness_homes_and_ordinals
   (cbi.compiler-builtin-initialize-for-parse!)
-  (let
-    [factor : i64 -1]
-    (while (<= factor 73)
+  (for [factor (iterator.range -1 (+ 73 1))]
+    (for [mode (iterator.range 0 24)]
       (let
-        [mode : i64 0]
-        (while (< mode 24)
-          (let
-            [scope (arena.make)]
-            (in-arena
-              scope
-              (check-case factor mode false)
-              (check-case factor mode true))
-            (arena.destroy-safe! scope))
-          (set! mode (+ mode 1))))
-      (set! factor (+ factor 1)))))
+        [scope (arena.make)]
+        (in-arena
+          scope
+          (check-case factor mode false)
+          (check-case factor mode true))
+        (arena.destroy-safe! scope)))))

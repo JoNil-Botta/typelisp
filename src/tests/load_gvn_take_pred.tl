@@ -1,5 +1,6 @@
 ;; A dispatch back to already-processed loop headers and forward to distinct
 ;; exits exercises the repeated-scan case in the CFG index's actual RPO.
+(import stdlib.iterator)
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
 (import compiler_builtin_ids as cbi)
@@ -21,7 +22,7 @@
       (set!
         (array-ref labels i)
         (ir.compiler-ir-label (& (string.int->string (+ i 10000)))))
-      (set! i (- i 1)))
+      (-= i 1))
     (set! i 0)
     (while (< i (+ headers exits))
       (set!
@@ -33,7 +34,7 @@
             (if (< i headers)
               i
               (+ i 1)))))
-      (set! i (+ i 1)))
+      (+= i 1))
     (set! i 0)
     (while (< i count)
       (let
@@ -62,7 +63,7 @@
           (ir.CompilerIrBlock.Block
             (array-ref labels i)
             (ir.CompilerIrInstrSeq slots 1)))
-        (set! i (+ i 1))))
+        (+= i 1)))
     (opt.opt-cfg-index-build (Array (ir.CompilerIrBlockSeq blocks count)))))
 
 (define (check-rpo [headers : i64] [exits : i64]) : unit
@@ -70,12 +71,11 @@
     [index (graph headers exits false)]
     [processed : (__tl_dyn-array bool)
       (__tl_make-array bool (+ (+ headers exits) 1))]
-    [i : i64 0]
     (test.assert-i64-eq
       index.reach-count
       (+ (+ headers exits) 1)
       "all graph blocks reachable")
-    (while (< i index.reach-count)
+    (for [i (iterator.range 0 index.reach-count)]
       (let
         [id : i64 (array-ref index.rpo i)]
         (when
@@ -89,8 +89,7 @@
               headers
               -1)
             "only the last exit takes a small dispatch state"))
-        (set! (array-ref processed id) true)
-        (set! i (+ i 1))))))
+        (set! (array-ref processed id) true)))))
 
 (define (check-shared-exit [headers : i64] [exits : i64]) : unit
   (let
@@ -100,7 +99,7 @@
     [i : i64 0]
     (while (< i (array-length processed))
       (set! (array-ref processed i) true)
-      (set! i (+ i 1)))
+      (+= i 1))
     ;; Even after all other readers finish, a join may reread both incoming
     ;; states while constructing its phis. It must not take either state.
     (test.assert-i64-eq
@@ -111,21 +110,15 @@
 (test
   bounded_load_gvn_last_reader
   (cbi.compiler-builtin-initialize-for-parse!)
-  (let
-    [headers : i64 1]
-    (while (<= headers 33)
+  (for [headers (iterator.range 1 (+ 33 1))]
+    (for [exits (iterator.range 1 (+ 33 1))]
       (let
-        [exits : i64 1]
-        (while (<= exits 33)
-          (let
-            [scope (arena.make)]
-            (in-arena
-              scope
-              (check-rpo headers exits)
-              (check-shared-exit headers exits))
-            (arena.destroy-safe! scope))
-          (set! exits (+ exits 1))))
-      (set! headers (+ headers 1))))
+        [scope (arena.make)]
+        (in-arena
+          scope
+          (check-rpo headers exits)
+          (check-shared-exit headers exits))
+        (arena.destroy-safe! scope))))
   (let
     [scope (arena.make)]
     (in-arena scope (check-rpo 2048 2048))

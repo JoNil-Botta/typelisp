@@ -46,30 +46,26 @@
         [used : i64 0]
         [cursor : i64 active]
         (while (not (= cursor 0))
-          (set!
+          (+=
             used
-            (+
-              used
-              (-
-                (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+            (-
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1)))))
           (set!
             cursor
             (unsafe
               (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0)))))
         (set! cursor retired)
         (while (not (= cursor 0))
-          (set!
+          (+=
             used
-            (+
-              used
-              (-
-                (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+            (-
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1)))))
           (set!
             cursor
             (unsafe
@@ -151,15 +147,15 @@
                     (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
                   cursor)]
               (if (> segment-used 0)
-                (set! used (+ used segment-used))
+                (+= used segment-used)
                 unit)
               (if (> segment-committed 0)
-                (set! committed (+ committed segment-committed))
+                (+= committed segment-committed)
                 unit)
               (if (> segment-reserved 0)
-                (set! reserved (+ reserved segment-reserved))
+                (+= reserved segment-reserved)
                 unit)
-              (set! segments (+ segments 1))
+              (+= segments 1)
               (set!
                 cursor
                 (unsafe
@@ -187,15 +183,15 @@
                     (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
                   cursor)]
               (if (> segment-used 0)
-                (set! used (+ used segment-used))
+                (+= used segment-used)
                 unit)
               (if (> segment-committed 0)
-                (set! committed (+ committed segment-committed))
+                (+= committed segment-committed)
                 unit)
               (if (> segment-reserved 0)
-                (set! reserved (+ reserved segment-reserved))
+                (+= reserved segment-reserved)
                 unit)
-              (set! segments (+ segments 1))
+              (+= segments 1)
               (set!
                 cursor
                 (unsafe

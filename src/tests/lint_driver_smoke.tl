@@ -1,5 +1,6 @@
 ;; lint_driver_smoke.tl - Runnable smoke for lint_driver_core.tl: drives
 ;; the full load -> lint -> render path on an embedded source and returns 42.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -175,13 +176,12 @@
           (lint_core.lint-rule-type-name-case-id))))))
 
 (define (lint-driver-smoke-name-case-spans-positive-from
-  [findings : lint_core.LintFindings]
-  [index : i64]) : bool
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view findings)))
-    true
+  [findings : lint_core.LintFindings]) : bool
+  (for [index
+    (iterator.range
+      0
+      (lint_core.lint-findings-count
+        (owned_view.compiler-owned-shared-view findings)))]
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref findings index)]
@@ -193,38 +193,36 @@
           (string.eq rule (lint_core.lint-rule-local-name-case-id))
           (string.eq rule (lint_core.lint-rule-type-name-case-id)))]
       [span : ast.AstSourceSpan finding.span]
-      (and
+      (unless
         (if is-name-case
           (and
             (> (ast.ast-source-span-start-line span) 0)
             (> (ast.ast-source-span-start-col span) 0))
           true)
-        (lint-driver-smoke-name-case-spans-positive-from findings (+ index 1))))))
+        (return false))
+      unit))
+  true)
 
 (define (lint-driver-smoke-name-case-spans-positive?
   [findings : lint_core.LintFindings]) : bool
-  (lint-driver-smoke-name-case-spans-positive-from findings 0))
+  (lint-driver-smoke-name-case-spans-positive-from findings))
 
 (define (lint-driver-smoke-name-case-rule-at-line?
   [findings : lint_core.LintFindings]
   [rule-id : String]
-  [line : i64]
-  [index : i64]) : bool
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view findings)))
-    false
+  [line : i64]) : bool
+  (for [index
+    (iterator.range
+      0
+      (lint_core.lint-findings-count
+        (owned_view.compiler-owned-shared-view findings)))]
     (let
       [finding : lint_core.LintFinding
         (lint_core.lint-findings-ref findings index)]
-      (if (string.eq finding.rule-id rule-id)
-        (= (ast.ast-source-span-start-line finding.span) line)
-        (lint-driver-smoke-name-case-rule-at-line?
-          findings
-          rule-id
-          line
-          (+ index 1))))))
+      (when
+        (string.eq finding.rule-id rule-id)
+        (return (= (ast.ast-source-span-start-line finding.span) line)))))
+  false)
 
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
@@ -1822,8 +1820,7 @@
           (lint-driver-smoke-name-case-rule-at-line?
             (owned_view.compiler-owned-shared-view binder-findings)
             (lint_core.lint-rule-local-name-case-id)
-            6
-            0))
+            6))
         191]
       [(not
           (and
@@ -1903,8 +1900,7 @@
           (lint-driver-smoke-name-case-rule-at-line?
             module-findings
             (lint_core.lint-rule-global-name-case-id)
-            3
-            0))
+            3))
         98]
       [else 42])))
 

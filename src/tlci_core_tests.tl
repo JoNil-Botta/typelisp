@@ -2,6 +2,7 @@
 ;; out of the production module. The inline test below runs the self-test; the
 ;; loader tests, the inspect tests and tests/tlci/corpus_emit.tl reuse the
 ;; fixtures.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
@@ -507,10 +508,9 @@
     [specializations : tlci.TlciSpmdSpecializations
       (tlci.tlci-spmd-specializations-empty)]
     [callables : tlci.TlciSpmdCallables (tlci.tlci-spmd-callables-empty)]
-    [index : i64 0]
     [ok : bool true]
     ;; Cross several vector growth boundaries for both metadata sequences.
-    (while (< index 33)
+    (for [index (iterator.range 0 33)]
       (tlci.tlci-spmd-specializations-push!
         (&mut specializations)
         (tlci.tlci-make-spmd-specialization
@@ -526,10 +526,8 @@
         (tlci.tlci-make-spmd-callable
           (str_cat.str-cat "helper-" (string.int->string index))
           "(-> i64 i64)"
-          (tlci.tlci-spmd-specializations-empty)))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index 33)
+          (tlci.tlci-spmd-specializations-empty))))
+    (for [index (iterator.range 0 33)]
       (let
         [specialization : tlci.TlciSpmdSpecialization
           (tlci.tlci-spmd-specializations-ref specializations index)]
@@ -544,8 +542,7 @@
             (string.eq
               callable.name
               (str_cat.str-cat "helper-" (string.int->string index))))
-          (set! ok false))
-        (set! index (+ index 1))))
+          (set! ok false))))
     (and
       ok
       (= (tlci.tlci-spmd-specializations-len specializations) 33)
@@ -1190,15 +1187,13 @@
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [state : i64 seed]
-    [i : i64 0]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (set! state (+ (* state 6364136223846793005) 1442695040888963407))
       (set!
         (array-ref bytes i)
         (if (< seed 0)
           (cast 255 : u8)
-          (cast (bit-and (shr state 33) 255) : u8)))
-      (set! i (+ i 1)))
+          (cast (bit-and (shr state 33) 255) : u8))))
     bytes))
 
 (define (tlci-test-range-hash-bytewise
@@ -1207,12 +1202,10 @@
   [len : i64]) : i64
   (let
     [hash : i64 1]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (set!
         hash
-        (% (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i))) 2147483647))
-      (set! i (+ i 1)))
+        (% (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i))) 2147483647)))
     hash))
 
 (define (tlci-test-hash-blocks-ok?) : bool
@@ -1237,7 +1230,7 @@
               (=
                 (tlci.tlci-range-hash (& random) 2 (- n 5))
                 (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
-        (set! n (+ n 1))))
+        (+= n 1)))
     ok))
 
 (define (tlci-core-self-test-status) : i64

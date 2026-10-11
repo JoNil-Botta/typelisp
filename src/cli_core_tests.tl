@@ -254,7 +254,7 @@
         (if (diagnostic-explain-registry-entry-ok? index)
           unit
           (set! ok false))
-        (set! index (+ index 1)))
+        (+= index 1))
       ok)))
 
 (cfg

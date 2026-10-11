@@ -1,4 +1,5 @@
 ;; Exhaustive ID enumeration and runtime feature selection for x86-64 templates.
+(import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
 (import stdlib.io)
 
@@ -38,19 +39,17 @@
       (CompilerX64ExecutableTemplateIdList
         (__tl_make-array x64.CompilerX64ExecutableTemplateId 96)
         0)]
-    [index : i64 0]
-    (while (< index 84)
+    (for [index (iterator.range 0 84)]
       (compiler-x64-template-id-list-push!
         (&mut ids)
-        (compiler-x64-template-id-from-index index))
-      (set! index (+ index 1)))
+        (compiler-x64-template-id-from-index index)))
     ids))
 
 (define (compiler-x64-template-id-list-push!
   [ids : (&mut ids CompilerX64ExecutableTemplateIdList)]
   [id : x64.CompilerX64ExecutableTemplateId]) : unit
   (set! (array-ref ids.slots ids.len) id)
-  (set! ids.len (+ ids.len 1)))
+  (+= ids.len 1))
 
 (define (compiler-x64-template-select-four
   [plain : x64.CompilerX64ExecutableTemplateId]
@@ -245,6 +244,6 @@
               (x64.compiler-x64-template-enum-tag
                 (compiler-x64-template-id-list-ref ids inner)))
             (set! ok false))
-          (set! inner (+ inner 1)))
-        (set! outer (+ outer 1))))
+          (+= inner 1))
+        (+= outer 1)))
     ok))

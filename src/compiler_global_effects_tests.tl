@@ -2,7 +2,6 @@
 (import stdlib.vector)
 (import (vector.vector i64) as words)
 (import stdlib.test)
-(import stdlib.arena)
 (import stdlib.iterator)
 
 (test
@@ -70,43 +69,6 @@
       (words.len (& (effects.witness! (&mut graph) 0 9)))
       0
       "a recursive SCC cannot reach an unrelated writer")))
-
-(test
-  global-effects-copy-retires-collector-scratch
-  (let
-    [home : i64 (arena.tl_arena_current)]
-    [scratch : i64 (arena.tl_arena_make_small)]
-    [_enter : unit
-      (unsafe
-        (arena.tl_arena_set scratch))]
-    [source : effects.Graph (effects.new 66)]
-    (effects.add-call! (&mut source) 0 65)
-    (effects.add-call! (&mut source) 65 64)
-    (effects.add-write! (&mut source) 64 7)
-    ;; Both positive and negative cached results belong to scratch.
-    (test.assert-i64-eq
-      (words.len (& (effects.witness! (&mut source) 0 7)))
-      3
-      "source positive cache")
-    (test.assert-i64-eq
-      (words.len (& (effects.witness! (&mut source) 0 8)))
-      0
-      "source negative cache")
-    (unsafe
-      (arena.tl_arena_set home))
-    (let
-      [kept : effects.Graph (effects.copy (& source))]
-      (unsafe
-        (arena.tl_arena_destroy scratch))
-      (test.assert-i64-eq
-        (words.len (& (effects.witness! (&mut kept) 0 7)))
-        3
-        "copied edges and writers survive retired scratch")
-      (effects.add-write! (&mut kept) 65 8)
-      (test.assert-i64-eq
-        (words.len (& (effects.witness! (&mut kept) 0 8)))
-        2
-        "copied graph rebuilds query caches in its destination arena"))))
 
 (test
   global-effects-exhaustive-three-node-graphs

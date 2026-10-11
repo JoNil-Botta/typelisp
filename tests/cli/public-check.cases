@@ -544,3 +544,13 @@ stderr contains (via observe -> reset!)
 stderr contains main.tl:6:3
 stderr contains main.tl:6:12
 stderr contains borrow of `g` remains live
+
+case check-global-call-borrow-legacy-matrix
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile tests/safety/inline_aggregate_global_live_borrow_reject.tl --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/legacy.s"
+exit nonzero
+stdout empty
+stderr contains error[E0222]
+stderr contains while global `held` is borrowed
+stderr contains (via observe -> install!)

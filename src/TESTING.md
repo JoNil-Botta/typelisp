@@ -60,6 +60,18 @@ The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
 
+## Global call borrow effects
+
+`compiler_global_effects_tests.tl` covers recursive witnesses, nonwriting SCCs,
+indirect unions, positive/negative cache invalidation and deep-copy survival
+after collector scratch retirement. The `global_call_*` safety rows exercise
+whole/projected/buffer writes, address-taking, mutable loans, transitive and
+recursive calls, indirect functions and closures, macro and imported setters,
+explicit and synthesized cleanup, and the allowed Copy/different-global/ended
+borrow/explicit-parameter cases. Keep their named call-chain diagnostics when
+changing traversal or binding resolution. Public CLI and LSP fixtures assert
+E0222, the primary call and secondary borrow locations, and `explain` text.
+
 ## Persistent lifetime memo
 
 The `lifetime-outlives-memo-*` inline tests in

@@ -479,6 +479,9 @@
 (define (compiler-diagnostic-code-typecheck-foreign-global-write) : String
   "E0220")
 
+(define (compiler-diagnostic-code-typecheck-global-borrow-call) : String
+  "E0222")
+
 (define (compiler-diagnostic-code-typecheck-opaque-representation) : String
   "E0221")
 
@@ -506,7 +509,8 @@
   (ComptimeConstraint)
   (UnsafeCallableEffect)
   (ForeignGlobalWrite)
-  (OpaqueRepresentation))
+  (OpaqueRepresentation)
+  (GlobalBorrowCall))
 
 (define (compiler-diagnostic-code-for-typecheck-kind
   [kind : CompilerTypecheckKind]) : String
@@ -539,7 +543,8 @@
     [(ForeignGlobalWrite)
       (compiler-diagnostic-code-typecheck-foreign-global-write)]
     [(OpaqueRepresentation)
-      (compiler-diagnostic-code-typecheck-opaque-representation)]))
+      (compiler-diagnostic-code-typecheck-opaque-representation)]
+    [(GlobalBorrowCall) (compiler-diagnostic-code-typecheck-global-borrow-call)]))
 
 ;; The kind tag sits in front of the message text: `__tl_tc_kind:<code>:`.
 ;; It holds no `|`, so it survives inside the typechecker's `|`-delimited
@@ -580,7 +585,8 @@
     [(ComptimeConstraint) "__tl_tc_kind:E0218:"]
     [(UnsafeCallableEffect) "__tl_tc_kind:E0219:"]
     [(ForeignGlobalWrite) "__tl_tc_kind:E0220:"]
-    [(OpaqueRepresentation) "__tl_tc_kind:E0221:"]))
+    [(OpaqueRepresentation) "__tl_tc_kind:E0221:"]
+    [(GlobalBorrowCall) "__tl_tc_kind:E0222:"]))
 
 ;; `message` tagged with `kind`.
 (define (compiler-diagnostic-typecheck-tagged
@@ -677,7 +683,7 @@
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  27)
+  28)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -704,10 +710,11 @@
     [(= index 20) (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [(= index 21) (compiler-diagnostic-code-typecheck-foreign-global-write)]
     [(= index 22) (compiler-diagnostic-code-typecheck-opaque-representation)]
-    [(= index 23) (compiler-diagnostic-code-parse-unbalanced-delimiter)]
-    [(= index 24) (compiler-diagnostic-code-parse-malformed-token)]
-    [(= index 25) (compiler-diagnostic-code-parse-malformed-form)]
-    [(= index 26) (compiler-diagnostic-code-parse-invalid-pattern)]
+    [(= index 23) (compiler-diagnostic-code-typecheck-global-borrow-call)]
+    [(= index 24) (compiler-diagnostic-code-parse-unbalanced-delimiter)]
+    [(= index 25) (compiler-diagnostic-code-parse-malformed-token)]
+    [(= index 26) (compiler-diagnostic-code-parse-malformed-form)]
+    [(= index 27) (compiler-diagnostic-code-parse-invalid-pattern)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -735,10 +742,11 @@
     [(= index 20) "unsafe callable effect erasure"]
     [(= index 21) "global written outside its module"]
     [(= index 22) "opaque representation used outside its module family"]
-    [(= index 23) "unbalanced delimiter"]
-    [(= index 24) "malformed token"]
-    [(= index 25) "malformed form"]
-    [(= index 26) "invalid pattern syntax"]
+    [(= index 23) "call may write a borrowed global"]
+    [(= index 24) "unbalanced delimiter"]
+    [(= index 25) "malformed token"]
+    [(= index 26) "malformed form"]
+    [(= index 27) "invalid pattern syntax"]
     [else ""]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String

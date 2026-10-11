@@ -1,0 +1,9 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/global-call.tl","languageId":"typelisp","version":1,"text":"(defstruct Big (a i64) (b i64) (c i64) (d i64))\n(define g : Big (Big 1 2 3 4))\n(define (reset!) : unit (set! g (Big 9 9 9 9)))\n(define (observe [value : (& r Big)]) : i64 (reset!) value.a)\n(define (main) : i64\n  (observe (& g)))\n"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/unrelated.tl","languageId":"typelisp","version":1,"text":"(define (main) : i64 42)"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/global-call.tl","version":2},"contentChanges":[{"text":"(defstruct Big (a i64) (b i64) (c i64) (d i64))\n(define g : Big (Big 1 2 3 4))\n(define (reset!) : unit (set! g (Big 9 9 9 9)))\n(define (observe [value : Big]) : i64 (reset!) value.a)\n(define (main) : i64\n  (observe g))\n"}]}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/global-call.tl","version":3},"contentChanges":[{"text":"(defstruct Big (a i64) (b i64) (c i64) (d i64))\n(define g : Big (Big 1 2 3 4))\n(define (reset!) : unit (set! g (Big 9 9 9 9)))\n(define (observe [value : (& r Big)]) : i64 (reset!) value.a)\n(define (main) : i64\n  (observe (& g)))\n"}]}},
+  {"jsonrpc":"2.0","id":2,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

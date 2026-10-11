@@ -159,6 +159,27 @@ to its source while an escaping reference still protects that source. Pattern
 scope exit restores captured outer root states for shadowed names; clearing a
 pattern local must not erase an incoming or escaping loan of the hidden owner.
 
+Global call effects share the borrow checker's live place facts. The check
+runs after argument validation and before call-scoped facts are discarded,
+so auto-borrows, earlier returned references and borrowed match arms remain
+visible. `compiler_global_effects` computes each queried global's least
+fixpoint over reverse call edges. Its witnesses descend through the first
+propagation predecessor, so recursive SCCs cannot produce cyclic diagnostic
+paths. Indirect edges reach the union of address-taken functions and lambda
+bodies. Nominal cleanup nodes use their declared field and payload hooks;
+these bodies are synthesized only during lowering. Package metadata nodes
+include the consumer callback union; the dependency interface exports no
+borrowable global places.
+
+The lazily built graph belongs to `TcJobState` through its existing macro
+state directory. Collection uses a separate scratch arena; only graph arrays
+and writer/edge indexes are copied into the retained arena. Query caches and
+witnesses allocate there too. Program/symbol identity, declaration count,
+expression-pool owner, source/structural owner and reset generation qualify
+reuse. Pass/file resets, checked-result completion and terminal job release
+retire the cache without affecting another job. Shared AST traversal handles
+ordinary children; binder and non-executed syntax cases are explicit.
+
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends
 with the call. Typechecking rejects any result or mutable referent that could

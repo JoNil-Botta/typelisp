@@ -250,6 +250,12 @@ global_call_for_owned_shadow_ok|run-exit|tests/safety/global_call_for_owned_shad
 global_call_foreach_shadow_ok|run-exit|tests/safety/global_call_foreach_shadow_ok.tl|1|-
 global_call_c_extern_ok|check-ok|tests/safety/global_call_c_extern_ok.tl|-|-
 inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|-|while global `held` is borrowed: it may assign `held` (via observe -> install!)
+global_call_temporary_cleanup_later_arg_reject|check-fail|tests/safety/global_call_temporary_cleanup_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_forward_reject|check-fail|tests/safety/global_call_temporary_cleanup_forward_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> drop-temporary -> close-handle -> drop-word)
+global_call_temporary_cleanup_returned_reject|check-fail|tests/safety/global_call_temporary_cleanup_returned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_indirect_reject|check-fail|tests/safety/global_call_temporary_cleanup_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> <indirect call/lambda> -> close-handle -> drop-word)
+global_call_temporary_cleanup_ended_ok|run-exit|tests/safety/global_call_temporary_cleanup_ended_ok.tl|1|-
+global_call_temporary_cleanup_same_call_ok|run-exit|tests/safety/global_call_temporary_cleanup_same_call_ok.tl|1|-
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-

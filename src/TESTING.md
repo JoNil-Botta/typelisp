@@ -74,8 +74,13 @@ whole/projected/buffer writes, address-taking, mutable loans, transitive and
 recursive calls, indirect functions and closures, macro and imported setters,
 explicit and synthesized cleanup, and the allowed Copy/different-global/ended
 borrow/explicit-parameter cases. Keep their named call-chain diagnostics when
-changing traversal or binding resolution. Public CLI and LSP fixtures assert
-E0222, the primary call and secondary borrow locations, and `explain` text.
+changing traversal or binding resolution. The temporary-cleanup rows cover
+later arguments, returned references, forward and indirect callees, ended
+borrows, and loans ending at the call before cleanup.
+`tests/inline/compiler_global_call_cache.tl` checks a reused source prefix
+against a changed callable union, reinfers temporary disposers after file
+reset, and preserves cache hits for context-independent prefixes. Public CLI
+and LSP fixtures assert E0222, the primary call and secondary borrow locations, and `explain` text.
 
 ## Persistent lifetime memo
 

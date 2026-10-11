@@ -5291,12 +5291,12 @@
     "sret role requires a live pointer variable, in-range index and pointer result"))
 
 (define (opt-indirect-call-def-is? [instr : ir.CompilerIrInstr] [want : i64]) : bool
-  (match (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr))
+  (match (opt.opt-instr-def-var (& instr))
     [(Some found) (= found want)]
     [(None) false]))
 
 (define (opt-indirect-call-nondef? [instr : ir.CompilerIrInstr]) : bool
-  (match (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr))
+  (match (opt.opt-instr-def-var (& instr))
     [(Some _) false]
     [(None) true]))
 
@@ -9198,7 +9198,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr)))
+      (opt.opt-instr-def-var (& instr)))
       [(Some found) (when (= found dst) (return true))]
       [(None) unit]))
   false)
@@ -35488,7 +35488,7 @@
     (+
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr)))
+        (opt.opt-instr-def-var (& instr)))
         [(Some dst)
           (if (= dst var)
             1

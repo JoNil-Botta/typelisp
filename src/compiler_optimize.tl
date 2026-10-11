@@ -2681,7 +2681,7 @@
     [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
     [_
       (Result
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst) (opt-const-unbind env dst)]
           [(None) env])
         instr)]))
@@ -2731,7 +2731,7 @@
       (Result (owned_view.compiler-owned-reference-shared-view env) instr)]
     [_
       (Result
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst) (opt-const-unbind env dst)]
           [(None) (owned_view.compiler-owned-reference-shared-view env)])
         instr)]))
@@ -5391,7 +5391,7 @@
     (>= index flat.count)
     (match (let
       [instr (opt-aggregate-split-at flat index)]
-      (opt-instr-def-var instr))
+      (opt-instr-def-var (& instr)))
       [(Some var) (opt-aggregate-split-count-use! (&mut plan.def-count) var)]
       [(None) unit])
     (opt-aggregate-split-count-defs! plan flat (+ index 1))))
@@ -8230,7 +8230,7 @@
         ;; invalidate their dst and keep the instruction; the rest clear the
         ;; table.
         [_
-          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+          (match (opt-instr-def-var (& instr))
             [(Some dst) (Result (opt-expr-invalidate-var (& table) dst) instr)]
             [(None) (Result (opt-expr-table-clear (& table)) instr)])])]))
 
@@ -9093,8 +9093,7 @@
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
       (opt-copy-env-truncate env 0)]
     [_
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(Some dst) (opt-copy-invalidate-var env dst)]
         [(None) env])]))
 
@@ -9420,8 +9419,7 @@
       (Nil)]
     [(BoundsCheck _ _ _) facts]
     [_
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(Some dst) (opt-bounds-invalidate-var facts dst)]
         [(None) (Nil)])]))
 
@@ -9439,8 +9437,7 @@
 (define (opt-bounds-casts-after
   [casts : OptBoundsCastEnv]
   [instr : (& instr ir.CompilerIrInstr)]) : OptBoundsCastEnv
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some dst) (opt-bounds-cast-unbind casts dst)]
     [(None) casts]))
 
@@ -9595,8 +9592,7 @@
         (match (compiler-opt-global-shared-view next-facts)
           [(Nil) (Step (Plain next-facts next-casts) true)]
           [_
-            (match (opt-instr-def-var
-              (owned_view.compiler-owned-reference-shared-view instr))
+            (match (opt-instr-def-var instr)
               [(Some dst)
                 (Step
                   (Object
@@ -11384,8 +11380,8 @@
 ;; indirect-call definition arms stay at the back. The shapes left in the
 ;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
 ;; TailCallIndirect) answer `None`.
-(define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
-  (match instr
+(define (opt-instr-def-var [instr : (& ir.CompilerIrInstr)]) : option_i64.Option
+  (match (owned_view.compiler-owned-reference-shared-view instr)
     ;; Pack/Word define their dst like any scalar op. Without these arms
     ;; the verifier saw every use of a register-group word as use-before-def
     ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
@@ -11447,7 +11443,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some dst) (when (= dst var) (return (Some instr)))]
         [(None) unit])))
   (No))
@@ -11551,7 +11547,7 @@
 (define (opt-def-counts-instr!
   [defs : (&mut defs (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (& instr))
     [(Some dst)
       (if (and (>= dst 0) (< dst (array-length defs)))
         (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
@@ -11566,7 +11562,7 @@
 (define (opt-verify-instr-def!
   [set : (&mut set (__tl_dyn-array bool))]
   [instr : ir.CompilerIrInstr]) : bool
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (& instr))
     [(Some var) (opt-var-set-add-unique! set var)]
     [(None) true]))
 
@@ -11599,7 +11595,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some var)
           (opt-var-defs-index-add!
             items
@@ -11679,7 +11675,7 @@
     (while (< i count)
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some var)
             (unless
               (opt-var-defs-checked-add!
@@ -12675,7 +12671,7 @@
         (set!
           (array-ref remap (opt_dense_i64_vec.get (& used) index -1))
           (ir.CompilerIrValue.Var -1)))
-      (match (opt-instr-def-var (compiler-opt-global-shared-view rewritten))
+      (match (opt-instr-def-var (& rewritten))
         [(Some dst)
           (if (opt-group-split-accepted? plan dst)
             (match (compiler-opt-global-shared-view rewritten)
@@ -13250,8 +13246,7 @@
                         (set! (array-ref pack-at dst) index)
                         unit)]
                     [_ unit])
-                  (match (opt-instr-def-var
-                    (compiler-opt-global-shared-view instr))
+                  (match (opt-instr-def-var (& instr))
                     [(Some dst)
                       (set!
                         types
@@ -13778,8 +13773,7 @@
     ;; (opt-group-split-function) defines a group's word vars with it.
     ;; Every other def has the type it states, or is bad without one.
     [_
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(None) facts]
         [(Some dst)
           (match (ir.compiler-ir-instr-dst-type
@@ -14021,8 +14015,7 @@
   [label : i64]
   [defs : OptSsaVarBlocks]
   [instr : (& ir.CompilerIrInstr)]) : OptSsaVarBlocks
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some var)
       (if (opt-ssa-candidate? facts var)
         (opt-ssa-var-blocks-add index defs var label)
@@ -15502,7 +15495,7 @@
     [(Expr)
       (match (opt-global-key-for-instr instr)
         [(Some key)
-          (match (opt-instr-def-var instr)
+          (match (opt-instr-def-var (& instr))
             [(Some dst)
               (if (or
                 (opt-addr-taken-var? addr-taken dst)
@@ -16061,7 +16054,7 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (opt-global-key-for-instr instr)
     [(Some key)
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some dst)
           (match (opt-global-fact-lookup
             type-segment-bases
@@ -18978,7 +18971,7 @@
             body-label
             want)])]))
 
-(define (opt-rotate-ssa-instr-dst [instr : ir.CompilerIrInstr]) : i64
+(define (opt-rotate-ssa-instr-dst [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(or (Mov dst _ _) (Cast dst _ _ _) (Bitcast dst _ _ _) (BinOp dst _ _ _ _)
          (UnOp dst _ _ _))
@@ -18999,7 +18992,8 @@
     (while (and local? (< index count))
       (let
         [dst : i64
-          (opt-rotate-ssa-instr-dst (ir.compiler-ir-instr-seq-ref guard index))]
+          (opt-rotate-ssa-instr-dst
+            (& (ir.compiler-ir-instr-seq-ref guard index)))]
         (set! local? (and (>= dst 0) (not (opt-used-array-contains uses dst))))
         (+= index 1)))
     local?))
@@ -19106,7 +19100,9 @@
           out-env
           (opt-copy-env-push
             out-env
-            (OptCopyEntry.Copy (opt-rotate-ssa-instr-dst instr) (Var out-var))))
+            (OptCopyEntry.Copy
+              (opt-rotate-ssa-instr-dst (& instr))
+              (Var out-var))))
         (+= out-var 1)))
     (set!
       (array-ref slots count)
@@ -19647,7 +19643,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
       (when
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some found) (= found dst)]
           [(None) false])
         (return
@@ -20558,7 +20554,7 @@
     set
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-instr-def-var instr))
+      (opt-instr-def-var (& instr)))
       [(Some var)
         (opt-licm-collect-defs-instr-seq-from
           instrs
@@ -20658,8 +20654,7 @@
     [_ (opt-function-addr-taken-install! frame blocks)]))
 
 (define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
     [(None) false]))
 
@@ -22303,8 +22298,7 @@
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
   [instr : (& instr ir.CompilerIrInstr)]) : OptLicmStoreState
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some var) (opt-licm-store-state-invalidate-ptr-def state var)]
     [(None) state]))
 
@@ -25444,8 +25438,7 @@
 (define (opt-licm-add-hoisted-def
   [hoisted : opt_i64_i64_map.Map]
   [instr : (& ir.CompilerIrInstr)]) : opt_i64_i64_map.Map
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some var) (opt-used-add hoisted var)]
     [(None) hoisted]))
 
@@ -25869,7 +25862,7 @@
           (- selected.len 1)
           subst)
           [(OptLicmDupVar canon)
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (& instr))
               [(Some dst)
                 (set!
                   next-env
@@ -28015,7 +28008,7 @@
     [index : i64 from]
     [found? : bool false]
     (while (and (not found?) (< index to))
-      (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs index))
+      (match (opt-instr-def-var (& (ir.compiler-ir-instr-seq-ref instrs index)))
         [(Some def) (set! found? (= def var))]
         [(None) unit])
       (+= index 1))
@@ -30206,7 +30199,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some dst)
           (when
             (= dst next-var)
@@ -31454,7 +31447,7 @@
     scaled
     derived
     instr)
-    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+    (match (opt-instr-def-var (& instr))
       [(Some dst)
         (Mov dst (Var derived-phi) (opt-induction-derived-phi-type derived))]
       [(None) instr])
@@ -32843,7 +32836,7 @@
     (>= index (ir.compiler-ir-instr-seq-count instrs))
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-instr-def-var instr))
+      (opt-instr-def-var (& instr)))
       [(Some dst)
         (when
           (and (>= dst 0) (< dst (array-length def-label)))
@@ -32875,7 +32868,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some found) (when (= found dst) (return (Some instr)))]
         [(None) unit])))
   (No))
@@ -33471,7 +33464,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
       [hit? : bool
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst) (or (= dst a) (= dst b))]
           [(None) false])]
       (match want
@@ -33776,7 +33769,7 @@
             [_ false])
           (and
             (>= extra 0)
-            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+            (match (opt-instr-def-var (& instr))
               [(Some found) (= found extra)]
               [(None) false])))
         (return false))))
@@ -34000,8 +33993,7 @@
   [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : bool
   (and
     (opt-flag-exit-pure-instr? instr)
-    (match (opt-instr-def-var
-      (owned_view.compiler-owned-reference-shared-view instr))
+    (match (opt-instr-def-var instr)
       [(Some dst)
         (and
           (>= dst 0)
@@ -34414,8 +34406,7 @@
 (define (opt-flag-exit-defines-closure?
   [instr : (& instr ir.CompilerIrInstr)]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some dst)
       (and
         (>= dst 0)
@@ -34449,8 +34440,7 @@
                 [_ false])
               (and
                 (>= extra 0)
-                (match (opt-instr-def-var
-                  (compiler-opt-global-shared-view instr))
+                (match (opt-instr-def-var (& instr))
                   [(Some found) (= found extra)]
                   [(None) false]))))
           (opt-collect-instr-uses-array
@@ -34511,7 +34501,7 @@
       (opt-collect-instr-uses-array
         (compiler-opt-global-shared-view inside)
         (& instr))
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (& instr))
         [(Some dst)
           (when
             (and (>= dst 0) (< dst (array-length defined)))
@@ -36200,8 +36190,7 @@
   (and
     gate?
     (>= plan.gate-extra 0)
-    (match (opt-instr-def-var
-      (owned_view.compiler-owned-reference-shared-view instr))
+    (match (opt-instr-def-var instr)
       [(Some found) (= found plan.gate-extra)]
       [(None) false])))
 
@@ -37416,7 +37405,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-instr-def-var instr))
+      (opt-instr-def-var (& instr)))
       [(Some dst) (when (= dst var) (return index))]
       [(None) unit]))
   (- 0 1))
@@ -37765,8 +37754,7 @@
         before-next
         before-back))
       true
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(None) false]
         [(Some dst)
           (cond
@@ -38194,7 +38182,7 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (owned_view.compiler-owned-reference-shared-view plan)
     [(Plan _ _ compare-dst compare _ _ _)
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some dst)
           (if (= dst compare-dst)
             compare
@@ -38213,7 +38201,7 @@
       (let
         [instr : ir.CompilerIrInstr
           (ir.compiler-ir-instr-seq-ref instrs cursor)]
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (if (opt-lftr-in-kills? plan dst)
               unit
@@ -38794,7 +38782,7 @@
       (- 0 1)
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs (- count 2))]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst) dst]
         [(None) (- 0 1)]))))
 
@@ -39879,7 +39867,7 @@
       (let
         [instr : ir.CompilerIrInstr
           (ir.compiler-ir-instr-seq-ref instrs cursor)]
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (if (and
               (>= dst 0)
@@ -44062,7 +44050,7 @@
         instrs
         (+ slot 1)
         var
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (if (= dst var)
               (match instr
@@ -46765,7 +46753,7 @@
     ;; Unknown, a branch on a Word-extracted enum tag marked NO successor
     ;; executable and SCCP folded match arms away at -O2.
     [_
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (& instr))
         [(Some dst) (opt-sccp-state-bind state dst (& (Overdefined)))]
         [(None) state])]))
 
@@ -47458,8 +47446,7 @@
 (define (opt-switch-copy-env-note
   [env : OptSwitchCopyEnv]
   [instr : (& ir.CompilerIrInstr)]) : OptSwitchCopyEnv
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some dst)
       (let
         [without-dependents : OptSwitchCopyEnv
@@ -57745,9 +57732,7 @@
 (define (opt-divrem-instr-def-var [instr : (& ir.CompilerIrInstr)]) : option_i64.Option
   (match instr
     [(or (CallIndirect dst _ _ _) (CallIndirectC dst _ _ _)) (Some dst)]
-    [_
-      (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))]))
+    [_ (opt-instr-def-var instr)]))
 
 (define (opt-divrem-instr-defines-var?
   [instr : (& ir.CompilerIrInstr)]
@@ -58911,7 +58896,7 @@
          (TotalEnumSwitch _ _ _ _ _))
       (Result (opt-expr-table-clear (& table)) instr)]
     [_
-      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      (match (opt-instr-def-var (& instr))
         [(Some dst) (Result (opt-expr-invalidate-var (& table) dst) instr)]
         [(None) (Result table instr)])]))
 
@@ -67625,8 +67610,7 @@
 (define (opt-unroll-simd-recurrent-vector-dst
   [instr : (& instr ir.CompilerIrInstr)]) : option_i64.Option
   (if (opt-unroll-simd-vector-instr? instr)
-    (match (opt-instr-def-var
-      (owned_view.compiler-owned-reference-shared-view instr))
+    (match (opt-instr-def-var instr)
       [(Some dst)
         (if (let
           [set (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 8) instr)]
@@ -86126,7 +86110,7 @@
     (for [cursor (iterator.range 0 count)]
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst)
           (if (and (>= dst 0) (< dst (array-length def-block)))
             (set! (array-ref def-block dst) block-id)
@@ -86234,7 +86218,7 @@
         [instr : ir.CompilerIrInstr
           (ir.compiler-ir-instr-seq-ref instrs cursor)]
         (if (opt-gep-offset-strandable? instr)
-          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+          (match (opt-instr-def-var (& instr))
             [(Some dst)
               (when
                 (and
@@ -86385,7 +86369,7 @@
   (match (opt-gep-offset-add-split instr def-block body)
     [(No) false]
     [(Some _ _)
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (& instr))
         [(Some dst) (opt-gep-offset-uses-all-geps? dst uses gep-uses poison)]
         [(None) false])]))
 
@@ -86571,7 +86555,7 @@
         (match (opt-gep-offset-add-split instr def-block body)
           [(No) unit]
           [(Some inv variant)
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (& instr))
               [(Some dst)
                 (when
                   (opt-gep-offset-uses-all-geps? dst uses gep-uses poison)
@@ -86705,7 +86689,7 @@
                       unit)))]
               [_ unit])]
           [_ unit])
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (if (and
               (>= dst 0)
@@ -86789,7 +86773,7 @@
                   unit)]
               [_ unit])]
           [_ unit])
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (if (and
               (>= dst 0)
@@ -87386,7 +87370,7 @@
     (>= index (ir.compiler-ir-instr-seq-count instrs))
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-instr-def-var instr))
+      (opt-instr-def-var (& instr)))
       [(Some dst) (set! (array-ref counts dst) (+ (array-ref counts dst) 1))]
       [(None) unit])
     (opt-gep-split-defs-instrs! instrs (+ index 1) counts)))
@@ -88564,7 +88548,7 @@
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
         [cond-var : i64 (opt-cmp-dup-branch-cond instr)]
-        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+        (match (opt-instr-def-var (& instr))
           [(Some dst)
             (when
               (and (>= dst 0) (< dst frame))
@@ -89907,7 +89891,7 @@
     (for [index (iterator.range 0 count)]
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst)
           (if (and (>= dst 0) (< dst frame))
             (set! (array-ref defs dst) (+ index 1))
@@ -89927,7 +89911,7 @@
     (while (>= index 0)
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst)
           (if (and (>= dst 0) (< dst frame) (> (array-ref live dst) 0))
             (opt-collect-instr-uses-array
@@ -90441,8 +90425,7 @@
                     index
                     terminator-index
                     (& instr)))
-                  (match (opt-instr-def-var
-                    (compiler-opt-global-shared-view instr))
+                  (match (opt-instr-def-var (& instr))
                     [(Some dst)
                       (match (opt-successor-sink-find-target
                         frame
@@ -91407,8 +91390,7 @@
   [ptr-root : (& ptr-root (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]) : OptGuardSinkCand
   (if (not
-    (match (opt-instr-def-var
-      (owned_view.compiler-owned-reference-shared-view instr))
+    (match (opt-instr-def-var instr)
       [(None) false]
       [(Some dst) (and (>= dst 0) (< dst frame) (= (array-ref ptr-root dst) 1))]))
     (No)
@@ -92040,7 +92022,7 @@
             (& instr))
             [(No) (- 0 1)]
             [(Yes mem)
-              (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+              (match (opt-instr-def-var (& instr))
                 [(None) (- 0 1)]
                 [(Some var)
                   (if (or
@@ -92197,7 +92179,7 @@
   [stop : i64]) : i64
   (match (let
     [instr (opt-guard-sink-moved-instr st k)]
-    (opt-instr-def-var instr))
+    (opt-instr-def-var (& instr)))
     [(None) phi-end]
     [(Some var)
       (if (or (< var 0) (>= var st.frame))
@@ -92508,7 +92490,7 @@
             (match mem
               [(None) (- 0 1)]
               [_
-                (match (opt-instr-def-var instr)
+                (match (opt-instr-def-var (& instr))
                   [(None) (- 0 1)]
                   [(Some var)
                     (if (or
@@ -92766,7 +92748,7 @@
                 [(Block _ instrs)
                   (match (let
                     [instr (ir.compiler-ir-instr-seq-ref instrs source-index)]
-                    (opt-instr-def-var instr))
+                    (opt-instr-def-var (& instr)))
                     [(Some found-var) found-var]
                     [(None) (- 0 1)])])]
             (if (< var 0)
@@ -93620,7 +93602,7 @@
         (match (compiler-opt-global-shared-view instr)
           [(AddrOf dst _) (when (= dst var) (set! found i) (set! done true))]
           [_
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (& instr))
               [(Some d)
                 (if (= d var)
                   (set! done true)
@@ -93641,7 +93623,7 @@
     (while (>= i 0)
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some d) (when (= d var) (set! found i) (set! i 0))]
         [(None) unit])
       (-= i 1))
@@ -93658,7 +93640,7 @@
     (while (and (not found) (<= i hi))
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some d)
           (if (= d var)
             (set! found true)
@@ -95445,7 +95427,7 @@
     (for [cursor (iterator.range 0 count)]
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst)
           (if (and (>= dst 0) (< dst (array-length def-block)))
             (set!
@@ -95971,7 +95953,7 @@
   [uses : (& (__tl_dyn-array i64))]) : bool
   (match (let
     [instr (ir.compiler-ir-instr-seq-ref instrs add-pos)]
-    (opt-instr-def-var instr))
+    (opt-instr-def-var (& instr)))
     [(None) false]
     [(Some dst)
       (if (or (< dst 0) (>= dst (array-length uses)))
@@ -96126,7 +96108,7 @@
     (while (< cursor count)
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst)
           (if (= dst var)
             (begin
@@ -102504,7 +102486,7 @@
 ;; forms opt-callgraph-instr reads, so a weighted edge exists exactly where the
 ;; call graph has an edge; an address-taken function value is a base, not an
 ;; edge, for the reason that comment gives.
-(define (opt-inline-synth-call-callee [instr : ir.CompilerIrInstr]) : i64
+(define (opt-inline-synth-call-callee [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(or (Call _ name _ _) (TailCall name _ _)) name]
     [(CallCAbiStoreResult payload-box) (deref payload-box).name]
@@ -102552,8 +102534,7 @@
         caller-scc
         inside?
         amount
-        (opt-inline-synth-call-callee
-          (compiler-opt-global-array-element-shared-view instrs.slots i))))))
+        (opt-inline-synth-call-callee (& (array-ref instrs.slots i)))))))
 
 ;; `position` is the block's index in the caller's block order, the same order
 ;; opt-inline-census-depths-build! numbered, so each block credits its sites
@@ -102775,8 +102756,7 @@
   [states : (&mut states (__tl_dyn-array i64))]
   [names : (&mut names (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(None) unit]
     [(Some dst)
       (if (or (< dst 0) (>= dst (array-length states)))
@@ -103848,7 +103828,7 @@
 (define (opt-inline-param-mutating-instr?
   [np : i64]
   [instr : ir.CompilerIrInstr]) : bool
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (& instr))
     [(Some var) (< var np)]
     [(None) false]))
 
@@ -107605,7 +107585,8 @@
     [(or (I64 _) (F64 _) (Bool _) (Char _) (Unit)) true]
     [_ false]))
 
-(define (opt-inline-checked-term-class-of-instr [instr : ir.CompilerIrInstr]) : i64
+(define (opt-inline-checked-term-class-of-instr
+  [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(Return maybe)
       (match maybe
@@ -107634,7 +107615,7 @@
     (if (< count 1)
       (opt-inline-checked-term-none)
       (opt-inline-checked-term-class-of-instr
-        (ir.compiler-ir-instr-seq-ref instrs (- count 1))))))
+        (& (ir.compiler-ir-instr-seq-ref instrs (- count 1)))))))
 
 (define (opt-inline-checked-term-class-at
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -114511,7 +114492,7 @@
   [sources : (& sources OptValueSources)]
   [roots : (&mut roots OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+  (match (opt-instr-def-var (& instr))
     [(None) unit]
     [(Some dst)
       (if (not (opt-gvn-stable-var? sources dst))
@@ -114727,7 +114708,7 @@
   [types : (& types OptSsaVarTypes)]
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+  (match (opt-instr-def-var (& instr))
     [(None) unit]
     [(Some dst)
       (let
@@ -116461,7 +116442,7 @@
   [copies : (&mut copies opt_i64_i64_map.Map)]
   [counts : (&mut counts opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+  (match (opt-instr-def-var (& instr))
     [(Some var)
       (opt_i64_i64_map.insert-ref!
         counts
@@ -118562,8 +118543,7 @@
   [tables : OptLenEqDefs]
   [region : i64]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (match (opt-instr-def-var
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (opt-instr-def-var instr)
     [(Some dst)
       (if (and (>= dst 0) (< dst (array-length tables.rdef)))
         (set! (array-ref tables.rdef dst) region)
@@ -118659,7 +118639,7 @@
   [tables : OptLenEqDefs]
   [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+  (match (opt-instr-def-var (& instr))
     [(Some dst)
       (when
         (and (>= dst 0) (< dst (array-length tables.defs)))
@@ -121311,7 +121291,7 @@
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
   [counts : (&mut counts (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+  (match (opt-instr-def-var (& instr))
     [(Some dst)
       (when
         (and (>= dst 0) (< dst (array-length defs)))
@@ -122736,8 +122716,7 @@
       [(Store name _ _) (SomeKey (Store function name))]
       [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)) (NoKey)]
       [_
-        (match (opt-instr-def-var
-          (owned_view.compiler-owned-reference-shared-view instr))
+        (match (opt-instr-def-var instr)
           [(Some dst) (SomeKey (Value function dst))]
           [(None) (NoKey)])])
     (NoKey)))
@@ -123559,8 +123538,7 @@
   [epoch : i64]) : OptAliasFacts
   (let
     [base : OptAliasFacts
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(Some dst)
           (opt-alias-remove-var
             (owned_view.compiler-owned-reference-shared-view facts)
@@ -124915,8 +124893,7 @@
         (opt-load-header-set-mark set dst false)
         source)]
     [_
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(Some dst) (opt-load-header-set-mark set dst false)]
         [(None) set])]))
 
@@ -125946,8 +125923,7 @@
   [instr : (& ir.CompilerIrInstr)]) : OptLoadPtrKinds
   (let
     [invalidated : OptLoadPtrKinds
-      (match (opt-instr-def-var
-        (owned_view.compiler-owned-reference-shared-view instr))
+      (match (opt-instr-def-var instr)
         [(Some dst) (opt-load-kinds-invalidate-def kinds dst)]
         [(None) kinds])]
     (match instr
@@ -126520,8 +126496,7 @@
     [_
       (if (and (= bases.len 0) (< bases.cell 0))
         bases
-        (match (opt-instr-def-var
-          (owned_view.compiler-owned-reference-shared-view instr))
+        (match (opt-instr-def-var instr)
           [(Some dst) (opt-load-global-bases-drop-var bases dst)]
           [(None) bases]))]))
 
@@ -127356,8 +127331,7 @@
           (if (opt-dead-store-other-keeps-pending? instr)
             pending
             (opt-dead-store-set-clear pending))])]
-    (match (opt-instr-def-var
-      (owned_view.compiler-owned-reference-shared-view instr))
+    (match (opt-instr-def-var instr)
       [(Some dst) (opt-dead-store-filter-def after-memory dst)]
       [(None) after-memory])))
 
@@ -127513,8 +127487,7 @@
             kinds
             instr
             next-epoch)
-          (match (opt-instr-def-var
-            (owned_view.compiler-owned-reference-shared-view instr))
+          (match (opt-instr-def-var instr)
             [(Some dst) (opt-load-table-invalidate-var table dst)]
             [(None) table])
           (opt-load-kinds-step
@@ -129101,7 +129074,7 @@
                   (ir.compiler-ir-instr-seq-ref instrs i)]
                 (unless
                   (opt-loop-call-literal-def? defs instr)
-                  (match (opt-instr-def-var instr)
+                  (match (opt-instr-def-var (& instr))
                     [(Some var) (opt_i64_i64_map.insert-ref! (&mut out) var 1)]
                     [(None) unit]))))
             (opt-loop-call-variant-defs defs rest out))])]))
@@ -129184,7 +129157,7 @@
             ;; slot (see opt-loop-call-addr-taken).
             (match (let
               [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-              (opt-instr-def-var instr))
+              (opt-instr-def-var (& instr)))
               [(Some var)
                 (when
                   (and
@@ -129416,7 +129389,7 @@
     (for [i (iterator.range 0 instrs.len)]
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (opt-instr-def-var instr))
+        (opt-instr-def-var (& instr)))
         [(Some dst) (when (opt-value-is-var? bound dst) (return (No)))]
         [_ unit]))
     (Some

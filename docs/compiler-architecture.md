@@ -167,7 +167,12 @@ fixpoint over reverse call edges. Its witnesses descend through the first
 propagation predecessor, so recursive SCCs cannot produce cyclic diagnostic
 paths. Indirect edges reach the union of address-taken functions and lambda
 bodies. Nominal cleanup nodes use their declared field and payload hooks;
-these bodies are synthesized only during lowering. Package metadata nodes
+these bodies are synthesized only during lowering. Borrowed temporary cleanup
+adds the inferred nominal disposer edge to every containing callable, including
+lambdas. A negative call query remains provisional until all function bodies
+have supplied these edges, so a later declaration cannot hide a disposer.
+Deferred queries retain source spans, paths and rendered labels in the graph
+arena; they never retain function-scratch borrow facts. Package metadata nodes
 include the consumer callback union; the dependency interface exports no
 borrowable global places.
 
@@ -178,7 +183,10 @@ witnesses allocate there too. Program/symbol identity, declaration count,
 expression-pool owner, source/structural owner and reset generation qualify
 reuse. Pass/file resets, checked-result completion and terminal job release
 retire the cache without affecting another job. Shared AST traversal handles
-ordinary children; binder and non-executed syntax cases are explicit.
+ordinary children; binder and non-executed syntax cases are explicit. A cached
+source or embedded-surface prefix containing global-place arguments, global
+borrows or borrowed temporaries is checked again against the current program
+and its callable union. Context-independent prefixes retain cache hits.
 
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends
@@ -186,7 +194,10 @@ with the call. Typechecking rejects any result or mutable referent that could
 retain that lifetime. The nested-call record is restored on both success and
 error. Lowering keeps storage through the call and records owned cleanup in
 the existing `LowerArgWriteback` sequence, reloading mutable register-class
-storage before cleanup. Such a call cannot become a tail call. A later argument
+storage before cleanup. Cleanup checks use the post-call live borrow facts:
+call-scoped loans have ended, but returned references and earlier enclosing
+arguments still protect their global places. Such a call cannot become a tail
+call. A later argument
 that can leave early is rejected when it would bypass an earlier temporary's
 cleanup; cleanup-containing aggregates without their own disposer are rejected.
 

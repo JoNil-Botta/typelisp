@@ -4460,7 +4460,10 @@ While a reference derived from an ordinary global remains live, safe code
 cannot call a function that may assign, mutate, mutably borrow or take the
 address of that global. This includes transitive calls, recursion, later
 arguments, borrowed `match` scrutinees, automatic immutable borrows, and
-cleanup calls. E0222 names the global and a call chain to the writer and
+cleanup calls. A borrowed temporary is cleaned up after its call: ended
+call-argument loans permit cleanup, while returned references and live borrows
+in an enclosing call still exclude a conflicting disposer. E0222 names the
+global and a call chain to the writer and
 labels the original borrow. Writes only through an explicit `&mut` parameter
 retain the ordinary exclusivity rules; by-value Copy reads and calls that
 write a different global remain allowed.

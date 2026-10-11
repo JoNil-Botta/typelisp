@@ -254,6 +254,9 @@ global_call_temporary_cleanup_later_arg_reject|check-fail|tests/safety/global_ca
 global_call_temporary_cleanup_forward_reject|check-fail|tests/safety/global_call_temporary_cleanup_forward_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> drop-temporary -> close-handle -> drop-word)
 global_call_temporary_cleanup_returned_reject|check-fail|tests/safety/global_call_temporary_cleanup_returned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
 global_call_temporary_cleanup_indirect_reject|check-fail|tests/safety/global_call_temporary_cleanup_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> <indirect call/lambda> -> close-handle -> drop-word)
+global_call_qualified_callee_reject|check-fail|tests/safety/global_call_qualified_callee_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read -> reset!)
+global_call_qualified_global_reject|check-fail|tests/safety/global_call_qualified_global_reject.tl|-|while global `effects.deep.g` is borrowed: it may assign `effects.deep.g` (via read -> reset!)
+global_call_qualified_pure_helper_ok|run-exit|tests/safety/global_call_qualified_pure_helper_ok.tl|132|-
 global_call_temporary_cleanup_ended_ok|run-exit|tests/safety/global_call_temporary_cleanup_ended_ok.tl|1|-
 global_call_temporary_cleanup_same_call_ok|run-exit|tests/safety/global_call_temporary_cleanup_same_call_ok.tl|1|-
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument

@@ -81223,8 +81223,29 @@
       (if (and (>= leading 0) (tc-name-id-list-contains bound leading))
         (csym.compiler-symbols-missing-handle)
         (let
-          [handle : i64
+          [direct : i64
             (tc-move-value-symbol-handle-id ctx (tc-empty-env) name)]
+          [handle : i64
+            (if (or
+              (csym.compiler-symbols-handle-found? direct)
+              (<
+                (tc-name-first-dot-id (tc-context-structural-session ctx) name)
+                0))
+              direct
+              (match (tc-source-name-lookup-key-with-field-check-lookup
+                ctx
+                (tc-empty-env)
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  name)
+                name
+                false)
+                [(Ok _ key)
+                  (csym.compiler-symbols-lookup-value-id-or
+                    (tc-context-symbols ctx)
+                    key
+                    direct)]
+                [(Err _) direct]))]
           (if (csym.compiler-symbols-handle-found? handle)
             handle
             (let
@@ -81376,11 +81397,18 @@
 ;; program's callable union or inferred temporary cleanup edges. Recheck the
 ;; prefix when it contains a global-place argument/borrow or a borrowed
 ;; temporary. Pure prefixes keep the ordinary checked-prefix fast path.
-(define (tc-global-effect-prefix-needs-check? [ctx : TcContext] [count : i64]) : bool
+(define (tc-global-effect-prefix-needs-check?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [count : i64]) : bool
   (let
+    [prefix : ast.AstDeclList (tc-decl-list-take decls count)]
+    ;; Source-prefix counts include module/import markers; effect nodes use
+    ;; canonical symbol indices, including declarations inside module bodies.
+    [indexed : i64 (csym.compiler-decl-list-index-count (& prefix))]
     [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
     (unsafe
-      (< (deref state).first-contextual-declaration count))))
+      (< (deref state).first-contextual-declaration indexed))))
 
 (define (tc-global-effect-scan!
   [ctx : TcContext]
@@ -82203,7 +82231,7 @@
 
 (define (tc-borrow-check-global-call-effects
   [ctx : TcContext]
-  [env : TcTypeEnv]
+  [_env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [call-expr : ast.AstExpr]
@@ -82215,16 +82243,22 @@
       (let
         [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
         [root : i64 fact.path.root]
+        [leading-root : i64 (tc-global-effect-name-part ctx root true)]
+        [handle : i64
+          (if (or
+            (tc-moved-contains? locals root)
+            (and (>= leading-root 0) (tc-moved-contains? locals leading-root)))
+            (csym.compiler-symbols-missing-handle)
+            (tc-global-effect-handle ctx Nil root))]
         (when
           (and
             (match fact.kind
               [(or (BorrowShared) (BorrowMut) (BorrowTwoPhaseMut)) true]
               [_ false])
-            (tc-move-global-source-root?
-              ctx
-              env
-              (tc-global-shared-view locals)
-              root))
+            (csym.compiler-symbols-handle-found? handle)
+            (=
+              (csym.compiler-symbol-handle-kind handle)
+              (csym.compiler-symbol-kind-value-define)))
           (let
             [state : (MutPtr TcGlobalCallEffects)
               (tc-global-call-effects-ensure! ctx)]
@@ -82250,7 +82284,6 @@
             (when
               (>= callee 0)
               (let
-                [handle : i64 (tc-move-value-symbol-handle-id ctx env root)]
                 [path : effect_words.Vec
                   (tc-global-effect-witness!
                     state
@@ -115688,7 +115721,10 @@
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
-  (if (tc-global-effect-prefix-needs-check? ctx count)
+  (if (tc-global-effect-prefix-needs-check?
+    ctx
+    (tc-global-shared-view decls)
+    count)
     (begin
       (tc-prefix-snapshot-cache-note-miss-for-state! prefix-cache)
       (tc-check-decls-with-paths-cold
@@ -115778,6 +115814,7 @@
         "compile-profile-detail|prelude.typecheck_decl_checks|0\n"))))
 
 (define (tc-check-decls-with-surface-prefix-hit
+  [load-state : cload.CompilerLoadSessionState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : ast.AstDeclList]
@@ -115786,7 +115823,10 @@
   [module : String]
   [module-id : i64]
   [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
-  (if (tc-global-effect-prefix-needs-check? ctx count)
+  (if (tc-global-effect-prefix-needs-check?
+    ctx
+    (tc-global-shared-view decls)
+    count)
     (tc-check-decls-with-paths-cold
       ctx
       top-env
@@ -115794,6 +115834,11 @@
       paths
       (CompilerTypecheckSummary 0 0 0))
     (begin
+      (when
+        (surface_facts.surface-typecheck-facts-composite-active?)
+        (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
+          load-state
+          count))
       (tc-clone-root-collection-apply-surface-facts! ctx)
       (cfg compile-profile (tc-profile-surface-prefix-hit))
       (cfg
@@ -115882,21 +115927,16 @@
             [facts : surface_facts.SurfaceTypecheckFacts
               (surface_facts.surface-typecheck-facts-current)]
             (if (and rebased (= count facts.prefix-decl-count))
-              (begin
-                (if (surface_facts.surface-typecheck-facts-composite-active?)
-                  (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
-                    load-state
-                    count)
-                  unit)
-                (tc-check-decls-with-surface-prefix-hit
-                  ctx
-                  top-env
-                  decls
-                  paths
-                  count
-                  module
-                  module-id
-                  facts))
+              (tc-check-decls-with-surface-prefix-hit
+                (tc-global-shared-view load-state)
+                ctx
+                top-env
+                decls
+                paths
+                count
+                module
+                module-id
+                facts)
               (begin
                 (surface_facts.surface-typecheck-facts-clear!)
                 (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]

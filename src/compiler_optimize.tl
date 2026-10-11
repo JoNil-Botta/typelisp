@@ -98331,6 +98331,8 @@
             [func (opt-pass-func s)]
             (opt-function-name func))
           summaries
+          (opt-pass-params s)
+          (opt-pass-frame s)
           (opt-const-divisor-rewrite-summary-blocks
             summaries
             (opt-pass-blocks s)))
@@ -105706,6 +105708,7 @@
 ;; rewrite storage once that storage is released. The next walk reinstalls
 ;; them (opt-inline-caller-facts-install!) before reading any of them.
 (define (opt-inline-caller-walk-unpublish!) : unit
+  (opt-inline-checked-unpublish-strings!)
   (set!
     (array-ref opt-inline-caller-facts-blocks 0)
     (ir.compiler-ir-block-list-empty))
@@ -108697,9 +108700,21 @@
 ;; The frontend materializes a literal argument as a temp (`t = 1`, then
 ;; `f(t, ...)`), so a var argument the caller defines exactly once by a `Mov`
 ;; of an `I64` counts as that literal (opt-inline-checked-literal-note!).
+;;
+;; A string literal argument specializes the same way (#8795): pinned by a
+;; `Mov` of the `String`, the callee's reads of its length fold
+;; (opt-string-literal-length-geps), so an inlined `string.eq` against a
+;; literal collapses to the literal's width. A slot's flag is 1 for an `I64`
+;; and 2 for a `String`, whose text sits in the parallel string lanes.
 (define (opt-inline-checked-literal-max) : i64
   32)
 
+(define opt-inline-checked-current-literal-strings : (__tl_dyn-array String)
+  (__tl_make-array String 32))
+(define opt-inline-checked-target-literal-strings : (__tl_dyn-array String)
+  (__tl_make-array String 32))
+(define opt-inline-checked-literal-scan-string : (__tl_dyn-array String)
+  (__tl_make-array String 1))
 (define opt-inline-checked-current-literals : (__tl_dyn-array i64)
   (__tl_make-array i64 64))
 (define opt-inline-checked-current-literal-count : i64
@@ -108712,6 +108727,20 @@
   false)
 (define opt-inline-checked-literal-scan : (__tl_dyn-array i64)
   (__tl_make-array i64 3))
+
+(define (opt-inline-checked-unpublish-strings!) : unit
+  ;; Literal payloads are copied in the caller's scratch phase. Clear every
+  ;; published String before that phase is rewound, including the scan lane.
+  (for [slot (iterator.range 0 (opt-inline-checked-literal-max))]
+    (set! (array-ref opt-inline-checked-current-literal-strings slot) "")
+    (set! (array-ref opt-inline-checked-target-literal-strings slot) "")
+    (when
+      (= (array-ref opt-inline-checked-current-literals (* 2 slot)) 2)
+      (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 0))
+    (when
+      (= (array-ref opt-inline-checked-target-literals (* 2 slot)) 2)
+      (set! (array-ref opt-inline-checked-target-literals (* 2 slot)) 0)))
+  (set! (array-ref opt-inline-checked-literal-scan-string 0) ""))
 
 ;; Set the definition count, literal flag and value cells. Only this module
 ;; writes them; tests isolate one scan by saving and restoring them here.
@@ -108740,6 +108769,11 @@
             [(I64 k)
               (set! (array-ref opt-inline-checked-literal-scan 1) 1)
               (set! (array-ref opt-inline-checked-literal-scan 2) k)]
+            [(String text)
+              (set! (array-ref opt-inline-checked-literal-scan 1) 2)
+              (set!
+                (array-ref opt-inline-checked-literal-scan-string 0)
+                (string.copy (& text)))]
             [_ unit])]
         [_ unit]))
     (opt-inline-checked-literal-scan-instrs! instrs (+ index 1) var)))
@@ -108767,6 +108801,11 @@
   (set! (array-ref opt-inline-checked-current-literals (+ (* 2 slot) 1)) k)
   1)
 
+(define (opt-inline-checked-literal-string-set! [slot : i64] [text : String]) : i64
+  (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 2)
+  (set! (array-ref opt-inline-checked-current-literal-strings slot) text)
+  1)
+
 (define (opt-inline-checked-literal-note!
   [slot : i64]
   [value : (& ir.CompilerIrValue)]) : i64
@@ -108777,6 +108816,8 @@
     0
     (match value
       [(I64 k) (opt-inline-checked-literal-set! slot k)]
+      [(String text)
+        (opt-inline-checked-literal-string-set! slot (string.copy text))]
       [(Var var)
         (set! (array-ref opt-inline-checked-literal-scan 0) 0)
         (set! (array-ref opt-inline-checked-literal-scan 1) 0)
@@ -108784,13 +108825,18 @@
         (opt-inline-checked-literal-scan-blocks!
           (& (opt-inline-caller-facts-blocks-shared-view))
           var)
-        (if (and
-          (= (array-ref opt-inline-checked-literal-scan 0) 1)
-          (= (array-ref opt-inline-checked-literal-scan 1) 1))
-          (opt-inline-checked-literal-set!
-            slot
-            (array-ref opt-inline-checked-literal-scan 2))
-          0)]
+        (cond
+          [(not (= (array-ref opt-inline-checked-literal-scan 0) 1)) 0]
+          [(= (array-ref opt-inline-checked-literal-scan 1) 1)
+            (opt-inline-checked-literal-set!
+              slot
+              (array-ref opt-inline-checked-literal-scan 2))]
+          [(= (array-ref opt-inline-checked-literal-scan 1) 2)
+            (opt-inline-checked-literal-string-set!
+              slot
+              (string.copy
+                (& (array-ref opt-inline-checked-literal-scan-string 0))))]
+          [else 0])]
       [_ 0])))
 
 (define (opt-inline-checked-literal-note-array!
@@ -108831,6 +108877,14 @@
     (set!
       (array-ref opt-inline-checked-target-literals index)
       (array-ref opt-inline-checked-current-literals index))
+    (when
+      (and
+        (= (% index 2) 0)
+        (= (array-ref opt-inline-checked-current-literals index) 2))
+      (set!
+        (array-ref opt-inline-checked-target-literal-strings (/ index 2))
+        (string.copy
+          (& (array-ref opt-inline-checked-current-literal-strings (/ index 2))))))
     (opt-inline-checked-copy-literals-from! (+ index 1))))
 
 ;; The admitted site's literals become the target's: the verdict prices the
@@ -108870,21 +108924,38 @@
       params
       (+ index 1)
       np
-      (if (= (array-ref opt-inline-checked-target-literals (* 2 index)) 1)
-        (match (ir.compiler-ir-param-seq-ref params index)
-          [(Param _ ty var)
-            (opt-inline-append
-              (& acc)
-              (&
-                (ir.compiler-ir-instr-seq1
-                  (Mov
-                    var
-                    (I64
-                      (array-ref
-                        opt-inline-checked-target-literals
-                        (+ (* 2 index) 1)))
-                    (clone ty)))))])
-        acc))))
+      (match (array-ref opt-inline-checked-target-literals (* 2 index))
+        [1
+          (match (ir.compiler-ir-param-seq-ref params index)
+            [(Param _ ty var)
+              (opt-inline-append
+                (& acc)
+                (&
+                  (ir.compiler-ir-instr-seq1
+                    (Mov
+                      var
+                      (I64
+                        (array-ref
+                          opt-inline-checked-target-literals
+                          (+ (* 2 index) 1)))
+                      (clone ty)))))])]
+        [2
+          (match (ir.compiler-ir-param-seq-ref params index)
+            [(Param _ ty var)
+              (opt-inline-append
+                (& acc)
+                (&
+                  (ir.compiler-ir-instr-seq1
+                    (Mov
+                      var
+                      (String
+                        (string.copy
+                          (&
+                            (array-ref
+                              opt-inline-checked-target-literal-strings
+                              index))))
+                      (clone ty)))))])]
+        [_ acc]))))
 
 (define (opt-inline-checked-prefix-entry!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -115885,7 +115956,8 @@
     (OptConstLengths lengths inits)))
 
 ;; The per-function fold: `%p = gep @g, <length slot>` then `%len = load %p`
-;; becomes `%len = mov n`. Two walks, so a load in a later block than its gep
+;; becomes `%len = mov n` for an i64 load. Other load types keep their memory
+;; interpretation and width. Two walks, so a load in a later block than its gep
 ;; is caught too; the dead gep is swept by the ordinary DCE.
 (define (opt-cl-collect-gep
   [type-segment-bases : i64]
@@ -115917,11 +115989,11 @@
   [geps : (& geps opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(Load dst src ty)
+    [(Load dst src (I64))
       (match src
         [(Var v)
           (match (opt_i64_i64_map.get (& geps) v)
-            [(LookupFound n) (Mov dst (I64 n) ty)]
+            [(LookupFound n) (Mov dst (I64 n) (I64))]
             [(LookupMissing) instr])]
         [_ instr])]
     [_ instr]))
@@ -115951,26 +116023,152 @@
   [type-segment-bases : i64]
   [name : i64]
   [summaries : (& summaries OptProgramSummaries)]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [lengths (& summaries.const-lengths)]
-    (if (or
-      (= (opt_i64_i64_map.len (& lengths)) 0)
-      (opt_i64_i64_map.contains?
-        (& summaries.init-functions)
-        (ir.compiler-ir-symbol-id name)))
-      blocks
-      (let
-        [geps : opt_i64_i64_map.Map
-          (opt-blocks-fold
-            blocks
-            (opt_i64_i64_map.with-capacity 8)
-            opt-cl-collect-gep
-            type-segment-bases
-            lengths)]
-        (if (= (opt_i64_i64_map.len (& geps)) 0)
+    [global-geps : opt_i64_i64_map.Map
+      (if (or
+        (= (opt_i64_i64_map.len (& lengths)) 0)
+        (opt_i64_i64_map.contains?
+          (& summaries.init-functions)
+          (ir.compiler-ir-symbol-id name)))
+        (opt_i64_i64_map.with-capacity 8)
+        (opt-blocks-fold
           blocks
-          (opt-cl-rewrite-blocks geps (& blocks)))))))
+          (opt_i64_i64_map.with-capacity 8)
+          opt-cl-collect-gep
+          type-segment-bases
+          lengths))]
+    [geps : opt_i64_i64_map.Map
+      (opt-string-literal-length-geps
+        type-segment-bases
+        params
+        frame
+        (& blocks)
+        global-geps)]
+    (if (= (opt_i64_i64_map.len (& geps)) 0)
+      blocks
+      (opt-cl-rewrite-blocks (& geps) (& blocks)))))
+
+;; --- string literal lengths --------------------------------------------------
+;;
+;; A string literal's descriptor `{data, len}` is emitted read-only, so its
+;; length word holds the literal's byte length at every program point. A
+;; length-slot `Gep` off a literal therefore loads a constant (#8795), whether
+;; its base is the literal itself or a var whose only definition is a `Mov` of
+;; it, the parameter copy an inlined callee receives. Folding that load is what
+;; lets an inlined `string.eq` against a literal prune its 8/4/2/1-byte dispatch
+;; to the literal's width. The literal var and the gep's destination must each
+;; have exactly one definition (parameters count) and must not have their
+;; address taken, so no other value can reach the folded load. Unlike CL-1's
+;; globals, a literal needs no initializer, so init functions fold too.
+(define (opt-string-literal-length-geps
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [geps : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (let
+    [literals : opt_i64_i64_map.Map
+      (opt-blocks-fold
+        blocks
+        (opt_i64_i64_map.with-capacity 8)
+        opt-string-literal-collect-var)]
+    [has-literal-gep : bool
+      (not
+        (opt-blocks-every?
+          blocks
+          opt-string-literal-gep-free?
+          type-segment-bases
+          (& literals)))]
+    (if (not has-literal-gep)
+      geps
+      (let
+        [sources : OptValueSources
+          (opt-gvn-sources-blocks
+            blocks
+            (& (opt-gvn-sources-params (& params) (opt-value-sources-new))))]
+        [marks : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
+        (opt-blocks-fold
+          blocks
+          geps
+          opt-string-literal-collect-gep
+          type-segment-bases
+          (& literals)
+          (& sources)
+          (& marks))))))
+
+;; Var -> byte length for every `Mov v (String s)`; the single-definition test
+;; is applied where the var is used as a gep base.
+(define (opt-string-literal-collect-var
+  [out : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
+  (let
+    [next : opt_i64_i64_map.Map out]
+    (match instr
+      [(Mov dst (String text) _)
+        (opt_i64_i64_map.insert-ref!
+          (&mut next)
+          dst
+          (string.string-length text))]
+      [_ unit])
+    next))
+
+;; Whether `instr` is not a length-slot gep off a literal or a var `Mov`ed
+;; from one, so a function without such a gep pays only this scan.
+(define (opt-string-literal-gep-free?
+  [type-segment-bases : i64]
+  [literals : (& literals opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(Gep _ base offset ty)
+      (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
+        (match base
+          [(String _) false]
+          [(Var v) (not (opt_i64_i64_map.contains? literals v))]
+          [_ true])
+        true)]
+    [_ true]))
+
+(define (opt-string-literal-stable-var?
+  [sources : (& sources OptValueSources)]
+  [marks : (& marks (__tl_dyn-array bool))]
+  [var : i64]) : bool
+  (and (opt-gvn-stable-var? sources var) (not (opt-addr-taken-var? marks var))))
+
+(define (opt-string-literal-collect-gep
+  [type-segment-bases : i64]
+  [literals : (& literals opt_i64_i64_map.Map)]
+  [sources : (& sources OptValueSources)]
+  [marks : (& marks (__tl_dyn-array bool))]
+  [out : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
+  (let
+    [next : opt_i64_i64_map.Map out]
+    (match instr
+      [(Gep dst base offset ty)
+        (when
+          (and
+            (opt-bounds-object-length-slot? type-segment-bases offset ty)
+            (opt-string-literal-stable-var? sources marks dst))
+          (match base
+            [(String text)
+              (opt_i64_i64_map.insert-ref!
+                (&mut next)
+                dst
+                (string.string-length text))]
+            [(Var v)
+              (when
+                (opt-string-literal-stable-var? sources marks v)
+                (match (opt_i64_i64_map.get literals v)
+                  [(LookupFound n)
+                    (opt_i64_i64_map.insert-ref! (&mut next) dst n)]
+                  [(LookupMissing) unit]))]
+            [_ unit]))]
+      [_ unit])
+    next))
 
 (define (opt-const-divisors-build
   [globals : (& ir.CompilerIrGlobalSeq)]

@@ -138,6 +138,13 @@ duplicate and nonliteral definitions, missing and boundary IDs, traversal
 order, and rescanning retained input. Keep both the counter and admission
 coverage when changing this scanner.
 
+`string-literal-length-fold` checks empty and UTF-8 byte lengths, direct and
+variable literal bases, both length-slot GEP spellings, parameter/duplicate
+definitions, address-taken bases and destinations, and unsupported offsets and
+load types. `tests/integration/string_literal_eq.tl` checks every comparison
+width and runtime equal/different values at opt0/1/2 on both hosts; the matching
+assembly case pins the specialized four-byte comparison.
+
 ## Move joins and diverging arms
 
 `tests/safety/move_diverging_*` and `move_*_reject` run the programs that an

@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_lower as lower)
 (import compiler_pointer_proof_input as proof)
 (import compiler_ir_types as ir)
@@ -61,9 +62,8 @@
 
 (define (proof-smoke-has-conversion? [input : proof.PointerProofInput]) : bool
   (let
-    [index : i64 0]
     [found : bool false]
-    (while (< index (proof.pointer-proof-input-use-count input))
+    (for [index (iterator.range 0 (proof.pointer-proof-input-use-count input))]
       (match (proof.pointer-proof-input-use
         input
         (proof.PointerProofRef input.control index))
@@ -71,7 +71,7 @@
           (match use.operation
             [(IntegerToPointer) (set! found true)]
             [_ unit])
-          (set! index (+ index 1))]
+          unit]
         [(Err _) (io.panic "pointer-proof smoke: missing occurrence")]))
     found))
 
@@ -113,15 +113,14 @@
     [reads : i64 0]
     [joined : bool false]
     [conversion-span : bool false]
-    [index : i64 0]
-    (while (< index (proof.pointer-proof-input-use-count input))
+    (for [index (iterator.range 0 (proof.pointer-proof-input-use-count input))]
       (match (proof.pointer-proof-input-use
         input
         (proof.PointerProofRef input.control index))
         [(Err _) (io.panic "pointer-proof smoke: missing mixed use")]
         [(Ok use)
           (match use.operation
-            [(Read binding) (when (= binding 0) (set! reads (+ reads 1)))]
+            [(Read binding) (when (= binding 0) (+= reads 1))]
             [(Join) (set! joined true)]
             [(IntegerToPointer)
               (match use.span
@@ -129,7 +128,7 @@
                   (set! conversion-span (> (cast span.start-col : i64) 70))]
                 [_ unit])]
             [_ unit])
-          (set! index (+ index 1))]))
+          unit]))
     (unless
       (and (= reads 2) joined conversion-span)
       (io.panic
@@ -200,37 +199,34 @@
   [source : String]
   [mode : lower.CompilerLowerMode]
   [target : backend.CompilerBackendTarget]) : unit
-  (let
-    [level : i64 0]
-    (while (< level 3)
-      (let
-        [plain-input : proof.PointerProofInput (proof.pointer-proof-input-new)]
-        [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
-        [plain : String
-          (proof-smoke-emit
-            plain-input
-            (owned_view.compiler-owned-shared-view source)
-            mode
-            target
-            level
-            false)]
-        [requested : String
-          (proof-smoke-emit
-            input
-            (owned_view.compiler-owned-shared-view source)
-            mode
-            target
-            level
-            true)]
-        (unless
-          (and
-            (string.eq (& plain) (& requested))
-            (= (proof.pointer-proof-input-use-count plain-input) 0))
-          (io.panic
-            "pointer-proof smoke: requested/ordinary opt0/1/2 assembly differs"))
-        (proof.pointer-proof-input-release! plain-input)
-        (proof.pointer-proof-input-release! input)
-        (set! level (+ level 1))))))
+  (for [level (iterator.range 0 3)]
+    (let
+      [plain-input : proof.PointerProofInput (proof.pointer-proof-input-new)]
+      [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
+      [plain : String
+        (proof-smoke-emit
+          plain-input
+          (owned_view.compiler-owned-shared-view source)
+          mode
+          target
+          level
+          false)]
+      [requested : String
+        (proof-smoke-emit
+          input
+          (owned_view.compiler-owned-shared-view source)
+          mode
+          target
+          level
+          true)]
+      (unless
+        (and
+          (string.eq (& plain) (& requested))
+          (= (proof.pointer-proof-input-use-count plain-input) 0))
+        (io.panic
+          "pointer-proof smoke: requested/ordinary opt0/1/2 assembly differs"))
+      (proof.pointer-proof-input-release! plain-input)
+      (proof.pointer-proof-input-release! input))))
 
 (define (proof-smoke-interactions
   [mode : lower.CompilerLowerMode]
@@ -244,13 +240,11 @@
         "(define (pass [p : (Ptr i64)]) : (Ptr i64) p) (define (main [p : (Ptr i64)] [b : bool]) : (Ptr i64) (if b (pass p) (pass (unsafe (int->ptr (ptr->int p) : (Ptr i64))))))"
         "(define (step [p : (Ptr i64)] [n : i64]) : (Ptr i64) (if (= n 0) (return p) (step p (- n 1)))) (define (main [p : (Ptr i64)]) : (Ptr i64) (if (ptr-null? p) (ptr-null : (Ptr i64)) (step p 2)))"
         "(define (pass [comptime T : type] [p : (Ptr T)]) : (Ptr T) p) (define (main [p : (Ptr i64)]) : (Ptr i64) (pass (type i64) p))")]
-    [index : i64 0]
-    (while (< index 6)
+    (for [index (iterator.range 0 6)]
       (proof-smoke-parity
         (owned_view.compiler-owned-array-element-shared-view sources index)
         mode
-        target)
-      (set! index (+ index 1)))))
+        target))))
 
 (define (proof-smoke-unsupported-producer-source) : String
   "(define (main [p : (Ptr i64)] [b : bool]) : (Ptr i64) (match b [true p] [false (ptr-null : (Ptr i64))]))")
@@ -311,67 +305,59 @@
         input
         "(define (pass [comptime T : type] [p : (Ptr T)]) : (Ptr T) p) (define (step [p : (Ptr i64)] [n : i64]) : (Ptr i64) (if (= n 0) (return p) (step p (- n 1)))) (define (main [p : (Ptr i64)] [b : bool]) : (Ptr i64) (let [q : (Ptr i64) p] (begin (set! q (unsafe (int->ptr (ptr->int p) : (Ptr i64)))) (if b (pass (type i64) q) (step p 2)))))"
         mode)]
-    [index : i64 0]
     [calls : i64 0]
     [recursive : bool false]
     [assignment : bool false]
     [returned : bool false]
-    (while (< index 3)
+    (for [index (iterator.range 0 3)]
       (match (proof.pointer-proof-input-function input index)
         [(Err _) (io.panic "pointer-proof smoke: missing specialized function")]
         [(Ok function)
-          (let
-            [parameter : i64 0]
-            (while (< parameter (refs.len (& function.parameters)))
-              (let
-                [use : proof.PointerProofUse
-                  (proof-smoke-use
-                    input
-                    (proof-smoke-reference (& function.parameters) parameter))]
-                (unless
-                  (=
-                    (ir.compiler-ir-symbol-id-value use.function)
-                    (ir.compiler-ir-symbol-id-value function.symbol))
-                  (io.panic
-                    "pointer-proof smoke: parameter belongs to another function"))
-                (match use.operation
-                  [(Parameter ordinal)
-                    (unless
-                      (= ordinal parameter)
-                      (io.panic
-                        "pointer-proof smoke: parameter ordinal changed"))]
-                  [_
-                    (io.panic
-                      "pointer-proof smoke: parameter is not a parameter occurrence")])
-                (when
-                  (= parameter 0)
-                  (match use.source-type
-                    [(Pointer) unit]
-                    [_
-                      (io.panic
-                        "pointer-proof smoke: original pointer parameter type lost")]))
-                (set! parameter (+ parameter 1))))
+          (for [parameter (iterator.range 0 (refs.len (& function.parameters)))]
             (let
-              [result : proof.PointerProofUse
-                (proof-smoke-use input function.result)]
+              [use : proof.PointerProofUse
+                (proof-smoke-use
+                  input
+                  (proof-smoke-reference (& function.parameters) parameter))]
               (unless
                 (=
-                  (ir.compiler-ir-symbol-id-value result.function)
+                  (ir.compiler-ir-symbol-id-value use.function)
                   (ir.compiler-ir-symbol-id-value function.symbol))
                 (io.panic
-                  "pointer-proof smoke: result belongs to another function"))))])
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index (proof.pointer-proof-input-use-count input))
+                  "pointer-proof smoke: parameter belongs to another function"))
+              (match use.operation
+                [(Parameter ordinal)
+                  (unless
+                    (= ordinal parameter)
+                    (io.panic "pointer-proof smoke: parameter ordinal changed"))]
+                [_
+                  (io.panic
+                    "pointer-proof smoke: parameter is not a parameter occurrence")])
+              (when
+                (= parameter 0)
+                (match use.source-type
+                  [(Pointer) unit]
+                  [_
+                    (io.panic
+                      "pointer-proof smoke: original pointer parameter type lost")]))))
+          (let
+            [result : proof.PointerProofUse
+              (proof-smoke-use input function.result)]
+            (unless
+              (=
+                (ir.compiler-ir-symbol-id-value result.function)
+                (ir.compiler-ir-symbol-id-value function.symbol))
+              (io.panic
+                "pointer-proof smoke: result belongs to another function")))]))
+    (for [index (iterator.range 0 (proof.pointer-proof-input-use-count input))]
       (let
         [use : proof.PointerProofUse
           (proof-smoke-use input (proof.PointerProofRef input.control index))]
         (match use.operation
           [(DirectCall symbol)
             (let
-              [callee-index : i64 0]
               [found : bool false]
-              (while (< callee-index 3)
+              (for [callee-index (iterator.range 0 3)]
                 (match (proof.pointer-proof-input-function input callee-index)
                   [(Ok callee)
                     (when
@@ -386,8 +372,7 @@
                         (io.panic
                           "pointer-proof smoke: specialized call argument ordinals changed")))]
                   [_
-                    (io.panic "pointer-proof smoke: missing direct-call callee")])
-                (set! callee-index (+ callee-index 1)))
+                    (io.panic "pointer-proof smoke: missing direct-call callee")]))
               (unless
                 found
                 (io.panic
@@ -397,7 +382,7 @@
                   (ir.compiler-ir-symbol-id-value symbol)
                   (ir.compiler-ir-symbol-id-value use.function))
                 (set! recursive true))
-              (set! calls (+ calls 1)))]
+              (+= calls 1))]
           [(Assignment binding)
             (let
               [bound : proof.PointerProofUse
@@ -410,8 +395,7 @@
                   (io.panic
                     "pointer-proof smoke: assignment lost its lexical binding")]))]
           [(Return) (set! returned true)]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (unless
       (and (= calls 3) recursive assignment returned)
       (io.panic
@@ -527,8 +511,7 @@
 (define (proof-smoke-failed-source-job [mode : lower.CompilerLowerMode]) : unit
   (let
     [sources : (Array String 2) (array "(" "(define (main) : i64 true)")]
-    [index : i64 0]
-    (while (< index 2)
+    (for [index (iterator.range 0 2)]
       (let
         [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
         [request : lower.CompilerLowerRequest (proof-smoke-request input mode)]
@@ -554,8 +537,7 @@
           [_
             (io.panic
               "pointer-proof smoke: failed owner entered a later source job")])
-        (proof.pointer-proof-input-release! input)
-        (set! index (+ index 1))))))
+        (proof.pointer-proof-input-release! input)))))
 
 (define (proof-smoke-driver-handoff
   [mode : lower.CompilerLowerMode]

@@ -6,6 +6,7 @@
 ;; `tests` directories are reserved for `typelisp test` and fixture corpora, so
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
 (import stdlib.byte_buf)
@@ -78,7 +79,7 @@
         [lc : i64 (package-source-char-code-at left idx)]
         [rc : i64 (package-source-char-code-at right idx)]
         (if (= lc rc)
-          (set! idx (+ idx 1))
+          (+= idx 1)
           (begin
             (set! less (< lc rc))
             (set! done true)))))
@@ -108,11 +109,9 @@
   [start : i64]
   [end : i64]) : svec.Vec
   (let
-    [idx : i64 start]
     [cur : svec.Vec out]
-    (while (< idx end)
-      (svec.push-ref! (&mut cur) (svec.get (& items) idx ""))
-      (set! idx (+ idx 1)))
+    (for [idx (iterator.range start end)]
+      (svec.push-ref! (&mut cur) (svec.get (& items) idx "")))
     cur))
 
 (define (package-source-vec-insert-at
@@ -386,10 +385,8 @@
   [package-name : String]
   [checkout-root : String]
   [relative : (& relative str)]
-  [entries : svec.Vec]
-  [index : i64]) : ResultPackageSourceConfinedPath
-  (if (>= index (svec.len (& entries)))
-    (Ok checkout-root)
+  [entries : svec.Vec]) : ResultPackageSourceConfinedPath
+  (for [index (iterator.range 0 (svec.len (& entries)))]
     (let
       [_
         (try
@@ -398,12 +395,8 @@
             (owned_view.compiler-owned-shared-view checkout-root)
             relative
             (svec.get (& entries) index "")))]
-      (package-source-fetched-checkout-audit-entries-from
-        package-name
-        checkout-root
-        relative
-        entries
-        (+ index 1)))))
+      unit))
+  (Ok checkout-root))
 
 (define (package-source-fetched-checkout-audit-dir
   [package-name : String]
@@ -426,8 +419,7 @@
           package-name
           checkout-root
           relative
-          (package-source-sort-entries entries)
-          0)])))
+          (package-source-sort-entries entries))])))
 
 ;; Refuse any package-controlled symbolic link, junction, reparse point, or
 ;; other special filesystem object before graph loading starts. This is a
@@ -719,7 +711,7 @@
     (while (and
       (< index end)
       (not (fs.path-separator? (string.string-ref relative index))))
-      (set! index (+ index 1)))
+      (+= index 1))
     index))
 
 ;; Check the directory segments that lead to one source. The root's own
@@ -851,26 +843,22 @@
 (define (package-source-binding-hash-u64 [hash : i64] [value : i64]) : i64
   (let
     [next : i64 hash]
-    [index : i64 0]
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (set!
         next
-        (package-source-binding-hash-byte next (shr value (* index 8))))
-      (set! index (+ index 1)))
+        (package-source-binding-hash-byte next (shr value (* index 8)))))
     next))
 
 (define (package-source-binding-hash-string [hash : i64] [text : String]) : i64
   (let
     [next : i64 hash]
-    [index : i64 0]
     [count : i64 (string.string-length text)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         next
         (package-source-binding-hash-byte
           next
-          (cast (string.string-ref text index) : i64)))
-      (set! index (+ index 1)))
+          (cast (string.string-ref text index) : i64))))
     next))
 
 (define (package-source-binding-hash-bytes
@@ -878,15 +866,13 @@
   [bytes : (__tl_dyn-array u8)]) : i64
   (let
     [next : i64 hash]
-    [index : i64 0]
     [count : i64 (array-length bytes)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         next
         (package-source-binding-hash-byte
           next
-          (cast (array-ref bytes index) : i64)))
-      (set! index (+ index 1)))
+          (cast (array-ref bytes index) : i64))))
     next))
 
 (define (package-source-binding-relative-path
@@ -1047,7 +1033,7 @@
                             (owned_view.compiler-owned-shared-view relative)
                             bytes))
                         (set! previous-relative relative))]))])])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (> (string.string-length error) 0)
       (Err error)
       (Ok hash))))

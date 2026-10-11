@@ -1110,10 +1110,10 @@
         (begin
           (if (= (string.string-ref source idx) '\n')
             (begin
-              (set! line (+ line 1))
+              (+= line 1)
               (set! col 1))
-            (set! col (+ col 1)))
-          (set! idx (+ idx 1)))))
+            (+= col 1))
+          (+= idx 1))))
     (if (and (< found 0) (= line target-line) (= col target-col))
       source-len
       found)))

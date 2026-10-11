@@ -1,5 +1,6 @@
 ;; build_run_core_tests.tl - White-box tests for source-tool builds: link
 ;; inputs, direct-object linkability and the Windows linker options.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
@@ -23,7 +24,7 @@
       (if (string.eq (process.args-ref left i) (process.args-ref right i))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 (define (source-tool-link-inputs-eq?
@@ -258,14 +259,12 @@
 (define (source-tool-test-list [items : cli_svec.Vec]) : process.ProcessStringList
   (let
     [out : process.ProcessStringList (process.args-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len (& items)))
+    (for [index (iterator.range 0 (cli_svec.len (& items)))]
       (set!
         out
         (process.args-append
           out
-          (process.args-single (cli_svec.get (& items) index ""))))
-      (set! index (+ index 1)))
+          (process.args-single (cli_svec.get (& items) index "")))))
     out))
 
 (define (source-tool-test-strings2 [a : String] [b : String]) : process.ProcessStringList

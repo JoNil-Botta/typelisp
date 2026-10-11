@@ -21,6 +21,7 @@
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
 ;; as the command name. The unified `main.tl` dispatcher calls it, so the single
 ;; binary drives the compiler.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -87,12 +88,10 @@
 (define (compile-cli-cfg-names-to-env [names : (& names cli_svec.Vec)]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len names))
+    (for [index (iterator.range 0 (cli_svec.len names))]
       (set!
         env
-        (cfg_core.compiler-cfg-enable env (& (cli_svec.get names index ""))))
-      (set! index (+ index 1)))
+        (cfg_core.compiler-cfg-enable env (& (cli_svec.get names index "")))))
     env))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state
@@ -100,15 +99,13 @@
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len names))
+    (for [index (iterator.range 0 (cli_svec.len names))]
       (set!
         env
         (cfg_core.compiler-cfg-enable-with-intern-state
           env
           (& (cli_svec.get names index ""))
-          intern-state))
-      (set! index (+ index 1)))
+          intern-state)))
     env))
 
 (defenum CompileCliConfig
@@ -167,10 +164,9 @@
   [extension : String]) : String
   (let
     [n : i64 (string.string-length input-path)]
-    [i : i64 0]
     [last-dot : i64 -1]
     [last-sep : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (string.string-ref input-path i)]
         (if (= c '.')
@@ -178,8 +174,7 @@
           (set! last-dot last-dot))
         (if (compile-cli-path-separator? c)
           (set! last-sep i)
-          (set! last-sep last-sep))
-        (set! i (+ i 1))))
+          (set! last-sep last-sep))))
     (if (> last-dot last-sep)
       (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
       (str_cat.str-cat input-path extension))))
@@ -382,7 +377,7 @@
                         value
                         6
                         (- (string.string-length value) 6)))
-                    (set! args.next (+ args.next 1))))
+                    (+= args.next 1)))
                 (set! emit-ir true)]
               [(string.eq args.name "--verify-ir")
                 (if compile-cli-verify-ir-requested
@@ -481,7 +476,7 @@
                 [else
                   (set! windows-coff-plan-path (io.arg args.next))
                   (set! has-windows-coff-plan true)
-                  (set! args.next (+ args.next 1))])]
+                  (+= args.next 1)])]
             [else (compile-cli-unknown-argument! (&mut args))])))
       (cond
         [args.failed (Err args.error)]
@@ -1072,7 +1067,7 @@
     (while (and (= found -1) (< i end))
       (if (= (string.string-ref text i) '|')
         (set! found i)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (compile-cli-batch-line-error [line : i64] [message : String]) : i64
@@ -1621,7 +1616,7 @@
       (text_buf.append! out "|")
       (text_buf.append! out (cli_svec.get results (+ index 3) ""))
       (text_buf.append! out "\n")
-      (set! index (+ index 4)))
+      (+= index 4))
     (text_buf.render out)))
 
 (define (compile-cli-write-windows-batch-result-plan

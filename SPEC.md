@@ -4456,6 +4456,23 @@ by-value read therefore never manufactures an untracked owning alias of
 mutable global storage. `extern` and raw static storage remain governed by
 their unsafe C boundary rather than this safe ordinary-global rule.
 
+While a reference derived from an ordinary global remains live, safe code
+cannot call a function that may assign, mutate, mutably borrow or take the
+address of that global. This includes transitive calls, recursion, later
+arguments, borrowed `match` scrutinees, automatic immutable borrows, and
+cleanup calls. E0222 names the global and a call chain to the writer and
+labels the original borrow. Writes only through an explicit `&mut` parameter
+retain the ordinary exclusivity rules; by-value Copy reads and calls that
+write a different global remain allowed.
+
+Direct callees use their transitive global write effects. A call through a
+function value or closure conservatively uses every function and lambda
+whose value is taken anywhere in the checked program. A package is checked
+against its own source globals. Dependency interfaces expose functions and
+types, not global places; a function with an unavailable package body also
+conservatively includes consumer callbacks. Raw `extern` calls remain the
+unsafe boundary. These rules do not change task-thread sharing (§6.5).
+
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
 

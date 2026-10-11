@@ -5,6 +5,8 @@
 (import stdlib.arena)
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
+(import compiler_global_effects as global_effects)
+(import (vector.vector i64) as effect_words)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -10407,3 +10409,79 @@
               target)))
         (io.panic
           "typecheck: lifetime memo reused an arena identity after its session reset")))))
+
+(cfg
+  test
+  (test
+    global-call-effects-job-and-scratch-isolation
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 8)]
+      [a : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          (tc_core.tc-job-state-new))]
+      [b : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          (tc_core.tc-job-state-new))]
+      [scratch : arena.Arena (arena.make)]
+      [state-a : (MutPtr tc_core.TcGlobalCallEffects)
+        (in-arena scratch (tc_core.tc-global-call-effects-ensure! a))]
+      [state-b : (MutPtr tc_core.TcGlobalCallEffects)
+        (in-arena scratch (tc_core.tc-global-call-effects-ensure! b))]
+      (in-arena
+        (arena.Arena
+          (unsafe
+            (deref state-a).arena))
+        (let
+          [graph : global_effects.Graph
+            (unsafe
+              (deref state-a).graph)]
+          (global_effects.add-write! (&mut graph) 0 7)
+          (unsafe
+            (set! (deref state-a).graph graph))))
+      (in-arena scratch (tc_core.tc-global-effect-witness! state-a 0 7))
+      (unsafe
+        (arena.destroy scratch))
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-a 0 7)))
+        1
+        "query allocation survives the caller scratch")
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-b 0 7)))
+        0
+        "another job cannot inherit the writer")
+      (tc_core.tc-job-state-reset-derived-caches!
+        (tc_core.tc-context-job-state b))
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-a 0 7)))
+        1
+        "another job reset preserves the retained summary")
+      (let
+        [changed : tc_core.TcContext
+          (tc_core.tc-context-with-program
+            a
+            (ast.ast-program (ast.ast-decl-list-new)))]
+        [fresh : (MutPtr tc_core.TcGlobalCallEffects)
+          (tc_core.tc-global-call-effects-ensure! changed)]
+        (test.assert-i64-eq
+          (effect_words.len (& (tc_core.tc-global-effect-witness! fresh 0 7)))
+          0
+          "new program identity rejects the old positive summary"))
+      (tc_core.tc-job-state-retire-owned-storage!
+        (tc_core.tc-context-job-state a))
+      (tc_core.tc-job-state-retire-owned-storage!
+        (tc_core.tc-context-job-state b)))))

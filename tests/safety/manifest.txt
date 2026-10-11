@@ -215,6 +215,36 @@ mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_referen
 global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
+
+# Calls cannot write an ordinary global while a caller loan is live (#7904).
+global_call_address_effect_reject|check-fail|tests/safety/global_call_address_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_auto_reject|check-fail|tests/safety/global_call_auto_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_buffer_write_reject|check-fail|tests/safety/global_call_buffer_write_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_byvalue_ok|run-exit|tests/safety/global_call_byvalue_ok.tl|1|-
+global_call_cleanup_reject|check-fail|tests/safety/global_call_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> cleanup -> rebind!)
+global_call_cleanup_in_match_reject|check-fail|tests/safety/global_call_cleanup_in_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_closure_reject|check-fail|tests/safety/global_call_closure_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_different_ok|run-exit|tests/safety/global_call_different_ok.tl|10|-
+global_call_ended_ok|run-exit|tests/safety/global_call_ended_ok.tl|1|-
+global_call_explicit_mut_ok|run-exit|tests/safety/global_call_explicit_mut_ok.tl|42|-
+global_call_imported_reject|check-fail|tests/safety/global_call_imported_reject.tl|-|while global `dep.g` is borrowed: it may assign `dep.g` (via read-after -> rebind!)
+global_call_indirect_reject|check-fail|tests/safety/global_call_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_inplace_reject|check-fail|tests/safety/global_call_inplace_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_later_arg_reject|check-fail|tests/safety/global_call_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_macro_reject|check-fail|tests/safety/global_call_macro_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_match_reject|check-fail|tests/safety/global_call_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_mut_effect_reject|check-fail|tests/safety/global_call_mut_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> borrow-write!)
+global_call_mutable_loan_reject|check-fail|tests/safety/global_call_mutable_loan_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_nominal_cleanup_reject|check-fail|tests/safety/global_call_nominal_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
+global_call_nominal_owned_reject|check-fail|tests/safety/global_call_nominal_owned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-holder -> close-handle -> drop-word)
+global_call_pure_constructor_ok|run-exit|tests/safety/global_call_pure_constructor_ok.tl|1|-
+global_call_reassign_copy_ok|run-exit|tests/safety/global_call_reassign_copy_ok.tl|1|-
+global_call_rebind_reject|check-fail|tests/safety/global_call_rebind_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_recursion_reject|check-fail|tests/safety/global_call_recursion_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> b! -> a! -> rebind!)
+global_call_three_deep_reject|check-fail|tests/safety/global_call_three_deep_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> first! -> second! -> third! -> rebind!)
+global_call_local_shadow_ok|run-exit|tests/safety/global_call_local_shadow_ok.tl|1|-
+global_call_cleanup_ended_ok|run-exit|tests/safety/global_call_cleanup_ended_ok.tl|1|-
+global_call_generated_global_reject|check-fail|tests/safety/global_call_generated_global_reject.tl|-|while global `generated.g` is borrowed: it may assign `generated.g` (via observe -> reset!)
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-

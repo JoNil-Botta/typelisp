@@ -525,3 +525,22 @@ stderr empty
 stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
+
+case check-global-call-borrow-diagnostic
+file main.tl
+(defstruct Big (a i64) (b i64) (c i64) (d i64))
+(define g : Big (Big 1 2 3 4))
+(define (reset!) : unit (set! g (Big 9 9 9 9)))
+(define (observe [value : (& r Big)]) : i64 (reset!) value.a)
+(define (main) : i64
+  (observe (& g)))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0222]
+stderr contains while global `g` is borrowed
+stderr contains (via observe -> reset!)
+stderr contains main.tl:6:3
+stderr contains main.tl:6:12
+stderr contains borrow of `g` remains live

@@ -1,5 +1,6 @@
 ;; Pure, bounded Git object identities and decoders. All String values here
 ;; are byte strings; no repository-controlled byte is placed in an error.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -44,12 +45,11 @@
     [width : i64 (git-object-id-bytes format)]
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity (* width 2))]
-    [index : i64 0]
     [nonzero : bool false]
     (when
       (!= (string.string-length binary) width)
       (return (Err "git object: invalid binary object ID width")))
-    (while (< index width)
+    (for [index (iterator.range 0 width)]
       (let
         [octet : i64 (git-object-byte binary index)]
         (when (!= octet 0) (set! nonzero true))
@@ -68,8 +68,7 @@
               (if (< low 10)
                 (+ 48 low)
                 (+ 87 low))
-              : u8)))
-        (set! index (+ index 1))))
+              : u8)))))
     (if nonzero
       (Ok
         (GitObjectId
@@ -97,7 +96,7 @@
         (byte_buf.byte-buf-builder-push
           (&mut out)
           (cast (+ (* high 16) low) : u8))
-        (set! index (+ index 2))))
+        (+= index 2)))
     (git-object-id-from-binary
       format
       (byte_buf.byte-buf-builder-finish-string (& out)))))
@@ -156,7 +155,6 @@
 (define (git-object-refname-valid? [name : (& name str)] [allow-head : bool]) : bool
   (let
     [length : i64 (string.string-length name)]
-    [index : i64 0]
     [component-start : i64 0]
     [slashes : i64 0]
     (when (and allow-head (string.eq name "HEAD")) (return true))
@@ -168,7 +166,7 @@
         (= (git-object-byte name (- length 1)) 46)
         (string.eq name "@"))
       (return false))
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (let
         [byte : i64 (git-object-byte name index)]
         (when
@@ -200,9 +198,8 @@
               (>= (- index component-start) 5)
               (string.eq (string.substring name (- index 5) 5) ".lock"))
             (return false))
-          (set! slashes (+ slashes 1))
-          (set! component-start (+ index 1)))
-        (set! index (+ index 1))))
+          (+= slashes 1)
+          (set! component-start (+ index 1)))))
     (and
       (> slashes 0)
       (!= (git-object-byte name component-start) 46)
@@ -302,23 +299,18 @@
   [start : i64]
   [wanted : i64]) : i64
   (let
-    [index : i64 start]
     [length : i64 (string.string-length bytes)]
-    (while (< index length)
-      (when (= (git-object-byte bytes index) wanted) (return index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range start length)]
+      (when (= (git-object-byte bytes index) wanted) (return index)))
     -1))
 
 (define (git-object-header-key-valid? [bytes : (& bytes str)] [end : i64]) : bool
-  (let
-    [index : i64 0]
-    (when (<= end 0) (return false))
-    (while (< index end)
-      (let
-        [byte : i64 (git-object-byte bytes index)]
-        (when (or (< byte 33) (> byte 126) (= byte 58)) (return false))
-        (set! index (+ index 1))))
-    true))
+  (when (<= end 0) (return false))
+  (for [index (iterator.range 0 end)]
+    (let
+      [byte : i64 (git-object-byte bytes index)]
+      (when (or (< byte 33) (> byte 126) (= byte 58)) (return false))))
+  true)
 
 ;: Parses all headers before the first empty line. A continuation belongs to
 ;: its preceding header and is retained verbatim, including LF and leading SP.
@@ -415,8 +407,7 @@
     [committer : String ""]
     [extra : (__tl_dyn-array GitObjectHeader)
       (__tl_make-array GitObjectHeader 0)]
-    [index : i64 0]
-    (while (< index (array-length parsed.items))
+    (for [index (iterator.range 0 (array-length parsed.items))]
       (let
         [header : (& parsed GitObjectHeader) (& (array-ref parsed.items index))]
         (when
@@ -432,7 +423,7 @@
         (cond
           [(string.eq header.name "tree")
             (set! stage 1)
-            (set! tree-count (+ tree-count 1))
+            (+= tree-count 1)
             (when
               (> tree-count 1)
               (return (Err "git object: duplicate commit tree")))
@@ -445,7 +436,7 @@
               (__tl_array-push! parents id))]
           [(string.eq header.name "author")
             (set! stage 2)
-            (set! author-count (+ author-count 1))
+            (+= author-count 1)
             (when
               (> author-count 1)
               (return (Err "git object: duplicate commit author")))
@@ -460,7 +451,7 @@
                 (string.string-length (& header.value))))]
           [(string.eq header.name "committer")
             (set! stage 3)
-            (set! committer-count (+ committer-count 1))
+            (+= committer-count 1)
             (when
               (> committer-count 1)
               (return (Err "git object: duplicate commit committer")))
@@ -484,8 +475,7 @@
                 (string.substring
                   (& header.value)
                   0
-                  (string.string-length (& header.value)))))])
-        (set! index (+ index 1))))
+                  (string.string-length (& header.value)))))])))
     (if (or
       (!= tree-count 1)
       (!= author-count 1)
@@ -562,7 +552,7 @@
         [a : i64 (git-object-byte left index)]
         [b : i64 (git-object-byte right index)]
         (when (!= a b) (return (- a b)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (let
       [a : i64
         (if (< index left-length)
@@ -607,16 +597,13 @@
         (when
           (and (> (- space cursor) 1) (= (git-object-byte bytes cursor) 48))
           (return (Err "git object: noncanonical tree mode")))
-        (let
-          [index : i64 cursor]
-          (while (< index space)
-            (let
-              [digit : i64 (- (git-object-byte bytes index) 48)]
-              (when
-                (or (< digit 0) (> digit 7))
-                (return (Err "git object: invalid octal tree mode")))
-              (set! mode (+ (* mode 8) digit))
-              (set! index (+ index 1)))))
+        (for [index (iterator.range cursor space)]
+          (let
+            [digit : i64 (- (git-object-byte bytes index) 48)]
+            (when
+              (or (< digit 0) (> digit 7))
+              (return (Err "git object: invalid octal tree mode")))
+            (set! mode (+ (* mode 8) digit))))
         (let
           [mode-code : i64 (git-object-tree-mode mode)]
           [name-start : i64 (+ space 1)]
@@ -635,21 +622,18 @@
               (string.substring bytes name-start (- nul name-start))]
             [slash : i64 (git-object-find-byte (& name) 0 47)]
             (when (>= slash 0) (return (Err "git object: forbidden tree name")))
-            (let
-              [prior-index : i64 0]
-              (while (< prior-index (array-length entries))
-                (let
-                  [prior : (& entries GitTreeEntry)
-                    (& (array-ref entries prior-index))]
-                  (when
-                    (>= comparisons limits.max-name-comparisons)
-                    (return
-                      (Err "git object: tree name comparison limit exceeded")))
-                  (set! comparisons (+ comparisons 1))
-                  (when
-                    (string.eq (& prior.name) (& name))
-                    (return (Err "git object: duplicate tree name")))
-                  (set! prior-index (+ prior-index 1)))))
+            (for [prior-index (iterator.range 0 (array-length entries))]
+              (let
+                [prior : (& entries GitTreeEntry)
+                  (& (array-ref entries prior-index))]
+                (when
+                  (>= comparisons limits.max-name-comparisons)
+                  (return
+                    (Err "git object: tree name comparison limit exceeded")))
+                (+= comparisons 1)
+                (when
+                  (string.eq (& prior.name) (& name))
+                  (return (Err "git object: duplicate tree name")))))
             (when
               (> (array-length entries) 0)
               (let
@@ -725,8 +709,7 @@
     [tagger : String ""]
     [extra : (__tl_dyn-array GitObjectHeader)
       (__tl_make-array GitObjectHeader 0)]
-    [index : i64 0]
-    (while (< index (array-length parsed.items))
+    (for [index (iterator.range 0 (array-length parsed.items))]
       (let
         [header : (& parsed GitObjectHeader) (& (array-ref parsed.items index))]
         (when
@@ -746,7 +729,7 @@
             [else 4]))
         (cond
           [(string.eq header.name "object")
-            (set! object-count (+ object-count 1))
+            (+= object-count 1)
             (when
               (> object-count 1)
               (return (Err "git object: duplicate tag object")))
@@ -754,13 +737,13 @@
               [id (try (git-object-id-from-hex format (& header.value)))]
               (set! target id))]
           [(string.eq header.name "type")
-            (set! type-count (+ type-count 1))
+            (+= type-count 1)
             (when
               (> type-count 1)
               (return (Err "git object: duplicate tag type")))
             (set! target-code (git-object-kind-from-name (& header.value)))]
           [(string.eq header.name "tag")
-            (set! tag-count (+ tag-count 1))
+            (+= tag-count 1)
             (when
               (> tag-count 1)
               (return (Err "git object: duplicate tag name")))
@@ -771,7 +754,7 @@
                 0
                 (string.string-length (& header.value))))]
           [(string.eq header.name "tagger")
-            (set! tagger-count (+ tagger-count 1))
+            (+= tagger-count 1)
             (when
               (> tagger-count 1)
               (return (Err "git object: duplicate tagger")))
@@ -795,8 +778,7 @@
                 (string.substring
                   (& header.value)
                   0
-                  (string.string-length (& header.value)))))])
-        (set! index (+ index 1))))
+                  (string.string-length (& header.value)))))])))
     (if (or
       (!= object-count 1)
       (!= type-count 1)
@@ -874,7 +856,6 @@
   (let
     [selected : String ""]
     [mode : i64 0]
-    [ref-index : i64 0]
     [matches : i64 0]
     [current : GitObjectId (GitObjectId format "" "")]
     [seen : (__tl_dyn-array String) (__tl_make-array String 0)]
@@ -911,7 +892,7 @@
             (string.eq (string.substring name 0 10) "refs/tags/"))
           (return (Err "git object: invalid tag selector")))
         (set! selected (string.substring name 0 (string.string-length name)))])
-    (while (< ref-index (array-length refs))
+    (for [ref-index (iterator.range 0 (array-length refs))]
       (let
         [advert : (& refs GitAdvertisedRef) (& (array-ref refs ref-index))]
         (unless
@@ -921,20 +902,19 @@
           (begin
             (when
               (string.eq (& advert.id.hex) (& selected))
-              (set! matches (+ matches 1))
+              (+= matches 1)
               (set! current (git-object-id-copy format (& advert.id))))
             (match (& advert.peeled)
               [(Absent) unit]
               [(Present peeled-id)
                 (when
                   (string.eq (& peeled-id.hex) (& selected))
-                  (set! matches (+ matches 1))
+                  (+= matches 1)
                   (set! current (git-object-id-copy format peeled-id)))]))
           (when
             (string.eq (& advert.name) (& selected))
-            (set! matches (+ matches 1))
-            (set! current (git-object-id-copy format (& advert.id)))))
-        (set! ref-index (+ ref-index 1))))
+            (+= matches 1)
+            (set! current (git-object-id-copy format (& advert.id)))))))
     (when (= matches 0) (return (Err "git object: revision is not advertised")))
     (when
       (and (!= mode 1) (> matches 1))
@@ -946,20 +926,17 @@
       (when
         (> depth limits.max-peel-depth)
         (return (Err "git object: tag depth exceeded")))
-      (let
-        [index : i64 0]
-        (while (< index (array-length seen))
-          (when
-            (string.eq (array-ref seen index) (& current.hex))
-            (return (Err "git object: tag cycle")))
-          (set! index (+ index 1))))
+      (for [index (iterator.range 0 (array-length seen))]
+        (when
+          (string.eq (array-ref seen index) (& current.hex))
+          (return (Err "git object: tag cycle"))))
       (__tl_array-push!
         seen
         (string.substring
           (& current.hex)
           0
           (string.string-length (& current.hex))))
-      (set! lookups (+ lookups 1))
+      (+= lookups 1)
       (match (lookup
         (string.substring
           (& current.hex)
@@ -1019,7 +996,7 @@
                   expected-code
                   (git-object-kind-from-name
                     (git-object-kind-name tag.target-kind)))
-                (set! depth (+ depth 1)))]
+                (+= depth 1))]
             [_
               (return (Err "git object: revision does not resolve to a commit"))])]))
     (Err "git object: unreachable peel state")))

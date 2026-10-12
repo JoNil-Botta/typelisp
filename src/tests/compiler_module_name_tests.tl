@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_module_name as module_name)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -129,21 +130,17 @@
         (NameCase "a b" true "a b" "a b" false)
         (NameCase "a$" true "a$" "a$" false)
         (NameCase "probe.*.core" true "probe.*.core" "core" true))]
-    [index : i64 0]
-    (while (< index (array-length cases))
-      (assert-name (& (array-ref cases index)))
-      (set! index (+ index 1)))))
+    (for [index (iterator.range 0 (array-length cases))]
+      (assert-name (& (array-ref cases index))))))
 
 (test
   dotted-import-long-name-boundary
   (let
     [name : String "probe"]
-    [index : i64 0]
-    (while (< index 12)
+    (for [index (iterator.range 0 12)]
       (set!
         name
-        (str_cat.str-cat (string.copy (& name)) (string.copy (& name)) ""))
-      (set! index (+ index 1)))
+        (str_cat.str-cat (string.copy (& name)) (string.copy (& name)) "")))
     (let
       [item : NameCase
         (NameCase
@@ -167,13 +164,12 @@
         "(import probe)"
         "(import probe\t"
         "(import probe; comment")]
-    [index : i64 0]
     (test.assert-true
       (match (lsp.lsp-dotted-import-name-kind "probe" false)
         [(Complete) true]
         [_ false])
       "valid name remains complete in an unfinished form")
-    (while (< index (array-length cases))
+    (for [index (iterator.range 0 (array-length cases))]
       (match (lsp.lsp-resolve-import-target-at
         (& (array-ref cases index))
         "__7525__/main.tl"
@@ -182,8 +178,7 @@
         [(Found _ start end)
           (test.assert-i64-eq start 8 "editor operand start")
           (test.assert-i64-eq end 13 "editor operand end")]
-        [_ (test.assert-true false "complete editor name must resolve")])
-      (set! index (+ index 1)))))
+        [_ (test.assert-true false "complete editor name must resolve")]))))
 
 (test
   incomplete-editor-prefixes-do-not-change-complete-grammar
@@ -198,8 +193,7 @@
         (PrefixCase "probe/core" false)
         (PrefixCase "probe\\core" false)
         (PrefixCase "probe:core" false))]
-    [index : i64 0]
-    (while (< index (array-length cases))
+    (for [index (iterator.range 0 (array-length cases))]
       (let
         [item : (& cases PrefixCase) (& (array-ref cases index))]
         [text : String
@@ -223,8 +217,7 @@
             8)
             [(Missing) true]
             [_ false])
-          "incomplete invalid name cannot resolve a valid prefix")
-        (set! index (+ index 1))))))
+          "incomplete invalid name cannot resolve a valid prefix")))))
 
 (test
   unsupported-import-token-bytes-cannot-resolve-a-prefix
@@ -235,8 +228,7 @@
         "(import probe$invalid)"
         "(import probe@invalid)"
         "(import probeé)")]
-    [index : i64 0]
-    (while (< index (array-length cases))
+    (for [index (iterator.range 0 (array-length cases))]
       (let
         [text : (& cases str) (& (array-ref cases index))]
         (test.assert-true
@@ -247,5 +239,4 @@
             8)
             [(Missing) true]
             [_ false])
-          "unsupported byte cannot delimit a valid import prefix")
-        (set! index (+ index 1))))))
+          "unsupported byte cannot delimit a valid import prefix")))))

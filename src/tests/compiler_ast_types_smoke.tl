@@ -1,4 +1,5 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -238,12 +239,9 @@
     [collision-a : i64 (ast.ast-node-pool-context-type-push pools (Var 0))]
     [collision-b : i64 (ast.ast-node-pool-context-type-push pools (Var 131072))]
     [decoy-first : i64 (ast.ast-node-pool-context-type-push decoy (Bool))]
-    [index : i64 0]
-    (while (< index 65533)
-      (begin
-        (ast.ast-node-pool-context-type-push pools (Array first index))
-        unit)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 65533)]
+      (ast.ast-node-pool-context-type-push pools (Array first index))
+      unit)
     (ast.ast-node-pool-context-install! decoy)
     (let
       [home : arena.Arena (arena.current)]
@@ -335,7 +333,7 @@
       (if (= (array-ref slots i) 0)
         unit
         (set! empty false))
-      (set! i (+ i 1)))
+      (+= i 1))
     empty))
 
 ;; Push COUNT distinct type variables starting at name START.
@@ -343,13 +341,9 @@
   [pools : ast.AstNodePoolContext]
   [start : i64]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (ast.ast-node-pool-context-type-push pools (Var (+ start index)))
-        unit)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (ast.ast-node-pool-context-type-push pools (Var (+ start index)))
+    unit))
 
 ;; A dedup clear empties exactly the slots filled since the last one, whichever
 ;; alias filled them: clears at the current count and at an interior mark,
@@ -378,13 +372,9 @@
         (compiler-ast-type-dedup-table-empty? pools)
         (= (ast.ast-node-pool-context-type-len pools) 150)))
     (ast.ast-node-pool-context-install! pools)
-    (let
-      [index : i64 0]
-      (while (< index 300)
-        (begin
-          (ast.ty-node-push (& (Var (+ 5000 index))))
-          unit)
-        (set! index (+ index 1))))
+    (for [index (iterator.range 0 300)]
+      (ast.ty-node-push (& (Var (+ 5000 index))))
+      unit)
     (ast.ast-node-pool-context-install! active-before)
     (ast.ast-node-pool-context-reset-to!
       pools
@@ -436,7 +426,7 @@
       (if (= (array-ref source i) (array-ref copy i))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 ;; Cloning a context's types copies its dedup array exactly, from the log when
@@ -1581,7 +1571,7 @@
         (set!
           modules
           (ast.ast-decl-module-list-prepend-builder-id module-id modules))
-        (set! i (- i 1))))
+        (-= i 1)))
     (let
       [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
       (and
@@ -1904,14 +1894,12 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
-    [canonical-index : i64 0]
     [base-literal : i64 -1]
     [canonical-63 : i64 -1]
     [canonical-64 : i64 -1]
-    [respan-index : i64 0]
     [respan-63 : i64 -1]
     [respan-64 : i64 -1]
-    (while (< canonical-index 65)
+    (for [canonical-index (iterator.range 0 65)]
       (let
         [literal : i64
           (ast.ast-node-pool-context-expr-push
@@ -1931,9 +1919,8 @@
           unit)
         (if (= canonical-index 64)
           (set! canonical-64 view)
-          unit)
-        (set! canonical-index (+ canonical-index 1))))
-    (while (< respan-index 65)
+          unit)))
+    (for [respan-index (iterator.range 0 65)]
       (let
         [line : i64 (+ respan-index 100)]
         [view : i64
@@ -1946,8 +1933,7 @@
           unit)
         (if (= respan-index 64)
           (set! respan-64 view)
-          unit)
-        (set! respan-index (+ respan-index 1))))
+          unit)))
     (and
       (= (ast.ast-node-pool-context-expr-len pools) 195)
       (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 65)
@@ -1989,13 +1975,11 @@
       (ast.ast-node-pool-context-expr-segment-bases (& a))]
     [b-expr-bases-before : i64
       (ast.ast-node-pool-context-expr-segment-bases (& b))]
-    [expr-index : i64 0]
-    [type-index : i64 0]
     [a-last-expr : i64 -1]
     [b-last-expr : i64 -1]
     [a-last-type : i64 -1]
     [b-last-type : i64 -1]
-    (while (<= expr-index 131072)
+    (for [expr-index (iterator.range 0 (+ 131072 1))]
       (set!
         a-last-expr
         (ast.ast-node-pool-context-expr-push
@@ -2007,9 +1991,8 @@
           (ast.ast-node-pool-context-expr-push
             b
             (Literal (ast.ast-lit-int (- 0 expr-index)))))
-        unit)
-      (set! expr-index (+ expr-index 1)))
-    (while (<= type-index 2048)
+        unit))
+    (for [type-index (iterator.range 0 (+ 2048 1))]
       (set!
         a-last-type
         (ast.ast-node-pool-context-type-push a (Var type-index)))
@@ -2017,8 +2000,7 @@
         (set!
           b-last-type
           (ast.ast-node-pool-context-type-push b (Var (+ type-index 10000))))
-        unit)
-      (set! type-index (+ type-index 1)))
+        unit))
     (let
       [a-growth-view : i64
         (ast.ast-expr-spanned-with-pools
@@ -2232,8 +2214,7 @@
     [zero-params : ast.AstParamList (ast.ast-param-list-with-capacity -1)]
     [minimum-field-defs : ast.AstFieldDefList
       (ast.ast-field-def-list-with-capacity -1)]
-    [index : i64 0]
-    (while (< index 17)
+    (for [index (iterator.range 0 17)]
       (ast.ast-variant-payload-cleanup-list-push
         (&mut cleanups)
         (if (= (bit-and index 1) 0)
@@ -2246,8 +2227,7 @@
         (&mut links)
         (if (= (bit-and index 1) 0)
           (ast.AstExternLinkInput.Lib "m")
-          (ast.AstExternLinkInput.Search "native")))
-      (set! index (+ index 1)))
+          (ast.AstExternLinkInput.Search "native"))))
     (ast.ast-variant-payload-cleanup-list-append-from
       (&mut cleanup-copy)
       (& cleanups)
@@ -2312,8 +2292,7 @@
   [first-line : i64]) : ast.AstExprList
   (let
     [views : ast.AstExprList (ast.ast-expr-list-new)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [literal : i64
           (ast.ast-node-pool-context-expr-push
@@ -2325,8 +2304,7 @@
           (ast.ast-expr-spanned-with-pools
             (& pools)
             literal
-            (ast.ast-source-span line 1 line 2)))
-        (set! index (+ index 1))))
+            (ast.ast-source-span line 1 line 2)))))
     views))
 
 (define (compiler-ast-reserve-program
@@ -2335,12 +2313,10 @@
   [reach : i64]) : ast.AstProgram
   (let
     [body : ast.AstExprList (ast.ast-expr-list-new)]
-    [index : i64 0]
-    (while (< index reach)
+    (for [index (iterator.range 0 reach)]
       (ast.ast-expr-list-push
         (&mut body)
-        (ast.ast-expr-list-get views index -1))
-      (set! index (+ index 1)))
+        (ast.ast-expr-list-get views index -1)))
     (ast.ast-program
       (ast.ast-decl-cons
         (&
@@ -2396,7 +2372,7 @@
       (set!
         ok
         (compiler-ast-reserve-view-line? pools views index (+ first-line index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; `extra` more spanned literals pushed into the destination after compaction

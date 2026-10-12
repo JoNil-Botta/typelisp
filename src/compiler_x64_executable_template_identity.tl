@@ -1,4 +1,5 @@
 ;; Canonical semantic identity for compiler-owned x86-64 templates.
+(import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
 (import compiler_x64_executable_template_evidence as evidence)
 (import stdlib.io)
@@ -12,16 +13,13 @@
   (if (or (< index 0) (>= index count))
     (io.panic "x64 executable template: enum tag is out of range")
     (let
-      [at : i64 0]
       [start : i64 0]
-      (while (< at index)
+      (for [at (iterator.range 0 index)]
         (let
           [end : i64 (string.index-of-byte names start (cast '|' : u8))]
           (if (< end 0)
             (io.panic "x64 executable template: enum name is missing")
-            (begin
-              (set! start (+ end 1))
-              (set! at (+ at 1))))))
+            (set! start (+ end 1)))))
       (let
         [separator : i64 (string.index-of-byte names start (cast '|' : u8))]
         [end : i64

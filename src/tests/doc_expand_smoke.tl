@@ -1,4 +1,5 @@
 ;; doc_expand_smoke.tl - Runnable smoke for generated-module docs.
+(import stdlib.iterator)
 (import doc_expand)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
@@ -94,8 +95,7 @@
     [targets : doc_generated_target_example_vec.Vec
       (doc_generated_target_example_vec.new)]
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
-    [index : i64 0]
-    (while (< index 6)
+    (for [index (iterator.range 0 6)]
       (doc_item_vec.push-ref!
         (&mut items)
         (doc_extract.DocItem.Item (Define) (string.int->string index) "" "" 0))
@@ -110,8 +110,7 @@
         (&mut modules)
         (doc_render.DocModule.Module
           (string.int->string index)
-          (doc_extract.doc-extraction-empty)))
-      (set! index (+ index 1)))
+          (doc_extract.doc-extraction-empty))))
     (unless
       (and
         (= (doc_extract.doc-item-list-count items) 6)

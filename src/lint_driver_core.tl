@@ -6,6 +6,7 @@
 ;; `--check` after the input path to exit non-zero when findings remain, or
 ;; `--format flat` for the stable `path:line:col: message` machine format. The
 ;; deprecated string.concat rule and staged migration rules are opt-in.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -303,10 +304,10 @@
     (while (and (< idx source-len) (< line target-line))
       (if (= (string.string-ref source idx) '\n')
         (begin
-          (set! line (+ line 1))
+          (+= line 1)
           (set! start (+ idx 1))
-          (set! idx (+ idx 1)))
-        (set! idx (+ idx 1))))
+          (+= idx 1))
+        (+= idx 1)))
     (if (= line target-line)
       start
       source-len)))
@@ -331,7 +332,7 @@
       (let
         [c : char (string.string-ref source j)]
         (cond
-          [(source_text.source-text-space? c) (set! j (+ j 1))]
+          [(source_text.source-text-space? c) (+= j 1)]
           [(= c ';') (set! j (source_text.source-text-skip-line source j n))]
           [else (set! done true)])))
     j))
@@ -354,7 +355,7 @@
     (while (and
       (< j n)
       (not (selfhost-lint-source-form-delim? (string.string-ref source j))))
-      (set! j (+ j 1)))
+      (+= j 1))
     j))
 
 (define (selfhost-lint-skip-source-group
@@ -374,15 +375,15 @@
           [(= c '\'')
             (set! j (source_text.source-text-skip-char-literal source j n))]
           [(or (= c '(') (= c '['))
-            (set! depth (+ depth 1))
-            (set! j (+ j 1))]
+            (+= depth 1)
+            (+= j 1)]
           [(or (= c ')') (= c ']'))
-            (set! depth (- depth 1))
-            (set! j (+ j 1))
+            (-= depth 1)
+            (+= j 1)
             (if (<= depth 0)
               (set! done true)
               unit)]
-          [else (set! j (+ j 1))])))
+          [else (+= j 1)])))
     j))
 
 (define (selfhost-lint-skip-source-form
@@ -426,7 +427,7 @@
               (if (or (= c ')') (= c ']'))
                 (set! done true)
                 (begin
-                  (set! count (+ count 1))
+                  (+= count 1)
                   (set! idx (selfhost-lint-skip-source-form source idx n)))))))
         count)
       1)))
@@ -453,7 +454,7 @@
           (begin
             (set! found true)
             (set! stop true))
-          (set! idx (+ idx 1)))))
+          (+= idx 1))))
     found))
 
 ;; A finding is suppressed when the line immediately above its flagged form
@@ -507,18 +508,19 @@
 (define (selfhost-lint-path-suffix-at?
   [path : (& path str)]
   [suffix : String]
-  [base : i64]
-  [index : i64]) : bool
-  (if (>= index (string.string-length suffix))
-    true
+  [base : i64]) : bool
+  (for [index (iterator.range 0 (string.string-length suffix))]
     (let
       [left : char (string.string-ref path (+ base index))]
       [right : char (string.string-ref suffix index)]
-      (if (or
-        (= left right)
-        (and (or (= left '/') (= left '\\')) (or (= right '/') (= right '\\'))))
-        (selfhost-lint-path-suffix-at? path suffix base (+ index 1))
-        false))))
+      (unless
+        (or
+          (= left right)
+          (and
+            (or (= left '/') (= left '\\'))
+            (or (= right '/') (= right '\\'))))
+        (return false))))
+  true)
 
 (define (selfhost-lint-path-suffix? [path : (& path str)] [suffix : String]) : bool
   (let
@@ -532,7 +534,7 @@
         (let
           [separator : char (string.string-ref path (- base 1))]
           (or (= separator '/') (= separator '\\'))))
-      (selfhost-lint-path-suffix-at? path suffix base 0))))
+      (selfhost-lint-path-suffix-at? path suffix base))))
 
 ;; Audited raw-arena module allowlist. It holds the line established by #6253;
 ;; #6620 owns classification/migration of the residual entries and should only
@@ -668,16 +670,16 @@
 
 (define (selfhost-lint-findings-have-rule-from?
   [items : lint_core.LintFindings]
-  [rule-id : String]
-  [index : i64]) : bool
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view items)))
-    false
-    (if (string.eq (lint_core.lint-findings-ref items index).rule-id rule-id)
-      true
-      (selfhost-lint-findings-have-rule-from? items rule-id (+ index 1)))))
+  [rule-id : String]) : bool
+  (for [index
+    (iterator.range
+      0
+      (lint_core.lint-findings-count
+        (owned_view.compiler-owned-shared-view items)))]
+    (when
+      (string.eq (lint_core.lint-findings-ref items index).rule-id rule-id)
+      (return true)))
+  false)
 
 (define (selfhost-lint-filter-derived-origins
   [path : (& path str)]
@@ -688,8 +690,7 @@
       (and
         (selfhost-lint-findings-have-rule-from?
           (owned_view.compiler-owned-shared-view items)
-          (lint_core.lint-rule-raw-arena-op-id)
-          0)
+          (lint_core.lint-rule-raw-arena-op-id))
         (selfhost-lint-raw-arena-op-allowlisted? path))]
     (selfhost-lint-filter-derived-origins-from
       path
@@ -751,8 +752,7 @@
         [n : i64 (ast.ast-decl-list-len (& decls))]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity n)]
         [rewritten : bool false]
-        [index : i64 0]
-        (while (< index n)
+        (for [index (iterator.range 0 n)]
           (let
             [decl : ast.AstDecl (ast.ast-decl-list-ref (& decls) index)]
             (match (selfhost-lint-selected-item-import
@@ -763,8 +763,7 @@
               [(Some item-import)
                 (ast.ast-decl-list-push (&mut out) item-import)
                 (set! rewritten true)]
-              [(No) (ast.ast-decl-list-push (&mut out) decl)])
-            (set! index (+ index 1))))
+              [(No) (ast.ast-decl-list-push (&mut out) decl)])))
         (if rewritten
           (ast.ast-program out)
           program))]))
@@ -887,15 +886,13 @@
   (let
     [cells : (__tl_dyn-array SelfhostLintUnsafeSurfaceName) names.slots]
     [n : i64 names.len]
-    [index : i64 0]
     (if (< n (array-length cells))
       unit
       (let
         [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceName)
           (__tl_make-array SelfhostLintUnsafeSurfaceName (* n 2))]
-        (while (< index n)
-          (set! (array-ref bigger index) (array-ref cells index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 n)]
+          (set! (array-ref bigger index) (array-ref cells index)))
         (set! cells bigger)))
     (set! (array-ref cells n) fact)
     (SelfhostLintUnsafeSurfaceNames cells (+ n 1))))
@@ -989,7 +986,7 @@
             (selfhost-lint-unsafe-surface-cache-entry index)
             path)
           path)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (< index n)
       (let
         [entry : SelfhostLintUnsafeSurfaceCacheEntry
@@ -1012,9 +1009,11 @@
   [root-module : i64]
   [out : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
   (let
-    [index : i64 0]
     [result : SelfhostLintUnsafeSurfaceNames out]
-    (while (< index (compiler_load.compiler-load-surface-decl-list-count decls))
+    (for [index
+      (iterator.range
+        0
+        (compiler_load.compiler-load-surface-decl-list-count decls))]
       (let
         [decl : compiler_load.CompilerLoadSurfaceDecl
           (compiler_load.compiler-load-surface-decl-list-at decls index)]
@@ -1029,15 +1028,13 @@
                 (string.copy (ci.intern-str decl.name))
                 decl.was-unsafe)
               result))
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     result))
 
 (define (selfhost-lint-unsafe-surface-cache-push!
   [entry : SelfhostLintUnsafeSurfaceCacheEntry]) : unit
   (let
     [n : i64 (__tl-project-field selfhost-lint-unsafe-surface-cache len)]
-    [index : i64 0]
     (if (<
       n
       (array-length
@@ -1046,11 +1043,10 @@
       (let
         [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceCacheEntry)
           (__tl_make-array SelfhostLintUnsafeSurfaceCacheEntry (* n 2))]
-        (while (< index n)
+        (for [index (iterator.range 0 n)]
           (set!
             (array-ref bigger index)
-            (selfhost-lint-unsafe-surface-cache-entry index))
-          (set! index (+ index 1)))
+            (selfhost-lint-unsafe-surface-cache-entry index)))
         (__tl-project-set-field selfhost-lint-unsafe-surface-cache slots bigger)))
     (set!
       (array-ref
@@ -1091,14 +1087,10 @@
     (match (selfhost-lint-unsafe-surface-cache-lookup
       (owned_view.compiler-owned-shared-view normalized))
       [(Hit valid names)
-        (set!
-          selfhost-lint-unsafe-surface-hit-count
-          (+ selfhost-lint-unsafe-surface-hit-count 1))
+        (+= selfhost-lint-unsafe-surface-hit-count 1)
         (Hit valid names)]
       [(Miss)
-        (set!
-          selfhost-lint-unsafe-surface-parse-count
-          (+ selfhost-lint-unsafe-surface-parse-count 1))
+        (+= selfhost-lint-unsafe-surface-parse-count 1)
         ;; Explicit file/package linting installs a growable pool context that
         ;; can safely own a second parse. Pure source helpers use the legacy
         ;; active pool, so leave their imports Unknown and use typed fallback.
@@ -1144,8 +1136,7 @@
   [names : SelfhostLintUnsafeSurfaceNames]) : unit
   (let
     [n : i64 names.len]
-    [index : i64 0]
-    (while (< index n)
+    (for [index (iterator.range 0 n)]
       (let
         [fact : SelfhostLintUnsafeSurfaceName
           (owned_view.compiler-owned-array-element-shared-view
@@ -1162,34 +1153,33 @@
             (owned_view.compiler-owned-shared-view alias)
             "/"
             fact.name)
-          fact.requires-unsafe)
-        (set! index (+ index 1))))))
+          fact.requires-unsafe)))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
   [decls : compiler_load.CompilerLoadSurfaceDeclList]
   [root-module : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler_load.compiler-load-surface-decl-list-count decls))
-      (let
-        [decl : compiler_load.CompilerLoadSurfaceDecl
-          (compiler_load.compiler-load-surface-decl-list-at decls index)]
-        (if (and
-          (= decl.module root-module)
-          (not decl.has-generated-meta)
-          (selfhost-lint-unsafe-surface-value-kind? decl.kind))
-          (lint_core.lint-unused-unsafe-classifier-add-exact-name!
-            (string.copy (ci.intern-str decl.name))
-            decl.was-unsafe)
-          unit)
-        ;; A top-level declaration can shadow an import alias. Only qualified
-        ;; references consult this root blocker, so unqualified local facts
-        ;; remain usable.
-        (if (not decl.has-generated-meta)
-          (lint_core.lint-unused-unsafe-classifier-add-unknown-root!
-            (string.copy (ci.intern-str decl.name)))
-          unit)
-        (set! index (+ index 1))))))
+  (for [index
+    (iterator.range
+      0
+      (compiler_load.compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : compiler_load.CompilerLoadSurfaceDecl
+        (compiler_load.compiler-load-surface-decl-list-at decls index)]
+      (if (and
+        (= decl.module root-module)
+        (not decl.has-generated-meta)
+        (selfhost-lint-unsafe-surface-value-kind? decl.kind))
+        (lint_core.lint-unused-unsafe-classifier-add-exact-name!
+          (string.copy (ci.intern-str decl.name))
+          decl.was-unsafe)
+        unit)
+      ;; A top-level declaration can shadow an import alias. Only qualified
+      ;; references consult this root blocker, so unqualified local facts
+      ;; remain usable.
+      (if (not decl.has-generated-meta)
+        (lint_core.lint-unused-unsafe-classifier-add-unknown-root!
+          (string.copy (ci.intern-str decl.name)))
+        unit))))
 
 (define (selfhost-lint-unsafe-surface-resolve-import
   [path : String]
@@ -1209,30 +1199,28 @@
   [stdlib-roots : lint_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [imports : compiler_load.CompilerLoadSurfaceImportList]) : unit
-  (let
-    [index : i64 0]
-    (while (<
-      index
-      (compiler_load.compiler-load-surface-import-list-count imports))
-      (let
-        [import-edge : compiler_load.CompilerLoadSurfaceImport
-          (compiler_load.compiler-load-surface-import-list-at imports index)]
-        [alias : String (selfhost-lint-unsafe-surface-import-alias import-edge)]
-        (if (string.eq alias "")
-          unit
-          (match (selfhost-lint-unsafe-surface-resolve-import
-            (owned_view.compiler-owned-shared-view path)
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            import-edge)
-            [(Err _) unit]
-            [(Ok resolved)
-              (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
-                [(Miss) unit]
-                [(Hit valid names)
-                  (if valid
-                    (selfhost-lint-unsafe-surface-add-names! alias names)
-                    unit)])]))
-        (set! index (+ index 1))))))
+  (for [index
+    (iterator.range
+      0
+      (compiler_load.compiler-load-surface-import-list-count imports))]
+    (let
+      [import-edge : compiler_load.CompilerLoadSurfaceImport
+        (compiler_load.compiler-load-surface-import-list-at imports index)]
+      [alias : String (selfhost-lint-unsafe-surface-import-alias import-edge)]
+      (if (string.eq alias "")
+        unit
+        (match (selfhost-lint-unsafe-surface-resolve-import
+          (owned_view.compiler-owned-shared-view path)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          import-edge)
+          [(Err _) unit]
+          [(Ok resolved)
+            (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
+              [(Miss) unit]
+              [(Hit valid names)
+                (if valid
+                  (selfhost-lint-unsafe-surface-add-names! alias names)
+                  unit)])])))))
 
 (define (selfhost-lint-unsafe-surface-prepare!
   [path : String]
@@ -1345,9 +1333,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : lint_core.LintFindings
   (if (lint_core.lint-program-has-unused-unsafe-candidate? program)
     (begin
-      (set!
-        selfhost-lint-unused-unsafe-fallback-file-count
-        (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
+      (+= selfhost-lint-unused-unsafe-fallback-file-count 1)
       (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots cfgs))
     (lint_core.lint-findings-empty)))
 
@@ -1422,19 +1408,11 @@
       (if (> unknown-count 0)
         (selfhost-lint-findings-without-unused-unsafe ordinary)
         ordinary)]
-    (set!
-      selfhost-lint-unused-unsafe-surface-required-count
-      (+ selfhost-lint-unused-unsafe-surface-required-count required-count))
-    (set!
-      selfhost-lint-unused-unsafe-surface-unused-count
-      (+ selfhost-lint-unused-unsafe-surface-unused-count unused-count))
-    (set!
-      selfhost-lint-unused-unsafe-surface-unknown-count
-      (+ selfhost-lint-unused-unsafe-surface-unknown-count unknown-count))
+    (+= selfhost-lint-unused-unsafe-surface-required-count required-count)
+    (+= selfhost-lint-unused-unsafe-surface-unused-count unused-count)
+    (+= selfhost-lint-unused-unsafe-surface-unknown-count unknown-count)
     (if (> unknown-count 0)
-      (set!
-        selfhost-lint-unused-unsafe-fallback-file-count
-        (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
+      (+= selfhost-lint-unused-unsafe-fallback-file-count 1)
       unit)
     (lint_core.lint-unused-unsafe-classifier-disable!)
     (selfhost-lint-findings-append base typed)))
@@ -1818,19 +1796,17 @@
 
 (define (selfhost-lint-dead-last-dot-from
   [name : (& name str)]
-  [index : i64]
   [last-dot : i64]) : i64
-  (if (>= index (string.string-length name))
-    last-dot
-    (selfhost-lint-dead-last-dot-from
-      name
-      (+ index 1)
+  (for [index (iterator.range 0 (string.string-length name))]
+    (set!
+      last-dot
       (if (= (string.string-ref name index) '.')
         index
-        last-dot))))
+        last-dot)))
+  last-dot)
 
 (define (selfhost-lint-dead-last-dot [name : (& name str)]) : i64
-  (selfhost-lint-dead-last-dot-from name 0 (- 0 1)))
+  (selfhost-lint-dead-last-dot-from name (- 0 1)))
 
 (define (selfhost-lint-dead-ref-add [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
   (let
@@ -1879,7 +1855,7 @@
     (while (and (< found 0) (< i source-len))
       (if (string.is-string-prefix-at source needle i)
         (set! found i)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (selfhost-lint-dead-find-name-prefix-from
@@ -1898,24 +1874,20 @@
 
 (define (selfhost-lint-dead-index-line [source : (& source str)] [target : i64]) : i64
   (let
-    [i : i64 0]
     [line : i64 1]
-    (while (< i target)
+    (for [i (iterator.range 0 target)]
       (if (= (string.string-ref source i) '\n')
-        (set! line (+ line 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= line 1)
+        unit))
     line))
 
 (define (selfhost-lint-dead-index-col [source : (& source str)] [target : i64]) : i64
   (let
-    [i : i64 0]
     [col : i64 1]
-    (while (< i target)
+    (for [i (iterator.range 0 target)]
       (if (= (string.string-ref source i) '\n')
         (set! col 1)
-        (set! col (+ col 1)))
-      (set! i (+ i 1)))
+        (+= col 1)))
     col))
 
 (define (selfhost-lint-dead-index-span
@@ -1966,14 +1938,12 @@
 (define (selfhost-lint-dead-names-refs [names : lint_core.LintNames]) : lint_svec.Vec
   (let
     [refs : lint_svec.Vec (lint_svec.new)]
-    [index : i64 0]
-    (while (< index names.len)
+    (for [index (iterator.range 0 names.len)]
       (set!
         refs
         (selfhost-lint-dead-ref-add
           refs
-          (ci.intern-str (array-ref names.ids index))))
-      (set! index (+ index 1)))
+          (ci.intern-str (array-ref names.ids index)))))
     refs))
 
 (define (selfhost-lint-dead-decl-refs [decl : ast.AstDecl]) : lint_svec.Vec
@@ -2449,37 +2419,35 @@
 
 (define (selfhost-lint-dead-decls-index-of-from
   [items : SelfhostLintDeadDecls]
-  [name : String]
-  [index : i64]) : i64
-  (if (>= index (selfhost-lint-dead-decls-count items))
-    (- 0 1)
-    (if (string.eq
-      (__tl-project-field (selfhost-lint-dead-decls-ref items index) name)
-      name)
-      index
-      (selfhost-lint-dead-decls-index-of-from items name (+ index 1)))))
+  [name : String]) : i64
+  (for [index (iterator.range 0 (selfhost-lint-dead-decls-count items))]
+    (when
+      (string.eq
+        (__tl-project-field (selfhost-lint-dead-decls-ref items index) name)
+        name)
+      (return index)))
+  (- 0 1))
 
 (define (selfhost-lint-dead-decls-index-of
   [items : SelfhostLintDeadDecls]
   [name : String]) : i64
-  (selfhost-lint-dead-decls-index-of-from items name 0))
+  (selfhost-lint-dead-decls-index-of-from items name))
 
 (define (selfhost-lint-dead-decls-index-of-key-from
   [items : SelfhostLintDeadDecls]
-  [key : String]
-  [index : i64]) : i64
-  (if (>= index (selfhost-lint-dead-decls-count items))
-    (- 0 1)
-    (if (string.eq
-      (__tl-project-field (selfhost-lint-dead-decls-ref items index) key)
-      key)
-      index
-      (selfhost-lint-dead-decls-index-of-key-from items key (+ index 1)))))
+  [key : String]) : i64
+  (for [index (iterator.range 0 (selfhost-lint-dead-decls-count items))]
+    (when
+      (string.eq
+        (__tl-project-field (selfhost-lint-dead-decls-ref items index) key)
+        key)
+      (return index)))
+  (- 0 1))
 
 (define (selfhost-lint-dead-decls-index-of-key
   [items : SelfhostLintDeadDecls]
   [key : String]) : i64
-  (selfhost-lint-dead-decls-index-of-key-from items key 0))
+  (selfhost-lint-dead-decls-index-of-key-from items key))
 
 (define (selfhost-lint-dead-mark-refs-from
   [items : SelfhostLintDeadDecls]
@@ -2665,21 +2633,20 @@
 
 (define (selfhost-lint-package-source-list-contains-from
   [sources : (& sources lint_svec.Vec)]
-  [path : (& path str)]
-  [index : i64]) : bool
-  (if (>= index (lint_svec.len (& sources)))
-    false
-    (if (string.eq
-      (compiler_load.compiler-load-normalize-path
-        (lint_svec.get (& sources) index ""))
-      (compiler_load.compiler-load-normalize-path path))
-      true
-      (selfhost-lint-package-source-list-contains-from sources path (+ index 1)))))
+  [path : (& path str)]) : bool
+  (for [index (iterator.range 0 (lint_svec.len (& sources)))]
+    (when
+      (string.eq
+        (compiler_load.compiler-load-normalize-path
+          (lint_svec.get (& sources) index ""))
+        (compiler_load.compiler-load-normalize-path path))
+      (return true)))
+  false)
 
 (define (selfhost-lint-package-source-list-contains?
   [sources : (& sources lint_svec.Vec)]
   [path : (& path str)]) : bool
-  (selfhost-lint-package-source-list-contains-from sources path 0))
+  (selfhost-lint-package-source-list-contains-from sources path))
 
 (define (selfhost-lint-package-empty-source-list) : lint_svec.Vec
   (lint_svec.new))
@@ -2766,10 +2733,10 @@
                   (string.substring line start (- index start))))
               (set! found true))
             (begin
-              (set! field (+ field 1))
+              (+= field 1)
               (set! start (+ index 1))
-              (set! index (+ index 1))))
-          (set! index (+ index 1)))))
+              (+= index 1)))
+          (+= index 1))))
     value))
 
 (define (selfhost-lint-dead-manifest-line-end
@@ -2784,7 +2751,7 @@
         (set! done true)
         (if (= (string.string-ref source index) '\n')
           (set! done true)
-          (set! index (+ index 1)))))
+          (+= index 1))))
     index))
 
 (define (selfhost-lint-dead-manifest-roots-from
@@ -3128,13 +3095,10 @@
       [next : lint_svec.Vec queue]
       [_append : unit
         (begin
-          (let
-            [import-index : i64 0]
-            (while (< import-index (lint_svec.len (& imports)))
-              (selfhost-lint-dead-root-add!
-                (&mut next)
-                (lint_svec.get (& imports) import-index ""))
-              (set! import-index (+ import-index 1))))
+          (for [import-index (iterator.range 0 (lint_svec.len (& imports)))]
+            (selfhost-lint-dead-root-add!
+              (&mut next)
+              (lint_svec.get (& imports) import-index "")))
           unit)]
       (selfhost-lint-package-dead-path-closure-from
         next
@@ -3339,10 +3303,8 @@
   [path : String]
   [source : (& source cdiag.CompilerDiagnosticSource)]
   [items : SelfhostLintDeadDecls]
-  [index : i64]
   [printed : i64]) : i64
-  (if (>= index (selfhost-lint-dead-decls-count items))
-    printed
+  (for [index (iterator.range 0 (selfhost-lint-dead-decls-count items))]
     (let
       [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next-printed : i64
@@ -3360,12 +3322,8 @@
                 (lint_core.lint-dead-code-finding decl.name decl.span)))
             (+ printed 1))
           printed)]
-      (selfhost-lint-package-dead-print-for-source-from
-        path
-        source
-        items
-        (+ index 1)
-        next-printed))))
+      (set! printed next-printed)))
+  printed)
 
 (define (selfhost-lint-package-dead-print-for-source
   [path : String]
@@ -3374,12 +3332,7 @@
   (let
     [indexed : cdiag.CompilerDiagnosticSource
       (cdiag.compiler-diagnostic-source-index source)]
-    (selfhost-lint-package-dead-print-for-source-from
-      path
-      (& indexed)
-      items
-      0
-      0)))
+    (selfhost-lint-package-dead-print-for-source-from path (& indexed) items 0)))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.
@@ -3642,7 +3595,6 @@
 
 (define (selfhost-lint-files-from
   [input-paths : (& input-paths lint_svec.Vec)]
-  [index : i64]
   [stdlib-roots : lint_svec.Vec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
@@ -3652,8 +3604,7 @@
   [name-case : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (lint_svec.len (& input-paths)))
-    status
+  (for [index (iterator.range 0 (lint_svec.len (& input-paths)))]
     (let
       [input-path : String (lint_svec.get (& input-paths) index "")]
       [file-status : i64
@@ -3675,20 +3626,12 @@
             redundant-begin
             prefer-dotted-field
             name-case))]
-      (selfhost-lint-files-from
-        input-paths
-        (+ index 1)
-        stdlib-roots
-        enforcing
-        deprecated-string-concat
-        redundant-function-name
-        redundant-begin
-        prefer-dotted-field
-        name-case
-        print-headers
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (selfhost-lint-files
   [input-paths : (& input-paths lint_svec.Vec)]
@@ -3704,7 +3647,6 @@
   (selfhost-lint-unsafe-surface-cache-reset!)
   (selfhost-lint-files-from
     input-paths
-    0
     stdlib-roots
     enforcing
     deprecated-string-concat
@@ -3717,7 +3659,6 @@
 
 (define (selfhost-lint-package-files-from
   [input-paths : (& input-paths lint_svec.Vec)]
-  [index : i64]
   [stdlib-roots : lint_svec.Vec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
@@ -3728,8 +3669,7 @@
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (lint_svec.len (& input-paths)))
-    status
+  (for [index (iterator.range 0 (lint_svec.len (& input-paths)))]
     (let
       [input-path : String (lint_svec.get (& input-paths) index "")]
       [file-status : i64
@@ -3752,21 +3692,12 @@
             prefer-dotted-field
             name-case
             (owned_view.compiler-owned-shared-view dead-decls)))]
-      (selfhost-lint-package-files-from
-        input-paths
-        (+ index 1)
-        stdlib-roots
-        enforcing
-        deprecated-string-concat
-        redundant-function-name
-        redundant-begin
-        prefer-dotted-field
-        name-case
-        dead-decls
-        print-headers
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (selfhost-lint-package-files
   [input-paths : (& input-paths lint_svec.Vec)]
@@ -3783,7 +3714,6 @@
   (selfhost-lint-unsafe-surface-cache-reset!)
   (selfhost-lint-package-files-from
     input-paths
-    0
     stdlib-roots
     enforcing
     deprecated-string-concat

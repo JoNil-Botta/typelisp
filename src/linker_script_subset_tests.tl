@@ -1,6 +1,7 @@
 ;; Implicit linker-script subset conformance (#8303), discovered by inline-test
 ;; CI: the real profile scripts in tests/fixtures/linker-scripts/, then tables of
 ;; accepted and rejected sources.
+(import stdlib.iterator)
 (import linker_script_subset as script)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.io)
@@ -72,8 +73,7 @@
   [count : i64]) : String
   (let
     [out : String "["]
-    [index : i64 first]
-    (while (< index (+ first count))
+    (for [index (iterator.range first (+ first count))]
       (set!
         out
         (cat.str-cat
@@ -81,16 +81,14 @@
           (if (> index first)
             ", "
             "")
-          (render-input (& (array-ref read.inputs.slots index)))))
-      (set! index (+ index 1)))
+          (render-input (& (array-ref read.inputs.slots index))))))
     (cat.str-cat out "]")))
 
 ;; A read script as one line: `L:C COMMAND(...)` per command, joined by ` | `.
 (define (render-script [read : (& r script.LinkerScript)]) : String
   (let
     [out : String ""]
-    [index : i64 0]
-    (while (< index read.items.len)
+    (for [index (iterator.range 0 read.items.len)]
       (let
         [item : (& r script.LinkerScriptItem)
           (& (array-ref read.items.slots index))]
@@ -120,8 +118,7 @@
               [(Group first count)
                 (cat.str-cat "GROUP" (render-files read first count))]
               [(SearchDir name)
-                (cat.str-cat "SEARCH_DIR(" (string.copy name) ")")])))
-        (set! index (+ index 1))))
+                (cat.str-cat "SEARCH_DIR(" (string.copy name) ")")])))))
     out))
 
 (define (kind-name [kind : (& k script.LinkerScriptErrorKind)]) : String
@@ -183,15 +180,13 @@
 ;; without restating the whole message.
 (define (head [rendered : String]) : String
   (let
-    [index : i64 0]
     [cut : i64 (string.string-length rendered)]
-    (while (< index (- (string.string-length rendered) 2))
+    (for [index (iterator.range 0 (- (string.string-length rendered) 2))]
       (when
         (and
           (= cut (string.string-length rendered))
           (string.eq (string.substring rendered index 3) " | "))
-        (set! cut index))
-      (set! index (+ index 1)))
+        (set! cut index)))
     (string.substring rendered 0 cut)))
 
 (define (contains? [text : String] [needle : String]) : bool
@@ -203,7 +198,7 @@
       (when
         (string.eq (string.substring text index n) needle)
         (set! found true))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (expect-error [text : String] [want-head : String] [names : String]) : unit

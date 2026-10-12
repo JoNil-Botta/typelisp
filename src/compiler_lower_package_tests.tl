@@ -1,4 +1,5 @@
 ;; compiler_lower_package_tests.tl - package-callable lowering test support.
+(import stdlib.iterator)
 (import compiler_lower as lower)
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
@@ -29,9 +30,8 @@
 (define (compiler-lower-spmd-package-helper-count
   [functions : ir.CompilerIrFunctionSeq]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index functions.len)
+    (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-ref functions index)
         [(Function name _ _ _ _ _)
           (let
@@ -53,9 +53,8 @@
                 name-text
                 "__tl_spmd_ret_mask___tl_spmd_pkg_"
                 0))
-              (set! count (+ count 1))
-              unit))])
-      (set! index (+ index 1)))
+              (+= count 1)
+              unit))]))
     count))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
@@ -98,30 +97,28 @@
   (cast 7 : i64))")
 
 (define (compiler-lower-spmd-package-uniform-helper-render-from
-  [functions : ir.CompilerIrFunctionSeq]
-  [index : i64]) : String
-  (if (>= index functions.len)
-    ""
+  [functions : ir.CompilerIrFunctionSeq]) : String
+  (for [index (iterator.range 0 functions.len)]
     (let
       [function : ir.CompilerIrFunction
         (ir.compiler-ir-function-seq-ref functions index)]
       (match (ir.compiler-ir-global-shared-view function)
         [(Function name _ _ _ _ _)
-          (if (lower.lower-string-prefix-at?
-            (ir.compiler-ir-symbol-text name)
-            "__tl_spmd_ret_uniform___tl_spmd_pkg_"
-            0)
-            (ir.compiler-ir-function-render
-              (cis.InternStructuralSessionHandle 0)
-              (ast.ast-node-pool-reader-type-segment-bases)
-              (& function))
-            (compiler-lower-spmd-package-uniform-helper-render-from
-              functions
-              (+ index 1)))]))))
+          (when
+            (lower.lower-string-prefix-at?
+              (ir.compiler-ir-symbol-text name)
+              "__tl_spmd_ret_uniform___tl_spmd_pkg_"
+              0)
+            (return
+              (ir.compiler-ir-function-render
+                (cis.InternStructuralSessionHandle 0)
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& function))))])))
+  "")
 
 (define (compiler-lower-spmd-package-uniform-helper-render
   [functions : ir.CompilerIrFunctionSeq]) : String
-  (compiler-lower-spmd-package-uniform-helper-render-from functions 0))
+  (compiler-lower-spmd-package-uniform-helper-render-from functions))
 
 (define (compiler-lower-spmd-package-return-context-source-ok?
   [source : String]) : bool

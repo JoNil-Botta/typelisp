@@ -1515,8 +1515,8 @@
   [loaded : (& loaded TlciLoadedImage)]
   [name : String]) : ResultTlciMacroEntry
   (match (tlci-loader-resolve-macro-entry loaded name)
-    [(Resolved resolved) (tlci-loader-resolved-macro-entry loaded resolved)]
-    [(Shell resolved) (tlci-loader-resolved-macro-entry loaded resolved)]
+    [(or (Resolved resolved) (Shell resolved))
+      (tlci-loader-resolved-macro-entry loaded resolved)]
     [(Missing)
       (Err
         (if (= loaded.macro-entry-count 0)

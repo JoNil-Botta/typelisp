@@ -228,8 +228,7 @@
               (let
                 [unrelated : i64 (ci.intern "unrelated")]
                 (match (surface_identity.surface-identity-hydrate bytes key)
-                  [(Err _) false]
-                  [(KeyMismatch _) false]
+                  [(or (Err _) (KeyMismatch _)) false]
                   [(Ok hydration)
                     (let
                       [remap : (__tl_dyn-array i64)
@@ -1496,8 +1495,7 @@
                   (match (surface_identity.surface-identity-hydrate
                     identity-bytes
                     key)
-                    [(Err _) false]
-                    [(KeyMismatch _) false]
+                    [(or (Err _) (KeyMismatch _)) false]
                     [(Ok identity-hydration)
                       (let
                         [dest-pools : ast.AstNodePoolContext

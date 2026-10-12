@@ -4902,6 +4902,7 @@
     [(Some v) v]
     [None (io.panic \"none\")]))")
         "typecheck: returned reference lifetime must be tied to a parameter")]
+    ;; A reference use after the write keeps the scrutinee loan live.
     [returned-borrowed-lookup-assign-error-ok : bool
       (compiler-typecheck-error-ok?
         "(defenum Slot (Empty) (Occupied String))
@@ -4915,7 +4916,10 @@
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (set! bag (Bag (__tl_make-array Slot 1)))]
+    [(SlotFound value)
+      (begin
+        (set! bag (Bag (__tl_make-array Slot 1)))
+        (let [still : (& bag str) value] unit))]
     [SlotMissing unit]))"
         "typecheck: cannot assign to borrowed place `bag`")]
     [returned-borrowed-lookup-array-set-error-ok : bool
@@ -4931,7 +4935,10 @@
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (set! (array-ref bag.slots 0) Empty)]
+    [(SlotFound value)
+      (begin
+        (set! (array-ref bag.slots 0) Empty)
+        (let [still : (& bag str) value] unit))]
     [SlotMissing unit]))"
         "typecheck: cannot assign to borrowed place `bag.slots[0]`")]
     [regular-call-lifetime-subst-ok : bool

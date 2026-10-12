@@ -687,6 +687,13 @@ tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pat
 # leaves the box usable.
 borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
 borrowed_pattern_copy_deferred_ok|run-exit|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-
+match_copy_loan_ends_ok|run-exit|tests/safety/match_copy_loan_ends_ok.tl|42|-
+match_copy_prior_argument_loan_reject|check-fail|tests/safety/match_copy_prior_argument_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_copy_scrutinee_store_loan_reject|check-fail|tests/safety/match_copy_scrutinee_store_loan_reject.tl|-|cannot assign to borrowed place `pair.right`
+match_copy_loop_carried_loan_reject|check-fail|tests/safety/match_copy_loop_carried_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_reference_result_loan_reject|check-fail|tests/safety/match_reference_result_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_copy_shadowed_owner_loan_reject|check-fail|tests/safety/match_copy_shadowed_owner_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_reference_shadowed_result_loan_reject|check-fail|tests/safety/match_reference_shadowed_result_loan_reject.tl|-|cannot assign to borrowed place `label`
 borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
 box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
 box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path

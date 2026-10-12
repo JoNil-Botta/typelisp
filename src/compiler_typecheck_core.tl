@@ -83295,6 +83295,7 @@
   [borrowed : TcMovedSet]
   [call-expr : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (for [index (iterator.range 0 args.len)]
     (let
       [operand : i64

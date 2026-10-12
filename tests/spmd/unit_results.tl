@@ -1,8 +1,8 @@
 ;; Unit branches have effects but no vector payload, including at opt 0.
 ;; Empty ranges and both SIMD tails must leave inactive sentinel slots alone.
 (define (touch-heavy [x : i64]) : unit
-  (begin
-    (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7)
+  (let
+    [_sum : i64 (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7)]
     unit))
 
 (define (store-heavy [out : (&mut out (__tl_dyn-array i64))] [i : i64]) : unit

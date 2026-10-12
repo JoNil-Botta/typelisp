@@ -18,7 +18,7 @@ suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
 
 `compiler-driver-retained-image-owner` in `compiler_driver_smoke_tests.tl`
-checks lazy embedded-image expansion, nested owners, forgetting a borrowed
+checks embedded-image retention, nested owners, forgetting a borrowed
 owner, and reuse after the previous owner is destroyed. Run it at opt0, opt1
 and opt2. The native-route stress and stdlib identity differential gates retain
 their complete native/source batches, mapping lifecycles, source-mutation

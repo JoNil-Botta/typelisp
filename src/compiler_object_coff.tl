@@ -1,4 +1,5 @@
 ;; compiler_object_coff.tl - COFF object-file serialization for object images.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -117,15 +118,13 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [name : (& name str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (layout.compiler-object-layout-string-length name)]
-    (while (< i 8)
+    (for [i (iterator.range 0 8)]
       (if (< i n)
         (byte_buf_core.byte-buf-builder-push
           out
           (cast (layout.compiler-object-layout-string-ref name i) : u8))
-        (layout.compiler-object-layout-push-u8! out 0))
-      (set! i (+ i 1)))
+        (layout.compiler-object-layout-push-u8! out 0)))
     unit))
 
 (define (compiler-object-coff-relocation-list-supported?
@@ -143,7 +142,7 @@
       (match (cobj.compiler-object-section-list-ref sections index)
         [(Section _ _ instrs)
           (if (layout.compiler-object-layout-instrs-encodable? instrs false)
-            (set! index (+ index 1))
+            (+= index 1)
             (set! ok false))]))
     ok))
 
@@ -165,8 +164,8 @@
               (set! result cur-index)
               (set! done true))
             (begin
-              (set! cur-index (+ cur-index 1))
-              (set! slot (+ slot 1))))]))
+              (+= cur-index 1)
+              (+= slot 1)))]))
     result))
 
 (define (compiler-object-coff-symbol-index
@@ -195,7 +194,7 @@
                     site)
                   0)
                 (>= (compiler-object-coff-symbol-index image target) 0))])
-            (set! index (+ index 1))
+            (+= index 1)
             (set! ok false))]))
     ok))
 
@@ -254,34 +253,26 @@
   [image : (& image cobj.CompilerObjectImage)]
   [end : i64]) : i64
   (let
-    [index : i64 0]
     [total : i64 0]
-    (while (< index end)
-      (set!
+    (for [index (iterator.range 0 end)]
+      (+=
         total
-        (+
-          total
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (layout.compiler-object-layout-section-at index))))
-      (set! index (+ index 1)))
+        (layout.compiler-object-layout-section-raw-size
+          image
+          (layout.compiler-object-layout-section-at index))))
     total))
 
 (define (compiler-object-coff-relocation-physical-count-before
   [image : (& image cobj.CompilerObjectImage)]
   [end : i64]) : i64
   (let
-    [index : i64 0]
     [total : i64 0]
-    (while (< index end)
-      (set!
+    (for [index (iterator.range 0 end)]
+      (+=
         total
-        (+
-          total
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (layout.compiler-object-layout-section-at index))))
-      (set! index (+ index 1)))
+        (compiler-object-coff-section-relocation-physical-count
+          image
+          (layout.compiler-object-layout-section-at index))))
     total))
 
 (define (compiler-object-coff-section-raw-pointer
@@ -377,28 +368,22 @@
 (define (compiler-object-coff-push-section-headers!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index layout.compiler-object-layout-section-count)
-      (compiler-object-coff-push-section-header!
-        out
-        image
-        (layout.compiler-object-layout-section-at index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 layout.compiler-object-layout-section-count)]
+    (compiler-object-coff-push-section-header!
+      out
+      image
+      (layout.compiler-object-layout-section-at index))))
 
 (define (compiler-object-coff-render-sections!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index layout.compiler-object-layout-section-count)
-      (let
-        [kind : cobj.CompilerObjectSectionKind
-          (layout.compiler-object-layout-section-at index)]
-        (match kind
-          [(Bss) unit]
-          [_ (layout.compiler-object-layout-render-section! out image kind)]))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 layout.compiler-object-layout-section-count)]
+    (let
+      [kind : cobj.CompilerObjectSectionKind
+        (layout.compiler-object-layout-section-at index)]
+      (match kind
+        [(Bss) unit]
+        [_ (layout.compiler-object-layout-render-section! out image kind)]))))
 
 (define (compiler-object-coff-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
@@ -461,18 +446,15 @@
     [(Section _ _ instrs)
       (let
         [count : i64 (cobj.compiler-object-instr-list-count instrs)]
-        [index : i64 0]
         [end : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [instr : cobj.CompilerObjectX64Instr
               (cobj.compiler-object-instr-list-ref instrs index)]
-            (set!
+            (+=
               end
-              (+
-                end
-                (layout.compiler-object-layout-instr-size
-                  (owned_view.compiler-owned-shared-view instr))))
+              (layout.compiler-object-layout-instr-size
+                (owned_view.compiler-owned-shared-view instr)))
             (match (layout.compiler-object-layout-instr-fixup instr)
               [(None) unit]
               [(One kind target)
@@ -494,8 +476,7 @@
                   image
                   (- end 4)
                   (Branch)
-                  false-target)])
-            (set! index (+ index 1))))
+                  false-target)])))
         unit)]))
 
 (define (compiler-object-coff-render-relocations-for-section!
@@ -505,8 +486,7 @@
   [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [reloc : cobj.CompilerObjectRelocation
           (cobj.compiler-object-relocation-list-ref relocs index)]
@@ -514,32 +494,25 @@
           [(Relocation section _ _ _)
             (if (cobj.compiler-object-section-kind-eq? section kind)
               (compiler-object-coff-render-relocation! out image reloc)
-              unit)])
-        (set! index (+ index 1))))
+              unit)])))
     unit))
 
 (define (compiler-object-coff-render-relocations!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index layout.compiler-object-layout-section-count)
-      (let
-        [kind : cobj.CompilerObjectSectionKind
-          (layout.compiler-object-layout-section-at index)]
-        (compiler-object-coff-render-relocation-overflow-sentinel!
-          out
-          image
-          kind)
-        (match kind
-          [(Text) (compiler-object-coff-render-text-relocations! out image)]
-          [_
-            (compiler-object-coff-render-relocations-for-section!
-              out
-              image
-              image.relocations
-              kind)])
-        (set! index (+ index 1))))))
+  (for [index (iterator.range 0 layout.compiler-object-layout-section-count)]
+    (let
+      [kind : cobj.CompilerObjectSectionKind
+        (layout.compiler-object-layout-section-at index)]
+      (compiler-object-coff-render-relocation-overflow-sentinel! out image kind)
+      (match kind
+        [(Text) (compiler-object-coff-render-text-relocations! out image)]
+        [_
+          (compiler-object-coff-render-relocations-for-section!
+            out
+            image
+            image.relocations
+            kind)]))))
 
 (define (compiler-object-coff-symbol-name-long? [name : (& name str)]) : bool
   (> (layout.compiler-object-layout-string-length name) 8))
@@ -563,13 +536,11 @@
                 (set! result cur-offset)
                 (set! done true))
               (begin
-                (set!
+                (+=
                   cur-offset
-                  (+
-                    cur-offset
-                    (+ (layout.compiler-object-layout-string-length found) 1)))
-                (set! index (+ index 1))))
-            (set! index (+ index 1)))]))
+                  (+ (layout.compiler-object-layout-string-length found) 1))
+                (+= index 1)))
+            (+= index 1))]))
     result))
 
 (define (compiler-object-coff-symbol-string-offset
@@ -634,13 +605,11 @@
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]) : unit
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-object-coff-render-symbol!
         out
         image
-        (cobj.compiler-object-symbol-list-ref symbols index))
-      (set! index (+ index 1)))
+        (cobj.compiler-object-symbol-list-ref symbols index)))
     unit))
 
 (define (compiler-object-coff-string-table-size-from
@@ -648,17 +617,13 @@
   [size : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
     [total : i64 size]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-symbol-list-ref symbols index)
         [(Symbol name _ _ _)
           (if (compiler-object-coff-symbol-name-long? name)
-            (set!
-              total
-              (+ total (+ (layout.compiler-object-layout-string-length name) 1)))
-            unit)])
-      (set! index (+ index 1)))
+            (+= total (+ (layout.compiler-object-layout-string-length name) 1))
+            unit)]))
     total))
 
 (define (compiler-object-coff-string-table-size
@@ -845,9 +810,9 @@
                       "coff: windows-x86_64 symbol "
                       name
                       " makes the string table exceed its 32-bit size"))
-                  (set! table-size (+ table-size (+ name-size 1)))))
+                  (+= table-size (+ name-size 1))))
               unit)])
-        (set! index (+ index 1)))
+        (+= index 1))
       (if (> (layout.compiler-object-layout-string-length error) 0)
         (CompilerObjectCoffLayoutAccumulator acc.offset error)
         (if (or
@@ -877,26 +842,24 @@
         (CompilerObjectCoffLayoutAccumulator
           (compiler-object-coff-header-size)
           "")]
-      [index : i64 0]
-      (while (< index layout.compiler-object-layout-section-count)
+      (for [index
+        (iterator.range 0 layout.compiler-object-layout-section-count)]
         (set!
           acc
           (compiler-object-coff-check-section-data-layout
             acc
             image
             (layout.compiler-object-layout-section-at index)
-            max-output-size))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index layout.compiler-object-layout-section-count)
+            max-output-size)))
+      (for [index
+        (iterator.range 0 layout.compiler-object-layout-section-count)]
         (set!
           acc
           (compiler-object-coff-check-section-relocation-layout
             acc
             image
             (layout.compiler-object-layout-section-at index)
-            max-output-size))
-        (set! index (+ index 1)))
+            max-output-size)))
       (set!
         acc
         (compiler-object-coff-check-symbol-table-layout
@@ -918,15 +881,13 @@
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]) : unit
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-symbol-list-ref symbols index)
         [(Symbol name _ _ _)
           (when
             (compiler-object-coff-symbol-name-long? name)
             (layout.compiler-object-layout-push-string-bytes! out name)
-            (layout.compiler-object-layout-push-u8! out 0))])
-      (set! index (+ index 1)))
+            (layout.compiler-object-layout-push-u8! out 0))]))
     unit))
 
 (define (compiler-object-coff-render-string-table!
@@ -1435,8 +1396,7 @@
       [builder : cobj.CompilerObjectRelocationBuilder
         (cobj.compiler-object-relocation-builder-with-capacity
           (+ data-count rodata-count))]
-      [index : i64 0]
-      (while (< index data-count)
+      (for [index (iterator.range 0 data-count)]
         (set!
           builder
           (cobj.compiler-object-relocation-builder-push
@@ -1447,10 +1407,8 @@
               (Abs64)
               (if (= index (- data-count 1))
                 "foreign_exact"
-                "_tl_answer"))))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index rodata-count)
+                "_tl_answer")))))
+      (for [index (iterator.range 0 rodata-count)]
         (set!
           builder
           (cobj.compiler-object-relocation-builder-push
@@ -1461,8 +1419,7 @@
               (Abs64)
               (if (= index (- rodata-count 1))
                 "foreign_exact"
-                "_tl_answer"))))
-        (set! index (+ index 1)))
+                "_tl_answer")))))
       (cobj.compiler-object-relocation-builder-finish builder))))
 
 (cfg

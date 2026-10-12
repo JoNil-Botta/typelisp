@@ -2,6 +2,7 @@
 ;;
 ;; The formatter CLI logic, main-free so the unified `main.tl` dispatcher and
 ;; the formatter tests can run the `fmt` command without duplicating a `main`.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -161,47 +162,38 @@
 (define (fmt-format-file-scoped [check : bool] [path : String]) : i64
   (with-arena file-arena (fmt-format-file check path)))
 
-(define (fmt-files-from
-  [check : bool]
-  [paths : fmt_svec.Vec]
-  [index : i64]
-  [status : i64]) : i64
-  (if (>= index (fmt_svec.len (& paths)))
-    status
+(define (fmt-files-from [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
+  (for [index (iterator.range 0 (fmt_svec.len (& paths)))]
     (let
       [path : String (fmt_svec.get (& paths) index "")]
       [file-status : i64 (fmt-format-file-scoped check path)]
-      (fmt-files-from
-        check
-        paths
-        (+ index 1)
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (fmt-files [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
-  (fmt-files-from check paths 0 status))
+  (fmt-files-from check paths status))
 
 (define (fmt-package-files-from
   [check : bool]
   [paths : fmt_svec.Vec]
-  [index : i64]
   [status : i64]) : i64
-  (if (>= index (fmt_svec.len (& paths)))
-    status
+  (for [index (iterator.range 0 (fmt_svec.len (& paths)))]
     (let
       [path : String (fmt_svec.get (& paths) index "")]
       [file-status : i64 (fmt-format-file-scoped check path)]
-      (fmt-package-files-from
-        check
-        paths
-        (+ index 1)
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (fmt-package-files [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
-  (fmt-package-files-from check paths 0 status))
+  (fmt-package-files-from check paths status))
 
 (define (fmt-package
   [check : bool]

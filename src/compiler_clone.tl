@@ -13,6 +13,7 @@
 ;; Clone-able values are scalars, String, tuples, fixed arrays, dynamic arrays,
 ;; Box of a clone-able type, and clone-able named aggregates. Function,
 ;; reference, raw-pointer, str, and compile-time-only values are not clone-able.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
@@ -66,15 +67,12 @@
 (define (clone-root-entries-materialize-helper-names!
   [roots : CloneRootEntries]) : unit
   (let
-    [index : i64 0]
     [count : i64 (clone-root-entries-len roots)]
-    (while (< index count)
-      (begin
-        (clone-helper-name-id-materialize-for-key!
-          (clone-root-entries-key-id-at-or roots index -1)
-          (clone-root-entries-helper-id-at-or roots index -1))
-        unit)
-      (set! index (+ index 1)))))
+    (for [index (iterator.range 0 count)]
+      (clone-helper-name-id-materialize-for-key!
+        (clone-root-entries-key-id-at-or roots index -1)
+        (clone-root-entries-helper-id-at-or roots index -1))
+      unit)))
 
 (define (clone-root-module-id) : i64
   -1)
@@ -134,14 +132,12 @@
 
 (define (clone-type-name-last-slash [name : (& name str)]) : i64
   (let
-    [i : i64 0]
     [n : i64 (string.string-length name)]
     [last : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (= (cast (string.string-ref name i) : i64) (cast '/' : i64))
         (set! last i)
-        unit)
-      (set! i (+ i 1)))
+        unit))
     last))
 
 (define (clone-type-name-module [name : (& name str)]) : String
@@ -205,9 +201,8 @@
   (let
     [aliases : clone_id_map.Map (clone_id_map.with-capacity 64)]
     [current-module-id : i64 (clone-root-module-id)]
-    [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       ;; Borrowed classification first: only module markers and imports
       ;; carry a payload this alias table reads.
       (if (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
@@ -222,8 +217,7 @@
                 target)
               unit)]
           [_ unit])
-        unit)
-      (set! index (+ index 1)))
+        unit))
     (CloneNameSet (clone_id_map.with-capacity 8) aliases)))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
@@ -376,12 +370,9 @@
   [src : (& src (__tl_dyn-array CloneRootEntry))]
   [index : i64]
   [count : i64]) : unit
-  (let
-    [cursor : i64 index]
-    (while (< cursor count)
-      (set! (array-ref dst cursor) (array-ref src cursor))
-      (set! cursor (+ cursor 1)))
-    unit))
+  (for [cursor (iterator.range index count)]
+    (set! (array-ref dst cursor) (array-ref src cursor)))
+  unit)
 
 (define (clone-root-entries-store-grow!
   [store : (&mut store CloneRootEntryStore)]) : unit
@@ -513,7 +504,7 @@
               (set! result key-id)
               (set! found true)))
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if ambiguous
       fallback
       result)))
@@ -548,7 +539,7 @@
             (if (not (clone_id_map.contains? (& out.key-index) key-id))
               (clone_id_map.insert-ref! (&mut out.key-index) key-id physical)
               unit))))
-      (set! index (- index 1)))
+      (-= index 1))
     (clone-root-entries-store-write! out-address out)
     (Dense out-address 0 count)))
 
@@ -870,9 +861,8 @@
   (let
     [out : CloneNameSet acc]
     [current-module-id : i64 module-id]
-    [index : i64 0]
     [count : i64 (ast.ast-decl-list-len decls)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       ;; Same borrowed classification as the fixpoint step above.
       (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
         decls
@@ -893,8 +883,7 @@
                 out
                 (clone-name-key-id-in-module current-module-id name)))]
           [_ unit])
-        unit)
-      (set! index (+ index 1)))
+        unit))
     out))
 
 (define (clone-all-type-names
@@ -1091,7 +1080,7 @@
               (set! done true))]
           [_ unit])
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     out))
 
 (define (clone-root-add-name-deps
@@ -1206,9 +1195,8 @@
   [cursor : CloneRootEntries]) : CloneRootEntries
   (let
     [out : CloneRootEntries roots]
-    [index : i64 0]
     [count : i64 (clone-root-entries-len cursor)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [name-key-id : i64 (clone-root-entries-key-id-at-or cursor index -1)]
         (set!
@@ -1219,8 +1207,7 @@
             decls
             able
             (clone-root-add-name pools decls able out name-key-id)
-            name-key-id))
-        (set! index (+ index 1))))
+            name-key-id))))
     out))
 
 (define (clone-stdlib-handoff-roots
@@ -1291,14 +1278,12 @@
   [names : CloneRootEntries]
   [acc : CloneNameSet]) : CloneNameSet
   (let
-    [index : i64 0]
     [count : i64 (clone-root-entries-len names)]
     [out : CloneNameSet acc]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (clone-name-set-insert-id
           out
-          (clone-root-entries-key-id-at-or names index -1)))
-      (set! index (+ index 1)))
+          (clone-root-entries-key-id-at-or names index -1))))
     out))

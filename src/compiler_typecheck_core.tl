@@ -60043,10 +60043,7 @@
 ;; environment. When its longest qualified prefix names another module's
 ;; global, report the ownership rule the unqualified forms get instead of an
 ;; unbound name.
-(define (tc-set-foreign-qualified-global-message
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]) : TcMaybeString
+(define (tc-set-foreign-qualified-global-message [ctx : TcContext] [name : i64]) : TcMaybeString
   (if (and (>= name 0) (< name (ci.intern-capacity)))
     (let
       [candidate : i64 name]
@@ -60057,7 +60054,7 @@
         (>= candidate 0)
         (>= (ci.intern-first-dot candidate) 0))
         (let
-          [handle : i64 (tc-move-value-symbol-handle-id ctx env candidate)]
+          [handle : i64 (tc-move-value-symbol-handle-id ctx candidate)]
           (if (and
             (csym.compiler-symbols-handle-found? handle)
             (=
@@ -60111,7 +60108,7 @@
           [(Err _) false]
           [(Ok _ _)
             (let
-              [handle : i64 (tc-move-value-symbol-handle-id ctx env name)]
+              [handle : i64 (tc-move-value-symbol-handle-id ctx name)]
               [kind : i64 (csym.compiler-symbol-handle-kind handle)]
               (cond
                 [(not (csym.compiler-symbols-handle-found? handle)) false]
@@ -60186,7 +60183,7 @@
       [(Err message)
         (if (tc-set-function-declaration? ctx env name)
           (Err (tc-set-function-declaration-message ctx name))
-          (match (tc-set-foreign-qualified-global-message ctx env name)
+          (match (tc-set-foreign-qualified-global-message ctx name)
             [(Some foreign) (Err foreign)]
             [(No) (Err message)]))])))
 
@@ -65991,7 +65988,6 @@
 (defmacro (tc-move-discharge-call-args
   [ctx : Expr]
   [expr-bases : Expr]
-  [env : Expr]
   [locals : Expr]
   [moved : Expr]
   [func : Expr]
@@ -66001,7 +65997,6 @@
     (tc-move-discharge-call-args-impl
       ,ctx
       ,expr-bases
-      ,env
       ,locals
       ,moved
       ,func
@@ -67580,10 +67575,7 @@
         base-id
         fallback))))
 
-(define (tc-move-value-symbol-handle-id
-  [ctx : TcContext]
-  [_env : TcTypeEnv]
-  [name-id : i64]) : i64
+(define (tc-move-value-symbol-handle-id [ctx : TcContext] [name-id : i64]) : i64
   (let
     [lookup-id : i64
       (tc-env-name-key-id (tc-context-structural-session ctx) name-id)]
@@ -67617,12 +67609,9 @@
             lookup-id
             (csym.compiler-symbols-missing-handle)))))))
 
-(define (tc-move-ordinary-global-value-id?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name-id : i64]) : bool
+(define (tc-move-ordinary-global-value-id? [ctx : TcContext] [name-id : i64]) : bool
   (let
-    [handle : i64 (tc-move-value-symbol-handle-id ctx env name-id)]
+    [handle : i64 (tc-move-value-symbol-handle-id ctx name-id)]
     (and
       (csym.compiler-symbols-handle-found? handle)
       (=
@@ -67641,7 +67630,6 @@
 
 (define (tc-move-global-source-root?
   [ctx : TcContext]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [root-id : i64]) : bool
   (and
@@ -67649,7 +67637,7 @@
     (or
       (tc-env-key-has-name-id? root-id)
       (macro-hygiene-global-id? (tc-context-structural-session ctx) root-id))
-    (tc-move-ordinary-global-value-id? ctx env root-id)))
+    (tc-move-ordinary-global-value-id? ctx root-id)))
 
 ;; A Copy projection may be read from a non-Copy global, so the value type gates
 ;; the root classification. Explicit/auto borrow expressions have no movable
@@ -67667,7 +67655,7 @@
       expr-bases
       (tc-global-shared-view expr))
       [(Some root-id)
-        (if (tc-move-global-source-root? ctx env locals root-id)
+        (if (tc-move-global-source-root? ctx locals root-id)
           (tc-move-global-source-result ctx expr-bases env moved expr root-id)
           (Ok moved))]
       [(No) (Ok moved)])
@@ -67850,11 +67838,7 @@
             env
             (tc-global-shared-view locals)
             v-id)
-          (tc-move-global-source-root?
-            ctx
-            env
-            (tc-global-shared-view locals)
-            v-id))
+          (tc-move-global-source-root? ctx (tc-global-shared-view locals) v-id))
           (Err
             (tc-locate-error-at-expr
               expr-bases
@@ -67909,11 +67893,7 @@
             (tc-global-shared-view locals)
             (tc-global-shared-view init)
             (tc-resolve-type ctx init-ty))
-          (tc-move-global-source-root?
-            ctx
-            env
-            (tc-global-shared-view locals)
-            v-id))
+          (tc-move-global-source-root? ctx (tc-global-shared-view locals) v-id))
           (Err
             (tc-locate-error-at-expr
               expr-bases
@@ -67979,7 +67959,6 @@
 (define (tc-move-global-source-target-move-only?
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]
@@ -67994,14 +67973,14 @@
           (match (tc-move-bare-var expr-bases expr)
             [(Some _ _)
               (and
-                (tc-move-global-source-root? ctx env locals root-id)
+                (tc-move-global-source-root? ctx locals root-id)
                 (not
                   (or
                     (tc-move-global-target-shallow-copyable? ctx target-ty)
                     (tc-move-global-target-shallow-copyable? ctx value-ty))))]
             [(No)
               (and
-                (tc-move-global-source-root? ctx env locals root-id)
+                (tc-move-global-source-root? ctx locals root-id)
                 (not (tc-move-global-target-shallow-copyable? ctx value-ty)))])]
         [(No) false])]))
 
@@ -69811,7 +69790,6 @@
 (define (tc-move-discharge-call-args-impl
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [func : ast.AstExpr]
@@ -69826,7 +69804,7 @@
         (tc-expr-var-name-id expr-bases (tc-global-shared-view func))]
       [callee : i64
         (if (>= callee-id 0)
-          (tc-move-value-symbol-handle-id ctx env callee-id)
+          (tc-move-value-symbol-handle-id ctx callee-id)
           (csym.compiler-symbols-missing-handle))]
       [out : TcMovedSet moved]
       (for [index (iterator.range 0 (ast.ast-expr-list-len (& args)))]
@@ -69946,7 +69924,6 @@
             (tc-move-discharge-call-args
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               moved-args0
               (tc-global-shared-view func)
@@ -70961,7 +70938,6 @@
                   (match (tc-move-foreign-global-place-check
                     ctx
                     expr-bases
-                    env
                     (tc-global-shared-view locals)
                     (ast.ast-expr-list-get (& args) 0 0)
                     "mutably borrow")
@@ -72577,12 +72553,11 @@
 ;; The handle of the global a place root names when another module owns it.
 (define (tc-move-foreign-global-root-handle
   [ctx : TcContext]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [root-id : i64]) : TcMaybeNameId
-  (if (tc-move-global-source-root? ctx env locals root-id)
+  (if (tc-move-global-source-root? ctx locals root-id)
     (let
-      [handle : i64 (tc-move-value-symbol-handle-id ctx env root-id)]
+      [handle : i64 (tc-move-value-symbol-handle-id ctx root-id)]
       (if (tc-module-ids-same?
         (tc-move-global-owner-module-id ctx handle)
         (tc-context-module-id ctx))
@@ -72623,12 +72598,11 @@
 (define (tc-move-foreign-global-root-check
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [site : ast.AstExpr]
   [root-id : i64]
   [operation : String]) : ResultTcUnit
-  (match (tc-move-foreign-global-root-handle ctx env locals root-id)
+  (match (tc-move-foreign-global-root-handle ctx locals root-id)
     [(Some handle)
       (Err
         (tc-locate-error-at-expr
@@ -72640,7 +72614,6 @@
 (define (tc-move-foreign-global-place-check
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [place-box : i64]
   [operation : String]) : ResultTcUnit
@@ -72653,7 +72626,6 @@
         (tc-move-foreign-global-root-check
           ctx
           expr-bases
-          env
           locals
           place
           root-id
@@ -72673,7 +72645,6 @@
   (tc-move-foreign-global-root-check
     ctx
     expr-bases
-    env
     locals
     (ast.ast-expr-segment-bases-get expr-bases rhs-box)
     (if (tc-dotted-place-name-id? ctx env name)
@@ -72728,7 +72699,6 @@
                   (tc-move-foreign-global-root-check
                     ctx
                     expr-bases
-                    env
                     (tc-global-shared-view locals)
                     expr
                     (if (tc-dotted-place-name-id? ctx env name)
@@ -72754,7 +72724,6 @@
                       (tc-move-foreign-global-root-check
                         ctx
                         expr-bases
-                        env
                         (tc-global-shared-view locals)
                         expr
                         (if (tc-dotted-place-name-id? ctx env name)
@@ -73512,7 +73481,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               array-box
               "assign to an element of"))]
@@ -73583,7 +73551,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               array-box
               "take an element of"))]
@@ -73626,7 +73593,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               place-box
               "replace a place in"))]
@@ -73703,7 +73669,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               receiver-box
               "assign to part of"))]
@@ -73766,7 +73731,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               array-box
               "push onto"))]
@@ -74425,7 +74389,6 @@
             (tc-move-foreign-global-place-check
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               box-box
               "assign through"))]
@@ -74715,7 +74678,6 @@
           (tc-move-foreign-global-place-check
             ctx
             expr-bases
-            env
             (tc-global-shared-view locals)
             inner-box
             "mutably borrow")
@@ -75304,7 +75266,6 @@
                       (tc-move-global-source-target-move-only?
                         ctx
                         expr-bases
-                        env
                         (tc-global-shared-view locals)
                         (tc-global-shared-view expr)
                         (tc-global-shared-view result-ty)

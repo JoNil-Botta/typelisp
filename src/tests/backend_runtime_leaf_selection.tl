@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_backend_runtime_common as common)
@@ -84,15 +85,9 @@
 
 (test
   runtime-leaf-reference-inventory
-  (let
-    [which : i64 0]
-    (while (< which 5)
-      (let
-        [mode : i64 0]
-        (while (< mode 8)
-          (check-reference which mode)
-          (set! mode (+ mode 1)))
-        (set! which (+ which 1))))))
+  (for [which (iterator.range 0 5)]
+    (for [mode (iterator.range 0 8)]
+      (check-reference which mode))))
 
 (define (leaf-features [mask : i64]) : common.CompilerBackendRuntimeFeatures
   (common.CompilerBackendRuntimeFeatures
@@ -108,31 +103,26 @@
 
 (test
   runtime-leaf-recipe-subsets
-  (let
-    [mask : i64 0]
-    (while (< mask 32)
-      (let
-        [features (leaf-features mask)]
-        [asm (linux.compiler-backend-runtime-functions (& features))]
-        [win (windows.compiler-backend-runtime-functions (& features))]
-        [full (leaf-features 31)]
-        [which : i64 0]
-        (test.assert-true
-          (string.contains (& asm) ".globl tl_memcpy\n")
-          "forward copy leaves retain their common copy core")
-        (test.assert-true
-          (string.eq win (windows.compiler-backend-runtime-functions (& full)))
-          "Linux leaf selection preserves Windows runtime")
-        (while (< which 5)
-          (let
-            [anchor (str_cat.str-cat ".globl " (leaf-name which) "\n" "")]
-            (test.assert-true
-              (=
-                (string.contains (& asm) (& anchor))
-                (!= (bit-and mask (shl 1 which)) 0))
-              "only selected runtime leaves are emitted")
-            (set! which (+ which 1))))
-        (set! mask (+ mask 1))))))
+  (for [mask (iterator.range 0 32)]
+    (let
+      [features (leaf-features mask)]
+      [asm (linux.compiler-backend-runtime-functions (& features))]
+      [win (windows.compiler-backend-runtime-functions (& features))]
+      [full (leaf-features 31)]
+      (test.assert-true
+        (string.contains (& asm) ".globl tl_memcpy\n")
+        "forward copy leaves retain their common copy core")
+      (test.assert-true
+        (string.eq win (windows.compiler-backend-runtime-functions (& full)))
+        "Linux leaf selection preserves Windows runtime")
+      (for [which (iterator.range 0 5)]
+        (let
+          [anchor (str_cat.str-cat ".globl " (leaf-name which) "\n" "")]
+          (test.assert-true
+            (=
+              (string.contains (& asm) (& anchor))
+              (!= (bit-and mask (shl 1 which)) 0))
+            "only selected runtime leaves are emitted"))))))
 
 (test
   runtime-leaf-selection-keeps-library-and-windows-recipes

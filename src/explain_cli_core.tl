@@ -1,5 +1,6 @@
 ;; explain_cli_core.tl - Long-form diagnostic code explanations.
 ;; Published codes and meanings are append-only.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -656,7 +657,7 @@ See also:
         (diagnostic-explain-ascii-fold-char (string.string-ref right index)))
         unit
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (define (diagnostic-explain-ascii-case-contains
@@ -679,11 +680,11 @@ See also:
               (string.string-ref needle offset)))
             unit
             (set! same false))
-          (set! offset (+ offset 1)))
+          (+= offset 1))
         (if same
           (set! found true)
           unit))
-      (set! start (+ start 1)))
+      (+= start 1))
     found))
 
 (define (diagnostic-explain-lookup [code : String]) : DiagnosticExplainLookup
@@ -806,19 +807,16 @@ See also:
 
 (define (diagnostic-explain-list) : i64
   (let
-    [index : i64 0]
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
-    (while (< index count)
-      (diagnostic-explain-print-registry-row index)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (diagnostic-explain-print-registry-row index))
     0))
 
 (define (diagnostic-explain-search [term : String]) : i64
   (let
-    [index : i64 0]
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [matches : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
         [title : String (cdiag.compiler-diagnostic-code-registry-title index)]
@@ -830,9 +828,8 @@ See also:
                 (diagnostic-explain-ascii-case-contains title term)
                 (diagnostic-explain-ascii-case-contains text term))
               (diagnostic-explain-print-registry-row index)
-              (set! matches (+ matches 1)))]
-          [DiagnosticExplainUnknown unit]))
-      (set! index (+ index 1)))
+              (+= matches 1))]
+          [DiagnosticExplainUnknown unit])))
     (if (> matches 0)
       0
       (begin

@@ -4,6 +4,7 @@
 ;; is represented here by three canonical Huffman alphabets: literal-or-match,
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
+(import stdlib.iterator)
 (import stdlib.byte_le)
 (import stdlib.string)
 (import compiler_lzss as lzss)
@@ -77,7 +78,7 @@
         (cast (string.string-ref prefix index) : u8))
         (set! matches false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     matches))
 
 (define (compiler-embedded-stdlib-tlci-codec-table-bytes) : i64
@@ -149,8 +150,7 @@
     [first-symbols : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
     [active : i64 0]
     [max-bits : i64 0]
-    [symbol : i64 0]
-    (while (< symbol alphabet-size)
+    (for [symbol (iterator.range 0 alphabet-size)]
       (let
         [bits : i64 (cast (array-ref payload (+ start symbol)) : i64)]
         (when
@@ -160,9 +160,8 @@
         (when
           (> bits 0)
           (set! (array-ref counts bits) (+ (array-ref counts bits) 1))
-          (set! active (+ active 1))
-          (when (> bits max-bits) (set! max-bits bits)))
-        (set! symbol (+ symbol 1))))
+          (+= active 1)
+          (when (> bits max-bits) (set! max-bits bits)))))
     (if (= active 0)
       (Ok
         (CompilerEmbeddedStdlibTlciHuffmanTable
@@ -176,16 +175,14 @@
           0
           0))
       (let
-        [bits : i64 1]
         [left : i64 1]
-        (while (<= bits max-bits)
+        (for [bits (iterator.range 1 (+ max-bits 1))]
           (set! left (- (* left 2) (array-ref counts bits)))
           (when
             (< left 0)
             (return
               (Err
-                "embedded stdlib tlci envelope: oversubscribed huffman table")))
-          (set! bits (+ bits 1)))
+                "embedded stdlib tlci envelope: oversubscribed huffman table"))))
         (if (!= left 0)
           (Err "embedded stdlib tlci envelope: incomplete huffman table")
           (let
@@ -203,10 +200,9 @@
               (set! (array-ref first-codes code-bits) code)
               (set! (array-ref first-symbols code-bits) ordered)
               (set! (array-ref next code-bits) ordered)
-              (set! ordered (+ ordered (array-ref counts code-bits)))
-              (set! code-bits (+ code-bits 1)))
-            (set! symbol 0)
-            (while (< symbol alphabet-size)
+              (+= ordered (array-ref counts code-bits))
+              (+= code-bits 1))
+            (for [symbol (iterator.range 0 alphabet-size)]
               (let
                 [length : i64 (cast (array-ref payload (+ start symbol)) : i64)]
                 (if (> length 0)
@@ -214,8 +210,7 @@
                     [position : i64 (array-ref next length)]
                     (set! (array-ref symbols position) symbol)
                     (set! (array-ref next length) (+ position 1)))
-                  unit)
-                (set! symbol (+ symbol 1))))
+                  unit)))
             ;; Directly expand all codes up to 16 bits. Main and length
             ;; symbols always fit and effectively all real distance tokens
             ;; do too. Longer malformed/rare tables retain the fallback.
@@ -224,7 +219,6 @@
               (<= code-bits max-bits)
               (<= code-bits (compiler-embedded-stdlib-tlci-codec-lookup-bits)))
               (let
-                [offset : i64 0]
                 [count : i64 (array-ref counts code-bits)]
                 [repeats : i64
                   (shl
@@ -232,7 +226,7 @@
                     (-
                       (compiler-embedded-stdlib-tlci-codec-lookup-bits)
                       code-bits))]
-                (while (< offset count)
+                (for [offset (iterator.range 0 count)]
                   (let
                     [canonical : i64
                       (+ (array-ref first-codes code-bits) offset)]
@@ -241,13 +235,10 @@
                         symbols
                         (+ (array-ref first-symbols code-bits) offset))]
                     [base : i64 (* canonical repeats)]
-                    [repeat : i64 0]
                     [packed : i64 (bit-or (shl code-bits 13) (+ decoded 1))]
-                    (while (< repeat repeats)
-                      (set! (array-ref lookup (+ base repeat)) packed)
-                      (set! repeat (+ repeat 1)))
-                    (set! offset (+ offset 1))))
-                (set! code-bits (+ code-bits 1))))
+                    (for [repeat (iterator.range 0 repeats)]
+                      (set! (array-ref lookup (+ base repeat)) packed))))
+                (+= code-bits 1)))
             (Ok
               (CompilerEmbeddedStdlibTlciHuffmanTable
                 counts
@@ -278,8 +269,8 @@
             (bit-or
               (shl reader.buffer 8)
               (cast (array-ref payload reader.next-byte) : i64)))
-          (set! reader.next-byte (+ reader.next-byte 1))
-          (set! reader.available (+ reader.available 8)))
+          (+= reader.next-byte 1)
+          (+= reader.available 8))
         (let
           [prefix : i64
             (bit-and
@@ -297,12 +288,11 @@
               [symbol : i64 (- (bit-and entry 8191) 1)]
               [remaining : i64 (- reader.available length)]
               (set! reader.available remaining)
-              (set! reader.consumed (+ reader.consumed length))
+              (+= reader.consumed length)
               (return (Ok symbol))))))
       (let
         [code : i64 0]
-        [bits : i64 1]
-        (while (<= bits table.max-bits)
+        (for [bits (iterator.range 1 (+ table.max-bits 1))]
           (when
             (>= reader.consumed bit-len)
             (return
@@ -314,11 +304,11 @@
               (set!
                 reader.buffer
                 (cast (array-ref payload reader.next-byte) : i64))
-              (set! reader.next-byte (+ reader.next-byte 1))
+              (+= reader.next-byte 1)
               (set! reader.available 8))
             (set! bit (bit-and (shr reader.buffer (- reader.available 1)) 1))
-            (set! reader.available (- reader.available 1))
-            (set! reader.consumed (+ reader.consumed 1))
+            (-= reader.available 1)
+            (+= reader.consumed 1)
             (set! code (bit-or (shl code 1) bit)))
           (let
             [first : i64 (array-ref table.first-codes bits)]
@@ -330,8 +320,7 @@
                 (Ok
                   (array-ref
                     table.symbols
-                    (+ (array-ref table.first-symbols bits) offset))))))
-          (set! bits (+ bits 1)))
+                    (+ (array-ref table.first-symbols bits) offset)))))))
         (Err "embedded stdlib tlci envelope: invalid huffman code")))))
 
 (define (compiler-embedded-stdlib-tlci-codec-decode-with-tables
@@ -441,8 +430,8 @@
                           (unsafe
                             (ptr-read (ptr-offset payload-data next-byte)))
                           : i64)))
-                    (set! next-byte (+ next-byte 1))
-                    (set! available (+ available 8))))
+                    (+= next-byte 1)
+                    (+= available 8)))
                 ;; 48 <= available <= 64 here, so every shift count below
                 ;; is in [0, 48] on the paths that use it.
                 (let
@@ -461,8 +450,8 @@
                         (ptr-write!
                           (ptr-offset out-data out-index)
                           (cast (- (bit-and entry 8191) 1) : u8)))
-                      (set! out-index (+ out-index 1))
-                      (set! available (- available (shr entry 13)))]
+                      (+= out-index 1)
+                      (-= available (shr entry 13))]
                     [else
                       (let
                         [after-main : i64 (- available (shr entry 13))]
@@ -507,7 +496,7 @@
                                   out-index
                                   distance
                                   length)
-                                (set! out-index (+ out-index length)))))))])))
+                                (+= out-index length))))))])))
               (set! consumed (- (* (- next-byte bit-start) 8) available))
               (when
                 (< out-index raw-len)
@@ -523,8 +512,8 @@
                       (bit-or
                         (shl buffer 8)
                         (cast (array-ref payload next-byte) : i64)))
-                    (set! next-byte (+ next-byte 1))
-                    (set! available (+ available 8)))
+                    (+= next-byte 1)
+                    (+= available 8))
                   (let
                     [entry : i64
                       (array-ref
@@ -534,8 +523,8 @@
                       (> entry 0)
                       (let
                         [length : i64 (shr entry 13)]
-                        (set! available (- available length))
-                        (set! consumed (+ consumed length))
+                        (-= available length)
+                        (+= consumed length)
                         (set! symbol (- (bit-and entry 8191) 1))))))
                 (when
                   (< symbol 0)
@@ -561,7 +550,7 @@
                 (if (< symbol 256)
                   (begin
                     (set! (array-ref out out-index) (cast symbol : u8))
-                    (set! out-index (+ out-index 1)))
+                    (+= out-index 1))
                   (begin
                     (set! stage 1)
                     (while (> stage 0)
@@ -583,8 +572,8 @@
                               (bit-or
                                 (shl buffer 8)
                                 (cast (array-ref payload next-byte) : i64)))
-                            (set! next-byte (+ next-byte 1))
-                            (set! available (+ available 8)))
+                            (+= next-byte 1)
+                            (+= available 8))
                           (let
                             [entry : i64
                               (array-ref
@@ -594,8 +583,8 @@
                               (> entry 0)
                               (let
                                 [length : i64 (shr entry 13)]
-                                (set! available (- available length))
-                                (set! consumed (+ consumed length))
+                                (-= available length)
+                                (+= consumed length)
                                 (set! value (- (bit-and entry 8191) 1))))))
                         (when
                           (< value 0)
@@ -644,7 +633,7 @@
                                   out-index
                                   distance
                                   length)
-                                (set! out-index (+ out-index length))]))))))))))
+                                (+= out-index length)]))))))))))
           (if (!= consumed bit-len)
             (Err "embedded stdlib tlci envelope: trailing huffman bits")
             (Ok out)))])))

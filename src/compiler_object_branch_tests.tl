@@ -1,4 +1,5 @@
 ;; Cross-route contract for conditional branches, including malformed records.
+(import stdlib.iterator)
 (import compiler_object as cobj)
 (import compiler_object_asm as asm)
 (import compiler_object_elf as elf)
@@ -18,8 +19,7 @@
   (let
     [body : parts.CompilerBackendObjectTargetParts
       (parts.compiler-backend-object-parts-empty)]
-    [index : i64 0]
-    (while (< index 2)
+    (for [index (iterator.range 0 2)]
       (let
         [label : String
           (if (= index 0)
@@ -57,8 +57,7 @@
             (parts.compiler-backend-object-add-text
               body
               (Bytes (parts.compiler-backend-object-bytes-from-hex "90"))))
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     (cobj.CompilerObjectImage
       (cobj.compiler-object-section-builder-finish
         (cobj.compiler-object-section-builder-push
@@ -98,8 +97,7 @@
         "jge"
         "jle"
         "jg")]
-    [cc : i64 0]
-    (while (< cc 16)
+    (for [cc (iterator.range 0 16)]
       (let
         [image : cobj.CompilerObjectImage (branch-image cc "end")]
         (match (asm.compiler-object-asm-render
@@ -125,8 +123,7 @@
             (let
               [text : i64 (elf.compiler-object-elf-load-offset image 0)]
               [relocs : i64 (elf.compiler-object-elf-rela-offset image 0)]
-              [index : i64 0]
-              (while (< index 2)
+              (for [index (iterator.range 0 2)]
                 (branch-bytes! bytes (+ text (* index 7)) cc)
                 (branch-i64!
                   (elf.compiler-object-elf-rela-target-offset-at
@@ -151,8 +148,7 @@
                     bytes
                     relocs
                     index)
-                  "ELF branch addend is -4")
-                (set! index (+ index 1))))])
+                  "ELF branch addend is -4")))])
         (match (coff.compiler-object-coff-render image)
           [(Err message) (test.assert-true false message)]
           [(Ok bytes)
@@ -161,8 +157,7 @@
                 (coff.compiler-object-coff-section-raw-pointer image (Text))]
               [relocs : i64
                 (coff.compiler-object-coff-relocation-pointer image (Text))]
-              [index : i64 0]
-              (while (< index 2)
+              (for [index (iterator.range 0 2)]
                 (let
                   [record : i64 (+ relocs (* index 10))]
                   (branch-bytes! bytes (+ text (* index 7)) cc)
@@ -178,8 +173,7 @@
                         "begin")))
                   (branch-i64!
                     (layout.compiler-object-layout-u16-at bytes (+ record 8))
-                    4)
-                  (set! index (+ index 1)))))])
+                    4))))])
         (match (native.compiler-tlci-native-layout-image image)
           [(Err message) (test.assert-true false message)]
           [(Ok image-layout)
@@ -193,16 +187,14 @@
               (cast (array-ref image-layout.bytes 8) : i64)
               (+ 0x80 cc))
             (branch-i64! (cast (array-ref image-layout.bytes 9) : i64) 0xf3)
-            (branch-i64! (cast (array-ref image-layout.bytes 12) : i64) 0xff)])
-        (set! cc (+ cc 1))))))
+            (branch-i64! (cast (array-ref image-layout.bytes 12) : i64) 0xff)])))))
 
 (test
   conditional-branch-rejections
   (let
     [codes : (__tl_dyn-array i64)
       (__tl_make-array -1 16 256 9223372036854775807 4)]
-    [index : i64 0]
-    (while (< index 5)
+    (for [index (iterator.range 0 5)]
       (let
         [image : cobj.CompilerObjectImage
           (branch-image
@@ -232,5 +224,4 @@
           (match (native.compiler-tlci-native-layout-image image)
             [(Err _) true]
             [_ false])
-          "TLCI rejects invalid codes and missing symbols")
-        (set! index (+ index 1))))))
+          "TLCI rejects invalid codes and missing symbols")))))

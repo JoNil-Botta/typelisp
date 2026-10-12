@@ -185,16 +185,24 @@ include the consumer callback union; the dependency interface exports no
 borrowable global places.
 
 The lazily built graph belongs to `TcJobState` through its existing macro
-state directory. Collection uses a separate scratch arena; only graph arrays
-and writer/edge indexes are copied into the retained arena. Query caches and
-witnesses allocate there too. Program/symbol identity, declaration count,
-expression-pool owner, source/structural owner and reset generation qualify
-reuse. Pass/file resets, checked-result completion and terminal job release
-retire the cache without affecting another job. Shared AST traversal handles
-ordinary children; binder and non-executed syntax cases are explicit. A cached
-source or embedded-surface prefix containing global-place arguments, global
-borrows or borrowed temporaries is checked again against the current program
-and its callable union. Context-independent prefixes retain cache hits.
+state directory. Direct queries collect only reachable declarations. Reaching
+an indirect node walks every runtime declaration for callable values, then
+collects the address-taken functions and lambda bodies. Collection uses a
+separate scratch arena; its edges and writer indexes are appended into the
+retained arena. Query caches and witnesses allocate there too. Program/symbol
+identity, declaration count, expression-pool owner, source/structural owner and
+reset generation qualify reuse. Pass/file resets, checked-result completion
+and terminal job release retire the cache without affecting another job.
+
+Shared AST traversal handles ordinary children; binder and non-executed syntax
+cases are explicit. Match patterns use declared or syntactically known
+scrutinee types to distinguish enum variants from local binders. Unknown types
+visit both interpretations, preserving possible global writes. Loop bounds use
+the incoming scope, and body bindings survive any nested bindings in a bound.
+A cached source or embedded-surface prefix containing non-Copy global-place
+arguments, explicit global borrows or borrowed temporaries is checked again
+against the current program and its callable union. Context-independent
+prefixes retain cache hits.
 
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends

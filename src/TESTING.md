@@ -68,14 +68,18 @@ at opt0, opt1 and opt2. Its valid borrow-ending counterpart remains in the
 native integration matrix and has the same result at every level.
 
 `compiler_global_effects_tests.tl` covers recursive witnesses, nonwriting SCCs,
-indirect unions and positive/negative cache invalidation. The graph-copy
+indirect unions and positive/negative cache invalidation. The graph-append
 retirement and explicit-job isolation tests live in
 `src/tests/compiler_typecheck_core_tests.tl`. The `global_call_*` safety rows exercise
 whole/projected/buffer writes, address-taking, mutable loans, transitive and
 recursive calls, indirect functions and closures, macro and imported setters,
 explicit and synthesized cleanup, and the allowed Copy/different-global/ended
 borrow/explicit-parameter cases. Keep their named call-chain diagnostics when
-changing traversal or binding resolution. Match-shadowing rows distinguish a
+changing traversal or binding resolution. Enum-pattern rows keep global writes
+visible through bare variants with known parameter types and unknown nested
+scrutinees; the constructor row keeps local binders and compiler primitives
+pure. Loop-scope tests preserve body binder values across nested bound scopes.
+Match-shadowing rows distinguish a
 loan created from the global before a same-named pattern binder from a loan
 created from a shadowing local, including loop arms. The typecheck self-test
 checks captured global identity through both union orders, snapshot restoration,

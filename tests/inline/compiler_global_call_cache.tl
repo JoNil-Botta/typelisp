@@ -178,3 +178,33 @@
         (string.contains message "target/global-call-temp-b.tl")
         "deferred diagnostic keeps the consumer path")))
   (finish-cache!))
+
+(test
+  global-call-copy-global-prefix-reuses-proof
+  (start-cache!)
+  (let
+    [prefix : String
+      "(define scalar : i64 42)\n(define (copy-word [n : i64]) : i64 n)\n(define (shared) : i64 (copy-word scalar))\n"]
+    (test.assert-true
+      (string.eq
+        (check-prefix
+          (string.copy (& prefix))
+          "(define (main) : i64 (shared))"
+          3
+          "target/global-copy-a.tl")
+        "ok")
+      "first Copy global prefix checks")
+    (tc.compiler-typecheck-reset-file-state!)
+    (test.assert-true
+      (string.eq
+        (check-prefix
+          prefix
+          "(define (main) : i64 (+ (shared) 1))"
+          3
+          "target/global-copy-b.tl")
+        "ok")
+      "second Copy global prefix checks")
+    (test.assert-true
+      (> (tc.tc-prefix-snapshot-cache-hit-count-value) 0)
+      "Copy global arguments create no contextual loan proof"))
+  (finish-cache!))

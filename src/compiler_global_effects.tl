@@ -29,23 +29,25 @@
     (ids.with-capacity 0)
     node-count))
 
-;; Retain only graph data when the collector's AST/binder scratch is retired.
-;; Query caches are rebuilt in the destination arena, never shallow-copied.
-(define (copy [source : (& source Graph)]) : Graph
-  (let
-    [out : Graph (new source.indirect)]
-    (for [index (iterator.range 0 (array-length source.callers))]
-      (set! (array-ref out.callers index) (array-ref source.callers index)))
-    (for [index (iterator.range 0 (edges.len (& source.links)))]
-      (edges.push-ref!
-        (&mut out.links)
-        (edges.get (& source.links) index (Edge 0 0))))
-    (for [index (iterator.range 0 (ids.capacity (& source.writers)))]
-      (match (ids.entry-at (& source.writers) index)
-        [(EntrySome global head)
-          (ids.insert-ref! (&mut out.writers) global head)]
-        [_ unit]))
-    out))
+;; Retained edges never point into the source collector's scratch arena.
+(define (append! [out : (&mut out Graph)] [source : (& source Graph)]) : unit
+  (for [callee (iterator.range 0 (array-length source.callers))]
+    (let
+      [head : i64 (array-ref source.callers callee)]
+      (while (!= head 0)
+        (let
+          [edge : Edge (edges.get (& source.links) (- head 1) (Edge 0 0))]
+          (add-call! out edge.node callee)
+          (set! head edge.next)))))
+  (for [index (iterator.range 0 (ids.capacity (& source.writers)))]
+    (match (ids.entry-at (& source.writers) index)
+      [(EntrySome global head)
+        (while (!= head 0)
+          (let
+            [edge : Edge (edges.get (& source.links) (- head 1) (Edge 0 0))]
+            (add-write! out edge.node global)
+            (set! head edge.next)))]
+      [_ unit])))
 
 (define (link! [graph : (&mut graph Graph)] [node : i64] [next : i64]) : i64
   (edges.push-ref! (&mut graph.links) (Edge node next))

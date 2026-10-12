@@ -172,7 +172,7 @@ cleanup; cleanup-containing aggregates without their own disposer are rejected.
 The call instruction reads its operands only after every argument has been
 lowered, so an argument read from storage would see later arguments' writes.
 That storage is a local's var or a register-resident field var.
-`lower-call-arg-snapshot` copies a scalar, raw-pointer or register-resident
+`lower-operand-snapshot` copies a scalar, raw-pointer or register-resident
 aggregate argument into a fresh var before the later arguments are lowered,
 when one of them can write that storage. For a read through a name, that is a
 `set!`, `replace!`, field or element store, push, take, mutable borrow or
@@ -185,6 +185,30 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+Binary operators use the same snapshot helper and storage-write scan with a
+single pending right operand, without allocating an argument list. Their left
+global reads are materialized before an effectful right operand. Short-circuit
+operators consume their condition before entering the right branch. Array
+assignment captures its receiver before index and value effects and its index
+before value effects. A descriptor snapshot retains its array type so the
+existing memory summary can still distinguish element writes from header writes.
+It evaluates the value before checking and addressing
+the logical element in the selected array's current buffer, so an RHS growth
+does not strand the store in the old buffer. Direct constructors retain a
+deferred destination until their existing argument collector has evaluated all
+fields; the same builders then store those values without an aggregate copy.
+Box assignment captures its selected
+pointer before value effects. Zero-sized array values still run their effects
+before the final bounds check. The existing `global_cell` stage can rematerialize a
+scalar snapshot within its block when the global mod-ref table proves all
+intervening direct calls preserve that cell. Address projections can share a
+snapshot under the same proof. The inline stage reuses its existing read-only
+call summaries to apply this rule before removing those call boundaries. Writes through unresolved pointers,
+opaque calls, address-taken cells, phi inputs and unstable vars retain snapshots.
+The late `load_sink` stage can also move a single-use constant-offset address
+next to its load through the same read-only window used for load/ALU pairs.
+Calls, stores, operand redefinitions and consumers already scheduled to move
+end that window.
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

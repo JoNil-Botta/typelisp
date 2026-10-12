@@ -1444,3 +1444,11 @@ compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
 compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
 compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
 compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type
+
+# Earlier operator values and assignment places precede later effects.
+operator_snapshot_div_overflow_trap|run-trap|tests/safety/operator_snapshot_div_overflow_trap.tl|135|integer division or remainder error: dividend=-128 divisor=-1
+set_place_value_before_bounds_trap|run-trap|tests/safety/set_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_unit_place_value_before_bounds_trap|run-trap|tests/safety/set_unit_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+operator_snapshot_type_reject|check-fail|tests/safety/operator_snapshot_type_reject.tl|-|integer operator expects matching integer operands: expected i64, found bool
+set_place_shared_reject|check-fail|tests/safety/set_place_shared_reject.tl|-|set! array element requires mutable array access
+set_aggregate_value_before_bounds_trap|run-trap|tests/safety/set_aggregate_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64

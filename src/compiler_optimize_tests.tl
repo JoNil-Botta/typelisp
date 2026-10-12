@@ -8164,6 +8164,116 @@
       (return 7))
     42))
 
+(test
+  load-sink-constant-address
+  (test.assert-true
+    (= (compiler-optimize-load-sink-self-test) 42)
+    "existing load sink cases")
+  (let
+    [cases
+      (array
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = add %1, 2 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %12 = add %1, 2 : i64
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           bounds_check %2, %3 message \"bounds\"
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           bounds_check %2, %3 message \"bounds\"
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = gep %1, 2 : i64
+           %11 = load %10 : i64
+           %13 = load %12 : i64
+           %14 = add %11, %13 : i64
+           return %14"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           %12 = gep %1, 2 : i64
+           %13 = load %12 : i64
+           %14 = add %11, %13 : i64
+           return %14")]
+    (for [index (iterator.range 0 (/ (array-length cases) 2))]
+      (let
+        [expected
+          (opt-load-sink-run
+            (irt.blocks (clone (array-ref cases (+ (* index 2) 1)))))]
+        [actual
+          (opt-load-sink-run (irt.blocks (clone (array-ref cases (* index 2)))))]
+        (test.assert-true
+          (opt.opt-block-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          "constant projections become adjacent without moving an already moved consumer")
+        (test.assert-true
+          (opt.opt-block-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (&
+              (opt-load-sink-run
+                (ir.compiler-ir-blocks
+                  (owned_view.compiler-owned-reference-shared-view (& actual))))))
+          "address scheduling is idempotent"))))
+  (let
+    [refused
+      (array
+        "entry:
+           %10 = gep %0, 1 : i64
+           store_ptr %1, 9 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = call opaque() : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %0 = mov %1 : u64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %10 = mov %1 : u64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = add %1, 2 : i64
+           %11 = load %10 : i64
+           %13 = load %10 : i64
+           return %13"
+        "entry:
+           %10 = gep %0, %1 : i64
+           %12 = add %2, 2 : i64
+           %11 = load %10 : i64
+           return %11")]
+    (for [index (iterator.range 0 (array-length refused))]
+      (let
+        [text (clone (array-ref refused index))]
+        [expected (irt.blocks (clone text))]
+        [actual (opt.opt-load-sink-blocks 32 (irt.blocks text))]
+        (test.assert-true
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          "stores, calls, redefinitions, multiple uses and dynamic offsets keep their order")))))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; Fixtures share two i64 parameters (vars 0 and 1) plus a spare var 2 that
@@ -61865,6 +61975,253 @@
 
 (define (opt-og-any? [obj : (& obj opt.OptGlobalModRef)] [name : i64]) : bool
   (opt.opt-global-mod-ref-any? (opt.opt-global-mod-ref-call-mask obj name)))
+
+;; Snapshots can move to one same-block use only while their cell is unchanged.
+(define (opt-snapshot-test-function [text : String]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "snapshot_fixture")
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    32
+    (irt.blocks text)
+    Ordinary))
+
+(define (opt-snapshot-test-ok?
+  [before : String]
+  [after : String]
+  [address-taken : bool]) : bool
+  (let
+    [symbols (opt-mr-test-symbols)]
+    [fixture (opt-snapshot-test-function before)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (if address-taken
+            (opt-mr-addr-functions symbols)
+            (opt-mr-test-functions symbols))))]
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [summaries
+      (opt.opt-build-program-summaries
+        bases
+        (& (opt-mr-test-globals symbols))
+        (& (ir.compiler-ir-extern-seq-empty))
+        functions
+        2)]
+    [optimized (opt.opt-global-snapshot-function (& summaries) fixture)]
+    [expected (opt-snapshot-test-function after)]
+    (opt.opt-function-eq bases (& optimized) (& expected))))
+
+(defstruct OptSnapshotTestCase
+  (before String)
+  (after String)
+  (address-taken bool))
+
+(test
+  global-snapshot-rematerialization
+  (let
+    [cases
+      (array
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = call mr_write_b() : i64
+             return %0"
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = call mr_write_b() : i64
+             return @mr_a"
+          false)
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             store @mr_b, 9 : i64
+             return %0"
+          "entry:
+             %0 = mov @mr_a : i64
+             store @mr_b, 9 : i64
+             return @mr_a"
+          false)
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = add 2, 3 : i64
+             return %0"
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = add 2, 3 : i64
+             return %0"
+          false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok?
+            (clone case.before)
+            case.after
+            case.address-taken)
+          case.before)))))
+
+(test
+  global-snapshot-barriers
+  (let
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_a() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_via() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           store @mr_a, 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_opaque() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call unknown_writer() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = mov 0 : u64
+           %2 = call* %1() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = mov 0 : u64
+           store_ptr %1, 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = add %0, %0 : i64
+           return %1"
+        "entry:
+           %0 = mov @mr_a : i64
+           %0 = mov 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = addr_of %0
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           jump exit
+         exit:
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           jump exit
+         exit:
+           %1 = phi [%0, entry] : i64
+           return %1")]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [text (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok? (clone text) text false)
+          "writes, opaque effects, unstable vars and control edges preserve snapshots"))))
+  (let
+    [text
+      "entry:
+         %0 = mov @mr_c : i64
+         %1 = call mr_write_b() : i64
+         return %0"]
+    (test.assert-true
+      (opt-snapshot-test-ok? (clone text) text true)
+      "an address-taken global preserves its snapshot")))
+
+(define (opt-snapshot-early-test-ok? [before : String] [after : String]) : bool
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture (opt-snapshot-test-function before)]
+    [reader : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "snapshot_reader")
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        0
+        (irt.blocks "entry:
+  return 0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [out (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [expected (opt-snapshot-test-function after)]
+    [actual (ir.compiler-ir-function-seq-ref (& out) 0)]
+    [ok (opt.opt-function-eq bases (& actual) (& expected))]
+    (opt.opt-pure-call-inline-memory-reset!)
+    ok))
+
+(test
+  global-snapshot-before-inlining
+  (let
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add %0, %1 : i64
+           return %2"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add @mr_a, %1 : i64
+           return %2"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep %0, 0 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep @mr_a, 0 : i64
+           %3 = gep @mr_a, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep %0, 0 : i64
+           store @mr_a, 9 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep @mr_a, 0 : i64
+           store @mr_a, 9 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6")]
+    (for [index (iterator.range 0 (/ (array-length cases) 2))]
+      (test.assert-true
+        (opt-snapshot-early-test-ok?
+          (clone (array-ref cases (* index 2)))
+          (clone (array-ref cases (+ (* index 2) 1))))
+        "read-only call facts apply before inlining; address uses stop forwarding at writes"))))
 
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;

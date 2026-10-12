@@ -1,6 +1,7 @@
 ;; compiler_surface_facts.tl - relocatable checked-prefix facts shared by
 ;; package surface producers and consumers.
 (import stdlib.byte_reader)
+(import compiler_owned_view as owned_view)
 (import compiler_surface_identity as surface_identity)
 (import compiler_intern_state as cis)
 (cfg
@@ -641,16 +642,22 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-encode
-    [facts : SurfaceTypecheckFacts]
+    [facts : (& SurfaceTypecheckFacts)]
     [structural-session : cis.InternStructuralSessionHandle]
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
     (if (not (surface-typecheck-facts-valid? facts))
       (Err "surface facts: invalid checked-prefix facts")
       (let
-        [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
-        [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
-        [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
+        [decl-keys : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-reference-shared-view
+            (& facts.clone-decl-keys))]
+        [root-keys : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-reference-shared-view
+            (& facts.clone-root-keys))]
+        [call-indices : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-reference-shared-view
+            (& facts.clone-call-indices))]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
@@ -715,12 +722,14 @@
         (< id (+ triple-offset (* identity-count2 identity-count)))))))
 
 (define (surface-typecheck-facts-decode
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& (__tl_dyn-array u8))]
   [structural-session : cis.InternStructuralSessionHandle]
-  [remap : (__tl_dyn-array i64)]) : ResultSurfaceTypecheckFacts
+  [remap : (& (__tl_dyn-array i64))]) : ResultSurfaceTypecheckFacts
   (let
     [reader : byte_reader.ByteReader
-      (byte_reader.new bytes byte_reader.unlimited-work)]
+      (byte_reader.new
+        (owned_view.compiler-owned-reference-shared-view bytes)
+        byte_reader.unlimited-work)]
     [magic : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
     [schema : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
     [macro-prefix-decl-count : i64

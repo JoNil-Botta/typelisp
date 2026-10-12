@@ -53,12 +53,12 @@
           (parser.compiler-parse-decl-origin-register-list-aliases!
             (& alias1)
             0
-            (owned_view.compiler-owned-shared-view replacement))
+            (& replacement))
           (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
           (parser.compiler-parse-decl-origin-register-list-aliases!
             (& alias2)
             0
-            alias1)
+            (& alias1))
           (set!
             ok
             (and
@@ -848,13 +848,14 @@
   ;; Keep the inline-test discovery marker split: this source is parser input,
   ;; not an inline test declaration in this file.
   (match (parser.parse-ast-source
-    (str_cat.str-cat
-      "(module parsed.module)
+    (&
+      (str_cat.str-cat
+        "(module parsed.module)
 (defstruct ParsedType (parsed-field i64))
 (define (parsed-fn [parsed-param : ParsedType]) : ParsedType parsed-param)
 "
-      "("
-      "test parsed-test unit)"))
+        "("
+        "test parsed-test unit)")))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -923,8 +924,10 @@
   [pools : ast.AstNodePoolContext]) : String
   (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     path
-    source
-    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
+    (& source)
+    (parser.compiler-parse-state-cfgs
+      (& parse-state)
+      (parser.compiler-cfg-empty))
     pools)
     [(Ok _) "parse succeeded"]
     [(Err diag) (diagnostic.compiler-diagnostic-message (__tl-box-place diag))]))
@@ -938,8 +941,10 @@
   [pools : ast.AstNodePoolContext]) : bool
   (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     "owner-import.tl"
-    source
-    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
+    (& source)
+    (parser.compiler-parse-state-cfgs
+      (& parse-state)
+      (parser.compiler-cfg-empty))
     pools)
     [(Err _) false]
     [(Ok (Program decls-box))
@@ -966,8 +971,10 @@
   [pools : ast.AstNodePoolContext]) : bool
   (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     "installed-owner.tl"
-    source
-    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
+    (& source)
+    (parser.compiler-parse-state-cfgs
+      (& parse-state)
+      (parser.compiler-cfg-empty))
     pools)
     [(Ok _) true]
     [(Err _) false]))

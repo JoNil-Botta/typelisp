@@ -1671,7 +1671,7 @@
 
 (define (host-smoke-table-ok?) : bool
   (match (tlci.tlci-validate-host-callback-table
-    (host.compiler-comptime-host-table))
+    (& (host.compiler-comptime-host-table)))
     [(Ok) true]
     [(Err _) false]))
 

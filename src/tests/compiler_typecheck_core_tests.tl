@@ -1234,7 +1234,7 @@
 ;; The body of `(define (probe) : i64 FORM)`, parsed into the active pools.
 (define (macro-output-probe-body [form : String]) : i64
   (match (parser.parse-ast-source
-    (str_cat.str-cat "(define (probe) : i64 " form ")"))
+    (& (str_cat.str-cat "(define (probe) : i64 " form ")")))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons (DefFn _ _ _ _ body-box _) _) body-box]
@@ -1312,13 +1312,15 @@
                         (macro-output-sexpr-eq? first second)
                         (string.eq
                           (ctfe_support.ctfe-describe-expr
-                            (ast.ast-expr-unspan-with-segment-bases
-                              bases
-                              (& first-expr)))
+                            (&
+                              (ast.ast-expr-unspan-with-segment-bases
+                                bases
+                                (& first-expr))))
                           (ctfe_support.ctfe-describe-expr
-                            (ast.ast-expr-unspan-with-segment-bases
-                              second-bases
-                              (& second-expr)))))]))])])))))
+                            (&
+                              (ast.ast-expr-unspan-with-segment-bases
+                                second-bases
+                                (& second-expr))))))]))])])))))
 
 ;; The probed forms, in order; the last wraps a converted form in a `let`.
 (define (macro-output-form [i : i64]) : String
@@ -9514,7 +9516,7 @@
             (tc_core.tc-macro-ctfe-state state-a))]
         [failed : ctfe_support.ResultCtfe
           (ctfe_support.compiler-ctfe-eval
-            (Literal (Float "not-a-float"))
+            (& (Literal (Float "not-a-float")))
             failed-env
             8)]
         (set!

@@ -1015,7 +1015,7 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]) : bool
   (let
-    [normalized : String (cload.compiler-load-canonical-path path)]
+    [normalized : String (cload.compiler-load-canonical-path (& path))]
     [path-index : i64 0]
     [found : bool false]
     (while (and (< path-index index.path-len) (not found))
@@ -1026,7 +1026,7 @@
             path-index)]
         [owned-path : String (string.copy (& info.path))]
         (if (string.eq
-          (cload.compiler-load-canonical-path owned-path)
+          (cload.compiler-load-canonical-path (& owned-path))
           normalized)
           (set! found true)
           unit)
@@ -7189,10 +7189,15 @@
         (compiler-check-program-with-paths-index-cache
           path
           source
-          (cload.compiler-load-decl-list-append prelude-decls entry-decls)
+          (cload.compiler-load-decl-list-append
+            (& prelude-decls)
+            (& entry-decls))
           (cload.compiler-load-decl-path-list-append
-            prelude-paths
-            (ast.ast-decl-path-list-with-modules entry-paths (& entry-modules)))
+            (& prelude-paths)
+            (&
+              (ast.ast-decl-path-list-with-modules
+                entry-paths
+                (& entry-modules))))
           stdlib-roots
           cfgs
           cache-scope))]
@@ -7264,7 +7269,7 @@
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view source)
+    (& source)
     cfgs)
     [(Fatal diagnostics)
       (begin
@@ -7274,15 +7279,15 @@
       (let
         [parse-identity : cload.CompilerLoadParseIdentity
           (cload.compiler-load-parse-identity
-            (owned_view.compiler-owned-shared-view path)
-            (cload.compiler-load-canonical-module-id-from-path path)
+            (& path)
+            (& (cload.compiler-load-canonical-module-id-from-path path))
             No)]
         [loaded : cload.ResultCompilerLoadWithPaths
           (cload.compiler-load-program-with-paths-and-roots-expect-cfg
             path
             program
             prelude-seen
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (& stdlib-roots)
             No
             cfgs
             parse-identity)]
@@ -7308,7 +7313,7 @@
     (cfg compile-profile (check_core.compiler-check-profile-start))
     (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-source-with-prelude-index-recovery

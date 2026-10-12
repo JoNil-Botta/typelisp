@@ -13,14 +13,14 @@
   [fallback : String]
   [slot : i64]
   [count : i64]) : unit
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program box))
       (let
         [input : ast.AstDeclList (deref box)]
         [decls : ast.AstDeclList
           (compiler_load.compiler-load-contextual-moduleless-decls
             (owned_view.compiler-owned-shared-view input)
-            (owned_view.compiler-owned-shared-view fallback)
+            (& fallback)
             (ci.intern-generated-name (& fallback)))]
         (test.assert-i64-eq
           (ast.ast-decl-list-len (& decls))
@@ -86,22 +86,20 @@
       (ast.ast-decl-cons (& (Module source-id)) (& (ast.ast-decl-list-new)))]
     [fallback-from-source : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
-        (owned_view.compiler-owned-shared-view module-name)
+        (& module-name)
         (Some source-id))]
     [fallback-from-generated : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
-        (owned_view.compiler-owned-shared-view module-name)
+        (& module-name)
         (Some generated-id))]
     (and
       (not (= source-id generated-id))
       (= fallback-from-source source-id)
       (= fallback-from-generated source-id)
-      (compiler_load.compiler-load-decl-list-has-module-id?
-        (owned_view.compiler-owned-shared-view decls)
-        source-id)
+      (compiler_load.compiler-load-decl-list-has-module-id? (& decls) source-id)
       (not
         (compiler_load.compiler-load-decl-list-has-module-id?
-          decls
+          (& decls)
           generated-id))
       (match (compiler_load.compiler-load-check-expected-module
         "src/loader_identity.tl"

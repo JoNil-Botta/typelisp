@@ -811,7 +811,7 @@
   (tc_core.tc-job-state-reset-advisories! (tc_core.tc-serial-job-state))
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    source
+    (& source)
     (check_core.compiler-check-language-cfgs))
     [(Parsed program diagnostics)
       (check_core.compiler-check-result-with-parse-diagnostics
@@ -910,7 +910,7 @@
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler_load.compiler-load-source-with-paths
     "src/virtual_entry.tl"
-    (compiler-check-virtual-import-source)
+    (& (compiler-check-virtual-import-source))
     (sym_i64_env.sym-i64-empty))
     [(Ok decls _ _ _)
       (let
@@ -1043,11 +1043,11 @@
     [path : String "src/already_loaded.tl"]
     [source : String "(define answer : i64 1)"]
     (match (compiler_load.compiler-load-source
-      (owned_view.compiler-owned-shared-view path)
-      (owned_view.compiler-owned-shared-view source)
+      (& path)
+      (& source)
       (sym_i64_env.sym-i64-empty))
       [(Ok _ seen)
-        (match (compiler_load.compiler-load-source path source seen)
+        (match (compiler_load.compiler-load-source (& path) (& source) seen)
           [(Ok decls _)
             (match (ast.ast-decl-list-step decls)
               [(Nil) true]

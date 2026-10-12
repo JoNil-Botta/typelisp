@@ -50,7 +50,7 @@
         (array-ref sections 0)
         (tlci_core.tlci-package-source-binding-section 12345))
       (match (tlci_core.tlci-aux-pack-rodata
-        (tlci_core.tlci-empty-bytes)
+        (& (tlci_core.tlci-empty-bytes))
         sections)
         [(Ok packed) (set! bound (inspect.tlci-inspect-source-binding packed))]
         [_ unit])
@@ -61,7 +61,7 @@
           2
           (tlci_core.tlci-string->bytes "future")))
       (match (tlci_core.tlci-aux-pack-rodata
-        (tlci_core.tlci-empty-bytes)
+        (& (tlci_core.tlci-empty-bytes))
         sections)
         [(Ok packed)
           (set! unsupported (inspect.tlci-inspect-source-binding packed))]
@@ -73,7 +73,7 @@
           tlci_core.tlci-package-source-binding-schema-version
           (__tl_make-array u8 7)))
       (match (tlci_core.tlci-aux-pack-rodata
-        (tlci_core.tlci-empty-bytes)
+        (& (tlci_core.tlci-empty-bytes))
         sections)
         [(Ok packed)
           (set! malformed (inspect.tlci-inspect-source-binding packed))]
@@ -117,7 +117,7 @@
           1
           (tlci_core.tlci-string->bytes "facts")))
       (match (tlci_core.tlci-aux-pack-rodata
-        (tlci_core.tlci-empty-bytes)
+        (& (tlci_core.tlci-empty-bytes))
         sections)
         [(Err _) (io.panic "inspect surface fixture packing failed")]
         [(Ok rodata)
@@ -149,11 +149,10 @@
     (let
       [ok : bool
         (match (tlci_core.tlci-emit-image
-          (tlci_core_tests.tlci-test-imports-image))
+          (& (tlci_core_tests.tlci-test-imports-image)))
           [(Err _) false]
           [(Ok bytes)
-            (match (tlci_core.tlci-parse-image
-              (owned_view.compiler-owned-shared-view bytes))
+            (match (tlci_core.tlci-parse-image (& bytes))
               [(Err _) false]
               [(Ok parsed)
                 (let
@@ -197,11 +196,10 @@
           (tlci_core.tlci-empty-bytes)
           (tlci_core.tlci-empty-bytes))]
       [ok : bool
-        (match (tlci_core.tlci-emit-image image)
+        (match (tlci_core.tlci-emit-image (& image))
           [(Err _) false]
           [(Ok bytes)
-            (match (tlci_core.tlci-parse-image
-              (owned_view.compiler-owned-shared-view bytes))
+            (match (tlci_core.tlci-parse-image (& bytes))
               [(Err _) false]
               [(Ok parsed)
                 (let

@@ -3,13 +3,13 @@
 (import stdlib.hashmap)
 (import stdlib.iterator)
 (import (hashmap.hashmap i64 i64) as ids)
-(import (vector.vector i64) as words)
+
+;; Graph storage uses only construction, indexed reads and append.
+(import (vector.vector i64 core) as words)
 
 (defstruct Edge
   (node i64)
   (next i64))
-
-(import (vector.vector Edge) as edges)
 
 (defstruct Graph
   ;; Reverse call edges let one query propagate a global's writers to every
@@ -18,7 +18,7 @@
   (callers (__tl_dyn-array i64))
   ;; Every nonempty reverse adjacency occurs once in this sparse index.
   (callee-nodes words.Vec)
-  (links edges.Vec)
+  (links words.Vec)
   (writers ids.Map)
   (summaries ids.Map)
   (indirect i64))
@@ -27,21 +27,21 @@
   (Graph
     (__tl_make-array i64 (+ node-count 1))
     (words.new)
-    (edges.new)
+    (words.with-capacity 8)
     (ids.with-capacity 0)
     (ids.with-capacity 0)
     node-count))
 
 ;; Retained edges never point into the source collector's scratch arena.
 (define (append! [out : (&mut out Graph)] [source : (& source Graph)]) : unit
-  (when (= (edges.len (& source.links)) 0) (return unit))
+  (when (= (words.len (& source.links)) 0) (return unit))
   (for [index (iterator.range 0 (words.len (& source.callee-nodes)))]
     (let
       [callee : i64 (words.get (& source.callee-nodes) index 0)]
       [head : i64 (array-ref source.callers callee)]
       (while (!= head 0)
         (let
-          [edge : Edge (edges.get (& source.links) (- head 1) (Edge 0 0))]
+          [edge : Edge (link-at (& source.links) (- head 1))]
           (add-call! out edge.node callee)
           (set! head edge.next)))))
   (for [index (iterator.range 0 (ids.capacity (& source.writers)))]
@@ -49,14 +49,24 @@
       [(EntrySome global head)
         (while (!= head 0)
           (let
-            [edge : Edge (edges.get (& source.links) (- head 1) (Edge 0 0))]
+            [edge : Edge (link-at (& source.links) (- head 1))]
             (add-write! out edge.node global)
             (set! head edge.next)))]
       [_ unit])))
 
+;; Link handles are one-based logical indices; storage holds two full-width
+;; words per link. Bounds are checked before doubling an arbitrary index.
+(define (link-at [links : (& links words.Vec)] [index : i64]) : Edge
+  (if (or (< index 0) (>= index (/ (words.len links) 2)))
+    (Edge 0 0)
+    (let
+      [word : i64 (* index 2)]
+      (Edge (words.get links word 0) (words.get links (+ word 1) 0)))))
+
 (define (link! [graph : (&mut graph Graph)] [node : i64] [next : i64]) : i64
-  (edges.push-ref! (&mut graph.links) (Edge node next))
-  (edges.len (& graph.links)))
+  (words.push-ref! (&mut graph.links) node)
+  (words.push-ref! (&mut graph.links) next)
+  (/ (words.len (& graph.links)) 2))
 
 (define (add-call! [graph : (&mut graph Graph)] [caller : i64] [callee : i64]) : unit
   (ids.clear-ref! (&mut graph.summaries))
@@ -91,7 +101,7 @@
         [cursor : i64 (ids.get-value-or (& graph.writers) global 0)]
         (while (!= cursor 0)
           (let
-            [edge : Edge (edges.get (& graph.links) (- cursor 1) (Edge 0 0))]
+            [edge : Edge (link-at (& graph.links) (- cursor 1))]
             [node : i64 edge.node]
             (when
               (= (array-ref result node) 0)
@@ -107,8 +117,7 @@
               [head : i64 (array-ref graph.callers callee)]
               (while (!= head 0)
                 (let
-                  [edge : Edge
-                    (edges.get (& graph.links) (- head 1) (Edge 0 0))]
+                  [edge : Edge (link-at (& graph.links) (- head 1))]
                   [caller : i64 edge.node]
                   (when
                     (= (array-ref result caller) 0)

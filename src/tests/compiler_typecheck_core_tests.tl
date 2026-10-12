@@ -6,7 +6,7 @@
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
 (cfg test (import compiler_global_effects as global_effects))
-(import (vector.vector i64) as effect_words)
+(import (vector.vector i64 core) as effect_words)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -10634,16 +10634,17 @@
           (tc_core.tc-moved-path-facts-cons
             facts
             (tc_core.TcMovedPathFact
-              (tc_core.TcMovePath
+              (tc_core.tc-move-path-capture-owner
+                (tc_core.TcMovePath
+                  (if (= index 31)
+                    global
+                    local)
+                  (tc_core.tc-move-path-segments-empty))
                 (if (= index 31)
-                  global
-                  local)
-                (tc_core.tc-move-path-segments-empty))
+                  0
+                  -1))
               (tc_core.TcMovedPathKind.BorrowShared)
-              (tc_core.tc-moved-no-origin-id)
-              (if (= index 31)
-                0
-                -1))))
+              (tc_core.tc-moved-no-origin-id))))
         (when (= index 30) (set! saved (tc_core.tc-global-shared-view facts)))
         (test.assert-true
           (=
@@ -10658,7 +10659,134 @@
         [locals : tc_core.TcMovedPathFacts
           (tc_core.tc-moved-path-facts-filter
             facts
-            (tc_core.TcMovedPathFactsFilter.Provenance global -1))]
+            (tc_core.TcMovedPathFactsFilter.Root global false))]
         (test.assert-false
           (tc_core.tc-moved-path-facts-have-globals? locals)
           "filtering the global rebuilds local-only prefixes")))))
+
+(cfg
+  test
+  (test
+    global-borrow-owner-key-full-width
+    (for [index (iterator.range 0 3)]
+      (let
+        [name : i64
+          (cond
+            [(= index 0) 0]
+            [(= index 1) 4294967296]
+            [else 9223372036854775807])]
+        [local : tc_core.TcMovePath
+          (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
+        [global : tc_core.TcMovePath
+          (tc_core.tc-move-path-capture-owner local 137)]
+        [fact : tc_core.TcMovedPathFact
+          (tc_core.TcMovedPathFact
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared)
+            9223372036854775807)]
+        [both : tc_core.TcMovedSet
+          (tc_core.tc-moved-add-path-fact
+            (tc_core.tc-moved-add-path-fact
+              (tc_core.tc-moved-empty)
+              local
+              (tc_core.TcMovedPathKind.BorrowShared)
+              -1)
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared)
+            9223372036854775807)]
+        [local-only : tc_core.TcMovedSet
+          (tc_core.tc-moved-remove-path-kind
+            both
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared))]
+        (test.assert-i64-eq
+          (tc_core.tc-move-path-source-root-id global)
+          name
+          "global source ID roundtrips without narrowing")
+        (test.assert-i64-eq
+          fact.origin
+          9223372036854775807
+          "full origin is independent of ownership key")
+        (test.assert-i64-eq
+          fact.path.root
+          global.root
+          "capturing an existing global key is idempotent")
+        (test.assert-false
+          (tc_core.tc-move-path-conflicts? local global)
+          "same-name local and global remain distinct")
+        (test.assert-true
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
+            local
+            (tc_core.TcMovedPathKind.BorrowShared))
+          "ending the global loan preserves a same-name local")
+        (test.assert-false
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
+            global
+            (tc_core.TcMovedPathKind.BorrowShared))
+          "global loan ends under its captured key")))))
+
+(cfg
+  test
+  (test
+    captured-global-reference-lifetime-survives-local-shadow
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [ctx : tc_core.TcContext
+        (macro-prepare-test-ctx (ast.ast-node-pool-context-capture-active))]
+      [name : i64 (ci.intern "captured-global-ref")]
+      [global-region : i64 (ci.intern "global-region")]
+      [local-region : i64 (ci.intern "local-region")]
+      [scalar : ast.AstType (ast.AstType.I64)]
+      (for [shape (iterator.range 0 3)]
+        (let
+          [global-type : ast.AstType
+            (cond
+              [(= shape 0) (ast.ast-ty-ref global-region (& scalar))]
+              [(= shape 1) (ast.ast-ty-mut-ref global-region (& scalar))]
+              [else (ast.ast-ty-region global-region (& scalar))])]
+          [globals : tc_core.TcTypeEnv
+            (tc_core.tc-bind-id (tc_core.tc-type-env-new) name global-type)]
+          [shadowed : tc_core.TcTypeEnv
+            (tc_core.tc-bind-id
+              (tc_core.tc-hygiene-global-env
+                (tc_core.tc-global-shared-view globals))
+              name
+              (ast.ast-ty-ref local-region (& scalar)))]
+          [local : tc_core.TcMovePath
+            (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
+          [saved : tc_core.TcTypeEnvScopedRuntimeSave
+            (tc_core.tc-type-env-scoped-runtime-enter-env!
+              (tc_core.tc-global-shared-view shadowed))]
+          (tc_core.tc-hygiene-reset-active-top-env!
+            (tc_core.tc-context-macro-state ctx)
+            globals)
+          (for [identity (iterator.range 0 3)]
+            (let
+              [global-name : i64
+                (if (= identity 0)
+                  name
+                  (tc_core.macro-hygiene-global-id
+                    (tc_core.tc-context-structural-session ctx)
+                    cbi.compiler-builtin-id-fix-empty
+                    name
+                    (= identity 1)))]
+              [global : tc_core.TcMovePath
+                (tc_core.tc-move-path-capture-owner
+                  (tc_core.TcMovePath
+                    global-name
+                    (tc_core.tc-move-path-segments-empty))
+                  137)]
+              (test.assert-i64-eq
+                (tc_core.tc-borrow-check-path-lifetime
+                  ctx
+                  (tc_core.tc-global-shared-view shadowed)
+                  global)
+                global-region
+                "captured globals preserve declared lifetimes across local shadowing")))
+          (test.assert-i64-eq
+            (tc_core.tc-borrow-check-path-lifetime ctx shadowed local)
+            local-region
+            "global lookup restores scoped locals and their lifetimes")
+          (tc_core.tc-type-env-scoped-runtime-restore! saved))))))

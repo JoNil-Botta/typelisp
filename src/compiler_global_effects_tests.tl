@@ -1,6 +1,6 @@
 (import compiler_global_effects as effects)
 (import stdlib.vector)
-(import (vector.vector i64) as words)
+(import (vector.vector i64 core) as words)
 (import stdlib.test)
 (import stdlib.iterator)
 
@@ -129,3 +129,77 @@
                               (words.get (& path) index -1))))
                         0)
                       "every witness step is an actual call edge")))))))))))
+
+(test
+  global-effects-link-storage-full-width-and-growth
+  (let
+    [graph : effects.Graph (effects.new 0)]
+    [first : i64
+      (effects.link! (&mut graph) 9223372036854775807 9223372036854775807)]
+    (test.assert-i64-eq first 1 "link handles start at one")
+    (for [index (iterator.range 0 64)]
+      (test.assert-i64-eq
+        (effects.link! (&mut graph) (+ 4294967296 index) first)
+        (+ index 2)
+        "growth preserves logical link handles"))
+    (let
+      [saved : effects.Edge (effects.link-at (& graph.links) (- first 1))]
+      [last : effects.Edge (effects.link-at (& graph.links) 64)]
+      (test.assert-i64-eq
+        saved.node
+        9223372036854775807
+        "retained node keeps its full-width ID")
+      (test.assert-i64-eq
+        saved.next
+        9223372036854775807
+        "retained successor keeps its full-width ID")
+      (test.assert-i64-eq
+        last.node
+        4294967359
+        "growth preserves later full-width IDs")
+      (test.assert-i64-eq last.next first "growth preserves successor handles"))
+    (for [case (iterator.range 0 4)]
+      (let
+        [index : i64
+          (cond
+            [(= case 0) -1]
+            [(= case 1) 65]
+            [(= case 2) 9223372036854775807]
+            [else (- -9223372036854775807 1)])]
+        [missing : effects.Edge (effects.link-at (& graph.links) index)]
+        (test.assert-i64-eq
+          missing.node
+          0
+          "invalid link indices return the fallback before offset arithmetic")
+        (test.assert-i64-eq
+          missing.next
+          0
+          "invalid link successor uses the same fallback")))))
+
+(test
+  global-effects-wide-global-through-grown-sparse-links
+  (let
+    [graph : effects.Graph (effects.new 131)]
+    (for [index (iterator.range 66 130)]
+      (effects.add-call! (&mut graph) index index))
+    (effects.add-call! (&mut graph) 130 65)
+    (effects.add-call! (&mut graph) 65 0)
+    (effects.add-write! (&mut graph) 0 9223372036854775807)
+    (let
+      [path : words.Vec (effects.witness! (&mut graph) 130 9223372036854775807)]
+      (test.assert-i64-eq
+        (words.len (& path))
+        3
+        "sparse high-index callers reach the full-width global")
+      (test.assert-i64-eq
+        (words.get (& path) 0 -1)
+        130
+        "witness starts at the high-index caller")
+      (test.assert-i64-eq
+        (words.get (& path) 2 -1)
+        0
+        "witness ends at the writer")
+      (test.assert-i64-eq
+        (words.len (& (effects.witness! (&mut graph) 130 9223372036854775806)))
+        0
+        "adjacent full-width global identities remain distinct"))))

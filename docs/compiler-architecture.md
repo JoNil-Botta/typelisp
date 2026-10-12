@@ -161,16 +161,25 @@ pattern local must not erase an incoming or escaping loan of the hidden owner.
 
 Global call effects share the borrow checker's live place facts. Global roots
 and callees use the ordinary source-name resolver for aliases and full dotted
-module paths, with lexical binders taking precedence. Each loan captures its
-global symbol handle in its source scope; later shadowing cannot change that
-identity. Persistent copies, scope restoration and branch/loop joins preserve
-the handle, and fixpoint equality includes it. Each immutable fact-chain node
-caches whether its prefix contains any global handle; append computes it from
-the parent and growth preserves it. Earlier snapshots retain their own prefix
-flag, so local-only chains can bypass global filtering and effect queries.
-A local binder removes its own root facts while retaining loans on a hidden global. Place conflicts and loan
-pruning select the resolved owner's facts, so a same-named local remains a
-separate place; ending its loan must not remove the global loan. The check runs
+module paths, with lexical binders taking precedence. Each loan captures the
+global namespace in its path root by complementing the full source-name ID;
+local roots remain nonnegative. Missing paths use `No`, so every nonnegative
+source ID has a distinct global key. The body's immutable context, symbols and
+source-name owner resolve that key without consulting later lexical binders.
+Persistent copies, scope restoration, branch/loop joins and fixpoint equality
+preserve the captured key. Stored-path operations use that key without
+reclassifying it in a later lexical environment. Origins retain their
+independent full-width IDs.
+Each immutable fact-chain node caches whether its prefix contains any global
+key; append computes it from the parent and growth preserves it. Earlier
+snapshots retain their own prefix flag, so local-only chains bypass effect
+queries. A local binder removes its own root facts while retaining loans on a
+hidden global. Place conflicts and loan pruning use the captured path identity,
+so a same-named local remains a separate place; ending its loan must not remove
+the global loan. Diagnostics decode the source name. Global lifetime lookup
+uses the definition-site environment with scoped locals suspended, then
+restores local lookup.
+The check runs
 after argument validation and before call-scoped facts are discarded,
 so auto-borrows, earlier returned references and borrowed match arms remain
 visible. `compiler_global_effects` computes each queried global's least
@@ -186,6 +195,11 @@ Deferred queries retain source spans, paths and rendered labels in the graph
 arena; they never retain function-scratch borrow facts. Package metadata nodes
 include the consumer callback union; the dependency interface exports no
 borrowable global places.
+
+Graph link storage uses pairs of full-width integer words in the existing core
+vector family. Adjacency heads remain one-based logical link indices; bounds
+checks precede conversion to word offsets. Link epochs count words and change
+on every appended edge.
 
 The lazily built graph belongs to `TcJobState` through its existing macro
 state directory. Direct queries collect only reachable declarations. Reaching

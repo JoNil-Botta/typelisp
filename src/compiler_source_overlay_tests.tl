@@ -529,7 +529,7 @@
       (compiler_load.compiler-pkg-deps-cons
         "math"
         "../math"
-        (compiler_load.compiler-pkg-deps-empty))]
+        (& (compiler_load.compiler-pkg-deps-empty)))]
     [entry-candidate : String
       "(import math.src.add)
 (define (main) : i64 (add.twice 20))"]
@@ -537,7 +537,7 @@
       "(define (inc [x : i64]) : i64 (+ x 1))
 (define (twice [x : i64]) : i64 (* x 2))"]
     (overlay-test-setup!)
-    (if (compiler_load.compiler-load-test-mkdir (string.copy base))
+    (if (compiler_load.compiler-load-test-mkdir (& (string.copy base)))
       unit
       unit)
     (if (compiler_load.compiler-load-test-mkdir "target/check_overlay/pkg/app")

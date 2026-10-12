@@ -227,7 +227,7 @@
     (match (load.compiler-load-file-with-paths-and-roots-cfg
       "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (svec.new)
+      (& (svec.new))
       cfgs)
       [(Ok _ _ _ seen)
         (and
@@ -406,7 +406,7 @@
     (match (load.compiler-load-file-with-paths-and-roots-cfg
       "target/cl_lazy_cfg_surface/entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (svec.new)
+      (& (svec.new))
       cfgs)
       [(Ok _ _ _ seen)
         (and
@@ -420,7 +420,7 @@
 (define (structural-member-demand-source [source : String] [alias : i64]) : load_tests.CompilerLoadStructuralMemberDemand
   (match (load.compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand.tl"
-    source
+    (& source)
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (Program decls))
       (load_tests.compiler-load-structural-member-demand (deref decls) alias)]
@@ -554,10 +554,10 @@
             cbi.compiler-builtin-id-fix-empty)]
         [demand : load.CompilerLoadLazyAliasDemand
           (load.compiler-load-session-state-lazy-import-preload-demand
-            (load.compiler-load-session-state-shared-view (& state-a))
+            (& (load.compiler-load-session-state-shared-view (& state-a)))
             true
             (Some alias)
-            (deref decls)
+            (& (deref decls))
             pools)]
         [observed-a : load_tests.CompilerLoadLazyQualifiedObserverResult
           (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!

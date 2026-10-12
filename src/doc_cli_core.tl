@@ -291,7 +291,7 @@
     (let
       [lazy-mode : bool
         (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
-          (owned_view.compiler-owned-shared-view load-state))]
+          (& load-state))]
       [_eager : unit
         (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
           (owned_view.compiler-owned-shared-view load-state)
@@ -301,7 +301,7 @@
           (owned_view.compiler-owned-shared-view load-state)
           input-path
           (sym_i64_env.sym-i64-empty)
-          stdlib-roots
+          (& stdlib-roots)
           (sym_i64_env.sym-i64-empty)
           pools)]
       [_publish : unit

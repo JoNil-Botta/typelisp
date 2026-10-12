@@ -5,10 +5,11 @@
 
 (define (c-function-parse-mode [mode : ast.AstCFunctionMode]) : bool
   (match (parser.parse-ast-source
-    (str_cat.str-cat
-      "(define value : (CFunc "
-      (ast.ast-c-function-mode-name mode)
-      " (-> i32 f64 u64)) 0)"))
+    (&
+      (str_cat.str-cat
+        "(define value : (CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " (-> i32 f64 u64)) 0)")))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
@@ -42,7 +43,7 @@
 
 (define (c-function-parse-invalid [type-source : String]) : bool
   (match (parser.parse-ast-source
-    (str_cat.str-cat "(define value : " type-source " 0)"))
+    (& (str_cat.str-cat "(define value : " type-source " 0)")))
     [(Err _) true]
     [(Ok _) false]))
 

@@ -21,7 +21,7 @@
   [kind : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : String
-  (load.compiler-load-prelude-cache-key kind stdlib-roots cfgs))
+  (load.compiler-load-prelude-cache-key kind (& stdlib-roots) cfgs))
 
 (define (compiler-typecheck-reset-load-session!) : unit
   (load.compiler-load-session-reset-pools!)
@@ -362,24 +362,26 @@
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
     (match (load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-cfg
           ""
-          src
+          (& src)
           prelude-seen
-          stdlib-roots
+          (& stdlib-roots)
           cfgs)
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
-              (load.compiler-load-decl-list-append prelude-decls entry-decls)
+              (load.compiler-load-decl-list-append
+                (& prelude-decls)
+                (& entry-decls))
               (load.compiler-load-decl-path-list-append
-                prelude-paths
-                entry-paths)
+                (& prelude-paths)
+                (& entry-paths))
               (load.compiler-load-decl-module-list-append
-                prelude-modules
-                entry-modules)
+                (& prelude-modules)
+                (& entry-modules))
               seen)]
           [(Err diag) (Err diag)])]
       [(Err diag) (Err diag)])))
@@ -390,7 +392,7 @@
   (match kind
     [(Module)
       (load.compiler-load-stdlib-import?
-        (load.compiler-load-dotted-module-path path))]
+        (load.compiler-load-dotted-module-path (& path)))]
     [_ false]))
 
 (define (typecheck-compiler-source-decl-has-stdlib-import? [decl : ast.AstDecl]) : bool
@@ -473,9 +475,7 @@
     [_dedup-reset : unit (ast.ty-node-dedup-clear!)]
     [_reset-before : unit (tc_core.compiler-typecheck-reset-file-state!)]
     [result : tc_core.ResultCompilerTypecheck
-      (match (parser.parse-ast-source-diagnostic
-        ""
-        (owned_view.compiler-owned-shared-view src))
+      (match (parser.parse-ast-source-diagnostic "" (& src))
         [(Ok program)
           ;; Keep synthetic in-memory fixtures on the historical direct path,
           ;; but route real stdlib imports through the loader so macro imports

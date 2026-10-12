@@ -28964,73 +28964,76 @@
           (ctfe_support.ctfe-env-extend-id
             env
             name
-            (cond
-              [(tc-macro-type-param-kind? (tc-global-shared-view ty))
-                (Type (Var name))]
-              [(tc-macro-module-param-kind? (tc-global-shared-view ty))
-                (String "" cbi.compiler-builtin-id-fix-empty)]
-              [(and
-                  variadic
-                  (tc-macro-expr-clause-type?
+            (&
+              (cond
+                [(tc-macro-type-param-kind? (tc-global-shared-view ty))
+                  (Type (Var name))]
+                [(tc-macro-module-param-kind? (tc-global-shared-view ty))
+                  (String "" cbi.compiler-builtin-id-fix-empty)]
+                [(and
+                    variadic
+                    (tc-macro-expr-clause-type?
+                      (tc-resolve-type
+                        ctx
+                        (tc-macro-signature-type (tc-global-shared-view ty)))))
+                  (ExprClauseList (ast.ast-expr-clause-list-new))]
+                [(and
+                    variadic
+                    (tc-macro-expr-binding-clause-type?
+                      (tc-resolve-type
+                        ctx
+                        (tc-macro-signature-type (tc-global-shared-view ty)))))
+                  (ExprBindingClauseList (ast.ast-expr-binding-clause-list-new))]
+                [variadic (ExprList (ast.ast-expr-list-new))]
+                [(tc-macro-expr-clause-type?
                     (tc-resolve-type
                       ctx
-                      (tc-macro-signature-type (tc-global-shared-view ty)))))
-                (ExprClauseList (ast.ast-expr-clause-list-new))]
-              [(and
-                  variadic
-                  (tc-macro-expr-binding-clause-type?
-                    (tc-resolve-type
-                      ctx
-                      (tc-macro-signature-type (tc-global-shared-view ty)))))
-                (ExprBindingClauseList (ast.ast-expr-binding-clause-list-new))]
-              [variadic (ExprList (ast.ast-expr-list-new))]
-              [(tc-macro-expr-clause-type?
-                  (tc-resolve-type
-                    ctx
-                    (tc-macro-signature-type (tc-global-shared-view ty))))
-                (ExprClause
-                  (ast.ast-expr-clause
-                    (ast.ast-node-pool-context-expr-push
-                      (tc-context-pools ctx)
-                      (Var
-                        (tc-generated-name-id
-                          (str_cat.str-cat (tc-env-key-name-text name) "$first"))))
-                    (ast.ast-node-pool-context-expr-push
-                      (tc-context-pools ctx)
-                      (Var
-                        (tc-generated-name-id
-                          (str_cat.str-cat
-                            (tc-env-key-name-text name)
-                            "$second"))))))]
-              [(tc-macro-expr-binding-clause-type?
-                  (tc-resolve-type
-                    ctx
-                    (tc-macro-signature-type (tc-global-shared-view ty))))
-                (let
-                  [unit-expr : i64
-                    (ast.ast-node-pool-context-expr-push
-                      (tc-context-pools ctx)
-                      (Literal (Unit)))]
-                  (ExprBindingClause
-                    (ast.ast-expr-binding-clause-id
-                      (ci.intern-syntax-id-from-raw name)
-                      false
-                      unit-expr
+                      (tc-macro-signature-type (tc-global-shared-view ty))))
+                  (ExprClause
+                    (ast.ast-expr-clause
                       (ast.ast-node-pool-context-expr-push
                         (tc-context-pools ctx)
                         (Var
                           (tc-generated-name-id
                             (str_cat.str-cat
                               (tc-env-key-name-text name)
-                              "$init"))))
-                      (ctfe_support.ctfe-untyped-expr-type)
-                      (ast.ast-source-span 0 0 0 0))))]
-              [else
-                (Expr
-                  (ast.ast-node-pool-context-expr-push
-                    (tc-context-pools ctx)
-                    (Var name))
-                  (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
+                              "$first"))))
+                      (ast.ast-node-pool-context-expr-push
+                        (tc-context-pools ctx)
+                        (Var
+                          (tc-generated-name-id
+                            (str_cat.str-cat
+                              (tc-env-key-name-text name)
+                              "$second"))))))]
+                [(tc-macro-expr-binding-clause-type?
+                    (tc-resolve-type
+                      ctx
+                      (tc-macro-signature-type (tc-global-shared-view ty))))
+                  (let
+                    [unit-expr : i64
+                      (ast.ast-node-pool-context-expr-push
+                        (tc-context-pools ctx)
+                        (Literal (Unit)))]
+                    (ExprBindingClause
+                      (ast.ast-expr-binding-clause-id
+                        (ci.intern-syntax-id-from-raw name)
+                        false
+                        unit-expr
+                        (ast.ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
+                          (Var
+                            (tc-generated-name-id
+                              (str_cat.str-cat
+                                (tc-env-key-name-text name)
+                                "$init"))))
+                        (ctfe_support.ctfe-untyped-expr-type)
+                        (ast.ast-source-span 0 0 0 0))))]
+                [else
+                  (Expr
+                    (ast.ast-node-pool-context-expr-push
+                      (tc-context-pools ctx)
+                      (Var name))
+                    (tc-resolve-type ctx (tc-macro-signature-type ty)))])))
           params
           (+ index 1))])))
 
@@ -29415,7 +29418,7 @@
             (tc-context-ctfe-macro-state ctx)
             module-id
             name
-            (tc-global-shared-view constructor-ty))
+            (& constructor-ty))
           (tc-bind-enum-variants-in-module-id-at
             ctx
             (tc-bind-alias-id-if-free
@@ -29499,7 +29502,7 @@
                 (tc-context-ctfe-macro-state ctx)
                 module-id
                 name
-                (tc-global-shared-view ty))
+                (& ty))
               (Ok
                 (tc-bind-unsafe-id
                   env
@@ -29514,7 +29517,7 @@
                 (tc-context-ctfe-macro-state ctx)
                 module-id
                 name
-                (tc-global-shared-view ty))
+                (& ty))
               (Ok
                 (tc-bind-unsafe-id
                   env
@@ -29533,7 +29536,7 @@
           (tc-context-ctfe-macro-state ctx)
           module-id
           name
-          (tc-global-shared-view ty))
+          (& ty))
         (Ok (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
     [(or (DefFn _ name _ _ _ _) (DefDispatch _ name _))
       (let
@@ -29546,7 +29549,7 @@
           (tc-context-ctfe-macro-state ctx)
           module-id
           name
-          (tc-global-shared-view ty))
+          (& ty))
         (Ok (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
     [(Extern decl-meta name kind _ _)
       (let
@@ -29557,7 +29560,7 @@
           (tc-context-ctfe-macro-state ctx)
           module-id
           name
-          (tc-global-shared-view ty))
+          (& ty))
         (Ok (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
     [(DefEnum decl-meta name cleanup variants)
       (let
@@ -29612,7 +29615,7 @@
           (tc-context-ctfe-macro-state ctx)
           module-id
           name
-          (tc-global-shared-view constructor-ty))
+          (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
             (tc-bind-id
@@ -29638,7 +29641,7 @@
           (tc-context-ctfe-macro-state ctx)
           module-id
           name
-          (tc-global-shared-view constructor-ty))
+          (& constructor-ty))
         (Ok
           (tc-bind-struct-cleanup-module-id
             (tc-bind-id
@@ -29783,8 +29786,7 @@
 (define (tc-import-alias-summary-index-build-current
   [all-decls : ast.AstDeclList]) : TcImportAliasSummaryIndex
   (let
-    [capacity : i64
-      (+ (parser.ast-decl-list-count (tc-global-shared-view all-decls)) 1)]
+    [capacity : i64 (+ (parser.ast-decl-list-count (& all-decls)) 1)]
     [decls : (__tl_dyn-array ast.AstDeclList)
       (__tl_make-array ast.AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
@@ -30255,7 +30257,7 @@
                   ;; checked by the loader's selected-item validator.
                   (unless
                     (cload.compiler-load-module-has-pending-generator?
-                      (tc-global-shared-view all-decls)
+                      (& all-decls)
                       target-module)
                     (set! message step-message)
                     (set! ok false))])))]
@@ -32012,7 +32014,7 @@
         [ctfe-env : ctfe_support.CtfeEnv
           (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
-          inner
+          (& inner)
           ctfe-env
           (ctfe_support.ctfe-fuel-limit))
           [(Ok value _) (tc-ctfe-value-type-with-expected ctx value expected)]
@@ -50418,7 +50420,7 @@
     [(Info _ repr-c? size align fields)
       (ctfe_support.ctfe-layout-info-list-add-if-missing-id
         layouts
-        (Info alias repr-c? size align fields)
+        (& (Info alias repr-c? size align fields))
         alias-id)]))
 
 (define (tc-ctfe-layout-add-names
@@ -50432,7 +50434,7 @@
     [with-key : ctfe_support.CtfeLayoutInfoList
       (ctfe_support.ctfe-layout-info-list-add-if-missing-id
         layouts
-        (tc-global-shared-view info)
+        (& info)
         key-id)]
     (if (= (string.string-length module) 0)
       with-key
@@ -50539,7 +50541,7 @@
             (ctfe_support.ctfe-layout-info-list-with-capacity
               ;; Splice extension grows this owner-arena vector
               ;; geometrically; reserve only the known program surface.
-              (ctfe_support.ctfe-metadata-decl-capacity decls))))])))
+              (ctfe_support.ctfe-metadata-decl-capacity (& decls)))))])))
 
 ;; The comptime evaluator has no import scope, so each type literal of a
 ;; comptime expression is resolved here, in the module being checked, to the
@@ -50670,9 +50672,10 @@
             (in-arena
               (arena.Arena owner)
               (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                (tc-ctfe-layouts ctx)
-                (ctfe_support.ctfe-reflections-from-program
-                  (tc-context-program ctx))
+                (& (tc-ctfe-layouts ctx))
+                (&
+                  (ctfe_support.ctfe-reflections-from-program
+                    (& (tc-context-program ctx))))
                 (tc-context-pools ctx)
                 (tc-context-source-names ctx)
                 (tc-macro-ctfe-state state)))]
@@ -58840,7 +58843,7 @@
     [ctfe-env : ctfe_support.CtfeEnv
       (tc-ctfe-env-for-comptime ctx (tc-global-shared-view len))]
     (match (ctfe_support.compiler-ctfe-eval
-      len
+      (& len)
       ctfe-env
       (ctfe_support.ctfe-fuel-limit))
       [(Ok value _)
@@ -60207,16 +60210,17 @@
           role
           ", got "
           (ctfe_support.ctfe-describe-expr
-            (ast.ast-expr-unspan-with-pools
-              pools
-              (& (tc-context-expr-get ctx expr-id)))))))))
+            (&
+              (ast.ast-expr-unspan-with-pools
+                pools
+                (& (tc-context-expr-get ctx expr-id))))))))))
 
 (define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
   (let
     [expected : ast.AstExpr (tc-context-expr-get ctx expected-id)]
     (match (ctfe_support.ctfe-expr-to-type
-      (tc-global-shared-view expected)
-      expected
+      (& expected)
+      (& expected)
       (tc-ctfe-env ctx)
       (ctfe_support.ctfe-fuel-limit))
       [(Ok ty _) (Ok (tc-resolve-type ctx ty))]
@@ -61177,7 +61181,7 @@
         [ctfe-env : ctfe_support.CtfeEnv
           (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
-          inner
+          (& inner)
           ctfe-env
           (ctfe_support.ctfe-fuel-limit))
           [(Ok value _) (tc-ctfe-value-type ctx value)]
@@ -61593,7 +61597,7 @@
       (tc-type-eq (tc-global-shared-view expected) (Expr))
       (tc-type-eq (tc-global-shared-view produced) (Expr))
       (ctfe_support.ctfe-untyped-expr-type? produced)
-      (ctfe_support.ctfe-captured-expr-type? (tc-global-shared-view produced))
+      (ctfe_support.ctfe-captured-expr-type? (& produced))
       (tc-type-compatible? expected (tc-resolve-type ctx produced)))))
 
 (define (tc-check-defmacro-produced-type
@@ -61707,20 +61711,18 @@
       [(ctfe_support.ctfe-builtin-offset-of-id? lookup-id) true]
       [(ctfe_support.ctfe-builtin-reflection-id? call-id) true]
       [(ctfe_support.ctfe-builtin-module-value-id? call-id) true]
-      [(ctfe_support.ctfe-string-eq-helper-name-id?
-          (tc-global-shared-view lookup-name)
-          lookup-id)
+      [(ctfe_support.ctfe-string-eq-helper-name-id? (& lookup-name) lookup-id)
         true]
       [(ctfe_support.ctfe-builtin-string-build-id? call-id) true]
       [(ctfe_support.ctfe-string-length-helper-name-id?
-          (tc-global-shared-view lookup-name)
+          (& lookup-name)
           lookup-id)
         true]
-      [(ctfe_support.ctfe-string-ref-helper-name-id?
-          (tc-global-shared-view lookup-name)
-          lookup-id)
+      [(ctfe_support.ctfe-string-ref-helper-name-id? (& lookup-name) lookup-id)
         true]
-      [(ctfe_support.ctfe-string-to-int-helper-name-id? lookup-name lookup-id)
+      [(ctfe_support.ctfe-string-to-int-helper-name-id?
+          (& lookup-name)
+          lookup-id)
         true]
       [(ctfe_support.ctfe-builtin-int-to-string-id? call-id) true]
       [(ctfe_support.ctfe-builtin-inspector-id? call-id) true]
@@ -63762,9 +63764,10 @@
             (= args.len 2)
             (>= raw-id 0)
             (ctfe_support.ctfe-string-eq-helper-name-id?
-              (tc-hygiene-name-text-id-for-session
-                (tc-macro-state-structural-session state)
-                raw-id)
+              (&
+                (tc-hygiene-name-text-id-for-session
+                  (tc-macro-state-structural-session state)
+                  raw-id))
               (macro-hygiene-global-source-name-id-or
                 (tc-macro-state-structural-session state)
                 raw-id
@@ -64101,7 +64104,7 @@
                 (tc-ctfe-env-extend-macro-params ctx base-definition-env params)]
               [definition-result : ctfe_support.ResultCtfe
                 (ctfe_support.compiler-ctfe-eval
-                  body
+                  (& body)
                   definition-env
                   (ctfe_support.ctfe-fuel-limit))]
               ;; This probe runs the body on placeholder
@@ -87418,7 +87421,7 @@
     cbi.compiler-builtin-id-fix-empty
     cbi.compiler-builtin-id-fix-empty
     (cload.compiler-load-session-state-dependency-catalog-handle
-      (cload.compiler-load-serial-test-session-state))
+      (& (cload.compiler-load-serial-test-session-state)))
     (tc_i64_i64_map.with-capacity 64)
     (__tl_make-array i64 13)
     false
@@ -87741,8 +87744,10 @@
     [reflections : ctfe_support.CtfeReflectInfoList
       (owned_view.compiler-owned-reference-shared-view reflections)]
     (if (or
-      (ctfe_support.ctfe-layout-info-list-contains-key-id? layouts key-id)
-      (ctfe_support.ctfe-reflect-info-list-contains-key-id? reflections key-id)
+      (ctfe_support.ctfe-layout-info-list-contains-key-id? (& layouts) key-id)
+      (ctfe_support.ctfe-reflect-info-list-contains-key-id?
+        (& reflections)
+        key-id)
       (tc_i64_i64_map.contains? seen key-id))
       false
       (begin
@@ -87784,12 +87789,7 @@
       [decl-offset : i64 decls.offset]
       [seen : tc_i64_i64_map.Map
         (tc_i64_i64_map.with-capacity
-          (+
-            (*
-              (ctfe_support.ctfe-metadata-decl-capacity
-                (tc-global-shared-view decls))
-              2)
-            1))]
+          (+ (* (ctfe_support.ctfe-metadata-decl-capacity (& decls)) 2) 1))]
       [safe : bool true]
       (while (and safe (< position count))
         (match (tc-global-array-element-shared-view
@@ -87874,9 +87874,7 @@
             (ctfe_support.ctfe-env-layouts ctfe-env-value)]
           [reflections : ctfe_support.CtfeReflectInfoList
             (ctfe_support.ctfe-env-reflections ctfe-env-value)]
-          [needed : i64
-            (ctfe_support.ctfe-metadata-decl-capacity
-              (tc-global-shared-view decls))]
+          [needed : i64 (ctfe_support.ctfe-metadata-decl-capacity (& decls))]
           (if (compiler-typecheck-ctfe-splice-append-safe?
             ctx
             (tc-global-shared-view decls)
@@ -87914,7 +87912,7 @@
                       grown-layouts)]
                   [next-reflections : ctfe_support.CtfeReflectInfoList
                     (ctfe_support.ctfe-reflections-from-decls
-                      decls
+                      (& decls)
                       module
                       module-id
                       grown-reflections)]
@@ -87923,8 +87921,8 @@
                       state
                       macro-expand-ctfe-env-value
                       (ctfe_support.ctfe-env-with-metadata-and-pools-and-source-names-and-macro-state
-                        next-layouts
-                        next-reflections
+                        (& next-layouts)
+                        (& next-reflections)
                         (ctfe_support.ctfe-env-pools ctfe-env-value)
                         (ctfe_support.ctfe-env-source-names ctfe-env-value)
                         (tc-macro-ctfe-state state)))
@@ -89406,7 +89404,7 @@
     (ast.ast-source-span-end-col span)))
 
 (define (macro-output-syntax-diag [origin : ast.AstExpr] [message : String]) : cdiag.CompilerDiagnostic
-  (ctfe_support.ctfe-diagnostic-at-expr origin message))
+  (ctfe_support.ctfe-diagnostic-at-expr (& origin) message))
 
 (define (macro-expansion-site-span [ctx : TcContext] [call-expr : ast.AstExpr]) : TcMaybeAstSourceSpan
   (match (tc-global-shared-view call-expr)
@@ -89679,7 +89677,10 @@
         false)
       unit)
     (if (!= out-key rest-key)
-      (parser.compiler-parse-decl-origin-register-list-aliases! (& out) 1 rest)
+      (parser.compiler-parse-decl-origin-register-list-aliases!
+        (& out)
+        1
+        (& rest))
       unit)
     out))
 
@@ -89743,7 +89744,7 @@
       (parser.compiler-parse-decl-origin-register-list-aliases!
         (& reserved)
         0
-        items)
+        (& items))
       reserved)))
 
 (define (macro-decl-list-append-from
@@ -89790,7 +89791,7 @@
           (parser.compiler-parse-decl-origin-register-list-aliases!
             (& out)
             0
-            left)
+            (& left))
           out))
       (let
         [out : ast.AstDeclList
@@ -89800,11 +89801,11 @@
         (parser.compiler-parse-decl-origin-register-list-aliases!
           (& out)
           0
-          left)
+          (& left))
         (parser.compiler-parse-decl-origin-register-list-aliases!
           (& out)
           left-len
-          right)
+          (& right))
         out))))
 
 (define (macro-flatten-module-body-decls-into-with-origins
@@ -89829,7 +89830,7 @@
                 1
                 (parser.compiler-parse-decl-list-storage-key (& rest))
                 (- rest.offset 1)
-                decl
+                (& decl)
                 false)
               (set! current-module-id next-module)]
             [(ModuleBody target-module-id body-box)
@@ -89842,7 +89843,7 @@
                 1
                 (parser.compiler-parse-decl-list-storage-key (& rest))
                 (- rest.offset 1)
-                (tc-global-shared-view decl)
+                (& decl)
                 false)
               (macro-flatten-module-body-decls-into-with-origins
                 (ast.ast-decl-list-box-shared-view body-box)
@@ -89858,7 +89859,7 @@
                 1
                 (parser.compiler-parse-decl-list-storage-key (& rest))
                 (- rest.offset 1)
-                decl
+                (& decl)
                 false)]
             [_
               (ast.ast-decl-list-push result (tc-global-shared-view decl))
@@ -89868,7 +89869,7 @@
                 1
                 (parser.compiler-parse-decl-list-storage-key (& rest))
                 (- rest.offset 1)
-                decl
+                (& decl)
                 false)])
           (set! cursor rest)]))
     unit))
@@ -91216,7 +91217,7 @@
   [expr : ast.AstExpr]
   [env : ctfe_support.CtfeEnv]
   [fuel : i64]) : spec.ResultGenKey
-  (match (ctfe_support.compiler-ctfe-eval (tc-global-shared-view expr) env fuel)
+  (match (ctfe_support.compiler-ctfe-eval (& expr) env fuel)
     [(Ok value next-fuel)
       (match value
         [(String text _) (Ok (spec.spec-string-key text) next-fuel)]
@@ -91226,7 +91227,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
-                expr
+                (& expr)
                 "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
     [(Err diag) (Err diag)]))
 
@@ -91480,7 +91481,7 @@
               (& type-kinds)
               head-expr))]
         (Ok
-          (str_cat.str-cat "type_" (ctfe_support.ctfe-type-key resolved-ty))
+          (str_cat.str-cat "type_" (ctfe_support.ctfe-type-key (& resolved-ty)))
           fuel))]
     [(tc-macro-module-param-kind? (tc-global-shared-view ty))
       (match (macro-module-strategy-arg-with-fallback
@@ -91522,7 +91523,10 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              (tc-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0))
+              (&
+                (tc-context-expr-get
+                  ctx
+                  (ast.ast-expr-list-get args arg-index 0)))
               "macro call has too many arguments"))))]
     [else
       (match (ast.ast-macro-param-list-get
@@ -91537,13 +91541,13 @@
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: type macro operand cannot be variadic")))]
                 [(tc-macro-module-param-kind? (tc-global-shared-view ty))
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: Module macro operand cannot be variadic")))]
                 [(macro-identity-syntax-param-type?
                     ctx
@@ -91613,13 +91617,13 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
-                      call-expr
+                      (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "macro call has too few arguments")))
               (let
                 [head-expr : ast.AstExpr
@@ -100885,7 +100889,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
-                call-expr
+                (& call-expr)
                 (macro-missing-macro-message name))))])
       (match (macro-surface-call-decl-in-module
         (tc-context-expr-bases ctx)
@@ -100905,7 +100909,7 @@
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
-                  call-expr
+                  (& call-expr)
                   (macro-missing-macro-message name)))))]))))
 
 (define (macro-qualified-call-decl
@@ -100949,7 +100953,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            call-expr
+            (& call-expr)
             (str_cat.str-cat
               "typecheck: qualified macro has no source id: "
               name)))))))
@@ -101105,9 +101109,9 @@
           target-module-id)
           [(CompilerLoadSomeSurfaceSummary summary)
             (cload.compiler-load-surface-summary-refresh-with-pools
-              summary.source-path
+              (& summary.source-path)
               summary.source-path-id
-              (svec.new)
+              (& (svec.new))
               (Some target-module-id)
               "stdlib"
               (parser.compiler-cfg-empty)
@@ -101400,7 +101404,8 @@
             -1
             call-expr)]
         [(Err message)
-          (Err (box (ctfe_support.ctfe-diagnostic-at-expr call-expr message)))]))))
+          (Err
+            (box (ctfe_support.ctfe-diagnostic-at-expr (& call-expr) message)))]))))
 
 (define (macro-call-decl-from-hygiene-name
   [ctx : TcContext]
@@ -101414,7 +101419,7 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
-          call-expr
+          (& call-expr)
           (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
             lookup-name))))
@@ -101713,11 +101718,11 @@
 (define (macro-type-arg-reflections-from-decls [decls : ast.AstDeclList]) : ctfe_support.CtfeReflectInfoList
   (ctfe_support.ctfe-build-seen-reset!)
   (ctfe_support.ctfe-reflections-from-decls
-    (tc-global-shared-view decls)
+    (& decls)
     ""
     cbi.compiler-builtin-id-fix-empty
     (ctfe_support.ctfe-reflect-info-list-with-capacity
-      (ctfe_support.ctfe-metadata-decl-capacity decls))))
+      (ctfe_support.ctfe-metadata-decl-capacity (& decls)))))
 
 (define (macro-type-arg-reflect-resolve
   [ctx : TcContext]
@@ -101783,15 +101788,15 @@
   [arg : ast.AstExpr]) : ResultMacroTypeArg
   (tc-context-capture-active-pools! ctx)
   (match (ctfe_support.ctfe-expr-to-type
-    (tc-global-shared-view arg)
-    (tc-global-shared-view arg)
+    (& arg)
+    (& arg)
     (ctfe_support.ctfe-env-empty-with-pools (tc-context-pools ctx))
     (ctfe_support.ctfe-fuel-limit))
     [(Ok ty _)
       (match (macro-type-arg-source-policy-ok ctx (tc-global-shared-view ty))
         [(Ok) (Ok (macro-type-arg-resolve ctx decls ty))]
         [(Err message)
-          (Err (box (ctfe_support.ctfe-diagnostic-at-expr arg message)))])]
+          (Err (box (ctfe_support.ctfe-diagnostic-at-expr (& arg) message)))])]
     [(Err diag) (Err diag)]))
 
 (define (macro-type-arg-with-fallback
@@ -101878,13 +101883,13 @@
         (ctfe_support.ctfe-type-kind-with-reflections-and-pools
           (tc-context-pools ctx)
           empty-infos
-          (tc-global-shared-view resolved-ty))]
+          (& resolved-ty))]
       (if (macro-type-kind-list-contains-text? type-kinds actual-kind)
         Ok
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              arg-expr
+              (& arg-expr)
               (macro-type-kind-constraint-message
                 macro-name
                 param-name
@@ -101916,7 +101921,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
-                arg
+                (& arg)
                 (tc-source-slash-qualified-message name))))
           (let
             [program : ast.AstProgram (tc-context-program ctx)]
@@ -101939,13 +101944,13 @@
                       (Err
                         (box
                           (ctfe_support.ctfe-diagnostic-at-expr
-                            arg
+                            (& arg)
                             (macro-module-strategy-unknown-message name)))))])]))))]
     [_
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            arg
+            (& arg)
             "typecheck: Module macro operand expects a module name")))]))
 
 (define (macro-module-strategy-arg-with-fallback
@@ -101967,7 +101972,9 @@
 (define (macro-expr-clause-shape-error [arg : ast.AstExpr]) : ResultMacroClause
   (Err
     (box
-      (ctfe_support.ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))))
+      (ctfe_support.ctfe-diagnostic-at-expr
+        (& arg)
+        (macro-clause-shape-message)))))
 
 ;; `[first second]` captures both expressions. Like a `let` body, a clause body
 ;; may be several forms, `[first form ...]`, captured as one implicit `begin`
@@ -102006,7 +102013,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            arg
+            (& arg)
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-clause-list-from-args
@@ -102053,7 +102060,7 @@
   (Err
     (box
       (ctfe_support.ctfe-diagnostic-at-expr
-        arg
+        (& arg)
         (macro-binding-clause-shape-message)))))
 
 (define (macro-expr-binding-clause-from-name
@@ -102118,7 +102125,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            arg
+            (& arg)
             "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-binding-clause-list-from-args
@@ -102330,7 +102337,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            arg
+            (& arg)
             (macro-clause-operand-mismatch-message resolved-expected))))]
     [else (macro-check-ordinary-operand ctx env resolved-expected arg)]))
 
@@ -102484,7 +102491,7 @@
               [captured : ast.AstType
                 (ctfe_support.ctfe-captured-expr-type-with-pools
                   (tc-context-pools ctx)
-                  (tc-resolve-type ctx actual))]
+                  (& (tc-resolve-type ctx actual)))]
               (tc-context-install-pools! ctx)
               captured)]
           [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
@@ -102851,7 +102858,7 @@
       (if rebase-binding-clauses?
         (Some (ast.ast-node-pool-context-capture-active))
         current)]
-    [_ (ctfe_support.ctfe-syntax-pools-for-value current value)]))
+    [_ (ctfe_support.ctfe-syntax-pools-for-value current (& value))]))
 
 (define (macro-capture-variadic-param
   [ctx : TcContext]
@@ -102869,13 +102876,13 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            (Var name)
+            (& (Var name))
             "typecheck: type macro operand cannot be variadic")))]
     [(tc-macro-module-param-kind? (tc-global-shared-view ty))
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            (Var name)
+            (& (Var name))
             "typecheck: Module macro operand cannot be variadic")))]
     [(macro-param-expr-clause?
         ctx
@@ -102958,7 +102965,7 @@
             env
             (ast.ast-node-pool-context-capture-active))]
         [_ env])]
-    (Ok (ctfe_support.ctfe-env-extend-id captured-env name value))))
+    (Ok (ctfe_support.ctfe-env-extend-id captured-env name (& value)))))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
 ;; code can inspect without evaluating. Keep its literal node in the active
@@ -103029,7 +103036,7 @@
   [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeEnv
   (if (tc-macro-module-param-kind? ty)
     (ctfe_support.ctfe-env-extend-typed-id env name value (String))
-    (ctfe_support.ctfe-env-extend-id env name value)))
+    (ctfe_support.ctfe-env-extend-id env name (& value))))
 
 (define (macro-capture-fixed-param
   [ctx : TcContext]
@@ -103240,7 +103247,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "macro call has too many arguments"))))]
     [else
       (match (ast.ast-macro-param-list-get
@@ -103303,19 +103310,22 @@
                     args
                     (+ param-index 1)
                     (+ arg-index clauses.len)
-                    (ctfe_support.ctfe-env-extend-id captured-env pname value)
+                    (ctfe_support.ctfe-env-extend-id
+                      captured-env
+                      pname
+                      (& value))
                     capture-expr-types
                     call-expr))
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
-                      call-expr
+                      (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
@@ -103418,7 +103428,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "macro call has too many arguments"))))]
     [else
       (match (ast.ast-macro-param-list-get
@@ -103511,13 +103521,13 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
-                      call-expr
+                      (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "macro call has too few arguments")))
               (let
                 [arg : i64 (ast.ast-expr-list-get args arg-index 0)]
@@ -103625,7 +103635,7 @@
       (tc-context-macro-state ctx)
       macro-dependency-catalog-handle)
     slot
-    identity))
+    (& identity)))
 
 (define (macro-dependency-catalog-slot-cache-reset! [state : TcMacroState]) : unit
   (let
@@ -103693,9 +103703,7 @@
               provenance-id
               (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-path
                 (tc-macro-walk-field state macro-dependency-catalog-handle)
-                (owned_view.compiler-owned-array-element-shared-view
-                  source-names.pool-slots
-                  provenance-id)))))))))
+                (& (array-ref source-names.pool-slots provenance-id))))))))))
 
 (define (macro-expand-stdlib-tlci-module-id?
   [state : TcMacroState]
@@ -103872,7 +103880,7 @@
     (match catalog
       [(Dependency capability)
         (cload.compiler-load-dependency-catalog-capability-error
-          capability
+          (& capability)
           identity
           message)]
       [(Embedded _) message])))
@@ -104377,7 +104385,9 @@
                           9))
                       (embedded_tlci.compiler-comptime-host-session-close!)
                       (Err
-                        (ctfe_support.ctfe-diagnostic-at-expr call-expr message)))]
+                        (ctfe_support.ctfe-diagnostic-at-expr
+                          (& call-expr)
+                          message)))]
                   [(Ok dispatch)
                     (let
                       [status : i64 dispatch.status]
@@ -104531,7 +104541,7 @@
                                 (embedded_tlci.compiler-comptime-host-session-close!)
                                 (Err
                                   (ctfe_support.ctfe-diagnostic-at-expr
-                                    call-expr
+                                    (& call-expr)
                                     message)))])]
                         ;; A transformer that called `comptime-error` left
                         ;; its own message in the session diagnostic slot;
@@ -104579,7 +104589,7 @@
                               (embedded_tlci.compiler-comptime-host-session-close!)
                               (Err
                                 (ctfe_support.ctfe-diagnostic-at-expr
-                                  call-expr
+                                  (& call-expr)
                                   message))))]))])))))))))
 
 ;; The provenance gate comes before identity construction and catalog access,
@@ -104988,11 +104998,11 @@
     (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (match (ctfe_support.ctfe-eval-node
-      body
+      (& body)
       (ctfe_support.ctfe-env-extend-id
         env
         (ctfe_support.ctfe-hygiene-enabled-id)
-        (Bool true))
+        (& (Bool true)))
       (ctfe_support.ctfe-fuel-limit))
       [(Ok value _)
         (begin
@@ -105314,7 +105324,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            expr
+            (& expr)
             "typecheck: expected binding clause")))]))
 
 (define (macro-expand-binding-prefix-args-into
@@ -105956,7 +105966,7 @@
       (ctfe_support.ctfe-env-extend-id
         (ctfe_support.ctfe-env-rebase-pools env rewrite-pools)
         (ctfe_support.ctfe-hygiene-enabled-id)
-        (Bool true))]
+        (& (Bool true)))]
     (macro-rewrite-generated-import-decls-with-env
       ctx
       orig-decls
@@ -106007,7 +106017,7 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    expr
+                    (& expr)
                     "macro expansion exceeded depth limit"))))
             (macro-expand-expr-fire ctx env decls depth expr)))))))
 
@@ -106030,13 +106040,13 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
-          call-expr
+          (& call-expr)
           "typecheck: Module macro can only be used in import position")))
     (if (tc-macro-result-decls? (tc-global-shared-view ret))
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            call-expr
+            (& call-expr)
             "typecheck: Decls macro can only be used at module scope")))
       (let
         [value
@@ -106098,7 +106108,7 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "typecheck: macro expansion produced type does not match declaration"))))]
           [(CapturedExpr expanded produced pools)
             (if (tc-macro-produced-type-compatible? ctx ret produced)
@@ -106149,13 +106159,13 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "typecheck: macro expansion produced type does not match declaration"))))]
           [_
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
-                  call-expr
+                  (& call-expr)
                   "macro transformer did not produce an Expr")))])))))
 
 (define (macro-expand-call
@@ -106259,7 +106269,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            expr
+            (& expr)
             "macro expansion exceeded depth limit"))))
     (macro-expand-expr-fire ctx env decls depth expr)))
 
@@ -106569,7 +106579,7 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
-          call-expr
+          (& call-expr)
           (macro-compat-guard-message name))))
     (macro-expand-compat-guard-body
       ctx
@@ -106633,7 +106643,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              expr
+              (& expr)
               "macro expansion exceeded depth limit"))))
       (macro-expand-expr-fire ctx env decls depth expr))))
 
@@ -107442,7 +107452,7 @@
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: Module macro expansion is not implemented yet")))]
                 [(and
                     import-position
@@ -107450,43 +107460,43 @@
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: Decls macro cannot be used in import position")))]
                 [import-position
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: expression macro cannot be used as module import")))]
                 [(tc-macro-result-decls? (tc-global-shared-view ret))
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: Decls macro expansion is not implemented yet")))]
                 [(tc-macro-result-module? ret)
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: Module macro can only be used in import position")))]
                 [else
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
-                        call-expr
+                        (& call-expr)
                         "typecheck: expression macro cannot be used at module scope")))])]
             [(No)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
-                    call-expr
+                    (& call-expr)
                     "typecheck: module-scope macro call must resolve to defmacro")))]))]
       [_
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
 
 (define (macro-expand-decl
@@ -108023,7 +108033,7 @@
         (let
           [macro-name : String
             (parser.parse-ast-dotted-import-default-alias
-              (tc-env-key-name-text target-module-id))]
+              (& (tc-env-key-name-text target-module-id)))]
           (str_cat.str-cat
             "typecheck: imported macro `"
             (tc-global-shared-view macro-name)
@@ -108040,7 +108050,7 @@
   [module-id : i64]
   [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
-    (tc-global-shared-view call-expr)
+    (& call-expr)
     (match (ast.ast-expr-unspan-with-segment-bases
       (tc-context-expr-bases ctx)
       (& call-expr))
@@ -108057,7 +108067,7 @@
   [call-expr : ast.AstExpr]
   [identity : String]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
-    call-expr
+    (& call-expr)
     (str_cat.str-cat
       "typecheck: Module macro output for generated identity "
       identity
@@ -108292,13 +108302,13 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
-            call-expr
+            (& call-expr)
             "typecheck: Module macro output must include a module declaration")))
       (if (> module-count 1)
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "typecheck: Module macro output must include exactly one module declaration")))
         (match (ast.ast-decl-list-step generated)
           [(Cons first body-rest-box)
@@ -108360,7 +108370,7 @@
                     (Err
                       (box
                         (ctfe_support.ctfe-diagnostic-at-expr
-                          call-expr
+                          (& call-expr)
                           "typecheck: Module macro output must include exactly one module declaration")))])]
               [(Module target-module-id)
                 (let
@@ -108417,13 +108427,13 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
-                      call-expr
+                      (& call-expr)
                       "typecheck: Module macro output must start with a module declaration")))])]
           [(Nil)
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
-                  call-expr
+                  (& call-expr)
                   "typecheck: Module macro output must include a module declaration")))])))))
 
 (define (macro-expand-decls-splice
@@ -108606,12 +108616,12 @@
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
-                                call-expr
+                                (& call-expr)
                                 "typecheck: Module macro can only be used in import position")))
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
-                                call-expr
+                                (& call-expr)
                                 "typecheck: expression macro cannot be used at module scope"))))))]
                   [(No)
                     (Err
@@ -108626,7 +108636,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
 
 (define (macro-expand-module-import
@@ -108853,12 +108863,12 @@
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
-                                call-expr
+                                (& call-expr)
                                 "typecheck: Decls macro cannot be used in import position")))
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
-                                call-expr
+                                (& call-expr)
                                 "typecheck: expression macro cannot be used as module import"))))))]
                   [(No)
                     (Err
@@ -108873,7 +108883,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
-              call-expr
+              (& call-expr)
               "typecheck: import macro placeholder must contain a call")))])))
 
 (define (macro-expand-decl-with-path
@@ -109048,7 +109058,7 @@
                   (parser.compiler-parse-decl-origin-register-list-aliases!
                     (& copied-decls)
                     0
-                    decls)
+                    (& decls))
                   (Ok
                     (ast.ast-program copied-decls)
                     (macro-decl-generation-copy-paths expanded-paths)))]))))]
@@ -111882,7 +111892,7 @@
                 index
                 cbi.compiler-builtin-id-fix-empty)]
             (if (cload.compiler-load-session-state-dependency-surface-provenance?
-              (tc-global-shared-view load-state)
+              (& load-state)
               provenance-id)
               (-= remaining 1)
               unit)
@@ -111912,7 +111922,7 @@
             (tc-global-shared-view paths)
             (tc-prefix-default-cache-scope)
             (cload.compiler-load-session-state-dependency-surface-provenance-count
-              (tc-global-shared-view load-state)))
+              (& load-state)))
             [(Some _ candidate-count _ _)
               (if (surface_facts.surface-typecheck-facts-rebase-composite-macro-prefix!
                 candidate-count)
@@ -112389,7 +112399,7 @@
             kind
             (tc-global-shared-view import-path)
             expected
-            stdlib-roots))]
+            (& stdlib-roots)))]
       (Ok
         (cload.CompilerLoadResolvedImport
           resolved
@@ -112404,7 +112414,7 @@
       import-path
       expected
       alias
-      stdlib-roots)))
+      (& stdlib-roots))))
 
 (define (macro-materialize-generated-import-with-provenance
   [load-state : cload.CompilerLoadSessionState]
@@ -112450,7 +112460,7 @@
               [alias : ast.AstMaybeImportAlias import.alias]
               [resolved-path-id : i64
                 (cload.compiler-load-resolved-path-id-for-generated-import-with-state
-                  (tc-global-shared-view load-state)
+                  (& load-state)
                   (tc-global-shared-view resolved)
                   expected)]
               (match (if (macro-materialize-provided-module?
@@ -112464,14 +112474,14 @@
                   seen)
                 (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
                   (tc-global-shared-view load-state)
-                  (tc-global-shared-view resolved)
+                  (& resolved)
                   resolved-path-id
                   seen
-                  stdlib-roots
+                  (& stdlib-roots)
                   kind
                   import-path
                   expected
-                  import-root
+                  (& import-root)
                   cfgs
                   pools
                   (tc-global-shared-view module)
@@ -112480,20 +112490,20 @@
                   (let
                     [after-import-expected : ast.AstMaybeModuleName
                       (cload.compiler-load-after-import-expected-module
-                        (tc-global-shared-view load-state)
+                        (& load-state)
                         resolved-path-id
                         kind
                         expected
                         alias
-                        (tc-global-shared-view imported-decls))]
+                        (& imported-decls))]
                     [after-import-alias : ast.AstMaybeImportAlias
                       (cload.compiler-load-after-import-alias
-                        load-state
+                        (& load-state)
                         resolved-path-id
                         kind
                         expected
                         alias
-                        (tc-global-shared-view imported-decls))]
+                        (& imported-decls))]
                     [source-import : ast.AstDeclList
                       (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))]
                     [tail-decls : ast.AstDeclList
@@ -112503,10 +112513,10 @@
                         after-import-expected
                         after-import-alias
                         span
-                        module
+                        (& module)
                         module-id
-                        source-import
-                        (tc-global-shared-view imported-decls)
+                        (& source-import)
+                        (& imported-decls)
                         (ast.ast-decl-list-new))]
                     [tail-paths : ast.AstDeclPathList
                       (cload.compiler-load-paths-after-import
@@ -112514,7 +112524,7 @@
                         decl-provenance-id
                         decl-owner-id
                         after-import-alias
-                        (tc-global-shared-view imported-decls)
+                        (& imported-decls)
                         (ast.ast-decl-path-list-new))]
                     [materialized-decls : ast.AstDeclList
                       (macro-decl-list-append imported-decls tail-decls)]
@@ -112557,15 +112567,15 @@
               (try
                 (cload.compiler-load-check-dotted-import-aliases-with-paths
                   ""
-                  (ast.ast-place-shared-view decls)
-                  (ast.ast-place-shared-view paths)))]
+                  (& decls)
+                  (& paths)))]
             (let
               [_
                 (try
                   (cload.compiler-load-check-expanded-unqualified-imports
                     ""
-                    decls
-                    (ast.ast-place-shared-view paths)))]
+                    (& decls)
+                    (& paths)))]
               (Ok program paths)))])]
     [(Err diag) (Err diag)]))
 
@@ -112590,7 +112600,7 @@
         (tc-job-state-macro-state job-state)
         macro-dependency-catalog-handle
         (cload.compiler-load-session-state-dependency-catalog-handle
-          (tc-global-shared-view load-state)))
+          (& load-state)))
       ;; The cache key is a source-name provenance index and the cached value
       ;; belongs to this exact catalog snapshot. Reset at the phase boundary so
       ;; job reuse cannot observe a prior source table or catalog generation.
@@ -112627,9 +112637,9 @@
           embedded-stdlib-tlci
           (or
             (cload.compiler-load-session-state-embedded-stdlib-source-used?
-              (tc-global-shared-view load-state))
+              (& load-state))
             (cload.compiler-load-session-state-embedded-provenance-noted?
-              (tc-global-shared-view load-state)))
+              (& load-state)))
           false))
       (cfg
         embedded-stdlib-tlci
@@ -114186,7 +114196,7 @@
         true
         (cload.compiler-load-path-under-roots-from?
           normalized
-          (tc-global-shared-view stdlib-roots)
+          (& stdlib-roots)
           (svec.len (& stdlib-roots)))))))
 
 (define (tc-prefix-cache-module-marker? [decl : ast.AstDecl]) : bool
@@ -114555,7 +114565,7 @@
           (tc-global-shared-view paths)
           cache-scope
           (cload.compiler-load-session-state-dependency-surface-provenance-count
-            (tc-global-shared-view load-state)))
+            (& load-state)))
         (tc-prefix-candidate
           (tc-global-shared-view decls)
           (tc-global-shared-view paths)

@@ -285,8 +285,7 @@ Summary:
 (define (tlci-inspect-render-bytes
   [path : String]
   [bytes : (__tl_dyn-array u8)]) : i64
-  (match (tlci_core.tlci-parse-image
-    (owned_view.compiler-owned-shared-view bytes))
+  (match (tlci_core.tlci-parse-image (& bytes))
     [(Err message)
       (io.print-error (tlci-inspect-error path message))
       1]

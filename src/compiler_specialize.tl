@@ -299,7 +299,7 @@
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
     (ctfe.ctfe-env-with-reflections-and-pools-and-source-names
-      reflections
+      (& reflections)
       (spec-owner-pools owner)
       (spec_ci.intern-source-name-session-handle-from-state intern-state))))
 
@@ -779,7 +779,7 @@
   [fuel : i64]) : ctfe.ResultCtfe
   (let
     [ctfe-env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
-    (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
+    (ctfe.compiler-ctfe-eval (& expr) ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
   (cbi.compiler-builtin-refresh!)
@@ -2364,11 +2364,13 @@
         [_ false])]
     [(Some a-ty)
       (match b
-        [(Some b-ty) (ctfe.ctfe-type-eq a-ty b-ty)]
+        [(Some b-ty) (ctfe.ctfe-type-eq (& a-ty) (& b-ty))]
         [_ false])]))
 
 (define (gen-expr-eq? [a : ast.AstExpr] [b : ast.AstExpr]) : bool
-  (ctfe.ctfe-expr-eq (ast.ast-expr-unspan (& a)) (ast.ast-expr-unspan (& b))))
+  (ctfe.ctfe-expr-eq
+    (& (ast.ast-expr-unspan (& a)))
+    (& (ast.ast-expr-unspan (& b)))))
 
 (define (gen-param-eq? [a : ast.AstParam] [b : ast.AstParam]) : bool
   (match a
@@ -2377,7 +2379,7 @@
         [(Param b-name b-ty b-comptime)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (= a-comptime b-comptime))])]))
 
 (define (gen-param-list-eq? [a : ast.AstParamList] [b : ast.AstParamList]) : bool
@@ -2407,7 +2409,7 @@
         [(Param b-name b-ty b-variadic b-type-kinds)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (= a-variadic b-variadic)
             (ast.ast-macro-type-kind-list-eq? (& a-type-kinds) (& b-type-kinds)))])]))
 
@@ -2457,7 +2459,7 @@
         [(Def b-name b-ty b-cleanup)
           (and
             (spec_ci.intern-syntax-id-eq? a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : ast.AstFieldDefList] [b : ast.AstFieldDefList]) : bool
@@ -2577,7 +2579,7 @@
         [(Def b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-list-eq a-payloads b-payloads)
+            (ctfe.ctfe-type-list-eq (& a-payloads) (& b-payloads))
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq?
@@ -2821,7 +2823,7 @@
               (and
                 (= a-name b-name)
                 (gen-param-list-eq? a-params b-params)
-                (ctfe.ctfe-type-eq a-ret b-ret)
+                (ctfe.ctfe-type-eq (& a-ret) (& b-ret))
                 (gen-expr-eq? a-body b-body)
                 (gen-fn-metadata-eq? a-metadata b-metadata)))]
           [_ false]))]
@@ -2840,7 +2842,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
@@ -2866,7 +2868,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
@@ -2881,7 +2883,7 @@
               (and
                 (= a-name b-name)
                 (gen-macro-param-list-eq? a-params b-params)
-                (ctfe.ctfe-type-eq a-ret b-ret)
+                (ctfe.ctfe-type-eq (& a-ret) (& b-ret))
                 (gen-expr-eq? a-body b-body)))]
           [_ false]))]
     [(Import decl-meta a-spec)
@@ -2969,8 +2971,8 @@
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
     (ctfe.ctfe-expr-eq-in-env
       (ctfe.ctfe-env-shared-view env)
-      (ast.ast-expr-unspan-with-pools pools (& a))
-      (ast.ast-expr-unspan-with-pools pools (& b)))))
+      (& (ast.ast-expr-unspan-with-pools pools (& a)))
+      (& (ast.ast-expr-unspan-with-pools pools (& b))))))
 
 (define (gen-param-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -3105,7 +3107,7 @@
         [(Def b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-list-eq-in-env env a-payloads b-payloads)
+            (ctfe.ctfe-type-list-eq-in-env env (& a-payloads) (& b-payloads))
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq-at-with-owner
@@ -3222,7 +3224,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
@@ -3248,7 +3250,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq-with-owner owner env a-fields b-fields))]
@@ -3351,10 +3353,7 @@
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [head-expr : ast.AstExpr (spec-owner-expr-get owner head-id)]
-      (match (ctfe.compiler-ctfe-eval
-        (ast.ast-place-shared-view head-expr)
-        env
-        fuel)
+      (match (ctfe.compiler-ctfe-eval (& head-expr) env fuel)
         [(Ok value head-fuel)
           (match value
             [(String text _)
@@ -3722,7 +3721,7 @@
                   rewritten-count
                   (parser.compiler-parse-decl-list-storage-key (& rest))
                   (- rest.offset 1)
-                  decl
+                  (& decl)
                   (!= rewritten-count 1))
                 (ast.ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
                 (set! cur-registry decl-registry)
@@ -3808,7 +3807,7 @@
                     rewritten-count
                     (parser.compiler-parse-decl-list-storage-key (& rest))
                     (- rest.offset 1)
-                    decl
+                    (& decl)
                     (!= rewritten-count 1))
                   (ast.ast-decl-list-append-from
                     (&mut out)
@@ -3846,7 +3845,7 @@
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
-            (ctfe.ctfe-reflections-from-program program))]
+            (ctfe.ctfe-reflections-from-program (& program)))]
         (match (gen-rewrite-decls-with-owner
           owner
           decls
@@ -3868,7 +3867,7 @@
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
-            (ctfe.ctfe-reflections-from-program program))]
+            (ctfe.ctfe-reflections-from-program (& program)))]
         (match (gen-rewrite-decls-with-paths-and-owner
           owner
           decls
@@ -6776,7 +6775,7 @@
           1
           (array-ref source-keys position)
           (array-ref source-slots position)
-          (ast.ast-decl-list-get sources position (ast.ast-decl-fallback))
+          (& (ast.ast-decl-list-get sources position (ast.ast-decl-fallback)))
           false)
         (ast.ast-decl-list-push
           (&mut out)
@@ -6863,8 +6862,7 @@
           [ctfe-env : ctfe.CtfeEnv
             (spec-owner-ctfe-env
               owner
-              (ctfe.ctfe-reflections-from-program
-                (ast.ast-place-shared-view normalized)))]
+              (ctfe.ctfe-reflections-from-program (& normalized)))]
           (if (= templates.len 0)
             (Ok normalized)
             (match (spec-rewrite-decls-with-owner
@@ -6914,8 +6912,7 @@
               [ctfe-env : ctfe.CtfeEnv
                 (spec-owner-ctfe-env
                   owner
-                  (ctfe.ctfe-reflections-from-program
-                    (ast.ast-place-shared-view normalized)))]
+                  (ctfe.ctfe-reflections-from-program (& normalized)))]
               (if (= templates.len 0)
                 (Ok normalized normalized-paths)
                 (match (spec-rewrite-decls-with-paths-with-owner

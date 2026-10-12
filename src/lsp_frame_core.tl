@@ -4527,10 +4527,10 @@
   [module-name : String]
   [stdlib-roots : lsp_svec.Vec]) : String
   (match (compiler_load.compiler-load-resolve-module-import-with-roots
-    (owned_view.compiler-owned-shared-view path)
+    (& path)
     (compiler_load.compiler-load-dirname path)
-    (owned_view.compiler-owned-shared-view module-name)
-    stdlib-roots)
+    (& module-name)
+    (& stdlib-roots))
     [(Ok resolved) (compiler_load.compiler-load-normalize-path resolved)]
     [(Err _) module-name]))
 
@@ -4560,9 +4560,9 @@
               [resolved : String
                 (compiler_load.compiler-load-normalize-path
                   (compiler_load.compiler-load-resolve-import-with-roots
-                    path
+                    (& path)
                     spec
-                    stdlib-roots))]
+                    (& stdlib-roots)))]
               (Found resolved content-start content-end))]
           [(lsp-ident-char? c)
             (let

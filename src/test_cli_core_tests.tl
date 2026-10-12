@@ -1421,7 +1421,7 @@
                     (compiler_load.compiler-load-package-owned-path
                       "tltest"
                       "."
-                      legacy-roots
+                      (& legacy-roots)
                       source)]
                   (match (tltest.tltest-build-harness owned-source decls paths)
                     [(Harness _ _ count) (= count 1)]))])))])

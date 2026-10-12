@@ -33,7 +33,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgram
-      (parser.parse-ast-program-with-cfg-and-pools toks cfgs pools)]
+      (parser.parse-ast-program-with-cfg-and-pools (& toks) cfgs pools)]
     (ast.ast-node-pool-context-install! pools)
     result))
 
@@ -43,7 +43,7 @@
 (define (parse-ast-source-recovery-diagnostic [path : String] [src : String]) : parser.ResultAstProgramRecovery
   (parser.parse-ast-source-recovery-diagnostic-with-cfg
     path
-    src
+    (& src)
     (parser.compiler-cfg-empty)))
 
 (define (ast-decl-list-tag-sum [decls : ast.AstDeclList]) : i64
@@ -547,7 +547,7 @@
         (parser.compiler-parse-tag-unknown))]
     [control : i64
       (parser.compiler-parse-state-control-addr
-        (parser.compiler-parse-default-state-shared-view))]
+        (& (parser.compiler-parse-default-state-shared-view)))]
     [index : i64 0]
     [ok : bool true]
     (while (< index (array-length names))
@@ -626,7 +626,7 @@
     [owner : ci.InternCompatState (ci.intern-compat-state-new)]
     [control : i64
       (parser.compiler-parse-state-control-addr
-        (parser.compiler-parse-default-state-shared-view))]
+        (& (parser.compiler-parse-default-state-shared-view)))]
     [ok : bool false]
     (ci.intern-compat-state-install! owner)
     (cbi.compiler-builtin-reset!)
@@ -760,8 +760,7 @@
   (let
     [src : String "(define)"]
     (and
-      (match (parser.parse-ast-source
-        (parser.compiler-parse-place-shared-view src))
+      (match (parser.parse-ast-source (& src))
         [(Err message) (string.eq message "parse: malformed define")]
         [_ false])
       (match (lexer.spanned-result (& src))
@@ -787,7 +786,7 @@
   [col : i64]) : bool
   (match (parser.parse-ast-source-diagnostic
     (parser.compiler-parse-place-shared-view path)
-    src)
+    (& src))
     [(Err diag)
       (and
         (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
@@ -899,8 +898,7 @@
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (+
-          (parser.ast-decl-list-count
-            (parser.compiler-parse-place-shared-view decls))
+          (parser.ast-decl-list-count (& decls))
           (+
             (ast-decl-list-tag-sum
               (parser.compiler-parse-place-shared-view decls))
@@ -915,7 +913,7 @@
 ;; counterpart to the success-path smoke: it pins the parser's rejection
 ;; messages so a regression that drops or relabels an error is caught.
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Err message) (string.eq message want)]
     [(Ok _) false]))
 
@@ -924,7 +922,7 @@
 (define (compiler-parse-diagnostic-code-is?
   [src : String]
   [want : (& want str)]) : bool
-  (match (parser.parse-ast-source-diagnostic "parse-code.tl" src)
+  (match (parser.parse-ast-source-diagnostic "parse-code.tl" (& src))
     [(Err diag)
       (let
         [error : cdiag.CompilerDiagnostic (deref diag)]
@@ -1102,7 +1100,7 @@
 (define (compiler-parse-if-missing-else-diagnostic-notes-ok?) : bool
   (match (parser.parse-ast-source-diagnostic
     "missing-if-else.tl"
-    (compiler-parse-malformed-if-source))
+    (& (compiler-parse-malformed-if-source)))
     [(Err diag)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
@@ -1827,7 +1825,7 @@
   [name : String]
   [want-args : i64]
   [check-guard-args : bool]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2125,7 +2123,7 @@
 (define (compiler-parse-first-struct-aligns [source : String] [field : i64]) : (Tuple
     i64
     i64)
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2152,7 +2150,7 @@
 
 ;; A struct's field alignment list ends at its last aligned field.
 (define (compiler-parse-field-aligns-len-is? [source : String] [want : i64]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2393,7 +2391,7 @@
       10)))
 
 (define (compiler-parse-first-decl-must-use? [source : String]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2461,7 +2459,7 @@
       "parse: unknown test metadata :must-use")))
 
 (define (compiler-parse-first-decl-markers [source : String]) : i64
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -3019,14 +3017,14 @@
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
 ;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
 (define (compiler-parse-ok? [src : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok _) true]
     [(Err _) false]))
 
 (define (compiler-parse-ok-with-cfg?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok _) true]
     [(Err _) false]))
 
@@ -3034,17 +3032,17 @@
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [want : i64]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        (= (parser.ast-decl-list-count decls) want))]
+        (= (parser.ast-decl-list-count (& decls)) want))]
     [(Err _) false]))
 
 (define (compiler-parse-cfg-error?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok _) false]
     [(Err _) true]))
 
@@ -3779,7 +3777,7 @@
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
 ;; parser's `parse_repl_item` tests.
 (define (compiler-parse-repl-decl-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok item)
       (match item
         [(AstReplDecl _) true]
@@ -3787,7 +3785,7 @@
     [(Err _) false]))
 
 (define (compiler-parse-repl-expr-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok item)
       (match item
         [(AstReplExpr _) true]
@@ -3798,7 +3796,7 @@
   [src : String]
   [expected : String]
   [code : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -3809,7 +3807,7 @@
           (>= (cdiag.compiler-diagnostic-line error) 1)))]))
 
 (define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -3861,7 +3859,7 @@
 ;; test_parse_comptime_function_param / _type_valued_comptime_param /
 ;; _comptime_lambda_param_rejected.
 (define (compiler-parse-first-fn-has-comptime-param? [src : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -4008,7 +4006,7 @@
   [expected-first : String]
   [expected-last : String]
   [verify-all : bool]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons (DefMacro _ _ params _ _) rest)

@@ -209,9 +209,9 @@
         (compiler_ctfe.ctfe-reflect-info-list-empty))
       (match (tlci_loader.tlci-loader-dispatch-macro
         loaded
-        (stress-global-shared-view stress-tier1-identity)
+        (& (stress-global-shared-view stress-tier1-identity))
         stress-cookie
-        (__tl_make-array i64 0)
+        (& (__tl_make-array i64 0))
         0)
         [(Err _) (set! outcome stress-status-dispatch-error)]
         [(Ok dispatch)
@@ -398,9 +398,9 @@
         (compiler_ctfe.ctfe-reflect-info-list-empty))
       (match (tlci_loader.tlci-loader-dispatch-macro
         loaded
-        (stress-global-shared-view stress-native-identity)
+        (& (stress-global-shared-view stress-native-identity))
         stress-cookie
-        (__tl_make-array i64 0)
+        (& (__tl_make-array i64 0))
         0)
         [(Err _) (set! outcome stress-status-dispatch-error)]
         [(Ok dispatch)
@@ -488,9 +488,9 @@
           (compiler_ctfe.ctfe-reflect-info-list-empty))
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          (stress-global-shared-view stress-native-identity)
+          (& (stress-global-shared-view stress-native-identity))
           stress-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) (set! outcome stress-status-dispatch-error)]
           [(Ok dispatch)
@@ -542,8 +542,8 @@
       [failed-at : (__tl_dyn-array i64) (__tl_make-array -1)]
       (match (tlci_loader.tlci-loader-load-from-bytes-with-host
         (arena.tl_arena_current)
-        (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
-        (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+        (& (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))
+        (& (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
         [(Err _)
           (io.print-error "stress: embedded image failed to load\n")
           stress-status-load-failed]

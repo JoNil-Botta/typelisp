@@ -864,6 +864,13 @@ BusyBox or MSYS2) and stop when the response header arrives. Each timer
 includes one `date` spawn, so sub-millisecond requests read as about a
 millisecond.
 
+The `compiler-ast-persist-span` inline test in
+`src/tests/compiler_ast_types_smoke.tl` checks ownership-only macro copy-out at
+empty, singleton and re-span capacity boundaries. It retains distinct views of
+shared nodes, destroys the source payload arena, and repeats copy-out while
+requiring unchanged node ids, provenance counts/capacities and the span oracle.
+Run it at opt0/1/2 alongside the existing span-sidecar and semantic-rewrite tests.
+
 ### Allocation profile rows
 
 `compile --profile-allocations` emits opt-in arena ownership rows for any input

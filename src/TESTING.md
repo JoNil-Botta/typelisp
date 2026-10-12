@@ -147,6 +147,19 @@ assembly case pins the specialized four-byte comparison.
 
 ## Move joins and diverging arms
 
+`match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
+projected storage after pattern binding, including dynamic indexes, or-patterns,
+branches, nested shadowing, loops and an unused reference payload. Its native
+rows run at opt0/1/2 and assert the original Copy values. Keep the existing
+`borrowed_pattern_copy_deferred_ok` matrix: calls and stores must force eager
+payload snapshots when lowering cannot prove that every read precedes a write.
+The paired `match_copy_*_loan_reject` and `match_reference_result_loan_reject`
+cases retain earlier argument loans, loop-carried references, scrutinee stores
+and reference-valued arm results. The scrutinee-store case must still reject
+when the arm itself never reads the stored reference. The shadowed-owner and
+shadowed-result cases use exhaustive single-arm matches, so another arm cannot
+accidentally preserve the loan that a shadowing pattern binding would erase.
+
 `tests/safety/move_diverging_*` and `move_*_reject` run the programs that an
 early `return`, `break`, `continue` or `never` call used to poison, next to the
 rejections that must survive: a move in an arm that completes normally, in both

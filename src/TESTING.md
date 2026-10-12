@@ -22,6 +22,11 @@ user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the
 seed policy are in
 [`../docs/testing-and-bootstrap.md`](../docs/testing-and-bootstrap.md).
 
+The aggregate-global backend escape fixture checks the existing safe-reference
+shape and a raw-pointer counterpart against the same boxed-cell assertions.
+Keep the raw case when global call checking rejects the safe reference case;
+the indirect-call shape remains independently covered.
+
 ## Linux thread storage
 
 `tests/integration/thread_local_word.tl` checks the private Linux runtime word

@@ -1446,15 +1446,17 @@
     (tc_core.macro-unqualified-import-cache-storage-ensure!
       (tc_core.tc-job-state-macro-state
         (compiler_driver_core.compiler-driver-state-typecheck state)))
-    ;; Source-root compilation still opens the baked-in native image when its
-    ;; fresh source proofs permit it. Keep only its immutable decoded bytes
-    ;; across entries; the normal per-entry provenance and mapping work stays.
+    ;; The decoded image is fixed batch infrastructure too. Initialize its
+    ;; bytes before entry 0; admission and mapping still require each entry's
+    ;; fresh source proofs.
     (when
       (> entry-count 1)
       (cfg
         embedded-stdlib-tlci
-        (embedded_tlci.compiler-embedded-stdlib-tlci-retain-decoded!
-          (compiler_driver_core.compiler-driver-state-surface-arena state))
+        (begin
+          (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes
+            (compiler_driver_core.compiler-driver-state-surface-arena state))
+          unit)
         unit))))
 
 (define (compile-cli-run-batch-entries

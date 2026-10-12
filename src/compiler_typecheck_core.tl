@@ -8033,6 +8033,7 @@
   [init : ast.AstExpr]
   [init-ty : ast.AstType]) : ResultTcUnit
   (match (tc-ensure-reference-value-can-bind
+    ctx
     env
     (tc-global-shared-view init-ty))
     [(Ok) Ok]
@@ -10258,6 +10259,9 @@
           [result : bool
             (cond
               [(and value-signature target-signature) false]
+              ;; A parameter, local or body region never outlives a signature
+              ;; lifetime, although the markers are bound after the parameters.
+              [(and target-signature (>= value-index 0)) false]
               [(>= value-index 0)
                 (and (>= target-index 0) (< value-index target-index))]
               [(>= target-index 0)
@@ -12867,6 +12871,27 @@
       (tc-diag-string-prefix?
         (ci.intern-str name)
         (tc-elided-lifetime-name-prefix)))))
+
+;: A lifetime as diagnostics spell it. The hidden name of an elided input
+;: reference reads `<elided N>`, N counting a signature's elided references
+;: from 1, since its source spelling has no name.
+(define (tc-lifetime-diagnostic-name [name : i64]) : String
+  (cond
+    [(= name cbi.compiler-builtin-id-fix-empty) "<elided>"]
+    [(tc-elaborated-lifetime-hidden? name)
+      (let
+        [text : String (ci.intern-str name)]
+        [prefix : String (tc-elided-lifetime-name-prefix)]
+        [index : i64 0]
+        (for [at
+          (iterator.range
+            (string.string-length (& prefix))
+            (string.string-length (& text)))]
+          (set!
+            index
+            (+ (* index 10) (- (cast (string.string-ref (& text) at) : i64) 48))))
+        (str_cat.str-cat "<elided " (string.int->string (+ index 1)) ">"))]
+    [else (ci.intern-str name)]))
 
 (define (tc-type-render [ty : ast.AstType]) : String
   (match ty
@@ -17174,6 +17199,9 @@
           (tc-ordinary-binding-rank-id-from env target-lifetime-id 0)]
         (cond
           [(and value-signature target-signature) false]
+          ;; A parameter or local never outlives a signature lifetime, although
+          ;; the markers are bound after the parameters.
+          [(and target-signature (>= value-rank 0)) false]
           [(or value-signature target-signature)
             (tc-lifetime-outlives-lifetime-scan-id
               env
@@ -17246,25 +17274,113 @@
   [target-lifetime : i64]) : bool
   (tc-reference-lifetimes-outlive-lifetime-id? env lifetimes target-lifetime))
 
+;; Whether `name-id` is bound by a local or parameter in scope, as opposed to
+;; naming a module-level binding.
+(define (tc-name-bound-locally-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (if (tc-type-env-scoped-runtime-active? env)
+    (or
+      (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0)
+      (>=
+        (tc-ordinary-binding-rank-id-from
+          (tc-type-env-scoped-carrier-persistent
+            (tc-type-env-scoped-runtime-current env))
+          name-id
+          0)
+        0))
+    (>= (tc-ordinary-binding-rank-id-from env name-id 0) 0)))
+
+;; Whether `lifetime-id` belongs to an owner that outlives every local scope
+;; of the body being checked, although no binding in the environment spells it:
+;; - The hidden lifetime of an elided input reference (`tc-elided-lifetime-name`)
+;;   is a caller's lifetime, like an explicit signature name (#8853). It gets
+;;   no marker binding, so ordinary checks never pay for it; it is only
+;;   consulted here, after the environment walk has failed.
+;; - `(& g)` of a module global carries the lifetime `g`. Where no local binding
+;;   spells `g`, the owner is the global, which lives for the whole program
+;;   (#8750). It still does not outlive `program`: a `(& program T)` would no
+;;   longer be a loan of `g`.
+(define (tc-outer-owner-lifetime-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime-id : i64]) : bool
+  (and
+    (>= lifetime-id 0)
+    (not (= lifetime-id cbi.compiler-builtin-id-fix-empty))
+    (or
+      (tc-elaborated-lifetime-hidden? lifetime-id)
+      (and
+        (not (tc-name-bound-locally-id? env lifetime-id))
+        (tc-move-ordinary-global-value-id? ctx env lifetime-id)))))
+
+(define (tc-reference-lifetimes-visible-or-outer?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]) : bool
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [visible : bool true]
+    (while (and visible (not (tc-name-id-list-empty? cursor)))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (or
+            (tc-lifetime-visible-id? env lifetime)
+            (tc-outer-owner-lifetime-id? ctx env lifetime))
+          (set! visible false)))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    visible))
+
 (define (tc-ensure-reference-value-can-bind
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [value-ty : ast.AstType]) : ResultTcUnit
   (let
     [lifetimes : TcNameIdList (tc-type-collect-regions value-ty)]
-    (if (tc-reference-lifetimes-visible? env lifetimes)
+    (if (or
+      (tc-reference-lifetimes-visible? env lifetimes)
+      (tc-reference-lifetimes-visible-or-outer? ctx env lifetimes))
       Ok
       (Err
         (tc-kind-message
           (RegionEscape)
           "typecheck: reference value would escape lexical scope")))))
 
+;; An outer owner's lifetime outlives a local target binding, but not a global
+;; one: storing into a global needs the `program` lifetime.
+(define (tc-reference-lifetimes-outlive-binding-or-outer?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target-id : i64]) : bool
+  (let
+    [target-local : bool (tc-name-bound-locally-id? env target-id)]
+    [cursor : TcNameIdList lifetimes]
+    [outlives : bool true]
+    (while (and outlives (not (tc-name-id-list-empty? cursor)))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (or
+            (tc-lifetime-outlives-binding-id? env lifetime target-id)
+            (and target-local (tc-outer-owner-lifetime-id? ctx env lifetime)))
+          (set! outlives false)))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    outlives))
+
 (define (tc-ensure-reference-value-can-assign
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [target-id : i64]
   [value-ty : ast.AstType]) : ResultTcUnit
   (let
     [lifetimes : TcNameIdList (tc-type-collect-reference-lifetimes value-ty)]
-    (if (tc-reference-lifetimes-outlive-binding-id? env lifetimes target-id)
+    (if (or
+      (tc-reference-lifetimes-outlive-binding-id? env lifetimes target-id)
+      (tc-reference-lifetimes-outlive-binding-or-outer?
+        ctx
+        env
+        lifetimes
+        target-id))
       Ok
       (Err
         (tc-kind-message
@@ -26666,9 +26782,9 @@
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
     "; source lifetime `"
-    (ci.intern-str source)
+    (tc-lifetime-diagnostic-name source)
     "` does not outlive required lifetime `"
-    (ci.intern-str required)
+    (tc-lifetime-diagnostic-name required)
     "`"))
 
 (define (tc-lifetime-coercion-invariant-detail
@@ -26686,9 +26802,9 @@
       (str_cat.str-cat "; " label " is invariant")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-diagnostic-name (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-diagnostic-name (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " is invariant"))))
@@ -26748,9 +26864,9 @@
       (str_cat.str-cat "; " label " failed")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-diagnostic-name (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-diagnostic-name (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " failed"))))
@@ -26787,9 +26903,9 @@
                 (str_cat.str-cat
                   (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
                   "; required lifetime `"
-                  (ci.intern-str required)
+                  (tc-lifetime-diagnostic-name required)
                   "` does not outlive source lifetime `"
-                  (ci.intern-str source)
+                  (tc-lifetime-diagnostic-name source)
                   "` for contravariant lifetime parameter "
                   (string.int->string (+ index 1))
                   " of `"
@@ -26798,9 +26914,9 @@
             [(TcVarianceInvariant)
               (str_cat.str-cat
                 "; source lifetime `"
-                (ci.intern-str source)
+                (tc-lifetime-diagnostic-name source)
                 "` cannot satisfy required lifetime `"
-                (ci.intern-str required)
+                (tc-lifetime-diagnostic-name required)
                 "` because lifetime parameter "
                 (string.int->string (+ index 1))
                 " of `"
@@ -26808,106 +26924,143 @@
                 "` is invariant")])))))
   "")
 
+;; The region-tag half of a coercion failure: both sides carry an allocation
+;; region, and the source's does not outlive the required one. The type
+;; renderer hides region tags, so without this a region mismatch reads as
+;; `expected String, found String`.
+(define (tc-region-coercion-failure-detail
+  [env : TcTypeEnv]
+  [expected : (& ast.AstType)]
+  [actual : (& ast.AstType)]) : String
+  (match expected
+    [(Region required _)
+      (match actual
+        [(Region source _)
+          (if (tc-lifetime-outlives-lifetime-id? env source required)
+            ""
+            (str_cat.str-cat
+              (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
+              "; source region `"
+              (tc-lifetime-diagnostic-name source)
+              "` does not outlive required region `"
+              (tc-lifetime-diagnostic-name required)
+              "`"))]
+        [_ ""])]
+    [_ ""]))
+
 (define (tc-type-coercion-failure-detail
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expected : ast.AstType]
   [actual : ast.AstType]) : String
   (let
-    [want : ast.AstType (tc-type-strip-region (tc-resolve-type ctx expected))]
-    [got : ast.AstType (tc-type-strip-region (tc-resolve-type ctx actual))]
-    (match want
-      [(Ref required want-inner)
-        (match got
-          [(Ref source got-inner)
-            (let
-              [want-inner-ty : ast.AstType (ast.ty-node-get want-inner)]
-              [got-inner-ty : ast.AstType (ast.ty-node-get got-inner)]
-              [inner-detail : String
-                (tc-type-coercion-failure-detail
+    [resolved-expected : ast.AstType (tc-resolve-type ctx expected)]
+    [resolved-actual : ast.AstType (tc-resolve-type ctx actual)]
+    [region-detail : String
+      (tc-region-coercion-failure-detail
+        env
+        (& resolved-expected)
+        (& resolved-actual))]
+    [want : ast.AstType (tc-type-strip-region resolved-expected)]
+    [got : ast.AstType (tc-type-strip-region resolved-actual)]
+    (if (> (string.string-length (& region-detail)) 0)
+      region-detail
+      (match want
+        [(Ref required want-inner)
+          (match got
+            [(Ref source got-inner)
+              (let
+                [want-inner-ty : ast.AstType (ast.ty-node-get want-inner)]
+                [got-inner-ty : ast.AstType (ast.ty-node-get got-inner)]
+                [inner-detail : String
+                  (tc-type-coercion-failure-detail
+                    ctx
+                    env
+                    (tc-global-shared-view want-inner-ty)
+                    (tc-global-shared-view got-inner-ty))]
+                (cond
+                  [(not
+                      (tc-type-coercible-core?
+                        ctx
+                        env
+                        want-inner-ty
+                        got-inner-ty))
+                    inner-detail]
+                  [(tc-lifetime-outlives-lifetime-id? env source required) ""]
+                  [else (tc-lifetime-coercion-outlives-detail source required)]))]
+            [_ ""])]
+        [(MutRef required want-inner)
+          (match got
+            [(MutRef source got-inner)
+              (if (tc-type-eq
+                (ast.ty-node-get want-inner)
+                (ast.ty-node-get got-inner))
+                (if (tc-lifetime-outlives-lifetime-id? env source required)
+                  ""
+                  (tc-lifetime-coercion-outlives-detail source required))
+                (tc-lifetime-coercion-invariant-detail
+                  "mutable reference referent type"
+                  (ast.ty-node-get want-inner)
+                  (ast.ty-node-get got-inner)))]
+            [_ ""])]
+        [(MutPtr want-inner)
+          (match got
+            [(MutPtr got-inner)
+              (tc-lifetime-coercion-invariant-detail
+                "mutable raw pointer referent type"
+                (ast.ty-node-get want-inner)
+                (ast.ty-node-get got-inner))]
+            [_ ""])]
+        ;; Covariant, so a failure is its element's.
+        [(DynArray want-inner)
+          (match got
+            [(DynArray got-inner)
+              (tc-type-coercion-failure-detail
+                ctx
+                env
+                (ast.ty-node-get want-inner)
+                (ast.ty-node-get got-inner))]
+            [_ ""])]
+        [(Func want-params want-ret)
+          (match got
+            [(Func got-params got-ret)
+              (let
+                [want-fn : ast.AstType (Func want-params want-ret)]
+                [got-fn : ast.AstType (Func got-params got-ret)]
+                (if (tc-func-invalidate-effects-differ?
+                  (tc-global-shared-view want-fn)
+                  (tc-global-shared-view got-fn))
+                  "; the function types differ in a parameter's :invalidate effect"
+                  (tc-lifetime-coercion-variance-detail
+                    "function parameter/result variance"
+                    want-fn
+                    got-fn)))]
+            [_ ""])]
+        [(EnumArgs want-name want-lifetimes)
+          (match got
+            [(EnumArgs got-name got-lifetimes)
+              (if (tc-nominal-name-id-eq? want-name got-name)
+                (tc-nominal-lifetime-coercion-failure-detail-at
                   ctx
                   env
-                  (tc-global-shared-view want-inner-ty)
-                  (tc-global-shared-view got-inner-ty))]
-              (cond
-                [(not
-                    (tc-type-coercible-core? ctx env want-inner-ty got-inner-ty))
-                  inner-detail]
-                [(tc-lifetime-outlives-lifetime-id? env source required) ""]
-                [else (tc-lifetime-coercion-outlives-detail source required)]))]
-          [_ ""])]
-      [(MutRef required want-inner)
-        (match got
-          [(MutRef source got-inner)
-            (if (tc-type-eq
-              (ast.ty-node-get want-inner)
-              (ast.ty-node-get got-inner))
-              (if (tc-lifetime-outlives-lifetime-id? env source required)
-                ""
-                (tc-lifetime-coercion-outlives-detail source required))
-              (tc-lifetime-coercion-invariant-detail
-                "mutable reference referent type"
-                (ast.ty-node-get want-inner)
-                (ast.ty-node-get got-inner)))]
-          [_ ""])]
-      [(MutPtr want-inner)
-        (match got
-          [(MutPtr got-inner)
-            (tc-lifetime-coercion-invariant-detail
-              "mutable raw pointer referent type"
-              (ast.ty-node-get want-inner)
-              (ast.ty-node-get got-inner))]
-          [_ ""])]
-      ;; Covariant, so a failure is its element's.
-      [(DynArray want-inner)
-        (match got
-          [(DynArray got-inner)
-            (tc-type-coercion-failure-detail
-              ctx
-              env
-              (ast.ty-node-get want-inner)
-              (ast.ty-node-get got-inner))]
-          [_ ""])]
-      [(Func want-params want-ret)
-        (match got
-          [(Func got-params got-ret)
-            (let
-              [want-fn : ast.AstType (Func want-params want-ret)]
-              [got-fn : ast.AstType (Func got-params got-ret)]
-              (if (tc-func-invalidate-effects-differ?
-                (tc-global-shared-view want-fn)
-                (tc-global-shared-view got-fn))
-                "; the function types differ in a parameter's :invalidate effect"
-                (tc-lifetime-coercion-variance-detail
-                  "function parameter/result variance"
-                  want-fn
-                  got-fn)))]
-          [_ ""])]
-      [(EnumArgs want-name want-lifetimes)
-        (match got
-          [(EnumArgs got-name got-lifetimes)
-            (if (tc-nominal-name-id-eq? want-name got-name)
-              (tc-nominal-lifetime-coercion-failure-detail-at
-                ctx
-                env
-                want-name
-                (ast.ast-lifetime-list-box-shared-view want-lifetimes)
-                (ast.ast-lifetime-list-box-shared-view got-lifetimes))
-              "")]
-          [_ ""])]
-      [(StructArgs want-name want-lifetimes)
-        (match got
-          [(StructArgs got-name got-lifetimes)
-            (if (tc-nominal-name-id-eq? want-name got-name)
-              (tc-nominal-lifetime-coercion-failure-detail-at
-                ctx
-                env
-                want-name
-                (ast.ast-lifetime-list-box-shared-view want-lifetimes)
-                (ast.ast-lifetime-list-box-shared-view got-lifetimes))
-              "")]
-          [_ ""])]
-      [_ ""])))
+                  want-name
+                  (ast.ast-lifetime-list-box-shared-view want-lifetimes)
+                  (ast.ast-lifetime-list-box-shared-view got-lifetimes))
+                "")]
+            [_ ""])]
+        [(StructArgs want-name want-lifetimes)
+          (match got
+            [(StructArgs got-name got-lifetimes)
+              (if (tc-nominal-name-id-eq? want-name got-name)
+                (tc-nominal-lifetime-coercion-failure-detail-at
+                  ctx
+                  env
+                  want-name
+                  (ast.ast-lifetime-list-box-shared-view want-lifetimes)
+                  (ast.ast-lifetime-list-box-shared-view got-lifetimes))
+                "")]
+            [_ ""])]
+        [_ ""]))))
 
 ;; A type mismatch with the coercion failure detail appended. A context kind
 ;; other than a plain type mismatch wins, then a lifetime failure in the detail.
@@ -60190,7 +60343,11 @@
                 (let
                   [_
                     (try
-                      (tc-ensure-reference-value-can-assign env name value-ty))]
+                      (tc-ensure-reference-value-can-assign
+                        ctx
+                        env
+                        name
+                        value-ty))]
                   (Ok (Unit)))))))]
       [(Err message)
         (if (tc-set-function-declaration? ctx env name)

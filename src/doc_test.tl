@@ -1728,7 +1728,7 @@
     (and
       (> (string.string-length normalized-root) 0)
       (if (string.eq normalized-root ".")
-        (not (compiler_load.compiler-load-path-escapes? normalized-path))
+        (not (compiler_load.compiler-load-path-escapes? (& normalized-path)))
         (compiler_load.compiler-load-path-under-root?
           normalized-path
           normalized-root)))))
@@ -1752,7 +1752,7 @@
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view dep-path))))]
       (if (and
-        (not (compiler_load.compiler-load-github-dependency-path? dep-path))
+        (not (compiler_load.compiler-load-github-dependency-path? (& dep-path)))
         (doc-test-path-under-root? path dep-root))
         true
         (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
@@ -1785,7 +1785,7 @@
             normalized
             (compiler_load.compiler-load-stdlib-owned-path-from-roots
               (owned_view.compiler-owned-shared-view rooted)
-              (owned_view.compiler-owned-shared-view stdlib-roots)))]
+              (& stdlib-roots)))]
         [manifest-stdlib-root : String
           (compiler_load.compiler-load-normalize-path
             (compiler_load.compiler-load-join-root-path

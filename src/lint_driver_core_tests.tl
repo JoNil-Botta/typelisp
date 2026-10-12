@@ -816,10 +816,9 @@ end
       (compiler_load.compiler-load-join-root-path
         (owned_view.compiler-owned-shared-view test-dir)
         "second_imported_smoke.tl")]
-    (compiler_load.compiler-load-test-mkdir root)
-    (compiler_load.compiler-load-test-mkdir
-      (owned_view.compiler-owned-shared-view src-dir))
-    (compiler_load.compiler-load-test-mkdir test-dir)
+    (compiler_load.compiler-load-test-mkdir (& root))
+    (compiler_load.compiler-load-test-mkdir (& src-dir))
+    (compiler_load.compiler-load-test-mkdir (& test-dir))
     (selfhost-lint-write-text
       manifest-path
       "(package

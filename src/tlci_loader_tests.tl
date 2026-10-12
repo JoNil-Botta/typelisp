@@ -2,6 +2,7 @@
 ;; self-test for tlci_loader, kept out of the production module.
 ;; tlci_loader_smoke.tl runs the self-test; the package discovery lifetime
 ;; tests reuse the fixtures.
+;; lint-allow: unused-import -- used only by cfg-gated code.
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
@@ -105,14 +106,14 @@
         (tlci-loader-test-macro-loaded (& storage) base 2)]
       [duplicate : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries duplicate-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries (& duplicate-loaded))
           "tlci loader: duplicate macro entry name")]
       [_distinct-name : unit
         (tlci-loader-test-put-string! (&mut storage) 72 "two")]
       [valid-loaded : tlci_loader.TlciLoadedImage
         (tlci-loader-test-macro-loaded (& storage) base 2)]
       [valid : bool
-        (match (tlci_loader.tlci-loader-validate-macro-entries valid-loaded)
+        (match (tlci_loader.tlci-loader-validate-macro-entries (& valid-loaded))
           [(Ok) true]
           [(Err _) false])]
       [_reserved : unit
@@ -123,7 +124,7 @@
         (tlci-loader-test-macro-loaded (& storage) base 1)]
       [reserved : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries reserved-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries (& reserved-loaded))
           "tlci loader: macro entry reserved field must be zero")]
       [_bad-name : unit
         (tlci-loader-test-write-macro-entry! (&mut storage) 0 127 2 96 0)]
@@ -131,7 +132,7 @@
         (tlci-loader-test-macro-loaded (& storage) base 1)]
       [bad-name : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries bad-name-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries (& bad-name-loaded))
           "tlci loader: macro entry name outside mapped image")]
       [_bad-function : unit
         (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 128 0)]
@@ -139,19 +140,20 @@
         (tlci-loader-test-macro-loaded (& storage) base 1)]
       [bad-function : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries bad-function-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries
+            (& bad-function-loaded))
           "tlci loader: macro entry function outside code section")]
       [unaligned-loaded : tlci_loader.TlciLoadedImage
         (tlci-loader-test-macro-loaded (& storage) (+ base 1) 1)]
       [unaligned : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries unaligned-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries (& unaligned-loaded))
           "tlci loader: macro entry table must be 8-byte aligned")]
       [outside-loaded : tlci_loader.TlciLoadedImage
         (tlci-loader-test-macro-loaded (& storage) (+ base 112) 1)]
       [outside : bool
         (tlci-loader-test-validation-error?
-          (tlci_loader.tlci-loader-validate-macro-entries outside-loaded)
+          (tlci_loader.tlci-loader-validate-macro-entries (& outside-loaded))
           "tlci loader: macro entry table outside mapped image")]
       (and duplicate valid reserved bad-name bad-function unaligned outside))))
 
@@ -192,7 +194,7 @@
     (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 96 0)
     (tlci-loader-test-write-macro-entry! (&mut storage) 32 72 3 104 0)
     (match (tlci_loader.tlci-loader-index-macro-entries
-      (tlci-loader-test-macro-loaded (& storage) base 2))
+      (& (tlci-loader-test-macro-loaded (& storage) base 2)))
       [(Err _) false]
       [(Ok indexed)
         (match (tlci_loader.tlci-loader-resolve-macro-entry (& indexed) "one")
@@ -254,7 +256,7 @@
                       (and
                         shell-ok
                         (match (tlci_loader.tlci-loader-index-macro-entries
-                          (tlci-loader-test-macro-loaded (& storage) base 2))
+                          (& (tlci-loader-test-macro-loaded (& storage) base 2)))
                           [(Err _) false]
                           [(Ok remapped)
                             (match (tlci_loader.tlci-loader-resolve-macro-entry
@@ -424,7 +426,7 @@
 (define (tlci-loader-test-emit-with-code [code : (__tl_dyn-array u8)]) : tlci.ResultTlciBytes
   (let
     [bytes
-      (try (tlci.tlci-emit-image (tlci-loader-test-image-with-code 0 code)))]
+      (try (tlci.tlci-emit-image (& (tlci-loader-test-image-with-code 0 code))))]
     [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
     [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
     (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
@@ -436,7 +438,7 @@
 
 (define (tlci-loader-test-emit-with-real-fixup) : tlci.ResultTlciBytes
   (let
-    [bytes (try (tlci.tlci-emit-image (tlci-loader-test-image 0)))]
+    [bytes (try (tlci.tlci-emit-image (& (tlci-loader-test-image 0))))]
     [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
     [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
     (tlci.tlci-set-u64! (&mut bytes) fixups-offset rodata-offset)
@@ -486,10 +488,11 @@
     [bytes
       (try
         (tlci.tlci-emit-image
-          (tlci-loader-test-image-with-code-and-imports
-            0
-            (tlci-loader-test-success-code-bytes)
-            (tlci-loader-test-imports name))))]
+          (&
+            (tlci-loader-test-image-with-code-and-imports
+              0
+              (tlci-loader-test-success-code-bytes)
+              (tlci-loader-test-imports name)))))]
     [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
     [fixups-offset : i64 (tlci.tlci-read-u64 bytes 104)]
     [imports-offset : i64 (tlci.tlci-read-u64 bytes 152)]
@@ -519,8 +522,8 @@
         [bound : bool
           (match (tlci_loader.tlci-loader-load-from-bytes-with-host
             (tlci-loader-test-owner-arena)
-            (owned_view.compiler-owned-shared-view bytes)
-            (tlci-loader-test-host-table "fuel-check" 4096))
+            (& bytes)
+            (& (tlci-loader-test-host-table "fuel-check" 4096)))
             [(Err _) false]
             [(Ok loaded)
               (let
@@ -535,8 +538,8 @@
           (tlci-loader-test-rejects?
             (tlci_loader.tlci-loader-load-from-bytes-with-host
               (tlci-loader-test-owner-arena)
-              (owned_view.compiler-owned-shared-view bytes)
-              (tlci-loader-test-host-table "other" 8192))
+              (& bytes)
+              (& (tlci-loader-test-host-table "other" 8192)))
             "tlci loader: image `demo@0.1.0` has unresolved host import `fuel-check`")]
         [bad-slot-bytes : (__tl_dyn-array u8) (tlci.tlci-copy-bytes bytes)]
         [imports-offset : i64 (tlci.tlci-read-u64 bad-slot-bytes 152)]
@@ -554,8 +557,8 @@
           (tlci-loader-test-rejects?
             (tlci_loader.tlci-loader-load-from-bytes-with-host
               (tlci-loader-test-owner-arena)
-              bad-slot-bytes
-              (tlci-loader-test-host-table "fuel-check" 4096))
+              (& bad-slot-bytes)
+              (& (tlci-loader-test-host-table "fuel-check" 4096)))
             "tlci loader: import slot outside loadable sections: 8")]
         (cond [(not bound) 2] [(not missing) 3] [(not bad-slot) 4] [else 0]))]))
 
@@ -565,8 +568,8 @@
     [(Ok bytes)
       (match (tlci_loader.tlci-loader-load-from-bytes-with-host
         (tlci-loader-test-owner-arena)
-        bytes
-        (tlci_core_tests.tlci-test-host-callback-table))
+        (& bytes)
+        (& (tlci_core_tests.tlci-test-host-callback-table)))
         [(Err _) 11]
         [(Ok loaded)
           (let
@@ -630,14 +633,14 @@
             (tlci-loader-test-rejects?
               (tlci_loader.tlci-loader-load-from-bytes-with-host
                 (tlci-loader-test-owner-arena)
-                status-bytes
-                (tlci_core_tests.tlci-test-host-callback-table))
+                (& status-bytes)
+                (& (tlci_core_tests.tlci-test-host-callback-table)))
               "tlci loader: tlci_image_entry returned status 4")
             (tlci-loader-test-rejects?
               (tlci_loader.tlci-loader-load-from-bytes-with-host
                 (tlci-loader-test-owner-arena)
-                bad-registration-bytes
-                (tlci_core_tests.tlci-test-host-callback-table))
+                (& bad-registration-bytes)
+                (& (tlci_core_tests.tlci-test-host-callback-table)))
               (str_cat.str-cat
                 "tlci loader: invalid image registration: "
                 "tlci host ABI: bad image registration magic")))])]))
@@ -657,27 +660,28 @@
         (and
           (tlci-loader-test-rejects?
             (tlci_loader.tlci-loader-load-from-bytes
-              (tlci.tlci-slice-bytes bytes 0 20))
+              (& (tlci.tlci-slice-bytes bytes 0 20)))
             "tlci: truncated header")
           (tlci-loader-test-rejects?
-            (tlci_loader.tlci-loader-load-from-bytes bad-fixup)
+            (tlci_loader.tlci-loader-load-from-bytes (& bad-fixup))
             "tlci loader: fixup offset outside loadable sections: 8")
           (tlci-loader-test-rejects?
             (tlci_loader.tlci-loader-load-from-bytes-with-host
               (tlci-loader-test-owner-arena)
-              bytes
-              (tlci.TlciHostCallbackTable
-                tlci.tlci-host-callback-table-magic
-                (+ tlci.tlci-host-abi-version 1)
-                tlci.tlci-host-callback-table-size
-                0
-                0
-                0
-                1
-                1
-                (__tl_make-array String 0)
-                (__tl_make-array i64 0)
-                0))
+              (& bytes)
+              (&
+                (tlci.TlciHostCallbackTable
+                  tlci.tlci-host-callback-table-magic
+                  (+ tlci.tlci-host-abi-version 1)
+                  tlci.tlci-host-callback-table-size
+                  0
+                  0
+                  0
+                  1
+                  1
+                  (__tl_make-array String 0)
+                  (__tl_make-array i64 0)
+                  0)))
             "tlci host ABI: unsupported callback ABI version 3")))]))
 
 (define (tlci-loader-test-platform-admission-ok?) : bool
@@ -688,32 +692,34 @@
         tlci.tlci-host-platform-x86-64-linux
         tlci.tlci-host-platform-x86-64-windows)]
     (match (tlci.tlci-emit-image
-      (tlci_core_tests.tlci-test-platform-image other-platform true))
+      (& (tlci_core_tests.tlci-test-platform-image other-platform true)))
       [(Err _) false]
       [(Ok mismatch-bytes)
         (match (tlci.tlci-emit-image-v2-legacy-compatible
-          (tlci_core_tests.tlci-test-platform-image
-            tlci.tlci-host-platform-x86-64-legacy
-            true))
+          (&
+            (tlci_core_tests.tlci-test-platform-image
+              tlci.tlci-host-platform-x86-64-legacy
+              true)))
           [(Err _) false]
           [(Ok legacy-bytes)
             (match (tlci.tlci-emit-image
-              (tlci_core_tests.tlci-test-platform-image other-platform false))
+              (&
+                (tlci_core_tests.tlci-test-platform-image other-platform false)))
               [(Err _) false]
               [(Ok metadata-bytes)
                 (and
                   (tlci-loader-test-rejects?
-                    (tlci_loader.tlci-loader-load-from-bytes mismatch-bytes)
+                    (tlci_loader.tlci-loader-load-from-bytes (& mismatch-bytes))
                     (str_cat.str-cat
                       "tlci: package `demo` code-bearing image host platform mismatch: image="
                       (tlci.tlci-host-platform-name other-platform)
                       ", host="
                       (tlci.tlci-host-platform-name host-platform)))
                   (tlci-loader-test-rejects?
-                    (tlci_loader.tlci-loader-load-from-bytes legacy-bytes)
+                    (tlci_loader.tlci-loader-load-from-bytes (& legacy-bytes))
                     "tlci: package `demo` code-bearing image uses legacy/ambiguous host platform")
                   (tlci-loader-test-rejects?
-                    (tlci_loader.tlci-loader-load-from-bytes metadata-bytes)
+                    (tlci_loader.tlci-loader-load-from-bytes (& metadata-bytes))
                     "tlci loader: image has no code section"))])])])))
 
 ;; R3-P2d regression. The retained host callback table and registration block
@@ -740,8 +746,8 @@
         [loaded-result : tlci_loader.ResultTlciLoadedImage
           (tlci_loader.tlci-loader-load-from-bytes-with-host
             owner
-            bytes
-            (tlci_core_tests.tlci-test-host-callback-table))]
+            (& bytes)
+            (& (tlci_core_tests.tlci-test-host-callback-table)))]
         [_leave : unit
           (unsafe
             ;; lint-allow: raw-arena-op -- moved from the audited tlci_loader module.
@@ -799,8 +805,8 @@
       [result : tlci_loader.ResultTlciLoadedImage
         (tlci_loader.tlci-loader-load-from-bytes-with-host
           (tlci-loader-test-owner-arena)
-          bytes
-          host-table)]
+          (& bytes)
+          (& host-table))]
       [attempts : i64 pages.tlci-pages-test-release-attempts]
       [index-destroys : i64 tlci_loader.tlci-loader-test-index-arena-destroys]
       [_reset : unit
@@ -923,8 +929,8 @@
       [(Ok bytes)
         (match (tlci_loader.tlci-loader-load-from-bytes-with-host
           (tlci-loader-test-owner-arena)
-          bytes
-          (tlci_core_tests.tlci-test-host-callback-table))
+          (& bytes)
+          (& (tlci_core_tests.tlci-test-host-callback-table)))
           [(Err _) false]
           [(Ok loaded)
             (let
@@ -939,7 +945,7 @@
                   (& stale)
                   "missing"
                   0
-                  (__tl_make-array i64 0)
+                  (& (__tl_make-array i64 0))
                   0)]
               [second : tlci_loader.ResultTlciLoaderUnit
                 (tlci_loader.tlci-loader-release stale)]
@@ -989,8 +995,7 @@
           (tlci_loader.tlci-loader-test-hooks-set! false true)
           (pages.tlci-pages-test-inject! false false false true))]
       [indexed : tlci_loader.ResultTlciLoadedImage
-        (tlci_loader.tlci-loader-index-macro-entries
-          (owned_view.compiler-owned-shared-view loaded))]
+        (tlci_loader.tlci-loader-index-macro-entries (& loaded))]
       [result : tlci_loader.ResultTlciLoadedImage
         (match indexed
           [(Err message)
@@ -1033,7 +1038,7 @@
           (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 96 0))]
       [loaded : tlci_loader.TlciLoadedImage
         (tlci-loader-test-macro-loaded (& storage) base 1)]
-      (match (tlci_loader.tlci-loader-index-macro-entries loaded)
+      (match (tlci_loader.tlci-loader-index-macro-entries (& loaded))
         [(Err _) false]
         [(Ok indexed)
           (let
@@ -1075,8 +1080,7 @@
     (match (tlci-loader-test-emit-with-real-fixup)
       [(Err _) false]
       [(Ok bytes)
-        (match (tlci.tlci-parse-image
-          (owned_view.compiler-owned-shared-view bytes))
+        (match (tlci.tlci-parse-image (& bytes))
           [(Err _) false]
           [(Ok parsed)
             (let
@@ -1085,7 +1089,7 @@
               (match (tlci_loader.tlci-loader-load-parsed
                 (tlci-loader-test-owner-arena)
                 bytes
-                parsed
+                (& parsed)
                 (& table))
                 [(Err _) false]
                 [(Ok loaded)
@@ -1097,9 +1101,9 @@
                     [result : tlci_loader.ResultTlciLoadedImage
                       (tlci_loader.tlci-loader-install-native-table
                         (tlci-loader-test-owner-arena)
-                        bytes
+                        (& bytes)
                         loaded
-                        table
+                        (& table)
                         0)]
                     [attempts : i64 pages.tlci-pages-test-release-attempts]
                     [_reset : unit

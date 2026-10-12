@@ -156,7 +156,7 @@
       (begin
         (embedded-stdlib-tlci-hash-text! (& suffix))
         (embedded-stdlib-tlci-hash-text! (& source))
-        (match (compiler_parse_core.parse-ast-source source)
+        (match (compiler_parse_core.parse-ast-source (& source))
           [(Err message)
             (set!
               embedded-stdlib-tlci-build-error
@@ -279,7 +279,7 @@
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : i64
   (match (compiler_tlci_native_producer.embedded-native-emit-package
     (tlci_core.tlci-metadata-emit
-      (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0"))
+      (& (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0")))
     build-hash
     windows-target
     rodata

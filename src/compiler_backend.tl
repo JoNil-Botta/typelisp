@@ -91476,7 +91476,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"
@@ -91495,7 +91495,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"

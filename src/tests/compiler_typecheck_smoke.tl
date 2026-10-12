@@ -1958,7 +1958,7 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
+  (match (parser.parse-ast-source-diagnostic-with-cfg entry-path (& src) cfgs)
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         program
@@ -2114,9 +2114,9 @@
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (compiler-typecheck-smoke-prefix-cache-loaded-check
     (load.compiler-load-file-with-paths-and-roots-cfg
-      entry-path
+      (& entry-path)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
     stdlib-roots
     cfgs))
@@ -2178,15 +2178,15 @@
     (let
       [loaded-a : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-a
+          (& entry-a)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       [loaded-b : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-b
+          (& entry-b)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       (if (compiler-typecheck-smoke-prefix-cache-loaded-check
         loaded-a
@@ -2236,15 +2236,15 @@
     (let
       [loaded-a : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-a
+          (& entry-a)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       [loaded-b : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-b
+          (& entry-b)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       (if (compiler-typecheck-smoke-prefix-cache-loaded-check
         loaded-a
@@ -2340,7 +2340,7 @@
         (ctfe.ctfe-env-empty-with-pools
           (ast.ast-node-pool-context-shared-view (& source-pools)))
         name-id
-        (Type (I64)))]
+        (& (Type (I64))))]
     [installed-type-id : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
@@ -2541,7 +2541,9 @@
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
   [key : String]) : ast.AstDecl
-  (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
+  (match (parser.parse-ast-source-diagnostic
+    "target/tc_state_entry.tl"
+    (& source))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons decl _)
@@ -2630,9 +2632,9 @@
 (define (main) : i64 42)"))
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      (tc_core.tc-global-shared-view entry)
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view roots)
+      (& roots)
       cfgs)
       [(Ok decls paths _ _)
         (match (tc_api.typecheck-compiler-program-with-paths-cache
@@ -2926,10 +2928,10 @@
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         (tc_core.tc-global-shared-view state-a)
-        entry
-        source
+        (& entry)
+        (& source)
         (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
+        (& roots)
         No
         cfgs
         pools)
@@ -3044,8 +3046,8 @@
           (tc_core.tc-global-shared-view stdlib-root))
         items)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (load.compiler-load-test-mkdir base)
-    (load.compiler-load-test-mkdir stdlib-root)
+    (load.compiler-load-test-mkdir (& base))
+    (load.compiler-load-test-mkdir (& stdlib-root))
     (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
     (compiler-typecheck-smoke-write-text
       entry
@@ -3067,7 +3069,7 @@
         "entry.tl")]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (load.compiler-load-test-mkdir dir)
+    (load.compiler-load-test-mkdir (& dir))
     (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
     (compiler-typecheck-smoke-write-text
       entry
@@ -3075,9 +3077,9 @@
 (import dep)
 (define (main) : i64 0)")
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view roots)
+      (& roots)
       cfgs)
       [(Ok decls paths _ _)
         (match (tc_api.typecheck-compiler-program-with-paths-cache
@@ -3117,7 +3119,7 @@
         (load.compiler-load-session-state-shared-view (& load-state))
         entry
         (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
+        (& roots)
         cfgs
         (ast.ast-node-pool-context-shared-view (& pools)))
         [(Ok decls paths modules _)
@@ -3160,9 +3162,9 @@
 (define (main) : i64 (provider.bumped 41))")
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      roots
+      (& roots)
       cfgs)
       [(Err diag)
         (and
@@ -3237,9 +3239,9 @@
 (define (main) : i64 0)")
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      roots
+      (& roots)
       cfgs)
       [(Ok _ _ _ _)
         (tc_core.tc-macro-state-bind-source-names!
@@ -3378,17 +3380,17 @@
         (load.compiler-load-canonical-module-id-from-path path))]
     (match (parser.parse-ast-source-diagnostic
       (tc_core.tc-global-shared-view path)
-      source)
+      (& source))
       [(Ok program)
         (match (load.compiler-load-surface-summary-build
-          (tc_core.tc-global-shared-view path)
+          (& path)
           path-id
-          (load.compiler-load-dirname path)
-          program
+          (& (load.compiler-load-dirname path))
+          (& program)
           fallback-id
           false)
           [(Ok summary)
-            (load.compiler-load-record-surface-summary! summary)
+            (load.compiler-load-record-surface-summary! (& summary))
             true]
           [(Err _) false])]
       [(Err _) false])))
@@ -3410,7 +3412,7 @@
     (if (compiler-typecheck-smoke-record-surface-summary?
       provider-path
       provider-source)
-      (match (parser.parse-ast-source-diagnostic "" entry-source)
+      (match (parser.parse-ast-source-diagnostic "" (& entry-source))
         [(Ok entry-program)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             entry-program
@@ -4434,7 +4436,7 @@
   [src : String]
   [path : String]
   [message : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -4820,7 +4822,7 @@
   [expected-change : bool]) : bool
   (let
     [ok : bool
-      (match (parser.parse-ast-source-diagnostic "" source)
+      (match (parser.parse-ast-source-diagnostic "" (& source))
         [(Ok program)
           (match (tc_core.macro-expand-program program)
             [(Ok _ _)

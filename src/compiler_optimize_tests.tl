@@ -62069,6 +62069,15 @@
       (array
         "entry:
            %0 = mov @mr_a : i64
+           %1 = call mr_write_b() : i64
+           %2 = call unknown_writer(%0) : i64
+           return %2"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_b() : i64
+           tailcall unknown_writer(%0) : i64"
+        "entry:
+           %0 = mov @mr_a : i64
            %1 = call mr_write_a() : i64
            return %0"
         "entry:

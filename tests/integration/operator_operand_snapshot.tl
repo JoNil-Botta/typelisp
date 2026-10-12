@@ -8,6 +8,19 @@
   (set! counter 99)
   5)
 
+(define (snapshot-reader) : i64
+  0)
+
+(define (snapshot-writer [value : i64]) : i64
+  (set! counter 9)
+  value)
+
+(define (saved-global-call) : i64
+  (let
+    [saved : i64 counter]
+    [_read : i64 (snapshot-reader)]
+    (snapshot-writer saved)))
+
 (define (write-99 [p : (MutPtr i64)]) : i64
   (unsafe
     (ptr-write! p 99))
@@ -81,6 +94,12 @@
   (set! counter 1)
   (test.assert-true (< counter (bump)) "global comparison")
   (test.assert-i64-eq counter 99 "global comparison write")
+  (set! counter 7)
+  (test.assert-i64-eq
+    (saved-global-call)
+    7
+    "snapshot argument to inlined writer")
+  (test.assert-i64-eq counter 9 "inlined writer effect")
   (let
     [x : i64 1]
     (test.assert-i64-eq (+ x (set-99 (&mut x))) 3 "later mutable borrow")

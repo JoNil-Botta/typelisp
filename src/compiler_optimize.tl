@@ -122900,13 +122900,15 @@
         (let
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs index)]
+          ;; A writing callee must receive the saved operand, even when inlined.
+          [_barrier : unit
+            (set! delayed (opt-global-snapshot-filter cell (& instr) delayed))]
           [rewritten : ir.CompilerIrInstr
             (opt-copy-subst-instr
               (& delayed)
               (compiler-opt-global-shared-view instr))]
           (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)
           (set! env (opt-global-snapshot-filter cell (& instr) env))
-          (set! delayed (opt-global-snapshot-filter cell (& instr) delayed))
           (match (compiler-opt-global-shared-view instr)
             [(or (Call _ _ _ _) (TailCall _ _ _) (Store _ _ _))
               (set! delayed (compiler-opt-global-shared-view env))]

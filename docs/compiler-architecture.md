@@ -161,8 +161,14 @@ pattern local must not erase an incoming or escaping loan of the hidden owner.
 
 Global call effects share the borrow checker's live place facts. Global roots
 and callees use the ordinary source-name resolver for aliases and full dotted
-module paths, with lexical binders taking precedence. The check
-runs after argument validation and before call-scoped facts are discarded,
+module paths, with lexical binders taking precedence. Each loan captures its
+global symbol handle in its source scope; later shadowing cannot change that
+identity. Persistent copies, scope restoration and branch/loop joins preserve
+the handle, and fixpoint equality includes it. A local binder removes its own
+root facts while retaining loans on a hidden global. Place conflicts and loan
+pruning select the resolved owner's facts, so a same-named local remains a
+separate place; ending its loan must not remove the global loan. The check runs
+after argument validation and before call-scoped facts are discarded,
 so auto-borrows, earlier returned references and borrowed match arms remain
 visible. `compiler_global_effects` computes each queried global's least
 fixpoint over reverse call edges. Its witnesses descend through the first

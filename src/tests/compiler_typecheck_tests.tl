@@ -9173,7 +9173,8 @@
               (tc_core.tc-move-path-segments-empty)
               index))
           (BorrowShared)
-          (ast.ast-node-push (ast.ast-global-shared-view origin)))))
+          (ast.ast-node-push (ast.ast-global-shared-view origin))
+          -1)))
     out))
 
 (define (compiler-typecheck-moved-facts-same-dense-snapshot?
@@ -9214,6 +9215,106 @@
                   (__tl-project-field (__tl-box-place other-store) nodes)))))]
         [_ false])]
     [_ false]))
+
+(define (compiler-typecheck-global-loan-provenance-ok?) : bool
+  (let
+    [root : i64 (ci.intern "global-loan-root")]
+    [path : tc_core.TcMovePath
+      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
+    [origin : ast.AstExpr (Var root)]
+    [local : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1
+        -1)]
+    [global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1
+        137)]
+    [global-first : tc_core.TcMovedSet
+      (tc_core.tc-moved-union (& global) (tc_core.tc-global-shared-view local))]
+    [local-first : tc_core.TcMovedSet
+      (tc_core.tc-moved-union (& local) (tc_core.tc-global-shared-view global))]
+    [shadowed : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-root-state
+        (tc_core.tc-global-shared-view global-first)
+        root
+        true)]
+    [local-view : tc_core.TcMovedSet
+      (tc_core.tc-moved-select-path-provenance
+        (tc_core.tc-global-shared-view global-first)
+        path
+        -1)]
+    [without-global : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-path-kind
+        (tc_core.tc-global-shared-view global-first)
+        path
+        (BorrowShared)
+        137)]
+    [restored : tc_core.TcMovedSet
+      (tc_core.tc-moved-restore-root-state
+        (tc_core.tc-global-shared-view local)
+        (tc_core.tc-moved-root-snapshot
+          (tc_core.tc-global-shared-view global)
+          root))]
+    [grown : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth
+        (tc_core.tc-moved-clone (& global))
+        (ci.intern "other-root")
+        0
+        128
+        origin)]
+    (and
+      (=
+        (tc_core.tc-moved-path-facts-len
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global-first)))
+        2)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths shadowed)
+        path
+        (BorrowShared)
+        137)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths local-view)
+        path
+        (BorrowShared)
+        -1)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths without-global)
+        path
+        (BorrowShared)
+        -1)
+      (not
+        (tc_core.tc-moved-same-facts?
+          (& global)
+          (& local)
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local))))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths global-first)
+        path
+        (BorrowShared)
+        137)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths local-first)
+        path
+        (BorrowShared)
+        137)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths restored)
+        path
+        (BorrowShared)
+        137)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths grown)
+        path
+        (BorrowShared)
+        137))))
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
@@ -9353,9 +9454,10 @@
         (tc_core.tc-moved-empty)
         shadowed-root
         (Move)
-        (tc_core.tc-moved-no-origin-id))]
+        (tc_core.tc-moved-no-origin-id)
+        -1)]
     [root-path-clear : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state root-path shadowed-id)]
+      (tc_core.tc-moved-remove-root-state root-path shadowed-id false)]
     [root-path-clears : bool
       (match (tc_core.tc-moved-path-exact-conflict
         root-path-clear
@@ -9374,7 +9476,8 @@
         (tc_core.tc-global-shared-view retained-parent)
         shadowed-root
         (BorrowShared)
-        (ast.ast-node-push (ast.ast-global-shared-view origin-b)))]
+        (ast.ast-node-push (ast.ast-global-shared-view origin-b))
+        -1)]
     [growth-successor : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
         (tc_core.tc-global-shared-view retained-parent)
@@ -9447,12 +9550,14 @@
           (tc_core.tc-moved-paths
             (tc_core.tc-global-shared-view growth-successor))
           items0
-          (BorrowShared))
+          (BorrowShared)
+          -2)
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
             (tc_core.tc-moved-paths growth-successor)
             shadowed-root
-            (BorrowShared))))]
+            (BorrowShared)
+            -2)))]
     [separate-store : tc_core.TcMovedSet
       (compiler-typecheck-moved-set-growth
         (tc_core.tc-moved-empty)
@@ -9477,7 +9582,8 @@
       (tc_core.tc-moved-remove-path-kind
         (tc_core.tc-global-shared-view cross-store-union)
         growth1
-        (BorrowShared))]
+        (BorrowShared)
+        -2)]
     [cross-store-remove-ok : bool
       (and
         (=
@@ -9489,17 +9595,20 @@
           (tc_core.tc-moved-paths
             (tc_core.tc-global-shared-view cross-store-removed))
           growth0
-          (BorrowShared))
+          (BorrowShared)
+          -2)
         (not
           (tc_core.tc-moved-path-facts-contains-exact-kind?
             (tc_core.tc-moved-paths cross-store-removed)
             growth1
-            (BorrowShared))))]
+            (BorrowShared)
+            -2)))]
     [missing-removal : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-path-kind
         (tc_core.tc-global-shared-view cross-store-union)
         shadowed-root
-        (Move))]
+        (Move)
+        -2)]
     [missing-removal-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths
@@ -9508,14 +9617,15 @@
     [missing-filter : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-root-state
         (tc_core.tc-global-shared-view cross-store-union)
-        shadowed-id)]
+        shadowed-id
+        false)]
     [missing-filter-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths
           (tc_core.tc-global-shared-view cross-store-union))
         (tc_core.tc-moved-paths missing-filter))]
     [filtered-growth : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state cross-store-union growth-id)]
+      (tc_core.tc-moved-remove-root-state cross-store-union growth-id false)]
     [changed-filter-reuses-tail : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths retained-parent)
@@ -9725,6 +9835,7 @@
 
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-global-loan-provenance-ok?)
     (compiler-typecheck-moved-set-metrics-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-use-after-move-source)

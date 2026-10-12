@@ -64197,7 +64197,10 @@
 (defstruct TcMovedPathFact
   (path TcMovePath)
   (kind TcMovedPathKind)
-  (origin i64))
+  (origin i64)
+  ;; Captured in the source scope; a later lexical binder can hide this root.
+  ;; Handles belong to the same context/symbol owner as the fact's AST origin.
+  (global-handle i64))
 
 ;; Moved-path facts are persistent snapshots over an append-only node store.
 ;; The singleton stays inline; larger snapshots carry only the stable store
@@ -64221,8 +64224,9 @@
   (Removed TcMovedPathFacts))
 
 (defenum TcMovedPathFactsFilter
-  (Root i64)
-  (Lending TcMovePath)
+  (Root i64 bool)
+  (Provenance i64 i64)
+  (Lending TcMovePath i64)
   (Pending i64))
 
 (defstruct TcParamStorageOriginNode
@@ -64476,7 +64480,8 @@
                         node.fact.path.segments.tail
                         node.fact.path.segments.len))
                     kind
-                    node.fact.origin)
+                    node.fact.origin
+                    node.fact.global-handle)
                   node.parent))))
           (set! data.nodes next))))))
 
@@ -65073,8 +65078,9 @@
 (define (tc-moved-path-fact-new
   [path : TcMovePath]
   [kind : TcMovedPathKind]
-  [origin : i64]) : TcMovedPathFact
-  (TcMovedPathFact path kind origin))
+  [origin : i64]
+  [global-handle : i64]) : TcMovedPathFact
+  (TcMovedPathFact path kind origin global-handle))
 
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   fact.origin)
@@ -65133,7 +65139,8 @@
 (define (tc-moved-path-facts-remove-exact
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
-  [kind : TcMovedPathKind]) : TcMovedPathFactsRemove
+  [kind : TcMovedPathKind]
+  [global-handle : i64]) : TcMovedPathFactsRemove
   (if (tc-moved-path-facts-empty? facts)
     (Missing)
     (let
@@ -65141,16 +65148,20 @@
       [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
-        (tc-moved-path-kind-eq? fact.kind kind))
+        (tc-moved-path-kind-eq? fact.kind kind)
+        (or (= global-handle -2) (= fact.global-handle global-handle)))
         (Removed rest)
-        (match (tc-moved-path-facts-remove-exact rest path kind)
+        (match (tc-moved-path-facts-remove-exact rest path kind global-handle)
           [(Missing) (Missing)]
           [(Removed tail) (Removed (tc-moved-path-facts-cons tail fact))])))))
 
+;; -2 queries any provenance; -1 is a local loan and nonnegative values are
+;; captured global handles. Fixpoint comparisons require the exact provenance.
 (define (tc-moved-path-facts-contains-exact-kind?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
-  [kind : TcMovedPathKind]) : bool
+  [kind : TcMovedPathKind]
+  [global-handle : i64]) : bool
   (if (tc-moved-path-facts-empty? facts)
     false
     (let
@@ -65158,22 +65169,26 @@
       [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       (if (and
         (tc-move-path-eq? fact.path path)
-        (tc-moved-path-kind-eq? fact.kind kind))
+        (tc-moved-path-kind-eq? fact.kind kind)
+        (or (= global-handle -2) (= fact.global-handle global-handle)))
         true
-        (tc-moved-path-facts-contains-exact-kind? rest path kind)))))
+        (tc-moved-path-facts-contains-exact-kind? rest path kind global-handle)))))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]
-  [origin : i64]) : TcMovedSet
+  [origin : i64]
+  [global-handle : i64]) : TcMovedSet
   (if (tc-moved-path-facts-contains-exact-kind?
     (tc-moved-paths (tc-global-shared-view set))
     path
-    kind)
+    kind
+    global-handle)
     set
     (let
-      [fact : TcMovedPathFact (tc-moved-path-fact-new path kind origin)]
+      [fact : TcMovedPathFact
+        (tc-moved-path-fact-new path kind origin global-handle)]
       (TcMovedSet
         (tc-moved-roots (tc-global-shared-view set))
         (tc-moved-partials (tc-global-shared-view set))
@@ -65223,7 +65238,8 @@
           out
           path
           (OwnerDependency (tc-name-id-list-head cursor))
-          (ast.ast-node-push (tc-global-shared-view origin))))
+          (ast.ast-node-push (tc-global-shared-view origin))
+          -1))
       (set! cursor (tc-name-id-list-rest cursor)))
     out))
 
@@ -65245,7 +65261,8 @@
                 out
                 (TcMovePath target-id (tc-move-path-segments-empty))
                 (OwnerDependency owner-id)
-                fact.origin)]
+                fact.origin
+                fact.global-handle)]
             [_ out])
           out)]
       (tc-moved-copy-owner-dependencies-at rest source-id target-id out2))))
@@ -65277,11 +65294,13 @@
 (define (tc-moved-remove-path-kind
   [set : TcMovedSet]
   [path : TcMovePath]
-  [kind : TcMovedPathKind]) : TcMovedSet
+  [kind : TcMovedPathKind]
+  [global-handle : i64]) : TcMovedSet
   (match (tc-moved-path-facts-remove-exact
     (tc-moved-paths (tc-global-shared-view set))
     path
-    kind)
+    kind
+    global-handle)
     [(Missing) set]
     [(Removed facts)
       (TcMovedSet
@@ -65619,9 +65638,17 @@
   [fact : TcMovedPathFact]
   [filter : TcMovedPathFactsFilter]) : bool
   (match filter
-    [(Root root-id) (= (tc-move-path-root-id fact.path) root-id)]
-    [(Lending path)
+    [(Root root-id preserve-global?)
       (and
+        (= (tc-move-path-root-id fact.path) root-id)
+        (or (not preserve-global?) (< fact.global-handle 0)))]
+    [(Provenance root-id global-handle)
+      (and
+        (= (tc-move-path-root-id fact.path) root-id)
+        (not (= fact.global-handle global-handle)))]
+    [(Lending path global-handle)
+      (and
+        (= fact.global-handle global-handle)
         (tc-move-path-eq? fact.path path)
         (match fact.kind
           [(or (BorrowLending _) (BorrowLendingUsed _)) true]
@@ -65661,17 +65688,22 @@
 
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
-  [root-id : i64]) : TcMovedPathFacts
-  (tc-moved-path-facts-filter facts (Root root-id)))
+  [root-id : i64]
+  [preserve-global? : bool]) : TcMovedPathFacts
+  (tc-moved-path-facts-filter facts (Root root-id preserve-global?)))
 
-(define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
+(define (tc-moved-remove-root-state
+  [set : TcMovedSet]
+  [name-id : i64]
+  [preserve-global? : bool]) : TcMovedSet
   (let
     [without-root : TcMovedSet
       (tc-moved-remove-partial (tc-moved-remove set name-id) name-id)]
     [facts : TcMovedPathFacts
       (tc-moved-path-facts-remove-root
         (tc-moved-paths (tc-global-shared-view without-root))
-        name-id)]
+        name-id
+        preserve-global?)]
     (TcMovedSet
       (tc-moved-roots (tc-global-shared-view without-root))
       (tc-moved-partials (tc-global-shared-view without-root))
@@ -65752,7 +65784,8 @@
           set
           fact.path
           fact.kind
-          (tc-moved-path-fact-origin fact))
+          (tc-moved-path-fact-origin fact)
+          fact.global-handle)
         rest))))
 
 ;; Drops what the scope recorded about its own binding of the name and puts
@@ -65762,7 +65795,7 @@
   [snapshot : TcMovedRootSnapshot]) : TcMovedSet
   (let
     [name-id : i64 snapshot.name-id]
-    [cleared : TcMovedSet (tc-moved-remove-root-state set name-id)]
+    [cleared : TcMovedSet (tc-moved-remove-root-state set name-id false)]
     [with-root : TcMovedSet
       (if snapshot.moved?
         (tc-moved-add-value cleared name-id snapshot.moved-origin)
@@ -65980,7 +66013,8 @@
       (if (tc-moved-path-facts-contains-exact-kind?
         (tc-moved-paths moved)
         (tc-move-obligation-path name-id)
-        (ObligationDischarged))
+        (ObligationDischarged)
+        -2)
         1
         2)]
     [(tc-moved-partial? (& moved) name-id) 3]
@@ -66105,7 +66139,8 @@
         moved
         (tc-move-obligation-path v-id)
         (ObligationDischarged)
-        value-id)
+        value-id
+        -1)
       moved)))
 
 ;; The same visible local must supply the value on every normally completing
@@ -66298,7 +66333,8 @@
                   out
                   (tc-move-obligation-path key)
                   (ObligationDischarged)
-                  (tc-moved-no-origin-id)))
+                  (tc-moved-no-origin-id)
+                  -1))
               unit)]
           [(EntryNone) unit])
         (+= cursor 1)
@@ -66613,7 +66649,7 @@
   [root-id : i64]
   [path : TcMovePath]) : TcMovedSet
   (let
-    [without-path : TcMovedSet (tc-moved-remove-path-kind set path (Move))]
+    [without-path : TcMovedSet (tc-moved-remove-path-kind set path (Move) -2)]
     (if (tc-moved-any-root-path? (tc-global-shared-view without-path) root-id)
       without-path
       (tc-moved-remove-partial without-path root-id))))
@@ -66630,7 +66666,8 @@
           out
           fact.path
           fact.kind
-          (tc-moved-path-fact-origin fact))))))
+          (tc-moved-path-fact-origin fact)
+          fact.global-handle)))))
 
 (define (tc-moved-union-id-loop
   [a : (& a tc_i64_i64_map.Map)]
@@ -66657,8 +66694,8 @@
       (-= remaining 1))
     result))
 
-;; Union keeps the left input's value for duplicate facts. Branch merging
-;; therefore reports the origin from the first/left arm deterministically.
+;; Union keeps the left origin for duplicate facts with the same provenance.
+;; A captured global and a same-named local remain distinct facts.
 (define (tc-moved-union [a : (& a TcMovedSet)] [b : TcMovedSet]) : TcMovedSet
   (let
     [a : TcMovedSet (owned_view.compiler-owned-reference-shared-view a)]
@@ -66727,7 +66764,8 @@
       (if (tc-moved-path-facts-contains-exact-kind?
         (tc-global-shared-view b)
         fact.path
-        fact.kind)
+        fact.kind
+        fact.global-handle)
         (tc-moved-path-facts-subset? rest b)
         false))))
 
@@ -67139,7 +67177,7 @@
     [(Some path)
       (if (tc-moved-contains? locals path.root)
         (if (= path.segments.len 0)
-          (tc-moved-remove-root-state moved path.root)
+          (tc-moved-remove-root-state moved path.root false)
           (tc-moved-remove-exact-path moved path.root path))
         moved)]
     [(No) moved]))
@@ -67217,7 +67255,7 @@
   (let
     [origin-id : i64 (ast.ast-node-push origin)]
     (tc-moved-add-partial-value
-      (tc-moved-add-path-fact moved path (Move) origin-id)
+      (tc-moved-add-path-fact moved path (Move) origin-id -1)
       root-id
       origin-id)))
 
@@ -67529,7 +67567,7 @@
           (tc-global-shared-view moved)
           init)
         No)]
-    [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id)]
+    [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id false)]
     (match origin
       [(Some parameter-id)
         (tc-param-storage-origin-bind-in-set cleared name-id parameter-id)]
@@ -68364,7 +68402,7 @@
           origin)
         (Ok
           (tc-moved-add-origin
-            (tc-moved-remove-root-state moved name-id)
+            (tc-moved-remove-root-state moved name-id false)
             name-id
             origin)))]
     [(tc-moved-contains? loop-carried name-id)
@@ -70352,7 +70390,7 @@
                     locals
                     name
                     (tc-global-shared-view init)))
-                (tc-moved-remove-root-state loop-carried name)
+                (tc-moved-remove-root-state loop-carried name false)
                 (tc-move-rebind-lambda-owner-dependencies
                   expr-bases
                   env
@@ -70497,7 +70535,7 @@
                 (if move-aware?
                   (tc-moved-add locals name)
                   (tc-move-bind-with-owner locals name init-box))
-                (tc-moved-remove-root-state loop-carried name)
+                (tc-moved-remove-root-state loop-carried name false)
                 (tc-param-storage-rebind-from-init
                   ctx
                   expr-bases
@@ -70533,7 +70571,7 @@
         [owner.move-aware
           (tc-move-check-cleanup-owner-exit
             expr-bases
-            (tc-moved-remove-root-state moved name-id)
+            (tc-moved-remove-root-state moved name-id false)
             roots
             scope
             (+ index 1))]
@@ -70571,7 +70609,9 @@
     [cursor : TcNameIdList names]
     [out : TcMovedSet moved]
     (while (not (tc-name-id-list-empty? cursor))
-      (set! out (tc-moved-remove-root-state out (tc-name-id-list-head cursor)))
+      (set!
+        out
+        (tc-moved-remove-root-state out (tc-name-id-list-head cursor) false))
       (set! cursor (tc-name-id-list-rest cursor)))
     out))
 
@@ -71855,8 +71895,8 @@
                           locals
                           name
                           (tc-global-shared-view init)))
-                      (tc-moved-remove-root-state loop-carried name)
-                      (tc-moved-remove-root-state outer-loop-carried name)
+                      (tc-moved-remove-root-state loop-carried name false)
+                      (tc-moved-remove-root-state outer-loop-carried name false)
                       (tc-param-storage-rebind-from-init
                         ctx
                         expr-bases
@@ -72856,16 +72896,19 @@
                     (I64))
                   (tc-moved-add (tc-moved-add locals source-name) index-name)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state loop-carried source-name)
-                    index-name)
+                    (tc-moved-remove-root-state loop-carried source-name false)
+                    index-name
+                    false)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state moved2 source-name)
-                    index-name)
+                    (tc-moved-remove-root-state moved2 source-name false)
+                    index-name
+                    false)
                   body-id))]
             (Ok
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state moved3 source-name)
-                index-name)))))]
+                (tc-moved-remove-root-state moved3 source-name false)
+                index-name
+                false)))))]
     [(ForOwnedStep payload)
       (let
         [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
@@ -72927,10 +72970,13 @@
                           binding-name
                           (tc-context-type-get ctx elem-id))
                         (tc-moved-add locals binding-name)
-                        (tc-moved-remove-root-state loop-carried binding-name)
-                        (tc-moved-remove-root-state moved3 binding-name)
+                        (tc-moved-remove-root-state
+                          loop-carried
+                          binding-name
+                          false)
+                        (tc-moved-remove-root-state moved3 binding-name false)
                         body-id))]
-                  (Ok (tc-moved-remove-root-state moved4 binding-name)))]
+                  (Ok (tc-moved-remove-root-state moved4 binding-name false)))]
               [_
                 (Err
                   "typecheck: scalar for owned step requires fixed-array state")]))))]
@@ -73895,7 +73941,8 @@
                     (tc-global-shared-view locals)
                     (tc-moved-remove-root-state
                       (tc-global-shared-view loop-carried)
-                      name)
+                      name
+                      false)
                     moved
                     rhs-box))]
               [_
@@ -73933,7 +73980,7 @@
                         (tc-global-shared-view rhs))
                       name
                       rhs))]
-                [(Err _) (Ok (tc-moved-remove-root-state moved2 name))])))))]
+                [(Err _) (Ok (tc-moved-remove-root-state moved2 name false))])))))]
     [(Borrow mutable _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -74063,8 +74110,8 @@
               (tc-moved-add
                 (tc-move-enter-loop-body (tc-moved-clone locals))
                 index)
-              (tc-moved-remove-root-state body-loop-carried index)
-              (tc-moved-remove-root-state loop-carried index)
+              (tc-moved-remove-root-state body-loop-carried index false)
+              (tc-moved-remove-root-state loop-carried index false)
               (tc-moved-clone moved2)
               body)
               [(Ok _ _ breaks? break-moved-box)
@@ -74114,8 +74161,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-union locals (tc-moved-clone loop-carried))
-                  outer)
-                inner)]
+                  outer
+                  false)
+                inner
+                false)]
             (match (tc-move-check-loop-body
               ctx
               expr-bases
@@ -74130,8 +74179,9 @@
                 inner)
               body-loop-carried
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state loop-carried outer)
-                inner)
+                (tc-moved-remove-root-state loop-carried outer false)
+                inner
+                false)
               (tc-moved-clone moved2)
               (ast.ast-expr-segment-bases-get expr-bases body-box))
               [(Ok _ _ breaks? break-moved-box)
@@ -74684,8 +74734,8 @@
           expr-bases
           (tc-bind-id env lane (I64))
           (tc-moved-add (tc-move-enter-loop-body (tc-moved-clone locals)) lane)
-          (tc-moved-remove-root-state body-loop-carried lane)
-          (tc-moved-remove-root-state loop-carried lane)
+          (tc-moved-remove-root-state body-loop-carried lane false)
+          (tc-moved-remove-root-state loop-carried lane false)
           (tc-moved-clone moved)
           (ast.ast-expr-segment-bases-get expr-bases body-box))
           [(Ok _ _ breaks? break-moved-box)
@@ -76426,7 +76476,8 @@
                 out
                 fact.path
                 (BorrowLendingUsed binding-id)
-                (tc-moved-path-fact-origin fact))
+                (tc-moved-path-fact-origin fact)
+                fact.global-handle)
               out)]
           [_ out])]
       (tc-borrow-check-note-lending-use-at rest binding-id out2))))
@@ -76460,7 +76511,8 @@
                     out
                     path
                     (BorrowLendingUsed binding-id)
-                    (tc-moved-path-fact-origin fact))]
+                    (tc-moved-path-fact-origin fact)
+                    fact.global-handle)]
                 [(No) out]))]
           [_ out])]
       (tc-borrow-check-propagate-lending-uses-at rest out2))))
@@ -76497,7 +76549,8 @@
                 out
                 fact.path
                 (BorrowLendingUsed binding-id)
-                (tc-moved-path-fact-origin fact))
+                (tc-moved-path-fact-origin fact)
+                fact.global-handle)
               out)]
           [_ out])]
       (tc-borrow-check-note-called-lambda-capture-uses-at
@@ -76527,12 +76580,14 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [binding-id : i64]
-  [origin : ast.AstExpr]) : TcMovedSet
+  [origin : ast.AstExpr]
+  [global-handle : i64]) : TcMovedSet
   (tc-moved-add-path-fact
     borrowed
     path
     (BorrowLending binding-id)
-    (ast.ast-node-push origin)))
+    (ast.ast-node-push origin)
+    global-handle))
 
 (define (tc-borrow-check-split-provenance-for-binding-at
   [facts : TcMovedPathFacts]
@@ -76640,7 +76695,8 @@
             out
             fact.path
             (BorrowLending binding-id)
-            (tc-moved-path-fact-origin fact))
+            (tc-moved-path-fact-origin fact)
+            fact.global-handle)
           out)]
       (tc-borrow-check-rebind-split-projection-at
         rest
@@ -76688,23 +76744,30 @@
 
 (define (tc-moved-path-facts-remove-lending
   [facts : TcMovedPathFacts]
-  [path : TcMovePath]) : TcMovedPathFacts
-  (tc-moved-path-facts-filter facts (Lending path)))
+  [path : TcMovePath]
+  [global-handle : i64]) : TcMovedPathFacts
+  (tc-moved-path-facts-filter facts (Lending path global-handle)))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
-  [path : TcMovePath]) : TcMovedSet
+  [path : TcMovePath]
+  [global-handle : i64]) : TcMovedSet
   (let
     [without-shared : TcMovedSet
-      (tc-moved-remove-path-kind borrowed path (BorrowShared))]
+      (tc-moved-remove-path-kind borrowed path (BorrowShared) global-handle)]
     [without-mut : TcMovedSet
-      (tc-moved-remove-path-kind without-shared path (BorrowMut))]
+      (tc-moved-remove-path-kind without-shared path (BorrowMut) global-handle)]
     [without-two-phase : TcMovedSet
-      (tc-moved-remove-path-kind without-mut path (BorrowTwoPhaseMut))]
+      (tc-moved-remove-path-kind
+        without-mut
+        path
+        (BorrowTwoPhaseMut)
+        global-handle)]
     [facts : TcMovedPathFacts
       (tc-moved-path-facts-remove-lending
         (tc-moved-paths (tc-global-shared-view without-two-phase))
-        path)]
+        path
+        global-handle)]
     (TcMovedSet
       (tc-moved-roots (tc-global-shared-view without-two-phase))
       (tc-moved-partials (tc-global-shared-view without-two-phase))
@@ -76976,7 +77039,8 @@
             out
             path
             kind
-            (tc-moved-path-fact-origin fact))
+            (tc-moved-path-fact-origin fact)
+            fact.global-handle)
           out)]
       (tc-borrow-check-propagate-return-borrows-at
         ctx
@@ -77040,9 +77104,12 @@
           [(BorrowShared) true]
           [_ false])]
       [new : bool
-        (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
-          [(Some _ _) false]
-          [No true])]
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view prior))
+            path
+            fact.kind
+            fact.global-handle))]
       [out2 : TcMovedSet
         (if (and
           shared
@@ -77059,7 +77126,8 @@
             out
             path
             binding-id
-            (tc-global-shared-view origin))
+            (tc-global-shared-view origin)
+            fact.global-handle)
           out)]
       (tc-borrow-check-mark-new-return-borrows-at
         ctx
@@ -77156,7 +77224,8 @@
               out
               fact.path
               (BorrowPending scope-id)
-              (tc-moved-path-fact-origin fact))]
+              (tc-moved-path-fact-origin fact)
+              fact.global-handle)]
           [_ out])]
       (tc-borrow-check-add-all-pending-markers-at scope-id rest out2))))
 
@@ -77205,6 +77274,16 @@
       [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
       [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       [path : TcMovePath fact.path]
+      [visible : TcMovedSet
+        (tc-moved-select-path-provenance
+          (tc-global-shared-view out)
+          path
+          fact.global-handle)]
+      [visible-protected : TcMovedSet
+        (tc-moved-select-path-provenance
+          (tc-global-shared-view protected)
+          path
+          fact.global-handle)]
       [shared : bool
         (match fact.kind
           [(BorrowShared) true]
@@ -77213,25 +77292,25 @@
         (if (or
           (not shared)
           (tc-borrow-check-pending-path-at?
-            (tc-moved-paths (tc-global-shared-view out))
+            (tc-moved-paths (tc-global-shared-view visible))
             path)
           (and
             (not
               (tc-borrow-check-has-lending-binding?
-                (tc-global-shared-view out)
+                (tc-global-shared-view visible)
                 path))
             (tc-borrow-check-protected-path?
-              (tc-global-shared-view protected)
+              (tc-global-shared-view visible-protected)
               path)))
           out
           (match (tc-borrow-check-lending-binding
-            (tc-moved-paths (tc-global-shared-view out))
+            (tc-moved-paths (tc-global-shared-view visible))
             path)
             [(Some lending-binding-id)
               (cond
                 [(not
                     (tc-borrow-check-lending-binding-used-at?
-                      (tc-moved-paths (tc-global-shared-view out))
+                      (tc-moved-paths (tc-global-shared-view visible))
                       path
                       lending-binding-id))
                   out]
@@ -77251,8 +77330,13 @@
                   (tc-moved-remove-path-kind
                     out
                     path
-                    (BorrowLending lending-binding-id))]
-                [else (tc-borrow-check-remove-borrow-path out path)])]
+                    (BorrowLending lending-binding-id)
+                    fact.global-handle)]
+                [else
+                  (tc-borrow-check-remove-borrow-path
+                    out
+                    path
+                    fact.global-handle)])]
             [(No)
               (if (tc-borrow-check-lifetime-used-in-exprs?
                 expr-bases
@@ -77262,7 +77346,7 @@
                 (tc-global-shared-view exprs)
                 (tc-borrow-check-path-lifetime ctx env path))
                 out
-                (tc-borrow-check-remove-borrow-path out path))]))]
+                (tc-borrow-check-remove-borrow-path out path fact.global-handle))]))]
       (tc-borrow-check-prune-before-exprs-loop
         expr-bases
         ctx
@@ -77304,19 +77388,38 @@
     [(No) (No)]))
 
 (define (tc-borrow-check-add-borrow-path
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [mutable : bool]
   [origin : ast.AstExpr]) : TcMovedSet
   (let
     [origin-id : i64 (ast.ast-node-push origin)]
+    [global-handle : i64
+      (tc-borrow-check-global-root-handle
+        ctx
+        (tc-global-shared-view locals)
+        path.root)]
     [borrowed1 : TcMovedSet
-      (tc-moved-add-path-fact borrowed path (BorrowShared) origin-id)]
+      (tc-moved-add-path-fact
+        borrowed
+        path
+        (BorrowShared)
+        origin-id
+        global-handle)]
     (if mutable
-      (tc-moved-add-path-fact borrowed1 path (BorrowMut) origin-id)
+      (tc-moved-add-path-fact
+        borrowed1
+        path
+        (BorrowMut)
+        origin-id
+        global-handle)
       borrowed1)))
 
 (define (tc-borrow-check-add-two-phase-mut-borrow-path
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [origin : ast.AstExpr]) : TcMovedSet
@@ -77324,11 +77427,16 @@
     borrowed
     path
     (BorrowTwoPhaseMut)
-    (ast.ast-node-push origin)))
+    (ast.ast-node-push origin)
+    (tc-borrow-check-global-root-handle
+      ctx
+      (tc-global-shared-view locals)
+      path.root)))
 
 (define (tc-borrow-check-add-two-phase-mut-place
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]
   [origin : ast.AstExpr]) : TcBorrowCheckResult
@@ -77338,148 +77446,238 @@
         [_
           (try
             (tc-borrow-check-mutably-borrow-conflict
+              ctx
               expr-bases
+              (tc-global-shared-view locals)
               (tc-global-shared-view borrowed)
               path
               (tc-global-shared-view origin)))]
         (Ok
-          (tc-borrow-check-add-two-phase-mut-borrow-path borrowed path origin)))]
+          (tc-borrow-check-add-two-phase-mut-borrow-path
+            ctx
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            origin)))]
     [(No) (Ok borrowed)]))
 
 (define (tc-borrow-check-remove-two-phase-mut-place
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]) : TcMovedSet
   (match (tc-borrow-check-place-path expr-bases place)
-    [(Some path) (tc-moved-remove-path-kind borrowed path (BorrowTwoPhaseMut))]
+    [(Some path)
+      (tc-moved-remove-path-kind
+        borrowed
+        path
+        (BorrowTwoPhaseMut)
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
     [(No) borrowed]))
 
+(define (tc-moved-select-path-provenance
+  [borrowed : TcMovedSet]
+  [path : TcMovePath]
+  [handle : i64]) : TcMovedSet
+  (let
+    [facts : TcMovedPathFacts
+      (tc-moved-path-facts-filter
+        (tc-moved-paths (tc-global-shared-view borrowed))
+        (Provenance path.root handle))]
+    (TcMovedSet
+      (tc-moved-roots (tc-global-shared-view borrowed))
+      (tc-moved-partials (tc-global-shared-view borrowed))
+      facts
+      (tc-moved-hidden-atomic-users (tc-global-shared-view borrowed))
+      (tc-moved-param-storage-origins borrowed))))
+
 (define (tc-borrow-check-move-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
+  (let
+    [borrowed : TcMovedSet
+      (tc-moved-select-path-provenance
         borrowed
         path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-move-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-move-message (tc-move-path-render path))))]
-      [No Ok])))
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-move-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-move-message (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-assign-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
+  (let
+    [borrowed : TcMovedSet
+      (tc-moved-select-path-provenance
         borrowed
         path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-assign-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-assign-message (tc-move-path-render path))))]
-      [No Ok])))
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-assign-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-assign-message (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-mutably-borrow-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
+  (let
+    [borrowed : TcMovedSet
+      (tc-moved-select-path-provenance
         borrowed
         path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))]
-      [No Ok])))
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-mutably-borrow-message
+                (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-immutably-borrow-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (match (tc-moved-path-conflict-kind
-    (tc-global-shared-view borrowed)
-    path
-    (BorrowMut))
-    [(Some _ _) true]
-    [No false])
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
+  (let
+    [borrowed : TcMovedSet
+      (tc-moved-select-path-provenance
         borrowed
         path
-        (BorrowMut)
-        primary
-        (tc-borrow-check-immutably-borrow-message (tc-move-path-render path))))
-    Ok))
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
+    (if (match (tc-moved-path-conflict-kind
+      (tc-global-shared-view borrowed)
+      path
+      (BorrowMut))
+      [(Some _ _) true]
+      [No false])
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowMut)
+          primary
+          (tc-borrow-check-immutably-borrow-message (tc-move-path-render path))))
+      Ok)))
 
 (define (tc-borrow-check-read-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (match (tc-moved-path-conflict-kind
-    (tc-global-shared-view borrowed)
-    path
-    (BorrowMut))
-    [(Some _ _) true]
-    [No false])
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
+  (let
+    [borrowed : TcMovedSet
+      (tc-moved-select-path-provenance
         borrowed
         path
-        (BorrowMut)
-        primary
-        (tc-borrow-check-read-message (tc-move-path-render path))))
-    Ok))
+        (tc-borrow-check-global-root-handle
+          ctx
+          (tc-global-shared-view locals)
+          path.root))]
+    (if (match (tc-moved-path-conflict-kind
+      (tc-global-shared-view borrowed)
+      path
+      (BorrowMut))
+      [(Some _ _) true]
+      [No false])
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowMut)
+          primary
+          (tc-borrow-check-read-message (tc-move-path-render path))))
+      Ok)))
 
 (define (tc-borrow-check-place-read-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [primary : ast.AstExpr]) : TcBorrowCheckResult
@@ -77491,7 +77689,9 @@
           [_
             (try
               (tc-borrow-check-read-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 primary))]
@@ -77499,8 +77699,9 @@
       [(No) (Ok borrowed)])))
 
 (define (tc-borrow-check-add-place-with-mutability
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [mutable : bool]
   [place : ast.AstExpr]
@@ -77512,25 +77713,44 @@
           [_
             (try
               (tc-borrow-check-mutably-borrow-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 (tc-global-shared-view origin)))]
-          (Ok (tc-borrow-check-add-borrow-path borrowed path true origin)))
+          (Ok
+            (tc-borrow-check-add-borrow-path
+              ctx
+              (tc-global-shared-view locals)
+              borrowed
+              path
+              true
+              origin)))
         (let
           [_
             (try
               (tc-borrow-check-immutably-borrow-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 (tc-global-shared-view origin)))]
-          (Ok (tc-borrow-check-add-borrow-path borrowed path false origin))))]
+          (Ok
+            (tc-borrow-check-add-borrow-path
+              ctx
+              (tc-global-shared-view locals)
+              borrowed
+              path
+              false
+              origin))))]
     [(No) (Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowCheckResult
   (match (tc-borrow-check-place-path expr-bases (tc-global-shared-view expr))
@@ -77539,7 +77759,9 @@
         [_
           (try
             (tc-borrow-check-move-conflict
+              ctx
               expr-bases
+              (tc-global-shared-view locals)
               (tc-global-shared-view borrowed)
               path
               expr))]
@@ -77562,7 +77784,7 @@
       env
       (tc-global-shared-view locals)
       (tc-global-shared-view expr)))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed expr)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-move-only-value
@@ -77580,7 +77802,7 @@
     (tc-global-shared-view locals)
     (tc-global-shared-view expr)
     (tc-resolve-type ctx target-ty))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed expr)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-reading-value
@@ -77601,6 +77823,7 @@
       (tc-global-shared-view expr)))
     (Ok borrowed)
     (tc-borrow-check-place-read-conflict
+      ctx
       expr-bases
       locals
       borrowed
@@ -77623,7 +77846,7 @@
       env
       (tc-global-shared-view locals)
       (tc-global-shared-view init)))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed init)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed init)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-bind-id
@@ -77639,12 +77862,18 @@
       [(Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env locals name-id))
+          (tc-move-var-move-only-id?
+            ctx
+            env
+            (tc-global-shared-view locals)
+            name-id))
           (let
             [_
               (try
                 (tc-borrow-check-move-conflict
+                  ctx
                   expr-bases
+                  (tc-global-shared-view locals)
                   (tc-global-shared-view borrowed)
                   (TcMovePath name-id (tc-move-path-segments-empty))
                   init))]
@@ -80365,12 +80594,22 @@
                 ;; transient call effect. Keeping it makes the ordinary
                 ;; mutable-borrow check report the aliasing conflict.
                 (if (tc-borrow-check-has-lending-binding?
-                  (tc-global-shared-view borrowed)
+                  (tc-moved-select-path-provenance
+                    (tc-global-shared-view borrowed)
+                    path
+                    (tc-borrow-check-global-root-handle
+                      ctx
+                      (tc-global-shared-view locals)
+                      path.root))
                   path)
                   (owned_view.compiler-owned-shared-view borrowed)
                   (tc-borrow-check-remove-borrow-path
                     (tc-global-shared-view borrowed)
-                    path))]
+                    path
+                    (tc-borrow-check-global-root-handle
+                      ctx
+                      (tc-global-shared-view locals)
+                      path.root)))]
               (match (tc-expr ctx env (tc-global-shared-view arg))
                 [(Ok borrow-ty)
                   (match (tc-borrow-check-first-overlapping-lifetime
@@ -80382,8 +80621,9 @@
                         [borrowed1
                           (try
                             (tc-borrow-check-add-place-with-mutability
+                              ctx
                               expr-bases
-                              locals
+                              (tc-global-shared-view locals)
                               without-temporary
                               true
                               place
@@ -80393,7 +80633,11 @@
                             borrowed1
                             path
                             binding-id
-                            arg)))]
+                            arg
+                            (tc-borrow-check-global-root-handle
+                              ctx
+                              (tc-global-shared-view locals)
+                              path.root))))]
                     [(No) (Ok borrowed)])]
                 [(Err _) (Ok borrowed)]))]
           [(No)
@@ -80537,12 +80781,18 @@
       [(Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env locals name-id))
+          (tc-move-var-move-only-id?
+            ctx
+            env
+            (tc-global-shared-view locals)
+            name-id))
           (let
             [_
               (try
                 (tc-borrow-check-move-conflict
+                  ctx
                   expr-bases
+                  (tc-global-shared-view locals)
                   (tc-global-shared-view borrowed)
                   (TcMovePath name-id (tc-move-path-segments-empty))
                   init))]
@@ -80623,7 +80873,8 @@
           (tc-moved-path-facts-contains-exact-kind?
             (tc-moved-paths (tc-global-shared-view prior))
             path
-            kind))]
+            kind
+            fact.global-handle))]
       [remove : bool
         (if (and borrow-kind new)
           (let
@@ -80644,7 +80895,7 @@
           false)]
       [out2 : TcMovedSet
         (if remove
-          (tc-moved-remove-path-kind out path kind)
+          (tc-moved-remove-path-kind out path kind fact.global-handle)
           out)]
       (tc-borrow-check-prune-value-temporaries-at
         ctx
@@ -80676,20 +80927,24 @@
     borrowed))
 
 (define (tc-borrow-check-assignment
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [name-id : i64]
   [primary : ast.AstExpr]) : ResultTcUnit
   (tc-borrow-check-assign-conflict
+    ctx
     expr-bases
+    (tc-global-shared-view locals)
     borrowed
     (TcMovePath name-id (tc-move-path-segments-empty))
     primary))
 
 (define (tc-borrow-check-array-set-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [array : ast.AstExpr]
   [index : ast.AstExpr]
@@ -80700,18 +80955,27 @@
     [(Some root-id)
       (match (tc-move-array-set-path expr-bases array index)
         [(Some path)
-          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
+          (tc-borrow-check-assign-conflict
+            ctx
+            expr-bases
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            primary)]
         [(No)
           (tc-borrow-check-assign-conflict
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             borrowed
             (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(No) Ok]))
 
 (define (tc-borrow-check-struct-set-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [receiver : ast.AstExpr]
   [field-id : i64]
@@ -80722,25 +80986,36 @@
     [(Some root-id)
       (match (tc-move-struct-set-path expr-bases receiver field-id)
         [(Some path)
-          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
+          (tc-borrow-check-assign-conflict
+            ctx
+            expr-bases
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            primary)]
         [(No)
           (tc-borrow-check-assign-conflict
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             borrowed
             (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(No) Ok]))
 
 (define (tc-borrow-check-root-mutation-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]
   [primary : ast.AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var-id expr-bases place)
     [(Some root-id)
       (tc-borrow-check-assign-conflict
+        ctx
         expr-bases
+        (tc-global-shared-view locals)
         borrowed
         (TcMovePath root-id (tc-move-path-segments-empty))
         primary)]
@@ -80801,7 +81076,9 @@
               [_
                 (try
                   (tc-borrow-check-assign-conflict
+                    ctx
                     expr-bases
+                    (tc-global-shared-view locals)
                     (tc-global-shared-view borrowed)
                     (TcMovePath key (tc-move-path-segments-empty))
                     (tc-global-shared-view primary)))]
@@ -80882,7 +81159,9 @@
               [_
                 (try
                   (tc-borrow-check-assign-conflict
+                    ctx
                     expr-bases
+                    (tc-global-shared-view locals)
                     (tc-global-shared-view borrowed)
                     (TcMovePath key (tc-move-path-segments-empty))
                     (tc-global-shared-view primary)))]
@@ -80928,7 +81207,9 @@
           [_
             (try
               (tc-borrow-check-assign-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 (TcMovePath pid (tc-move-path-segments-empty))
                 (tc-global-shared-view primary)))]
@@ -80979,7 +81260,9 @@
                     [_
                       (try
                         (tc-borrow-check-assign-conflict
+                          ctx
                           expr-bases
+                          (tc-global-shared-view locals)
                           (tc-global-shared-view borrowed)
                           owner-place
                           (tc-global-shared-view primary)))]
@@ -81038,7 +81321,9 @@
                   (ast.ast-expr-segment-bases-get expr-bases arg-box))
                   [(Some owner-place)
                     (tc-borrow-check-assign-conflict
+                      ctx
                       expr-bases
+                      (tc-global-shared-view locals)
                       (tc-global-shared-view borrowed)
                       owner-place
                       (tc-global-shared-view primary))]
@@ -82229,6 +82514,26 @@
         (arena.tl_arena_set enclosing))
       path)))
 
+(define (tc-borrow-check-global-root-handle
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [root : i64]) : i64
+  (if (tc-moved-contains? locals root)
+    (csym.compiler-symbols-missing-handle)
+    (let
+      [leading-root : i64 (tc-global-effect-name-part ctx root true)]
+      [handle : i64
+        (if (and (>= leading-root 0) (tc-moved-contains? locals leading-root))
+          (csym.compiler-symbols-missing-handle)
+          (tc-global-effect-handle ctx Nil root))]
+      (if (and
+        (csym.compiler-symbols-handle-found? handle)
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-value-define)))
+        handle
+        (csym.compiler-symbols-missing-handle)))))
+
 (define (tc-borrow-check-global-call-effects
   [ctx : TcContext]
   [_env : TcTypeEnv]
@@ -82242,14 +82547,7 @@
     (while (not (tc-moved-path-facts-empty? facts))
       (let
         [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
-        [root : i64 fact.path.root]
-        [leading-root : i64 (tc-global-effect-name-part ctx root true)]
-        [handle : i64
-          (if (or
-            (tc-moved-contains? locals root)
-            (and (>= leading-root 0) (tc-moved-contains? locals leading-root)))
-            (csym.compiler-symbols-missing-handle)
-            (tc-global-effect-handle ctx Nil root))]
+        [handle : i64 fact.global-handle]
         (when
           (and
             (match fact.kind
@@ -82586,6 +82884,7 @@
       (if (= (tc-moved-len borrowed1) 0)
         (Ok borrowed1)
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -82716,14 +83015,17 @@
         [(BorrowTwoPhaseMut)
           (let
             [path : TcMovePath fact.path]
-            (match (tc-moved-path-conflict
-              (tc-global-shared-view borrowed)
-              path)
+            [visible : TcMovedSet
+              (tc-moved-select-path-provenance
+                (tc-global-shared-view borrowed)
+                path
+                fact.global-handle)]
+            (match (tc-moved-path-conflict (tc-global-shared-view visible) path)
               [(Some _ _)
                 (Err
                   (tc-borrow-check-rich-conflict-message
                     expr-bases
-                    borrowed
+                    visible
                     path
                     (BorrowShared)
                     primary
@@ -82764,6 +83066,7 @@
     [borrowed0
       (try
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           (tc-global-shared-view locals)
           borrowed
@@ -82780,6 +83083,7 @@
           (tc-global-shared-view place)))]
     [_ (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
     (tc-borrow-check-add-two-phase-mut-place
+      ctx
       expr-bases
       locals
       borrowed1
@@ -83066,6 +83370,7 @@
               [place : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed
@@ -83739,7 +84044,8 @@
             out
             path
             kind
-            (tc-moved-path-fact-origin fact)))]
+            (tc-moved-path-fact-origin fact)
+            fact.global-handle))]
       (tc-borrow-check-loop-protect-carried-facts-loop
         ctx
         loop-env
@@ -83791,7 +84097,8 @@
                 out
                 path
                 kind
-                (tc-moved-path-fact-origin fact))
+                (tc-moved-path-fact-origin fact)
+                fact.global-handle)
               out)))]
       (tc-borrow-check-protect-stored-facts-loop
         ctx
@@ -83938,7 +84245,7 @@
     loop-env
     entry
     (if (>= remove-root-id 0)
-      (tc-moved-remove-root-state state remove-root-id)
+      (tc-moved-remove-root-state state remove-root-id true)
       state)))
 
 ;; Drop ROOT-ID's borrow state from every edge of RESULT, as an exit edge
@@ -83955,11 +84262,13 @@
         [break : TcMovedSet (tc-moved-set-box-shared-view break-box)]
         (Ok
           normal?
-          (box (tc-moved-remove-root-state (tc-moved-clone normal) root-id))
+          (box
+            (tc-moved-remove-root-state (tc-moved-clone normal) root-id true))
           repeats?
-          (box (tc-moved-remove-root-state (tc-moved-clone repeat) root-id))
+          (box
+            (tc-moved-remove-root-state (tc-moved-clone repeat) root-id true))
           breaks?
-          (box (tc-moved-remove-root-state (tc-moved-clone break) root-id))))]))
+          (box (tc-moved-remove-root-state (tc-moved-clone break) root-id true))))]))
 
 (define (tc-borrow-loop-result-exit-state
   [ctx : TcContext]
@@ -84687,7 +84996,10 @@
                             init-box
                             (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+              (tc-moved-remove-root-state
+                (tc-moved-clone outer-borrowed)
+                index
+                true)]
             [keep-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -84703,8 +85015,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-clone keep-borrowed)
-                  index)
-                slot)]
+                  index
+                  true)
+                slot
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -84722,8 +85036,9 @@
                 env
                 keep-borrowed
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  slot))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  slot
+                  true))))])]
     [_
       (tc-borrow-check-expr
         ctx
@@ -84988,6 +85303,7 @@
           [borrowed2
             (try
               (tc-borrow-check-place-read-conflict
+                ctx
                 expr-bases
                 (tc-global-shared-view locals)
                 borrowed1
@@ -85022,6 +85338,7 @@
               [place : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed
@@ -85235,7 +85552,8 @@
                   (TcMovedPathFact
                     fact.path
                     (BorrowLending closure-id)
-                    fact.origin)]
+                    fact.origin
+                    fact.global-handle)]
                 (if (tc-closure-local-fact-copyable-code?
                   (tc-closure-local-fact-code locals binding-id))
                   (tc-moved-path-facts-cons
@@ -85268,7 +85586,8 @@
                 (TcMovedPathFact
                   fact.path
                   (BorrowLending closure-id)
-                  fact.origin))
+                  fact.origin
+                  fact.global-handle))
               fact)
             (tc-moved-path-facts-cons tail fact))]
         [_ (tc-moved-path-facts-cons tail fact)]))))
@@ -85299,7 +85618,8 @@
             out
             path
             closure-id
-            (tc-global-shared-view origin))
+            (tc-global-shared-view origin)
+            fact.global-handle)
           out)]
       (tc-borrow-check-add-closure-lending-for-lifetimes
         ctx
@@ -85587,7 +85907,7 @@
                     locals
                     name
                     init)
-                  (tc-moved-remove-root-state borrowed5 name)
+                  (tc-moved-remove-root-state borrowed5 name true)
                   protected
                   bindings
                   body-box
@@ -85714,7 +86034,7 @@
               name
               (tc-type-without-regions init-ty))
             (tc-moved-add locals name)
-            (tc-moved-remove-root-state borrowed2 name)
+            (tc-moved-remove-root-state borrowed2 name true)
             bindings
             (+ index 1)))])))
 
@@ -85882,6 +86202,7 @@
       [borrowed2
         (try
           (tc-borrow-check-add-place-with-mutability
+            ctx
             expr-bases
             (tc-global-shared-view locals)
             borrowed1
@@ -85905,13 +86226,19 @@
         "typecheck: slice-view expects exactly three arguments"))))
 
 (define (tc-borrow-check-add-slice-split-provenance
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [base : TcMovePath]
   [mutable : bool]
   [split-id : i64]
   [origin : ast.AstExpr]) : TcMovedSet
   (tc-borrow-check-add-borrow-path
+    ctx
+    (tc-global-shared-view locals)
     (tc-borrow-check-add-borrow-path
+      ctx
+      (tc-global-shared-view locals)
       borrowed
       (tc-move-slice-split-half-path base split-id 0)
       mutable
@@ -85952,6 +86279,7 @@
       [borrowed2
         (try
           (tc-borrow-check-add-place-with-mutability
+            ctx
             expr-bases
             (tc-global-shared-view locals)
             (tc-global-shared-view borrowed1)
@@ -85963,6 +86291,8 @@
           (match (tc-borrow-check-split-provenance expr-bases borrowed1 source)
             [(Some base)
               (tc-borrow-check-add-slice-split-provenance
+                ctx
+                (tc-global-shared-view locals)
                 borrowed2
                 base
                 mutable
@@ -86037,14 +86367,16 @@
                     (I64))
                   (tc-moved-add (tc-moved-add locals source-name) index-name)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state borrowed2 source-name)
-                    index-name)
+                    (tc-moved-remove-root-state borrowed2 source-name true)
+                    index-name
+                    true)
                   borrowed
                   body-id))]
             (Ok
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state borrowed3 source-name)
-                index-name)))))]
+                (tc-moved-remove-root-state borrowed3 source-name true)
+                index-name
+                true)))))]
     [(ForOwnedStep payload)
       (let
         [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
@@ -86103,10 +86435,10 @@
                           binding-name
                           (tc-context-type-get ctx elem-id))
                         (tc-moved-add locals binding-name)
-                        (tc-moved-remove-root-state borrowed3 binding-name)
+                        (tc-moved-remove-root-state borrowed3 binding-name true)
                         borrowed
                         body-id))]
-                  (Ok (tc-moved-remove-root-state borrowed4 binding-name)))]
+                  (Ok (tc-moved-remove-root-state borrowed4 binding-name true)))]
               [_
                 (Err
                   "typecheck: scalar for owned step requires fixed-array state")]))))]
@@ -86402,6 +86734,7 @@
               borrowed
               inner))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -86475,6 +86808,7 @@
               borrowed1
               index))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed2
@@ -86527,6 +86861,7 @@
         [_
           (try
             (tc-borrow-check-array-set-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed4)
@@ -86572,6 +86907,7 @@
         [_
           (try
             (tc-borrow-check-array-set-conflict
+              ctx
               expr-bases
               (tc-global-shared-view locals)
               (tc-global-shared-view borrowed3)
@@ -86582,6 +86918,7 @@
           [_
             (try
               (tc-borrow-check-array-set-conflict
+                ctx
                 expr-bases
                 locals
                 (tc-global-shared-view borrowed3)
@@ -86623,7 +86960,7 @@
               ctx
               expr-bases
               env
-              locals
+              (tc-global-shared-view locals)
               rhs-borrowed
               (tc-global-shared-view replacement)
               place-ty))]
@@ -86643,7 +86980,9 @@
               expr))]
         (Ok
           (tc-borrow-check-remove-two-phase-mut-place
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             activated
             place)))]
     [(StructSet receiver-box field value-box)
@@ -86682,6 +87021,7 @@
         [_
           (try
             (tc-borrow-check-struct-set-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -86725,6 +87065,7 @@
         [_
           (try
             (tc-borrow-check-root-mutation-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -86755,6 +87096,7 @@
               borrowed1
               index))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed2
@@ -86871,6 +87213,7 @@
             [_
               (try
                 (tc-borrow-check-assignment
+                  ctx
                   expr-bases
                   locals
                   (tc-global-shared-view borrowed3)
@@ -86914,6 +87257,7 @@
                     env
                     (tc-global-shared-view inner)))]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed1
@@ -86924,6 +87268,7 @@
               [borrowed0
                 (try
                   (tc-borrow-check-place-read-conflict
+                    ctx
                     expr-bases
                     (tc-global-shared-view locals)
                     borrowed
@@ -86946,6 +87291,7 @@
                     env
                     (tc-global-shared-view inner)))]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed1
@@ -87024,7 +87370,7 @@
             [body-locals : TcMovedSet
               (tc-moved-add (tc-moved-clone locals) index)]
             [body-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone borrowed2) index)]
+              (tc-moved-remove-root-state (tc-moved-clone borrowed2) index true)]
             (tc-borrow-loop-result-exit-state
               ctx
               env
@@ -87079,8 +87425,9 @@
                                 (& (ast.ast-expr-list-new)))))))))))]
             [body-entry : TcMovedSet
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state bounds-borrowed outer)
-                inner)]
+                (tc-moved-remove-root-state bounds-borrowed outer true)
+                inner
+                true)]
             (tc-borrow-loop-result-exit-state
               ctx
               env
@@ -87194,13 +87541,23 @@
                   value-env
                   env
                   value-locals
-                  (tc-moved-remove-root-state (tc-moved-clone borrowed3) index)
-                  (tc-moved-remove-root-state (tc-moved-clone borrowed3) index)
+                  (tc-moved-remove-root-state
+                    (tc-moved-clone borrowed3)
+                    index
+                    true)
+                  (tc-moved-remove-root-state
+                    (tc-moved-clone borrowed3)
+                    index
+                    true)
                   value))]
             [body-entry : TcMovedSet
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state (tc-moved-clone borrowed4) index)
-                prefix)]
+                (tc-moved-remove-root-state
+                  (tc-moved-clone borrowed4)
+                  index
+                  true)
+                prefix
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -87218,8 +87575,9 @@
                 env
                 borrowed4
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  prefix))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  prefix
+                  true))))])]
     [(SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(Compact
@@ -87263,7 +87621,10 @@
                             init-box
                             (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+              (tc-moved-remove-root-state
+                (tc-moved-clone outer-borrowed)
+                index
+                true)]
             [keep-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -87279,8 +87640,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-clone keep-borrowed)
-                  index)
-                slot)]
+                  index
+                  true)
+                slot
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -87298,8 +87661,9 @@
                 env
                 keep-borrowed
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  slot))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  slot
+                  true))))])]
     [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
       (let
         [value : ast.AstExpr
@@ -87430,6 +87794,7 @@
               borrowed
               inner))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -87483,6 +87848,7 @@
                     [_ (Ok borrowed1)])]
                 [(Err _) (Ok borrowed1)])
               (tc-borrow-check-place-read-conflict
+                ctx
                 expr-bases
                 locals
                 borrowed1
@@ -87525,6 +87891,7 @@
         [_
           (try
             (tc-borrow-check-root-mutation-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -87650,7 +88017,7 @@
     [(ForeachActive lane body-box)
       (let
         [body-entry : TcMovedSet
-          (tc-moved-remove-root-state (tc-moved-clone borrowed) lane)]
+          (tc-moved-remove-root-state (tc-moved-clone borrowed) lane true)]
         (tc-borrow-loop-result-exit-state
           ctx
           env

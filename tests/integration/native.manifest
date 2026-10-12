@@ -37,10 +37,14 @@ static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_glob
 # IAG-1 inline shapes at every level.
 inline_aggregate_global|all|-|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global|linux|0,1,2|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl|-
-# The deliberately invalidated borrow keeps its established 4/4/9 baseline.
+# The copied result survives a rebind after its borrow has ended.
 inline_aggregate_global_escape|all|-|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_escape|linux|0,1|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
-inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_global_escape.tl|42|9\n|-|stdlib/io.tl stdlib/string.tl|-
+inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
+# Preserve the original live-borrow shape until #7904 rejects it.
+inline_aggregate_global_live_borrow|all|-|tests/integration/inline_aggregate_global_live_borrow.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
+inline_aggregate_global_live_borrow|linux|0,1|tests/integration/inline_aggregate_global_live_borrow.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
+inline_aggregate_global_live_borrow_opt2|linux|2|tests/integration/inline_aggregate_global_live_borrow.tl|42|9\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_three_field|all|-|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl|-
 cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-

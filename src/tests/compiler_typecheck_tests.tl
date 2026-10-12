@@ -9216,6 +9216,93 @@
         [_ false])]
     [_ false]))
 
+(define (compiler-typecheck-global-loan-protection-result) : tc_core.ResultTcUnit
+  (let
+    [program (try (parser.parse-ast-source "(define g : i64 0)"))]
+    [symbols (try (csym.build-compiler-symbols program))]
+    [registries (try (csym.build-compiler-registries program))]
+    [root : i64 (ci.intern "g")]
+    [saved : i64 (ci.intern "saved")]
+    [store : ast.AstExpr (Set saved (ast.ast-node-push (Var root)))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-global-shared-view program)
+        symbols
+        registries
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    [path : tc_core.TcMovePath
+      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
+    [handle : i64
+      (tc_core.tc-borrow-check-global-root-handle
+        ctx
+        (tc_core.tc-moved-empty)
+        root)]
+    [scalar : ast.AstType (I64)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-bind-id (tc_core.tc-type-env-new) root (I64))
+        saved
+        (ast.ast-ty-ref root (& scalar)))]
+    [local : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1
+        -1)]
+    [global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1
+        handle)]
+    [carried : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-loop-protect-carried-facts
+        ctx
+        env
+        (tc_core.tc-global-shared-view local)
+        (tc_core.tc-global-shared-view global)
+        (tc_core.tc-global-shared-view local))]
+    [stored : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-protect-stored-facts-loop
+        ctx
+        (tc_core.tc-context-expr-bases ctx)
+        env
+        store
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+        (tc_core.tc-global-shared-view local))]
+    [returned : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-propagate-return-borrows-at
+        ctx
+        env
+        (tc_core.tc-moved-empty)
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+        (tc_core.tc-name-id-list-cons (Nil) root)
+        (Some path)
+        local)]
+    (if (and
+      (>= handle 0)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths carried)
+        path
+        (BorrowShared)
+        handle)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths stored)
+        path
+        (BorrowShared)
+        handle)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths returned)
+        path
+        (BorrowShared)
+        handle))
+      (Ok)
+      (Err "global loan identity lost during protection"))))
+
 (define (compiler-typecheck-global-loan-provenance-ok?) : bool
   (let
     [root : i64 (ci.intern "global-loan-root")]
@@ -9240,6 +9327,31 @@
       (tc_core.tc-moved-union (& global) (tc_core.tc-global-shared-view local))]
     [local-first : tc_core.TcMovedSet
       (tc_core.tc-moved-union (& local) (tc_core.tc-global-shared-view global))]
+    [global-ref : i64 (ci.intern "global-ref")]
+    [local-ref : i64 (ci.intern "local-ref")]
+    [global-marker : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowLending global-ref)
+        -1
+        137)]
+    [both-markers : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        global-marker
+        path
+        (BorrowLending local-ref)
+        -1
+        -1)]
+    [used-global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowLendingUsed global-ref)
+        -1
+        137)]
+    [propagated : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-propagate-lending-uses used-global both-markers)]
     [shadowed : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-root-state
         (tc_core.tc-global-shared-view global-first)
@@ -9270,6 +9382,14 @@
         128
         origin)]
     (and
+      (match (compiler-typecheck-global-loan-protection-result)
+        [(Ok) true]
+        [(Err _) false])
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths propagated)
+        path
+        (BorrowLendingUsed global-ref)
+        137)
       (=
         (tc_core.tc-moved-path-facts-len
           (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global-first)))

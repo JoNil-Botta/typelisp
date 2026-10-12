@@ -83,6 +83,10 @@ cloning and dense-store growth, and requires fixpoint equality to distinguish it
 Later-argument let/for shadowing must preserve an earlier global loan, while
 mutating a separate same-named local remains valid. Root removal, owner selection
 and exact loan removal are checked with both owners present in one snapshot.
+The same owner identity selects lending-use propagation and prevents a local
+fact from suppressing a global loan during return, loop, or stored-loan protection.
+The public shadowing matrix requires the secondary diagnostic to point to the
+original global borrow when a later local borrow has the same spelling.
 The temporary-cleanup rows cover later arguments, returned references, forward and indirect callees, ended
 borrows, and loans ending at the call before cleanup.
 `tests/inline/compiler_global_call_cache.tl` checks a reused source prefix

@@ -76504,7 +76504,9 @@
             (let
               [path : TcMovePath fact.path]
               (match (tc-borrow-check-lending-binding
-                (tc-moved-paths (tc-global-shared-view out))
+                (tc-moved-path-facts-filter
+                  (tc-moved-paths (tc-global-shared-view out))
+                  (Provenance path.root fact.global-handle))
                 path)
                 [(Some binding-id)
                   (tc-moved-add-path-fact
@@ -77019,9 +77021,12 @@
           [(Some direct) (tc-move-path-conflicts? path direct)]
           [(No) true])]
       [missing : bool
-        (match (tc-moved-path-exact-conflict-kind out path kind)
-          [(Some _ _) false]
-          [No true])]
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view out))
+            path
+            kind
+            fact.global-handle))]
       [out2 : TcMovedSet
         (if (and
           keep-kind
@@ -82560,6 +82565,11 @@
           (let
             [state : (MutPtr TcGlobalCallEffects)
               (tc-global-call-effects-ensure! ctx)]
+            [global-borrowed : TcMovedSet
+              (tc-moved-select-path-provenance
+                (tc-global-shared-view borrowed)
+                fact.path
+                fact.global-handle)]
             [name : i64
               (tc-expr-var-name-id
                 (tc-context-expr-bases ctx)
@@ -82593,7 +82603,7 @@
                     state
                     (csym.compiler-symbol-handle-index handle)
                     callee
-                    (tc-global-shared-view borrowed)
+                    (tc-global-shared-view global-borrowed)
                     (tc-global-shared-view fact)
                     (tc-global-shared-view call-expr))
                   unit)
@@ -82603,7 +82613,7 @@
                     (Err
                       (tc-borrow-check-global-call-message
                         ctx
-                        (tc-global-shared-view borrowed)
+                        (tc-global-shared-view global-borrowed)
                         fact.path
                         fact.kind
                         (tc-global-shared-view call-expr)
@@ -84033,12 +84043,16 @@
       [kind : TcMovedPathKind fact.kind]
       [out2 : TcMovedSet
         (if (or
-          (match (tc-moved-path-exact-conflict-kind before path kind)
-            [(Some _ _) true]
-            [No false])
-          (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(Some _ _) true]
-            [No false]))
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view before))
+            path
+            kind
+            fact.global-handle)
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view out))
+            path
+            kind
+            fact.global-handle))
           out
           (tc-moved-add-path-fact
             out
@@ -84081,9 +84095,11 @@
       [path : TcMovePath fact.path]
       [kind : TcMovedPathKind fact.kind]
       [out2 : TcMovedSet
-        (if (match (tc-moved-path-exact-conflict-kind out path kind)
-          [(Some _ _) true]
-          [No false])
+        (if (tc-moved-path-facts-contains-exact-kind?
+          (tc-moved-paths (tc-global-shared-view out))
+          path
+          kind
+          fact.global-handle)
           out
           (let
             [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]

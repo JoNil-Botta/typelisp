@@ -617,7 +617,8 @@
 
 (define (tltest-main-decl? [decl : ast.AstDecl]) : bool
   (match decl
-    [(or (Def _ name _ _) (DefFn _ name _ _ _ _)) (= name (tltest-main-id))]
+    [(Def decl-meta name _ _) (= name (tltest-main-id))]
+    [(DefFn decl-meta name _ _ _ _) (= name (tltest-main-id))]
     [(DefMacro decl-meta _ _ _ _) false]
     [(Unsafe inner-box)
       (let
@@ -798,9 +799,10 @@
                   (&mut runtime-paths-out)
                   decl-path
                   decl-owner-id)]
-              [(or (IncludeStr _ _) (IncludeStrComptime _ _)
-                   (IncludeStrLzss _ _) (IncludeBin _ _))
-                unit]
+              [(IncludeStr _ _) unit]
+              [(IncludeStrComptime _ _) unit]
+              [(IncludeStrLzss _ _) unit]
+              [(IncludeBin _ _) unit]
               [_
                 (unless
                   (tltest-main-decl?
@@ -1602,7 +1604,7 @@
                 called-names)]
             [_ called-names])]
         (tltest-reach-mark-expr-list session args runtime-names))]
-    [(or (Lambda _) (WithEscape _ _) (WithScratch _))
+    [(Lambda _)
       (tltest-reach-mark-children
         session
         node-id
@@ -1645,6 +1647,16 @@
         session
         value
         (tltest-reach-mark-source-name session names name))]
+    [(WithEscape _ _)
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-string-snapshot-runtime names))]
+    [(WithScratch _)
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-string-snapshot-runtime names))]
     [_ (tltest-reach-mark-children session node-id names)]))
 
 (define (tltest-reach-mark-tests-from
@@ -1837,23 +1849,31 @@
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
             names)])]
+    [(DefMacro decl-meta _ _ _ body)
+      (tltest-reach-mark-expr session body names)]
     ;; A top-level declaration macro call stays unexpanded here and is always
     ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
     ;; references: a constant named only by `(gen-slots first ...)` must survive
     ;; pruning, or the expansion reads an unbound name.
-    [(or (DefMacro _ _ _ _ body) (Import _ (Spec (MacroDecls body _) _ _ _ _)))
-      (tltest-reach-mark-expr session body names)]
+    [(Import decl-meta (Spec (MacroDecls call _) _ _ _ _))
+      (tltest-reach-mark-expr session call names)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
         (tltest-reach-mark-decl session inner names))]
-    [(or (DefStruct _ _ _ cleanup fields)
-         (DefStructLifetimes _ _ _ _ cleanup fields))
+    [(DefStruct decl-meta _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
         (tltest-reach-mark-struct-cleanup cleanup names))]
-    [(or (DefEnum _ _ cleanup variants)
-         (DefEnumLifetimes _ _ _ cleanup variants))
+    [(DefStructLifetimes decl-meta _ _ _ cleanup fields)
+      (tltest-reach-mark-field-cleanups
+        fields
+        (tltest-reach-mark-struct-cleanup cleanup names))]
+    [(DefEnum decl-meta _ cleanup variants)
+      (tltest-reach-mark-variant-cleanups
+        variants
+        (tltest-reach-mark-enum-cleanup cleanup names))]
+    [(DefEnumLifetimes decl-meta _ _ cleanup variants)
       (tltest-reach-mark-variant-cleanups
         variants
         (tltest-reach-mark-enum-cleanup cleanup names))]
@@ -1927,7 +1947,7 @@
   [decl : ast.AstDecl]
   [names : (& names tltest_name_map.Map)]) : bool
   (match decl
-    [(or (Def _ name _ _) (Extern _ name _ _ _))
+    [(Def decl-meta name _ _)
       (tltest-reachable-name-marked? session names name)]
     [(DefFn decl-meta name _ _ _ metadata)
       (let
@@ -1935,6 +1955,8 @@
         (match (ast.ast-fn-metadata-export (& metadata))
           [(Export _) true]
           [(No) marked]))]
+    [(Extern decl-meta name _ _ _)
+      (tltest-reachable-name-marked? session names name)]
     [(DefMacro decl-meta _ _ _ _) true]
     [(Unsafe inner-box)
       (let
@@ -4202,9 +4224,11 @@
 
 (define (tltest-config-host-isa-permits? [config : TestConfig]) : bool
   (match config
-    [(or (File _ _ backend-mode _ _ test-mode)
-         (Batch _ _ backend-mode _ _ test-mode)
-         (Package _ _ _ backend-mode _ _ test-mode))
+    [(File _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(Batch _ _ backend-mode _ _ test-mode)
+      (tltest-host-isa-permits? backend-mode test-mode)]
+    [(Package _ _ _ backend-mode _ _ test-mode)
       (tltest-host-isa-permits? backend-mode test-mode)]))
 
 (define (tltest-run-config [config : TestConfig]) : i64

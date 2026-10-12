@@ -122,7 +122,8 @@
             (& (array-ref parser.tokens.slots parser.index))]
           [valid : bool
             (match token.kind
-              [(or (Word) (Quoted)) true]
+              [(Word) true]
+              [(Quoted) true]
               [_ false])]
           [i : i64 0]
           [glob : bool false]

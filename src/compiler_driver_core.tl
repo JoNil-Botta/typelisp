@@ -3306,7 +3306,8 @@
       [(ExactMatch)
         (match (compiler_surface_hydrate.compiler-surface-key
           (owned_view.compiler-owned-shared-view rodata))
-          [(or (Missing) (Err _)) Missing]
+          [(Missing) Missing]
+          [(Err _) Missing]
           [(Ok key)
             (if (not
               (compiler-driver-prelude-surface-key-valid?
@@ -3321,7 +3322,9 @@
                 (compiler_load.compiler-load-session-state-structural-session
                   load-state)
                 pools)
-                [(or (Missing) (KeyMismatch _) (Err _)) Missing]
+                [(Missing) Missing]
+                [(KeyMismatch _) Missing]
+                [(Err _) Missing]
                 [(Ok hydration)
                   (let
                     [ast : surface_ast.SurfaceAstHydration hydration.ast]

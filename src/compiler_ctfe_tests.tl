@@ -73,13 +73,18 @@
     [(F32 _) "f32"]
     [(Bool _) "bool"]
     [(Char _) "char"]
-    [(or (String _ _) (Name _ _)) "String"]
+    [(String _ _) "String"]
+    [(Name _ _) "String"]
     [(Unit) "unit"]
     [(Type _) "type"]
-    [(or (Expr _ _) (CapturedExpr _ _ _)) "Expr"]
-    [(or (ExprList _) (CapturedExprList _ _)) "expr-list"]
-    [(or (ExprClause _) (CapturedExprClause _ _)) "ExprClause"]
-    [(or (ExprClauseList _) (CapturedExprClauseList _ _)) "ExprClauseList"]
+    [(Expr _ _) "Expr"]
+    [(CapturedExpr _ _ _) "Expr"]
+    [(ExprList _) "expr-list"]
+    [(CapturedExprList _ _) "expr-list"]
+    [(ExprClause _) "ExprClause"]
+    [(CapturedExprClause _ _) "ExprClause"]
+    [(ExprClauseList _) "ExprClauseList"]
+    [(CapturedExprClauseList _ _) "ExprClauseList"]
     [(ExprBindingClause _) "ExprBindingClause"]
     [(ExprBindingClauseList _) "ExprBindingClauseList"]
     [(Pattern _) "Pattern"]
@@ -1715,7 +1720,8 @@
     (ctfe.ctfe-fuel-limit))
     [(Ok value _)
       (match value
-        [(or (TypeInfo ty) (TypeVariantPayload ty))
+        [(TypeInfo ty) (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [(TypeVariantPayload ty)
           (compiler-ctfe-type-info-builtin-kind? env ty want)]
         [_ false])]
     [(Err _) false]))

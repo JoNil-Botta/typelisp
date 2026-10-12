@@ -1,9 +1,5 @@
-; IAG-1: the escape shape the safety rule refuses. `observe` holds a borrow of
-; the aggregate global across a call that rebinds it, so the box identity is
-; observable and the classification must leave this global boxed. The printed
-; value must be byte-identical to the pre-IAG compiler at every opt level: the
-; current baseline is 4 at opt0/1 and 9 at opt2, where inlining materializes
-; the borrow after the rebind.
+; Copy the observed scalar before replacing the global's owning value.
+; The shared borrow ends at the call, so the later setter cannot invalidate it.
 (import stdlib.io)
 
 (defstruct Cell
@@ -17,9 +13,11 @@
   (set! held (Cell (__tl_make-array i64 n) n)))
 
 (define (observe [c : (& Cell)]) : i64
-  (install! 9)
   c.len)
 
 (define (main) : i64
-  (io.print-format "{}\n" (observe (& held)))
+  (let
+    [observed : i64 (observe (& held))]
+    (install! 9)
+    (io.print-format "{}\n" observed))
   42)

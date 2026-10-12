@@ -883,10 +883,19 @@
             [decl : ast.AstDecl
               (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
             (match decl
-              [(or (DefStruct _ candidate _ _ _)
-                   (DefStructLifetimes _ candidate _ _ _ _)
-                   (DefEnum _ candidate _ _)
-                   (DefEnumLifetimes _ candidate _ _ _))
+              [(DefStruct decl-meta candidate _ _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefStructLifetimes decl-meta candidate _ _ _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefEnum decl-meta candidate _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefEnumLifetimes decl-meta candidate _ _ _)
                 (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
                   (set! name-id candidate)
                   unit)]

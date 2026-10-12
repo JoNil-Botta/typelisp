@@ -36,6 +36,7 @@ check check
 clean clean
 compile compile
 doc doc
+expand expand
 explain explain
 format fmt
 inspect inspect

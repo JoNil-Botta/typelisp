@@ -7,6 +7,7 @@
 ;; Evaluation threads persistent environment snapshots through recursion, and
 ;; the step budget ("fuel") through results, so the evaluator stays
 ;; deterministic without a mutable fuel counter.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
@@ -319,19 +320,17 @@
       (if (string.char-eq (string.string-ref name index) '.')
         (set! first-dot index)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     first-dot))
 
 (define (ctfe-generated-name-last-dot [name : (& name str)]) : i64
   (let
-    [index : i64 0]
     [len : i64 (string.string-length name)]
     [last-dot : i64 -1]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (if (string.char-eq (string.string-ref name index) '.')
         (set! last-dot index)
-        unit)
-      (set! index (+ index 1)))
+        unit))
     last-dot))
 
 (define (ctfe-generated-name-store [name : String]) : i64
@@ -917,7 +916,9 @@
         (match lookup
           [(InternLookupFound source-id) source-id]
           [(InternLookupMissing) generated-id])]
-      [(or (WrongOwner) (StaleGeneration) (InvalidIdentity)) string-id])))
+      [(WrongOwner) string-id]
+      [(StaleGeneration) string-id]
+      [(InvalidIdentity) string-id])))
 
 (define (ctfe-untyped-expr-type-id) : i64
   -3)
@@ -1026,9 +1027,10 @@
 
 (define (ctfe-value-syntax-pools [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
   (match value
-    [(or (CapturedExpr _ _ pools) (CapturedExprList _ pools)
-         (CapturedExprClause _ pools) (CapturedExprClauseList _ pools))
-      (Some pools)]
+    [(CapturedExpr _ _ pools) (Some pools)]
+    [(CapturedExprList _ pools) (Some pools)]
+    [(CapturedExprClause _ pools) (Some pools)]
+    [(CapturedExprClauseList _ pools) (Some pools)]
     [_ (None)]))
 
 ;; Native transformer callbacks build syntax in an explicitly selected host
@@ -1312,11 +1314,8 @@
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
   [src : (& src (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (ctfe-env-arena-add-segment! [store : (&mut store CtfeEnvArena)]) : unit
   (let
@@ -1491,10 +1490,8 @@
           (__tl_make-array
             CtfeLayoutInfo
             (ctfe-metadata-grown-capacity capacity required))]
-        [index : i64 0]
-        (while (< index len)
-          (set! (array-ref grown index) (array-ref slots index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref grown index) (array-ref slots index)))
         ;; The id map grows independently on insert. Preserve it so the
         ;; copied vector retains every first-wins slot without rebuilding a
         ;; second key list solely for capacity changes.
@@ -1581,22 +1578,18 @@
             (__tl_make-array
               i64
               (ctfe-metadata-grown-capacity (array-length aligns.words) needed))]
-          [index : i64 0]
-          (while (< index start)
-            (set! (array-ref grown index) (array-ref aligns.words index))
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 start)]
+            (set! (array-ref grown index) (array-ref aligns.words index)))
           grown))]
-    [field : i64 0]
     (set! (array-ref words start) key-id)
     (set! (array-ref words (+ start 1)) field-count)
     (set!
       (array-ref words (+ start 2))
       (ast.ast-struct-repr-declared-align repr))
-    (while (< field field-count)
+    (for [field (iterator.range 0 field-count)]
       (set!
         (array-ref words (+ (+ start 3) field))
-        (ast.ast-struct-repr-field-declared-align repr field))
-      (set! field (+ field 1)))
+        (ast.ast-struct-repr-field-declared-align repr field)))
     (CtfeReflectInfoList
       items.slots
       items.index
@@ -1623,7 +1616,7 @@
           (and (= (array-ref words cursor) key-id) (< field count))
           (set! found (array-ref words (+ (+ cursor 3) field)))
           (set! cursor len))
-        (set! cursor (+ cursor (+ 3 count)))))
+        (+= cursor (+ 3 count))))
     found))
 
 (define (ctfe-reflect-info-list-empty) : CtfeReflectInfoList
@@ -1643,10 +1636,8 @@
           (__tl_make-array
             CtfeReflectInfo
             (ctfe-metadata-grown-capacity capacity required))]
-        [index : i64 0]
-        (while (< index len)
-          (set! (array-ref grown index) (array-ref slots index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref grown index) (array-ref slots index)))
         (CtfeReflectInfoList
           grown
           items.index
@@ -1713,22 +1704,19 @@
 
 (define (ctfe-layout-field-offset-id-from
   [fields : (& fields CtfeLayoutFieldList)]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index fields.len)
-    -1
+  [name-id : i64]) : i64
+  (for [index (iterator.range 0 fields.len)]
     (let
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(Field _ offset)
-          (if (= (array-ref fields.key-ids index) name-id)
-            offset
-            (ctfe-layout-field-offset-id-from fields name-id (+ index 1)))]))))
+          (when (= (array-ref fields.key-ids index) name-id) (return offset))])))
+  -1)
 
 (define (ctfe-layout-field-offset-id
   [fields : (& fields CtfeLayoutFieldList)]
   [name-id : i64]) : i64
-  (ctfe-layout-field-offset-id-from fields name-id 0))
+  (ctfe-layout-field-offset-id-from fields name-id))
 
 (define (ctfe-env-shared-view [env : (& env CtfeEnv)]) : CtfeEnv
   (let
@@ -1988,7 +1976,7 @@
                 resolved
                 (ast.ast-type-list-get (& resolutions.resolved) index id))
               (set! index count))
-            (set! index (+ index 1))))
+            (+= index 1)))
         (ctfe-ty-get env resolved)))))
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : ast.AstNodePoolContext]) : CtfeEnv
@@ -2062,7 +2050,8 @@
 
 (define (ctfe-expr-unspan [env : (& env CtfeEnv)] [expr : ast.AstExpr]) : ast.AstExpr
   (match (clone expr)
-    [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
+    [(Spanned inner-id _) (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
+    [(MacroExpansion inner-id _ _)
       (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
     [_ expr]))
 
@@ -2165,7 +2154,7 @@
           (if (=
             (cast (ctfe-private-string-ref text i) : i64)
             (cast (ctfe-private-string-ref prefix i) : i64))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! same false)))
         same))))
 
@@ -2182,7 +2171,7 @@
           (if (=
             (cast (ctfe-private-string-ref text (+ start i)) : i64)
             (cast (ctfe-private-string-ref needle i) : i64))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! same false)))
         same))))
 
@@ -2223,7 +2212,7 @@
         [c : i64 (cast (ctfe-private-string-ref name i) : i64)]
         (if (or (= c 46) (= c 47))
           (set! found true)
-          (set! i (+ i 1)))))
+          (+= i 1))))
     found))
 
 (define (ctfe-string-contains-string-token? [name : String]) : bool
@@ -2240,7 +2229,7 @@
         (= (cast (ctfe-private-string-ref name (+ i 4)) : i64) 110)
         (= (cast (ctfe-private-string-ref name (+ i 5)) : i64) 103))
         (set! found true)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (ctfe-string-helper-candidate-name-id? [name : String] [name-id : i64]) : bool
@@ -2296,7 +2285,7 @@
     (while (and (< i n) (< found 0))
       (if (= (cast (ctfe-private-string-ref payload i) : i64) 124)
         (set! found i)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (ctfe-hygiene-global-call-name [name : String]) : String
@@ -2652,7 +2641,6 @@
   [infos : CtfeReflectInfoList]) : CtfeReflectInfoList
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [current-module : String module]
     [current-module-id : i64 module-id]
     [current-infos : CtfeReflectInfoList infos]
@@ -2663,7 +2651,7 @@
     ;; only the fields an arm binds.
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref decl-slots (+ decl-offset index))
         [(Module next-module)
           (set!
@@ -2682,8 +2670,7 @@
                 current-module-id
                 alias
                 target)))]
-        [(or (DefStruct decl-meta name repr cleanup fields)
-             (DefStructLifetimes decl-meta name _ repr cleanup fields))
+        [(DefStruct decl-meta name repr cleanup fields)
           (set!
             current-infos
             (ctfe-reflections-add-struct
@@ -2695,8 +2682,19 @@
               (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               (& repr)
               fields))]
-        [(or (DefEnum decl-meta name cleanup variants)
-             (DefEnumLifetimes decl-meta name _ cleanup variants))
+        [(DefStructLifetimes decl-meta name _ repr cleanup fields)
+          (set!
+            current-infos
+            (ctfe-reflections-add-struct
+              current-infos
+              (string.copy current-module)
+              current-module-id
+              name
+              cleanup
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
+              (& repr)
+              fields))]
+        [(DefEnum decl-meta name cleanup variants)
           (set!
             current-infos
             (ctfe-reflections-add-enum
@@ -2707,22 +2705,31 @@
               cleanup
               (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               variants))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [(DefEnumLifetimes decl-meta name _ cleanup variants)
+          (set!
+            current-infos
+            (ctfe-reflections-add-enum
+              current-infos
+              (string.copy current-module)
+              current-module-id
+              name
+              cleanup
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
+              variants))]
+        [_ unit]))
     current-infos))
 
 (define (ctfe-metadata-decl-capacity [decls : ast.AstDeclList]) : i64
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [capacity : i64 1]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ast.ast-decl-list-ref-borrowed (& decls) index)
-        [(or (DefStruct _ _ _ _ _) (DefStructLifetimes _ _ _ _ _ _)
-             (DefEnum _ _ _ _) (DefEnumLifetimes _ _ _ _ _))
-          (set! capacity (+ capacity 2))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [(DefStruct decl-meta _ _ _ _) (+= capacity 2)]
+        [(DefStructLifetimes decl-meta _ _ _ _ _) (+= capacity 2)]
+        [(DefEnum decl-meta _ _ _) (+= capacity 2)]
+        [(DefEnumLifetimes decl-meta _ _ _ _) (+= capacity 2)]
+        [_ unit]))
     capacity))
 
 (define (ctfe-reflections-from-program [program : ast.AstProgram]) : CtfeReflectInfoList
@@ -2838,8 +2845,9 @@
     [(Tuple _) "tuple"]
     [(TupleRef _ _) "tuple-ref"]
     [(Array _) "array"]
-    [(or (DynArray _) (MakeArray _ _)) "__tl_make-array"]
+    [(DynArray _) "__tl_make-array"]
     [(FixedMakeArray _ _) "make-array"]
+    [(MakeArray _ _) "__tl_make-array"]
     [(ArrayRef _ _) "array-ref"]
     [(ArraySet _ _ _) "array-set!"]
     [(ArrayTake _ _ _) "__tl_array-take!"]
@@ -2851,7 +2859,7 @@
     [(ForOwnedStep _) "scalar for owned-array step"]
     [(Begin _) "begin"]
     [(Unsafe _) "unsafe"]
-    [(or (Set _ _) (StructSet _ _ _) (BoxSet _ _)) "set!"]
+    [(Set _ _) "set!"]
     [(Ann _ _) "type annotation"]
     [(Cast _ _) "cast"]
     [(Borrow mutable _ _)
@@ -2870,6 +2878,7 @@
     [(ForeachActive _ _) "foreach-active"]
     [(LaneValue _) "lane-value"]
     [(StructGet _ _) "struct-get"]
+    [(StructSet _ _ _) "set!"]
     [(WithRegion _ _) "with-arena"]
     [(WithEscape _ _) "with-escape"]
     [(WithScratch _) "with-scratch"]
@@ -2897,6 +2906,7 @@
     [(Box _) "box"]
     [(BoxGet _) "box-get"]
     [(BoxTake _) "box-take"]
+    [(BoxSet _ _) "set!"]
     [(StringData _) "string-data"]
     [(StringFromBytes _ _) "string-from-bytes"]
     [(ArrayData _) "__tl_array-data"]
@@ -3239,7 +3249,17 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(or (String a _) (Name a _))
+    [(String a _)
+      (match rv
+        [(String b _) (ctfe-eval-bin-string op a b expr fuel)]
+        [(Name b _) (ctfe-eval-bin-string op a b expr fuel)]
+        [_
+          (Err
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "binary operation in comptime requires matching operand types")))])]
+    [(Name a _)
       (match rv
         [(String b _) (ctfe-eval-bin-string op a b expr fuel)]
         [(Name b _) (ctfe-eval-bin-string op a b expr fuel)]
@@ -3528,9 +3548,12 @@
   [value : CompilerCtfeValue]
   [env : CtfeEnv]) : ast.AstType
   (match inner
-    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
+    [(Spanned inner-box _)
       (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
-    [(or (Ann _ ty-id) (Cast _ ty-id)) (ctfe-ty-get env ty-id)]
+    [(MacroExpansion inner-box _ _)
+      (ctfe-cast-source-type (ctfe-ast-get env inner-box) value env)]
+    [(Ann _ ty-id) (ctfe-ty-get env ty-id)]
+    [(Cast _ ty-id) (ctfe-ty-get env ty-id)]
     [(Var name)
       (match (ctfe-env-lookup-type-id env name)
         [(Some ty) ty]
@@ -3924,7 +3947,15 @@
             pools
             infos
             (ast.ast-node-pool-context-type-get pools inner))))]
-    [(or (Struct name) (Enum name) (Var name))
+    [(Struct name)
+      (match (ctfe-reflect-info-canonical-type-lookup infos name)
+        [(Some canonical) canonical]
+        [(No) ty])]
+    [(Enum name)
+      (match (ctfe-reflect-info-canonical-type-lookup infos name)
+        [(Some canonical) canonical]
+        [(No) ty])]
+    [(Var name)
       (match (ctfe-reflect-info-canonical-type-lookup infos name)
         [(Some canonical) canonical]
         [(No) ty])]
@@ -3990,9 +4021,12 @@
   [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : CtfeMaybeReflectInfo
   (match ty
-    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _)
-         (Var name) (VarArgs name _))
-      (ctfe-reflect-info-lookup-name-id infos name)]
+    [(Struct name) (ctfe-reflect-info-lookup-name-id infos name)]
+    [(StructArgs name _) (ctfe-reflect-info-lookup-name-id infos name)]
+    [(Enum name) (ctfe-reflect-info-lookup-name-id infos name)]
+    [(EnumArgs name _) (ctfe-reflect-info-lookup-name-id infos name)]
+    [(Var name) (ctfe-reflect-info-lookup-name-id infos name)]
+    [(VarArgs name _) (ctfe-reflect-info-lookup-name-id infos name)]
     [(Region _ inner)
       (ctfe-reflect-info-for-type-with-pools
         pools
@@ -4245,9 +4279,12 @@
     [(MutRef _ _) "mut-ref"]
     [(Region _ _) "region"]
     [(Invalidate _ _) "invalidate"]
-    [(or (Enum _) (EnumArgs _ _)) "enum"]
-    [(or (Struct _) (StructArgs _ _)) "struct"]
-    [(or (Var _) (VarArgs _ _)) "type-var"]))
+    [(Enum _) "enum"]
+    [(EnumArgs _ _) "enum"]
+    [(Struct _) "struct"]
+    [(StructArgs _ _) "struct"]
+    [(Var _) "type-var"]
+    [(VarArgs _ _) "type-var"]))
 
 (define (ctfe-expr-shared-view [expr : (& expr ast.AstExpr)]) : ast.AstExpr
   (let
@@ -4560,9 +4597,11 @@
             (ctfe-value-list1 (TypeInfoList (deref elems)))
             env)
           (No))]
-      [(or (Struct _) (StructArgs _ _))
+      [(Struct _) (ctfe-match-type-info-nominal variant args resolved env true)]
+      [(StructArgs _ _)
         (ctfe-match-type-info-nominal variant args resolved env true)]
-      [(or (Enum _) (EnumArgs _ _))
+      [(Enum _) (ctfe-match-type-info-nominal variant args resolved env false)]
+      [(EnumArgs _ _)
         (ctfe-match-type-info-nominal variant args resolved env false)]
       [_
         (if (ctfe-type-info-builtin-kind? (string.copy kind))
@@ -4588,8 +4627,19 @@
 
 (define (ctfe-eval-node [expr : ast.AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (match (clone expr)
-    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
-         (Comptime inner-box) (Ann inner-box _))
+    [(Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (compiler-ctfe-eval inner env fuel))]
+    [(MacroExpansion inner-box _ _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (compiler-ctfe-eval inner env fuel))]
+    [(Comptime inner-box)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (compiler-ctfe-eval inner env fuel))]
+    [(Ann inner-box _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (compiler-ctfe-eval inner env fuel))]
@@ -4641,7 +4691,8 @@
           (let
             [body : ast.AstExpr (ctfe-ast-get env body-box)]
             (ctfe-eval-let bindings body env fuel))])]
-    [(or (Begin exprs) (Unsafe exprs)) (ctfe-eval-begin exprs env fuel)]
+    [(Begin exprs) (ctfe-eval-begin exprs env fuel)]
+    [(Unsafe exprs) (ctfe-eval-begin exprs env fuel)]
     [(Set name rhs-box)
       (let
         [rhs : ast.AstExpr (ctfe-ast-get env rhs-box)]
@@ -4663,7 +4714,11 @@
       (let
         [func : ast.AstExpr (ctfe-ast-get env func-box)]
         (ctfe-eval-call func args expr env fuel))]
-    [(or (BoxGet inner-box) (BoxTake inner-box))
+    [(BoxGet inner-box)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-box-get inner expr env fuel))]
+    [(BoxTake inner-box)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-box-get inner expr env fuel))]
@@ -4747,15 +4802,27 @@
   [layouts : CtfeLayoutInfoList]
   [ty : ast.AstType]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (DynArray _) (Box _)
-         (Ptr _) (MutPtr _) (String))
-      8]
-    [(or (I32) (U32) (F32)) 4]
-    [(or (I16) (U16)) 2]
-    [(or (I8) (U8) (Bool) (Char)) 1]
-    [(or (Unit) (Never)) 0]
-    ;; Bare slices remain unsized; only borrowed Slice references have layout.
-    [(or (Str) (Bytes) (Expr) (ExprList) (Slice _)) -1]
+    [(I64) 8]
+    [(U64) 8]
+    [(F64) 8]
+    [(I32) 4]
+    [(U32) 4]
+    [(F32) 4]
+    [(I16) 2]
+    [(U16) 2]
+    [(I8) 1]
+    [(U8) 1]
+    [(Bool) 1]
+    [(Char) 1]
+    [(Unit) 0]
+    [(Never) 0]
+    [(Str) -1]
+    [(Bytes) -1]
+    [(Expr) -1]
+    [(ExprList) -1]
+    [(CFunc _ _) 8]
+    [(Func _ _) 8]
+    [(Tuple _) 8]
     [(Array elem count)
       (let
         [elem-size : i64
@@ -4766,46 +4833,98 @@
         (if (< elem-size 0)
           -1
           (* elem-size count)))]
-    [(or (Ref _ inner) (MutRef _ inner))
+    [(DynArray _) 8]
+    ;; Bare slices remain unsized; only borrowed Slice references have layout.
+    [(Slice _) -1]
+    [(Box _) 8]
+    [(Ptr _) 8]
+    [(MutPtr _) 8]
+    [(Ref _ inner)
       (if (ctfe-fat-reference? pools inner)
         16
         8)]
-    [(or (Region _ inner) (Invalidate _ inner))
+    [(MutRef _ inner)
+      (if (ctfe-fat-reference? pools inner)
+        16
+        8)]
+    [(Region _ inner)
       (ctfe-type-size-with-pools
         pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
-    [(or (Struct name) (StructArgs name _))
-      (ctfe-layout-size-or layouts name 8)]
+    [(Invalidate _ inner)
+      (ctfe-type-size-with-pools
+        pools
+        layouts
+        (ast.ast-node-pool-context-type-get pools inner))]
     ;; An enum occupies its 8-byte tag plus max-aligned payload storage inline,
     ;; exactly like a struct occupies its fields, so its size comes from the
     ;; recorded layout rather than from the tag width. Returning the tag width
     ;; here reported 8 for every enum while `offset-of` on a struct field of the
     ;; same type reported the real inline size.
-    [(or (Enum name) (EnumArgs name _) (Var name) (VarArgs name _))
-      (ctfe-layout-size-or layouts name -1)]))
+    [(Enum name) (ctfe-layout-size-or layouts name -1)]
+    [(EnumArgs name _) (ctfe-layout-size-or layouts name -1)]
+    [(Struct name) (ctfe-layout-size-or layouts name 8)]
+    [(StructArgs name _) (ctfe-layout-size-or layouts name 8)]
+    [(String) 8]
+    [(Var name) (ctfe-layout-size-or layouts name -1)]
+    [(VarArgs name _) (ctfe-layout-size-or layouts name -1)]))
 
 (define (ctfe-type-align-with-pools
   [pools : ast.AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
   [ty : ast.AstType]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (DynArray _) (Box _)
-         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Enum _) (EnumArgs _ _)
-         (String))
-      8]
-    [(or (I32) (U32) (F32)) 4]
-    [(or (I16) (U16)) 2]
-    [(or (I8) (U8) (Bool) (Char) (Unit) (Never)) 1]
-    [(or (Str) (Bytes) (Expr) (ExprList) (Slice _)) -1]
-    [(or (Array elem _) (Region _ elem) (Invalidate _ elem))
+    [(I64) 8]
+    [(U64) 8]
+    [(F64) 8]
+    [(I32) 4]
+    [(U32) 4]
+    [(F32) 4]
+    [(I16) 2]
+    [(U16) 2]
+    [(I8) 1]
+    [(U8) 1]
+    [(Bool) 1]
+    [(Char) 1]
+    [(Unit) 1]
+    [(Never) 1]
+    [(Str) -1]
+    [(Bytes) -1]
+    [(Expr) -1]
+    [(ExprList) -1]
+    [(CFunc _ _) 8]
+    [(Func _ _) 8]
+    [(Tuple _) 8]
+    [(Array elem _)
       (ctfe-type-align-with-pools
         pools
         layouts
         (ast.ast-node-pool-context-type-get pools elem))]
-    [(or (Struct name) (StructArgs name _))
-      (ctfe-layout-align-or layouts name 8)]
-    [(or (Var name) (VarArgs name _)) (ctfe-layout-align-or layouts name -1)]))
+    [(DynArray _) 8]
+    [(Slice _) -1]
+    [(Box _) 8]
+    [(Ptr _) 8]
+    [(MutPtr _) 8]
+    [(Ref _ _) 8]
+    [(MutRef _ _) 8]
+    [(Region _ inner)
+      (ctfe-type-align-with-pools
+        pools
+        layouts
+        (ast.ast-node-pool-context-type-get pools inner))]
+    [(Invalidate _ inner)
+      (ctfe-type-align-with-pools
+        pools
+        layouts
+        (ast.ast-node-pool-context-type-get pools inner))]
+    [(Enum _) 8]
+    [(EnumArgs _ _) 8]
+    [(Struct name) (ctfe-layout-align-or layouts name 8)]
+    [(StructArgs name _) (ctfe-layout-align-or layouts name 8)]
+    [(String) 8]
+    [(Var name) (ctfe-layout-align-or layouts name -1)]
+    [(VarArgs name _) (ctfe-layout-align-or layouts name -1)]))
 
 (define (ctfe-layout-query-value-with-pools
   [pools : ast.AstNodePoolContext]
@@ -4859,7 +4978,11 @@
 
 (define (ctfe-offset-field-name [expr : ast.AstExpr] [env : (& env CtfeEnv)]) : CtfeMaybeFieldName
   (match expr
-    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
+    [(Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-offset-field-name inner env))]
+    [(MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-offset-field-name inner env))]
@@ -4871,9 +4994,11 @@
   [layouts : CtfeLayoutInfoList]
   [ty : ast.AstType]) : CtfeMaybeLayoutInfo
   (match ty
-    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _)
-         (Var name))
-      (ctfe-layout-info-lookup-name-id layouts name)]
+    [(Struct name) (ctfe-layout-info-lookup-name-id layouts name)]
+    [(StructArgs name _) (ctfe-layout-info-lookup-name-id layouts name)]
+    [(Enum name) (ctfe-layout-info-lookup-name-id layouts name)]
+    [(EnumArgs name _) (ctfe-layout-info-lookup-name-id layouts name)]
+    [(Var name) (ctfe-layout-info-lookup-name-id layouts name)]
     [(Region _ inner)
       (ctfe-layout-info-for-type-with-pools
         pools
@@ -5155,7 +5280,9 @@
         [_ (ctfe-reflection-requires name "box type")])]
     [(string.eq name "reference-element-type")
       (match ty
-        [(or (Ref _ elem) (MutRef _ elem))
+        [(Ref _ elem)
+          (Ok (Type (ast.ast-node-pool-context-type-get pools elem)))]
+        [(MutRef _ elem)
           (Ok (Type (ast.ast-node-pool-context-type-get pools elem)))]
         [_ (ctfe-reflection-requires name "reference type")])]
     [(string.eq name "array-length")
@@ -5800,7 +5927,7 @@
     [index : i64 0]
     (while (< index (array-length items))
       (set! (array-ref items index) value)
-      (set! index (+ index 1)))))
+      (+= index 1))))
 
 ;; `head` and `previous` are the raw element storage of the two index arrays the
 ;; compressor owns for the length of one compression. Both subscripts are
@@ -5834,7 +5961,6 @@
   [start : i64]
   [count : i64]) : unit
   (let
-    [index : i64 start]
     [limit : i64 (- source-len 2)]
     [end : i64
       (let
@@ -5842,15 +5968,14 @@
         (if (< stop limit)
           stop
           limit))]
-    (while (< index end)
+    (for [index (iterator.range start end)]
       (let
         [slot : (MutPtr i64)
           (unsafe
             (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index)))]
         (unsafe
           (ptr-write! (ptr-offset previous index) (ptr-read slot))
-          (ptr-write! slot index))
-        (set! index (+ index 1))))))
+          (ptr-write! slot index))))))
 
 ;; Longest common prefix of the candidate and cursor spans, capped by `cap`
 ;; (= min(18, source-len - index)). Words compare 8 bytes at a time; the byte
@@ -5870,13 +5995,13 @@
       (if (=
         (ctfe-embedded-stdlib-lzss-word data (+ candidate length))
         (ctfe-embedded-stdlib-lzss-word data (+ index length)))
-        (set! length (+ length 8))
+        (+= length 8)
         (set! words-done true)))
     (while (and (not tail-done) (< length cap))
       (if (=
         (ctfe-embedded-stdlib-lzss-byte data (+ candidate length))
         (ctfe-embedded-stdlib-lzss-byte data (+ index length)))
-        (set! length (+ length 1))
+        (+= length 1)
         (set! tail-done true)))
     length))
 
@@ -5956,7 +6081,7 @@
               candidate
               (unsafe
                 (ptr-read (ptr-offset chain candidate))))
-            (set! links (- links 1)))
+            (-= links 1))
           (if (or (< candidate floor) (= links 0))
             (return (CtfeEmbeddedStdlibLzssMatch best-offset best-len))
             (let
@@ -5970,7 +6095,7 @@
                 candidate
                 (unsafe
                   (ptr-read (ptr-offset chain candidate))))
-              (set! links (- links 1))))))
+              (-= links 1)))))
       (CtfeEmbeddedStdlibLzssMatch best-offset best-len))))
 
 ;; Emit one (offset, length) token: 12 bits of offset - 1, 4 of length - 3.
@@ -6049,7 +6174,7 @@
                     head-slots
                     previous-slots
                     index)
-                  (set! index (+ index 1))]
+                  (+= index 1)]
                 [(< length 6)
                   ;; One-step lazy matching: when the match at the next
                   ;; position is longer, emit this byte as a literal and take
@@ -6083,7 +6208,7 @@
                           (set! pending-valid true)
                           (set! pending-offset next-offset)
                           (set! pending-length next-length)
-                          (set! index (+ index 1)))
+                          (+= index 1))
                         (begin
                           (ctfe-embedded-stdlib-lzss-push-match!
                             (&mut out)
@@ -6096,7 +6221,7 @@
                             previous-slots
                             (+ index 1)
                             (- length 1))
-                          (set! index (+ index length))))])]
+                          (+= index length)))])]
                 [else
                   (ctfe-embedded-stdlib-lzss-push-match!
                     (&mut out)
@@ -6109,8 +6234,8 @@
                     previous-slots
                     index
                     length)
-                  (set! index (+ index length))])])
-          (set! bit (+ bit 1)))
+                  (+= index length)])])
+          (+= bit 1))
         (set! (array-ref out.slots flag-index) (cast flags : u8))))
     (byte_buf_core.byte-buf-builder-to-string (& out))))
 
@@ -6176,9 +6301,13 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(Ok value arg-fuel)
           (match value
-            [(or (String text string-id) (Name text string-id))
+            [(String text string-id)
               (if extract?
                 (Ok (String text string-id) arg-fuel)
+                (Ok (Bool true) arg-fuel))]
+            [(Name text name-id)
+              (if extract?
+                (Ok (String text name-id) arg-fuel)
                 (Ok (Bool true) arg-fuel))]
             [(Expr node _)
               (match (ctfe-expr-unspan env (ctfe-ast-get env node))
@@ -6988,8 +7117,15 @@
     pools
     (& (ast.ast-node-pool-context-expr-get pools node)))
     [(Var _) true]
-    [(or (StructGet receiver _) (TupleRef receiver _) (ArrayRef receiver _)
-         (BoxGet receiver) (BoxTake receiver))
+    [(StructGet receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(TupleRef receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(ArrayRef receiver _)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(BoxGet receiver)
+      (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
+    [(BoxTake receiver)
       (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
     [_ false]))
 
@@ -7422,9 +7558,12 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(Ok value arg-fuel)
           (match value
-            [(or (ExprList nodes) (CapturedExprList nodes _))
+            [(ExprList nodes) (Ok (I64 (ctfe-expr-list-length nodes)) arg-fuel)]
+            [(CapturedExprList nodes _)
               (Ok (I64 (ctfe-expr-list-length nodes)) arg-fuel)]
-            [(or (ExprClauseList clauses) (CapturedExprClauseList clauses _))
+            [(ExprClauseList clauses)
+              (Ok (I64 (ctfe-expr-clause-list-length clauses)) arg-fuel)]
+            [(CapturedExprClauseList clauses _)
               (Ok (I64 (ctfe-expr-clause-list-length clauses)) arg-fuel)]
             [(ExprBindingClauseList clauses)
               (Ok (I64 (ctfe-expr-binding-clause-list-length clauses)) arg-fuel)]
@@ -7450,10 +7589,10 @@
 (define (ctfe-comptime-sequence-length-or-negative
   [value : (& value CompilerCtfeValue)]) : i64
   (match value
-    [(or (ExprList items) (CapturedExprList items _))
-      (ctfe-expr-list-length items)]
-    [(or (ExprClauseList items) (CapturedExprClauseList items _))
-      (ctfe-expr-clause-list-length items)]
+    [(ExprList items) (ctfe-expr-list-length items)]
+    [(CapturedExprList items _) (ctfe-expr-list-length items)]
+    [(ExprClauseList items) (ctfe-expr-clause-list-length items)]
+    [(CapturedExprClauseList items _) (ctfe-expr-clause-list-length items)]
     [(ExprBindingClauseList items) (ctfe-expr-binding-clause-list-length items)]
     [_ -1]))
 
@@ -7515,8 +7654,8 @@
   (match (ast.ast-node-pool-context-expr-get pools node)
     [(TypeLiteral ty-id)
       (Ok (Type (ast.ast-node-pool-context-type-get pools ty-id)))]
-    [(or (Spanned inner _) (MacroExpansion inner _ _))
-      (ctfe-expr-type-literal-value pools inner)]
+    [(Spanned inner _) (ctfe-expr-type-literal-value pools inner)]
+    [(MacroExpansion inner _ _) (ctfe-expr-type-literal-value pools inner)]
     [_ (Err "expr-list-type-nth expects a captured type literal")]))
 
 (define (ctfe-expr-list-type-at
@@ -7826,8 +7965,8 @@
           (if continue-on-true
             when-false-node
             out-node)))
-      (set! index (- index 1))
-      (set! remaining-fuel (- remaining-fuel 1)))
+      (-= index 1)
+      (-= remaining-fuel 1))
     (CtfeFold
       (if (>= index 0)
         -1
@@ -8031,8 +8170,8 @@
                 test-node
                 (ctfe-expr-clause-second clause)
                 out-node)]))
-        (set! index (- index 1))
-        (set! remaining-fuel (- remaining-fuel 1))))
+        (-= index 1)
+        (-= remaining-fuel 1)))
     (CtfeFold
       (if (>= index 0)
         -1
@@ -8344,8 +8483,7 @@
   [count : i64]) : ast.AstPatternList
   (let
     [patterns : ast.AstPatternList (ast.ast-pattern-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-pattern-list-push
         (&mut patterns)
         (let
@@ -8357,8 +8495,7 @@
             (ctfe-string-syntax-name-id
               (ctfe-env-source-names env)
               name
-              name-id))))
-      (set! index (+ index 1)))
+              name-id)))))
     patterns))
 
 (define (ctfe-eval-pattern-list-bindings-call
@@ -9310,7 +9447,11 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match func
-    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
+    [(Spanned inner-box _)
+      (let
+        [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-call inner args expr env fuel))]
+    [(MacroExpansion inner-box _ _)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-call inner args expr env fuel))]
@@ -10157,8 +10298,13 @@
       ;; evaluated, otherwise it can allocate the same node id and overwrite
       ;; the value just stored.
       (match (owned_view.compiler-owned-shared-view value)
-        [(or (CapturedExpr _ _ pools) (CapturedExprList _ pools)
-             (CapturedExprClause _ pools) (CapturedExprClauseList _ pools))
+        [(CapturedExpr _ _ pools)
+          (ctfe-env-adopt-captured-pools! (& env) pools)]
+        [(CapturedExprList _ pools)
+          (ctfe-env-adopt-captured-pools! (& env) pools)]
+        [(CapturedExprClause _ pools)
+          (ctfe-env-adopt-captured-pools! (& env) pools)]
+        [(CapturedExprClauseList _ pools)
           (ctfe-env-adopt-captured-pools! (& env) pools)]
         [_ unit])
       (if (ctfe-env-set-local-id! env name-id value)
@@ -10545,21 +10691,23 @@
                 env)
               (No))]
           [_ (No)]))]
-    [(Or alternatives-box)
-      (ctfe-match-or-pattern (deref alternatives-box) 0 value value-ty env)]
-    ;; Comptime values have no struct form, so struct patterns never match.
+    [(Tuple _) (No)]
+    [(Array _) (No)]
     ;; Comptime values have no Slice representation.
-    [(or (Tuple _) (Array _) (Slice _ _) (Fields _) (Field _ _)) (No)]))
+    [(Slice _ _) (No)]
+    [(Or alternatives-box)
+      (ctfe-match-or-pattern (deref alternatives-box) value value-ty env)]
+    ;; Comptime values have no struct form, so struct patterns never match.
+    [(Fields _) (No)]
+    [(Field _ _) (No)]))
 
 ;; An or-pattern matches with the first alternative that does.
 (define (ctfe-match-or-pattern
   [alternatives : ast.AstPatternList]
-  [index : i64]
   [value : CompilerCtfeValue]
   [value-ty : ast.AstType]
   [env : CtfeEnv]) : CtfePatternMatch
-  (if (>= index alternatives.len)
-    (No)
+  (for [index (iterator.range 0 alternatives.len)]
     (match (ctfe-match-pattern
       (ast.ast-pattern-list-get
         (& alternatives)
@@ -10568,8 +10716,9 @@
       (ctfe-value-owned-copy (& value))
       (clone value-ty)
       env)
-      [(Matched matched-env) (Matched matched-env)]
-      [(No) (ctfe-match-or-pattern alternatives (+ index 1) value value-ty env)])))
+      [(Matched matched-env) (return (Matched matched-env))]
+      [(No) unit]))
+  (No))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -10578,19 +10727,16 @@
   [origin : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (ctfe-eval-match-arms-at value value-ty (& arms) 0 origin env fuel))
+  (ctfe-eval-match-arms-at value value-ty (& arms) origin env fuel))
 
 (define (ctfe-eval-match-arms-at
   [value : CompilerCtfeValue]
   [value-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]
   [origin : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (if (>= index arms.len)
-    (Err
-      (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm")))
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (match (ctfe-match-pattern
@@ -10599,16 +10745,10 @@
           (clone value-ty)
           env)
           [(Matched arm-env)
-            (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel)]
-          [(No)
-            (ctfe-eval-match-arms-at
-              value
-              value-ty
-              arms
-              (+ index 1)
-              origin
-              env
-              fuel)])])))
+            (return
+              (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel))]
+          [(No) unit])]))
+  (Err (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm"))))
 
 (define (ctfe-eval-match
   [scrutinee : ast.AstExpr]
@@ -11742,18 +11882,16 @@
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
     [out-fuel
-      (try (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out)))]
+      (try (ctfe-quote-param-list-into (& params) env origin fuel (&mut out)))]
     (Ok out out-fuel)))
 
 (define (ctfe-quote-param-list-into
   [params : (& params ast.AstParamList)]
-  [index : i64]
   [env : (& env CtfeEnv)]
   [origin : ast.AstExpr]
   [fuel : i64]
   [out : (&mut out ast.AstParamList)]) : ResultCtfeQuoteParamsBuild
-  (if (>= index (ast.ast-param-list-len params))
-    (Ok fuel)
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty comptime?)
         (match (ctfe-quote-type ty env (clone origin) fuel)
@@ -11764,14 +11902,9 @@
                 (ctfe-quote-name-id env name)
                 quoted-ty
                 comptime?))
-            (ctfe-quote-param-list-into
-              params
-              (+ index 1)
-              env
-              origin
-              next-fuel
-              out)]
-          [(Err diag) (Err diag)])])))
+            (set! fuel next-fuel)]
+          [(Err diag) (return (Err diag))])]))
+  (Ok fuel))
 
 (define (ctfe-quote-pattern-list
   [patterns : ast.AstPatternList]
@@ -11847,7 +11980,6 @@
       (try
         (ctfe-quote-let-binding-list-into
           (& bindings)
-          0
           env
           fuel
           quasiquote
@@ -11856,13 +11988,11 @@
 
 (define (ctfe-quote-let-binding-list-into
   [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]
   [out : (&mut out ast.AstLetBindingList)]) : ResultCtfeQuoteLetBindingsBuild
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    (Ok fuel)
+  (for [index (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       index
@@ -11880,15 +12010,10 @@
                       (ctfe-quote-name-id env name)
                       quoted-ty
                       quoted-init))
-                  (ctfe-quote-let-binding-list-into
-                    bindings
-                    (+ index 1)
-                    env
-                    init-fuel
-                    quasiquote
-                    out)]
-                [(Err diag) (Err diag)])]
-            [(Err diag) (Err diag)]))])))
+                  (set! fuel init-fuel)]
+                [(Err diag) (return (Err diag))])]
+            [(Err diag) (return (Err diag))]))]))
+  (Ok fuel))
 
 (define (ctfe-quote-resource-binding-list
   [bindings : ast.AstResourceBindingList]
@@ -11903,7 +12028,6 @@
       (try
         (ctfe-quote-resource-binding-list-into
           (& bindings)
-          0
           env
           fuel
           quasiquote
@@ -11912,13 +12036,11 @@
 
 (define (ctfe-quote-resource-binding-list-into
   [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]
   [out : (&mut out ast.AstResourceBindingList)]) : ResultCtfeQuoteResourceBindingsBuild
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    (Ok fuel)
+  (for [index (iterator.range 0 (ast.ast-resource-binding-list-len bindings))]
     (match (ast.ast-resource-binding-list-get
       bindings
       index
@@ -11938,15 +12060,10 @@
                       quoted-init
                       quoted-cleanup
                       move-aware?))
-                  (ctfe-quote-resource-binding-list-into
-                    bindings
-                    (+ index 1)
-                    env
-                    cleanup-fuel
-                    quasiquote
-                    out)]
-                [(Err diag) (Err diag)])]
-            [(Err diag) (Err diag)]))])))
+                  (set! fuel cleanup-fuel)]
+                [(Err diag) (return (Err diag))])]
+            [(Err diag) (return (Err diag))]))]))
+  (Ok fuel))
 
 (define (ctfe-quote-arm-list
   [arms : ast.AstMatchArmList]
@@ -11956,18 +12073,16 @@
   (let
     [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     [out-fuel
-      (try (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out)))]
+      (try (ctfe-quote-arm-list-into (& arms) env fuel quasiquote (&mut out)))]
     (Ok out out-fuel)))
 
 (define (ctfe-quote-arm-list-into
   [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]
   [out : (&mut out ast.AstMatchArmList)]) : ResultCtfeQuoteArmsBuild
-  (if (>= index arms.len)
-    (Ok fuel)
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (let
@@ -11977,14 +12092,9 @@
               (ast.ast-match-arm-list-push
                 out
                 (ast.ast-match-arm (ctfe-quote-pattern pattern env) quoted-body))
-              (ctfe-quote-arm-list-into
-                arms
-                (+ index 1)
-                env
-                body-fuel
-                quasiquote
-                out)]
-            [(Err diag) (Err diag)]))])))
+              (set! fuel body-fuel)]
+            [(Err diag) (return (Err diag))]))]))
+  (Ok fuel))
 
 (define (ctfe-quote-preserve-unquoted-source-span?
   [template : ast.AstExpr]
@@ -13377,21 +13487,21 @@
   [env : CtfeEnv]
   [a : ast.AstPatternList]
   [b : ast.AstPatternList]) : bool
-  (and (= a.len b.len) (ctfe-pattern-list-eq-in-env-at env (& a) (& b) 0)))
+  (and (= a.len b.len) (ctfe-pattern-list-eq-in-env-at env (& a) (& b))))
 
 (define (ctfe-pattern-list-eq-in-env-at
   [env : CtfeEnv]
   [a : (& a ast.AstPatternList)]
-  [b : (& b ast.AstPatternList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstPatternList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (ctfe-pattern-eq-in-env
         env
         (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback))
         (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback)))
-      (ctfe-pattern-list-eq-in-env-at env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (ctfe-expr-eq-inner-in-env
   [env : CtfeEnv]
@@ -13457,22 +13567,22 @@
   [a : ast.AstExprClauseList]
   [b : ast.AstExprClauseList]) : bool
   (if (= a.len b.len)
-    (ctfe-expr-clause-list-eq-at-in-env env (& a) (& b) 0)
+    (ctfe-expr-clause-list-eq-at-in-env env (& a) (& b))
     false))
 
 (define (ctfe-expr-clause-list-eq-at-in-env
   [env : CtfeEnv]
   [a : (& a ast.AstExprClauseList)]
-  [b : (& b ast.AstExprClauseList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstExprClauseList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (ctfe-expr-clause-eq-in-env
         env
         (ast.ast-expr-clause-list-get a index (ast.ast-expr-clause-fallback))
         (ast.ast-expr-clause-list-get b index (ast.ast-expr-clause-fallback)))
-      (ctfe-expr-clause-list-eq-at-in-env env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (ctfe-expr-binding-clause-eq-in-env
   [env : CtfeEnv]
@@ -13494,17 +13604,15 @@
   [a : ast.AstExprBindingClauseList]
   [b : ast.AstExprBindingClauseList]) : bool
   (if (= a.len b.len)
-    (ctfe-expr-binding-clause-list-eq-at-in-env env (& a) (& b) 0)
+    (ctfe-expr-binding-clause-list-eq-at-in-env env (& a) (& b))
     false))
 
 (define (ctfe-expr-binding-clause-list-eq-at-in-env
   [env : CtfeEnv]
   [a : (& a ast.AstExprBindingClauseList)]
-  [b : (& b ast.AstExprBindingClauseList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstExprBindingClauseList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (ctfe-expr-binding-clause-eq-in-env
         env
         (ast.ast-expr-binding-clause-list-get
@@ -13515,7 +13623,9 @@
           b
           index
           (ast.ast-expr-binding-clause-fallback)))
-      (ctfe-expr-binding-clause-list-eq-at-in-env env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (ctfe-expr-eq [a : ast.AstExpr] [b : ast.AstExpr]) : bool
   (ctfe-expr-eq-in-env (ctfe-env-empty) a b))
@@ -13724,16 +13834,35 @@
           (cfloat.compiler-float-round-f32-as-f64 n)))]
     [(Bool b) (Bool b)]
     [(Char c) (Char c)]
-    [(or (String _ string-id) (Name _ string-id)) (String string-id)]
-    [(or (Unit) (Type _) (Expr _ _) (CapturedExpr _ _ _) (ExprList _)
-         (CapturedExprList _ _) (ExprClause _) (CapturedExprClause _ _)
-         (ExprClauseList _) (CapturedExprClauseList _ _) (ExprBindingClause _)
-         (ExprBindingClauseList _) (Pattern _) (PatternList _) (MatchArm _)
-         (MatchArmList _) (LetBinding _) (LetBindingList _) (TypeInfo _)
-         (TypeInfoBox _) (TypeInfoList _) (TypeField _ _) (TypeFieldList _)
-         (TypeVariantPayload _) (TypeVariantPayloadList _) (TypeVariant _ _)
-         (TypeVariantList _))
-      (Unit)]))
+    [(String _ string-id) (String string-id)]
+    [(Name _ name-id) (String name-id)]
+    [(Unit) (Unit)]
+    [(Type _) (Unit)]
+    [(Expr _ _) (Unit)]
+    [(CapturedExpr _ _ _) (Unit)]
+    [(ExprList _) (Unit)]
+    [(CapturedExprList _ _) (Unit)]
+    [(ExprClause _) (Unit)]
+    [(CapturedExprClause _ _) (Unit)]
+    [(ExprClauseList _) (Unit)]
+    [(CapturedExprClauseList _ _) (Unit)]
+    [(ExprBindingClause _) (Unit)]
+    [(ExprBindingClauseList _) (Unit)]
+    [(Pattern _) (Unit)]
+    [(PatternList _) (Unit)]
+    [(MatchArm _) (Unit)]
+    [(MatchArmList _) (Unit)]
+    [(LetBinding _) (Unit)]
+    [(LetBindingList _) (Unit)]
+    [(TypeInfo _) (Unit)]
+    [(TypeInfoBox _) (Unit)]
+    [(TypeInfoList _) (Unit)]
+    [(TypeField _ _) (Unit)]
+    [(TypeFieldList _) (Unit)]
+    [(TypeVariantPayload _) (Unit)]
+    [(TypeVariantPayloadList _) (Unit)]
+    [(TypeVariant _ _) (Unit)]
+    [(TypeVariantList _) (Unit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]

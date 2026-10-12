@@ -338,9 +338,12 @@
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
-         (Var name) (VarArgs name _))
-      (doc-symbol-text ctx name)]
+    [(Enum name) (doc-symbol-text ctx name)]
+    [(EnumArgs name _) (doc-symbol-text ctx name)]
+    [(Struct name) (doc-symbol-text ctx name)]
+    [(StructArgs name _) (doc-symbol-text ctx name)]
+    [(Var name) (doc-symbol-text ctx name)]
+    [(VarArgs name _) (doc-symbol-text ctx name)]
     [(Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
     [(MutPtr elem) (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 

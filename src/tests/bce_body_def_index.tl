@@ -42,7 +42,7 @@
 (define (check [n : i64] [kind : i64] [duplicate : bool] [pattern : i64]) : unit
   (let
     [bs (make-blocks n kind duplicate)]
-    [defs (opt.opt-bce-mb-body-defs (opt.compiler-opt-global-shared-view bs))]
+    [defs (opt.opt-bce-mb-body-defs (& bs))]
     [uses (imap.with-capacity 16)]
     [i : i64 0]
     (while (< i (+ (* n 13) 8))
@@ -69,7 +69,7 @@
           (ir.compiler-ir-block-list-view bs)
           uses
           (seed))]
-      [new (opt.opt-bce-mb-body-defs-used defs bs uses (seed))]
+      [new (opt.opt-bce-mb-body-defs-used (& defs) (& bs) (& uses) (seed))]
       [i : i64 0]
       (test.assert-i64-eq
         (opt.opt-bce-mb-var-list-count old)

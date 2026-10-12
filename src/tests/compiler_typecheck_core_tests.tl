@@ -1245,7 +1245,7 @@
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
   (match (lexer.spanned-result (& form))
     [(Ok toks)
-      (match (reader.spanned-result toks)
+      (match (reader.spanned-result (& toks))
         [(Ok sexpr) sexpr]
         [(Err _)
           (reader.spanned-sexpr-list-from-builder
@@ -10081,3 +10081,327 @@
         (memo-test-lookup state 0)
         4
         "the zeroed slot is reused"))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-spine-semantics
+    (let
+      [ids : (__tl_dyn-array i64) (__tl_make-array i64 33)]
+      [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+      [ok : bool true]
+      (for [index (iterator.range 0 33)]
+        (let
+          [name : String
+            (str_cat.str-cat "memo-lifetime-" (string.int->string index))]
+          [id : i64 (ci.intern name)]
+          (set! (array-ref ids index) id)
+          (set! env (tc_core.tc-bind-id env id (I64)))))
+      ;; More distinct non-reflexive pairs than slots force collisions. Repeat
+      ;; in the opposite order, against both the spine and a local cache layer.
+      (let
+        [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-local-cache env)]
+        [outer : i64 (array-ref ids 0)]
+        [inner : i64 (array-ref ids 32)]
+        [missing : i64 (ci.intern "memo-unbound-lifetime")]
+        [shadow : tc_core.TcTypeEnv (tc_core.tc-bind-id env outer (Bool))]
+        (for [round (iterator.range 0 2)]
+          (for [i (iterator.range 0 33)]
+            (for [j (iterator.range 0 33)]
+              (let
+                [value : i64
+                  (array-ref
+                    ids
+                    (if (= round 0)
+                      i
+                      (- 32 i)))]
+                [target : i64
+                  (array-ref
+                    ids
+                    (if (= round 0)
+                      j
+                      (- 32 j)))]
+                [expected : bool
+                  (if (= round 0)
+                    (<= i j)
+                    (>= i j))]
+                (unless
+                  (and
+                    (=
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                        env
+                        value
+                        target)
+                      expected)
+                    (=
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                        cached
+                        value
+                        target)
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-scan-id?
+                        cached
+                        value
+                        target)))
+                  (set! ok false))))))
+        (unless
+          (and
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                shadow
+                outer
+                inner))
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                missing
+                inner))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                outer
+                missing))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id? env -1 -1))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                -1
+                inner))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                outer
+                -1)))
+          (set! ok false)))
+      (unless
+        ok
+        (io.panic
+          "typecheck: lifetime memo changed lexical ordering, shadowing or collision results")))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-job-and-scratch-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [owner-a : arena.Arena (arena.make)]
+      [owner-b : arena.Arena (arena.make)]
+      [outer : i64 (ci.intern "memo-job-outer")]
+      [inner : i64 (ci.intern "memo-job-inner")]
+      [_owner-a : unit
+        (unsafe
+          (arena.set! owner-a))]
+      [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state-a : tc_core.TcTypeResolutionCacheState
+        (tc_core.tc-job-state-type-resolution-cache job-a)]
+      [env-a : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job-a)
+            outer
+            (I64))
+          inner
+          (I64))]
+      [_owner-b : unit
+        (unsafe
+          (arena.set! owner-b))]
+      [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state-b : tc_core.TcTypeResolutionCacheState
+        (tc_core.tc-job-state-type-resolution-cache job-b)]
+      [env-b : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job-b)
+            inner
+            (I64))
+          outer
+          (I64))]
+      [_restore : unit
+        (unsafe
+          (arena.set! caller))]
+      [ok : bool
+        (and
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-a).outlives-slots)
+            0)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-b).outlives-slots)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      ;; First allocation happens under a decoy, but belongs to each job.
+      (in-arena
+        scratch
+        (unless
+          (and
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env-a
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env-b
+                outer
+                inner)))
+          (set! ok false)))
+      (unsafe
+        (arena.destroy scratch))
+      (let
+        [epoch-a : i64
+          (tc_core.tc-type-resolution-cache-state-data state-a).epoch]
+        [epoch-b : i64
+          (tc_core.tc-type-resolution-cache-state-data state-b).epoch]
+        (tc_core.tc-job-state-reset-derived-caches! job-b)
+        (unless
+          (and
+            (=
+              (tc_core.tc-type-resolution-cache-state-data state-a).epoch
+              epoch-a)
+            (>
+              (tc_core.tc-type-resolution-cache-state-data state-b).epoch
+              epoch-b)
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env-a
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env-b
+                outer
+                inner)))
+          (set! ok false)))
+      ;; Rewind and reuse one function-store arena with alternating order.
+      ;; Its raw addresses may repeat; the persistent-store epoch must reject
+      ;; every previous answer while the memo remains in job A's owner.
+      (let
+        [fork-arena : arena.Arena (arena.make)]
+        (unsafe
+          (arena.set! fork-arena))
+        (let
+          [mark : i64
+            (unsafe
+              (arena.tl_region_mark))]
+          (for [round (iterator.range 0 8)]
+            (let
+              [forward : bool (= (bit-and round 1) 0)]
+              [fork : tc_core.TcTypeEnv
+                (tc_core.tc-bind-id
+                  (tc_core.tc-bind-id
+                    (tc_core.tc-type-env-fork-function-store env-a)
+                    (if forward
+                      outer
+                      inner)
+                    (I64))
+                  (if forward
+                    inner
+                    outer)
+                  (I64))]
+              (unless
+                (=
+                  (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                    fork
+                    outer
+                    inner)
+                  forward)
+                (set! ok false)))
+            (unsafe
+              (arena.tl_region_reset mark))))
+        (unsafe
+          (arena.set! caller))
+        (unsafe
+          (arena.destroy fork-arena)))
+      (unless
+        (and
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env-a
+            outer
+            inner)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-a).outlives-slots)
+            tc_core.tc-outlives-memo-capacity)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-b).outlives-slots)
+            tc_core.tc-outlives-memo-capacity))
+        (set! ok false))
+      (unsafe
+        (arena.destroy owner-a))
+      (unless
+        (not
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env-b
+            outer
+            inner))
+        (set! ok false))
+      (unsafe
+        (arena.destroy owner-b))
+      (unless
+        ok
+        (io.panic
+          "typecheck: lifetime memo crossed job ownership or scratch retirement")))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-structural-generation
+    (let
+      [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+      [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [owner : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-owner")]
+      [target : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-target")]
+      [token : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-token")]
+      [_bind : unit
+        (tc_core.tc-macro-state-bind-source-names!
+          (tc_core.tc-job-state-macro-state job)
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [base : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+      [env : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-ordinary-arena-owner base owner)
+          target
+          (I64))]
+      [region : i64 (tc_core.tc-arena-phase-region-id env owner token)]
+      [before : bool
+        (and
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env
+            region
+            target)
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env
+            region
+            target))]
+      [active-generation : i64 (ci.intern-generation)]
+      ;; Reset this explicit session without moving the installed interner or
+      ;; rebuilding the environment: its arena-phase identity becomes stale.
+      (ci.intern-compat-state-reset! (&mut intern-state))
+      (unless
+        (and
+          before
+          (= active-generation (ci.intern-generation))
+          (not
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-scan-id?
+              env
+              region
+              target))
+          (not
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              region
+              target)))
+        (io.panic
+          "typecheck: lifetime memo reused an arena identity after its session reset")))))

@@ -192,11 +192,13 @@
 
 (define (fmt-cst-count [node : cst.FormatCst]) : i64
   (match node
-    [(or (Atom _) (Comment _)) 1]
-    [(or (Prefix _ child) (Projection child _))
-      (+ 1 (fmt-cst-count (deref child)))]
-    [(or (List items) (BracketList items) (Forms items))
-      (+ 1 (fmt-cst-list-total (deref items)))]))
+    [(Atom _) 1]
+    [(Comment _) 1]
+    [(Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
+    [(Projection child _) (+ 1 (fmt-cst-count (deref child)))]
+    [(List items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
 
 (define (fmt-cst-list-total [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
@@ -207,10 +209,11 @@
   (match node
     [(Atom _) 0]
     [(Comment _) 1]
-    [(or (Prefix _ child) (Projection child _))
-      (fmt-cst-comment-count (deref child))]
-    [(or (List items) (BracketList items) (Forms items))
-      (fmt-cst-list-comment-count (deref items))]))
+    [(Prefix _ child) (fmt-cst-comment-count (deref child))]
+    [(Projection child _) (fmt-cst-comment-count (deref child))]
+    [(List items) (fmt-cst-list-comment-count (deref items))]
+    [(BracketList items) (fmt-cst-list-comment-count (deref items))]
+    [(Forms items) (fmt-cst-list-comment-count (deref items))]))
 
 (define (fmt-cst-list-comment-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
@@ -220,11 +223,13 @@
 
 (define (fmt-cst-bracket-count [node : cst.FormatCst]) : i64
   (match node
-    [(or (Atom _) (Comment _)) 0]
-    [(or (Prefix _ child) (Projection child _))
-      (fmt-cst-bracket-count (deref child))]
+    [(Atom _) 0]
+    [(Comment _) 0]
+    [(Prefix _ child) (fmt-cst-bracket-count (deref child))]
+    [(Projection child _) (fmt-cst-bracket-count (deref child))]
+    [(List items) (fmt-cst-list-bracket-count (deref items))]
     [(BracketList items) (+ 1 (fmt-cst-list-bracket-count (deref items)))]
-    [(or (List items) (Forms items)) (fmt-cst-list-bracket-count (deref items))]))
+    [(Forms items) (fmt-cst-list-bracket-count (deref items))]))
 
 (define (fmt-cst-list-bracket-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)

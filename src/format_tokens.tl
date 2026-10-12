@@ -136,8 +136,11 @@
     [(Dot) "."]
     [(Comma) ","]
     [(CommaAt) ",@"]
-    [(or (Int text) (Symbol text) (String text) (Char text) (Comment text))
-      text]
+    [(Int text) text]
+    [(Symbol text) text]
+    [(String text) text]
+    [(Char text) text]
+    [(Comment text) text]
     [(End) ""]))
 
 (define (format-token-at [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatToken

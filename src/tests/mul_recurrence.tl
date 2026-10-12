@@ -157,8 +157,7 @@
     (when
       (!= mode 5)
       (test.assert-true
-        (opt.opt-verify-ok?
-          (opt.opt-verify-function (view.compiler-owned-shared-view out)))
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
         "rewriting retains a valid SSA control-flow graph"))
     (test.assert-i64-eq
       (opt.opt-function-frame out)

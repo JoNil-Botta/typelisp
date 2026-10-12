@@ -165,7 +165,8 @@
   test
   (define (package-source-binding-test-remove [path : (& path str)]) : unit
     (match (fs.try-remove-file path)
-      [(or (OkIoUnit) (ErrIoUnit _)) unit])))
+      [(OkIoUnit) unit]
+      [(ErrIoUnit _) unit])))
 
 (cfg
   test

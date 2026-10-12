@@ -55,6 +55,17 @@ The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
 
+## Persistent lifetime memo
+
+The `lifetime-outlives-memo-*` inline tests in
+`src/tests/compiler_typecheck_core_tests.tl` cover lexical ordering and shadowing,
+more distinct lifetime pairs than memo slots, local environment cache layers,
+invalid/missing lifetimes, interleaved jobs, allocation under a retired decoy
+arena, job reset/destruction, reused function scratch, and explicit structural
+session reset while the installed interner stays unchanged. Run them at opt0,
+opt1 and opt2. The normal safety and integration corpora keep reference coercion
+and arena-escape diagnostics covered through the compiler entry points.
+
 ## Intern ID provenance
 
 The ID provenance contract is stated at the top of
@@ -127,7 +138,27 @@ duplicate and nonliteral definitions, missing and boundary IDs, traversal
 order, and rescanning retained input. Keep both the counter and admission
 coverage when changing this scanner.
 
+`string-literal-length-fold` checks empty and UTF-8 byte lengths, direct and
+variable literal bases, both length-slot GEP spellings, parameter/duplicate
+definitions, address-taken bases and destinations, and unsupported offsets and
+load types. `tests/integration/string_literal_eq.tl` checks every comparison
+width and runtime equal/different values at opt0/1/2 on both hosts; the matching
+assembly case pins the specialized four-byte comparison.
+
 ## Move joins and diverging arms
+
+`match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
+projected storage after pattern binding, including dynamic indexes, or-patterns,
+branches, nested shadowing, loops and an unused reference payload. Its native
+rows run at opt0/1/2 and assert the original Copy values. Keep the existing
+`borrowed_pattern_copy_deferred_ok` matrix: calls and stores must force eager
+payload snapshots when lowering cannot prove that every read precedes a write.
+The paired `match_copy_*_loan_reject` and `match_reference_result_loan_reject`
+cases retain earlier argument loans, loop-carried references, scrutinee stores
+and reference-valued arm results. The scrutinee-store case must still reject
+when the arm itself never reads the stored reference. The shadowed-owner and
+shadowed-result cases use exhaustive single-arm matches, so another arm cannot
+accidentally preserve the loan that a shadowing pattern binding would erase.
 
 `tests/safety/move_diverging_*` and `move_*_reject` run the programs that an
 early `return`, `break`, `continue` or `never` call used to poison, next to the
@@ -845,6 +876,13 @@ framed stdio JSON-RPC. Its request timers read `date +%s%N` (GNU coreutils,
 BusyBox or MSYS2) and stop when the response header arrives. Each timer
 includes one `date` spawn, so sub-millisecond requests read as about a
 millisecond.
+
+The `compiler-ast-persist-span` inline test in
+`src/tests/compiler_ast_types_smoke.tl` checks ownership-only macro copy-out at
+empty, singleton and re-span capacity boundaries. It retains distinct views of
+shared nodes, destroys the source payload arena, and repeats copy-out while
+requiring unchanged node ids, provenance counts/capacities and the span oracle.
+Run it at opt0/1/2 alongside the existing span-sidecar and semantic-rewrite tests.
 
 ### Allocation profile rows
 

@@ -1000,10 +1000,11 @@
 (define (selfhost-lint-unsafe-surface-value-kind?
   [kind : compiler_load.CompilerLoadSurfaceDeclKind]) : bool
   (match kind
-    [(or (CompilerLoadSurfaceFunction) (CompilerLoadSurfaceExtern)
-         (CompilerLoadSurfaceStruct) (CompilerLoadSurfaceEnum)
-         (CompilerLoadSurfaceDispatch))
-      true]
+    [(CompilerLoadSurfaceFunction) true]
+    [(CompilerLoadSurfaceExtern) true]
+    [(CompilerLoadSurfaceStruct) true]
+    [(CompilerLoadSurfaceEnum) true]
+    [(CompilerLoadSurfaceDispatch) true]
     [_ false]))
 
 (define (selfhost-lint-unsafe-surface-copy-decls
@@ -2056,10 +2057,27 @@
             visible-root
             allow-report
             (deref body-box))]
-        [(or (Module _) (IncludeStr _ _) (IncludeStrComptime _ _)
-             (IncludeStrLzss _ _) (IncludeBin _ _))
-          scan]
-        [(or (Def _ name _ body) (DefFn _ name _ _ body _))
+        [(Module _) scan]
+        [(Def _ name _ body)
+          (let
+            [text : String (ci.intern-str name)]
+            [span : ast.AstSourceSpan
+              (selfhost-lint-dead-decl-span
+                source
+                (owned_view.compiler-owned-shared-view text)
+                (selfhost-lint-dead-expr-span body))]
+            (selfhost-lint-dead-add-visible-node
+              scan
+              path
+              module
+              source
+              text
+              span
+              (selfhost-lint-dead-decl-refs
+                (owned_view.compiler-owned-shared-view decl))
+              visible-root
+              allow-report))]
+        [(DefFn _ name _ _ body _)
           (let
             [text : String (ci.intern-str name)]
             [span : ast.AstSourceSpan
@@ -2090,9 +2108,57 @@
               (owned_view.compiler-owned-shared-view decl))
             visible-root
             allow-report)]
-        [(or (Extern _ name _ _ _) (DefEnum _ name _ _)
-             (DefEnumLifetimes _ name _ _ _) (DefStruct _ name _ _ _)
-             (DefStructLifetimes _ name _ _ _ _) (DefDispatch _ name _))
+        [(Extern _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        [(DefEnum _ name _ _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        [(DefEnumLifetimes _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        [(DefStruct _ name _ _ _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        [(DefStructLifetimes _ name _ _ _ _)
+          (selfhost-lint-dead-add-no-span-node
+            scan
+            path
+            module
+            source
+            (owned_view.compiler-owned-shared-view decl)
+            name
+            visible-root
+            allow-report)]
+        [(DefDispatch _ name _)
           (selfhost-lint-dead-add-no-span-node
             scan
             path
@@ -2104,11 +2170,20 @@
             allow-report)]
         ;; Macro imports and tests reference their names from outside any
         ;; declaration; other imports reference none.
-        [(or (Import _ _) (Test _ _ _ _))
+        [(Import _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-decl-refs
               (owned_view.compiler-owned-shared-view decl)))]
+        [(Test _ _ _ _)
+          (selfhost-lint-dead-refs-to-roots
+            scan
+            (selfhost-lint-dead-decl-refs
+              (owned_view.compiler-owned-shared-view decl)))]
+        [(IncludeStr _ _) scan]
+        [(IncludeStrComptime _ _) scan]
+        [(IncludeStrLzss _ _) scan]
+        [(IncludeBin _ _) scan]
         [(Unsafe inner)
           (selfhost-lint-dead-scan-decl
             scan

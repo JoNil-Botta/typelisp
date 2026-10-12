@@ -219,8 +219,8 @@
 
 (define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : compiler_ast_types.AstExpr
   (match (compiler_ast_types.ast-node-get node)
-    [(or (Spanned inner _) (MacroExpansion inner _ _))
-      (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(Spanned inner _) (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(MacroExpansion inner _ _) (embedded-stdlib-tlci-unwrap-expr inner)]
     [_ (compiler_ast_types.ast-node-get node)]))
 
 ;; Is this template position an unquote? Its substituted value already carries
@@ -4131,7 +4131,8 @@
 ;: Refs #5701.
 (define (embedded-native-data-cast-type? [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(or (I64) (Char)) true]
+    [(I64) true]
+    [(Char) true]
     [_ false]))
 
 ;: The generated i64 text of a canonical int literal, a compile-time data
@@ -5883,7 +5884,8 @@
                   (= argc 1)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                    [(or (If _ _ _) (Match _)) true]
+                    [(If _ _ _) true]
+                    [(Match _) true]
                     [(Call inner-func inner-args)
                       (match (embedded-stdlib-tlci-unwrap-expr inner-func)
                         [(Var inner-head-id)
@@ -5905,14 +5907,16 @@
                                   (& inner-args)
                                   0
                                   0))
-                                [(or (If _ _ _) (Match _)) true]
+                                [(If _ _ _) true]
+                                [(Match _) true]
                                 [_ false])
                               (match (embedded-stdlib-tlci-unwrap-expr
                                 (compiler_ast_types.ast-expr-list-get
                                   (& inner-args)
                                   1
                                   0))
-                                [(or (If _ _ _) (Match _)) true]
+                                [(If _ _ _) true]
+                                [(Match _) true]
                                 [_ false])))]
                         [_ false])]
                     [_ false]))
@@ -5936,11 +5940,13 @@
                   (or
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                      [(or (If _ _ _) (Match _)) true]
+                      [(If _ _ _) true]
+                      [(Match _) true]
                       [_ false])
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                      [(or (If _ _ _) (Match _)) true]
+                      [(If _ _ _) true]
+                      [(Match _) true]
                       [_ false])))
                 (embedded-native-computed-binary-code
                   params
@@ -5960,7 +5966,8 @@
                   (= argc 2)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                    [(or (Match _) (If _ _ _)) true]
+                    [(Match _) true]
+                    [(If _ _ _) true]
                     [_ false]))
                 (embedded-native-computed-binary-code
                   params
@@ -8043,7 +8050,9 @@
                     rest
                     ")\n"))))]
           [(Wildcard) (embedded-native-body-code params body-node)]
-          [(or (Binding binder) (Var binder (No)))
+          [(Binding binder)
+            (embedded-native-int-match-default params body-node binder name)]
+          [(Var binder (No))
             (embedded-native-int-match-default params body-node binder name)]
           [_ ""])])))
 
@@ -8486,7 +8495,7 @@
     target)
     [(Ok program spans)
       (match (compiler_optimize.optimize-program-with-spans-and-level
-        program
+        (& program)
         spans
         (embedded-native-opt-level))
         [(Program optimized optimized-spans) (Ok optimized optimized-spans)])]

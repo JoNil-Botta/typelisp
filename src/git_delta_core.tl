@@ -824,7 +824,20 @@
                     (match (& entry.body)
                       [(Stored _ _)
                         (return (Err "git delta: invalid stored entry state"))]
-                      [(or (Ofs _ expected delta) (Ref _ expected delta))
+                      [(Ofs _ expected delta)
+                        (unless
+                          (git-delta-expected-kind-matches? expected base-kind)
+                          (return (Err "git delta: object type mismatch")))
+                        (let
+                          [object
+                            (try
+                              (git-delta-apply-with-budget
+                                (& base-bytes)
+                                delta
+                                limits
+                                (&mut budget)))]
+                          (set! (array-ref objects slot) object))]
+                      [(Ref _ expected delta)
                         (unless
                           (git-delta-expected-kind-matches? expected base-kind)
                           (return (Err "git delta: object type mismatch")))

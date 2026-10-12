@@ -124,7 +124,9 @@
 (define (pointer-proof-operation-conversion?
   [operation : PointerProofOperation]) : bool
   (match operation
-    [(or (PointerCast) (PointerToInteger) (IntegerToPointer)) true]
+    [(PointerCast) true]
+    [(PointerToInteger) true]
+    [(IntegerToPointer) true]
     [_ false]))
 
 (define (pointer-proof-input-new) : PointerProofInput

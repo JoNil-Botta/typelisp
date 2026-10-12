@@ -145,7 +145,11 @@
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
     [(Ok decl)
       (match decl
-        [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
+        [(DefEnum decl-meta _ _ variants)
+          (compiler-symbols-option-or
+            (csym.compiler-variant-name-id-at-index variants variant-index 0)
+            -1)]
+        [(DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-symbols-option-or
             (csym.compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
@@ -170,7 +174,9 @@
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
     [(Ok decl)
       (match decl
-        [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
+        [(DefStruct decl-meta _ _ _ fields)
+          (compiler-field-name-id-at-index fields field-index)]
+        [(DefStructLifetimes decl-meta _ _ _ _ fields)
           (compiler-field-name-id-at-index fields field-index)]
         [_ -1])]
     [(Err _) -1]))
@@ -188,7 +194,8 @@
   (match (csym.compiler-symbols-decl-at-index symbols target)
     [(Ok (Def decl-meta _ _ value))
       (compiler-symbols-expr-source-id (ast.ast-node-get value))]
-    [(or (Ok _) (Err _)) -1]))
+    [(Ok _) -1]
+    [(Err _) -1]))
 
 (define (compiler-symbol-lookup-score
   [found : option_i64.Option]
@@ -863,7 +870,8 @@
           symbols
           handle)
           [(Ok (I64)) true]
-          [(or (Ok _) (Err _)) false]))]
+          [(Ok _) false]
+          [(Err _) false]))]
     [(None) false]))
 
 (define (compiler-registries-lifetime-field-indexed-ok?) : bool

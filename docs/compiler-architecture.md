@@ -149,6 +149,16 @@ proof; loops, captures, address-taking and unmodeled uses require an eager copy.
 Deferred IDs name fresh locals and keep their by-value type. Reading one emits
 a load, and borrowing one first copies the loaded value into its own storage.
 
+Borrow checking prunes fresh match-scrutinee loans after binding each pattern,
+using the arm environment and the existing lifetime/free-use scan. Copy-only
+bindings do not keep the source loan alive; reference-bearing bindings do.
+Incoming loans and loans stored by scrutinee evaluation stay protected in both
+ordinary and loop arms. The join unions the checked arm states rather than
+restoring the unpruned scrutinee state, so a copied payload can outlive a write
+to its source while an escaping reference still protects that source. Pattern
+scope exit restores captured outer root states for shadowed names; clearing a
+pattern local must not erase an incoming or escaping loan of the hidden owner.
+
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends
 with the call. Typechecking rejects any result or mutable referent that could
@@ -453,8 +463,10 @@ Declaration-producing macro expansion threads that environment through scratch
 generations and reparses both `Decls` and `Module` output with that same
 environment. Generated predicates use the canonical parser evaluator;
 constructing an empty dispatch would silently drop enabled declarations. Syntax
-head classification does not evaluate predicates and may use the cfg-free
-keyword table. The lowerer's closed core-macro Clone handoff supplies its explicit
+head classification does not evaluate predicates and reads the cfg-free
+keyword index directly, refreshing its cached base for the current intern
+table/generation without appending invocation bindings. The lowerer's closed
+core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
@@ -503,6 +515,14 @@ row owns. Origin records are written and scanned by marker id (reset-aware
 builtin ids). The views render Int and Float text as a shared view of the
 interned spelling. A consumer that keeps a spelling past an intern reset copies
 it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
+
+Macro generation copy-out persists expression payloads in place: all expression
+ids, wrapper targets, and wrapper spans remain unchanged. It shares the row-write
+and protected-node journal operation with ordinary rewrites, but retains the
+existing provenance slots and span records. Registering those wrappers again
+would duplicate per-use re-span records. Semantic rewrites still use the
+span-updating setter, and whole-program compaction rebuilds provenance for its
+new ids.
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and
@@ -697,8 +717,15 @@ A global's IR initializer takes one of three forms:
 
 Mutable typecheck caches, indexes and traversal state belong to the compiler
 job's `TcJobState`, never to process-wide cells, so resetting or destroying one
-job cannot disturb another. A value that is a pure function of intern ids is
-not cached at all: a stdlib comptime syntax type is recognised by decomposing
+job cannot disturb another. Persistent lifetime-outlives answers use lazy fixed
+storage in the job's existing type-resolution cache. Entries retain scalar
+store/head and lifetime identities only; store retirement epochs, structural
+session owner/reset generation, installed intern owner/generation and the job's
+reset epoch
+reject stale or reused identities. Allocation always selects the job owner
+arena, including when a function scratch arena is current.
+
+A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
@@ -981,9 +1008,19 @@ has no input arena and reads the tiny-leaf stage's arena in place.
 The checked inliner's literal-argument scan borrows dense block storage directly.
 It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer
-literal, even after a duplicate makes specialization ineligible. Keep traversal
+or string literal, even after a duplicate makes specialization ineligible. String
+literal flags select parallel text lanes; adopting a site copies its text, and
+unpublishing a caller clears those lanes before its scratch phase is rewound.
+Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
+
+The constant-length rewrite also recognizes literal String descriptors. Their
+read-only length word contains the byte length, including for empty and UTF-8
+text. It folds only i64 loads from that slot. Both a literal-backed variable
+and the GEP destination must have one definition, counting parameters, and
+neither may have its address taken. Other fields, offsets and load types retain
+their memory operations. Literal lengths do not depend on global initialization.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
@@ -1453,6 +1490,17 @@ table and the gates; read it before changing CI structure.
 
 `typelisp --help` lists the commands and the global and common options;
 `typelisp <command> --help` shows each command's options.
+
+`typelisp expand` and LSP `tl/expandMacro` share the query in
+`compiler_expand_query.tl`. It checks the source through the production
+pipeline, then walks checked `MacroExpansion` nodes to select the innermost
+invocation at the requested position and report its enclosing frames. Rendering
+uses the existing macro-expression converter and formatter, with an explicit
+byte bound. Frame identities and AST nodes belong to that check's pool and
+intern session; consumers render their response before the session retires.
+Inspection does not evaluate transformers a second time or run generated code.
+LSP positions use the negotiated encoding and must identify an exact position
+in the document; invalid coordinates are rejected before checking the source.
 
 Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
 default output target; `test` defaults to the host), `--backend-mode

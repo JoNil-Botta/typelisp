@@ -386,7 +386,8 @@
           [(Err message) (string.eq message expected)]
           [(Ok region)
             (match (tlci-pages-release region)
-              [(or (Ok) (Err _)) false])])))))
+              [(Ok) false]
+              [(Err _) false])])))))
 
 (test
   tlci-pages-first-error-policy

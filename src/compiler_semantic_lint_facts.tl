@@ -327,10 +327,9 @@
       [(CompilerSemanticFactReliability.Reliable) true]
       [_ false])
     (match fact.provenance
-      [(or (CompilerSemanticFactProvenance.Source)
-           (CompilerSemanticFactProvenance.MacroArgument)
-           (CompilerSemanticFactProvenance.CheckedGenerated))
-        true]
+      [(CompilerSemanticFactProvenance.Source) true]
+      [(CompilerSemanticFactProvenance.MacroArgument) true]
+      [(CompilerSemanticFactProvenance.CheckedGenerated) true]
       [_ false])))
 
 (define (compiler-semantic-fact-recorder-grow!
@@ -390,9 +389,10 @@
 
 (define (compiler-semantic-fact-direct-nominal-name [ty : ast.AstType]) : i64
   (match ty
-    [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _)
-         (ast.AstType.Enum name) (ast.AstType.EnumArgs name _))
-      name]
+    [(ast.AstType.Struct name) name]
+    [(ast.AstType.StructArgs name _) name]
+    [(ast.AstType.Enum name) name]
+    [(ast.AstType.EnumArgs name _) name]
     [_ -1]))
 
 (define (compiler-semantic-fact-handle-identity
@@ -568,11 +568,10 @@
             [(option_i64.None) -1])]
         [nominal : bool
           (match decl
-            [(or (ast.AstDecl.DefStruct _ _ _ _ _)
-                 (ast.AstDecl.DefStructLifetimes _ _ _ _ _ _)
-                 (ast.AstDecl.DefEnum _ _ _ _)
-                 (ast.AstDecl.DefEnumLifetimes _ _ _ _ _))
-              true]
+            [(ast.AstDecl.DefStruct _ _ _ _ _) true]
+            [(ast.AstDecl.DefStructLifetimes _ _ _ _ _ _) true]
+            [(ast.AstDecl.DefEnum _ _ _ _) true]
+            [(ast.AstDecl.DefEnumLifetimes _ _ _ _ _) true]
             [_ false])]
         [nominal-name : i64
           (if nominal
@@ -988,7 +987,9 @@
         (& pools)
         (& (tc.tc-context-expr-get ctx expression)))]
     (match expr
-      [(or (ast.AstExpr.Var _) (ast.AstExpr.Call _ _))
+      [(ast.AstExpr.Var _)
+        (compiler-semantic-fact-reference-identity recorder ctx env)]
+      [(ast.AstExpr.Call _ _)
         (compiler-semantic-fact-reference-identity recorder ctx env)]
       [(ast.AstExpr.Binary operation _ _)
         (compiler-semantic-fact-core-operation
@@ -1227,8 +1228,15 @@
                   (array-ref data.frames (- data.frame-count 1)).expression)))
               [(ast.AstExpr.Foreach payload)
                 (match (ast.ast-foreach-box-shared-view payload)
-                  [(or (ast.AstForeach.Foreach _ _ _ _ body)
-                       (ast.AstForeach.Foreach2 _ _ _ _ _ _ _ _ body))
+                  [(ast.AstForeach.Foreach _ _ _ _ body)
+                    (or
+                      (= expression body)
+                      (=
+                        (ast.ast-node-pool-context-expr-source-owner
+                          (& pools)
+                          expression)
+                        body))]
+                  [(ast.AstForeach.Foreach2 _ _ _ _ _ _ _ _ body)
                     (or
                       (= expression body)
                       (=
@@ -1286,12 +1294,14 @@
         [(ast.AstExpr.Let payload)
           (match (ast.ast-let-box-shared-view payload)
             [(ast.AstLet.Let _ body) body])]
-        [(or (ast.AstExpr.Match _) (ast.AstExpr.Foreach _)
-             (ast.AstExpr.SpmdReduce _) (ast.AstExpr.SpmdScan _)
-             (ast.AstExpr.SpmdCompact _) (ast.AstExpr.WithResource _)
-             (ast.AstExpr.WithRegion _ _))
-          expression]
+        [(ast.AstExpr.Match _) expression]
+        [(ast.AstExpr.Foreach _) expression]
         [(ast.AstExpr.ForeachActive _ body) body]
+        [(ast.AstExpr.SpmdReduce _) expression]
+        [(ast.AstExpr.SpmdScan _) expression]
+        [(ast.AstExpr.SpmdCompact _) expression]
+        [(ast.AstExpr.WithResource _) expression]
+        [(ast.AstExpr.WithRegion _ _) expression]
         [_ data.current-scope])]
     [fallback : CompilerSemanticFactProvenance
       (if (> data.expansion-depth 0)
@@ -1806,10 +1816,9 @@
   (let
     [entry-path : String
       (match (owned_view.compiler-owned-shared-view request.input)
-        [(or (check.CompilerSemanticCheckInput.Source path _)
-             (check.CompilerSemanticCheckInput.File path)
-             (check.CompilerSemanticCheckInput.PackageEntry path _ _ _))
-          path])]
+        [(check.CompilerSemanticCheckInput.Source path _) path]
+        [(check.CompilerSemanticCheckInput.File path) path]
+        [(check.CompilerSemanticCheckInput.PackageEntry path _ _ _) path])]
     [recorder : CompilerSemanticFactRecorder
       (in-arena
         request.facts-arena

@@ -502,9 +502,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (load.compiler-load-file-with-paths-and-roots-cfg
-    source
+    (& source)
     (sym_i64_env.sym-i64-empty)
-    stdlib-roots
+    (& stdlib-roots)
     cfgs)
     [(Ok decls _ _ _)
       (Ok

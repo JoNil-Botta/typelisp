@@ -1,5 +1,8 @@
 ;; compiler_surface_ast_expr.tl - exhaustive expression surface codec.
 (import compiler_ast_types as ast)
+
+;; lint-allow: unused-import -- used only by cfg-gated code.
+(import compiler_owned_view as owned_view)
 (import compiler_intern as ci)
 (import compiler_surface_ast_codec_core as codec)
 
@@ -33,7 +36,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-expr-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [items : ast.AstExprList]) : unit
+    [items : (& ast.AstExprList)]) : unit
     (let
       [index : i64 0]
       [count : i64 items.len]
@@ -58,11 +61,11 @@
   (define (surface-ast-write-param!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [param : ast.AstParam]) : unit
+    [param : (& ast.AstParam)]) : unit
     (match param
       [(Param name ty is-comptime)
         (codec.surface-ast-write-name! out context name)
-        (codec.surface-ast-write-type! out context ty)
+        (codec.surface-ast-write-type! out context (& ty))
         (codec.surface-ast-write-bool! out is-comptime)])))
 
 (define (surface-ast-read-param!
@@ -77,7 +80,7 @@
   (define (surface-ast-write-param-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [params : ast.AstParamList]) : unit
+    [params : (& ast.AstParamList)]) : unit
     (let
       [index : i64 0]
       [count : i64 params.len]
@@ -86,7 +89,7 @@
         (surface-ast-write-param!
           out
           context
-          (ast.ast-array-shared-view params.slots index))
+          (& (array-ref params.slots index)))
         (set! index (+ index 1))))))
 
 (define (surface-ast-read-param-list!
@@ -105,7 +108,7 @@
   (define (surface-ast-write-pattern-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [patterns : ast.AstPatternList]) : unit
+    [patterns : (& ast.AstPatternList)]) : unit
     (let
       [index : i64 0]
       [count : i64 patterns.len]
@@ -114,7 +117,7 @@
         (surface-ast-write-pattern!
           out
           context
-          (ast.ast-array-shared-view patterns.slots index))
+          (& (array-ref patterns.slots index)))
         (set! index (+ index 1))))))
 
 (cfg
@@ -122,22 +125,22 @@
   (define (surface-ast-write-pattern!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [pattern : ast.AstPattern]) : unit
+    [pattern : (& ast.AstPattern)]) : unit
     (match pattern
       [(Var name maybe-ty)
         (codec.surface-ast-write-i64! out 0)
         (codec.surface-ast-write-name! out context name)
-        (codec.surface-ast-write-maybe-type! out context maybe-ty)]
+        (codec.surface-ast-write-maybe-type! out context (& maybe-ty))]
       [(Tuple items)
         (codec.surface-ast-write-i64! out 1)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Array items)
         (codec.surface-ast-write-i64! out 6)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Slice items has-rest)
         (codec.surface-ast-write-i64! out 7)
         (codec.surface-ast-write-bool! out has-rest)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Wildcard) (codec.surface-ast-write-i64! out 2)]
       [(Binding name)
         (codec.surface-ast-write-i64! out 3)
@@ -145,20 +148,20 @@
       [(Variant name items)
         (codec.surface-ast-write-i64! out 4)
         (codec.surface-ast-write-name! out context name)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Literal literal)
         (codec.surface-ast-write-i64! out 5)
-        (codec.surface-ast-write-literal! out context literal)]
+        (codec.surface-ast-write-literal! out context (& literal))]
       [(Or items)
         (codec.surface-ast-write-i64! out 8)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Fields items)
         (codec.surface-ast-write-i64! out 9)
-        (surface-ast-write-pattern-list! out context (deref items))]
+        (surface-ast-write-pattern-list! out context (& (deref items)))]
       [(Field name items)
         (codec.surface-ast-write-i64! out 10)
         (codec.surface-ast-write-name! out context name)
-        (surface-ast-write-pattern-list! out context (deref items))])))
+        (surface-ast-write-pattern-list! out context (& (deref items)))])))
 
 (define (surface-ast-read-pattern-list!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPatternList
@@ -211,7 +214,7 @@
   (define (surface-ast-write-let-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [bindings : ast.AstLetBindingList]) : unit
+    [bindings : (& ast.AstLetBindingList)]) : unit
     (let
       [index : i64 0]
       [count : i64 bindings.len]
@@ -220,7 +223,7 @@
         (match (ast.ast-array-shared-view bindings.slots index)
           [(Binding name maybe-ty value)
             (codec.surface-ast-write-name! out context name)
-            (codec.surface-ast-write-maybe-type! out context maybe-ty)
+            (codec.surface-ast-write-maybe-type! out context (& maybe-ty))
             (codec.surface-ast-write-i64! out value)])
         (set! index (+ index 1))))))
 
@@ -246,7 +249,7 @@
   (define (surface-ast-write-resource-binding-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [bindings : ast.AstResourceBindingList]) : unit
+    [bindings : (& ast.AstResourceBindingList)]) : unit
     (let
       [index : i64 0]
       [count : i64 bindings.len]
@@ -283,7 +286,7 @@
   (define (surface-ast-write-match-arm-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [arms : ast.AstMatchArmList]) : unit
+    [arms : (& ast.AstMatchArmList)]) : unit
     (let
       [index : i64 0]
       [count : i64 arms.len]
@@ -291,7 +294,7 @@
       (while (< index count)
         (match (ast.ast-array-shared-view arms.slots index)
           [(Arm pattern body)
-            (surface-ast-write-pattern! out context pattern)
+            (surface-ast-write-pattern! out context (& pattern))
             (codec.surface-ast-write-i64! out body)])
         (set! index (+ index 1))))))
 
@@ -316,15 +319,15 @@
   (define (surface-ast-write-expr!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [expr : ast.AstExpr]) : unit
-    (match expr
+    [expr : (& ast.AstExpr)]) : unit
+    (match (owned_view.compiler-owned-reference-shared-view expr)
       [(Spanned inner span)
         (codec.surface-ast-write-i64! out 0)
         (codec.surface-ast-write-i64! out inner)
         (codec.surface-ast-write-span! out span)]
       [(Literal literal)
         (codec.surface-ast-write-i64! out 1)
-        (codec.surface-ast-write-literal! out context literal)]
+        (codec.surface-ast-write-literal! out context (& literal))]
       [(Var name)
         (codec.surface-ast-write-i64! out 2)
         (codec.surface-ast-write-name! out context name)]
@@ -340,7 +343,7 @@
       [(Call callee args)
         (codec.surface-ast-write-i64! out 5)
         (codec.surface-ast-write-i64! out callee)
-        (surface-ast-write-expr-list! out args)]
+        (surface-ast-write-expr-list! out (& args))]
       [(If condition then-expr else-expr)
         (codec.surface-ast-write-i64! out 6)
         (codec.surface-ast-write-i64! out condition)
@@ -350,28 +353,28 @@
         (match (deref payload)
           [(Let bindings body)
             (codec.surface-ast-write-i64! out 7)
-            (surface-ast-write-let-binding-list! out context bindings)
+            (surface-ast-write-let-binding-list! out context (& bindings))
             (codec.surface-ast-write-i64! out body)])]
       [(Lambda payload)
         (match (deref payload)
           [(Lambda params ret body)
             (codec.surface-ast-write-i64! out 8)
-            (surface-ast-write-param-list! out context params)
-            (codec.surface-ast-write-maybe-type! out context ret)
+            (surface-ast-write-param-list! out context (& params))
+            (codec.surface-ast-write-maybe-type! out context (& ret))
             (codec.surface-ast-write-i64! out body)])]
       [(Tuple items)
         (codec.surface-ast-write-i64! out 9)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(TupleRef target index)
         (codec.surface-ast-write-i64! out 10)
         (codec.surface-ast-write-i64! out target)
         (codec.surface-ast-write-i64! out index)]
       [(Array items)
         (codec.surface-ast-write-i64! out 11)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(DynArray items)
         (codec.surface-ast-write-i64! out 12)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(FixedMakeArray ty-id size)
         (codec.surface-ast-write-i64! out 85)
         (codec.surface-ast-write-i64! out ty-id)
@@ -409,13 +412,13 @@
       [(While condition body)
         (codec.surface-ast-write-i64! out 19)
         (codec.surface-ast-write-i64! out condition)
-        (surface-ast-write-expr-list! out body)]
+        (surface-ast-write-expr-list! out (& body))]
       [(Begin items)
         (codec.surface-ast-write-i64! out 20)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(Unsafe items)
         (codec.surface-ast-write-i64! out 21)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(Set name value)
         (codec.surface-ast-write-i64! out 22)
         (codec.surface-ast-write-name! out context name)
@@ -441,13 +444,13 @@
           [(Match scrutinee arms)
             (codec.surface-ast-write-i64! out 26)
             (codec.surface-ast-write-i64! out scrutinee)
-            (surface-ast-write-match-arm-list! out context arms)])]
+            (surface-ast-write-match-arm-list! out context (& arms))])]
       [(Foreach payload)
         (match (deref payload)
           [(Foreach name index-ty start end body)
             (codec.surface-ast-write-i64! out 27)
             (codec.surface-ast-write-name! out context name)
-            (codec.surface-ast-write-type! out context index-ty)
+            (codec.surface-ast-write-type! out context (& index-ty))
             (codec.surface-ast-write-i64! out start)
             (codec.surface-ast-write-i64! out end)
             (codec.surface-ast-write-i64! out body)]
@@ -463,11 +466,11 @@
             body)
             (codec.surface-ast-write-i64! out 89)
             (codec.surface-ast-write-name! out context outer)
-            (codec.surface-ast-write-type! out context outer-ty)
+            (codec.surface-ast-write-type! out context (& outer-ty))
             (codec.surface-ast-write-i64! out outer-start)
             (codec.surface-ast-write-i64! out outer-end)
             (codec.surface-ast-write-name! out context inner)
-            (codec.surface-ast-write-type! out context inner-ty)
+            (codec.surface-ast-write-type! out context (& inner-ty))
             (codec.surface-ast-write-i64! out inner-start)
             (codec.surface-ast-write-i64! out inner-end)
             (codec.surface-ast-write-i64! out body)])]
@@ -477,7 +480,7 @@
             (codec.surface-ast-write-i64! out 28)
             (codec.surface-ast-write-reduce-op! out op)
             (codec.surface-ast-write-name! out context index)
-            (codec.surface-ast-write-type! out context index-ty)
+            (codec.surface-ast-write-type! out context (& index-ty))
             (codec.surface-ast-write-i64! out start)
             (codec.surface-ast-write-i64! out end)
             (codec.surface-ast-write-i64! out init)
@@ -488,11 +491,11 @@
             (codec.surface-ast-write-i64! out 29)
             (codec.surface-ast-write-reduce-op! out op)
             (codec.surface-ast-write-name! out context index)
-            (codec.surface-ast-write-type! out context index-ty)
+            (codec.surface-ast-write-type! out context (& index-ty))
             (codec.surface-ast-write-i64! out start)
             (codec.surface-ast-write-i64! out end)
             (codec.surface-ast-write-name! out context prefix)
-            (codec.surface-ast-write-type! out context prefix-ty)
+            (codec.surface-ast-write-type! out context (& prefix-ty))
             (codec.surface-ast-write-i64! out init)
             (codec.surface-ast-write-i64! out value)
             (codec.surface-ast-write-i64! out body)])]
@@ -501,11 +504,11 @@
           [(Compact index index-ty start end slot slot-ty init keep body)
             (codec.surface-ast-write-i64! out 86)
             (codec.surface-ast-write-name! out context index)
-            (codec.surface-ast-write-type! out context index-ty)
+            (codec.surface-ast-write-type! out context (& index-ty))
             (codec.surface-ast-write-i64! out start)
             (codec.surface-ast-write-i64! out end)
             (codec.surface-ast-write-name! out context slot)
-            (codec.surface-ast-write-type! out context slot-ty)
+            (codec.surface-ast-write-type! out context (& slot-ty))
             (codec.surface-ast-write-i64! out init)
             (codec.surface-ast-write-i64! out keep)
             (codec.surface-ast-write-i64! out body)])]
@@ -550,24 +553,24 @@
       [(WithRegion region body)
         (codec.surface-ast-write-i64! out 36)
         (codec.surface-ast-write-name! out context region)
-        (surface-ast-write-expr-list! out body)]
+        (surface-ast-write-expr-list! out (& body))]
       [(WithEscape escape body)
         (codec.surface-ast-write-i64! out 37)
         (codec.surface-ast-write-i64! out escape)
-        (surface-ast-write-expr-list! out body)]
+        (surface-ast-write-expr-list! out (& body))]
       [(WithScratch body)
         (codec.surface-ast-write-i64! out 38)
-        (surface-ast-write-expr-list! out body)]
+        (surface-ast-write-expr-list! out (& body))]
       [(InArena arena body)
         (codec.surface-ast-write-i64! out 39)
         (codec.surface-ast-write-i64! out arena)
-        (surface-ast-write-expr-list! out body)]
+        (surface-ast-write-expr-list! out (& body))]
       [(WithResource payload)
         (match (deref payload)
           [(WithResource bindings body)
             (codec.surface-ast-write-i64! out 40)
-            (surface-ast-write-resource-binding-list! out context bindings)
-            (surface-ast-write-expr-list! out body)])]
+            (surface-ast-write-resource-binding-list! out context (& bindings))
+            (surface-ast-write-expr-list! out (& body))])]
       [(Box value)
         (codec.surface-ast-write-i64! out 41)
         (codec.surface-ast-write-i64! out value)]
@@ -604,7 +607,7 @@
         (codec.surface-ast-write-i64! out inner)]
       [(BracketClause items)
         (codec.surface-ast-write-i64! out 52)
-        (surface-ast-write-expr-list! out items)]
+        (surface-ast-write-expr-list! out (& items))]
       [(Try inner)
         (codec.surface-ast-write-i64! out 53)
         (codec.surface-ast-write-i64! out inner)]
@@ -681,7 +684,7 @@
         (codec.surface-ast-write-i64! out index)]
       [(Syscall args)
         (codec.surface-ast-write-i64! out 78)
-        (surface-ast-write-expr-list! out args)]
+        (surface-ast-write-expr-list! out (& args))]
       [(ForOwnedState payload)
         (codec.surface-ast-write-i64! out 80)
         (codec.surface-ast-write-i64!

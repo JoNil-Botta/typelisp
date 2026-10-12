@@ -935,7 +935,7 @@ typecheck: return type mismatch"))]
         (doc_svec.push-ref! (&mut items) "target/doc_test_session_cache")
         items)]
     (compiler_load.compiler-load-test-mkdir "target")
-    (compiler_load.compiler-load-test-mkdir root)
+    (compiler_load.compiler-load-test-mkdir (& root))
     (let
       [contents : String "(define shared-value : i64 7)"]
       (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
@@ -1020,8 +1020,7 @@ typecheck: return type mismatch"))]
         "example_"
         3)]
     (compiler_load.compiler-load-test-mkdir "target")
-    (compiler_load.compiler-load-test-mkdir
-      (owned_view.compiler-owned-shared-view root))
+    (compiler_load.compiler-load-test-mkdir (& root))
     (let
       [contents-a : String (doc-test-package-walk-example-source 1)]
       [contents-b : String (doc-test-package-walk-example-source 2)]

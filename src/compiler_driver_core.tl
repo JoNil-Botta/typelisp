@@ -997,10 +997,10 @@
   [seen : sym_i64_env.SymI64Env]) : unit
   (compiler_load.compiler-load-session-state-runtime-prelude-cache-store
     load-state
-    key
-    decls
-    paths
-    modules
+    (& key)
+    (& decls)
+    (& paths)
+    (& modules)
     seen))
 
 (define (compiler-driver-runtime-prelude-cache-store
@@ -1027,10 +1027,10 @@
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
   (compiler_load.compiler-load-session-state-runtime-prelude-cache-store-with-pools
     load-state
-    key
-    decls
-    paths
-    modules
+    (& key)
+    (& decls)
+    (& paths)
+    (& modules)
     seen
     pools))
 
@@ -3304,8 +3304,7 @@
       outer-build
       (build_identity.compiler-build-git-hash-shared-view))
       [(ExactMatch)
-        (match (compiler_surface_hydrate.compiler-surface-key
-          (owned_view.compiler-owned-shared-view rodata))
+        (match (compiler_surface_hydrate.compiler-surface-key (& rodata))
           [(Missing) Missing]
           [(Err _) Missing]
           [(Ok key)
@@ -3317,10 +3316,10 @@
                 configuration))
               Missing
               (match (compiler_surface_hydrate.compiler-surface-hydrate
-                rodata
-                key
+                (& rodata)
+                (& key)
                 (compiler_load.compiler-load-session-state-structural-session
-                  load-state)
+                  (& load-state))
                 pools)
                 [(Missing) Missing]
                 [(KeyMismatch _) Missing]
@@ -3348,7 +3347,7 @@
         (compiler-driver-prelude-surface-configuration cfgs)]
       (if (or
         (= surface-arena 0)
-        (compiler_load.compiler-load-stdlib-root-configured? stdlib-roots)
+        (compiler_load.compiler-load-stdlib-root-configured? (& stdlib-roots))
         (= (string.string-length configuration) 0))
         Missing
         (in-arena
@@ -3371,26 +3370,26 @@
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler-driver-profile-note-prelude-source-pipeline! profile-state)
   (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg
-    (compiler_load.compiler-load-runtime-prelude-path-shared-view)
+    (& (compiler_load.compiler-load-runtime-prelude-path-shared-view))
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    (& stdlib-roots)
     cfgs)
     [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
       (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
         runtime-seen
-        stdlib-roots
+        (& stdlib-roots)
         cfgs)
         [(Ok macro-decls macro-paths macro-modules macro-seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              runtime-decls
-              macro-decls)
+              (& runtime-decls)
+              (& macro-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              runtime-paths
-              macro-paths)
+              (& runtime-paths)
+              (& macro-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              runtime-modules
-              macro-modules)
+              (& runtime-modules)
+              (& macro-modules))
             macro-seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3429,7 +3428,7 @@
     (let
       [key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-runtime-prelude-cache-key
-          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (& stdlib-roots)
           cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
@@ -3457,21 +3456,21 @@
     profile-state)
     [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-entry-file-with-paths-and-roots-cfg
-        input-path
+        (& input-path)
         prelude-seen
-        stdlib-roots
+        (& stdlib-roots)
         cfgs)
         [(Ok entry-decls entry-paths entry-modules seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              prelude-decls
-              entry-decls)
+              (& prelude-decls)
+              (& entry-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              prelude-paths
-              entry-paths)
+              (& prelude-paths)
+              (& entry-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
+              (& prelude-modules)
+              (& entry-modules))
             seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3492,25 +3491,25 @@
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
   (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    (& stdlib-roots)
     cfgs)
     [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-entry-file-with-paths-and-roots-cfg
-        input-path
+        (& input-path)
         prelude-seen
-        stdlib-roots
+        (& stdlib-roots)
         cfgs)
         [(Ok entry-decls entry-paths entry-modules seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              prelude-decls
-              entry-decls)
+              (& prelude-decls)
+              (& entry-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              prelude-paths
-              entry-paths)
+              (& prelude-paths)
+              (& entry-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
+              (& prelude-modules)
+              (& entry-modules))
             seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3524,29 +3523,29 @@
   (compiler-driver-profile-note-prelude-source-pipeline! profile-state)
   (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
     (owned_view.compiler-owned-shared-view load-state)
-    (compiler_load.compiler-load-runtime-prelude-path-shared-view)
+    (& (compiler_load.compiler-load-runtime-prelude-path-shared-view))
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    (& stdlib-roots)
     cfgs
     pools)
     [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
       (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
         load-state
         runtime-seen
-        stdlib-roots
+        (& stdlib-roots)
         cfgs
         pools)
         [(Ok macro-decls macro-paths macro-modules macro-seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              runtime-decls
-              macro-decls)
+              (& runtime-decls)
+              (& macro-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              runtime-paths
-              macro-paths)
+              (& runtime-paths)
+              (& macro-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              runtime-modules
-              macro-modules)
+              (& runtime-modules)
+              (& macro-modules))
             macro-seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3594,7 +3593,7 @@
       [key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-session-state-runtime-prelude-cache-key
           (owned_view.compiler-owned-shared-view load-state)
-          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (& stdlib-roots)
           cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup-with-state
         (owned_view.compiler-owned-shared-view load-state)
@@ -3659,17 +3658,18 @@
           ;; to resolve core_macros.tl from the embedded payload.
           (compiler_load.compiler-load-session-state-note-embedded-module!
             load-state
-            (compiler_load.compiler-load-core-macro-prelude-path-shared-view))
+            (&
+              (compiler_load.compiler-load-core-macro-prelude-path-shared-view)))
           ;; core_macros imports stdlib.clone for the late typed helper
           ;; splice. Hydration bypasses that import's ordinary source
           ;; provenance hook too, and the late splice runs after the primary
           ;; macro walk, so name the transitive macro owner explicitly.
           (compiler_load.compiler-load-session-state-note-embedded-module!
             load-state
-            (compiler_load.compiler-load-clone-prelude-path-shared-view))
+            (& (compiler_load.compiler-load-clone-prelude-path-shared-view)))
           (compiler_load.compiler-load-session-state-note-embedded-module!
             load-state
-            (compiler_load.compiler-load-runtime-prelude-path-shared-view))
+            (& (compiler_load.compiler-load-runtime-prelude-path-shared-view)))
           (compiler_load.compiler-load-session-state-note-embedded-stdlib-source!
             load-state)
           (compiler-driver-profile-note-prelude-hydration! profile-state)
@@ -3737,20 +3737,20 @@
             load-state
             input-path
             prelude-seen
-            stdlib-roots
+            (& stdlib-roots)
             cfgs
             pools)
             [(Ok entry-decls entry-paths entry-modules seen)
               (Ok
                 (compiler_load.compiler-load-decl-list-append
-                  prelude-decls
-                  entry-decls)
+                  (& prelude-decls)
+                  (& entry-decls))
                 (compiler_load.compiler-load-decl-path-list-append
-                  prelude-paths
-                  entry-paths)
+                  (& prelude-paths)
+                  (& entry-paths))
                 (compiler_load.compiler-load-decl-module-list-append
-                  prelude-modules
-                  entry-modules)
+                  (& prelude-modules)
+                  (& entry-modules))
                 seen)]
             [(Err diag) (Err diag)]))]
       [(Err diag) (Err diag)])))
@@ -3772,24 +3772,24 @@
     [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         load-state
-        input-path
-        source
+        (& input-path)
+        (& source)
         prelude-seen
-        stdlib-roots
+        (& stdlib-roots)
         No
         cfgs
         pools)
         [(Ok entry-decls entry-paths entry-modules seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              prelude-decls
-              entry-decls)
+              (& prelude-decls)
+              (& entry-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              prelude-paths
-              entry-paths)
+              (& prelude-paths)
+              (& entry-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
+              (& prelude-modules)
+              (& entry-modules))
             seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3818,7 +3818,7 @@
   (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
     (owned_view.compiler-owned-shared-view load-state)
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    (& stdlib-roots)
     cfgs
     pools)
     [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
@@ -3826,20 +3826,20 @@
         load-state
         input-path
         prelude-seen
-        stdlib-roots
+        (& stdlib-roots)
         cfgs
         pools)
         [(Ok entry-decls entry-paths entry-modules seen)
           (Ok
             (compiler_load.compiler-load-decl-list-append
-              prelude-decls
-              entry-decls)
+              (& prelude-decls)
+              (& entry-decls))
             (compiler_load.compiler-load-decl-path-list-append
-              prelude-paths
-              entry-paths)
+              (& prelude-paths)
+              (& entry-paths))
             (compiler_load.compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
+              (& prelude-modules)
+              (& entry-modules))
             seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -3872,7 +3872,7 @@
           cfgs
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
-            stdlib-roots
+            (& stdlib-roots)
             cfgs))
           [(Ok program spans)
             (begin
@@ -3944,7 +3944,7 @@
           cfgs
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
-            stdlib-roots
+            (& stdlib-roots)
             cfgs))
           [(Ok program spans)
             (begin
@@ -4177,7 +4177,7 @@
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
-      (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
+      (compiler_parse_core.compiler-parse-state-cfgs (& parser-state) cfgs)]
     (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
       (owned_view.compiler-owned-shared-view state.load-session)
       input-path
@@ -4272,7 +4272,7 @@
                 cfgs
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
-                  stdlib-roots
+                  (& stdlib-roots)
                   cfgs)
                 pools
                 source-names
@@ -4413,7 +4413,7 @@
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
-      (compiler_parse_core.compiler-parse-state-cfgs parser-state cfgs)]
+      (compiler_parse_core.compiler-parse-state-cfgs (& parser-state) cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
       (owned_view.compiler-owned-shared-view state.load-session)
       input-path
@@ -4497,7 +4497,7 @@
                 cfgs
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
-                  stdlib-roots
+                  (& stdlib-roots)
                   cfgs)
                 pools
                 source-names
@@ -4813,7 +4813,7 @@
     [state : CompilerDriverState
       (compiler-driver-state-new-for-compile-with-load-session
         (compiler_load.compiler-load-session-state-new-for-package-child
-          (owned_view.compiler-owned-shared-view parent)))]
+          (& parent)))]
     [frontend : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (set! (array-ref frontend 0) (arena.tl_arena_make))
     (compiler-driver-state-install-pools! state)
@@ -5023,10 +5023,10 @@
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler_load.compiler-load-package-file-with-runtime-cfg
-    input-path
-    stdlib-roots
-    manifest-dir
-    deps
+    (& input-path)
+    (& stdlib-roots)
+    (& manifest-dir)
+    (& deps)
     emit-entry
     cfgs))
 
@@ -5094,7 +5094,7 @@
         [interns : ci.InternCompatState (ci.intern-compat-state-new)]
         [state : compiler_load.CompilerLoadSessionState
           (compiler_load.compiler-load-session-state-new-for-package-child
-            (owned_view.compiler-owned-shared-view parent))]
+            (& parent))]
         [_install-pools : unit
           (compiler_ast_types.ast-node-pool-context-install! pools)]
         [_install-interns : unit (ci.intern-compat-state-install! interns)]
@@ -5139,9 +5139,7 @@
           home-interns
           home-builtins)
         (compiler_load.compiler-load-dependency-surface-list-destroy-storage!
-          (owned_view.compiler-owned-array-element-shared-view
-            state.dependency-surfaces.fragments
-            0))
+          (& (array-ref state.dependency-surfaces.fragments 0)))
         (compiler_ast_types.ast-node-pool-context-destroy-storage!
           retired-pools)
         (ci.intern-compat-state-release-structural-generations! (&mut interns))
@@ -5168,12 +5166,12 @@
       (Ok
         (owned_view.compiler-owned-shared-view decls)
         (compiler_load.compiler-load-package-owned-paths-for-decls
-          package-owner
-          manifest-dir
-          stdlib-roots
-          input-path
-          decls
-          paths)
+          (& package-owner)
+          (& manifest-dir)
+          (& stdlib-roots)
+          (& input-path)
+          (& decls)
+          (& paths))
         modules
         seen)]
     [(Err diag) (Err diag)]))

@@ -99,7 +99,7 @@
 (define (lower-symbol-smoke-parsed-extern-match?
   [source : String]
   [want : bool]) : bool
-  (match (compiler_parse_core.parse-ast-source source)
+  (match (compiler_parse_core.parse-ast-source (& source))
     [(Ok program)
       (match program
         [(Program decls-box)
@@ -389,9 +389,7 @@
     [roots : svec.Vec (compiler-driver-pic-smoke-roots)]
     [cfgs : sym_i64_env.SymI64Env (compiler_cfg_core.compiler-cfg-empty)]
     [key : compiler_load.CompilerLoadPreludeCacheKey
-      (compiler_load.compiler-load-runtime-prelude-cache-key
-        (owned_view.compiler-owned-shared-view roots)
-        cfgs)]
+      (compiler_load.compiler-load-runtime-prelude-cache-key (& roots) cfgs)]
     [home-handle : i64 (arena.tl_arena_current)]
     [caller : arena.Arena (arena.make)]
     [caller-handle : i64 (arena.raw-handle caller)]

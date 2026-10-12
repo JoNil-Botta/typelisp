@@ -1491,6 +1491,17 @@ table and the gates; read it before changing CI structure.
 `typelisp --help` lists the commands and the global and common options;
 `typelisp <command> --help` shows each command's options.
 
+`typelisp expand` and LSP `tl/expandMacro` share the query in
+`compiler_expand_query.tl`. It checks the source through the production
+pipeline, then walks checked `MacroExpansion` nodes to select the innermost
+invocation at the requested position and report its enclosing frames. Rendering
+uses the existing macro-expression converter and formatter, with an explicit
+byte bound. Frame identities and AST nodes belong to that check's pool and
+intern session; consumers render their response before the session retires.
+Inspection does not evaluate transformers a second time or run generated code.
+LSP positions use the negotiated encoding and must identify an exact position
+in the document; invalid coordinates are rejected before checking the source.
+
 Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
 default output target; `test` defaults to the host), `--backend-mode
 scalar|avx2|avx512`, `--opt-level 0|1|2` (0: no IR optimizer; 1: cheap

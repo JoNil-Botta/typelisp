@@ -3955,6 +3955,163 @@
         (compiler-ctfe-lzss-noise-source 6000 3))
       0)))
 
+(cfg
+  test
+  (define (compiler-ctfe-captured-list-builders-ok?
+    [count : i64]
+    [foreign? : bool]) : bool
+    (let
+      [base : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+      [owner : ast.AstNodePoolContext (ctfe.ctfe-env-pools base)]
+      [head : i64 (ctfe.ctfe-ast-push base (Literal (ast.ast-lit-int 42)))]
+      [pools : ast.AstNodePoolContext
+        (if foreign?
+          (ast.ast-node-pool-context-new-with-capacities-in-arena
+            2
+            2
+            (arena.tl_arena_current))
+          owner)]
+      [items : ast.AstExprList (ast.ast-expr-list-with-capacity count)]
+      [head-name : i64 (ci.intern-generated-canonical-name "list-builder-head")]
+      [tail-name : i64 (ci.intern-generated-canonical-name "list-builder-tail")]
+      (for [index (iterator.range 0 count)]
+        (ast.ast-expr-list-push
+          (&mut items)
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Literal (ast.ast-lit-int (+ index 10))))))
+      (let
+        [env : ctfe.CtfeEnv
+          (ctfe.ctfe-env-extend-id
+            (ctfe.ctfe-env-extend-id base head-name (Expr head (I64)))
+            tail-name
+            (CapturedExprList
+              (clone items)
+              (ast.ast-node-pool-context-snapshot pools)))]
+        [head-var : i64 (ctfe.ctfe-ast-push env (Var head-name))]
+        [tail-var : i64 (ctfe.ctfe-ast-push env (Var tail-name))]
+        [cons-call : i64
+          (compiler-ctfe-call2-in-env
+            env
+            (ctfe.ctfe-builtin "expr-list-cons")
+            head-var
+            tail-var)]
+        [call-call : i64
+          (compiler-ctfe-call2-in-env
+            env
+            (ctfe.ctfe-builtin "expr-call")
+            head-var
+            tail-var)]
+        (if foreign?
+          (and
+            (compiler-ctfe-eval-error-ok?
+              cons-call
+              env
+              "expr-list-cons expects head and tail from the same syntax pool")
+            (compiler-ctfe-eval-error-ok?
+              call-call
+              env
+              "expr-call expects callee and arguments from the same syntax pool"))
+          (and
+            (match (ctfe.compiler-ctfe-eval
+              (ctfe.ctfe-ast-get env cons-call)
+              env
+              (ctfe.ctfe-fuel-limit))
+              [(Ok (CapturedExprList actual captured) _)
+                (and
+                  (ctfe.ctfe-node-pools-share-storage? captured pools)
+                  (= actual.len (+ count 1))
+                  (= (ast.ast-expr-list-get (& actual) 0 -1) head)
+                  (let
+                    [good : bool true]
+                    (for [index (iterator.range 0 count)]
+                      (unless
+                        (and
+                          (=
+                            (ast.ast-expr-list-get (& actual) (+ index 1) -1)
+                            (ast.ast-expr-list-get (& items) index -2))
+                          (match (ast.ast-node-pool-context-expr-get
+                            captured
+                            (ast.ast-expr-list-get (& actual) (+ index 1) -1))
+                            [(Literal (Int value _)) (= value (+ index 10))]
+                            [_ false]))
+                        (set! good false)))
+                    good))]
+              [_ false])
+            (match (ctfe.compiler-ctfe-eval
+              (ctfe.ctfe-ast-get env call-call)
+              env
+              (ctfe.ctfe-fuel-limit))
+              [(Ok (CapturedExpr node _ captured) _)
+                (and
+                  (ctfe.ctfe-node-pools-share-storage? captured pools)
+                  (match (ast.ast-node-pool-context-expr-get captured node)
+                    [(Call actual-head actual-args)
+                      (and (= actual-head head) (= actual-args.len count))]
+                    [_ false]))]
+              [_ false])))))))
+
+(cfg
+  test
+  (define (compiler-ctfe-list-builder-errors-ok? [cons? : bool]) : bool
+    (let
+      [base : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+      [node : i64 (ctfe.ctfe-ast-push base (Literal (ast.ast-lit-int 7)))]
+      [head-name : i64 (ci.intern-generated-canonical-name "list-error-head")]
+      [tail-name : i64 (ci.intern-generated-canonical-name "list-error-tail")]
+      [env : ctfe.CtfeEnv
+        (ctfe.ctfe-env-extend-id
+          (ctfe.ctfe-env-extend-id base head-name (Expr node (I64)))
+          tail-name
+          (ExprList (ast.ast-expr-list-new)))]
+      [head : i64 (ctfe.ctfe-ast-push env (Var head-name))]
+      [tail : i64 (ctfe.ctfe-ast-push env (Var tail-name))]
+      [builtin : i64
+        (if cons?
+          (ctfe.ctfe-builtin "expr-list-cons")
+          (ctfe.ctfe-builtin "expr-call"))]
+      [empty-call : i64
+        (ast.ast-expr-call-with-pools
+          (ctfe.ctfe-env-pools env)
+          (ctfe.ctfe-ast-push env (Var builtin))
+          (ast.ast-expr-list-new))]
+      (and
+        (compiler-ctfe-eval-error-ok?
+          empty-call
+          env
+          (if cons?
+            "expr-list-cons expects exactly two args"
+            "expr-call expects exactly two args"))
+        (compiler-ctfe-eval-error-ok?
+          (compiler-ctfe-call2-in-env env builtin node tail)
+          env
+          (if cons?
+            "expr-list-cons head expects Expr"
+            "expr-call callee expects Expr"))
+        (compiler-ctfe-eval-error-ok?
+          (compiler-ctfe-call2-in-env env builtin head node)
+          env
+          (if cons?
+            "expr-list-cons tail expects ExprList"
+            "expr-call args expects ExprList"))))))
+
+(cfg
+  test
+  (test
+    compiler-ctfe-captured-list-builders
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (and
+      (compiler-ctfe-captured-list-builders-ok? 0 false)
+      (compiler-ctfe-captured-list-builders-ok? 1 false)
+      (compiler-ctfe-captured-list-builders-ok? 65 false)
+      (compiler-ctfe-captured-list-builders-ok? 1 true)
+      (compiler-ctfe-list-builder-errors-ok? true)
+      (compiler-ctfe-list-builder-errors-ok? false))
+      unit
+      (begin
+        (/ 1 0)
+        unit))))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)

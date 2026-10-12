@@ -7035,6 +7035,11 @@
       (match (compiler-ctfe-eval head-arg env fuel)
         [(Ok head-value head-fuel)
           (let
+            [head-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools
+                (owned_view.compiler-owned-shared-view head-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [head-node : i64 (ctfe-syntax-expr-value-node head-value (& env))]
             (if (>= head-node 0)
               (match (compiler-ctfe-eval tail-arg env head-fuel)
@@ -7044,6 +7049,23 @@
                       (Ok
                         (ExprList (ast.ast-expr-cons head-node (& tail)))
                         tail-fuel)]
+                    [(CapturedExprList tail pools)
+                      ;; Numeric child ids can be joined only within one syntax
+                      ;; domain. Adopt its newer cursor before returning a list
+                      ;; that a subsequent builder may extend.
+                      (if (ctfe-node-pools-share-storage? head-pools pools)
+                        (begin
+                          (ctfe-env-adopt-captured-pools! (& env) pools)
+                          (Ok
+                            (CapturedExprList
+                              (ast.ast-expr-cons head-node (& tail))
+                              (ctfe-env-syntax-pool-context-live env))
+                            tail-fuel))
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-list-cons expects head and tail from the same syntax pool"))))]
                     [_
                       (Err
                         (box
@@ -7075,6 +7097,11 @@
       (match (compiler-ctfe-eval callee-arg env fuel)
         [(Ok callee-value callee-fuel)
           (let
+            [callee-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools
+                (owned_view.compiler-owned-shared-view callee-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [callee-node : i64
               (ctfe-syntax-expr-value-node callee-value (& env))]
             (if (>= callee-node 0)
@@ -7092,6 +7119,25 @@
                             call-args)
                           (ctfe-untyped-expr-type))
                         args-fuel)]
+                    [(CapturedExprList call-args pools)
+                      (if (ctfe-node-pools-share-storage? callee-pools pools)
+                        (begin
+                          (ctfe-env-adopt-captured-pools! (& env) pools)
+                          (Ok
+                            (ctfe-syntax-expr-value
+                              env
+                              (ctfe-ast-expr-call-with-provenance
+                                (ctfe-env-macro-state env)
+                                (ctfe-env-syntax-pool-context-live env)
+                                callee-node
+                                call-args)
+                              (ctfe-untyped-expr-type))
+                            args-fuel))
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-call expects callee and arguments from the same syntax pool"))))]
                     [_
                       (Err
                         (box

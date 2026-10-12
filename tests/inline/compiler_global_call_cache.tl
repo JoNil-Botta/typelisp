@@ -17,7 +17,7 @@
   [entry : String]) : String
   (match (parser.parse-ast-source-diagnostic
     (string.copy (& entry))
-    (cat.str-cat prefix suffix))
+    (& (cat.str-cat prefix suffix)))
     [(Ok parsed)
       (let
         ;; Imported source prefixes contain module markers absent from the

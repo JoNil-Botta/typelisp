@@ -2759,10 +2759,12 @@
           ast-node-respan-records
           ast-node-respan-count)))))
 
-(define (ast-expr-node-pool-state-set!
-  [pool : AstExprNodePoolState]
+;; Store the row and journal any protected predecessor. The returned slot is
+;; the prior provenance; a semantic rewrite must update it before publishing.
+(define (ast-expr-node-pool-state-write-row!
+  [pool : (& pool AstExprNodePoolState)]
   [id : i64]
-  [node : AstExpr]) : AstExprNodePoolState
+  [node : AstExpr]) : i64
   (let
     [biased-base : i64
       (unsafe
@@ -2786,6 +2788,18 @@
       (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
       (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
       (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))
+    prior-slot))
+
+(define (ast-expr-node-pool-state-set!
+  [pool : AstExprNodePoolState]
+  [id : i64]
+  [node : AstExpr]) : AstExprNodePoolState
+  (let
+    [prior-slot : i64
+      (ast-expr-node-pool-state-write-row!
+        (& pool)
+        id
+        (ast-global-shared-view node))]
     (match (ast-global-shared-view node)
       [(Spanned _ _)
         (let
@@ -10492,12 +10506,15 @@
   [remap : (& remap AstProgramCompactionRemap)]
   [id : i64]
   [node : AstExpr]) : unit
-  (ast-expr-pool-cell-write!
-    remap.dest-pools.expr-pool
-    (ast-expr-node-pool-state-set!
-      (ast-expr-pool-cell-read remap.dest-pools.expr-pool)
-      id
-      node))
+  ;; Persist mode retains every expression id and copies each wrapper's span
+  ;; unchanged. Its out-of-line payloads acquire a stable owner, but its
+  ;; provenance slots and scalar span records already describe the same node.
+  ;; Re-registering them would append a duplicate ReSpan on every copy-out.
+  ;; Ordinary semantic rewrites must still use the span-updating set! path.
+  (ast-expr-node-pool-state-write-row!
+    (& (ast-expr-pool-cell-read remap.dest-pools.expr-pool))
+    id
+    node)
   (ast-node-pool-compat-context-sync-installed!))
 
 (define (ast-compaction-remap-dest-expr-push

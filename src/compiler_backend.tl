@@ -6344,7 +6344,8 @@
       type-segment-bases
       instr-diag
       elem-ty
-      lanes)))
+      lanes
+      backend-state)))
 
 (define (compiler-backend-stack-memory-operand
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -6600,7 +6601,8 @@
       type-segment-bases
       instr-diag
       elem-ty
-      lanes)))
+      lanes
+      backend-state)))
 
 (define (compiler-backend-emit-avx2-i64-vector-mul
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -6893,7 +6895,8 @@
       type-segment-bases
       instr-diag
       elem-ty
-      lanes)))
+      lanes
+      backend-state)))
 
 (define (compiler-backend-emit-vector-binop-memory-source
   [mode : CompilerBackendMode]
@@ -6981,7 +6984,8 @@
       type-segment-bases
       instr-diag
       elem-ty
-      lanes)))
+      lanes
+      backend-state)))
 
 (define (compiler-backend-emit-vector-store
   [mode : CompilerBackendMode]
@@ -7038,7 +7042,8 @@
       type-segment-bases
       instr-diag
       elem-ty
-      lanes)))
+      lanes
+      backend-state)))
 
 (define (compiler-backend-avx512-shape-ok?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
@@ -7086,8 +7091,8 @@
 
 ;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Avx2
 ;; works in ymm registers, Avx512 in zmm. A shape that fills a zmm is emitted
-;; with AVX-512; every other shape goes to AVX2, which diagnoses the ones that
-;; fit neither.
+;; with AVX-512; every other shape goes to AVX2. Rejected shapes report the
+;; current function's ISA rather than the fallback emitter's width.
 (define (compiler-backend-vector-mode
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : CompilerBackendMode
@@ -7113,20 +7118,30 @@
   [type-segment-bases : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [elem-ty : compiler_ast_types.AstType]
-  [lanes : i64]) : ResultCompilerBackend
-  (match mode
-    [(Avx512)
-      (compiler-backend-avx512-shape-diagnostic
-        type-segment-bases
-        instr-diag
-        elem-ty
-        lanes)]
-    [_
-      (compiler-backend-avx2-shape-diagnostic
-        type-segment-bases
-        instr-diag
-        elem-ty
-        lanes)]))
+  [lanes : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [diagnostic-mode : CompilerBackendMode
+      (if (compiler-backend-state-function-state-active? backend-state)
+        (match (compiler-backend-function-state-current-mode
+          (compiler-backend-state-function-state backend-state))
+          [(Scalar) mode]
+          [(Avx2) (Avx2)]
+          [(Avx512) (Avx512)])
+        mode)]
+    (match diagnostic-mode
+      [(Avx512)
+        (compiler-backend-avx512-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)]
+      [_
+        (compiler-backend-avx2-shape-diagnostic
+          type-segment-bases
+          instr-diag
+          elem-ty
+          lanes)])))
 
 (define (compiler-backend-mode-unsupported
   [mode : CompilerBackendMode]

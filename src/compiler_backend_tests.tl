@@ -1,5 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.io)
+(import stdlib.iterator)
 (import compiler_object as cobj)
 (import compiler_object_asm as object_asm)
 (import compiler_object_coff as coff)
@@ -19017,6 +19018,73 @@ f:
           (& func)
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)))
+
+(define (compiler-backend-unit-shape-diagnostic-ok?
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
+  [name : String]
+  [lanes : i64]
+  [isa : String]) : bool
+  (match (backend.compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program
+      (irt.func
+        (str_cat.str-cat
+          "function @"
+          name
+          "() -> unit vars 1 {\nentry:\n"
+          "  %0 = splat unit lanes "
+          (string.int->string lanes)
+          " : unit\n  return\n}")))
+    target
+    mode
+    (ir.compiler-source-spans-empty)
+    true)
+    [(Err diag)
+      (string.eq
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+        (str_cat.str-cat
+          "backend: unsupported "
+          isa
+          " vector shape "
+          (string.int->string lanes)
+          " x unit"))]
+    [(Ok _) false]))
+
+(test
+  backend-invalid-vector-shape-names-active-isa
+  (for [index (iterator.range 0 2)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (= index 0)
+          (backend.CompilerBackendTarget.Linux)
+          (backend.CompilerBackendTarget.Windows))]
+      (unless
+        (and
+          (compiler-backend-unit-shape-diagnostic-ok?
+            target
+            (Avx2)
+            "unit_shape"
+            4
+            "AVX2")
+          (compiler-backend-unit-shape-diagnostic-ok?
+            target
+            (Avx512)
+            "unit_shape"
+            8
+            "AVX-512")
+          (compiler-backend-unit-shape-diagnostic-ok?
+            target
+            (Scalar)
+            "__tl_dispatch_variant_avx2_unit_shape"
+            4
+            "AVX2")
+          (compiler-backend-unit-shape-diagnostic-ok?
+            target
+            (Avx2)
+            "__tl_dispatch_variant_avx512_unit_shape"
+            8
+            "AVX-512"))
+        (io.panic "unsupported vector shape reported the wrong function ISA")))))
 
 (define (compiler-backend-vector-call-lifetime-function) : ir.CompilerIrFunction
   (Function

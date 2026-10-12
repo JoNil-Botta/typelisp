@@ -606,6 +606,35 @@ source tests/spmd/private_helper_effects.tl
 mode avx2
 not-match %zmm[0-9]+|%k[0-7]
 
+# Unit results must survive lowering before dead-value optimization, including
+# masked helpers and the guard-page program's inactive accesses.
+case unit-results-run
+source tests/spmd/unit_results.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case private-helper-store-run
+source tests/spmd/private_helper_store.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case masked-move-fault-suppression-run
+source tests/spmd/masked_move_fault_suppression.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
 # --------------------------------------------------------------- reductions
 
 # A sum keeps one vector accumulator in the gang and reduces horizontally only

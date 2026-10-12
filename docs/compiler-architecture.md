@@ -326,6 +326,12 @@ binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
 access rule as tuple slots and array elements, preserving the borrow lifetime.
 
+Masked unit expressions retain their effects and mask but have no lane payload:
+lowering returns the unit IR value directly, including inside private SIMD
+helpers, rather than emitting a unit-typed splat or select. Unsupported vector
+shapes still fail in the backend; their diagnostic names the current function's
+ISA, including a runtime dispatch variant's mode.
+
 The lowerer's job state, `CompilerLowerState`, is a one-word handle to a
 directory of typed cells, one per field, so an access reads one directory word
 and the cell and never copies the wide state. The fields are declared once, as

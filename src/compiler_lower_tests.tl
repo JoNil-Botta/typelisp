@@ -3723,6 +3723,7 @@
   (TailMask)
   (TotalEnumBranch)
   (U64Mov)
+  (UnitVector)
   (VectorBinop)
   (VectorLoad)
   (VectorReduce)
@@ -3760,6 +3761,14 @@
     [(TailMask) (lower-test-instr-tail-mask-count instr)]
     [(TotalEnumBranch) (lower-test-instr-total-enum-branch-count instr)]
     [(U64Mov) (lower-test-instr-u64-mov-count instr)]
+    [(UnitVector)
+      (match instr
+        [(Splat _ _ _ (Unit)) 1]
+        [(Select payload)
+          (match (ir.compiler-ir-box-field-shared-view payload ty)
+            [(Unit) 1]
+            [_ 0])]
+        [_ 0])]
     [(VectorBinop) (lower-test-instr-vector-binop-count instr)]
     [(VectorLoad) (lower-test-instr-vector-load-count instr)]
     [(VectorReduce) (lower-test-instr-vector-reduce-count instr)]
@@ -9239,6 +9248,50 @@
     (if (< i 4)
       (set! (array-ref out i) (heavy i))
       (set! (array-ref out i) 0))))")
+
+(define (compiler-lower-spmd-unit-results-ok?
+  [source : String]
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source-with-mode source mode))
+    [(Some functions)
+      (let
+        [count : i64 0]
+        (for [index (iterator.range 0 functions.len)]
+          (match (ir.compiler-ir-array-shared-view functions.slots index)
+            [(Function _ _ _ _ blocks _)
+              (+=
+                count
+                (lower-test-blocks-count
+                  (ir.compiler-ir-block-list-view blocks)
+                  (UnitVector)))]))
+        (= count 0))]
+    [(No) false]))
+
+(test
+  spmd-unit-results-have-no-vector-payload
+  (for [index (iterator.range 0 3)]
+    (let
+      [mode : lower.CompilerLowerMode
+        (if (= index 0)
+          (lower.CompilerLowerMode.Scalar)
+          (if (= index 1)
+            (lower.CompilerLowerMode.Avx2)
+            (lower.CompilerLowerMode.Avx512)))]
+      (test.assert-true
+        (and
+          (compiler-lower-spmd-unit-results-ok?
+            "(define (fill [n : i64]) : unit
+             (foreach ([i : i64 0 n])
+               (let [u : unit (if (< i 3) unit unit)] u)))"
+            mode)
+          (compiler-lower-spmd-unit-results-ok?
+            (compiler-lower-spmd-out-of-line-unit-source)
+            mode)
+          (compiler-lower-spmd-unit-results-ok?
+            (compiler-lower-spmd-out-of-line-masked-source)
+            mode))
+        "unit literals and masked helper results must not be splatted"))))
 
 (define (compiler-lower-spmd-source-call-count
   [src : String]

@@ -29,6 +29,11 @@ directly. Public-surface coverage uses native `Slice`/`Vec` values
   compiler-internal lowering and private-call ABI tests are the
   `src/tests/compiler_spmd_*_smoke.tl` drivers.
 
+`simd.cases` also runs `unit_results`, `private_helper_store` and
+`masked_move_fault_suppression` at every optimization level and backend mode.
+These check unit-valued branches and out-of-line helpers before dead-value
+optimization, effects in either branch, and inactive tail lanes.
+
 Fixture families: `tail_*`, `*_fault_suppression` and `foreach_bound_extremes`
 (tails and inactive lanes), `masked_if_*`, `varying_while_*`, `varying_match_*`
 and `full_gang_all_active_i64` (masked control flow), `*_shift_*`, `byte_mul_*`

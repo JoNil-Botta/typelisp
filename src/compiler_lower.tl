@@ -53085,17 +53085,31 @@
               (let
                 [lowered
                   (try
-                    (lower-avx512-masked-expr
-                      ctx
-                      state
-                      env
-                      type-env
-                      lane-locals
-                      (lower-global-shared-view index)
-                      index-var
-                      (lower-global-shared-view active-mask)
-                      lanes
-                      (lower-global-shared-view init)))]
+                    (match (try
+                      (lower-avx512-masked-expr
+                        ctx
+                        state
+                        env
+                        type-env
+                        lane-locals
+                        (lower-global-shared-view index)
+                        index-var
+                        (lower-global-shared-view active-mask)
+                        lanes
+                        (lower-global-shared-view init)))
+                      [(Expr init-state init-value init-ty)
+                        (match (lower-global-shared-view init-value)
+                          ;; Bind unit with a scalar home, never a vector splat.
+                          [(Unit)
+                            (lower-materialize-at-expr
+                              ctx
+                              init-state
+                              init-value
+                              init-ty
+                              (lower-global-shared-view init))]
+                          [_
+                            (ResultLowerExpr.Ok
+                              (Expr init-state init-value init-ty))])]))]
                 (match lowered
                   [(Expr init-state init-value init-ty)
                     (let
@@ -58186,6 +58200,7 @@
           cast-ty-id)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]
@@ -58538,6 +58553,7 @@
           expected-ty)]
       [(Literal lit)
         (match (lower-global-shared-view lit)
+          [(Unit) (Ok (Expr state Unit (Unit)))]
           [(Bool value)
             (Ok
               (lower-avx512-masked-bool-literal state active-mask lanes value))]

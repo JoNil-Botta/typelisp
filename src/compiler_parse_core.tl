@@ -83,9 +83,21 @@
 ;; Semantic-origin records live in the retained spanned-node sidecar pool. A
 ;; source index asks for one run per declaration, so rescanning that entire
 ;; pool for every slot makes a sequence of cached checks quadratic. Incrementally
-;; index appended sidecars instead, and invalidate the table when the reader
-;; resets its pool. Alias entries are expanded by destination slot so lookup
-;; remains constant-time and the existing bounded alias walk is preserved.
+;; index appended sidecars instead, and invalidate the index when the reader
+;; resets its pool.
+;;
+;; Direct records (one semantic run or one declaration span per slot) go into
+;; an open-addressing table. An origin alias maps a whole run of destination
+;; slots onto a source run, and every pipeline copy of the program's
+;; declaration list adds one. Expanding aliases per slot made the table hold
+;; one entry per declaration per copy: 6.5 million entries, 2.4 GB with the
+;; tables it outgrew, at the first diagnostic of `check src/main.tl` (#8855).
+;; Aliases therefore stay runs, chained per destination key from newest to
+;; oldest, and a lookup takes whichever of the slot's direct entry and newest
+;; covering run came last. A key built from many source lists can carry tens
+;; of thousands of runs, so a long chain is indexed on first lookup: its
+;; newest covering run per slot, as sorted disjoint segments that a lookup
+;; binary-searches.
 (defstruct CompilerParseSemanticOriginLookupSlot
   (generation i64)
   ;; 1 = semantic occurrence run, 2 = declaration span.
@@ -97,8 +109,53 @@
   (run-start i64)
   (run-count i64)
   (source-key i64)
-  (source-slot i64))
+  (source-slot i64)
+  ;; Insertion order: the latest record for a slot wins.
+  (order i64))
 
+;; One alias record: destination slots [target-start, target-start + count) of
+;; KEY map to SOURCE-KEY slots from SOURCE-START (all to SOURCE-START when
+;; REPEAT).
+(defstruct CompilerParseOriginAliasRun
+  (key i64)
+  (target-start i64)
+  (count i64)
+  (source-key i64)
+  (source-start i64)
+  (repeat bool)
+  (order i64)
+  ;; The next older run of the same key, or -1.
+  (older i64))
+
+;; The alias runs of one destination key.
+(defstruct CompilerParseOriginAliasHead
+  (generation i64)
+  (key i64)
+  (newest i64)
+  (runs i64)
+  ;; The oldest INDEXED-RUNS runs of the chain are covered by the key's
+  ;; segments, one range per domain in `compiler-parse-origin-segments`.
+  (indexed-runs i64)
+  (decl-segment-start i64)
+  (decl-segment-len i64)
+  (semantic-segment-start i64)
+  (semantic-segment-len i64))
+
+;; Slots [start, end) of a key whose newest covering run is RUN.
+(defstruct CompilerParseOriginSegment
+  (start i64)
+  (end i64)
+  (run i64))
+
+;; A lookup walks at most this many runs of a chain before it uses (or
+;; rebuilds) the key's segments.
+(define compiler-parse-origin-chain-walk-limit : i64
+  16)
+
+;; The tables share one arena that is never reset. A cache reset keeps them for
+;; reuse (entries of an older generation read as empty, run and segment counts
+;; restart at 0), and growth abandons the outgrown array, so the arena holds at
+;; most about twice the largest index.
 (define compiler-parse-semantic-origin-lookup-arena : i64
   (arena.tl_arena_make))
 (define compiler-parse-semantic-origin-lookup-slots : (__tl_dyn-array
@@ -108,10 +165,31 @@
   0)
 (define compiler-parse-semantic-origin-lookup-generation : i64
   1)
+(define compiler-parse-semantic-origin-lookup-order : i64
+  0)
 (define compiler-parse-semantic-origin-lookup-indexed-len : i64
   0)
 (define compiler-parse-semantic-origin-lookup-reader-reset-generation : i64
   0)
+(define compiler-parse-origin-alias-runs : (__tl_dyn-array
+    CompilerParseOriginAliasRun)
+  (__tl_make-array CompilerParseOriginAliasRun 0))
+(define compiler-parse-origin-alias-run-len : i64
+  0)
+(define compiler-parse-origin-alias-heads : (__tl_dyn-array
+    CompilerParseOriginAliasHead)
+  (__tl_make-array CompilerParseOriginAliasHead 0))
+(define compiler-parse-origin-alias-head-len : i64
+  0)
+(define compiler-parse-origin-segments : (__tl_dyn-array
+    CompilerParseOriginSegment)
+  (__tl_make-array CompilerParseOriginSegment 0))
+(define compiler-parse-origin-segment-len : i64
+  0)
+
+;; Scratch for indexing one key: the newest covering run of each slot.
+(define compiler-parse-origin-paint : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 
 (define (compiler-parse-semantic-origin-lookup-slots-shared) : (__tl_dyn-array
     CompilerParseSemanticOriginLookupSlot)
@@ -571,6 +649,9 @@
 (define (compiler-parse-semantic-origin-lookup-cache-reset!) : unit
   (+= compiler-parse-semantic-origin-lookup-generation 1)
   (set! compiler-parse-semantic-origin-lookup-len 0)
+  (set! compiler-parse-origin-alias-run-len 0)
+  (set! compiler-parse-origin-alias-head-len 0)
+  (set! compiler-parse-origin-segment-len 0)
   (set! compiler-parse-semantic-origin-lookup-indexed-len 0))
 
 (define (compiler-parse-semantic-origin-lookup-prepare!) : unit
@@ -611,7 +692,8 @@
   [run-start : i64]
   [run-count : i64]
   [source-key : i64]
-  [source-slot : i64]) : unit
+  [source-slot : i64]
+  [order : i64]) : unit
   (let
     [capacity : i64 (array-length compiler-parse-semantic-origin-lookup-slots)]
     [cursor : i64
@@ -636,7 +718,8 @@
                 run-start
                 run-count
                 source-key
-                source-slot))
+                source-slot
+                order))
             (+= compiler-parse-semantic-origin-lookup-len 1)
             (set! done true))
           (if (and
@@ -646,7 +729,7 @@
             (begin
               ;; Sidecar storage is append-only between resets. Replacing an
               ;; existing slot therefore keeps latest-wins behavior when an
-              ;; address is reused or an alias is superseded.
+              ;; address is reused.
               (set!
                 (array-ref compiler-parse-semantic-origin-lookup-slots cursor)
                 (CompilerParseSemanticOriginLookupSlot
@@ -658,7 +741,8 @@
                   run-start
                   run-count
                   source-key
-                  source-slot))
+                  source-slot
+                  order))
               (set! done true))
             (set! cursor (bit-and (+ cursor 1) (- capacity 1)))))))))
 
@@ -692,7 +776,8 @@
             entry.run-start
             entry.run-count
             entry.source-key
-            entry.source-slot)
+            entry.source-slot
+            entry.order)
           unit)))))
 
 (define (compiler-parse-semantic-origin-lookup-insert!
@@ -711,6 +796,7 @@
       (* (array-length compiler-parse-semantic-origin-lookup-slots) 7)))
     (compiler-parse-semantic-origin-lookup-grow!)
     unit)
+  (+= compiler-parse-semantic-origin-lookup-order 1)
   (compiler-parse-semantic-origin-lookup-insert-no-grow!
     domain
     key
@@ -719,7 +805,347 @@
     run-start
     run-count
     source-key
-    source-slot))
+    source-slot
+    compiler-parse-semantic-origin-lookup-order))
+
+(define (compiler-parse-origin-alias-runs-shared) : (__tl_dyn-array
+    CompilerParseOriginAliasRun)
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-parse-origin-alias-runs))))
+
+(define (compiler-parse-origin-alias-heads-shared) : (__tl_dyn-array
+    CompilerParseOriginAliasHead)
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-parse-origin-alias-heads))))
+
+;; The head slot of KEY: its occupied slot, or the free slot where it belongs.
+(define (compiler-parse-origin-alias-head-slot [key : i64]) : i64
+  (let
+    [capacity : i64 (array-length compiler-parse-origin-alias-heads)]
+    [cursor : i64 (compiler-parse-semantic-origin-lookup-hash 3 key 0 capacity)]
+    (for [probes (iterator.range 0 capacity)]
+      (let
+        [head : CompilerParseOriginAliasHead
+          (array-ref compiler-parse-origin-alias-heads cursor)]
+        (if (or
+          (!= head.generation compiler-parse-semantic-origin-lookup-generation)
+          (= head.key key))
+          (return cursor)
+          (set! cursor (bit-and (+ cursor 1) (- capacity 1))))))
+    cursor))
+
+(define (compiler-parse-origin-alias-heads-grow!) : unit
+  (let
+    [old : (__tl_dyn-array CompilerParseOriginAliasHead)
+      (compiler-parse-origin-alias-heads-shared)]
+    [old-capacity : i64 (array-length old)]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        64
+        (* old-capacity 2))]
+    (set!
+      compiler-parse-origin-alias-heads
+      (in-arena
+        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (__tl_make-array CompilerParseOriginAliasHead next-capacity)))
+    (for [old-index (iterator.range 0 old-capacity)]
+      (let
+        [head : CompilerParseOriginAliasHead (array-ref old old-index)]
+        (when
+          (= head.generation compiler-parse-semantic-origin-lookup-generation)
+          (set!
+            (array-ref
+              compiler-parse-origin-alias-heads
+              (compiler-parse-origin-alias-head-slot head.key))
+            head))))))
+
+(define (compiler-parse-origin-alias-runs-grow!) : unit
+  (let
+    [old : (__tl_dyn-array CompilerParseOriginAliasRun)
+      (compiler-parse-origin-alias-runs-shared)]
+    [next-capacity : i64
+      (if (< (array-length old) 1)
+        64
+        (* (array-length old) 2))]
+    (set!
+      compiler-parse-origin-alias-runs
+      (in-arena
+        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (__tl_make-array CompilerParseOriginAliasRun next-capacity)))
+    (for [index (iterator.range 0 compiler-parse-origin-alias-run-len)]
+      (set!
+        (array-ref compiler-parse-origin-alias-runs index)
+        (array-ref old index)))))
+
+;; Record one alias run as the newest run of KEY.
+(define (compiler-parse-origin-alias-insert!
+  [key : i64]
+  [target-start : i64]
+  [count : i64]
+  [source-key : i64]
+  [source-start : i64]
+  [repeat : bool]) : unit
+  (when
+    (>=
+      compiler-parse-origin-alias-run-len
+      (array-length compiler-parse-origin-alias-runs))
+    (compiler-parse-origin-alias-runs-grow!))
+  (when
+    (or
+      (< (array-length compiler-parse-origin-alias-heads) 1)
+      (>=
+        (* (+ compiler-parse-origin-alias-head-len 1) 10)
+        (* (array-length compiler-parse-origin-alias-heads) 7)))
+    (compiler-parse-origin-alias-heads-grow!))
+  (+= compiler-parse-semantic-origin-lookup-order 1)
+  (let
+    [head-slot : i64 (compiler-parse-origin-alias-head-slot key)]
+    [head : CompilerParseOriginAliasHead
+      (array-ref compiler-parse-origin-alias-heads head-slot)]
+    [present : bool
+      (= head.generation compiler-parse-semantic-origin-lookup-generation)]
+    [index : i64 compiler-parse-origin-alias-run-len]
+    (set!
+      (array-ref compiler-parse-origin-alias-runs index)
+      (CompilerParseOriginAliasRun
+        key
+        target-start
+        count
+        source-key
+        source-start
+        repeat
+        compiler-parse-semantic-origin-lookup-order
+        (if present
+          head.newest
+          -1)))
+    (set!
+      (array-ref compiler-parse-origin-alias-heads head-slot)
+      (if present
+        (CompilerParseOriginAliasHead
+          compiler-parse-semantic-origin-lookup-generation
+          key
+          index
+          (+ head.runs 1)
+          head.indexed-runs
+          head.decl-segment-start
+          head.decl-segment-len
+          head.semantic-segment-start
+          head.semantic-segment-len)
+        (CompilerParseOriginAliasHead
+          compiler-parse-semantic-origin-lookup-generation
+          key
+          index
+          1
+          0
+          0
+          0
+          0
+          0)))
+    (unless present (+= compiler-parse-origin-alias-head-len 1))
+    (+= compiler-parse-origin-alias-run-len 1)))
+
+;; Whether RUN covers SLOT in DOMAIN. A repeat alias carries no semantic
+;; occurrence run, so domain 1 looks past it to older runs.
+(define (compiler-parse-origin-alias-run-covers?
+  [run : CompilerParseOriginAliasRun]
+  [domain : i64]
+  [slot : i64]) : bool
+  (and
+    (>= slot run.target-start)
+    (< slot (+ run.target-start run.count))
+    (or (!= domain 1) (not run.repeat))))
+
+(define (compiler-parse-origin-segments-push!
+  [start : i64]
+  [end : i64]
+  [run : i64]) : unit
+  (when
+    (>=
+      compiler-parse-origin-segment-len
+      (array-length compiler-parse-origin-segments))
+    (let
+      [old : (__tl_dyn-array CompilerParseOriginSegment)
+        (unsafe
+          (ptr-read (ptr-addr-of compiler-parse-origin-segments)))]
+      (set!
+        compiler-parse-origin-segments
+        (in-arena
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (__tl_make-array
+            CompilerParseOriginSegment
+            (if (< (array-length old) 1)
+              64
+              (* (array-length old) 2)))))
+      (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
+        (set!
+          (array-ref compiler-parse-origin-segments index)
+          (array-ref old index)))))
+  (set!
+    (array-ref compiler-parse-origin-segments compiler-parse-origin-segment-len)
+    (CompilerParseOriginSegment start end run))
+  (+= compiler-parse-origin-segment-len 1))
+
+;; Append the segments of one domain of a chain whose runs cover slots
+;; [LO, LO + WIDTH), and return the first appended segment's index.
+(define (compiler-parse-origin-alias-segments-build!
+  [newest : i64]
+  [domain : i64]
+  [lo : i64]
+  [width : i64]) : i64
+  (let
+    [first : i64 compiler-parse-origin-segment-len]
+    [cursor : i64 newest]
+    [index : i64 0]
+    (for [offset (iterator.range 0 width)]
+      (set! (array-ref compiler-parse-origin-paint offset) -1))
+    ;; Newest first: a slot keeps the first run that paints it.
+    (while (>= cursor 0)
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs cursor)]
+        (when
+          (or (!= domain 1) (not run.repeat))
+          (for [slot
+            (iterator.range
+              (- run.target-start lo)
+              (- (+ run.target-start run.count) lo))]
+            (when
+              (< (array-ref compiler-parse-origin-paint slot) 0)
+              (set! (array-ref compiler-parse-origin-paint slot) cursor))))
+        (set! cursor run.older)))
+    (while (< index width)
+      (let
+        [run : i64 (array-ref compiler-parse-origin-paint index)]
+        [end : i64 (+ index 1)]
+        (if (< run 0)
+          (set! index end)
+          (begin
+            (while (and
+              (< end width)
+              (= (array-ref compiler-parse-origin-paint end) run))
+              (set! end (+ end 1)))
+            (compiler-parse-origin-segments-push! (+ lo index) (+ lo end) run)
+            (set! index end)))))
+    first))
+
+;; Index every run of the key at HEAD-SLOT into segments.
+(define (compiler-parse-origin-alias-index-key! [head-slot : i64]) : unit
+  (let
+    [head : CompilerParseOriginAliasHead
+      (array-ref compiler-parse-origin-alias-heads head-slot)]
+    [lo : i64 0]
+    [hi : i64 0]
+    [seen : bool false]
+    [cursor : i64 head.newest]
+    (while (>= cursor 0)
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs cursor)]
+        (when
+          (or (not seen) (< run.target-start lo))
+          (set! lo run.target-start))
+        (when
+          (or (not seen) (> (+ run.target-start run.count) hi))
+          (set! hi (+ run.target-start run.count)))
+        (set! seen true)
+        (set! cursor run.older)))
+    (when
+      (< (array-length compiler-parse-origin-paint) (- hi lo))
+      (set!
+        compiler-parse-origin-paint
+        (in-arena
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (__tl_make-array
+            i64
+            (if (< (* (array-length compiler-parse-origin-paint) 2) (- hi lo))
+              (- hi lo)
+              (* (array-length compiler-parse-origin-paint) 2))))))
+    (let
+      [decl-start : i64
+        (compiler-parse-origin-alias-segments-build! head.newest 2 lo (- hi lo))]
+      [semantic-start : i64
+        (compiler-parse-origin-alias-segments-build! head.newest 1 lo (- hi lo))]
+      (set!
+        (array-ref compiler-parse-origin-alias-heads head-slot)
+        (CompilerParseOriginAliasHead
+          head.generation
+          head.key
+          head.newest
+          head.runs
+          head.runs
+          decl-start
+          (- semantic-start decl-start)
+          semantic-start
+          (- compiler-parse-origin-segment-len semantic-start))))))
+
+;; The run of the segment in [START, START + LEN) that covers SLOT, or -1.
+(define (compiler-parse-origin-segments-find
+  [start : i64]
+  [len : i64]
+  [slot : i64]) : i64
+  (let
+    [lo : i64 start]
+    [hi : i64 (+ start len)]
+    ;; Find the first segment that starts after SLOT.
+    (while (< lo hi)
+      (let
+        [mid : i64 (/ (+ lo hi) 2)]
+        (if (<= (array-ref compiler-parse-origin-segments mid).start slot)
+          (set! lo (+ mid 1))
+          (set! hi mid))))
+    (if (and
+      (> lo start)
+      (< slot (array-ref compiler-parse-origin-segments (- lo 1)).end))
+      (array-ref compiler-parse-origin-segments (- lo 1)).run
+      -1)))
+
+;; The newest alias run of KEY covering SLOT in DOMAIN, or -1.
+(define (compiler-parse-origin-alias-covering
+  [domain : i64]
+  [key : i64]
+  [slot : i64]) : i64
+  (if (< (array-length compiler-parse-origin-alias-heads) 1)
+    -1
+    (let
+      [head-slot : i64 (compiler-parse-origin-alias-head-slot key)]
+      [head : CompilerParseOriginAliasHead
+        (array-ref compiler-parse-origin-alias-heads head-slot)]
+      (if (!= head.generation compiler-parse-semantic-origin-lookup-generation)
+        -1
+        (begin
+          (when
+            (and
+              (> head.runs compiler-parse-origin-chain-walk-limit)
+              (>
+                (- head.runs head.indexed-runs)
+                compiler-parse-origin-chain-walk-limit))
+            (compiler-parse-origin-alias-index-key! head-slot)
+            (set! head (array-ref compiler-parse-origin-alias-heads head-slot)))
+          ;; Walk the runs newer than the segments (every run of a short chain).
+          (let
+            [cursor : i64 head.newest]
+            [left : i64 (- head.runs head.indexed-runs)]
+            (while (> left 0)
+              (let
+                [run : CompilerParseOriginAliasRun
+                  (array-ref compiler-parse-origin-alias-runs cursor)]
+                (when
+                  (compiler-parse-origin-alias-run-covers? run domain slot)
+                  (return cursor))
+                (set! cursor run.older)
+                (-= left 1))))
+          (cond
+            [(= head.indexed-runs 0) -1]
+            [(= domain 1)
+              (compiler-parse-origin-segments-find
+                head.semantic-segment-start
+                head.semantic-segment-len
+                slot)]
+            [else
+              (compiler-parse-origin-segments-find
+                head.decl-segment-start
+                head.decl-segment-len
+                slot)]))))))
 
 (define (compiler-parse-semantic-origin-lookup-build!) : unit
   (let
@@ -778,44 +1204,25 @@
             [(or
                 (compiler-parse-marker? marker "__tl_decl_origin_alias")
                 (compiler-parse-marker? marker "__tl_decl_origin_alias_repeat"))
-              (let
-                [target-start : i64 (token.span-start-line marker-span)]
-                [count : i64 (token.span-start-col marker-span)]
-                [source-key : i64 (token.span-end-line marker-span)]
-                [source-start : i64 (token.span-end-col marker-span)]
-                [repeat : bool
+              ;; One run per record: target start, count, source key and
+              ;; source start ride in the marker span.
+              (when
+                (> (token.span-start-col marker-span) 0)
+                (compiler-parse-origin-alias-insert!
+                  record-key
+                  (token.span-start-line marker-span)
+                  (token.span-start-col marker-span)
+                  (token.span-end-line marker-span)
+                  (token.span-end-col marker-span)
                   (compiler-parse-marker?
                     marker
-                    "__tl_decl_origin_alias_repeat")]
-                (for [offset (iterator.range 0 count)]
-                  (if repeat
-                    unit
-                    (compiler-parse-semantic-origin-lookup-insert!
-                      1
-                      record-key
-                      (+ target-start offset)
-                      2
-                      0
-                      0
-                      source-key
-                      (+ source-start offset)))
-                  (compiler-parse-semantic-origin-lookup-insert!
-                    2
-                    record-key
-                    (+ target-start offset)
-                    2
-                    0
-                    0
-                    source-key
-                    (if repeat
-                      source-start
-                      (+ source-start offset)))))]
+                    "__tl_decl_origin_alias_repeat")))]
             [else unit])]
         [_ unit])
       (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
     (set! compiler-parse-semantic-origin-lookup-indexed-len limit)))
 
-(define (compiler-parse-semantic-origin-lookup
+(define (compiler-parse-semantic-origin-lookup-direct
   [domain : i64]
   [key : i64]
   [slot : i64]) : CompilerParseSemanticOriginLookupSlot
@@ -826,7 +1233,7 @@
         (compiler-parse-semantic-origin-lookup-hash domain key slot capacity)
         0)]
     [fallback : CompilerParseSemanticOriginLookupSlot
-      (CompilerParseSemanticOriginLookupSlot 0 0 0 0 0 0 0 0 0)]
+      (CompilerParseSemanticOriginLookupSlot 0 0 0 0 0 0 0 0 0 0)]
     (if (< capacity 1)
       fallback
       (begin
@@ -845,6 +1252,37 @@
                 (return entry)
                 (set! cursor (bit-and (+ cursor 1) (- capacity 1)))))))
         fallback))))
+
+;; The latest record for SLOT of KEY in DOMAIN: its direct entry, or an alias
+;; entry (kind 2) built from the newest covering run when that run came later.
+(define (compiler-parse-semantic-origin-lookup
+  [domain : i64]
+  [key : i64]
+  [slot : i64]) : CompilerParseSemanticOriginLookupSlot
+  (let
+    [direct : CompilerParseSemanticOriginLookupSlot
+      (compiler-parse-semantic-origin-lookup-direct domain key slot)]
+    [alias-index : i64 (compiler-parse-origin-alias-covering domain key slot)]
+    (if (< alias-index 0)
+      direct
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs alias-index)]
+        (if (and (!= direct.kind 0) (> direct.order run.order))
+          direct
+          (CompilerParseSemanticOriginLookupSlot
+            compiler-parse-semantic-origin-lookup-generation
+            domain
+            key
+            slot
+            2
+            0
+            0
+            run.source-key
+            (if run.repeat
+              run.source-start
+              (+ run.source-start (- slot run.target-start)))
+            run.order))))))
 
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.

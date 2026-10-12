@@ -81219,6 +81219,26 @@
     locals
     (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern)))
 
+;; A pattern-local name can hide an owner whose loan was live at arm entry.
+;; Restore only that captured outer state after removing the binding's state.
+(define (tc-borrow-check-restore-pattern-scope
+  [entry : TcMovedSet]
+  [after : TcMovedSet]
+  [names : TcNameIdList]) : TcMovedSet
+  (let
+    [cursor : TcNameIdList names]
+    [out : TcMovedSet after]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [name : i64 (tc-name-id-list-head cursor)]
+        (set!
+          out
+          (tc-moved-restore-root-state
+            out
+            (tc-moved-root-snapshot (tc-global-shared-view entry) name))))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    out))
+
 ;; A borrowed call-argument temporary (section 3.10) borrows storage that no
 ;; place names, so it adds no loan. Its operand's reads, and the value it
 ;; consumes into that storage, are checked like a by-value argument.
@@ -82440,7 +82460,7 @@
     (tc-moved-paths after)
     protected))
 
-(define (tc-borrow-check-loop-protect-stored-facts-loop
+(define (tc-borrow-check-protect-stored-facts-loop
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -82473,7 +82493,7 @@
                 kind
                 (tc-moved-path-fact-origin fact))
               out)))]
-      (tc-borrow-check-loop-protect-stored-facts-loop
+      (tc-borrow-check-protect-stored-facts-loop
         ctx
         expr-bases
         env
@@ -82481,14 +82501,16 @@
         rest
         out2))))
 
-(define (tc-borrow-check-loop-protect-stored-facts
+;; Stores can carry a loan past this expression even when its result and the
+;; next match arm do not use that lifetime. Incoming facts stay protected.
+(define (tc-borrow-check-protect-stored-facts
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]) : TcMovedSet
-  (tc-borrow-check-loop-protect-stored-facts-loop
+  (tc-borrow-check-protect-stored-facts-loop
     ctx
     expr-bases
     env
@@ -82744,7 +82766,7 @@
                       (tc-moved-set-box-shared-view normal-box)
                       pending-scope-id)]
                   [protected1 : TcMovedSet
-                    (tc-borrow-check-loop-protect-stored-facts
+                    (tc-borrow-check-protect-stored-facts
                       ctx
                       expr-bases
                       env
@@ -82869,7 +82891,7 @@
                     (tc-moved-set-box-shared-view normal-box)
                     head-id)]
                 [protected1 : TcMovedSet
-                  (tc-borrow-check-loop-protect-stored-facts
+                  (tc-borrow-check-protect-stored-facts
                     ctx
                     expr-bases
                     env
@@ -82948,7 +82970,7 @@
           [borrowed2 : TcMovedSet
             (tc-borrow-check-remove-pending-markers borrowed1 pending-scope-id)]
           [protected1 : TcMovedSet
-            (tc-borrow-check-loop-protect-stored-facts
+            (tc-borrow-check-protect-stored-facts
               ctx
               expr-bases
               env
@@ -83026,7 +83048,7 @@
             [borrowed2 : TcMovedSet
               (tc-borrow-check-remove-pending-markers borrowed1 head-id)]
             [protected1 : TcMovedSet
-              (tc-borrow-check-loop-protect-stored-facts
+              (tc-borrow-check-protect-stored-facts
                 ctx
                 expr-bases
                 env
@@ -83066,6 +83088,8 @@
               rest
               message))]))))
 
+;; The pattern has already copied by-value parts. Only live reference bindings
+;; need a fresh scrutinee loan; earlier and scrutinee-stored loans are protected.
 (define (tc-borrow-check-arms-loop-join
   [ctx : TcContext]
   [expr-bases : i64]
@@ -83073,6 +83097,7 @@
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
@@ -83083,6 +83108,7 @@
     loop-env
     locals
     borrowed
+    protected
     scrut-ty
     (& arms)
     joined
@@ -83095,6 +83121,7 @@
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [joined : TcMovedSet]
@@ -83113,6 +83140,21 @@
                 env
                 (tc-global-shared-view scrut-ty)
                 (tc-global-shared-view pattern)))]
+          [arm-locals : TcMovedSet
+            (tc-borrow-check-pattern-locals
+              ctx
+              (tc-global-shared-view scrut-ty)
+              (tc-global-shared-view pattern)
+              (tc-moved-clone locals))]
+          [arm-entry : TcMovedSet
+            (tc-borrow-check-prune-before-exprs
+              expr-bases
+              ctx
+              arm-env
+              (tc-global-shared-view arm-locals)
+              (tc-moved-clone borrowed)
+              (tc-global-shared-view protected)
+              (ast.ast-expr-cons body-box (& (ast.ast-expr-list-new))))]
           [arm-borrowed
             (try
               (tc-borrow-check-expr-loop
@@ -83120,16 +83162,13 @@
                 expr-bases
                 arm-env
                 loop-env
-                (tc-borrow-check-pattern-locals
-                  ctx
-                  (tc-global-shared-view scrut-ty)
-                  (tc-global-shared-view pattern)
-                  (tc-moved-clone locals))
-                (tc-moved-clone borrowed)
-                (tc-global-shared-view borrowed)
+                arm-locals
+                (tc-moved-clone arm-entry)
+                (tc-global-shared-view protected)
                 body))]
           [visible-arm-borrowed : TcMovedSet
-            (tc-move-remove-bound-root-states
+            (tc-borrow-check-restore-pattern-scope
+              arm-entry
               arm-borrowed
               (tc-borrow-check-pattern-bound-names
                 ctx
@@ -83142,6 +83181,7 @@
             loop-env
             locals
             borrowed
+            protected
             scrut-ty
             arms
             (tc-moved-union joined visible-arm-borrowed)
@@ -83154,6 +83194,7 @@
   [loop-env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]) : TcBorrowCheckResult
   (tc-borrow-check-arms-loop-join
@@ -83162,10 +83203,11 @@
     env
     loop-env
     locals
-    (tc-global-shared-view borrowed)
+    borrowed
+    (tc-global-shared-view protected)
     scrut-ty
     arms
-    borrowed))
+    (tc-moved-empty)))
 
 (define (tc-borrow-check-expr-loop
   [ctx : TcContext]
@@ -83275,8 +83317,16 @@
                   expr-bases
                   env
                   (tc-global-shared-view locals)
-                  borrowed
-                  scrut))]
+                  (tc-global-shared-view borrowed)
+                  (tc-global-shared-view scrut)))]
+            [protected1 : TcMovedSet
+              (tc-borrow-check-protect-stored-facts
+                ctx
+                expr-bases
+                env
+                scrut
+                (tc-global-shared-view borroweds)
+                borrowed)]
             [scrut-ty : ast.AstType
               (try
                 (tc-body-type-fact-expr-id
@@ -83291,6 +83341,7 @@
               loop-env
               locals
               borroweds
+              protected1
               scrut-ty
               arms))])]
     [(SpmdCompact compact-box)
@@ -84373,6 +84424,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
@@ -84382,6 +84434,7 @@
     env
     locals
     borrowed
+    protected
     scrut-ty
     (& arms)
     joined
@@ -84393,6 +84446,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [joined : TcMovedSet]
@@ -84409,21 +84463,34 @@
                 env
                 (tc-global-shared-view scrut-ty)
                 (tc-global-shared-view pattern)))]
+          [arm-locals : TcMovedSet
+            (tc-borrow-check-pattern-locals
+              ctx
+              (tc-global-shared-view scrut-ty)
+              (tc-global-shared-view pattern)
+              (tc-moved-clone locals))]
+          [arm-entry : TcMovedSet
+            (tc-borrow-check-prune-before-exprs
+              expr-bases
+              ctx
+              arm-env
+              (tc-global-shared-view arm-locals)
+              (tc-moved-clone borrowed)
+              (tc-global-shared-view protected)
+              (ast.ast-expr-cons body-box (& (ast.ast-expr-list-new))))]
           [arm-borrowed
             (try
-              (tc-borrow-check-expr-id
+              (tc-borrow-check-expr-with-protected-id
                 ctx
                 expr-bases
                 arm-env
-                (tc-borrow-check-pattern-locals
-                  ctx
-                  (tc-global-shared-view scrut-ty)
-                  (tc-global-shared-view pattern)
-                  (tc-moved-clone locals))
-                (tc-moved-clone borrowed)
+                arm-locals
+                (tc-moved-clone arm-entry)
+                (tc-global-shared-view protected)
                 body-box))]
           [visible-arm-borrowed : TcMovedSet
-            (tc-move-remove-bound-root-states
+            (tc-borrow-check-restore-pattern-scope
+              arm-entry
               arm-borrowed
               (tc-borrow-check-pattern-bound-names
                 ctx
@@ -84435,6 +84502,7 @@
             env
             locals
             borrowed
+            protected
             scrut-ty
             arms
             (tc-moved-union joined visible-arm-borrowed)
@@ -84446,6 +84514,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
   [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]) : TcBorrowCheckResult
   (tc-borrow-check-arms-join
@@ -84453,10 +84522,11 @@
     expr-bases
     env
     locals
-    (tc-global-shared-view borrowed)
+    borrowed
+    (tc-global-shared-view protected)
     scrut-ty
     arms
-    borrowed))
+    (tc-moved-empty)))
 
 (define (tc-borrow-check-expr-id
   [ctx : TcContext]
@@ -85595,8 +85665,16 @@
                   expr-bases
                   env
                   (tc-global-shared-view locals)
-                  borrowed
-                  scrut))]
+                  (tc-global-shared-view borrowed)
+                  (tc-global-shared-view scrut)))]
+            [protected1 : TcMovedSet
+              (tc-borrow-check-protect-stored-facts
+                ctx
+                expr-bases
+                env
+                scrut
+                (tc-global-shared-view borroweds)
+                borrowed)]
             [scrut-ty : ast.AstType
               (try
                 (tc-body-type-fact-expr-id
@@ -85610,6 +85688,7 @@
               env
               locals
               borroweds
+              protected1
               scrut-ty
               arms))])]
     [(Foreach fe-box)

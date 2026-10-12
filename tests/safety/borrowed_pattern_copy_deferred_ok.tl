@@ -2,8 +2,8 @@
 ;: the match (SPEC section 5.13), even when the arm changes the scrutinee before
 ;: reading the binding. Lowering reads such a binding from the scrutinee at each
 ;: use only when nothing that could write memory can run first; these arms
-;: exercise both sides. A call can change a global scrutinee the borrow checker
-;: does not track across calls.
+;: exercise both sides. The scrutinee loan ends after Copy-only destructuring;
+;: calls remain possible memory writes for the deferred-read proof.
 (defenum Tok
   (Num i64)
   (Pair i64 bool)

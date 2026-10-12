@@ -149,6 +149,16 @@ proof; loops, captures, address-taking and unmodeled uses require an eager copy.
 Deferred IDs name fresh locals and keep their by-value type. Reading one emits
 a load, and borrowing one first copies the loaded value into its own storage.
 
+Borrow checking prunes fresh match-scrutinee loans after binding each pattern,
+using the arm environment and the existing lifetime/free-use scan. Copy-only
+bindings do not keep the source loan alive; reference-bearing bindings do.
+Incoming loans and loans stored by scrutinee evaluation stay protected in both
+ordinary and loop arms. The join unions the checked arm states rather than
+restoring the unpruned scrutinee state, so a copied payload can outlive a write
+to its source while an escaping reference still protects that source. Pattern
+scope exit restores captured outer root states for shadowed names; clearing a
+pattern local must not erase an incoming or escaping loan of the hidden owner.
+
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends
 with the call. Typechecking rejects any result or mutable referent that could

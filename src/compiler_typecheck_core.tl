@@ -12872,6 +12872,15 @@
         (ci.intern-str name)
         (tc-elided-lifetime-name-prefix)))))
 
+;: Whether `name` is a compiler-generated region or lifetime with no source
+;: spelling (a with-scratch body region, say) other than an elided input's:
+;: those names start with a newline, and a diagnostic cannot name them.
+(define (tc-lifetime-generated-unnamed? [name : i64]) : bool
+  (and
+    (ci.intern-renderable-id? name)
+    (not (tc-elaborated-lifetime-hidden? name))
+    (tc-diag-string-prefix? (ci.intern-str name) "\n")))
+
 ;: A lifetime as diagnostics spell it. The hidden name of an elided input
 ;: reference reads `<elided N>`, N counting a signature's elided references
 ;: from 1, since its source spelling has no name.
@@ -26936,7 +26945,10 @@
     [(Region required _)
       (match actual
         [(Region source _)
-          (if (tc-lifetime-outlives-lifetime-id? env source required)
+          (if (or
+            (tc-lifetime-outlives-lifetime-id? env source required)
+            (tc-lifetime-generated-unnamed? source)
+            (tc-lifetime-generated-unnamed? required))
             ""
             (str_cat.str-cat
               (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))

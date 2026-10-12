@@ -86,6 +86,9 @@ cloning and dense-store growth, and requires fixpoint equality to distinguish it
 Later-argument let/for shadowing must preserve an earlier global loan, while
 mutating a separate same-named local remains valid. Root removal, owner selection
 and exact loan removal are checked with both owners present in one snapshot.
+The global-prefix metadata test grows a dense store through several capacities,
+retains a local-only earlier snapshot, and filters a global back out; every
+prefix must report exactly the global handles reachable in its parent chain.
 The same owner identity selects lending-use propagation and prevents a local
 fact from suppressing a global loan during return, loop, or stored-loan protection.
 The public shadowing matrix requires the secondary diagnostic to point to the

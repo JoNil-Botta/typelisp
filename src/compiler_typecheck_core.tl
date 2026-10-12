@@ -64207,7 +64207,9 @@
 ;; address, their newest node, and their logical length.
 (defstruct TcMovedPathFactNode
   (fact TcMovedPathFact)
-  (parent i64))
+  (parent i64)
+  ;; Exact over this immutable parent chain, including non-borrow markers.
+  (has-globals bool))
 
 (defstruct TcMovedPathFactStoreData
   (nodes (__tl_dyn-array TcMovedPathFactNode))
@@ -64435,7 +64437,9 @@
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
       (__tl_make-array TcMovedPathFactNode 4)]
     [owner : i64 (arena.tl_arena_current)]
-    (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
+    (set!
+      (array-ref nodes 0)
+      (TcMovedPathFactNode first -1 (>= first.global-handle 0)))
     (box (TcMovedPathFactStoreData nodes 1 owner))))
 
 (define (tc-moved-path-fact-store-grow!
@@ -64482,7 +64486,8 @@
                     kind
                     node.fact.origin
                     node.fact.global-handle)
-                  node.parent))))
+                  node.parent
+                  node.has-globals))))
           (set! data.nodes next))))))
 
 (define (tc-moved-path-fact-store-push!
@@ -64492,7 +64497,14 @@
   (let
     [index : i64 data.len]
     (tc-moved-path-fact-store-grow! data (+ index 1))
-    (set! (array-ref data.nodes index) (TcMovedPathFactNode fact parent))
+    (let
+      [has-globals : bool
+        (or
+          (>= fact.global-handle 0)
+          (and (>= parent 0) (array-ref data.nodes parent).has-globals))]
+      (set!
+        (array-ref data.nodes index)
+        (TcMovedPathFactNode fact parent has-globals)))
     (set! data.len (+ index 1))
     index))
 
@@ -64501,6 +64513,13 @@
   [index : i64]) : TcMovedPathFactNode
   (unsafe
     (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
+
+(define (tc-moved-path-facts-have-globals? [facts : TcMovedPathFacts]) : bool
+  (match facts
+    [(Nil) false]
+    [(One fact) (>= fact.global-handle 0)]
+    [(Dense store tail _)
+      (array-ref (__tl-box-place store).nodes tail).has-globals]))
 
 (define (tc-moved-path-facts-empty-impl [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -77482,7 +77501,13 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [handle : i64]) : TcMovedSet
-  (when (tc-moved-path-facts-empty? borrowed.paths) (return borrowed))
+  (when
+    (and
+      (< handle 0)
+      (not
+        (tc-moved-path-facts-have-globals?
+          (tc-global-shared-view borrowed.paths))))
+    (return borrowed))
   (let
     [facts : TcMovedPathFacts
       (tc-moved-path-facts-filter
@@ -83104,6 +83129,9 @@
   [call-expr : ast.AstExpr]
   [func : ast.AstExpr]
   [known-callee : i64]) : ResultTcUnit
+  (unless
+    (tc-moved-path-facts-have-globals? (tc-global-shared-view borrowed.paths))
+    (return Ok))
   (let
     [facts : TcMovedPathFacts (tc-moved-paths (tc-global-shared-view borrowed))]
     (while (not (tc-moved-path-facts-empty? facts))
@@ -83267,7 +83295,9 @@
   [borrowed : TcMovedSet]
   [call-expr : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcUnit
-  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (unless
+    (tc-moved-path-facts-have-globals? (tc-global-shared-view borrowed.paths))
+    (return Ok))
   (for [index (iterator.range 0 args.len)]
     (let
       [operand : i64

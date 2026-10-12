@@ -10616,3 +10616,47 @@
           (effect_words.len (& (global_effects.witness! (&mut kept) 0 8)))
           2
           "appended graph rebuilds query caches in its destination arena")))))
+
+(cfg
+  test
+  (test
+    global-borrow-prefix-metadata
+    (let
+      [local : i64 (ci.intern "metadata-local")]
+      [global : i64 (ci.intern "metadata-global")]
+      [facts : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
+      [saved : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
+      (for [index (iterator.range 0 64)]
+        (set!
+          facts
+          (tc_core.tc-moved-path-facts-cons
+            facts
+            (tc_core.TcMovedPathFact
+              (tc_core.TcMovePath
+                (if (= index 31)
+                  global
+                  local)
+                (tc_core.tc-move-path-segments-empty))
+              (tc_core.TcMovedPathKind.BorrowShared)
+              (tc_core.tc-moved-no-origin-id)
+              (if (= index 31)
+                0
+                -1))))
+        (when (= index 30) (set! saved (tc_core.tc-global-shared-view facts)))
+        (test.assert-true
+          (=
+            (tc_core.tc-moved-path-facts-have-globals?
+              (tc_core.tc-global-shared-view facts))
+            (>= index 31))
+          "every prefix has exactly the globals introduced in that prefix"))
+      (test.assert-false
+        (tc_core.tc-moved-path-facts-have-globals? saved)
+        "growth and later global facts do not alter an earlier snapshot")
+      (let
+        [locals : tc_core.TcMovedPathFacts
+          (tc_core.tc-moved-path-facts-filter
+            facts
+            (tc_core.TcMovedPathFactsFilter.Provenance global -1))]
+        (test.assert-false
+          (tc_core.tc-moved-path-facts-have-globals? locals)
+          "filtering the global rebuilds local-only prefixes")))))

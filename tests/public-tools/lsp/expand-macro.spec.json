@@ -2,6 +2,23 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"text\""}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/when\"", "raw_contains": "\"definedIn\":\"stdlib/core_macros.tl\"", "raw_contains": "\"frames\":[{\"macro\":\"stdlib.core_macros/for\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":5,\"character\":4},\"end\":{\"line\":7,\"character\":34}}},{\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":6,\"character\":6},\"end\":{\"line\":7,\"character\":33}}}]", "raw_contains": "\"expansion\":\"(if (> i 0)\\n  (begin\\n    (set! total (+ total i)))\\n  unit)\"", "raw_contains": "\"truncated\":false", "raw_not_contains": "\"text\""},
+    {"jsonpath_id": 3, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/for\"", "raw_contains": "__for_index", "raw_not_contains": "\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"frames\""},
+    {"jsonpath_id": 4, "raw_contains": "\"success\":false", "raw_contains": "\"error\":\"No macro invocation at this position\""},
+    {"jsonpath_id": 5, "raw_contains": "\"error\"", "raw_contains": "Missing position parameter"},
+    {"jsonpath_id": 6, "raw_contains": "\"error\"", "raw_contains": "Document not found"},
+    {"jsonpath_id": 8, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 9, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 10, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 11, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 12, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 13, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 14, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 15, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"},
+    {"jsonpath_id": 16, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/when\""},
+    {"jsonpath_id": 17, "raw_contains": "\"success\":true", "raw_contains": "\"macro\":\"stdlib.core_macros/for\"", "raw_not_contains": "\"macro\":\"stdlib.core_macros/when\""},
+    {"jsonpath_id": 18, "raw_contains": "\"success\":false", "raw_contains": "No macro invocation at this position"},
+    {"jsonpath_id": 19, "raw_contains": "\"frames\":[{\"macro\":\"stdlib.core_macros/when\",\"definedIn\":\"stdlib/core_macros.tl\",\"range\":{\"start\":{\"line\":0,\"character\":28},\"end\":{\"line\":0,\"character\":45}}}]", "raw_contains": "(if false", "raw_not_contains": "(> i 0)"},
+    {"jsonpath_id": 20, "raw_contains": "\"code\":-32602", "raw_contains": "Invalid position parameter"}
   ]
 }

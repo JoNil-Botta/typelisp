@@ -85,7 +85,7 @@ count-at-least|call _tl_sym_i64_lookup_id|2
 end
 
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
-# build/clean/run/check/fmt/lint/test/doc/explain/inspect/repl/lsp); each
+# build/clean/run/check/fmt/lint/test/doc/expand/explain/inspect/repl/lsp); each
 # command is exercised by the public CLI gates.
 case|selfhost_main|src/main.tl|assembly|exactly-one|direct
 not-contains|root_list_append

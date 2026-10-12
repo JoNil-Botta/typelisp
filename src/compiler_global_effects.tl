@@ -16,6 +16,8 @@
   ;; caller. Cached witness successors always decrease the propagation depth,
   ;; including inside recursive SCCs; absence is published only at fixpoint.
   (callers (__tl_dyn-array i64))
+  ;; Every nonempty reverse adjacency occurs once in this sparse index.
+  (callee-nodes words.Vec)
   (links edges.Vec)
   (writers ids.Map)
   (summaries ids.Map)
@@ -24,6 +26,7 @@
 (define (new [node-count : i64]) : Graph
   (Graph
     (__tl_make-array i64 (+ node-count 1))
+    (words.new)
     (edges.new)
     (ids.with-capacity 0)
     (ids.with-capacity 0)
@@ -31,8 +34,10 @@
 
 ;; Retained edges never point into the source collector's scratch arena.
 (define (append! [out : (&mut out Graph)] [source : (& source Graph)]) : unit
-  (for [callee (iterator.range 0 (array-length source.callers))]
+  (when (= (edges.len (& source.links)) 0) (return unit))
+  (for [index (iterator.range 0 (words.len (& source.callee-nodes)))]
     (let
+      [callee : i64 (words.get (& source.callee-nodes) index 0)]
       [head : i64 (array-ref source.callers callee)]
       (while (!= head 0)
         (let
@@ -57,8 +62,10 @@
   (ids.clear-ref! (&mut graph.summaries))
   (let
     [head : i64 (array-ref graph.callers callee)]
-    [next : i64 (link! graph caller head)]
-    (set! (array-ref graph.callers callee) next)))
+    (when (= head 0) (words.push-ref! (&mut graph.callee-nodes) callee))
+    (let
+      [next : i64 (link! graph caller head)]
+      (set! (array-ref graph.callers callee) next))))
 
 (define (add-write!
   [graph : (&mut graph Graph)]

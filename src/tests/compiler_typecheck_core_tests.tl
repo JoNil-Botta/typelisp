@@ -10604,6 +10604,13 @@
           (effect_words.len (& (global_effects.witness! (&mut kept) 1 7)))
           4
           "appending preserves edges collected by an earlier query")
+        (let
+          [cloned : global_effects.Graph (global_effects.new 66)]
+          (global_effects.append! (&mut cloned) (& kept))
+          (test.assert-i64-eq
+            (effect_words.len (& (global_effects.witness! (&mut cloned) 1 7)))
+            4
+            "subsequent appends retain earlier and collected edges after scratch retirement"))
         (global_effects.add-write! (&mut kept) 65 8)
         (test.assert-i64-eq
           (effect_words.len (& (global_effects.witness! (&mut kept) 0 8)))

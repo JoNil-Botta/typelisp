@@ -86,8 +86,9 @@
         (with-arena
           scratch
           (let
-            [graph : effects.Graph (effects.copy (& base))]
+            [graph : effects.Graph (effects.new 3)]
             [reachable : i64 writers]
+            (effects.append! (&mut graph) (& base))
             (for [node (iterator.range 0 3)]
               (when
                 (!= (bit-and writers (shl 1 node)) 0)

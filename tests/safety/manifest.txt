@@ -244,6 +244,8 @@ global_call_mutable_loan_reject|check-fail|tests/safety/global_call_mutable_loan
 global_call_nominal_cleanup_reject|check-fail|tests/safety/global_call_nominal_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
 global_call_nominal_owned_reject|check-fail|tests/safety/global_call_nominal_owned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-holder -> close-handle -> drop-word)
 global_call_pure_constructor_ok|run-exit|tests/safety/global_call_pure_constructor_ok.tl|1|-
+global_call_enum_pattern_global_write_reject|check-fail|tests/safety/global_call_enum_pattern_global_write_reject.tl|-|may assign `g`
+global_call_enum_parameter_global_write_reject|check-fail|tests/safety/global_call_enum_parameter_global_write_reject.tl|-|may assign `g`
 global_call_reassign_copy_ok|run-exit|tests/safety/global_call_reassign_copy_ok.tl|1|-
 global_call_rebind_reject|check-fail|tests/safety/global_call_rebind_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
 global_call_recursion_reject|check-fail|tests/safety/global_call_recursion_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> b! -> a! -> rebind!)

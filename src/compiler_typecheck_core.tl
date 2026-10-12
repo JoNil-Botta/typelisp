@@ -76345,12 +76345,34 @@
     "` remains live because a later reference use may still depend on it"))
 
 (define (tc-borrow-check-conflict-origin
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcBorrowConflictOrigin
-  (match (tc-moved-path-conflict-kind borrowed path kind)
-    [(Some _ origin-id) (Some origin-id)]
-    [No No]))
+  (let
+    [facts : TcMovedPathFacts (tc-moved-paths borrowed)]
+    (while (not (tc-moved-path-facts-empty? facts))
+      (let
+        [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+        (when
+          (and
+            (tc-moved-path-kind-eq? fact.kind kind)
+            (tc-move-path-conflicts? fact.path path))
+          ;; Local diagnostics identify the borrowed operand. Captured global
+          ;; proofs retain their original borrow-site span through shadowing.
+          (when
+            (< fact.global-handle 0)
+            (let
+              [origin : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases fact.origin)]
+              (match (ast.ast-expr-unspan-with-segment-bases
+                expr-bases
+                (& origin))
+                [(Borrow _ _ place) (return (Some place))]
+                [_ unit])))
+          (return (Some fact.origin)))
+        (set! facts (tc-moved-path-facts-rest facts))))
+    No))
 
 (define (tc-borrow-check-rich-conflict-message
   [expr-bases : i64]
@@ -76362,6 +76384,7 @@
   (match (tc-expr-maybe-span expr-bases primary)
     [(Some primary-span)
       (match (tc-borrow-check-conflict-origin
+        expr-bases
         borrowed
         conflict-path
         conflict-kind)
@@ -76394,6 +76417,7 @@
             (tc-borrow-check-origin-label (tc-move-path-render conflict-path)))])]
     [(No)
       (match (tc-borrow-check-conflict-origin
+        expr-bases
         borrowed
         conflict-path
         conflict-kind)
@@ -81454,6 +81478,12 @@
 (defstruct TcGlobalEffectCollector
   (graph global_effects.Graph)
   (temporary-callers tc_i64_i64_map.Map)
+  (typed-temporaries tc_i64_i64_map.Map)
+  (collected (__tl_dyn-array i64))
+  (pending effect_words.Vec)
+  (prefix-only bool)
+  (address-only bool)
+  (bindings ast.AstLetBindingList)
   (declaration i64)
   (first-contextual-declaration i64))
 
@@ -81481,7 +81511,7 @@
   (graph global_effects.Graph)
   (temporary-callers tc_i64_i64_map.Map)
   (typed-temporaries tc_i64_i64_map.Map)
-  (first-contextual-declaration i64)
+  (collected (__tl_dyn-array i64))
   (pending i64))
 
 (define (tc-global-effect-name-part
@@ -81512,7 +81542,10 @@
   (if (or (< name 0) (tc-name-id-list-contains bound name))
     (csym.compiler-symbols-missing-handle)
     (let
-      [leading : i64 (tc-global-effect-name-part ctx name true)]
+      [leading : i64
+        (if (tc-name-id-list-empty? bound)
+          -1
+          (tc-global-effect-name-part ctx name true))]
       (if (and (>= leading 0) (tc-name-id-list-contains bound leading))
         (csym.compiler-symbols-missing-handle)
         (let
@@ -81547,12 +81580,36 @@
                 (tc-global-effect-handle ctx bound prefix)
                 handle))))))))
 
+(define (tc-global-effect-enqueue!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]) : unit
+  (unless
+    (or collector.prefix-only (!= (array-ref collector.collected node) 0))
+    (set! (array-ref collector.collected node) 1)
+    (effect_words.push-ref! (&mut collector.pending) node)))
+
+(define (tc-global-effect-add-call!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [caller : i64]
+  [callee : i64]) : unit
+  (unless
+    (or collector.prefix-only collector.address-only)
+    (global_effects.add-call! (&mut collector.graph) caller callee)
+    ;; Merely defining a lambda or taking a function value does not execute
+    ;; the indirect union. Its outgoing edges become relevant when queried.
+    (when
+      (or
+        (!= caller collector.graph.indirect)
+        (!= (array-ref collector.collected collector.graph.indirect) 0))
+      (tc-global-effect-enqueue! collector callee))))
+
 (define (tc-global-effect-write-name!
   [ctx : TcContext]
   [collector : (&mut collector TcGlobalEffectCollector)]
   [node : i64]
   [bound : TcNameIdList]
   [name : i64]) : unit
+  (when (or collector.prefix-only collector.address-only) (return unit))
   (let
     [handle : i64 (tc-global-effect-handle ctx bound name)]
     (when
@@ -81624,7 +81681,17 @@
             bound
             (tc-global-effect-name-part ctx name true)))
         indirect]
-      [(tc-move-check-constructor-call? ctx func) -1]
+      ;; A valid unresolved bare value can name a variant supplied by its
+      ;; expected enum, including one imported only through a type alias.
+      ;; Ordinary declarations and lexical callables have already won above.
+      [(or
+          (tc-move-check-constructor-call? ctx func)
+          (and
+            (>= name 0)
+            (< name (ci.intern-capacity))
+            (tc-bare-variant-name-id? name)
+            (tc-bare-variant-declared-name? ctx name)))
+        -1]
       ;; Compiler-owned primitives do not execute a user function. Resolve
       ;; declarations and lexical callable bindings before this fallback so
       ;; a shadowing function retains its actual effects.
@@ -81636,17 +81703,217 @@
               (tc-hygiene-global-name-id?
                 (tc-context-structural-session ctx)
                 name))]
-          (or
-            (cbi.compiler-builtin-typecheck-length-call-id? builtin)
-            (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
-            (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
-            (cbi.compiler-builtin-typecheck-clone-id? builtin)
-            (cbi.compiler-builtin-private-intrinsic-id? builtin)
-            (cbi.compiler-builtin-typecheck-tls-current-arena-id? builtin)
-            (cbi.compiler-builtin-lower-arena-id? builtin)
-            (cbi.compiler-builtin-c-fn-check-id? builtin)))
+          (and
+            (>= builtin 0)
+            (< builtin (ci.intern-capacity))
+            (or
+              (cbi.compiler-builtin-typecheck-length-call-id? builtin)
+              (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
+              (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
+              (cbi.compiler-builtin-typecheck-clone-id? builtin)
+              (cbi.compiler-builtin-private-intrinsic-id? builtin)
+              (cbi.compiler-builtin-typecheck-syntactic-unsafe-call-id? builtin)
+              (let
+                [text : String (tc-env-key-name-text builtin)]
+                (or
+                  (not
+                    (=
+                      (tc-slice-view-spelling-kind (& text))
+                      TcSliceViewCallKind.None))
+                  (tc-layout-query-name? (tc-global-shared-view text))))
+              (cbi.compiler-builtin-typecheck-tls-current-arena-id? builtin)
+              (cbi.compiler-builtin-lower-arena-id? builtin)
+              (cbi.compiler-builtin-c-fn-check-id? builtin))))
         -1]
       [else indirect])))
+
+(define (tc-global-effect-bind!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [bound : TcNameIdList]
+  [name : i64]
+  [annotation : ast.AstMaybeType]
+  [init : i64]) : TcNameIdList
+  (ast.ast-let-binding-list-push
+    (&mut collector.bindings)
+    (ast.AstLetBinding.Binding name annotation init))
+  (tc-name-id-list-add bound name))
+
+;; Resolve only declared or syntactically known types; never re-enter body
+;; typechecking from the effect walk. The binding's index limits initializer
+;; lookup to its incoming scope, including same-name sequential bindings.
+(define (tc-global-effect-known-type
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [id : i64]
+  [limit : i64]) : ast.AstMaybeType
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _) (Borrow _ _ inner))
+      (tc-global-effect-known-type ctx collector inner limit)]
+    [(Ann _ ty) (Some (tc-resolve-type ctx (ast.ty-node-get ty)))]
+    [(Literal value) (Some (tc-literal-type value))]
+    [(Var name)
+      (let
+        [index : i64 (- limit 1)]
+        (while (>= index 0)
+          (match (ast.ast-let-binding-list-get
+            (& collector.bindings)
+            index
+            (ast.ast-let-binding-fallback))
+            [(Binding local annotation init)
+              (when
+                (= local name)
+                (return
+                  (match annotation
+                    [(Some ty) (Some (tc-resolve-type ctx ty))]
+                    [(No)
+                      (if (>= init 0)
+                        (tc-global-effect-known-type ctx collector init index)
+                        (No))])))])
+          (-= index 1))
+        (tc-global-effect-declared-type ctx name false))]
+    [(Call func _)
+      (let
+        [name : i64
+          (tc-expr-var-name-id
+            (tc-context-expr-bases ctx)
+            (tc-context-expr-get ctx func))]
+        [local : bool false]
+        (for [index (iterator.range 0 limit)]
+          (match (ast.ast-let-binding-list-get
+            (& collector.bindings)
+            index
+            (ast.ast-let-binding-fallback))
+            [(Binding bound _ _) (when (= name bound) (set! local true))]))
+        (if local
+          (match (tc-global-effect-known-type ctx collector func limit)
+            [(Some ty)
+              (match (tc-type-strip-region ty)
+                [(Func _ ret) (Some (ast.ty-node-get ret))]
+                [_ (No)])]
+            [(No) (No)])
+          (tc-global-effect-declared-type ctx name true)))]
+    [(If _ yes no)
+      (match (tc-global-effect-known-type ctx collector yes limit)
+        [(Some left)
+          (match (tc-global-effect-known-type ctx collector no limit)
+            [(Some right)
+              (if (tc-type-eq (tc-global-shared-view left) right)
+                (Some left)
+                (No))]
+            [(No) (No)])]
+        [(No) (No)])]
+    [(Begin items)
+      (if (> items.len 0)
+        (tc-global-effect-known-type
+          ctx
+          collector
+          (ast.ast-expr-list-get (& items) (- items.len 1) 0)
+          limit)
+        (Some (ast.AstType.Unit)))]
+    [(StructGet base field)
+      (match (tc-global-effect-known-type ctx collector base limit)
+        [(Some ty)
+          (match (tc-struct-get-result-type-id ctx ty field)
+            [(Ok result) (Some result)]
+            [_ (No)])]
+        [(No) (No)])]
+    [_ (No)]))
+
+(define (tc-global-effect-declared-type
+  [ctx : TcContext]
+  [name : i64]
+  [called : bool]) : ast.AstMaybeType
+  (let
+    [direct : i64 (tc-global-effect-handle ctx Nil name)]
+    [handle : i64
+      (if (or
+        (csym.compiler-symbols-handle-found? direct)
+        (< name 0)
+        (>= name (ci.intern-capacity))
+        (not (tc-bare-variant-name-id? name)))
+        direct
+        (tc-bare-variant-visible-handle ctx name))]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      (No)
+      (let
+        [index : i64
+          (if (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-enum-variant))
+            (csym.compiler-registry-handle-owner-index handle)
+            (csym.compiler-symbol-handle-index handle))]
+        [module : i64
+          (csym.compiler-symbols-owner-module-id-at-index-or
+            (tc-context-symbols ctx)
+            index
+            cbi.compiler-builtin-id-fix-empty)]
+        [owner : TcContext
+          (tc-context-with-module-id ctx (tc-env-key-name-text module) module)]
+        (if (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-enum-variant))
+          (Some (ast.AstType.Enum (tc-variant-owner-id-or ctx handle -1)))
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            index)
+            [(Ok decl)
+              (match (ast.ast-decl-unwrapped (& decl))
+                [(DefFn _ _ _ ret _ _)
+                  (if called
+                    (Some (tc-resolve-type owner ret))
+                    (No))]
+                [(Def _ _ annotation _)
+                  (if called
+                    (No)
+                    (match annotation
+                      [(Some ty) (Some (tc-resolve-type owner ty))]
+                      [(No) (No)]))]
+                [_ (No)])]
+            [_ (No)]))))))
+
+(define (tc-global-effect-nullary-pattern? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(or (Var _ _) (Binding _)) true]
+    [(Or alternatives)
+      (let
+        [items : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives)]
+        (for [index (iterator.range 0 items.len)]
+          (when
+            (tc-global-effect-nullary-pattern?
+              (ast.ast-pattern-list-get
+                (& items)
+                index
+                (ast.ast-pattern-fallback)))
+            (return true)))
+        false)]
+    [_ false]))
+
+(define (tc-global-effect-bind-pattern
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [pattern : ast.AstPattern]
+  [bound : TcNameIdList]
+  [enum-arm : bool]) : TcNameIdList
+  (let
+    [names : TcNameIdList
+      (if enum-arm
+        (tc-enum-arm-pattern-bound-name-ids pattern Nil)
+        (tc-pattern-add-bound-name-ids pattern Nil))]
+    [scope : TcNameIdList bound]
+    (while (not (tc-name-id-list-empty? names))
+      (let
+        [name : i64 (tc-name-id-list-head names)]
+        ;; A qualified top-level name can only denote a nullary variant.
+        (unless
+          (or
+            (tc-name-qualified-id? (tc-context-structural-session ctx) name)
+            (>=
+              (tc-name-first-dot-id (tc-context-structural-session ctx) name)
+              0))
+          (set! scope (tc-global-effect-bind! collector scope name (No) -1)))
+        (set! names (tc-name-id-list-rest names))))
+    scope))
 
 (define (tc-global-effect-scan-list!
   [ctx : TcContext]
@@ -81666,7 +81933,8 @@
 (define (tc-global-effect-global-place?
   [ctx : TcContext]
   [bound : TcNameIdList]
-  [id : i64]) : bool
+  [id : i64]
+  [explicit-borrow : bool]) : bool
   (match (tc-move-root-projection-var-id
     (tc-context-expr-bases ctx)
     (tc-context-expr-get ctx id))
@@ -81677,7 +81945,37 @@
           (csym.compiler-symbols-handle-found? handle)
           (=
             (csym.compiler-symbol-handle-kind handle)
-            (csym.compiler-symbol-kind-value-define))))]
+            (csym.compiler-symbol-kind-value-define))
+          ;; Copy arguments create no global-place loan. Explicit borrows
+          ;; retain their provenance even when the referent itself is Copy.
+          (or
+            explicit-borrow
+            (match (csym.compiler-symbols-decl-at-index
+              (tc-context-symbols ctx)
+              (csym.compiler-symbol-handle-index handle))
+              [(Ok decl)
+                (let
+                  [owner : TcContext
+                    (tc-context-with-nominal-owner-index-module
+                      ctx
+                      (csym.compiler-symbol-handle-index handle))]
+                  (match (ast.ast-decl-unwrapped (& decl))
+                    [(Def _ _ (Some ty) _)
+                      (not (tc-move-global-target-shallow-copyable? owner ty))]
+                    [(Def _ _ (No) init)
+                      (let
+                        [expr : ast.AstExpr (tc-context-expr-get ctx init)]
+                        (match (ast.ast-expr-unspan-with-segment-bases
+                          (tc-context-expr-segment-bases ctx)
+                          (& expr))
+                          [(Literal lit)
+                            (not
+                              (tc-move-global-target-shallow-copyable?
+                                owner
+                                (tc-literal-type lit)))]
+                          [_ true]))]
+                    [_ true]))]
+              [_ true]))))]
     [(No) false]))
 
 (define (tc-global-effect-contextual!
@@ -81699,9 +81997,32 @@
     ;; Source-prefix counts include module/import markers; effect nodes use
     ;; canonical symbol indices, including declarations inside module bodies.
     [indexed : i64 (csym.compiler-decl-list-index-count (& prefix))]
-    [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make_small)]
     (unsafe
-      (< (deref state).first-contextual-declaration indexed))))
+      (arena.tl_arena_set scratch))
+    (let
+      [collector : TcGlobalEffectCollector
+        (TcGlobalEffectCollector
+          (global_effects.new 0)
+          (tc_i64_i64_map.with-capacity 0)
+          (tc_i64_i64_map.with-capacity 0)
+          (__tl_make-array i64 0)
+          (effect_words.new)
+          true
+          false
+          (ast.ast-let-binding-list-new)
+          -1
+          indexed)]
+      (for [index (iterator.range 0 indexed)]
+        (tc-global-effect-scan-declaration! ctx (&mut collector) index)
+        (when (< collector.first-contextual-declaration indexed) (break)))
+      (let
+        [contextual : bool (< collector.first-contextual-declaration indexed)]
+        (unsafe
+          (arena.tl_arena_set enclosing)
+          (arena.tl_arena_destroy scratch))
+        contextual))))
 
 (define (tc-global-effect-scan!
   [ctx : TcContext]
@@ -81710,7 +82031,14 @@
   [bound : TcNameIdList]
   [id : i64]
   [call-head : bool]) : unit
+  (when
+    (and
+      collector.prefix-only
+      (>= collector.first-contextual-declaration 0)
+      (<= collector.first-contextual-declaration collector.declaration))
+    (return unit))
   (let
+    [entry : i64 collector.bindings.len]
     [expr : ast.AstExpr (tc-context-expr-get ctx id)]
     (match (tc-global-shared-view expr)
       [(or (Quote _) (Quasiquote _) (Comptime _) (TypeLiteral _)) unit]
@@ -81718,7 +82046,7 @@
         (tc-global-effect-scan! ctx collector node bound inner call-head)]
       [(Var _)
         (unless
-          call-head
+          (or call-head collector.prefix-only)
           (let
             [target : i64
               (tc-global-effect-callee ctx bound expr collector.graph.indirect)]
@@ -81727,37 +82055,49 @@
               (global_effects.add-call!
                 (&mut collector.graph)
                 collector.graph.indirect
-                target))))]
+                target)
+              (when
+                (!= (array-ref collector.collected collector.graph.indirect) 0)
+                (tc-global-effect-enqueue! collector target)))))]
       [(Call func args)
         (let
           [callee : i64
-            (tc-global-effect-callee
-              ctx
-              bound
-              (tc-context-expr-get ctx func)
-              collector.graph.indirect)]
-          (when
-            (>= callee 0)
-            (global_effects.add-call! (&mut collector.graph) node callee))
-          (for [index (iterator.range 0 args.len)]
-            (when
-              (tc-global-effect-global-place?
+            (if (or collector.prefix-only collector.address-only)
+              -1
+              (tc-global-effect-callee
                 ctx
                 bound
-                (ast.ast-expr-list-get (& args) index 0))
-              (tc-global-effect-contextual! collector)))
+                (tc-context-expr-get ctx func)
+                collector.graph.indirect))]
+          (when
+            (>= callee 0)
+            (tc-global-effect-add-call! collector node callee))
+          (when
+            collector.prefix-only
+            (for [index (iterator.range 0 args.len)]
+              (when
+                (tc-global-effect-global-place?
+                  ctx
+                  bound
+                  (ast.ast-expr-list-get (& args) index 0)
+                  false)
+                (tc-global-effect-contextual! collector))))
           (tc-global-effect-scan! ctx collector node bound func true)
           (tc-global-effect-scan-list! ctx collector node bound (& args)))]
       [(Lambda payload)
         (match (ast.ast-lambda-box-shared-view payload)
           [(Lambda params _ body)
-            (tc-global-effect-scan!
-              ctx
-              collector
-              collector.graph.indirect
-              (tc-global-effect-bind-params params bound)
-              body
-              false)])]
+            (let
+              [discovery : bool collector.address-only]
+              (set! collector.address-only false)
+              (tc-global-effect-scan!
+                ctx
+                collector
+                collector.graph.indirect
+                (tc-global-effect-bind-params collector params bound)
+                body
+                false)
+              (set! collector.address-only discovery))])]
       [(Let payload)
         (match (ast.ast-let-box-shared-view payload)
           [(Let bindings body)
@@ -81768,27 +82108,96 @@
                   (& bindings)
                   index
                   (ast.ast-let-binding-fallback))
-                  [(Binding name _ init)
+                  [(Binding name annotation init)
                     (tc-global-effect-scan! ctx collector node scope init false)
-                    (set! scope (tc-name-id-list-add scope name))]))
+                    (set!
+                      scope
+                      (tc-global-effect-bind!
+                        collector
+                        scope
+                        name
+                        annotation
+                        init))]))
               (tc-global-effect-scan! ctx collector node scope body false))])]
       [(Match payload)
         (match (ast.ast-match-box-shared-view payload)
           [(Match scrut arms)
             (tc-global-effect-scan! ctx collector node bound scrut false)
-            (for [index (iterator.range 0 arms.len)]
-              (match (ast.ast-match-arm-list-get
-                (& arms)
-                index
-                (ast.ast-match-arm-fallback))
-                [(Arm pattern body)
-                  (tc-global-effect-scan!
-                    ctx
-                    collector
-                    node
-                    (tc-pattern-add-bound-name-ids pattern bound)
-                    body
-                    false)]))])]
+            (let
+              [needs-type : bool false]
+              (for [index (iterator.range 0 arms.len)]
+                (match (ast.ast-match-arm-list-get
+                  (& arms)
+                  index
+                  (ast.ast-match-arm-fallback))
+                  [(Arm pattern _)
+                    (when
+                      (tc-global-effect-nullary-pattern? pattern)
+                      (set! needs-type true))]))
+              (let
+                [known : ast.AstMaybeType
+                  (if needs-type
+                    (tc-global-effect-known-type
+                      ctx
+                      collector
+                      scrut
+                      collector.bindings.len)
+                    (No))]
+                [enum-arm : bool
+                  (match (tc-global-shared-view known)
+                    [(Some ty)
+                      (match (tc-type-strip-region
+                        (tc-match-coverage-type ctx ty))
+                        [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
+                          true]
+                        [_ false])]
+                    [(No) false])]
+                [uncertain : bool
+                  (match (tc-global-shared-view known)
+                    [(Some ty)
+                      (match (tc-type-strip-region
+                        (tc-match-coverage-type ctx ty))
+                        [(or (ast.AstType.Var _) (ast.AstType.VarArgs _ _))
+                          true]
+                        [_ false])]
+                    [(No) true])]
+                [entry : i64 collector.bindings.len]
+                (for [index (iterator.range 0 arms.len)]
+                  (match (ast.ast-match-arm-list-get
+                    (& arms)
+                    index
+                    (ast.ast-match-arm-fallback))
+                    [(Arm pattern body)
+                      (tc-global-effect-scan!
+                        ctx
+                        collector
+                        node
+                        (tc-global-effect-bind-pattern
+                          ctx
+                          collector
+                          (tc-global-shared-view pattern)
+                          bound
+                          enum-arm)
+                        body
+                        false)
+                      (set! collector.bindings.len entry)
+                      ;; An unresolved scrutinee may be an enum. Visit both
+                      ;; scope interpretations instead of hiding a global write.
+                      (when
+                        (and needs-type uncertain)
+                        (tc-global-effect-scan!
+                          ctx
+                          collector
+                          node
+                          (tc-global-effect-bind-pattern
+                            ctx
+                            collector
+                            (tc-global-shared-view pattern)
+                            bound
+                            true)
+                          body
+                          false)
+                        (set! collector.bindings.len entry))]))))])]
       [(WithResource payload)
         (match (ast.ast-with-resource-box-shared-view payload)
           [(WithResource bindings body)
@@ -81817,18 +82226,17 @@
                           collector.graph.indirect)]
                       (when
                         (>= callee 0)
-                        (global_effects.add-call!
-                          (&mut collector.graph)
-                          node
-                          callee)))
-                    (set! scope (tc-name-id-list-add scope name))]))
+                        (tc-global-effect-add-call! collector node callee)))
+                    (set!
+                      scope
+                      (tc-global-effect-bind! collector scope name (No) init))]))
               (tc-global-effect-scan-list! ctx collector node scope (& body)))])]
       [(or (WithRegion name items) (WithEscape name items))
         (tc-global-effect-scan-list!
           ctx
           collector
           node
-          (tc-name-id-list-add bound name)
+          (tc-global-effect-bind! collector bound name (No) -1)
           (& items))]
       [(ForOwnedState payload)
         (tc-global-effect-scan!
@@ -81842,15 +82250,21 @@
           ctx
           collector
           node
-          (tc-name-id-list-add
-            (tc-name-id-list-add
+          (tc-global-effect-bind!
+            collector
+            (tc-global-effect-bind!
+              collector
               bound
               (tc-for-owned-name-id
                 (tc-context-expr-bases ctx)
-                (ast.ast-for-owned-state-source-name (& payload))))
+                (ast.ast-for-owned-state-source-name (& payload)))
+              (No)
+              -1)
             (tc-for-owned-name-id
               (tc-context-expr-bases ctx)
-              (ast.ast-for-owned-state-index-name (& payload))))
+              (ast.ast-for-owned-state-index-name (& payload)))
+            (Some (ast.AstType.I64))
+            -1)
           (ast.ast-for-owned-state-body (& payload))
           false)]
       [(ForOwnedStep payload)
@@ -81861,11 +82275,15 @@
           bound
           expr
           (ast.ast-for-owned-step-body (& payload))
-          (tc-name-id-list-add
+          (tc-global-effect-bind!
+            collector
             bound
             (tc-for-owned-name-id
               (tc-context-expr-bases ctx)
-              (ast.ast-for-owned-step-binding-name (& payload)))))]
+              (ast.ast-for-owned-step-binding-name (& payload)))
+            (No)
+            -1)
+          1)]
       [(Foreach payload)
         (match (ast.ast-foreach-box-shared-view payload)
           [(Foreach index _ _ _ body)
@@ -81876,7 +82294,13 @@
               bound
               expr
               body
-              (tc-name-id-list-add bound index))]
+              (tc-global-effect-bind!
+                collector
+                bound
+                index
+                (Some (ast.AstType.I64))
+                -1)
+              1)]
           [(Foreach2 outer _ _ _ inner _ _ _ body)
             (tc-global-effect-scan-scoped-children!
               ctx
@@ -81885,7 +82309,18 @@
               bound
               expr
               body
-              (tc-name-id-list-add (tc-name-id-list-add bound outer) inner))])]
+              (tc-global-effect-bind!
+                collector
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  outer
+                  (Some (ast.AstType.I64))
+                  -1)
+                inner
+                (Some (ast.AstType.I64))
+                -1)
+              2)])]
       [(SpmdReduce payload)
         (match (ast.ast-spmd-reduce-box-shared-view payload)
           [(Reduce _ index _ _ _ _ value)
@@ -81896,7 +82331,13 @@
               bound
               expr
               value
-              (tc-name-id-list-add bound index))])]
+              (tc-global-effect-bind!
+                collector
+                bound
+                index
+                (Some (ast.AstType.I64))
+                -1)
+              1)])]
       [(SpmdScan payload)
         (match (ast.ast-spmd-scan-box-shared-view payload)
           [(Scan _ index _ start end prefix _ init value body)
@@ -81904,13 +82345,19 @@
             (tc-global-effect-scan! ctx collector node bound end false)
             (tc-global-effect-scan! ctx collector node bound init false)
             (let
-              [scope : TcNameIdList (tc-name-id-list-add bound index)]
+              [scope : TcNameIdList
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  index
+                  (Some (ast.AstType.I64))
+                  -1)]
               (tc-global-effect-scan! ctx collector node scope value false)
               (tc-global-effect-scan!
                 ctx
                 collector
                 node
-                (tc-name-id-list-add scope prefix)
+                (tc-global-effect-bind! collector scope prefix (No) -1)
                 body
                 false))])]
       [(SpmdCompact payload)
@@ -81920,13 +82367,19 @@
             (tc-global-effect-scan! ctx collector node bound end false)
             (tc-global-effect-scan! ctx collector node bound init false)
             (let
-              [scope : TcNameIdList (tc-name-id-list-add bound index)]
+              [scope : TcNameIdList
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  index
+                  (Some (ast.AstType.I64))
+                  -1)]
               (tc-global-effect-scan! ctx collector node scope keep false)
               (tc-global-effect-scan!
                 ctx
                 collector
                 node
-                (tc-name-id-list-add scope slot)
+                (tc-global-effect-bind! collector scope slot (No) -1)
                 body
                 false))])]
       [(ForeachActive lane body)
@@ -81934,7 +82387,12 @@
           ctx
           collector
           node
-          (tc-name-id-list-add bound lane)
+          (tc-global-effect-bind!
+            collector
+            bound
+            lane
+            (Some (ast.AstType.I64))
+            -1)
           body
           false)]
       [_
@@ -81946,19 +82404,24 @@
             (tc-global-effect-write-place! ctx collector node bound place)]
           [(Borrow mutable _ place)
             (when
-              (or
-                (tc-global-effect-global-place? ctx bound place)
-                (tc-borrow-operand-id-temporary?
-                  (tc-context-expr-bases ctx)
-                  place))
+              (and
+                collector.prefix-only
+                (or
+                  (tc-global-effect-global-place? ctx bound place true)
+                  (tc-borrow-operand-id-temporary?
+                    (tc-context-expr-bases ctx)
+                    place)))
               (tc-global-effect-contextual! collector))
             (when
               mutable
               (tc-global-effect-write-place! ctx collector node bound place))
             (when
-              (tc-borrow-operand-id-temporary?
-                (tc-context-expr-bases ctx)
-                place)
+              (and
+                (not collector.prefix-only)
+                (not collector.address-only)
+                (tc-borrow-operand-id-temporary?
+                  (tc-context-expr-bases ctx)
+                  place))
               (let
                 [head : i64
                   (tc_i64_i64_map.get-value-or
@@ -81970,14 +82433,24 @@
                 (tc_i64_i64_map.insert-ref!
                   (&mut collector.temporary-callers)
                   place
-                  next)))]
+                  next)
+                (let
+                  [cleanup : i64
+                    (tc_i64_i64_map.get-value-or
+                      (& collector.typed-temporaries)
+                      place
+                      0)]
+                  (when
+                    (> cleanup 0)
+                    (tc-global-effect-add-call! collector node (- cleanup 1))))))]
           [(ArrayTake place live _)
             (tc-global-effect-write-place! ctx collector node bound place)
             (tc-global-effect-write-place! ctx collector node bound live)]
           [_ unit])
         (let
           [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
-          (tc-global-effect-scan-list! ctx collector node bound (& children)))])))
+          (tc-global-effect-scan-list! ctx collector node bound (& children)))])
+    (set! collector.bindings.len entry)))
 
 (define (tc-global-effect-scan-scoped-children!
   [ctx : TcContext]
@@ -81986,12 +82459,35 @@
   [bound : TcNameIdList]
   [expr : ast.AstExpr]
   [body : i64]
-  [scope : TcNameIdList]) : unit
+  [scope : TcNameIdList]
+  [bindings : i64]) : unit
   (let
+    [full : i64 collector.bindings.len]
+    [saved : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
     [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+    ;; Descending into an incoming-scope child can reuse the stack slots that
+    ;; hold body binders. Preserve their values, not just the stack length.
+    (ast.ast-let-binding-list-append-from
+      (&mut saved)
+      collector.bindings
+      (- full bindings))
     (for [index (iterator.range 0 children.len)]
       (let
         [child : i64 (ast.ast-expr-list-get (& children) index 0)]
+        (when
+          (= child body)
+          (for [index (iterator.range 0 bindings)]
+            (set!
+              (array-ref collector.bindings.slots (+ (- full bindings) index))
+              (ast.ast-let-binding-list-get
+                (& saved)
+                index
+                (ast.ast-let-binding-fallback)))))
+        (set!
+          collector.bindings.len
+          (if (= child body)
+            full
+            (- full bindings)))
         (tc-global-effect-scan!
           ctx
           collector
@@ -82000,16 +82496,19 @@
             scope
             bound)
           child
-          false)))))
+          false)))
+    (set! collector.bindings.len full)))
 
 (define (tc-global-effect-bind-params
+  [collector : (&mut collector TcGlobalEffectCollector)]
   [params : ast.AstParamList]
   [bound : TcNameIdList]) : TcNameIdList
   (let
     [out : TcNameIdList bound]
     (for [index (iterator.range 0 params.len)]
       (match (ast.ast-param-list-get (& params) index (ast.ast-param-fallback))
-        [(Param name _ _) (set! out (tc-name-id-list-add out name))]))
+        [(Param name ty _)
+          (set! out (tc-global-effect-bind! collector out name (Some ty) -1))]))
     out))
 
 ;; Nominal disposers are synthesized during lowering. Their field/payload
@@ -82022,9 +82521,7 @@
   (let
     [callee : i64
       (tc-global-effect-callee ctx Nil (Var name) collector.graph.indirect)]
-    (when
-      (>= callee 0)
-      (global_effects.add-call! (&mut collector.graph) node callee))))
+    (when (>= callee 0) (tc-global-effect-add-call! collector node callee))))
 
 (define (tc-global-effect-owned-cleanup-call!
   [ctx : TcContext]
@@ -82035,145 +82532,136 @@
     [handle : i64 (tc-move-declared-cleanup-handle ctx ty)]
     (when
       (csym.compiler-symbols-handle-found? handle)
-      (global_effects.add-call!
-        (&mut collector.graph)
+      (tc-global-effect-add-call!
+        collector
         node
         (csym.compiler-symbol-handle-index handle)))))
 
-(define (tc-global-call-effects-build!
+(define (tc-global-effect-scan-declaration!
   [ctx : TcContext]
-  [collector : (&mut collector TcGlobalEffectCollector)]) : unit
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [index : i64]) : unit
+  (set! collector.declaration index)
+  (set! collector.bindings.len 0)
   (let
-    [count : i64 (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
-    (for [index (iterator.range 0 count)]
-      (set! collector.declaration index)
-      (let
-        [module-id : i64
-          (csym.compiler-symbols-owner-module-id-at-index-or
-            (tc-context-symbols ctx)
-            index
-            cbi.compiler-builtin-id-fix-empty)]
-        [owner : TcContext
-          (tc-context-with-module-id
-            ctx
-            (tc-env-key-name-text module-id)
-            module-id)]
-        (match (csym.compiler-symbols-decl-at-index
-          (tc-context-symbols ctx)
-          index)
-          [(Ok decl)
-            (unless
-              ;; Generated runtime declarations carry comptime provenance;
-              ;; only uninstantiated templates have no runtime effects.
-              (and
-                (ast.ast-decl-comptime-only? decl)
-                (match (ast.ast-decl-generated-meta decl)
-                  [(No) true]
-                  [_ false]))
-              (match (ast.ast-decl-unwrapped (& decl))
-                [(DefFn _ _ params _ body _)
-                  (tc-global-effect-scan!
-                    owner
-                    collector
-                    index
-                    (tc-global-effect-bind-params params Nil)
-                    body
-                    false)]
-                [(Def _ _ _ init)
-                  (tc-global-effect-scan! owner collector index Nil init false)]
-                [(or (DefStruct _ _ _ cleanup fields)
-                     (DefStructLifetimes _ _ _ _ cleanup fields))
-                  (when
-                    (ast.ast-struct-cleanup? cleanup)
-                    (for [field (iterator.range 0 fields.len)]
-                      (match (ast.ast-field-def-list-get
-                        (& fields)
-                        field
-                        (ast.ast-field-def-fallback))
-                        [(Def _ ty hook)
-                          (match hook
-                            [(Fn name)
-                              (tc-global-effect-cleanup-call!
-                                owner
-                                collector
-                                index
-                                (ci.intern-syntax-id-value name))]
-                            [(Owned)
-                              (tc-global-effect-owned-cleanup-call!
-                                owner
-                                collector
-                                index
-                                ty)]
-                            [_ unit])])))]
-                [(or (DefEnum _ _ cleanup variants)
-                     (DefEnumLifetimes _ _ _ cleanup variants))
-                  (when
-                    (ast.ast-enum-cleanup? cleanup)
-                    (for [variant (iterator.range 0 variants.len)]
-                      (match (ast.ast-variant-def-list-get
-                        (& variants)
-                        variant
-                        (ast.ast-variant-def-fallback))
-                        [(Def _ types hooks)
-                          (for [field (iterator.range 0 types.len)]
-                            (match (ast.ast-variant-payload-cleanup-list-get
-                              (& hooks)
-                              field
-                              (ast.ast-variant-payload-cleanup-fallback))
-                              [(Fn name)
-                                (tc-global-effect-cleanup-call!
-                                  owner
-                                  collector
-                                  index
-                                  (ci.intern-syntax-id-value name))]
-                              [(Owned)
-                                (tc-global-effect-owned-cleanup-call!
-                                  owner
-                                  collector
-                                  index
-                                  (ast.ty-node-get
-                                    (ast.ast-type-list-get
-                                      (& types)
-                                      field
-                                      (ast.ast-type-id-fallback))))]
-                              [_ unit]))])))]
-                [(Extern _ _ _ metadata _)
-                  (let
-                    [meta : ast.AstExternMetadata
-                      (ast.ast-extern-metadata-box-shared-view metadata)]
-                    (match (ast.ast-extern-metadata-imported-spmd meta)
-                      [(Package _ _ _ _)
-                        ;; Dependency interfaces export functions and types,
-                        ;; never global places. Their hidden bodies can still
-                        ;; invoke a consumer callback, including one retained
-                        ;; by an earlier call: use the whole callable union.
-                        (global_effects.add-call!
-                          (&mut collector.graph)
-                          index
-                          collector.graph.indirect)]
-                      [_ unit]))]
-                [(DefDispatch _ _ variants)
-                  (for [variant (iterator.range 0 variants.len)]
-                    (match (ast.ast-dispatch-variant-list-get
-                      (& variants)
-                      variant
-                      (ast.ast-dispatch-variant-fallback))
-                      [(Variant _ name)
-                        (let
-                          [callee : i64
-                            (tc-global-effect-callee
+    [module-id : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        (tc-context-symbols ctx)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [owner : TcContext
+      (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id)]
+    (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) index)
+      [(Ok decl)
+        (unless
+          ;; Generated runtime declarations carry comptime provenance;
+          ;; only uninstantiated templates have no runtime effects.
+          (and
+            (ast.ast-decl-comptime-only? decl)
+            (match (ast.ast-decl-generated-meta decl)
+              [(No) true]
+              [_ false]))
+          (match (ast.ast-decl-unwrapped (& decl))
+            [(DefFn _ _ params _ body _)
+              (tc-global-effect-scan!
+                owner
+                collector
+                index
+                (tc-global-effect-bind-params collector params Nil)
+                body
+                false)]
+            [(Def _ _ _ init)
+              (tc-global-effect-scan! owner collector index Nil init false)]
+            [(or (DefStruct _ _ _ cleanup fields)
+                 (DefStructLifetimes _ _ _ _ cleanup fields))
+              (when
+                (ast.ast-struct-cleanup? cleanup)
+                (for [field (iterator.range 0 fields.len)]
+                  (match (ast.ast-field-def-list-get
+                    (& fields)
+                    field
+                    (ast.ast-field-def-fallback))
+                    [(Def _ ty hook)
+                      (match hook
+                        [(Fn name)
+                          (tc-global-effect-cleanup-call!
+                            owner
+                            collector
+                            index
+                            (ci.intern-syntax-id-value name))]
+                        [(Owned)
+                          (tc-global-effect-owned-cleanup-call!
+                            owner
+                            collector
+                            index
+                            ty)]
+                        [_ unit])])))]
+            [(or (DefEnum _ _ cleanup variants)
+                 (DefEnumLifetimes _ _ _ cleanup variants))
+              (when
+                (ast.ast-enum-cleanup? cleanup)
+                (for [variant (iterator.range 0 variants.len)]
+                  (match (ast.ast-variant-def-list-get
+                    (& variants)
+                    variant
+                    (ast.ast-variant-def-fallback))
+                    [(Def _ types hooks)
+                      (for [field (iterator.range 0 types.len)]
+                        (match (ast.ast-variant-payload-cleanup-list-get
+                          (& hooks)
+                          field
+                          (ast.ast-variant-payload-cleanup-fallback))
+                          [(Fn name)
+                            (tc-global-effect-cleanup-call!
                               owner
-                              Nil
-                              (ast.AstExpr.Var name)
-                              collector.graph.indirect)]
-                          (when
-                            (>= callee 0)
-                            (global_effects.add-call!
-                              (&mut collector.graph)
+                              collector
                               index
-                              callee)))]))]
-                [_ unit]))]
-          [_ unit])))))
+                              (ci.intern-syntax-id-value name))]
+                          [(Owned)
+                            (tc-global-effect-owned-cleanup-call!
+                              owner
+                              collector
+                              index
+                              (ast.ty-node-get
+                                (ast.ast-type-list-get
+                                  (& types)
+                                  field
+                                  (ast.ast-type-id-fallback))))]
+                          [_ unit]))])))]
+            [(Extern _ _ _ metadata _)
+              (let
+                [meta : ast.AstExternMetadata
+                  (ast.ast-extern-metadata-box-shared-view metadata)]
+                (match (ast.ast-extern-metadata-imported-spmd meta)
+                  [(Package _ _ _ _)
+                    ;; Dependency interfaces export functions and types,
+                    ;; never global places. Their hidden bodies can still
+                    ;; invoke a consumer callback, including one retained
+                    ;; by an earlier call: use the whole callable union.
+                    (tc-global-effect-add-call!
+                      collector
+                      index
+                      collector.graph.indirect)]
+                  [_ unit]))]
+            [(DefDispatch _ _ variants)
+              (for [variant (iterator.range 0 variants.len)]
+                (match (ast.ast-dispatch-variant-list-get
+                  (& variants)
+                  variant
+                  (ast.ast-dispatch-variant-fallback))
+                  [(Variant _ name)
+                    (let
+                      [callee : i64
+                        (tc-global-effect-callee
+                          owner
+                          Nil
+                          (ast.AstExpr.Var name)
+                          collector.graph.indirect)]
+                      (when
+                        (>= callee 0)
+                        (tc-global-effect-add-call! collector index callee)))]))]
+            [_ unit]))]
+      [_ unit])))
 
 (define (tc-global-call-effects-ensure! [ctx : TcContext]) : (MutPtr
     TcGlobalCallEffects)
@@ -82220,54 +82708,129 @@
       (= address 0)
       (let
         [enclosing : i64 (arena.tl_arena_current)]
-        [scratch : i64 (arena.tl_arena_make_small)]
         [storage : i64 (arena.tl_arena_make_small)]
         (unsafe
-          (arena.tl_arena_set scratch))
+          (arena.tl_arena_set storage))
         (let
-          [collected : TcGlobalEffectCollector
-            (TcGlobalEffectCollector
+          [cell : (__tl_dyn-array TcGlobalCallEffects)
+            (__tl_make-array TcGlobalCallEffects 1)]
+          (set!
+            (array-ref cell 0)
+            (TcGlobalCallEffects
+              storage
+              ctx.program-decls
+              symbols
+              count
+              expr-bases
+              source-owner
+              structural-owner
+              generation
               (global_effects.new count)
               (tc_i64_i64_map.with-capacity 0)
-              -1
-              count)]
-          (tc-global-call-effects-build! ctx (&mut collected))
-          (unsafe
-            (arena.tl_arena_set storage))
-          (let
-            [cell : (__tl_dyn-array TcGlobalCallEffects)
-              (__tl_make-array TcGlobalCallEffects 1)]
-            [graph : global_effects.Graph
-              (global_effects.copy (& collected.graph))]
-            (set!
-              (array-ref cell 0)
-              (TcGlobalCallEffects
-                storage
-                ctx.program-decls
-                symbols
-                count
-                expr-bases
-                source-owner
-                structural-owner
-                generation
-                graph
-                (tc-moved-clone-id-map (& collected.temporary-callers))
-                (tc_i64_i64_map.with-capacity 0)
-                collected.first-contextual-declaration
-                0))
-            (set!
-              address
-              (unsafe
-                (cast (ptr->int (__tl_array-data cell)) : i64)))))
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array i64 (+ count 1))
+              0))
+          (set!
+            address
+            (unsafe
+              (cast (ptr->int (__tl_array-data cell)) : i64))))
         (unsafe
-          (arena.tl_arena_set enclosing)
-          (arena.tl_arena_destroy scratch))
+          (arena.tl_arena_set enclosing))
         (tc-macro-state-slot-address-set!
           owner
           tc-macro-state-slot-global-call-effects
           address)))
     (unsafe
       (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))))
+
+(define (tc-global-call-effects-collect!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [root : i64]) : unit
+  (let
+    [collected : (__tl_dyn-array i64)
+      (unsafe
+        (deref state).collected)]
+    (when (!= (array-ref collected root) 0) (return unit))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (arena.tl_arena_make_small)]
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [collector : TcGlobalEffectCollector
+          (TcGlobalEffectCollector
+            (global_effects.new
+              (unsafe
+                (deref state).count))
+            (tc_i64_i64_map.with-capacity 0)
+            (unsafe
+              (deref state).typed-temporaries)
+            collected
+            (effect_words.new)
+            false
+            false
+            (ast.ast-let-binding-list-new)
+            -1
+            (unsafe
+              (deref state).count))]
+        [cursor : i64 0]
+        (tc-global-effect-enqueue! (&mut collector) root)
+        (while (< cursor (effect_words.len (& collector.pending)))
+          (let
+            [node : i64 (effect_words.get (& collector.pending) cursor 0)]
+            (if (= node collector.graph.indirect)
+              (begin
+                ;; Callable values in every runtime body contribute to the
+                ;; indirect union, even when their enclosing body is uncalled.
+                (set! collector.address-only true)
+                (for [index (iterator.range 0 collector.graph.indirect)]
+                  (tc-global-effect-scan-declaration!
+                    ctx
+                    (&mut collector)
+                    index))
+                (set! collector.address-only false))
+              (tc-global-effect-scan-declaration! ctx (&mut collector) node)))
+          (+= cursor 1))
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (let
+          [graph : global_effects.Graph
+            (unsafe
+              (deref state).graph)]
+          [callers : tc_i64_i64_map.Map
+            (unsafe
+              (deref state).temporary-callers)]
+          (global_effects.append! (&mut graph) (& collector.graph))
+          (for [index
+            (iterator.range
+              0
+              (tc_i64_i64_map.capacity (& collector.temporary-callers)))]
+            (match (tc_i64_i64_map.entry-at
+              (& collector.temporary-callers)
+              index)
+              [(EntrySome operand head)
+                (while (!= head 0)
+                  (let
+                    [edge : global_effects.Edge
+                      (effect_edges.get
+                        (& collector.graph.links)
+                        (- head 1)
+                        (global_effects.Edge 0 0))]
+                    [next : i64
+                      (global_effects.link!
+                        (&mut graph)
+                        edge.node
+                        (tc_i64_i64_map.get-value-or (& callers) operand 0))]
+                    (tc_i64_i64_map.insert-ref! (&mut callers) operand next)
+                    (set! head edge.next)))]
+              [_ unit]))
+          (unsafe
+            (set! (deref state).graph graph)
+            (set! (deref state).temporary-callers callers))))
+      (unsafe
+        (arena.tl_arena_set enclosing)
+        (arena.tl_arena_destroy scratch)))))
 
 (define (tc-global-call-effects-finish! [job : TcJobState]) : unit
   (let
@@ -82305,6 +82868,7 @@
       (let
         [state : (MutPtr TcGlobalCallEffects)
           (tc-global-call-effects-ensure! ctx)]
+        [reachable : bool false]
         [enclosing : i64 (arena.tl_arena_current)]
         [storage : i64
           (unsafe
@@ -82325,6 +82889,10 @@
                 (unsafe
                   (deref state).temporary-callers)]
               [head : i64 (tc_i64_i64_map.get-value-or (& callers) operand 0)]
+              [collected : (__tl_dyn-array i64)
+                (unsafe
+                  (deref state).collected)]
+              (set! reachable (!= (array-ref collected graph.indirect) 0))
               (while (!= head 0)
                 (let
                   [edge : global_effects.Edge
@@ -82332,17 +82900,27 @@
                       (& graph.links)
                       (- head 1)
                       (global_effects.Edge 0 0))]
+                  (when (!= edge.node graph.indirect) (set! reachable true))
                   (global_effects.add-call!
                     (&mut graph)
                     edge.node
                     (csym.compiler-symbol-handle-index handle))
                   (set! head edge.next)))
-              (tc_i64_i64_map.insert-ref! (&mut seen) operand 1)
+              (tc_i64_i64_map.insert-ref!
+                (&mut seen)
+                operand
+                (+ (csym.compiler-symbol-handle-index handle) 1))
               (unsafe
                 (set! (deref state).graph graph)
                 (set! (deref state).typed-temporaries seen))))
           (unsafe
-            (arena.tl_arena_set enclosing)))))))
+            (arena.tl_arena_set enclosing))
+          (when
+            reachable
+            (tc-global-call-effects-collect!
+              ctx
+              state
+              (csym.compiler-symbol-handle-index handle))))))))
 
 ;; A negative reachability result remains provisional until all bodies have
 ;; supplied their inferred temporary cleanup edges. Retain spans and rendered
@@ -82368,7 +82946,11 @@
         [bases : i64 (tc-context-expr-bases ctx)]
         [primary : TcMaybeAstSourceSpan (tc-expr-maybe-span bases call-expr)]
         [origin : TcMaybeAstSourceSpan
-          (match (tc-borrow-check-conflict-origin borrowed fact.path fact.kind)
+          (match (tc-borrow-check-conflict-origin
+            bases
+            borrowed
+            fact.path
+            fact.kind)
             [(Some id) (tc-expr-maybe-span bases (tc-context-expr-get ctx id))]
             [(No) (No)])]
         [enclosing : i64 (arena.tl_arena_current)]
@@ -82594,6 +83176,7 @@
                       (deref state).graph.indirect))))]
             (when
               (>= callee 0)
+              (tc-global-call-effects-collect! ctx state callee)
               (let
                 [path : effect_words.Vec
                   (tc-global-effect-witness!

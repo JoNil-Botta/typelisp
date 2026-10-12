@@ -10415,6 +10415,7 @@
   (test
     global-call-effects-job-and-scratch-isolation
     (let
+      [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 8 8)]
       [a : tc_core.TcContext
@@ -10442,6 +10443,85 @@
         (in-arena scratch (tc_core.tc-global-call-effects-ensure! a))]
       [state-b : (MutPtr tc_core.TcGlobalCallEffects)
         (in-arena scratch (tc_core.tc-global-call-effects-ensure! b))]
+      (for [rank (iterator.range 1 3)]
+        (let
+          [source : String
+            (if (= rank 1)
+              "(foreach ([i : i64 (let [outer : bool true] 0) 1]) unit)"
+              "(foreach ([i : i64 (let [outer : bool true] 0) 1] [j : i64 0 1]) unit)")]
+          [id : i64
+            (match (parser.parse-ast-expr-with-pools
+              (parser.compiler-parse-dispatch-env)
+              pools
+              (macro-output-source-sexpr source))
+              [(Ok value) value]
+              [_ (io.panic "effect scope fixture must parse")])]
+          [expr : ast.AstExpr
+            (ast.ast-expr-unspan-with-pools
+              (& pools)
+              (& (tc_core.tc-context-expr-get a id)))]
+          [children : ast.AstExprList
+            (ast.ast-expr-child-ids (tc_core.tc-global-shared-view expr))]
+          [body : i64 (ast.ast-expr-list-get (& children) (- children.len 1) 0)]
+          [collector : tc_core.TcGlobalEffectCollector
+            (tc_core.TcGlobalEffectCollector
+              (global_effects.new 0)
+              (tc_i64_i64_map.with-capacity 0)
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array i64 1)
+              (effect_words.new)
+              true
+              false
+              (ast.ast-let-binding-list-new)
+              -1
+              0)]
+          [outer : tc_core.TcNameIdList
+            (tc_core.tc-global-effect-bind!
+              (&mut collector)
+              tc_core.TcNameIdList.Nil
+              (ci.intern "outer")
+              (ast.AstMaybeType.Some (ast.AstType.Bool))
+              -1)]
+          [scope : tc_core.TcNameIdList outer]
+          (for [index (iterator.range 0 rank)]
+            (set!
+              scope
+              (tc_core.tc-global-effect-bind!
+                (&mut collector)
+                scope
+                (ci.intern
+                  (if (= index 0)
+                    "i"
+                    "j"))
+                (ast.AstMaybeType.Some (ast.AstType.I64))
+                -1)))
+          (tc_core.tc-global-effect-scan-scoped-children!
+            a
+            (&mut collector)
+            0
+            outer
+            expr
+            body
+            scope
+            rank)
+          (for [index (iterator.range 0 rank)]
+            (match (ast.ast-let-binding-list-get
+              (& collector.bindings)
+              (+ index 1)
+              (ast.ast-let-binding-fallback))
+              [(Binding name annotation _)
+                (test.assert-i64-eq
+                  name
+                  (ci.intern
+                    (if (= index 0)
+                      "i"
+                      "j"))
+                  "bound expressions cannot overwrite the body's binding names")
+                (test.assert-true
+                  (match annotation
+                    [(Some (ast.AstType.I64)) true]
+                    [_ false])
+                  "bound expressions cannot overwrite the body's binding types")]))))
       (in-arena
         (arena.Arena
           (unsafe
@@ -10489,7 +10569,7 @@
 (cfg
   test
   (test
-    global-effects-copy-retires-collector-scratch
+    global-effects-append-retires-collector-scratch
     (let
       [home : i64 (arena.tl_arena_current)]
       [scratch : i64 (arena.tl_arena_make_small)]
@@ -10500,6 +10580,7 @@
       (global_effects.add-call! (&mut source) 0 65)
       (global_effects.add-call! (&mut source) 65 64)
       (global_effects.add-write! (&mut source) 64 7)
+      (global_effects.add-write! (&mut source) 63 8)
       ;; Both positive and negative cached results belong to scratch.
       (test.assert-i64-eq
         (effect_words.len (& (global_effects.witness! (&mut source) 0 7)))
@@ -10512,15 +10593,21 @@
       (unsafe
         (arena.tl_arena_set home))
       (let
-        [kept : global_effects.Graph (global_effects.copy (& source))]
+        [kept : global_effects.Graph (global_effects.new 66)]
+        (global_effects.add-call! (&mut kept) 1 0)
+        (global_effects.append! (&mut kept) (& source))
         (unsafe
           (arena.tl_arena_destroy scratch))
         (test.assert-i64-eq
           (effect_words.len (& (global_effects.witness! (&mut kept) 0 7)))
           3
-          "copied edges and writers survive retired scratch")
+          "appended edges and writers survive retired scratch")
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 1 7)))
+          4
+          "appending preserves edges collected by an earlier query")
         (global_effects.add-write! (&mut kept) 65 8)
         (test.assert-i64-eq
           (effect_words.len (& (global_effects.witness! (&mut kept) 0 8)))
           2
-          "copied graph rebuilds query caches in its destination arena")))))
+          "appended graph rebuilds query caches in its destination arena")))))

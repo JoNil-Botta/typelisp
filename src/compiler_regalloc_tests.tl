@@ -13045,6 +13045,59 @@
           (<= (+ (array-ref remap group-var) 1) slots))]
       [(None) false])))
 
+(define (compiler-reg-empty-body-coloring [text : String] [stack-only? : bool]) : reg.CompilerRegColoring
+  (match (irt.func text)
+    [(Function _ params _ vars blocks _)
+      (reg.compiler-reg-color-stack-slots-with-stack-only
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (&
+          (reg.CompilerRegPlan.Plan
+            (reg.compiler-reg-assignment-table-empty)
+            (live.compiler-live-set-empty)
+            (reg.compiler-reg-interval-seq-empty)
+            (reg.compiler-reg-var-types-empty)
+            (reg.compiler-reg-call-split-empty)))
+        (& (live.compiler-live-set-empty))
+        (& params)
+        (& blocks)
+        vars
+        vars
+        (& (live.compiler-live-set-empty))
+        stack-only?)]))
+
+(test
+  regalloc-empty-private-body-keeps-wide-parameter-homes
+  (for [index (iterator.range 0 2)]
+    (match (compiler-reg-empty-body-coloring
+      "function @empty_private(__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_0=%1:i64, __tl_spmd_mask_arg_avx2_1=%2:bool) -> unit vars 3 {
+       entry:
+         return
+       }"
+      (= index 0))
+      [(Remap remap slots)
+        (test.assert-true (>= slots 12) "three YMM homes need twelve words")
+        (for [a (iterator.range 0 3)]
+          (test.assert-true
+            (and (>= (array-ref remap a) 3) (< (array-ref remap a) slots))
+            "every full-width home must lie inside the accepted frame")
+          (for [b (iterator.range (+ a 1) 3)]
+            (test.assert-true
+              (or
+                (>= (- (array-ref remap a) (array-ref remap b)) 4)
+                (>= (- (array-ref remap b) (array-ref remap a)) 4))
+              "prologue-only YMM homes must not overlap")))]
+      [(None) (test.assert-true false "empty body skipped parameter homes")])
+    (for [control (iterator.range 0 2)]
+      (test.assert-true
+        (match (compiler-reg-empty-body-coloring
+          (if (= control 0)
+            "function @empty() -> unit vars 0 {\nentry:\nreturn\n}"
+            "function @unused_scalar(x=%0:i64) -> unit vars 1 {\nentry:\nreturn\n}")
+          (= index 0))
+          [(None) true]
+          [(Remap _ _) false])
+        "empty ordinary plans retain their existing behavior"))))
+
 ;; Image-scoped program-map suppression, the contract a STANDALONE plan runs
 ;; under. The allocator's group/class/C-call maps describe the image the backend
 ;; is emitting and are owned by that image's arena; a caller that plans outside

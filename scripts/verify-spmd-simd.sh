@@ -148,6 +148,7 @@ tests/spmd/private_helper_mask_arg.tl
 tests/spmd/private_helper_uniform_stack.tl
 tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
+tests/spmd/empty_private_params.tl
 tests/spmd/private_helper_effects.tl
 tests/spmd/byte_mul_value_types.tl
 tests/spmd/full_gang_all_active_i64.tl

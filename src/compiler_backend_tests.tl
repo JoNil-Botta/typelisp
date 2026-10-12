@@ -19018,6 +19018,49 @@ f:
           (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)))
 
+(define (compiler-backend-empty-private-param-homes-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-program-target-with-mode
+    (irt.program
+      "typelisp-ir v1
+function @__tl_spmd_ret_varying_empty_private(__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_0=%1:i64) -> unit vars 2 {
+entry:
+  return
+}")
+    target
+    (Avx2)
+    (ir.compiler-source-spans-empty)
+    false)
+    [(Ok asm)
+      (and
+        (asm-has? asm "    vmovdqu 0(%r10), %ymm14\n")
+        (asm-has? asm "    vmovdqu 32(%r10), %ymm14\n")
+        (match target
+          [(Linux)
+            ;; Two disjoint 32-byte homes fit in the leaf's 128-byte red zone.
+            (and
+              (asm-has? asm "    vmovdqu %ymm14, -32(%rsp)\n")
+              (asm-has? asm "    vmovdqu %ymm14, -64(%rsp)\n")
+              (asm-lacks? asm "    subq $"))]
+          [(Windows)
+            ;; The upper store ends at byte 64, below the return slot at 72.
+            (and
+              (asm-has? asm "    subq $72, %rsp\n")
+              (asm-has? asm "    vmovdqu %ymm14, 32(%rsp)\n")
+              (asm-has? asm "    vmovdqu %ymm14, 0(%rsp)\n")
+              (asm-has? asm "    addq $72, %rsp\n"))]))]
+    [(Err _) false]))
+
+(test
+  backend-empty-private-body-keeps-entry-stores-inside-frame
+  (unless
+    (and
+      (compiler-backend-empty-private-param-homes-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-empty-private-param-homes-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic "prologue-only AVX2 parameter stores escaped their frame")))
+
 (define (compiler-backend-vector-call-lifetime-function) : ir.CompilerIrFunction
   (Function
     (ci.intern "vector_call_lifetime")

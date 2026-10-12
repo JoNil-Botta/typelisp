@@ -326,6 +326,10 @@ binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
 access rule as tuple slots and array elements, preserving the borrow lifetime.
 
+Private AVX2 parameter entry stores participate in the full-width stack-home
+census even when optimization removes every body use and liveness interval.
+An empty body still needs disjoint YMM homes inside its accepted frame.
+
 The lowerer's job state, `CompilerLowerState`, is a one-word handle to a
 directory of typed cells, one per field, so an access reads one directory word
 and the cell and never copies the wide state. The fields are declared once, as

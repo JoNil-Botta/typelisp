@@ -75,8 +75,15 @@ whole/projected/buffer writes, address-taking, mutable loans, transitive and
 recursive calls, indirect functions and closures, macro and imported setters,
 explicit and synthesized cleanup, and the allowed Copy/different-global/ended
 borrow/explicit-parameter cases. Keep their named call-chain diagnostics when
-changing traversal or binding resolution. The temporary-cleanup rows cover
-later arguments, returned references, forward and indirect callees, ended
+changing traversal or binding resolution. Match-shadowing rows distinguish a
+loan created from the global before a same-named pattern binder from a loan
+created from a shadowing local, including loop arms. The typecheck self-test
+checks captured global identity through both union orders, snapshot restoration,
+cloning and dense-store growth, and requires fixpoint equality to distinguish it.
+Later-argument let/for shadowing must preserve an earlier global loan, while
+mutating a separate same-named local remains valid. Root removal, owner selection
+and exact loan removal are checked with both owners present in one snapshot.
+The temporary-cleanup rows cover later arguments, returned references, forward and indirect callees, ended
 borrows, and loans ending at the call before cleanup.
 `tests/inline/compiler_global_call_cache.tl` checks a reused source prefix
 against a changed callable union, reinfers temporary disposers after file

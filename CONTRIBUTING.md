@@ -20,8 +20,8 @@ Thanks for your interest! This is a learning project — all contributions welco
      set `TLCI_NATIVE_ROUTE_TIME_BIN` and `DOC_SITE_TIME_BIN` to one), and
      `jq`. On Debian or Ubuntu:
      `sudo apt install binutils gcc clang valgrind time jq`. The memory-bounded
-     gates also need a user systemd manager (`systemd-run --user`) that
-     enforces `MemoryMax`.
+     gates also need a systemd 254+ user manager (`systemd-run --user`) with
+     cgroup v2 memory delegation and enforcement of `MemoryMax`.
    - Windows: PowerShell 7 (`pwsh`) and `jq`.
 
    [`scripts/ci-host-tools.tsv`](scripts/ci-host-tools.tsv) lists each tool

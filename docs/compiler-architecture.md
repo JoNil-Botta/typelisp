@@ -164,8 +164,11 @@ and callees use the ordinary source-name resolver for aliases and full dotted
 module paths, with lexical binders taking precedence. Each loan captures its
 global symbol handle in its source scope; later shadowing cannot change that
 identity. Persistent copies, scope restoration and branch/loop joins preserve
-the handle, and fixpoint equality includes it. A local binder removes its own
-root facts while retaining loans on a hidden global. Place conflicts and loan
+the handle, and fixpoint equality includes it. Each immutable fact-chain node
+caches whether its prefix contains any global handle; append computes it from
+the parent and growth preserves it. Earlier snapshots retain their own prefix
+flag, so local-only chains can bypass global filtering and effect queries.
+A local binder removes its own root facts while retaining loans on a hidden global. Place conflicts and loan
 pruning select the resolved owner's facts, so a same-named local remains a
 separate place; ending its loan must not remove the global loan. The check runs
 after argument validation and before call-scoped facts are discarded,

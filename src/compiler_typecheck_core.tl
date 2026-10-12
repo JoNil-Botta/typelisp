@@ -81522,8 +81522,7 @@
       (if (and (>= leading 0) (tc-name-id-list-contains bound leading))
         (csym.compiler-symbols-missing-handle)
         (let
-          [direct : i64
-            (tc-move-value-symbol-handle-id ctx (tc-empty-env) name)]
+          [direct : i64 (tc-move-value-symbol-handle-id ctx name)]
           [handle : i64
             (if (or
               (csym.compiler-symbols-handle-found? direct)
@@ -88635,20 +88634,32 @@
 ;; A callee that keeps no borrow past the call: each parameter is free of
 ;; lifetimes or a reference to a referent free of them, and so is the result.
 ;; Such a call's borrows end when it returns. Local arguments can only
-;; conflict with other arguments, but a global argument also conflicts with
+;; conflict with other arguments, but a global reference argument also conflicts with
 ;; writes performed by the callee or its transitive callees.
-(define (tc-borrow-gate-call-scoped-callee? [ctx : TcContext] [func-id : i64]) : bool
+(define (tc-borrow-gate-call-scoped-inert?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [func-id : i64]
+  [args : ast.AstExprList]) : bool
   (match (tc-body-type-fact-lookup (tc-context-body-state ctx) func-id)
     [(Hit fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(Func params ret)
-          (and
-            (not
-              (tc-type-contains-any-region
-                (tc-resolve-type ctx (ast.ty-node-get ret))))
-            (tc-borrow-gate-call-scoped-params-at?
-              ctx
-              (ast.ast-type-list-box-shared-view params)))]
+          (let
+            [param-types : ast.AstTypeList
+              (ast.ast-type-list-box-shared-view params)]
+            (and
+              (not
+                (tc-type-contains-any-region
+                  (tc-resolve-type ctx (ast.ty-node-get ret))))
+              (tc-borrow-gate-call-scoped-params-at?
+                ctx
+                (tc-global-shared-view param-types))
+              (tc-borrow-gate-call-scoped-args-inert?
+                ctx
+                expr-bases
+                args
+                param-types)))]
         [_ false])]
     [(Miss) false]))
 
@@ -88713,7 +88724,9 @@
 (define (tc-borrow-gate-call-scoped-args-inert?
   [ctx : TcContext]
   [expr-bases : i64]
-  [args : ast.AstExprList]) : bool
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]) : bool
+  (when (> args.len params.len) (return false))
   (let
     [count : i64 (ast.ast-expr-list-len (& args))]
     [i : i64 0]
@@ -88733,7 +88746,23 @@
               (or
                 ;; A callee may write a borrowed global even when no
                 ;; second argument mentions that place.
-                (tc-move-ordinary-global-value-id? ctx (tc-empty-env) root)
+                (and
+                  (or
+                    (match (ast.ast-expr-unspan-with-segment-bases
+                      expr-bases
+                      (& arg))
+                      [(Borrow _ _ _) true]
+                      [_ false])
+                    (match (tc-resolve-type
+                      ctx
+                      (ast.ty-node-get
+                        (ast.ast-type-list-get
+                          (& params)
+                          i
+                          (ast.ast-type-id-fallback))))
+                      [(or (Ref _ _) (MutRef _ _)) true]
+                      [_ false]))
+                  (tc-move-ordinary-global-value-id? ctx root))
                 (tc-borrow-gate-dotted-name? ctx root)
                 (tc-borrow-gate-name-in-other-args?
                   ctx
@@ -88971,10 +89000,7 @@
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases func-box))
         (if (tc-borrow-gate-call-has-region? ctx func-box)
-          (not
-            (and
-              (tc-borrow-gate-call-scoped-callee? ctx func-box)
-              (tc-borrow-gate-call-scoped-args-inert? ctx expr-bases args)))
+          (not (tc-borrow-gate-call-scoped-inert? ctx expr-bases func-box args))
           (tc-borrow-gate-exprs-relevant? ctx expr-bases args)))]
     [(or (BracketClause items) (Tuple items) (Array items) (DynArray items)
          (Begin items) (Unsafe items) (WithScratch items) (Syscall items))

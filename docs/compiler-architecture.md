@@ -202,7 +202,10 @@ the incoming scope, and body bindings survive any nested bindings in a bound.
 A cached source or embedded-surface prefix containing non-Copy global-place
 arguments, explicit global borrows or borrowed temporaries is checked again
 against the current program and its callable union. Context-independent
-prefixes retain cache hits.
+prefixes retain cache hits. Call-scoped reference parameters with a region-free
+result can bypass borrow analysis only when argument roots cannot conflict;
+a by-value global copy creates no global loan, while explicit and automatic
+global references require effect checking.
 
 A direct call argument may explicitly borrow a temporary. Its operand is a
 by-value position evaluated in argument order, and its reserved lifetime ends

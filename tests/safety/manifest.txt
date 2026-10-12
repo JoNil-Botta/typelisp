@@ -1496,3 +1496,6 @@ compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
 compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
 compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
 compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type
+
+global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
+global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed

@@ -22,10 +22,9 @@ user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the
 seed policy are in
 [`../docs/testing-and-bootstrap.md`](../docs/testing-and-bootstrap.md).
 
-The aggregate-global backend escape fixture checks the existing safe-reference
-shape and a raw-pointer counterpart against the same boxed-cell assertions.
-Keep the raw case when global call checking rejects the safe reference case;
-the indirect-call shape remains independently covered.
+The aggregate-global backend escape fixture rejects the safe-reference shape
+with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
+The indirect-call shape remains independently covered.
 
 ## Linux thread storage
 
@@ -91,6 +90,8 @@ The same owner identity selects lending-use propagation and prevents a local
 fact from suppressing a global loan during return, loop, or stored-loan protection.
 The public shadowing matrix requires the secondary diagnostic to point to the
 original global borrow when a later local borrow has the same spelling.
+The mixed-argument rows distinguish an independent local loan plus a by-value
+global copy from a global auto-borrow; the copy runs at opt0, opt1 and opt2.
 The temporary-cleanup rows cover later arguments, returned references, forward and indirect callees, ended
 borrows, and loans ending at the call before cleanup.
 `tests/inline/compiler_global_call_cache.tl` checks a reused source prefix

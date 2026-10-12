@@ -3632,11 +3632,59 @@
         [(Some _) true]
         [(None) false]))))
 
+;; A finished evaluation hands its bindings back: releasing to a mark leaves
+;; every snapshot at or below the mark intact, the next push reuses the first
+;; released slot, nested marks unwind innermost first, and a stale or negative
+;; mark changes nothing.
+(define (compiler-ctfe-env-arena-release-ok?) : bool
+  (let
+    [base-id : i64 (ctfe.ctfe-materialize-generated-name-id "release-base")]
+    [inner-id : i64 (ctfe.ctfe-materialize-generated-name-id "release-inner")]
+    [next-id : i64 (ctfe.ctfe-materialize-generated-name-id "release-next")]
+    [base : ctfe.CtfeEnv
+      (ctfe.ctfe-env-extend-id (ctfe.ctfe-env-empty) base-id (& (I64 1)))]
+    [outer-mark : i64 (ctfe.ctfe-env-binding-mark (& base))]
+    [outer : ctfe.CtfeEnv base]
+    ;; More bindings than one store segment holds.
+    (for [index (iterator.range 0 20)]
+      (set!
+        outer
+        (ctfe.ctfe-env-extend-id outer (+ 200000 index) (& (I64 index)))))
+    (let
+      [inner-mark : i64 (ctfe.ctfe-env-binding-mark (& outer))]
+      [inner : ctfe.CtfeEnv
+        (ctfe.ctfe-env-extend-id outer inner-id (& (I64 7)))]
+      [inner-len : i64 (ctfe.ctfe-env-binding-mark (& inner))]
+      [_inner-release : unit
+        (ctfe.ctfe-env-release-bindings-to! (& inner) inner-mark)]
+      [after-inner : i64 (ctfe.ctfe-env-binding-mark (& outer))]
+      [outer-still-ok : bool
+        (compiler-ctfe-env-i64-value-ok? outer (+ 200000 19) 19)]
+      [_outer-release : unit
+        (ctfe.ctfe-env-release-bindings-to! (& outer) outer-mark)]
+      [after-outer : i64 (ctfe.ctfe-env-binding-mark (& base))]
+      [_stale : unit (ctfe.ctfe-env-release-bindings-to! (& base) inner-len)]
+      [_negative : unit (ctfe.ctfe-env-release-bindings-to! (& base) -1)]
+      [after-noops : i64 (ctfe.ctfe-env-binding-mark (& base))]
+      [next : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id base next-id (& (I64 9)))]
+      (and
+        (= inner-len (+ inner-mark 1))
+        (= after-inner inner-mark)
+        outer-still-ok
+        (= after-outer outer-mark)
+        (= after-noops outer-mark)
+        (= (ctfe.ctfe-env-binding-mark (& next)) (+ outer-mark 1))
+        (compiler-ctfe-env-i64-value-ok? next next-id 9)
+        (compiler-ctfe-env-i64-value-ok? next base-id 1)
+        (compiler-ctfe-env-value-missing? next (+ 200000 19))
+        (compiler-ctfe-env-i64-value-ok? base base-id 1)))))
+
 (define (compiler-ctfe-env-arena-ok?) : bool
   (and
     (compiler-ctfe-env-arena-snapshots-ok?)
     (compiler-ctfe-env-arena-mutation-ok?)
-    (compiler-ctfe-env-arena-provenance-ok?)))
+    (compiler-ctfe-env-arena-provenance-ok?)
+    (compiler-ctfe-env-arena-release-ok?)))
 
 (define (compiler-ctfe-generated-dotted-suffix-id-ok?) : bool
   (match (ctfe.ctfe-generated-string-append-value

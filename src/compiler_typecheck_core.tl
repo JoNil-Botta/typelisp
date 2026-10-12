@@ -60043,10 +60043,7 @@
 ;; environment. When its longest qualified prefix names another module's
 ;; global, report the ownership rule the unqualified forms get instead of an
 ;; unbound name.
-(define (tc-set-foreign-qualified-global-message
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]) : TcMaybeString
+(define (tc-set-foreign-qualified-global-message [ctx : TcContext] [name : i64]) : TcMaybeString
   (if (and (>= name 0) (< name (ci.intern-capacity)))
     (let
       [candidate : i64 name]
@@ -60186,7 +60183,7 @@
       [(Err message)
         (if (tc-set-function-declaration? ctx env name)
           (Err (tc-set-function-declaration-message ctx name))
-          (match (tc-set-foreign-qualified-global-message ctx env name)
+          (match (tc-set-foreign-qualified-global-message ctx name)
             [(Some foreign) (Err foreign)]
             [(No) (Err message)]))])))
 
@@ -65991,7 +65988,6 @@
 (defmacro (tc-move-discharge-call-args
   [ctx : Expr]
   [expr-bases : Expr]
-  [env : Expr]
   [locals : Expr]
   [moved : Expr]
   [func : Expr]
@@ -66001,7 +65997,6 @@
     (tc-move-discharge-call-args-impl
       ,ctx
       ,expr-bases
-      ,env
       ,locals
       ,moved
       ,func
@@ -67964,7 +67959,6 @@
 (define (tc-move-global-source-target-move-only?
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [expr : ast.AstExpr]
   [target-ty : ast.AstType]
@@ -69796,7 +69790,6 @@
 (define (tc-move-discharge-call-args-impl
   [ctx : TcContext]
   [expr-bases : i64]
-  [env : TcTypeEnv]
   [locals : TcMovedSet]
   [moved : TcMovedSet]
   [func : ast.AstExpr]
@@ -69931,7 +69924,6 @@
             (tc-move-discharge-call-args
               ctx
               expr-bases
-              env
               (tc-global-shared-view locals)
               moved-args0
               (tc-global-shared-view func)
@@ -75274,7 +75266,6 @@
                       (tc-move-global-source-target-move-only?
                         ctx
                         expr-bases
-                        env
                         (tc-global-shared-view locals)
                         (tc-global-shared-view expr)
                         (tc-global-shared-view result-ty)

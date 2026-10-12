@@ -851,7 +851,8 @@
             (load.compiler-load-session-state-shared-view (& previous-state))]
           (load.compiler-load-session-state-use! state))]
       (and
-        (load.compiler-load-session-state-standalone-reset-safe? previous-state)
+        (load.compiler-load-session-state-standalone-reset-safe?
+          (& previous-state))
         (= generation-before generation-after)
         (match result
           [(Err diag)
@@ -1247,7 +1248,7 @@
 
 (define (compiler-lower-stable-word-masks-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-lower-stable-word-mask-source))
+  (match (parser.parse-ast-source (& (compiler-lower-stable-word-mask-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1640,7 +1641,7 @@
 
 (define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-stdlib-string-wrapper-prune-source))
+    (& (compiler-lower-stdlib-string-wrapper-prune-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -4857,7 +4858,7 @@
         (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new))))))
 
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-generated-path-source))
+  (match (parser.parse-ast-source (& (compiler-lower-generated-path-source)))
     [(Ok program)
       (match (owned_view.compiler-owned-shared-view program)
         [(Program decls-box)
@@ -4914,7 +4915,7 @@
       (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-lower-module-symbols-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-module-symbol-source))
+  (match (parser.parse-ast-source (& (compiler-lower-module-symbol-source)))
     [(Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
@@ -4948,7 +4949,8 @@
       (ast.ast-decl-root-path-cons "" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-lower-package-owned-symbols-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-package-owned-symbol-source))
+  (match (parser.parse-ast-source
+    (& (compiler-lower-package-owned-symbol-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -5291,7 +5293,7 @@
     (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new))))
 
 (define (compiler-lower-module-specialize-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-module-specialize-source))
+  (match (parser.parse-ast-source (& (compiler-lower-module-specialize-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -6472,7 +6474,8 @@
     [_ false]))
 
 (define (compiler-lower-stdlib-hash-string-shape-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-stdlib-hash-string-source))
+  (match (parser.parse-ast-source
+    (& (compiler-lower-stdlib-hash-string-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7282,7 +7285,7 @@
 
 (define (compiler-lower-runtime-substring-scratch-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-scratch-source))
+    (& (compiler-lower-runtime-substring-scratch-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7302,7 +7305,7 @@
 
 (define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-call-source))
+    (& (compiler-lower-runtime-substring-call-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7322,7 +7325,7 @@
 
 (define (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-capturing-lambda-source))
+    (& (compiler-lower-runtime-substring-capturing-lambda-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7342,7 +7345,7 @@
 
 (define (compiler-lower-runtime-atomic-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-atomic-reachable-source))
+    (& (compiler-lower-runtime-atomic-reachable-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -10537,7 +10540,7 @@
     [_ false]))
 
 (define (compiler-lower-string-length-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-string-length-source))
+  (match (parser.parse-ast-source (& (compiler-lower-string-length-source)))
     [(Ok program)
       (match (lower-test-functions (lower-compiler-program program))
         [(Some functions)
@@ -10587,7 +10590,7 @@
 
 (define (compiler-lower-public-literal-float-to-bits-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-public-literal-float-to-bits-source))
+    (& (compiler-lower-public-literal-float-to-bits-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -10599,7 +10602,7 @@
     [(Err _) false]))
 
 (define (compiler-lower-string-runtime-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-string-runtime-source))
+  (match (parser.parse-ast-source (& (compiler-lower-string-runtime-source)))
     [(Ok program)
       (match (lower-compiler-program program)
         [(Ok _ _) true]
@@ -10607,7 +10610,7 @@
     [(Err _) false]))
 
 (define (compiler-lower-stdio-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-stdio-source))
+  (match (parser.parse-ast-source (& (compiler-lower-stdio-source)))
     [(Ok program)
       (match (lower-compiler-program program)
         [(Ok _ _) true]
@@ -11722,7 +11725,7 @@
     (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-unsafe-ast-dce-source))
+  (match (parser.parse-ast-source (& (compiler-lower-unsafe-ast-dce-source)))
     [(Ok program)
       (match (owned_view.compiler-owned-shared-view program)
         [(Program decls-box)
@@ -13446,25 +13449,12 @@
         ;; Its elements are two-word shared Slice views, like `(& str)`.
         (lower.lower-supported-reference-type? ctx nested-ref-dyn-array)
         (not (lower.lower-supported-reference-type? ctx borrowed-ref-dyn-array))
+        (= (ctfe.ctfe-type-size-with-pools pools (& layouts) (& ref)) 16)
+        (= (ctfe.ctfe-type-align-with-pools pools (& layouts) (& mut-ref)) 8)
         (=
-          (ctfe.ctfe-type-size-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            (owned_view.compiler-owned-shared-view ref))
-          16)
-        (=
-          (ctfe.ctfe-type-align-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            mut-ref)
+          (ctfe.ctfe-type-size-with-pools pools (& layouts) (& ordinary-ref))
           8)
-        (=
-          (ctfe.ctfe-type-size-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            ordinary-ref)
-          8)
-        (= (ctfe.ctfe-type-size-with-pools pools layouts bare-slice) -1)
+        (= (ctfe.ctfe-type-size-with-pools pools (& layouts) (& bare-slice)) -1)
         (match (tc_core.tc-inline-aggregate-type-layout ctx ref)
           [(Ok info)
             (and
@@ -14056,7 +14046,7 @@
   compiler-lower-package-alias-collision
   (test.assert-true
     (match (parser.parse-ast-source
-      (compiler-lower-package-alias-collision-source))
+      (& (compiler-lower-package-alias-collision-source)))
       [(Ok program)
         (match (lower-test-functions
           (lower-compiler-program-with-decl-paths
@@ -14092,24 +14082,24 @@
         (load.compiler-load-package-def-fn-extern
           "surface_left"
           "C:/surface_left/"
-          (svec.new)
+          (& (svec.new))
           "C:/surface_left/src/lib.tl"
           "left.src.lib"
           name
-          (ast.ast-param-list-new)
-          (I64)
-          Unavailable)]
+          (& (ast.ast-param-list-new))
+          (& (I64))
+          (& (Unavailable)))]
       [right : ast.AstDecl
         (load.compiler-load-package-def-fn-extern
           "surface_right"
           "C:/surface_right/"
-          (svec.new)
+          (& (svec.new))
           "C:/surface_right/src/lib.tl"
           "right.src.lib"
           name
-          (ast.ast-param-list-new)
-          (I64)
-          Unavailable)]
+          (& (ast.ast-param-list-new))
+          (& (I64))
+          (& (Unavailable)))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state
           (ci.intern-compat-state-capture-active))]

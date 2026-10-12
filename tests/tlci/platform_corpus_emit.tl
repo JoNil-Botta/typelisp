@@ -29,7 +29,7 @@
 (define (tlci-platform-corpus-write
   [path : String]
   [image : tlci_core.TlciImage]) : i64
-  (match (tlci_core.tlci-emit-image image)
+  (match (tlci_core.tlci-emit-image (& image))
     [(Err message)
       (io.print-error message)
       1]
@@ -41,10 +41,11 @@
 
 (define (tlci-platform-corpus-write-unknown [path : String]) : i64
   (match (tlci_core.tlci-emit-image
-    (tlci-platform-corpus-image
-      tlci_core.tlci-host-platform-x86-64-linux
-      "corpus.platform-unknown"
-      false))
+    (&
+      (tlci-platform-corpus-image
+        tlci_core.tlci-host-platform-x86-64-linux
+        "corpus.platform-unknown"
+        false)))
     [(Err message)
       (io.print-error message)
       1]

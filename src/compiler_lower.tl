@@ -28844,7 +28844,10 @@
           (tc_core.tc-ctfe-env-for-comptime
             ctx
             (lower-global-shared-view inner))]
-        (match (ctfe.compiler-ctfe-eval inner ctfe-env (ctfe.ctfe-fuel-limit))
+        (match (ctfe.compiler-ctfe-eval
+          (& inner)
+          ctfe-env
+          (ctfe.ctfe-fuel-limit))
           [(Ok value _)
             (match (lower-global-shared-view value)
               [(Type ty)
@@ -29017,9 +29020,7 @@
                   state
                   (lower-literal-value-with-type
                     (tc_core.tc-context-source-names ctx)
-                    (ctfe.ctfe-value-to-literal-for-type
-                      value
-                      (lower-global-shared-view expr-ty))
+                    (ctfe.ctfe-value-to-literal-for-type (& value) (& expr-ty))
                     (lower-global-shared-view expr-ty))
                   expr-ty)])]
           [(Err diag) (Err diag)]))]
@@ -32540,7 +32541,7 @@
     (ctfe.ctfe-type-key-with-reflections-and-pools
       (tc_core.tc-context-pools ctx)
       empty-infos
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
+      (& (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))))
 
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count slots) 2)
@@ -72305,24 +72306,26 @@
     [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
     (match (load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (lower-global-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-cfg
           ""
-          src
+          (& src)
           prelude-seen
-          stdlib-roots
+          (& stdlib-roots)
           cfgs)
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
-              (load.compiler-load-decl-list-append prelude-decls entry-decls)
+              (load.compiler-load-decl-list-append
+                (& prelude-decls)
+                (& entry-decls))
               (load.compiler-load-decl-path-list-append
-                prelude-paths
-                entry-paths)
+                (& prelude-paths)
+                (& entry-paths))
               (load.compiler-load-decl-module-list-append
-                prelude-modules
-                entry-modules)
+                (& prelude-modules)
+                (& entry-modules))
               seen)]
           [(Err diagnostic) (Err diagnostic)])]
       [(Err diagnostic) (Err diagnostic)])))
@@ -72333,7 +72336,7 @@
   (match kind
     [(Module)
       (load.compiler-load-stdlib-import?
-        (load.compiler-load-dotted-module-path path))]
+        (load.compiler-load-dotted-module-path (& path)))]
     [_ false]))
 
 (define (lower-source-stdlib-import-needs-loader?
@@ -72462,7 +72465,7 @@
   (ci.intern-reset!)
   (lower-reset-intern-owned-state!)
   (cbi.compiler-builtin-reset!)
-  (match (parser.parse-ast-source (lower-global-shared-view src))
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (if (lower-source-program-needs-loader?
         (lower-global-shared-view program))
@@ -72481,7 +72484,7 @@
                 cfgs
                 (load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
-                  stdlib-roots
+                  (& stdlib-roots)
                   cfgs))]
             [(Err diag) (Err diag)]))
         (lower-compiler-program-with-path-mode-and-state

@@ -27,8 +27,8 @@
   (match (compiler_ctfe.ctfe-apply-binop
     (Eq)
     a
-    b
-    (Literal (Unit))
+    (& b)
+    (& (Literal (Unit)))
     (compiler_ctfe.ctfe-env-shared-view env)
     (compiler_ctfe.ctfe-fuel-limit))
     [(Ok value _)
@@ -60,10 +60,11 @@
           (compiler_ctfe.ctfe-env-extend-id
             env
             name
-            (compiler-ctfe-source-parity-arg
-              index
-              (owned_view.compiler-owned-shared-view first)
-              (owned_view.compiler-owned-shared-view second)))
+            (&
+              (compiler-ctfe-source-parity-arg
+                index
+                (owned_view.compiler-owned-shared-view first)
+                (owned_view.compiler-owned-shared-view second))))
           params
           first
           second
@@ -116,12 +117,12 @@
         builtin-index
         arity)]
     (match (compiler_ctfe.compiler-ctfe-eval
-      (compiler_ctfe.ctfe-ast-get (& env) body)
+      (& (compiler_ctfe.ctfe-ast-get (& env) body))
       (& env)
       (compiler_ctfe.ctfe-fuel-limit))
       [(Ok source-value _)
         (match (compiler_ctfe.compiler-ctfe-eval
-          (compiler_ctfe.ctfe-ast-get (& env) direct-call)
+          (& (compiler_ctfe.ctfe-ast-get (& env) direct-call))
           (& env)
           (compiler_ctfe.ctfe-fuel-limit))
           [(Ok direct-value _)
@@ -132,7 +133,7 @@
           [(Err _) false])]
       [(Err source-diag)
         (match (compiler_ctfe.compiler-ctfe-eval
-          (compiler_ctfe.ctfe-ast-get (& env) direct-call)
+          (& (compiler_ctfe.ctfe-ast-get (& env) direct-call))
           (& env)
           (compiler_ctfe.ctfe-fuel-limit))
           [(Err direct-diag)
@@ -219,7 +220,7 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name _ _)
         (compiler-ctfe-source-placeholder-bind-params
-          (compiler_ctfe.ctfe-env-extend-id env name (Unit))
+          (compiler_ctfe.ctfe-env-extend-id env name (& (Unit)))
           params
           (+ index 1))])))
 
@@ -234,7 +235,7 @@
         (& params)
         0)]
     (match (compiler_ctfe.compiler-ctfe-eval
-      (compiler_ctfe.ctfe-ast-get env body)
+      (& (compiler_ctfe.ctfe-ast-get env body))
       env
       (compiler_ctfe.ctfe-fuel-limit))
       [(Err diag)
@@ -526,7 +527,7 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (match (embedded_stdlib.compiler-embedded-stdlib-lookup "comptime.tl")
     [(CompilerEmbeddedStdlibSomeSource source)
-      (match (parser.parse-ast-source source)
+      (match (parser.parse-ast-source (& source))
         [(Ok program)
           (match program
             [(Program decls-box)

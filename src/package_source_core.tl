@@ -164,8 +164,9 @@
   (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
       (owned_view.compiler-owned-shared-view path)
-      (byte_buf.to-string
-        (io.read-file (owned_view.compiler-owned-shared-view path))))
+      (&
+        (byte_buf.to-string
+          (io.read-file (owned_view.compiler-owned-shared-view path)))))
       [(Err diag)
         (Err
           (str_cat.str-cat

@@ -86,7 +86,7 @@
 (define (lint-driver-smoke-source-has-unused-unsafe-candidate?
   [path : String]
   [source : String]) : bool
-  (match (parse_core.parse-ast-source-diagnostic path source)
+  (match (parse_core.parse-ast-source-diagnostic path (& source))
     [(Ok program) (lint_core.lint-program-has-unused-unsafe-candidate? program)]
     [(Err _) true]))
 
@@ -689,7 +689,7 @@
     [status : i64
       (match (parse_core.parse-ast-source-diagnostic
         "lint_driver_unused_variable_clean.tl"
-        (lint-driver-smoke-clean-unused-variable-source))
+        (& (lint-driver-smoke-clean-unused-variable-source)))
         [(Ok _) 42]
         [(Err _) 49])]
     (if (not

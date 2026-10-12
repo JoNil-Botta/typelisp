@@ -93,8 +93,8 @@
 (define (embedded-verify-native-array-length-ok?) : bool
   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
     (arena.tl_arena_current)
-    (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
-    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+    (& (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))
+    (& (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
     [(Err _) false]
     [(Ok loaded)
       (let
@@ -121,7 +121,7 @@
               (& loaded)
               "stdlib.core_macros/__tl-box-place"
               embedded-verify-cookie
-              (__tl_make-array i64 0)
+              (& (__tl_make-array i64 0))
               0)
               [(Err _) false]
               [(Ok dispatch)
@@ -140,8 +140,8 @@
   [expected-status : i64]) : bool
   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
     (arena.tl_arena_current)
-    (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)
-    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+    (& (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))
+    (& (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
     [(Err _) false]
     [(Ok loaded)
       (let
@@ -168,7 +168,7 @@
               (& loaded)
               "stdlib.core_macros/__tl-box-place"
               embedded-verify-cookie
-              (__tl_make-array i64 0)
+              (& (__tl_make-array i64 0))
               0)
               [(Err _) false]
               [(Ok dispatch)

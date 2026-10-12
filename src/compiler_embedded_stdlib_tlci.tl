@@ -269,7 +269,7 @@
     (let
       [bytes : (__tl_dyn-array u8)
         (compiler-embedded-stdlib-tlci-surface-bytes owner)]
-      (match (tlci.tlci-parse-image bytes)
+      (match (tlci.tlci-parse-image (& bytes))
         [(Err message) (Unavailable message)]
         [(Ok image)
           (Ok
@@ -304,8 +304,8 @@
             [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
             (match (loader.tlci-loader-load-from-bytes-with-host
               (compiler-embedded-stdlib-tlci-session-arena)
-              bytes
-              host)
+              (& bytes)
+              (& host))
               [(Err message)
                 (set!
                   (array-ref compiler-embedded-stdlib-tlci-session-state 0)
@@ -336,7 +336,7 @@
     (let
       [loaded : loader.TlciLoadedImage
         (compiler-embedded-stdlib-tlci-session-image-shared-view)]
-      (match (loader.tlci-loader-resolve-macro-entry (& loaded) name)
+      (match (loader.tlci-loader-resolve-macro-entry (& loaded) (& name))
         [(Resolved resolved) (Resolved resolved)]
         [(Shell resolved) (Shell resolved)]
         [(Missing) Missing]
@@ -356,7 +356,7 @@
         (& loaded)
         resolved
         session-cookie
-        (__tl_make-array i64 0)
+        (& (__tl_make-array i64 0))
         0))
     (Err "embedded stdlib tlci session is not loaded")))
 
@@ -404,8 +404,8 @@
         (try
           (loader.tlci-loader-load-from-bytes-with-host
             (arena.tl_arena_current)
-            bytes
-            host))]
+            (& bytes)
+            (& host)))]
       [count : i64 loaded.macro-entry-count]
       [has-native-sentinel : bool
         (match (loader.tlci-loader-find-macro-entry
@@ -828,7 +828,7 @@
   [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeMaybeNameId
   (ctfe_support.ctfe-value-syntax-name-id
     (compiler-comptime-host-session-source-names-value)
-    value))
+    (& value)))
 
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
@@ -848,7 +848,7 @@
 (define (compiler-comptime-host-expr-value-for-owner
   [owner : ctfe_support.CompilerCtfeValue]
   [node : i64]) : ctfe_support.CompilerCtfeValue
-  (match (ctfe_support.ctfe-value-syntax-pools owner)
+  (match (ctfe_support.ctfe-value-syntax-pools (& owner))
     [(Some pools) (CapturedExpr node (Expr) pools)]
     [(None) (Expr node (Expr))]))
 
@@ -899,9 +899,7 @@
     [(Type ty)
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (ctfe_support.ctfe-type-to-expr
-          (owned_view.compiler-owned-reference-shared-view ty)
-          env))]
+        (ctfe_support.ctfe-type-to-expr ty env))]
     [_ -1]))
 
 ;; Pop two operand expressions (second then target) and push a two-operand
@@ -1032,7 +1030,7 @@
         tlci.tlci-host-callback-status-bad-request
         (match (ctfe_support.ctfe-pattern-binding-type-value
           type-value
-          (Literal (Unit))
+          (& (Literal (Unit)))
           (compiler-comptime-host-ctfe-env)
           compiler-comptime-host-session-fuel)
           [(Ok ty next-fuel)
@@ -1107,7 +1105,7 @@
           (compiler-comptime-host-stack-value 1)]
         (match (ctfe_support.ctfe-pattern-binding-type-value
           type-value
-          (Literal (Unit))
+          (& (Literal (Unit)))
           (compiler-comptime-host-ctfe-env)
           compiler-comptime-host-session-fuel)
           [(Ok inner next-fuel)
@@ -1170,9 +1168,9 @@
         (match (ctfe_support.ctfe-type-reflection
           name
           (compiler-comptime-host-session-pools)
-          (compiler-comptime-host-session-reflections)
+          (& (compiler-comptime-host-session-reflections))
           session
-          ty
+          (& ty)
           index
           second-index)
           [(Ok value) (compiler-comptime-host-replace! 1 value)]
@@ -1192,9 +1190,9 @@
         (match (ctfe_support.ctfe-type-reflection
           name
           (compiler-comptime-host-session-pools)
-          (compiler-comptime-host-session-reflections)
+          (& (compiler-comptime-host-session-reflections))
           (compiler-comptime-host-structural-session)
-          ty
+          (& ty)
           index
           0)
           [(Ok (I64 count))
@@ -1494,8 +1492,8 @@
                 (compiler-comptime-host-drop! 2)
                 (if (ctfe_support.ctfe-function-shared-borrow-returns-string?
                   (compiler-comptime-host-ctfe-env)
-                  signature
-                  value-type)
+                  (& signature)
+                  (& value-type))
                   1
                   0)]
               [_ -3])]
@@ -1600,7 +1598,7 @@
                     (compiler-comptime-host-session-macro-state-value)
                     pools
                     callee-node
-                    items)]
+                    (& items))]
                 (compiler-comptime-host-replace-expr! 2 node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
@@ -1856,7 +1854,7 @@
               (ctfe_support.ctfe-type-kind-with-reflections-and-pools
                 host-pools
                 host-reflections
-                ty))
+                (& ty)))
             (unsafe
               (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
             1
@@ -1889,7 +1887,9 @@
             [pools : ast.AstNodePoolContext
               (compiler-comptime-host-session-pools)]
             [actual-ty : ast.AstType
-              (ctfe_support.ctfe-captured-expr-type-inner-with-pools pools ty)]
+              (ctfe_support.ctfe-captured-expr-type-inner-with-pools
+                pools
+                (& ty))]
             (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
               -3
               (if (string.eq
@@ -1899,10 +1899,11 @@
                   (ctfe_support.ctfe-type-kind-with-reflections-and-pools
                     pools
                     host-reflections
-                    (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                      pools
-                      host-reflections
-                      actual-ty)))
+                    (&
+                      (ctfe_support.ctfe-reflect-resolve-type-with-pools
+                        pools
+                        host-reflections
+                        actual-ty))))
                 (unsafe
                   (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
                 1
@@ -1937,7 +1938,7 @@
               (ctfe_support.ctfe-type-key-with-reflections-and-pools
                 host-pools
                 host-reflections
-                ty))
+                (& ty)))
             (unsafe
               (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
             1
@@ -1966,7 +1967,7 @@
               (ctfe_support.ctfe-expr-type-value
                 (compiler-comptime-host-session-pools)
                 reflections
-                ty)))]
+                (& ty))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; type-expr: pop one reflected Type value and push one opaque TypeLiteral Expr
@@ -2134,7 +2135,9 @@
               [(Some splice-items)
                 (let
                   [next : ast.AstExprList
-                    (ctfe_support.ctfe-expr-list-append items splice-items)]
+                    (ctfe_support.ctfe-expr-list-append
+                      (& items)
+                      (& splice-items))]
                   (compiler-comptime-host-replace! 2 (ExprList next)))]
               [(None) tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
@@ -2241,7 +2244,7 @@
               1
               (Expr
                 (ctfe_support.ctfe-expr-begin-unit-node
-                  items
+                  (& items)
                   (compiler-comptime-host-session-pools))
                 (Unit)))]
           [(None) tlci.tlci-host-callback-status-bad-request])))))
@@ -2298,9 +2301,10 @@
       (compiler-comptime-host-replace-built!
         0
         (ctfe_support.ctfe-expr-list-type-nth
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-operands
-            arg-a)
+          (&
+            (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-operands
+              arg-a))
           arg-b
           (compiler-comptime-host-session-pools))))))
 
@@ -2326,7 +2330,9 @@
             tlci.tlci-host-callback-status-bad-request
             (compiler-comptime-host-push!
               (ExprBindingClause
-                (ctfe_support.ctfe-expr-binding-clause-list-nth clauses arg-b))))]
+                (ctfe_support.ctfe-expr-binding-clause-list-nth
+                  (& clauses)
+                  arg-b))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Project name/type/init from an ExprBindingClause on the session stack.
@@ -2346,10 +2352,11 @@
                     (ctfe_support.ctfe-expr-binding-clause-name-id clause)))]
               [(= selector 1)
                 (Expr
-                  (ctfe_support.ctfe-expr-binding-clause-type clause)
+                  (ctfe_support.ctfe-expr-binding-clause-type (& clause))
                   (ctfe_support.ctfe-untyped-expr-type))]
               [(= selector 3)
-                (ctfe_support.ctfe-expr-binding-clause-init-callee-value clause)]
+                (ctfe_support.ctfe-expr-binding-clause-init-callee-value
+                  (& clause))]
               [else
                 (let
                   [produced : ast.AstType
@@ -2360,8 +2367,8 @@
                   (Expr
                     (ctfe_support.ctfe-caller-origin-expr-node-with-pools
                       pools
-                      (ctfe_support.ctfe-expr-binding-clause-init clause)
-                      (owned_view.compiler-owned-shared-view produced))
+                      (ctfe_support.ctfe-expr-binding-clause-init (& clause))
+                      (& produced))
                     (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
                       pools
                       produced)))])]
@@ -2421,7 +2428,7 @@
         compiler-comptime-host-locals
         arg-a)
         [(ExprBindingClause clause)
-          (if (ctfe_support.ctfe-expr-binding-clause-has-type? clause)
+          (if (ctfe_support.ctfe-expr-binding-clause-has-type? (& clause))
             1
             0)]
         [_ -3]))))
@@ -2594,7 +2601,7 @@
               1
               (ctfe_support.ctfe-syntax-expr-push
                 env
-                (Var name-id)
+                (& (Var name-id))
                 (ctfe_support.ctfe-untyped-expr-type))))]
         [(None) tlci.tlci-host-callback-status-bad-request]))))
 
@@ -2812,9 +2819,9 @@
                 (compiler-comptime-host-replace!
                   2
                   (ctfe_support.ctfe-generated-string-append-value
-                    left-text
+                    (& left-text)
                     left-id
-                    right-text
+                    (& right-text)
                     right-id))]
               [(None) tlci.tlci-host-callback-status-bad-request])]
           [(None) tlci.tlci-host-callback-status-bad-request])))))
@@ -2865,7 +2872,7 @@
     [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
     (match (ctfe_support.ctfe-pattern-binding-type-value
       type-value
-      (Literal (Unit))
+      (& (Literal (Unit)))
       env
       compiler-comptime-host-session-fuel)
       [(Ok ty next-fuel)
@@ -3041,9 +3048,9 @@
                   (Pattern
                     (ctfe_support.ctfe-pattern-variant
                       (compiler-comptime-host-session-source-names-value)
-                      text
+                      (& text)
                       name-id
-                      payloads)))]
+                      (& payloads))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [(None) tlci.tlci-host-callback-status-bad-request])))))
 
@@ -4750,7 +4757,7 @@
               1
               (ctfe_support.ctfe-syntax-expr-push
                 env
-                (Literal (String string-id))
+                (& (Literal (String string-id)))
                 (String))))]
         [(None) tlci.tlci-host-callback-status-bad-request]))))
 
@@ -5021,7 +5028,7 @@
                 (compiler-comptime-host-session-pools))]
             (match (ctfe_support.ctfe-pattern-binding-type-value
               type-value
-              (Literal (Unit))
+              (& (Literal (Unit)))
               env
               compiler-comptime-host-session-fuel)
               [(Ok ty next-fuel)

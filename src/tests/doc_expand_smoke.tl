@@ -1,6 +1,5 @@
 ;; doc_expand_smoke.tl - Runnable smoke for generated-module docs.
 (import doc_expand)
-(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -242,7 +241,7 @@
 
 (import (boxmod i64) as ibox)"
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view roots))
+      (& roots))
       [(Ok decls paths _ _)
         (let
           [pools : ast.AstNodePoolContext

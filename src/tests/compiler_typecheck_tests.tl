@@ -304,7 +304,7 @@
   [entry-path : String]) : bool
   (match (parser.parse-ast-source-diagnostic
     (tc_core.tc-global-shared-view entry-path)
-    src)
+    (& src))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -982,7 +982,7 @@
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-typecheck-repr-c-layout-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-repr-c-layout-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1097,7 +1097,7 @@
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-typecheck-repr-c-f32-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-repr-c-f32-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1148,7 +1148,7 @@
   [name : String]
   [want : String]) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1303,7 +1303,7 @@
 (define (compiler-typecheck-repr-c-aligned-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
   (match (parser.parse-ast-source
-    (compiler-typecheck-repr-c-aligned-layout-source))
+    (& (compiler-typecheck-repr-c-aligned-layout-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1462,7 +1462,7 @@
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : tc_core.ResultTcUnit
   (let
-    [program (try (parser.parse-ast-source src))]
+    [program (try (parser.parse-ast-source (& src)))]
     [symbols (try (csym.build-compiler-symbols program))]
     [registries (try (csym.build-compiler-registries program))]
     [ctx : tc_core.TcContext
@@ -1487,7 +1487,7 @@
   [src : String]
   [name : String]
   [want : i64]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -10940,7 +10940,7 @@
       (ast.ast-decl-root-path-cons "src/main.tl" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
-  (match (parser.parse-ast-source (compiler-typecheck-dup-extern-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-dup-extern-source)))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -10961,7 +10961,7 @@
     [(Err _) false]))
 
 (define (compiler-typecheck-dup-function-paths-ok?) : bool
-  (match (parser.parse-ast-source (compiler-typecheck-dup-function-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-dup-function-source)))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -10981,7 +10981,7 @@
     [(Err _) false]))
 
 (define (compiler-typecheck-dup-type-path-ok? [source : String] [name : String]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program

@@ -20,7 +20,7 @@
 
 (define (compiler-lzss-prefix?
   [payload : (& payload (__tl_dyn-array u8))]
-  [prefix : String]) : bool
+  [prefix : (& str)]) : bool
   (let
     [index : i64 0]
     [prefix-len : i64 (string.string-length prefix)]
@@ -44,7 +44,7 @@
     [prefix-len : i64 (string.string-length prefix)]
     (cond
       [(< raw-limit 0) (Err "compiler lzss: invalid raw length limit")]
-      [(not (compiler-lzss-prefix? payload prefix))
+      [(not (compiler-lzss-prefix? payload (& prefix)))
         (Err "compiler lzss: bad envelope prefix")]
       [else
         (let

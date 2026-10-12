@@ -77512,6 +77512,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [handle : i64]) : TcMovedSet
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return borrowed))
   (let
     [facts : TcMovedPathFacts
       (tc-moved-path-facts-filter
@@ -77531,6 +77532,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (let
     [borrowed : TcMovedSet
       (tc-moved-select-path-provenance
@@ -77569,6 +77571,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (let
     [borrowed : TcMovedSet
       (tc-moved-select-path-provenance
@@ -77607,6 +77610,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (let
     [borrowed : TcMovedSet
       (tc-moved-select-path-provenance
@@ -77646,6 +77650,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (let
     [borrowed : TcMovedSet
       (tc-moved-select-path-provenance
@@ -77678,6 +77683,7 @@
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
   (let
     [borrowed : TcMovedSet
       (tc-moved-select-path-provenance

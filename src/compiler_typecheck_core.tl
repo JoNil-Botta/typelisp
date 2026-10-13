@@ -40959,7 +40959,7 @@
               expr-bases
               bindings
               name
-              (tc-string-list-add bound (ci.intern-str bind-name))
+              (tc-string-list-add bound (tc-env-key-name-text bind-name))
               (+ index 1))))])))
 
 (define (tc-ref-closure-let-rest-and-body-local-uses-ok-at?
@@ -41029,7 +41029,7 @@
                 bindings
                 body
                 name
-                (tc-string-list-add bound (ci.intern-str bind-name))
+                (tc-string-list-add bound (tc-env-key-name-text bind-name))
                 true
                 (+ index 1)))
             (and
@@ -41043,7 +41043,7 @@
                 bindings
                 body
                 name
-                (tc-string-list-add bound (ci.intern-str bind-name))
+                (tc-string-list-add bound (tc-env-key-name-text bind-name))
                 allow-copy-alias
                 (+ index 1)))))])))
 
@@ -41092,7 +41092,7 @@
               expr-bases
               bindings
               name
-              (tc-string-list-add bound (ci.intern-str bind-name))
+              (tc-string-list-add bound (tc-env-key-name-text bind-name))
               (+ index 1))))])))
 
 (define (tc-ref-closure-match-arms-local-uses-ok?
@@ -46594,7 +46594,7 @@
               expr-bases
               bindings
               names
-              (tc-string-list-add bound (ci.intern-str bind-name))
+              (tc-string-list-add bound (tc-env-key-name-text bind-name))
               (+ index 1)
               sets-only?)))])))
 
@@ -46648,7 +46648,7 @@
               expr-bases
               bindings
               names
-              (tc-string-list-add bound (ci.intern-str bind-name))
+              (tc-string-list-add bound (tc-env-key-name-text bind-name))
               (+ index 1)
               sets-only?)))])))
 

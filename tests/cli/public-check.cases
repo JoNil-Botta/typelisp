@@ -526,6 +526,17 @@ stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
 
+# Poisoned declarations and origin aliases must fit below the check's memory
+# cap while preserving every diagnostic. A cap kill exits 137 instead of 1.
+case check-type-errors-memory
+hosts linux
+sh mkdir -p "{{dir}}/tree" && cp -R src "{{dir}}/tree/src"
+sh sed -E 's/^  \(compiler-ir-array-shared-view (seq|values|cases|params)\.slots index\)\)$/  (array-ref \1.slots index))/' src/compiler_ir_types.tl > "{{dir}}/tree/src/compiler_ir_types.tl"
+cwd {{dir}}/tree
+exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 2560 --timeout-seconds 600 --report "{{dir}}/memory.txt" -- "{{compiler}}" check src/main.tl --stdlib-root "{{root}}/stdlib" --stdlib-root src
+exit 1
+stderr count = 4 ^error\[
+stderr count = 3 ^error\[E0208\]
 case check-global-call-borrow-diagnostic
 file main.tl
 (defstruct Big (a i64) (b i64) (c i64) (d i64))

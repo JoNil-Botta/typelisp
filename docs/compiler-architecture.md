@@ -673,6 +673,12 @@ rewrites still register their provenance normally.
 Live contexts mutate their stable expression-pool cell through an exclusive
 borrow; value-oriented callers apply the same setter to a state copy. Snapshots retain their own counts while sharing record-table storage.
 
+Raw expression-pool capture publishes all eleven state words, including the
+span sidecar, record-table addresses, record counts and rollback-order flag.
+The table words retain their existing pool owner; capture must not create
+replacement storage in the caller's temporary arena. Installed contexts
+and fresh snapshots therefore observe the same published span generation.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,

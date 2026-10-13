@@ -8407,7 +8407,7 @@
     (expr-int 1)
     (expr-int 0)))
 (define (main) : i64 (needs-type missing))"
-      "expr-type requires a typechecked Expr")
+      "typecheck: unbound name missing")
     (compiler-typecheck-ok?
       "(defenum MaybeI64 (Some i64) (None))
 (defmacro (make-some [value : i64]) : MaybeI64 `(Some ,value))

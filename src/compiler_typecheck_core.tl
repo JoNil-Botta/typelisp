@@ -91619,6 +91619,52 @@
         (tc-context-expr-get ctx func-box))]
     [_ (tc-expr-maybe-span (tc-context-expr-bases ctx) call-expr)]))
 
+;; `expr-type` on an operand the walk failed to typecheck names that operand
+;; after `ctfe-expr-type-failed-operand-prefix` (#8871). The operand node id, or
+;; -1 for any other diagnostic.
+(define (macro-failed-operand-node [diag : (& diag cdiag.CompilerDiagnostic)]) : i64
+  (let
+    [message : String (cdiag.compiler-diagnostic-message diag)]
+    [start : i64
+      (string.string-length (ctfe_support.ctfe-expr-type-failed-operand-prefix))]
+    (if (tc-diag-string-prefix?
+      (& message)
+      (ctfe_support.ctfe-expr-type-failed-operand-prefix))
+      (let
+        [end : i64 (string.index-of-byte (& message) start 124)]
+        (if (> end start)
+          (string.>int (& (string.substring message start (- end start))))
+          -1))
+      -1)))
+
+;; The diagnostic without the failed-operand prefix: the generic `expr-type`
+;; message at its original location.
+(define (macro-failed-operand-generic-diagnostic
+  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  (if (< (macro-failed-operand-node (& diag)) 0)
+    diag
+    (cdiag.compiler-diagnostic-with-message
+      (& diag)
+      (ctfe_support.ctfe-expr-type-untyped-message))))
+
+;; Report the error of the operand a macro asked `expr-type` about, at the
+;; operand, in place of the generic `expr-type` message. The operand is checked
+;; again in the environment of the macro call, the one its capture used.
+(define (macro-failed-operand-diagnostic
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  (let
+    [node : i64 (macro-failed-operand-node (& diag))]
+    (if (< node 0)
+      diag
+      (let
+        [operand : ast.AstExpr (tc-context-expr-get ctx node)]
+        (match (tc-expr ctx type-env (tc-global-shared-view operand))
+          [(Err message)
+            (tc-expr-diag (tc-context-expr-bases ctx) operand message)]
+          [(Ok _) (macro-failed-operand-generic-diagnostic diag)])))))
+
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
   [path : String]
@@ -91737,7 +91783,8 @@
             path
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-generic-diagnostic
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-output-syntax-id-at
   [session : cis.InternStructuralSessionHandle]
@@ -104696,7 +104743,7 @@
                   (& (tc-resolve-type ctx actual)))]
               (tc-context-install-pools! ctx)
               captured)]
-          [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+          [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 
@@ -104723,7 +104770,7 @@
             (tc-resolve-type ctx actual))]
         (tc-context-install-pools! ctx)
         captured)]
-    [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+    [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
 
 ;; The declaration a call head names, as the `module/name` key the
 ;; typechecker resolves it to, when that declaration is a `define`d function of
@@ -108424,7 +108471,10 @@
             (macro-active-decl-path ctx)
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-expand-exprs
   [ctx : TcContext]

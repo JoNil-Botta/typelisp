@@ -932,10 +932,36 @@
 (define (ctfe-untyped-expr-type) : ast.AstType
   (Var (ctfe-untyped-expr-type-id)))
 
+;; An operand the macro walk tried to typecheck and could not. It is untyped
+;; everywhere, except that `expr-type` on it names the operand node in its
+;; diagnostic, so the walk can report the operand's own error instead (#8871).
+(define (ctfe-failed-expr-type-id) : i64
+  -6)
+
+(define (ctfe-failed-expr-type) : ast.AstType
+  (Var (ctfe-failed-expr-type-id)))
+
+(define (ctfe-failed-expr-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Var name) (= name (ctfe-failed-expr-type-id))]
+    [_ false]))
+
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name)
+      (or
+        (= name (ctfe-untyped-expr-type-id))
+        (= name (ctfe-failed-expr-type-id)))]
     [_ false]))
+
+(define (ctfe-expr-type-untyped-message) : String
+  "expr-type requires a typechecked Expr")
+
+;; Prefix of the `expr-type` diagnostic for an operand the walk failed to
+;; typecheck, followed by the operand node id, `|`, and the generic message.
+;; The macro walk replaces the diagnostic with the operand's own error.
+(define (ctfe-expr-type-failed-operand-prefix) : String
+  "__tl_ctfe_failed_operand|")
 
 (define (ctfe-captured-expr-type-id) : i64
   -4)
@@ -7503,12 +7529,20 @@
 (define (ctfe-expr-type-value
   [pools : ast.AstNodePoolContext]
   [reflections : (& reflections CtfeReflectInfoList)]
+  [node : i64]
   [ty : (& ast.AstType)]) : CtfeBuilt
   (let
     [actual-ty : ast.AstType
       (ctfe-captured-expr-type-inner-with-pools pools ty)]
     (if (ctfe-untyped-expr-type? actual-ty)
-      (Err "expr-type requires a typechecked Expr")
+      (Err
+        (if (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
+          (str_cat.str-cat
+            (ctfe-expr-type-failed-operand-prefix)
+            (string.int->string node)
+            "|"
+            (ctfe-expr-type-untyped-message))
+          (ctfe-expr-type-untyped-message)))
       (Ok
         (Type
           (ctfe-reflect-resolve-type-with-pools pools reflections actual-ty))))))
@@ -7526,14 +7560,20 @@
           (let
             [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
             (match value
-              [(Expr _ ty)
+              [(Expr node ty)
                 (ctfe-built-result
-                  (ctfe-expr-type-value (ctfe-env-pools env) reflections (& ty))
+                  (ctfe-expr-type-value
+                    (ctfe-env-pools env)
+                    reflections
+                    node
+                    (& ty))
                   expr
                   arg-fuel)]
+              ;; A captured list element's node names another pool, so its
+              ;; diagnostic stays generic.
               [(CapturedExpr _ ty pools)
                 (ctfe-built-result
-                  (ctfe-expr-type-value pools reflections (& ty))
+                  (ctfe-expr-type-value pools reflections -1 (& ty))
                   expr
                   arg-fuel)]
               [_

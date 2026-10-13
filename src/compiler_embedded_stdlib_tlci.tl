@@ -1958,7 +1958,7 @@
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
       (match (compiler-comptime-host-stack-value 1)
-        [(Expr _ ty)
+        [(Expr node ty)
           (let
             [reflections : ctfe_support.CtfeReflectInfoList
               (compiler-comptime-host-session-reflections)]
@@ -1967,6 +1967,7 @@
               (ctfe_support.ctfe-expr-type-value
                 (compiler-comptime-host-session-pools)
                 reflections
+                node
                 (& ty))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 

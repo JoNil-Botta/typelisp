@@ -3721,12 +3721,29 @@
     [cell : (MutPtr i64)
       (unsafe
         (int->ptr cell-address : (MutPtr i64)))]
+    [canonical-descriptor : i64
+      (unsafe
+        (ptr-read
+          (ptr-cast (ptr-addr-of ast-node-canonical-span-records) : (Ptr i64))))]
+    [respan-descriptor : i64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of ast-node-respan-records) : (Ptr i64))))]
     (unsafe
       (ptr-write! cell ast-node-pool-segment-bases)
       (ptr-write! (ptr-offset cell 1) ast-node-pool-count)
       (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
       (ptr-write! (ptr-offset cell 3) ast-node-pool-storage-arena)
-      (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count))))
+      (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count)
+      (ptr-write! (ptr-offset cell 5) ast-node-span-slot-segment-bases)
+      (ptr-write! (ptr-offset cell 6) canonical-descriptor)
+      (ptr-write! (ptr-offset cell 7) ast-node-canonical-span-count)
+      (ptr-write! (ptr-offset cell 8) respan-descriptor)
+      (ptr-write! (ptr-offset cell 9) ast-node-respan-count)
+      (ptr-write!
+        (ptr-offset cell 10)
+        (if ast-node-span-records-monotonic?
+          1
+          0)))))
 
 (define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
   (let

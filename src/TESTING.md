@@ -1559,3 +1559,12 @@ in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
 - Run the focused tests for the layer touched, plus `typelisp fmt --check`.
+
+## Iterative AST wrapper removal
+
+`compiler-ast-deep-wrapper-chain` in `src/tests/compiler_ast_types_smoke.tl`
+checks bare leaves and mixed `Spanned`/`MacroExpansion` chains on both sides of
+expression segment boundaries, including more than two full segments. Run it at
+opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
+and equal-ID/different-pool cases. Wrapper removal consumes each row before
+reading the next and copies out the leaf without recursive stack growth.

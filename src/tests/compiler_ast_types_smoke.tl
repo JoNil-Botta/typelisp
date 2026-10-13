@@ -7,6 +7,7 @@
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
 
@@ -671,6 +672,42 @@
     (ast.ast-node-pool-context-destroy-storage! a)
     (ast.ast-node-pool-context-destroy-storage! b)
     (and initial-ok rewrite-ok retired-ok reset-ok)))
+
+;; Mixed wrapper chains cross expression segment boundaries without consulting
+;; the installed compatibility pool.
+(define (compiler-ast-deep-wrapper-chain-smoke? [depth : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [leaf : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 73)))]
+    [root : i64 leaf]
+    (for [index (iterator.range 0 depth)]
+      (set!
+        root
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (if (= (bit-and index 1) 0)
+            (Spanned root (ast.ast-source-span 1 1 1 2))
+            (MacroExpansion root 101 201)))))
+    (let
+      [ok : bool
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            (ast.ast-node-pool-context-expr-segment-bases (& pools))
+            (& (ast.ast-node-pool-context-expr-get (& pools) root)))
+          73)]
+      (ast.ast-node-pool-context-destroy-storage! pools)
+      ok)))
+
+(test
+  compiler-ast-deep-wrapper-chain
+  (let
+    [depths : (Array i64 7) (array 0 1 2 65535 65536 65537 131073)]
+    (for [index (iterator.range 0 (array-length depths))]
+      (tl_test.assert-true
+        (compiler-ast-deep-wrapper-chain-smoke? (array-ref depths index))
+        "mixed wrappers preserve their leaf across segment growth"))))
 
 (define (compiler-ast-context-base-arenas-match?
   [pools : (& pools ast.AstNodePoolContext)]) : bool

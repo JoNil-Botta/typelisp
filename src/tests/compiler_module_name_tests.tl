@@ -70,7 +70,7 @@
       [text : String
         (str_cat.str-cat "(import " (string.copy (& item.name)) ")")]
       (test.assert-bool-eq
-        (match (parser.parse-ast-source (string.copy (& text)))
+        (match (parser.parse-ast-source (& (string.copy (& text))))
           [(Ok _) true]
           [_ false])
         item.valid

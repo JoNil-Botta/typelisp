@@ -170,7 +170,7 @@
   [decl : ast.AstDecl]
   [path : (& path str)]) : unit
   (set! compiler-symbols-last-error-path (string.copy path))
-  (match (parser.compiler-parse-decl-body-span decl)
+  (match (parser.compiler-parse-decl-body-span (& decl))
     [(Some span)
       (set! compiler-symbols-last-error-span span)
       (set! compiler-symbols-last-error-has-span true)]
@@ -191,7 +191,7 @@
       (set! compiler-symbols-last-error-span span)
       (set! compiler-symbols-last-error-has-span true)]
     [(None)
-      (match (parser.compiler-parse-decl-body-span decl)
+      (match (parser.compiler-parse-decl-body-span (& decl))
         [(Some span)
           (set! compiler-symbols-last-error-span span)
           (set! compiler-symbols-last-error-has-span true)]

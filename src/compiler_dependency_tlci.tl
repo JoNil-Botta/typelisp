@@ -152,10 +152,10 @@
   [artifact-path : String]
   [source-digest : i64]) : load.CompilerLoadDependencyCatalogKey
   (compiler-dependency-tlci-key
-    (load.compiler-load-canonical-path source-set.manifest-dir)
+    (load.compiler-load-canonical-path (& source-set.manifest-dir))
     source-set.manifest.name
     source-set.manifest.version
-    (load.compiler-load-canonical-path artifact-path)
+    (load.compiler-load-canonical-path (& artifact-path))
     source-digest
     -1
     -1
@@ -169,10 +169,10 @@
   [image-content-hash : i64]
   [image : tlci.TlciImage]) : load.CompilerLoadDependencyCatalogKey
   (compiler-dependency-tlci-key
-    (load.compiler-load-canonical-path source-set.manifest-dir)
+    (load.compiler-load-canonical-path (& source-set.manifest-dir))
     source-set.manifest.name
     source-set.manifest.version
-    (load.compiler-load-canonical-path artifact-path)
+    (load.compiler-load-canonical-path (& artifact-path))
     source-digest
     image-content-hash
     image.host-platform
@@ -201,8 +201,8 @@
     embedded-stdlib-tlci
     (match (loader.tlci-loader-load-from-bytes-with-host
       _owner
-      _bytes
-      (comptime_host.compiler-comptime-host-table))
+      (& _bytes)
+      (& (comptime_host.compiler-comptime-host-table)))
       [(Ok loaded)
         (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)]
       [(Err message)
@@ -229,9 +229,7 @@
         (tlci.tlci-content-hash bytes)
         (owned_view.compiler-owned-shared-view image))]
     [reused : i64
-      (load.compiler-load-dependency-catalog-find-key-slot
-        (owned_view.compiler-owned-shared-view state)
-        (owned_view.compiler-owned-shared-view key))]
+      (load.compiler-load-dependency-catalog-find-key-slot (& state) (& key))]
     (if (>= reused 0)
       reused
       (let
@@ -354,8 +352,7 @@
               [(OkIoBytes contents)
                 (let
                   [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
-                  (match (tlci.tlci-parse-image
-                    (owned_view.compiler-owned-shared-view bytes))
+                  (match (tlci.tlci-parse-image (& bytes))
                     [(Err message)
                       (compiler-dependency-tlci-record-unavailable!
                         state
@@ -416,12 +413,11 @@
             (compiler-dependency-tlci-record-unavailable!
               state
               (compiler-dependency-tlci-key
-                (load.compiler-load-canonical-path
-                  (owned_view.compiler-owned-shared-view root))
+                (load.compiler-load-canonical-path (& root))
                 (owned_view.compiler-owned-shared-view dep.alias)
                 ""
                 (load.compiler-load-canonical-path
-                  (load.compiler-load-package-tlci-path root dep.alias))
+                  (& (load.compiler-load-package-tlci-path root dep.alias)))
                 -1
                 -1
                 -1
@@ -573,7 +569,7 @@
           tlci.tlci-aux-kind-package-source-binding
           schema
           payload))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
         [(Ok packed) packed]
         [(Err message) (io.panic message)]))))
 
@@ -599,7 +595,7 @@
   test
   (define (compiler-dependency-tlci-test-emit [image : tlci.TlciImage]) : (__tl_dyn-array
       u8)
-    (match (tlci.tlci-emit-image image)
+    (match (tlci.tlci-emit-image (& image))
       [(Ok bytes) bytes]
       [(Err message) (io.panic message)])))
 
@@ -694,7 +690,7 @@
               (= observed.entry-bytes 0)
               (= observed.import-bytes 0)
               (match (load.compiler-load-dependency-catalog-lookup-macro
-                (owned_view.compiler-owned-shared-view state)
+                (& state)
                 first
                 "metadata_dep/missing")
                 [(MetadataOnly) true]

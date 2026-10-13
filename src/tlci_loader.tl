@@ -482,7 +482,7 @@
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
-  [table : tlci.TlciHostCallbackTable]) : (__tl_dyn-array i64)
+  [table : (& tlci.TlciHostCallbackTable)]) : (__tl_dyn-array i64)
   (let
     [items : (__tl_dyn-array i64)
       (tlci-loader-alloc-i64-array-in-arena owner-arena 8)]
@@ -521,7 +521,7 @@
 
 (define (tlci-loader-apply-fixups-at!
   [image-base : i64]
-  [fixups : (__tl_dyn-array u8)]
+  [fixups : (& (__tl_dyn-array u8))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -541,7 +541,7 @@
   [image : (& image tlci.TlciImage)]) : unit
   (tlci-loader-apply-fixups-at!
     image-base
-    (owned_view.compiler-owned-reference-shared-view (& image.fixups))
+    (& image.fixups)
     0
     (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)))
 
@@ -566,7 +566,7 @@
 ;; slot while the image is still writable and before any comptime code runs.
 (define (tlci-loader-bind-imports-at!
   [image-base : i64]
-  [imports : (__tl_dyn-array u8)]
+  [imports : (& (__tl_dyn-array u8))]
   [image-identity : String]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]
   [index : i64]
@@ -608,7 +608,7 @@
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoaderUnit
   (tlci-loader-bind-imports-at!
     image-base
-    (owned_view.compiler-owned-reference-shared-view (& image.imports))
+    (& image.imports)
     (str_cat.str-cat
       (string.copy (& image.metadata.package-name))
       (str_cat.str-cat "@" (string.copy (& image.metadata.package-version))))
@@ -650,7 +650,7 @@
             false)))]
     (Ok)))
 
-(define (tlci-loader-loaded-image-region [loaded : TlciLoadedImage]) : pages.TlciPageRegion
+(define (tlci-loader-loaded-image-region [loaded : (& TlciLoadedImage)]) : pages.TlciPageRegion
   (pages.TlciPageRegion
     loaded.image-region-addr
     loaded.image-region-size
@@ -668,7 +668,7 @@
       [_revoke : unit (set! (array-ref loaded.live 0) false)]
       [index-arena : i64 loaded.macro-index-arena]
       [page-result : pages.ResultTlciPageUnit
-        (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
+        (pages.tlci-pages-release (tlci-loader-loaded-image-region (& loaded)))]
       (tlci-loader-destroy-index-arena index-arena)
       (let
         [_ (try page-result)]
@@ -783,9 +783,9 @@
 ;; same macro-entry checks the registration path applies.
 (define (tlci-loader-install-native-table
   [owner-arena : i64]
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& (__tl_dyn-array u8))]
   [loaded : TlciLoadedImage]
-  [host-table : tlci.TlciHostCallbackTable]
+  [host-table : (& tlci.TlciHostCallbackTable)]
   [table-offset : i64]) : ResultTlciLoadedImage
   (let
     [code-file-offset : i64 (tlci.tlci-read-u64 bytes 88)]
@@ -825,22 +825,19 @@
         (__tl_make-array i64 0)
         0
         loaded.live)]
-    (match (tlci-loader-index-macro-entries
-      (tlci-loader-global-shared-view installed))
+    (match (tlci-loader-index-macro-entries (& installed))
       [(Err message) (tlci-loader-rollback-loaded installed message)]
       [(Ok indexed) (Ok indexed)])))
 
 (define (tlci-loader-load-from-bytes-with-registration
   [owner-arena : i64]
-  [bytes : (__tl_dyn-array u8)]
-  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  [bytes : (& (__tl_dyn-array u8))]
+  [host-table : (& tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
-    [parsed
-      (try
-        (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes)))]
+    [parsed (try (tlci.tlci-parse-image bytes))]
     [native-table : i64 (tlci-loader-native-table-offset parsed)]
     [loaded
-      (try (tlci-loader-load-parsed owner-arena bytes parsed (& host-table)))]
+      (try (tlci-loader-load-parsed owner-arena bytes (& parsed) host-table))]
     (if (>= native-table 0)
       (tlci-loader-install-native-table
         owner-arena
@@ -853,7 +850,7 @@
 (define (tlci-loader-finish-registration
   [owner-arena : i64]
   [loaded : TlciLoadedImage]
-  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  [host-table : (& tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
     [loaded (try (ResultTlciLoadedImage.Ok loaded))]
     [host-storage : (__tl_dyn-array i64)
@@ -890,15 +887,14 @@
                   host-table-addr
                   registration-addr
                   registration)]
-              (match (tlci-loader-index-macro-entries
-                (tlci-loader-global-shared-view registered))
+              (match (tlci-loader-index-macro-entries (& registered))
                 [(Err message) (tlci-loader-rollback-loaded registered message)]
                 [(Ok indexed) (Ok indexed)]))])))))
 
 (define (tlci-loader-load-mapped-region
   [owner-arena : i64]
   [bytes : (& bytes (__tl_dyn-array u8))]
-  [image : tlci.TlciImage]
+  [image : (& tlci.TlciImage)]
   [image-region : pages.TlciPageRegion]
   [entry-code-offset : i64]
   [rodata-offset : i64]
@@ -948,10 +944,10 @@
 (define (tlci-loader-load-parsed
   [owner-arena : i64]
   [bytes : (& bytes (__tl_dyn-array u8))]
-  [image : tlci.TlciImage]
+  [image : (& tlci.TlciImage)]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (match (tlci.tlci-image-admit-host
-    (tlci-loader-global-shared-view image)
+    (owned_view.compiler-owned-reference-shared-view image)
     (tlci.tlci-build-host-platform))
     [(Rejected message) (Err message)]
     [(MetadataOnly) (Err "tlci loader: image has no code section")]
@@ -994,16 +990,14 @@
     (__tl_make-array i64 0)
     0))
 
-(define (tlci-loader-load-from-bytes [bytes : (__tl_dyn-array u8)]) : ResultTlciLoadedImage
+(define (tlci-loader-load-from-bytes [bytes : (& (__tl_dyn-array u8))]) : ResultTlciLoadedImage
   (let
-    [image
-      (try
-        (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes)))]
+    [image (try (tlci.tlci-parse-image bytes))]
     [host-table : tlci.TlciHostCallbackTable (tlci-loader-empty-host-table)]
     (tlci-loader-load-parsed
       (arena.tl_arena_current)
       bytes
-      image
+      (& image)
       (& host-table))))
 
 ;: `owner-arena` owns the storage the returned image RETAINS, and must outlive
@@ -1013,13 +1007,10 @@
 ;: `(arena.tl_arena_current)`, and one that is kept past it must not.
 (define (tlci-loader-load-from-bytes-with-host
   [owner-arena : i64]
-  [bytes : (__tl_dyn-array u8)]
-  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  [bytes : (& (__tl_dyn-array u8))]
+  [host-table : (& tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
   (let
-    [_
-      (try
-        (tlci.tlci-validate-host-callback-table
-          (tlci-loader-global-shared-view host-table)))]
+    [_ (try (tlci.tlci-validate-host-callback-table host-table))]
     (tlci-loader-load-from-bytes-with-registration owner-arena bytes host-table)))
 
 (define (tlci-loader-address-range-contained?
@@ -1318,7 +1309,7 @@
       [else (Err "tlci loader: macro entry index is full")])))
 
 (define (tlci-loader-build-macro-index
-  [loaded : TlciLoadedImage]
+  [loaded : (& TlciLoadedImage)]
   [index-arena : i64]) : ResultTlciLoadedImage
   (let
     [count : i64 loaded.macro-entry-count]
@@ -1332,7 +1323,7 @@
     [failed : bool false]
     [message : String ""]
     (while (and (not failed) (< index count))
-      (match (tlci-loader-read-macro-entry (& loaded) index)
+      (match (tlci-loader-read-macro-entry loaded index)
         [(Err entry-message)
           (set! failed true)
           (set! message entry-message)]
@@ -1355,7 +1346,7 @@
         (Err message)
         (Ok
           (tlci-loader-loaded-image-with-macro-index
-            loaded
+            (owned_view.compiler-owned-reference-shared-view loaded)
             (tlci-loader-macro-index-generation-next!)
             slots
             name-addrs
@@ -1364,13 +1355,13 @@
             entry-states
             index-arena))))))
 
-(define (tlci-loader-index-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoadedImage
+(define (tlci-loader-index-macro-entries [loaded : (& TlciLoadedImage)]) : ResultTlciLoadedImage
   (let
     [count : i64 loaded.macro-entry-count]
     [table : i64 loaded.macro-entry-table]
     [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
-      [(not (tlci-loader-image-live? (& loaded)))
+      [(not (tlci-loader-image-live? loaded))
         (Err "tlci loader: image has been released")]
       [(cfg test tlci-loader-test-fail-index-before-alloc false)
         (Err "tlci loader: injected macro index failure")]
@@ -1379,7 +1370,7 @@
       [(= count 0)
         (Ok
           (tlci-loader-loaded-image-with-macro-index
-            loaded
+            (owned_view.compiler-owned-reference-shared-view loaded)
             (tlci-loader-macro-index-generation-next!)
             (__tl_make-array i64 0)
             (__tl_make-array i64 0)
@@ -1408,7 +1399,7 @@
               (Err message)]
             [(Ok indexed) (Ok indexed)]))])))
 
-(define (tlci-loader-validate-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
+(define (tlci-loader-validate-macro-entries [loaded : (& TlciLoadedImage)]) : ResultTlciLoaderUnit
   (let
     [indexed (try (tlci-loader-index-macro-entries loaded))]
     (tlci-loader-destroy-index-arena indexed.macro-index-arena)
@@ -1416,7 +1407,7 @@
 
 (define (tlci-loader-resolve-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
-  [name : String]) : TlciMacroEntryLookup
+  [name : (& str)]) : TlciMacroEntryLookup
   (let
     [count : i64 loaded.macro-entry-count]
     [generation : i64 loaded.macro-index-generation]
@@ -1513,7 +1504,7 @@
 
 (define (tlci-loader-find-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
-  [name : String]) : ResultTlciMacroEntry
+  [name : (& str)]) : ResultTlciMacroEntry
   (match (tlci-loader-resolve-macro-entry loaded name)
     [(or (Resolved resolved) (Shell resolved))
       (tlci-loader-resolved-macro-entry loaded resolved)]
@@ -1528,7 +1519,7 @@
   [loaded : (& loaded TlciLoadedImage)]
   [entry : TlciMacroEntry]
   [session-context : i64]
-  [operands : (__tl_dyn-array i64)]
+  [operands : (& (__tl_dyn-array i64))]
   [initial-result : i64]) : ResultTlciMacroDispatch
   (if (not (tlci-loader-image-live? loaded))
     (Err "tlci loader: image has been released")
@@ -1561,7 +1552,7 @@
   [loaded : (& loaded TlciLoadedImage)]
   [resolved : TlciResolvedMacroEntry]
   [session-context : i64]
-  [operands : (__tl_dyn-array i64)]
+  [operands : (& (__tl_dyn-array i64))]
   [initial-result : i64]) : ResultTlciMacroDispatch
   (let
     [entry (try (tlci-loader-resolved-macro-entry loaded resolved))]
@@ -1574,9 +1565,9 @@
 
 (define (tlci-loader-dispatch-macro
   [loaded : (& loaded TlciLoadedImage)]
-  [name : String]
+  [name : (& str)]
   [session-context : i64]
-  [operands : (__tl_dyn-array i64)]
+  [operands : (& (__tl_dyn-array i64))]
   [initial-result : i64]) : ResultTlciMacroDispatch
   (match (tlci-loader-resolve-macro-entry loaded name)
     [(Resolved resolved)

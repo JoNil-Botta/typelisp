@@ -237,7 +237,7 @@
           tlci.tlci-aux-kind-package-source-binding
           schema
           payload))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
         [(Ok packed) packed]
         [(Err message) (io.panic message)]))))
 

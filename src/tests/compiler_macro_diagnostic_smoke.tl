@@ -205,9 +205,9 @@
   [frame-col : i64]
   [macro-name : String]) : bool
   (match (load.compiler-load-file-with-paths-and-roots-cfg
-    (load.compiler-load-global-shared-view entry-path)
+    (& entry-path)
     (sym_i64_env.sym-i64-empty)
-    roots
+    (& roots)
     (parser.compiler-cfg-empty))
     [(Ok decls paths _ _)
       (match (tc_api.typecheck-compiler-program-with-paths
@@ -273,7 +273,7 @@
         (load.compiler-load-global-shared-view dir)
         "native_entry.tl")]
     [roots : svec.Vec (svec.new)]
-    (load.compiler-load-test-mkdir dir)
+    (load.compiler-load-test-mkdir (& dir))
     (macro-diagnostic-write-text
       provider
       "(module tc_macro_diagnostic_provider)

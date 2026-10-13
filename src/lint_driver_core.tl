@@ -721,7 +721,7 @@
         (owned_view.compiler-owned-shared-view import-path)
         expected
         alias
-        stdlib-roots)
+        (& stdlib-roots))
         [(Ok resolved)
           (match resolved.kind
             [(ModuleItem _)
@@ -1106,16 +1106,18 @@
           (io.file-exists? (owned_view.compiler-owned-shared-view normalized)))
           (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
             (owned_view.compiler-owned-shared-view normalized)
-            (byte_buf.to-string
-              (io.read-file (owned_view.compiler-owned-shared-view normalized)))
+            (&
+              (byte_buf.to-string
+                (io.read-file
+                  (owned_view.compiler-owned-shared-view normalized))))
             cfgs
             (ast.ast-node-pool-compat-context-current))
             [(Ok program)
               (match (compiler_load.compiler-load-surface-summary-build
-                (owned_view.compiler-owned-shared-view normalized)
+                (& normalized)
                 0
                 ""
-                program
+                (& program)
                 0
                 true)
                 [(Ok summary)
@@ -1197,10 +1199,10 @@
   (match import-edge.kind
     [(CompilerLoadSurfaceImportModule)
       (compiler_load.compiler-load-resolve-module-import-with-roots
-        (owned_view.compiler-owned-shared-view path)
+        (& path)
         (compiler_load.compiler-load-dirname path)
-        import-edge.import-path
-        stdlib-roots)]
+        (& import-edge.import-path)
+        (& stdlib-roots))]
     [_ (Err "lint: macro import surface is not static")]))
 
 (define (selfhost-lint-unsafe-surface-prepare-imports!
@@ -1241,10 +1243,10 @@
   (selfhost-lint-unsafe-surface-cache-ensure!)
   (lint_core.lint-unused-unsafe-classifier-reset!)
   (match (compiler_load.compiler-load-surface-summary-build
-    (owned_view.compiler-owned-shared-view path)
+    (& path)
     0
     ""
-    program
+    (& program)
     0
     false)
     [(Err _) unit]
@@ -1458,7 +1460,7 @@
     [findings : lint_core.LintFindings
       (match (parser.parse-ast-source-diagnostic-with-cfg
         (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view source)
+        (& source)
         cfgs)
         [(Ok program)
           (let
@@ -1703,7 +1705,7 @@
 
 (define (selfhost-lint-dead-default-module-from-path [path : String]) : String
   (parser.parse-ast-dotted-import-default-alias
-    (compiler_load.compiler-load-canonical-module-id-from-path path)))
+    (& (compiler_load.compiler-load-canonical-module-id-from-path path))))
 
 (define (selfhost-lint-dead-qualified-ref-prefix) : String
   "\nselfhost-lint-dead-qualified-ref\n")
@@ -2231,7 +2233,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : SelfhostLintDeadScan
   (match (parser.parse-ast-source-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view source)
+    (& source)
     cfgs)
     [(Ok program)
       (match program
@@ -2619,7 +2621,7 @@
         normalized
         (compiler_load.compiler-load-stdlib-owned-path-from-roots
           normalized
-          stdlib-roots))]
+          (& stdlib-roots)))]
     (compiler_load.compiler-load-stdlib-import? stdlib-path)))
 
 (define (selfhost-lint-package-dead-source-path?
@@ -2850,16 +2852,16 @@
                   kind
                   (owned_view.compiler-owned-shared-view import-path)
                   expected-module
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (& stdlib-roots)
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view manifest.deps))
+                  (& manifest.deps))
                 (compiler_load.compiler-load-resolve-import-spec-with-roots
                   (owned_view.compiler-owned-shared-view importer-path)
                   (owned_view.compiler-owned-shared-view import-root)
                   kind
                   (owned_view.compiler-owned-shared-view import-path)
                   expected-module
-                  (owned_view.compiler-owned-shared-view stdlib-roots)))
+                  (& stdlib-roots)))
                 [(Err message)
                   (Err
                     (box
@@ -2873,21 +2875,21 @@
                         package-imports
                         (compiler_load.compiler-load-package-import-externs?
                           kind
-                          import-path
+                          (& import-path)
                           expected-module
-                          manifest.deps))]
+                          (& manifest.deps)))]
                     [preload-candidate : bool
                       (and
                         (not package-externs)
                         (compiler_load.compiler-load-lazy-import-preload-candidate?
-                          (owned_view.compiler-owned-shared-view importer-path)
+                          (& importer-path)
                           kind
                           alias))]
                     [preload-demand : compiler_load.CompilerLoadLazyAliasDemand
                       (compiler_load.compiler-load-lazy-import-preload-demand
                         preload-candidate
                         alias
-                        (owned_view.compiler-owned-shared-view rest)
+                        (& rest)
                         pools)]
                     [preload-summary-needed : bool
                       (and
@@ -2897,11 +2899,11 @@
                     [_preload-summary : unit
                       (if preload-summary-needed
                         (compiler_load.compiler-load-lazy-import-preload-summary-with-pools
-                          (owned_view.compiler-owned-shared-view resolved)
+                          (& resolved)
                           resolved-id
-                          (owned_view.compiler-owned-shared-view stdlib-roots)
+                          (& stdlib-roots)
                           expected-module
-                          manifest-dir
+                          (& manifest-dir)
                           (selfhost-lint-package-dead-cfgs)
                           pools)
                         unit)]
@@ -2909,16 +2911,16 @@
                       (and
                         preload-summary-needed
                         (compiler_load.compiler-load-lazy-import-skip?
-                          (owned_view.compiler-owned-shared-view importer-path)
+                          (& importer-path)
                           kind
-                          (owned_view.compiler-owned-shared-view resolved)
+                          (& resolved)
                           resolved-id
                           expected-module
                           alias
-                          (owned_view.compiler-owned-shared-view rest)
+                          (& rest)
                           pools
                           preload-demand
-                          (owned_view.compiler-owned-shared-view stdlib-roots)))]
+                          (& stdlib-roots)))]
                     [next : lint_svec.Vec
                       (if (or
                         preload-skip
@@ -3003,8 +3005,9 @@
           [scratch-result : ResultSelfhostLintDeadImportList
             (match (parser.parse-ast-source-diagnostic-with-cfg
               (owned_view.compiler-owned-shared-view path)
-              (byte_buf.to-string
-                (io.read-file (owned_view.compiler-owned-shared-view path)))
+              (&
+                (byte_buf.to-string
+                  (io.read-file (owned_view.compiler-owned-shared-view path))))
               (selfhost-lint-package-dead-cfgs))
               [(Err diag) (Err diag)]
               [(Ok program)
@@ -3451,7 +3454,7 @@
     ;; the live context keeps ast-node-get pointed at the grown pool.
     (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       (owned_view.compiler-owned-shared-view input-path)
-      (owned_view.compiler-owned-shared-view source)
+      (& source)
       (selfhost-lint-language-cfgs)
       (ast.ast-node-pool-compat-context-current))
       [(Ok program)
@@ -3518,7 +3521,7 @@
     ;; the live context keeps ast-node-get pointed at the grown pool.
     (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
       (owned_view.compiler-owned-shared-view input-path)
-      (owned_view.compiler-owned-shared-view source)
+      (& source)
       (selfhost-lint-language-cfgs)
       (ast.ast-node-pool-compat-context-current))
       [(Ok program)

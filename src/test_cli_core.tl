@@ -2029,12 +2029,13 @@
             (Harness
               (ast.ast-program
                 (compiler_load.compiler-load-decl-list-append
-                  pruned-decls
-                  (tltest-generated-test-decls
-                    (owned_view.compiler-owned-shared-view tests))))
+                  (& pruned-decls)
+                  (&
+                    (tltest-generated-test-decls
+                      (owned_view.compiler-owned-shared-view tests)))))
               (compiler_load.compiler-load-decl-path-list-append
-                pruned-paths
-                (tltest-generated-test-paths source tests))
+                (& pruned-paths)
+                (& (tltest-generated-test-paths source tests)))
               count))])]))
 
 ;; Standalone tltest runs serially. Keep the active-session capture at this
@@ -2062,15 +2063,15 @@
   [tests : (__tl_dyn-array InlineTest)]) : ast.AstProgram
   (ast.ast-program
     (compiler_load.compiler-load-decl-list-append
-      decls
-      (tltest-generated-typecheck-decls tests))))
+      (& decls)
+      (& (tltest-generated-typecheck-decls tests)))))
 
 (define (tltest-inline-typecheck-paths
   [paths : ast.AstDeclPathList]
   [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclPathList
   (compiler_load.compiler-load-decl-path-list-append
-    paths
-    (tltest-generated-typecheck-paths tests)))
+    (& paths)
+    (& (tltest-generated-typecheck-paths tests))))
 
 (define (tltest-inline-typecheck-loaded
   [source : String]
@@ -2124,7 +2125,7 @@
         normalized
         (compiler_load.compiler-load-stdlib-owned-path-from-roots
           normalized
-          roots))]
+          (& roots)))]
     (compiler_load.compiler-load-stdlib-import? stdlib-path)))
 
 (define (tltest-inline-clear-load-only-caches!) : unit
@@ -2205,8 +2206,8 @@
           (tltest-inline-typecheck-loaded
             (compiler_load.compiler-load-package-owned-path
               package-owner
-              manifest-dir
-              legacy-roots
+              (& manifest-dir)
+              (& legacy-roots)
               source)
             decls
             paths
@@ -3208,8 +3209,8 @@
             [owned-source : String
               (compiler_load.compiler-load-package-owned-path
                 package-owner
-                manifest-dir
-                legacy-roots
+                (& manifest-dir)
+                (& legacy-roots)
                 source)]
             (tltest-package-run-one
               owned-source

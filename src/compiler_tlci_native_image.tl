@@ -712,25 +712,26 @@
   [identities : (__tl_dyn-array String)]
   [entry-offsets : (__tl_dyn-array i64)]
   [macro-count : i64]) : ResultCompilerTlciNativeBytes
-  (match (tlci_core.tlci-metadata-parse metadata-text)
+  (match (tlci_core.tlci-metadata-parse (& metadata-text))
     [(Err message)
       (Err (str_cat.str-cat "package metadata rejected: " message))]
     [(Ok metadata)
       (Ok
         (try
           (tlci_core.tlci-emit-native-package-image
-            metadata
+            (& metadata)
             build-hash
             host-platform
-            (tlci_core.TlciNativePackageInput
-              rodata
-              code
-              imports
-              fixup-offsets
-              fixup-count
-              identities
-              entry-offsets
-              macro-count))))]))
+            (&
+              (tlci_core.TlciNativePackageInput
+                rodata
+                code
+                imports
+                fixup-offsets
+                fixup-count
+                identities
+                entry-offsets
+                macro-count)))))]))
 
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]

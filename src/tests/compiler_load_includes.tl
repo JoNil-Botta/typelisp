@@ -60,7 +60,7 @@
                         (match kind
                           [(LzssString)
                             (ctfe.ctfe-embedded-stdlib-binary-data-bytes
-                              contents)]
+                              (& contents))]
                           [_ contents]))]
                     [_ false]))]))]
         [(DefMacro _ name params (String) body)
@@ -119,7 +119,7 @@
             "tests/integration/include-entry.tl"
             "include_bin_payload.bin"
             cbi.compiler-builtin-id-fix-x
-            (load_tests.compiler-load-string-vec-one "stdlib")
+            (& (load_tests.compiler-load-string-vec-one "stdlib"))
             pools)]
         (test.assert-true
           (include-matches? kind (& pools) result (string.copy contents))
@@ -135,7 +135,7 @@
               "tests/integration/include-entry.tl"
               "__missing_include__.bin"
               cbi.compiler-builtin-id-fix-x
-              (load_tests.compiler-load-string-vec-one "stdlib")
+              (& (load_tests.compiler-load-string-vec-one "stdlib"))
               pools)
             (cat.str-cat
               "compiler-load: cannot read "
@@ -151,7 +151,7 @@
               "tests/integration/include-entry.tl"
               "pkg:__missing_include__/payload.bin"
               cbi.compiler-builtin-id-fix-x
-              (load_tests.compiler-load-string-vec-one "stdlib")
+              (& (load_tests.compiler-load-string-vec-one "stdlib"))
               pools)
             "compiler-load: unknown package alias '__missing_include__': pkg:__missing_include__/payload.bin")
           "ordinary resolver errors survive include dispatch")
@@ -162,12 +162,13 @@
               "tests/integration/include-entry.tl"
               "pkg:assets/include_bin_payload.bin"
               cbi.compiler-builtin-id-fix-x
-              (load_tests.compiler-load-string-vec-one "stdlib")
+              (& (load_tests.compiler-load-string-vec-one "stdlib"))
               "tests"
-              (load.compiler-pkg-deps-cons
-                "assets"
-                "integration"
-                (load.compiler-pkg-deps-empty)))]
+              (&
+                (load.compiler-pkg-deps-cons
+                  "assets"
+                  "integration"
+                  (& (load.compiler-pkg-deps-empty)))))]
           [active : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
           (test.assert-true

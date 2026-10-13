@@ -194,15 +194,15 @@
       (+ source-count (array-length identity-payload.generated))]
     [modules : ast.AstDeclModuleList
       (package-surface-modules (owned_view.compiler-owned-shared-view program))]
-    (match (surface_identity.surface-identity-encode identity-payload)
+    (match (surface_identity.surface-identity-encode (& identity-payload))
       [(Err message) (package-surface-capture-error! message)]
       [(Ok identity-bytes)
         (match program
           [(Program decls-box)
             (match (surface_ast.surface-ast-encode
               structural-session
-              (deref decls-box)
-              paths
+              (& (deref decls-box))
+              (& paths)
               modules
               seen
               pools
@@ -211,7 +211,7 @@
               [(Err message) (package-surface-capture-error! message)]
               [(Ok ast-bytes)
                 (match (surface_facts.surface-typecheck-facts-encode
-                  facts
+                  (& facts)
                   structural-session
                   source-count
                   identity-count)
@@ -317,7 +317,7 @@
     (set!
       (array-ref sections 3)
       (tlci.tlci-package-source-binding-section source-digest))
-    (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)))
+    (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)))
 
 (cfg
   (all

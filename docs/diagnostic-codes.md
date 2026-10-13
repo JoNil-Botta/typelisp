@@ -32,6 +32,7 @@ duplicate rows.
 | E0219 | typecheck | unsafe callable effect erasure | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 | E0220 | typecheck | global written outside its module | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 | E0221 | typecheck | opaque representation used outside its module family | typechecker | raise-site `CompilerTypecheckKind` | detailed |
+| E0222 | typecheck | call may write a borrowed global | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 | E0101 | parse | unbalanced delimiter | reader | `token.SourceErrorKind` `DelimiterError` | detailed |
 | E0102 | parse | malformed token | lexer, reader | `token.SourceErrorKind` `TokenError` | detailed |
 | E0103 | parse | malformed form | parser | raise-site `CompilerParseKind` | detailed |

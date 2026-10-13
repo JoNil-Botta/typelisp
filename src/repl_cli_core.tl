@@ -562,8 +562,8 @@
 
 (define (repl-load-session-decls [session-source : String]) : ResultReplDeclList
   (match (compiler_load.compiler-load-source
-    (repl-session-source-path)
-    session-source
+    (& (repl-session-source-path))
+    (& session-source)
     (sym_i64_env.sym-i64-empty))
     [(Ok decls _) (Ok decls)]
     [(Err diag) (Err diag)]))
@@ -672,8 +672,7 @@
   [expr-source : String]) : unit
   (if (string.eq expr-source "")
     (repl-print-error-line "Error: .type expects an expression")
-    (match (parser.parse-ast-repl-source
-      (owned_view.compiler-owned-shared-view expr-source))
+    (match (parser.parse-ast-repl-source (& expr-source))
       [(Ok item)
         (match item
           [(AstReplDecl _)
@@ -731,8 +730,7 @@
         session-source])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
-  (match (parser.parse-ast-repl-source
-    (owned_view.compiler-owned-shared-view input))
+  (match (parser.parse-ast-repl-source (& input))
     [(Ok item)
       (match item
         [(AstReplDecl _)

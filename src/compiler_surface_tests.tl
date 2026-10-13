@@ -217,7 +217,7 @@
       (if (not (= alpha 0))
         false
         (match (surface_identity.surface-identity-encode
-          (surface-tests-shared-view payload))
+          (& (surface-tests-shared-view payload)))
           [(Err _) false]
           [(Ok bytes)
             (let
@@ -227,7 +227,7 @@
               (ci.intern-reset!)
               (let
                 [unrelated : i64 (ci.intern "unrelated")]
-                (match (surface_identity.surface-identity-hydrate bytes key)
+                (match (surface_identity.surface-identity-hydrate (& bytes) key)
                   [(Err _) false]
                   [(KeyMismatch _) false]
                   [(Ok hydration)
@@ -317,7 +317,8 @@
                             mapped-base
                             1536
                             mapped-alpha))
-                        (match (surface_identity.surface-identity-decode copy)
+                        (match (surface_identity.surface-identity-decode
+                          (& copy))
                           [(Err _) false]
                           [(Ok decoded)
                             (surface_identity.surface-identity-key-eq?
@@ -353,7 +354,7 @@
         [byte-count : i64 (array-length bytes)]
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            bytes
+            (& bytes)
             structural-session
             (__tl_make-array i64 0))]
         [before : arena.ArenaMark (arena.mark)]
@@ -395,14 +396,14 @@
       (expr_codec.surface-ast-write-pattern!
         (&mut out)
         (&mut context)
-        (ast.ast-pat-slice items true))
+        (& (ast.ast-pat-slice items true)))
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& out))]
         [byte-count : i64 (array-length bytes)]
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            bytes
+            (& bytes)
             structural-session
             (__tl_make-array i64 0))]
         [decoded : ast.AstPattern
@@ -440,7 +441,7 @@
       (let
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            (byte_buf_core.byte-buf-builder-finish-array (& out))
+            (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
             structural-session
             (__tl_make-array i64 0))]
         (surface_ast.surface-ast-read-decl-meta! (&mut reader))
@@ -465,24 +466,24 @@
       (codec.surface-ast-write-i64! (&mut out) 0)
       (codec.surface-ast-write-i64! (&mut out) 3)
       (codec.surface-ast-write-i64! (&mut out) 0)
-      (codec.surface-ast-write-type! (&mut out) (&mut context) I64)
+      (codec.surface-ast-write-type! (&mut out) (&mut context) (& (I64)))
       (codec.surface-ast-write-type!
         (&mut out)
         (&mut context)
-        (Func (box (ast.ast-type-list-new)) 0))
+        (& (Func (box (ast.ast-type-list-new)) 0)))
       (codec.surface-ast-write-type!
         (&mut out)
         (&mut context)
-        (CFunc signature NonNull))
+        (& (CFunc signature NonNull)))
       ;; Empty declaration, path, module, and seen lists.
       (codec.surface-ast-write-i64! (&mut out) 0)
       (codec.surface-ast-write-i64! (&mut out) 0)
       (codec.surface-ast-write-i64! (&mut out) 0)
       (codec.surface-ast-write-i64! (&mut out) 0)
       (match (surface_ast.surface-ast-decode
-        (byte_buf_core.byte-buf-builder-finish-array (& out))
+        (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
         session
-        (__tl_make-array i64 0)
+        (& (__tl_make-array i64 0))
         (ast.ast-node-pool-context-new-with-capacities 4 1))
         [(Ok _) (= signature 1)]
         [(Err message)
@@ -508,9 +509,9 @@
       (codec.surface-ast-write-i64! (&mut out) 0)
       (codec.surface-ast-write-i64! (&mut out) 0)
       (match (surface_ast.surface-ast-decode
-        (byte_buf_core.byte-buf-builder-finish-array (& out))
+        (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
         structural-session
-        (__tl_make-array i64 0)
+        (& (__tl_make-array i64 0))
         (ast.ast-node-pool-context-new-with-capacities 1 1))
         [(Err _) true]
         [(Ok _) false]))))
@@ -525,13 +526,11 @@
         (cis.intern-structural-session-handle-from-source-names
           (ci.intern-source-name-session-handle-from-state intern-state))]
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (surface_ast.surface-ast-write-struct-repr!
-        (&mut out)
-        (ast.ast-global-shared-view repr))
+      (surface_ast.surface-ast-write-struct-repr! (&mut out) (& repr))
       (let
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            (byte_buf_core.byte-buf-builder-finish-array (& out))
+            (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
             structural-session
             (__tl_make-array i64 0))]
         [decoded : ast.AstStructRepr
@@ -568,14 +567,14 @@
       (surface_ast.surface-ast-write-extern-abi!
         (&mut out)
         (&mut context)
-        (ast.ast-global-shared-view abi))
+        (& abi))
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& out))]
         [byte-count : i64 (array-length bytes)]
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            bytes
+            (& bytes)
             structural-session
             (__tl_make-array i64 0))]
         [decoded : ast.AstExternAbi
@@ -600,7 +599,7 @@
       (let
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            (byte_buf_core.byte-buf-builder-finish-array (& out))
+            (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
             structural-session
             (__tl_make-array i64 0))]
         [_decoded : ast.AstExternAbi
@@ -710,13 +709,16 @@
       (while (< index count)
         (set! (array-ref remap index) index)
         (set! index (+ index 1)))
-      (expr_codec.surface-ast-write-pattern! (&mut out) (&mut context) pattern)
+      (expr_codec.surface-ast-write-pattern!
+        (&mut out)
+        (&mut context)
+        (& pattern))
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& out))]
         [byte-count : i64 (array-length bytes)]
         [reader : codec.SurfaceAstReader
-          (codec.surface-ast-reader-new bytes structural-session remap)]
+          (codec.surface-ast-reader-new (& bytes) structural-session remap)]
         [decoded : ast.AstPattern
           (expr_codec.surface-ast-read-pattern! (&mut reader))]
         (if (and
@@ -823,7 +825,7 @@
       (let
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
-            (byte_buf_core.byte-buf-builder-finish-array (& out))
+            (& (byte_buf_core.byte-buf-builder-finish-array (& out)))
             structural-session
             (__tl_make-array i64 0))]
         (if (>= tag 0)
@@ -875,13 +877,16 @@
       (expr_codec.surface-ast-write-expr!
         (&mut out)
         (&mut context)
-        (ast.AstExpr.While 3 body))
+        (& (ast.AstExpr.While 3 body)))
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& out))]
         [byte-count : i64 (array-length bytes)]
         [reader : codec.SurfaceAstReader
-          (codec.surface-ast-reader-new bytes session (__tl_make-array i64 0))]
+          (codec.surface-ast-reader-new
+            (& bytes)
+            session
+            (__tl_make-array i64 0))]
         [decoded : ast.AstExpr
           (expr_codec.surface-ast-read-expr! (&mut reader))]
         (and
@@ -970,8 +975,8 @@
         (try
           (surface_ast.surface-ast-encode
             structural-session
-            (owned_view.compiler-owned-shared-view decls)
-            (owned_view.compiler-owned-shared-view paths)
+            (& decls)
+            (& paths)
             modules
             seen
             source-pools
@@ -981,8 +986,8 @@
         (try
           (surface_ast.surface-ast-encode
             structural-session
-            decls
-            paths
+            (& decls)
+            (& paths)
             modules
             seen
             source-pools
@@ -1476,7 +1481,7 @@
         [structural-session : cis.InternStructuralSessionHandle
           (cis.intern-structural-session-handle-from-source-names
             (ci.intern-source-name-session-handle-from-state intern-state))]
-        (match (surface_identity.surface-identity-encode identity-payload)
+        (match (surface_identity.surface-identity-encode (& identity-payload))
           [(Err _) false]
           [(Ok identity-bytes)
             (match (surface-ast-encode-deterministic
@@ -1494,7 +1499,7 @@
                 (let
                   [_unrelated : i64 (ci.intern "unrelated")]
                   (match (surface_identity.surface-identity-hydrate
-                    identity-bytes
+                    (& identity-bytes)
                     key)
                     [(Err _) false]
                     [(KeyMismatch _) false]
@@ -1509,9 +1514,9 @@
                             (ci.intern-source-name-session-handle-from-state
                               hydrated-intern-state))]
                         (match (surface_ast.surface-ast-decode
-                          ast-bytes
+                          (& ast-bytes)
                           hydrated-session
-                          identity-hydration.remap
+                          (& identity-hydration.remap)
                           dest-pools)
                           [(Err _) false]
                           [(Ok hydration)
@@ -2058,13 +2063,13 @@
           (__tl_make-array root-id)
           (__tl_make-array 0))]
       [identity-bytes
-        (try (surface_identity.surface-identity-encode identity-payload))]
+        (try (surface_identity.surface-identity-encode (& identity-payload)))]
       [ast-bytes
         (try
           (surface_ast.surface-ast-encode
             structural-session
-            decls
-            paths
+            (& decls)
+            (& paths)
             decl-modules
             (sym_i64_env.sym-i64-empty)
             source-pools
@@ -2073,14 +2078,14 @@
       [fact-one-bytes
         (try
           (surface_facts.surface-typecheck-facts-encode
-            first
+            (& first)
             structural-session
             2
             2))]
       [fact-two-bytes
         (try
           (surface_facts.surface-typecheck-facts-encode
-            second
+            (& second)
             structural-session
             2
             2))]
@@ -2119,9 +2124,9 @@
             unit
             (set! ok false))
           (match (surface_hydrate.compiler-surface-hydrate-payloads
-            (owned_view.compiler-owned-shared-view payloads.identity-bytes)
-            (owned_view.compiler-owned-shared-view payloads.ast-bytes)
-            payloads.fact-one-bytes
+            (& payloads.identity-bytes)
+            (& payloads.ast-bytes)
+            (& payloads.fact-one-bytes)
             payloads.key
             structural-session
             pools)
@@ -2143,9 +2148,9 @@
           ;; Decode a malformed second fact payload after a valid first one.
           ;; The explicitly published first hydration must remain unchanged.
           (match (surface_hydrate.compiler-surface-hydrate-payloads
-            (owned_view.compiler-owned-shared-view payloads.identity-bytes)
-            (owned_view.compiler-owned-shared-view payloads.ast-bytes)
-            (__tl_make-array u8 0)
+            (& payloads.identity-bytes)
+            (& payloads.ast-bytes)
+            (& (__tl_make-array u8 0))
             payloads.key
             structural-session
             pools)
@@ -2159,9 +2164,9 @@
             unit
             (set! ok false))
           (match (surface_hydrate.compiler-surface-hydrate-payloads
-            payloads.identity-bytes
-            payloads.ast-bytes
-            payloads.fact-two-bytes
+            (& payloads.identity-bytes)
+            (& payloads.ast-bytes)
+            (& payloads.fact-two-bytes)
             payloads.key
             structural-session
             pools)
@@ -2173,8 +2178,8 @@
                 (set! ok false))]
             [_ (set! ok false)])
           (match (surface_hydrate.compiler-surface-hydrate
-            (__tl_make-array u8 0)
-            payloads.key
+            (& (__tl_make-array u8 0))
+            (& payloads.key)
             structural-session
             pools)
             [(Missing) unit]

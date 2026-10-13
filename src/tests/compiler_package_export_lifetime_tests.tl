@@ -78,7 +78,7 @@
             (tc.compiler-typecheck-reset-intern-owned-state!)
             (driver.compiler-driver-reset-analysis-state!))]
         [result : build.ResultBuildPackageTlciExports
-          (match (parse.parse-ast-source source)
+          (match (parse.parse-ast-source (& source))
             [(Err _) (in-arena home (Err (string.copy "fixture parse failed")))]
             [(Ok program)
               (match program
@@ -162,7 +162,7 @@
             (string.eq
               metadata
               (tlci.tlci-metadata-emit
-                (tlci.tlci-make-metadata "v1" "capture" "0.1.0"))))
+                (& (tlci.tlci-make-metadata "v1" "capture" "0.1.0")))))
           (io.panic "retired package metadata changed"))])))
 
 (test
@@ -202,7 +202,7 @@
           (and
             (= (array-length names) 0)
             (string.eq source "")
-            (match (tlci.tlci-metadata-parse metadata)
+            (match (tlci.tlci-metadata-parse (& metadata))
               [(Err _) false]
               [(Ok parsed)
                 (and

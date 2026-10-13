@@ -11,6 +11,7 @@
 ;; package name + canonical module set + source hash + compiler build + config
 ;; variant. Later per-package images use the same schema and hydration path.
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import compiler_intern_state as cis)
 (import compiler_surface_binary as binary)
 (import stdlib.byte_reader)
@@ -586,10 +587,12 @@
 (define (surface-identity-safe-count? [count : i64]) : bool
   (and (>= count 0) (<= count surface-identity-max-count)))
 
-(define (surface-identity-decode [bytes : (__tl_dyn-array u8)]) : ResultSurfaceIdentityPayload
+(define (surface-identity-decode [bytes : (& (__tl_dyn-array u8))]) : ResultSurfaceIdentityPayload
   (let
     [reader : byte_reader.ByteReader
-      (byte_reader.new bytes byte_reader.unlimited-work)]
+      (byte_reader.new
+        (owned_view.compiler-owned-reference-shared-view bytes)
+        byte_reader.unlimited-work)]
     [magic : i64 (surface-identity-reader-u64! (&mut reader))]
     [schema : i64 (surface-identity-reader-u64! (&mut reader))]
     [module-count : i64 (surface-identity-reader-u64! (&mut reader))]
@@ -738,7 +741,7 @@
       (Ok (SurfaceIdentityHydration payload.key remap)))))
 
 (define (surface-identity-hydrate
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& (__tl_dyn-array u8))]
   [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
     [(Err message) (Err message)]
@@ -831,14 +834,18 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
-    (if (not (surface-identity-payload-valid? (& payload)))
+  (define (surface-identity-encode [payload : (& SurfaceIdentityPayload)]) : ResultSurfaceIdentityBytes
+    (if (not (surface-identity-payload-valid? payload))
       (Err "surface identity: invalid package key or identity graph")
       (let
-        [key : SurfaceIdentityKey payload.key]
-        [source-names : (__tl_dyn-array String) payload.source-names]
+        [key : SurfaceIdentityKey
+          (owned_view.compiler-owned-reference-shared-view (& payload.key))]
+        [source-names : (__tl_dyn-array String)
+          (owned_view.compiler-owned-reference-shared-view
+            (& payload.source-names))]
         [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
-          payload.generated]
+          (owned_view.compiler-owned-reference-shared-view
+            (& payload.generated))]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]

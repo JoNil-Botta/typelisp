@@ -430,10 +430,10 @@
     [(Ok entry-decls entry-paths entry-modules _)
       (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
         (ast.ast-program
-          (cload.compiler-load-decl-list-append prelude-decls entry-decls))
+          (cload.compiler-load-decl-list-append (& prelude-decls) entry-decls))
         (cload.compiler-load-decl-path-list-append
-          prelude-paths
-          (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
+          (& prelude-paths)
+          (& (ast.ast-decl-path-list-with-modules entry-paths entry-modules)))
         stdlib-roots
         cfgs
         "typecheck-prefix-expand")
@@ -469,12 +469,12 @@
   (check_core.compiler-check-reset-pools!)
   (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    (& stdlib-roots)
     cfgs)
     [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
       (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
         (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view source)
+        (& source)
         cfgs)
         [(Fatal diagnostics) (Failed (deref diagnostics))]
         [(Parsed program diagnostics)
@@ -487,16 +487,16 @@
                 prelude-paths
                 prelude-modules)
               (cload.compiler-load-program-with-paths-and-roots-expect-cfg
-                (owned_view.compiler-owned-shared-view path)
+                (& path)
                 program
                 prelude-seen
-                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (& stdlib-roots)
                 No
                 cfgs
                 (cload.compiler-load-parse-identity
-                  (owned_view.compiler-owned-shared-view path)
-                  (cload.compiler-load-canonical-module-id-from-path
-                    (owned_view.compiler-owned-shared-view path))
+                  (& path)
+                  (&
+                    (cload.compiler-load-canonical-module-id-from-path (& path)))
                   No))
               stdlib-roots
               cfgs

@@ -205,7 +205,7 @@
           " [value : Expr]) : Expr `(+ ,value 1))\n"))
       (set! index (+ index 1)))
     (match (parse_core.parse-ast-source
-      (source_buf.byte-buf-builder-finish-string (& source)))
+      (& (source_buf.byte-buf-builder-finish-string (& source))))
       [(Err _) (io.panic "native source allocation fixture did not parse")]
       [(Ok program)
         (match program
@@ -442,9 +442,9 @@
       [committed : i64
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) -1]
           [(Ok dispatch)
@@ -462,9 +462,7 @@
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [identity : String]
   [operand : compiler_ctfe.CompilerCtfeValue]) : bool
-  (match (tlci_loader.tlci-loader-resolve-macro-entry
-    loaded
-    (owned_view.compiler-owned-shared-view identity))
+  (match (tlci_loader.tlci-loader-resolve-macro-entry loaded (& identity))
     [(Resolved resolved)
       (let
         [pools : ast.AstNodePoolContext
@@ -485,7 +483,7 @@
               loaded
               resolved
               producer-test-cookie
-              (__tl_make-array i64 0)
+              (& (__tl_make-array i64 0))
               0)
               [(Err _) false]
               [(Ok dispatch)
@@ -504,16 +502,16 @@
                 (and
                   (match (tlci_loader.tlci-loader-resolve-macro-entry
                     loaded
-                    (owned_view.compiler-owned-shared-view identity))
+                    (& identity))
                     [(Shell _) true]
                     [_ false])
                   ;; Known-shell dispatch stops at indexed state and needs
                   ;; no second compiler host session.
                   (match (tlci_loader.tlci-loader-dispatch-macro
                     loaded
-                    identity
+                    (& identity)
                     producer-test-cookie
-                    (__tl_make-array i64 0)
+                    (& (__tl_make-array i64 0))
                     0)
                     [(Err message)
                       (string.eq
@@ -868,9 +866,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -993,7 +991,7 @@
           loaded
           "stdlib.str_cat_runtime/str-cat-scoped"
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1092,9 +1090,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1236,9 +1234,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1308,9 +1306,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1408,9 +1406,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1507,9 +1505,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1613,9 +1611,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1751,9 +1749,9 @@
             [dispatch-ok : bool
               (match (tlci_loader.tlci-loader-dispatch-macro
                 loaded
-                identity
+                (& identity)
                 producer-test-cookie
-                (__tl_make-array i64 0)
+                (& (__tl_make-array i64 0))
                 0)
                 [(Err _) false]
                 [(Ok dispatch)
@@ -1797,9 +1795,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1842,9 +1840,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1890,9 +1888,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1933,9 +1931,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1979,9 +1977,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -1993,8 +1991,8 @@
                   (match (producer-test-expr-get pools node)
                     [(TypeLiteral ty-id)
                       (compiler_ctfe.ctfe-type-eq
-                        (ast.ast-node-pool-context-type-get pools ty-id)
-                        box-ty)]
+                        (& (ast.ast-node-pool-context-type-get pools ty-id))
+                        (& box-ty))]
                     [_ false])]
                 [_ false]))])]
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -2018,10 +2016,13 @@
                   [(Param name actual false)
                     (and
                       (= name (producer-test-name-id "value"))
-                      (compiler_ctfe.ctfe-type-eq actual (clone expected)))]
+                      (compiler_ctfe.ctfe-type-eq
+                        (& actual)
+                        (& (clone expected))))]
                   [_ false])
                 (match maybe-ret
-                  [(Some actual) (compiler_ctfe.ctfe-type-eq actual expected)]
+                  [(Some actual)
+                    (compiler_ctfe.ctfe-type-eq (& actual) (& expected))]
                   [_ false])
                 (match (producer-test-expr-get pools body)
                   [(Var name) (= name (producer-test-name-id "value"))]
@@ -2069,9 +2070,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2189,7 +2190,7 @@
       (array-ref operands 0)
       (compiler_ctfe.CompilerCtfeValue.Expr
         operand
-        (compiler_ctfe.ctfe-captured-expr-type-with-pools pools lambda-ty)))
+        (compiler_ctfe.ctfe-captured-expr-type-with-pools pools (& lambda-ty))))
     (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
       pools
       operands
@@ -2201,9 +2202,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2237,9 +2238,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2255,8 +2256,8 @@
                       (ast.ast-expr-list-get (& items) 0 -1))
                       [(TypeLiteral ty-id)
                         (compiler_ctfe.ctfe-type-eq
-                          (ast.ast-node-pool-context-type-get pools ty-id)
-                          box-ty)]
+                          (& (ast.ast-node-pool-context-type-get pools ty-id))
+                          (& box-ty))]
                       [_ false]))]
                 [_ false]))])]
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -2298,9 +2299,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2360,9 +2361,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2399,9 +2400,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2447,9 +2448,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2503,9 +2504,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2536,9 +2537,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2602,9 +2603,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2820,9 +2821,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2889,9 +2890,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -2926,9 +2927,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3029,9 +3030,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3142,7 +3143,7 @@
             (compiler_ctfe.ctfe-generated-string-append-value
               "producer.nominal.module"
               module-id
-              suffix-text
+              (& suffix-text)
               suffix-id)]
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
             pools
@@ -3225,9 +3226,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3278,9 +3279,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3352,9 +3353,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3397,9 +3398,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3433,9 +3434,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3486,7 +3487,7 @@
         [(String text string-id)
           (compiler_ctfe.ctfe-string-syntax-name-id
             (compiler_ctfe.ctfe-env-source-names (& expected-env))
-            text
+            (& text)
             string-id)]
         [_ -1])]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -3519,9 +3520,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3594,9 +3595,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -3649,8 +3650,8 @@
   [fallback-identity : String]) : bool
   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
     (producer-test-image-owner-arena)
-    bytes
-    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+    (& bytes)
+    (& (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
     [(Err _) false]
     [(Ok loaded)
       (let
@@ -3691,7 +3692,7 @@
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-    (match (parse_core.parse-ast-source source)
+    (match (parse_core.parse-ast-source (& source))
       [(Err _) false]
       [(Ok program)
         (match program
@@ -3714,7 +3715,8 @@
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
-                  (tlci.tlci-make-metadata "v1" "str-cat-scoped-test" "0.1.0"))
+                  (&
+                    (tlci.tlci-make-metadata "v1" "str-cat-scoped-test" "0.1.0")))
                 "producer-test"
                 (cfg windows true false)
                 (tlci.tlci-empty-bytes)
@@ -3724,8 +3726,9 @@
                 [(Ok bytes)
                   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
                     (producer-test-image-owner-arena)
-                    bytes
-                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+                    (& bytes)
+                    (&
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
                     [(Err _) false]
                     [(Ok loaded)
                       (let
@@ -3814,7 +3817,7 @@
   (compiler_tlci_native_producer.embedded-native-full-blocker-report-set! true)
   (match (compiler_tlci_native_producer.embedded-native-emit-package
     (tlci.tlci-metadata-emit
-      (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      (& (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0")))
     "producer-full-blocker-test"
     (cfg windows true false)
     (tlci.tlci-empty-bytes)
@@ -3878,7 +3881,7 @@
   (compiler_tlci_native_producer.embedded-native-full-blocker-report-set! false)
   (match (compiler_tlci_native_producer.embedded-native-emit-package
     (tlci.tlci-metadata-emit
-      (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0"))
+      (& (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0")))
     "producer-full-blocker-test"
     (cfg windows true false)
     (tlci.tlci-empty-bytes)
@@ -4079,8 +4082,8 @@
                 (match (producer-test-expr-get pools node)
                   [(TypeLiteral ty-id)
                     (compiler_ctfe.ctfe-type-eq
-                      (ast.ast-node-pool-context-type-get pools ty-id)
-                      box-ty)]
+                      (& (ast.ast-node-pool-context-type-get pools ty-id))
+                      (& box-ty))]
                   [_ false])]
               [_ false]))
           (and
@@ -4374,9 +4377,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -4438,9 +4441,9 @@
       [ok : bool
         (match (tlci_loader.tlci-loader-dispatch-macro
           loaded
-          identity
+          (& identity)
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -4522,7 +4525,7 @@
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-    (match (parse_core.parse-ast-source source)
+    (match (parse_core.parse-ast-source (& source))
       [(Err _) false]
       [(Ok program)
         (match program
@@ -4545,7 +4548,7 @@
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
-                  (tlci.tlci-make-metadata "v1" "package" "0.1.0"))
+                  (& (tlci.tlci-make-metadata "v1" "package" "0.1.0")))
                 "producer-test"
                 (cfg windows true false)
                 (tlci.tlci-empty-bytes)
@@ -4558,8 +4561,9 @@
                 [(Ok bytes)
                   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
                     (producer-test-image-owner-arena)
-                    bytes
-                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+                    (& bytes)
+                    (&
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
                     [(Err message)
                       (io.print-error
                         (str_cat.str-cat "loader error: " message))
@@ -4981,7 +4985,7 @@
           loaded
           "span.macros/spanned"
           producer-test-cookie
-          (__tl_make-array i64 0)
+          (& (__tl_make-array i64 0))
           0)
           [(Err _) false]
           [(Ok dispatch)
@@ -5028,7 +5032,7 @@
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
-                  (tlci.tlci-make-metadata "v1" "span-test" "0.1.0"))
+                  (& (tlci.tlci-make-metadata "v1" "span-test" "0.1.0")))
                 "producer-test"
                 (cfg windows true false)
                 (tlci.tlci-empty-bytes)
@@ -5038,8 +5042,9 @@
                 [(Ok bytes)
                   (match (tlci_loader.tlci-loader-load-from-bytes-with-host
                     (producer-test-image-owner-arena)
-                    bytes
-                    (compiler_embedded_stdlib_tlci.compiler-comptime-host-table))
+                    (& bytes)
+                    (&
+                      (compiler_embedded_stdlib_tlci.compiler-comptime-host-table)))
                     [(Err _) false]
                     [(Ok loaded)
                       (let

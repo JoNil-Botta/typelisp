@@ -30,7 +30,7 @@
         [program : parser.ResultAstProgram
           (in-arena
             (arena.Arena (array-ref scope.frontend-arena 0))
-            (parser.parse-ast-source source))]
+            (parser.parse-ast-source (& source)))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
             (owned_view.compiler-owned-shared-view scope))]

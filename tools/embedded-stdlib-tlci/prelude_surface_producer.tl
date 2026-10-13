@@ -59,25 +59,29 @@
   [pools : ast.AstNodePoolContext]) : load.ResultCompilerLoadWithPaths
   (match (load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
     (load.compiler-load-session-state-shared-view (& load-state))
-    (load.compiler-load-runtime-prelude-path-shared-view)
+    (& (load.compiler-load-runtime-prelude-path-shared-view))
     (cfg_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view roots)
+    (& roots)
     (cfg_env.sym-i64-shared-view (& cfgs))
     pools)
     [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
       (match (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
         (load.compiler-load-session-state-shared-view (& load-state))
         runtime-seen
-        (owned_view.compiler-owned-shared-view roots)
+        (& roots)
         (cfg_env.sym-i64-shared-view (& cfgs))
         pools)
         [(Ok macro-decls macro-paths macro-modules macro-seen)
           (Ok
-            (load.compiler-load-decl-list-append runtime-decls macro-decls)
-            (load.compiler-load-decl-path-list-append runtime-paths macro-paths)
+            (load.compiler-load-decl-list-append
+              (& runtime-decls)
+              (& macro-decls))
+            (load.compiler-load-decl-path-list-append
+              (& runtime-paths)
+              (& macro-paths))
             (load.compiler-load-decl-module-list-append
-              runtime-modules
-              macro-modules)
+              (& runtime-modules)
+              (& macro-modules))
             macro-seen)]
         [(Err diag) (Err diag)])]
     [(Err diag) (Err diag)]))
@@ -296,7 +300,7 @@
         tlci.tlci-aux-kind-frontend-facts
         surface_facts.surface-typecheck-facts-schema-version
         fact-bytes))
-    (Ok (try (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)))))
+    (Ok (try (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)))))
 
 (define (prelude-surface-encode-payloads
   [structural-session : cis.InternStructuralSessionHandle]
@@ -311,13 +315,13 @@
   [identity-count : i64]) : ResultPreludeSurface
   (let
     [identity-bytes
-      (try (surface_identity.surface-identity-encode identity-payload))]
+      (try (surface_identity.surface-identity-encode (& identity-payload)))]
     [ast-bytes
       (try
         (surface_ast.surface-ast-encode
           structural-session
-          decls
-          paths
+          (& decls)
+          (& paths)
           modules
           seen
           pools
@@ -326,7 +330,7 @@
     [fact-bytes
       (try
         (surface_facts.surface-typecheck-facts-encode
-          facts
+          (& facts)
           structural-session
           source-count
           identity-count))]

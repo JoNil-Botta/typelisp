@@ -626,9 +626,10 @@
             (load.compiler-pkg-dep-list-empty))]
         [direct-catalog-deps : load.CompilerPkgDepList
           (load.compiler-pkg-dep-list-push
-            (load.compiler-pkg-dep-list-push
-              (load.compiler-pkg-dep-list-empty)
-              (load.CompilerPkgDep "first-a" "first"))
+            (&
+              (load.compiler-pkg-dep-list-push
+                (& (load.compiler-pkg-dep-list-empty))
+                (load.CompilerPkgDep "first-a" "first")))
             (load.CompilerPkgDep "first-b" "first/."))]
         [merged-catalog-deps : load.CompilerPkgDepList
           (build.build-package-graph-catalog-deps
@@ -685,7 +686,7 @@
         [dep : load.CompilerPkgDep (load.CompilerPkgDep "dep" "../dep")]
         [deps : load.CompilerPkgDepList
           (load.compiler-pkg-dep-list-push
-            (load.compiler-pkg-dep-list-empty)
+            (& (load.compiler-pkg-dep-list-empty))
             dep)]
         [node : build.BuildPackageGraphNode
           (build.BuildPackageGraphNode
@@ -718,7 +719,7 @@
         [dep : load.CompilerPkgDep (load.CompilerPkgDep "runtime" "../runtime")]
         [deps : load.CompilerPkgDepList
           (load.compiler-pkg-dep-list-push
-            (load.compiler-pkg-dep-list-empty)
+            (& (load.compiler-pkg-dep-list-empty))
             dep)]
         [resolve-manifest : load.CompilerPkgManifest
           (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
@@ -896,7 +897,7 @@
     (let
       [source : String
         "(module z.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(module dep.macros)\n(defmacro (foreign [value : Expr]) : Expr `(foreign ,value))\n(module a.macros)\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n"]
-      (match (compiler_parse_core.parse-ast-source source)
+      (match (compiler_parse_core.parse-ast-source (& source))
         [(Err _) false]
         [(Ok program)
           (match program
@@ -1408,9 +1409,10 @@
       [local : load.CompilerPkgDep (load.CompilerPkgDep "local" "../local")]
       [deps : load.CompilerPkgDepList
         (load.compiler-pkg-dep-list-push
-          (load.compiler-pkg-dep-list-push
-            (load.compiler-pkg-dep-list-empty)
-            remote)
+          (&
+            (load.compiler-pkg-dep-list-push
+              (& (load.compiler-pkg-dep-list-empty))
+              remote))
           local)]
       [actual : process.ProcessStringList
         (build.build-package-worker-append-resolved-deps

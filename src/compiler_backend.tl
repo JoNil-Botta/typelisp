@@ -75831,14 +75831,14 @@
   (compiler_abi.compiler-abi-outgoing-shadow-space
     (compiler-backend-target-abi target)))
 
-;; Program entry section and global symbol. Freestanding Linux links the
-;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
-;; Windows links `main` through the CRT.
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
   (match target
     [(CompilerBackendTarget.Linux) true]
     [(CompilerBackendTarget.Windows) false]))
 
+;; Linux inline entry text selects backend `_tl_start` or CRT `main`.
+;; Windows declares user `main` here; its selected runtime bundle supplies
+;; the freestanding `_tl_start` image entry.
 (define (compiler-backend-target-entry-text-with-crt
   [target : CompilerBackendTarget]
   [emit-entry : bool]
@@ -91476,7 +91476,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"
@@ -91495,7 +91495,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"

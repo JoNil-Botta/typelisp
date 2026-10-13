@@ -573,8 +573,7 @@
     ;; that allocation in this process-global slot across batch entries.
     (set!
       compiler-comptime-host-stack
-      (compiler-comptime-host-global-shared-view
-        compiler-comptime-host-stack-base))
+      compiler-comptime-host-stack-base)
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (compiler-comptime-host-locals-clear!)
@@ -1841,9 +1840,7 @@
       (<= arg-b 0)
       (< _arg-c 0))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-operands arg-a))
         [(Type ty)
           (if (string.eq
             (let
@@ -1879,9 +1876,7 @@
       (<= arg-b 0)
       (< _arg-c 0))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-operands arg-a))
         [(Expr _ ty)
           (let
             [pools : ast.AstNodePoolContext
@@ -1925,9 +1920,7 @@
       (<= arg-b 0)
       (< _arg-c 0))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-operands arg-a))
         [(Type ty)
           (if (string.eq
             (let
@@ -2198,9 +2191,7 @@
     session
     (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-operands arg-a))
         [(ExprBindingClauseList clauses)
           (ctfe_support.ctfe-expr-binding-clause-list-length clauses)]
         [_ -3]))))
@@ -2302,9 +2293,7 @@
         0
         (ctfe_support.ctfe-expr-list-type-nth
           (&
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-operands
-              arg-a))
+            (array-ref compiler-comptime-host-operands arg-a))
           arg-b
           (compiler-comptime-host-session-pools))))))
 
@@ -2318,9 +2307,7 @@
     session
     (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-operands arg-a))
         [(ExprBindingClauseList clauses)
           (if (or
             (< arg-b 0)
@@ -2424,9 +2411,7 @@
       (>= arg-a compiler-comptime-host-locals-cap)
       (not (array-ref compiler-comptime-host-locals-live arg-a)))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-locals
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-locals arg-a))
         [(ExprBindingClause clause)
           (if (ctfe_support.ctfe-expr-binding-clause-has-type? (& clause))
             1
@@ -4240,9 +4225,7 @@
       [index : i64 0]
       [start : i64 (- compiler-comptime-host-stack-len arg-a)]
       (while (and valid (< index arg-a))
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (+ start index))
+        (match (& (array-ref compiler-comptime-host-stack (+ start index)))
           [(Type _) unit]
           [_ (set! valid false)])
         (set! index (+ index 1)))
@@ -4565,9 +4548,7 @@
       (>= arg-a compiler-comptime-host-locals-cap)
       (not (array-ref compiler-comptime-host-locals-live arg-a)))
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-locals
-        arg-a)
+      (match (& (array-ref compiler-comptime-host-locals arg-a))
         [(Bool value)
           (if value
             1

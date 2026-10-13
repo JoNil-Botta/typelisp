@@ -4481,6 +4481,95 @@
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
     ok))
 
+(define (compiler-parse-origin-lookup-model-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [kinds : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [sources : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [positions : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [ok : bool true]
+    ;; The oracle expands each alias into slots. Production keeps ranges;
+    ;; compare their answers across overlaps, gaps, domains and rebuilds.
+    (for [step (iterator.range 0 512)]
+      (let
+        [key : i64 (% step 4)]
+        [start : i64 (% (* step 17) 32)]
+        [width : i64 (+ (% step 7) 1)]
+        [count : i64
+          (if (> (+ start width) 32)
+            (- 32 start)
+            width)]
+        [repeat : bool (= (% step 5) 0)]
+        (if (= (% step 3) 0)
+          (let
+            [domain : i64 (+ (% step 2) 1)]
+            [kind : i64
+              (if (= domain 1)
+                1
+                3)]
+            [index : i64 (+ (* (- domain 1) 128) (* key 32) start)]
+            (parser.compiler-parse-semantic-origin-lookup-insert!
+              domain
+              (+ 100 key)
+              start
+              kind
+              step
+              1
+              0
+              0)
+            (set! (array-ref kinds index) kind)
+            (set! (array-ref sources index) 0)
+            (set! (array-ref positions index) step))
+          (begin
+            (parser.compiler-parse-origin-alias-insert!
+              (+ 100 key)
+              start
+              count
+              (+ 9000 step)
+              (* step 2)
+              repeat)
+            (for [domain (iterator.range 1 3)]
+              (unless
+                (and (= domain 1) repeat)
+                (for [offset (iterator.range 0 count)]
+                  (let
+                    [index : i64
+                      (+ (* (- domain 1) 128) (* key 32) start offset)]
+                    (set! (array-ref kinds index) 2)
+                    (set! (array-ref sources index) (+ 9000 step))
+                    (set!
+                      (array-ref positions index)
+                      (+
+                        (* step 2)
+                        (if repeat
+                          0
+                          offset)))))))))
+        (when
+          (= (% step 8) 7)
+          (for [domain (iterator.range 1 3)]
+            (for [key (iterator.range 0 4)]
+              (for [slot (iterator.range 0 32)]
+                (let
+                  [index : i64 (+ (* (- domain 1) 128) (* key 32) slot)]
+                  [found : parser.CompilerParseSemanticOriginLookupSlot
+                    (parser.compiler-parse-semantic-origin-lookup
+                      domain
+                      (+ 100 key)
+                      slot)]
+                  (set!
+                    ok
+                    (and
+                      ok
+                      (= found.kind (array-ref kinds index))
+                      (= found.source-key (array-ref sources index))
+                      (=
+                        (if (= found.kind 2)
+                          found.source-slot
+                          found.run-start)
+                        (array-ref positions index)))))))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source
     "(import stdlib.test)
@@ -4514,6 +4603,7 @@
         (compiler-parse-origin-lookup-cache-tests-ok?)
         (compiler-parse-origin-lookup-alias-run-tests-ok?)
         (compiler-parse-origin-reindex-storage-tests-ok?)
+        (compiler-parse-origin-lookup-model-tests-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)

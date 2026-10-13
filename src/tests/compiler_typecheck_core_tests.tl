@@ -401,14 +401,10 @@
     cbi.compiler-builtin-id-fix-empty
     pools))
 
-;; Preparing a transformer compares the owned pools with the installed pool's
-;; lengths (#7937). An owned context that argument normalisation extended past
-;; the installed one, in either pool, is installed; an owned context that is not
-;; longer takes a capture of the installed state; under an explicit
-;; compatibility context nothing changes.
 (test
   tc-poison-module-env-cache-identity-and-suffix
   (let
+    [saved-poison-observed : bool tc_core.tc-poison-observed]
     [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
     [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [other : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
@@ -488,8 +484,16 @@
           (= local-scope.local-env.abi-pad env.abi-pad))
         (io.panic
           "typecheck: poison cache reused a changed store or scoped state")))
-    (tc_core.tc-job-state-retire-owned-storage! job)))
+    (tc_core.tc-job-state-retire-owned-storage! job)
+    (if saved-poison-observed
+      (tc_core.tc-poison-observation-note! (tc_core.tc-poison-type))
+      (tc_core.tc-poison-observation-reset!))))
 
+;; Preparing a transformer compares the owned pools with the installed pool's
+;; lengths (#7937). An owned context that argument normalisation extended past
+;; the installed one, in either pool, is installed; an owned context that is not
+;; longer takes a capture of the installed state; under an explicit
+;; compatibility context nothing changes.
 (test
   macro-prepare-transformer-pools-length-decision
   (let

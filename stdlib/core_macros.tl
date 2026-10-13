@@ -1275,10 +1275,8 @@
                         (set! __for_more (< __for_index __for_last))
                         (set! __for_index (+ __for_index 1))))]
                   [range-body : comptime.Expr
-                    `(begin
-                      ,range-advance
-                      ,@body
-                      unit)]
+                    (comptime.expr-begin-unit
+                      (comptime.expr-list-cons range-advance body))]
                   [range-index : comptime.Expr `__for_index]
                   [range-step : comptime.Expr
                     (comptime.expr-let-scope range-item range-index range-body)]

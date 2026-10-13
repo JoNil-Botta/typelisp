@@ -1,3 +1,5 @@
+(import stdlib.iterator)
+
 ;; refs #8853: an elided input reference's hidden lifetime outlives the body,
 ;; like an explicit signature lifetime name (#6053). A local may bind the
 ;; parameter itself or a borrow projected from it, shared or mutable, scalar or
@@ -64,6 +66,19 @@
     [bound rec]
     bound))
 
+;; A body that uses macros (`when`, `for`, `+=`) is checked once against the
+;; parameters as written, while macros expand, then against the elaborated
+;; signature. Both checks accept the let-bound reference.
+(define (elided-let-in-macros [items : (& (__tl_dyn-array ElidedLetRec))]) : i64
+  (let
+    [total : i64 0]
+    [bound items]
+    (for [index (iterator.range 0 2)]
+      (when
+        (> (array-ref bound index).value 0)
+        (+= total (array-ref bound index).value)))
+    total))
+
 (define (main) : i64
   (let
     [items : (__tl_dyn-array ElidedLetRec) (__tl_make-array ElidedLetRec 2)]
@@ -73,8 +88,9 @@
     (set! (array-ref items 0) (ElidedLetRec 5))
     (set! (array-ref items 1) (ElidedLetRec 2))
     (elided-let-touch! (&mut items) 0)
-    ;; 7 + 10 + 6 + (6 - 2) + 4 + 6 + (2 + 3) = 42
+    ;; 7 + 10 + 6 + (6 - 2) + 4 + 6 + (2 + 3) + (6 + 2) - 8 = 42
     (+
+      (- (elided-let-in-macros (& items)) 8)
       (elided-let-copy (& seven))
       (elided-let-project (& stored))
       (elided-let-element (& items) 0)

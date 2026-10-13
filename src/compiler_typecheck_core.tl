@@ -17314,8 +17314,10 @@
   [lifetime-id : i64]) : bool
   (and
     (>= lifetime-id 0)
-    (not (= lifetime-id cbi.compiler-builtin-id-fix-empty))
     (or
+      ;; Also the unelaborated empty lifetime: macro expansion checks a body
+      ;; against the parameters as written, before elision names their
+      ;; lifetimes, and the final check sees the hidden names.
       (tc-elaborated-lifetime-hidden? lifetime-id)
       (and
         (not (tc-name-bound-locally-id? env lifetime-id))

@@ -3818,8 +3818,8 @@
 
 (define (compiler-ir-spmd-private-param-seq-ref
   [seq : (& CompilerIrSpmdPrivateParamSeq)]
-  [index : i64]) : CompilerIrSpmdPrivateParam
-  (compiler-ir-array-shared-view seq.slots index))
+  [index : i64]) : (& CompilerIrSpmdPrivateParam)
+  (& (array-ref seq.slots index)))
 
 (define (compiler-ir-function-abi-private [abi : CompilerIrSpmdPrivateAbi]) : CompilerIrFunctionAbi
   (SpmdPrivate (box abi)))
@@ -3872,7 +3872,7 @@
         (&mut params)
         (compiler-ir-clone-spmd-private-param
           pools
-          (& (compiler-ir-spmd-private-param-seq-ref abi.params index)))))
+          (compiler-ir-spmd-private-param-seq-ref abi.params index))))
     (CompilerIrSpmdPrivateAbi
       (match abi.schema
         [(V1) (V1)])
@@ -4033,8 +4033,8 @@
           same
           (compiler-ir-spmd-private-param-eq?
             bases
-            (& (compiler-ir-spmd-private-param-seq-ref left.params index))
-            (& (compiler-ir-spmd-private-param-seq-ref right.params index))))
+            (compiler-ir-spmd-private-param-seq-ref left.params index)
+            (compiler-ir-spmd-private-param-seq-ref right.params index)))
         (+= index 1))
       same)
     (compiler-ir-spmd-private-index-eq? left.index right.index)
@@ -4098,7 +4098,7 @@
           (compiler-ir-spmd-private-param-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-spmd-private-param-seq-ref abi.params index))))))
+            (compiler-ir-spmd-private-param-seq-ref abi.params index)))))
     (text_buf.render
       (text_buf.append
         buf

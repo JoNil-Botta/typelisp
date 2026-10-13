@@ -33680,6 +33680,30 @@
           message))
       message)))
 
+;; An error located at an operand's span outside that operand's own check. When
+;; the operand is caller syntax a macro spliced into its template, frame the
+;; error with the operand's caller-origin marker, as checking the operand itself
+;; would, so the location is reported in the caller's file rather than the
+;; macro's (#8870).
+(define (tc-caller-origin-operand-error
+  [expr-bases : i64]
+  [operand : (& ast.AstExpr)]
+  [located : String]) : String
+  (match operand
+    [(Spanned inner-id span)
+      (match (ast.ast-expr-segment-bases-get expr-bases inner-id)
+        [(MacroExpansion _ provenance-id macro-name-id)
+          (if (< macro-name-id 0)
+            (tc-macro-framed-error
+              (macro-expansion-invocation-path-id provenance-id)
+              span
+              (macro-expansion-origin-path-id provenance-id)
+              macro-name-id
+              located)
+            located)]
+        [_ located])]
+    [_ located]))
+
 (define (tc-locate-integer-binop-error
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -33705,11 +33729,14 @@
                     (tc-global-shared-view left-ty)
                     (tc-global-shared-view right-ty))))
                 (Err
-                  (tc-located-error
-                    (match right
-                      [(Spanned _ right-span) right-span]
-                      [_ fallback])
-                    (tc-type-mismatch-message right-ty left-ty message)))
+                  (tc-caller-origin-operand-error
+                    (tc-context-expr-bases ctx)
+                    right
+                    (tc-located-error
+                      (match right
+                        [(Spanned _ right-span) right-span]
+                        [_ fallback])
+                      (tc-type-mismatch-message right-ty left-ty message))))
                 (Err (tc-located-error fallback message)))]
             [(Err _) (Err (tc-located-error fallback message))])]
         [(Err _) (Err (tc-located-error fallback message))])]

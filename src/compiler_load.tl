@@ -963,7 +963,7 @@
       (compiler-load-global-array-element-shared-view cell 0)]
     (set! canonical.shared-address address)
     (set! (array-ref cell 0) canonical)
-    (compiler-load-global-array-element-shared-view cell 0)))
+    (array-ref cell 0)))
 
 (define (compiler-load-session-state-new-with-standalone-reset-safety
   [standalone-reset-safe : bool]) : CompilerLoadSessionState
@@ -2592,7 +2592,7 @@
 (define (compiler-load-session-state-interns
   [state : (& state CompilerLoadSessionState)]) : ci.InternCompatState
   (if (array-ref state.intern-state-ready 0)
-    (owned_view.compiler-owned-array-element-shared-view state.intern-state 0)
+    (array-ref state.intern-state 0)
     (ci.intern-compat-state-capture-active)))
 
 ;; Intern into the table that gives this load session's id-keyed caches their
@@ -2947,9 +2947,7 @@
                         (for [index (iterator.range 0 proofs.len)]
                           (set!
                             (array-ref grown index)
-                            (owned_view.compiler-owned-array-element-shared-view
-                              proofs.slots
-                              index)))
+                            (array-ref proofs.slots index)))
                         grown))]
                   (set! (array-ref slots proofs.len) proof)
                   (set!
@@ -12917,9 +12915,7 @@
             0)]
         (if (or (< slot 0) (>= slot fragments.len))
           Unavailable
-          (match (owned_view.compiler-owned-array-element-shared-view
-            fragments.slots
-            slot)
+          (match (array-ref fragments.slots slot)
             [(Unavailable) Unavailable]
             [(Ready hydration spmd-callables)
               (let

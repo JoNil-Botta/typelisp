@@ -676,6 +676,12 @@ exactly as parsed, so none of these can inherit an earlier check's rewrites:
 - a later `typelisp test` file;
 - a later doc example.
 
+Raw expression-pool capture publishes all eleven state words, including the
+span sidecar, record-table addresses, record counts and rollback-order flag.
+The table words retain their existing pool owner; capture must not create
+replacement storage in the caller's temporary arena. Installed contexts
+and fresh snapshots therefore observe the same published span generation.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,

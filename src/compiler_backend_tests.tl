@@ -36949,8 +36949,8 @@ b_keep:
 (define (read-len) : i64 (+ (peek (& cell)) (+ cell.len triple.c)))
 (define (main) : i64 (begin (install! 3) (install3! 4) (read-len)))")
 
-;; Raw pointers preserve box-escape coverage independently of safe borrow rules.
-;; Both forms share the same declarations and boxed-cell assertions.
+;; A raw alias can observe box identity across a rebind. The corresponding
+;; safe reference program must be rejected before reaching the backend.
 (define (compiler-backend-inline-aggregate-global-escape-source
   [raw-alias : bool]) : String
   (str_cat.str-cat
@@ -37060,8 +37060,13 @@ b_keep:
 
 (define (compiler-backend-inline-aggregate-global-safety-ok?) : bool
   (and
-    (compiler-backend-inline-aggregate-global-excluded-shape-ok?
+    (match (backend.compiler-backend-emit-source
       (compiler-backend-inline-aggregate-global-escape-source false))
+      [(Err diagnostic)
+        (string.eq
+          (cdiag.compiler-diagnostic-code-or-empty (__tl-box-place diagnostic))
+          "E0222")]
+      [(Ok _) false])
     (compiler-backend-inline-aggregate-global-excluded-shape-ok?
       (compiler-backend-inline-aggregate-global-escape-source true))
     (compiler-backend-inline-aggregate-global-excluded-shape-ok?

@@ -22,10 +22,9 @@ user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the
 seed policy are in
 [`../docs/testing-and-bootstrap.md`](../docs/testing-and-bootstrap.md).
 
-The aggregate-global backend escape fixture checks the existing safe-reference
-shape and a raw-pointer counterpart against the same boxed-cell assertions.
-Keep the raw case when global call checking rejects the safe reference case;
-the indirect-call shape remains independently covered.
+The aggregate-global backend escape fixture rejects the safe-reference shape
+with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
+The indirect-call shape remains independently covered.
 
 ## Linux thread storage
 
@@ -59,6 +58,51 @@ through the package preparation and object/assembly paths.
 The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
+
+## Global call borrow effects
+
+The original `inline_aggregate_global_live_borrow_reject.tl` escape shape
+is rejected by the public check/compile corpus on Linux and Windows targets
+at opt0, opt1 and opt2. Its valid borrow-ending counterpart remains in the
+native integration matrix and has the same result at every level.
+
+`compiler_global_effects_tests.tl` covers recursive witnesses, nonwriting SCCs,
+indirect unions and positive/negative cache invalidation. The graph-append
+retirement and explicit-job isolation tests live in
+`src/tests/compiler_typecheck_core_tests.tl`. The `global_call_*` safety rows exercise
+whole/projected/buffer writes, address-taking, mutable loans, transitive and
+recursive calls, indirect functions and closures, macro and imported setters,
+explicit and synthesized cleanup, and the allowed Copy/different-global/ended
+borrow/explicit-parameter cases. Keep their named call-chain diagnostics when
+changing traversal or binding resolution. Enum-pattern rows keep global writes
+visible through bare variants with known parameter types and unknown nested
+scrutinees; the constructor row keeps local binders and compiler primitives
+pure. Loop-scope tests preserve body binder values across nested bound scopes.
+Match-shadowing rows distinguish a
+loan created from the global before a same-named pattern binder from a loan
+created from a shadowing local, including loop arms. The typecheck self-test
+checks captured global identity through both union orders, snapshot restoration,
+cloning and dense-store growth, and requires fixpoint equality to distinguish it.
+Later-argument let/for shadowing must preserve an earlier global loan, while
+mutating a separate same-named local remains valid. Root removal, owner selection
+and exact loan removal are checked with both owners present in one snapshot.
+The global-prefix metadata test grows a dense store through several capacities,
+retains a local-only earlier snapshot, and filters a global back out; every
+prefix must report exactly the global handles reachable in its parent chain.
+The same owner identity selects lending-use propagation and prevents a local
+fact from suppressing a global loan during return, loop, or stored-loan protection.
+The public shadowing matrix requires the secondary diagnostic to point to the
+original global borrow when a later local borrow has the same spelling.
+The mixed-argument rows distinguish an independent local loan plus a by-value
+global copy from a global auto-borrow; the copy runs at opt0, opt1 and opt2.
+The temporary-cleanup rows cover later arguments, returned references, forward and indirect callees, ended
+borrows, and loans ending at the call before cleanup.
+`tests/inline/compiler_global_call_cache.tl` checks a reused source prefix
+against a changed callable union, reinfers temporary disposers after file
+reset, and preserves cache hits for context-independent prefixes with module markers.
+Qualified-name rows reject full dotted callees and global roots while permitting
+a pure qualified helper even when a global-writing callback exists. Public CLI
+and LSP fixtures assert E0222, the primary call and secondary borrow locations, and `explain` text.
 
 ## Persistent lifetime memo
 
@@ -1559,3 +1603,12 @@ in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
 - Run the focused tests for the layer touched, plus `typelisp fmt --check`.
+
+## Iterative AST wrapper removal
+
+`compiler-ast-deep-wrapper-chain` in `src/tests/compiler_ast_types_smoke.tl`
+checks bare leaves and mixed `Spanned`/`MacroExpansion` chains on both sides of
+expression segment boundaries, including more than two full segments. Run it at
+opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
+and equal-ID/different-pool cases. Wrapper removal consumes each row before
+reading the next and copies out the leaf without recursive stack growth.

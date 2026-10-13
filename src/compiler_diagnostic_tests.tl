@@ -536,7 +536,8 @@
     (compiler-diagnostic-typecheck-kind-row-is? (ComptimeConstraint) 19)
     (compiler-diagnostic-typecheck-kind-row-is? (UnsafeCallableEffect) 20)
     (compiler-diagnostic-typecheck-kind-row-is? (ForeignGlobalWrite) 21)
-    (compiler-diagnostic-typecheck-kind-row-is? (OpaqueRepresentation) 22)))
+    (compiler-diagnostic-typecheck-kind-row-is? (OpaqueRepresentation) 22)
+    (compiler-diagnostic-typecheck-kind-row-is? (GlobalBorrowCall) 23)))
 
 ;; Parse kinds map one-to-one onto the parse rows of the registry (#7135).
 (define (compiler-diagnostic-parse-kind-row-is?
@@ -559,10 +560,10 @@
 (define (compiler-diagnostic-parse-kind-rows-ok?) : bool
   (and
     (compiler-diagnostic-parse-kind-row-is? (UnclassifiedParse) 0)
-    (compiler-diagnostic-parse-kind-row-is? (UnbalancedDelimiter) 23)
-    (compiler-diagnostic-parse-kind-row-is? (MalformedToken) 24)
-    (compiler-diagnostic-parse-kind-row-is? (MalformedForm) 25)
-    (compiler-diagnostic-parse-kind-row-is? (InvalidPattern) 26)
+    (compiler-diagnostic-parse-kind-row-is? (UnbalancedDelimiter) 24)
+    (compiler-diagnostic-parse-kind-row-is? (MalformedToken) 25)
+    (compiler-diagnostic-parse-kind-row-is? (MalformedForm) 26)
+    (compiler-diagnostic-parse-kind-row-is? (InvalidPattern) 27)
     (not
       (cdiag.compiler-diagnostic-parse-code?
         (& (cdiag.compiler-diagnostic-code-typecheck))))
@@ -723,7 +724,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 27)]
+    [ok : bool (= count 28)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]

@@ -670,6 +670,9 @@ outside a snapshot's count remain missing even if its shared backing array
 contains them. Reuse follows the protected write journal and keeps the
 conservative prefix rollback scan; changed targets, spans and semantic-node
 rewrites still register their provenance normally.
+Live contexts mutate their stable expression-pool cell through an exclusive
+borrow; value-oriented callers apply the same setter to a state copy. Storage
+growth keeps prior backing arrays available to snapshots.
 
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)

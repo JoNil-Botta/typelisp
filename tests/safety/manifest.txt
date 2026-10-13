@@ -29,6 +29,8 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
+elided_lifetime_let_borrow_ok|run-exit|tests/safety/elided_lifetime_let_borrow_ok.tl|42|-
+global_let_borrow_ok|run-exit|tests/safety/global_let_borrow_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
 rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
@@ -276,6 +278,7 @@ mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mut
 mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
 mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
 mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_param_named_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_named_reject.tl|-|cannot store reference into longer-lived struct field
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is
@@ -388,6 +391,14 @@ lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_i
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
 signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|error[E0210]: typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`
 signature_lifetime_alias_local_return_reject|check-fail|tests/safety/signature_lifetime_alias_local_return_reject.tl|-|typecheck: borrow lifetime mismatch
+elided_lifetime_let_local_return_reject|check-fail|tests/safety/elided_lifetime_let_local_return_reject.tl|-|typecheck: reference value would escape lexical scope
+elided_lifetime_let_region_copy_escape_reject|check-fail|tests/safety/elided_lifetime_let_region_copy_escape_reject.tl|-|cannot store region-tagged value into return value
+elided_lifetime_let_function_value_escape_reject|check-fail|tests/safety/elided_lifetime_let_function_value_escape_reject.tl|-|typecheck: reference value would escape lexical scope
+elided_lifetime_let_distinct_return_reject|check-fail|tests/safety/elided_lifetime_let_distinct_return_reject.tl|-|source lifetime `<elided 1>` does not outlive required lifetime `keep`
+elided_lifetime_let_distinct_assign_reject|check-fail|tests/safety/elided_lifetime_let_distinct_assign_reject.tl|-|source lifetime `<elided 2>` does not outlive required lifetime `<elided 1>`
+global_let_borrow_shadow_reject|check-fail|tests/safety/global_let_borrow_shadow_reject.tl|-|typecheck: cannot store reference into longer-lived binding
+global_let_borrow_write_reject|check-fail|tests/safety/global_let_borrow_write_reject.tl|-|typecheck: cannot assign to borrowed place `written`
+global_let_borrow_program_reject|check-fail|tests/safety/global_let_borrow_program_reject.tl|-|source lifetime `widened` does not outlive required lifetime `program`
 lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_live_reject.tl|-|cannot read mutably borrowed place `values`
@@ -934,7 +945,7 @@ arena_branded_return_only_reject|check-fail|tests/safety/arena_branded_return_on
 arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|scoped-region and lifetime-parameterized values cannot cross thread boundaries
 arena_branded_in_arena_wrong_assignment_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_assignment_reject.tl|-|cannot store region-tagged value into struct field
 arena_branded_in_arena_wrong_storage_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_storage_reject.tl|-|cannot store region-tagged value into constructor result
-arena_branded_in_arena_wrong_return_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_return_reject.tl|-|cannot store region-tagged value into return value
+arena_branded_in_arena_wrong_return_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_return_reject.tl|-|source region `source` does not outlive required region `target`
 arena_branded_in_arena_closure_capture_reject|check-fail|tests/safety/arena_branded_in_arena_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
 arena_branded_in_arena_plain_field_reject|check-fail|tests/safety/arena_branded_in_arena_plain_field_reject.tl|-|cannot pass region-tagged value to function parameter
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
@@ -1165,7 +1176,7 @@ move_out_of_reference_call_arg_reject|check-fail|tests/safety/move_out_of_refere
 move_out_of_reference_call_arg_help_reject|check-fail|tests/safety/move_out_of_reference_call_arg_reject.tl|-|help: pass an owned clone, or make the parameter a reference and pass `(& ...)`
 move_out_of_reference_local_borrow_reject|check-fail|tests/safety/move_out_of_reference_local_borrow_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
 move_out_of_reference_let_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
-move_out_of_reference_let_help_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|help: bind a borrow `(& ...)` of it instead, or an owned clone
+move_out_of_reference_let_help_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
 move_out_of_reference_let_inferred_reject|check-fail|tests/safety/move_out_of_reference_let_inferred_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
 move_out_of_reference_constructor_reject|check-fail|tests/safety/move_out_of_reference_constructor_reject.tl|-|help: construct with an owned clone of it, or make the field a reference
 move_out_of_reference_return_reject|check-fail|tests/safety/move_out_of_reference_return_reject.tl|-|help: return an owned clone, or return a reference tied to a parameter's lifetime

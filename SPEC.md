@@ -2186,7 +2186,12 @@ lifetime from the owner:
 - A local or parameter root named `x` gives references rooted in `x` the
   lifetime name `x`.
 - A global root named `x` gives references rooted in `x` the lifetime name
-  `x`, unless its arena-tagged type supplies the owner lifetime below.
+  `x`, unless its arena-tagged type supplies the owner lifetime below. A
+  global lives for the whole program, so where no local or parameter spells
+  `x`, this lifetime outlives every local scope: a local may bind such a
+  reference, or have one assigned to it. It does not outlive `program`, so
+  `(& program T)` cannot hold it. A `program` reference would no longer count
+  as a loan of `x`.
 - A field, tuple element, or array element projection inherits the lifetime
   name of its root place.
 - A region-tagged aggregate `(in phase T)` gives references to its owned storage
@@ -2264,7 +2269,11 @@ argument lists; those positions require an explicit lifetime or `program`.
 
 - Each elided input reference receives a distinct hidden, signature-local
   lifetime. Two `(& T)` inputs therefore do not imply that their callers share
-  a lifetime.
+  a lifetime. Inside the body, a hidden lifetime outlives every local scope,
+  like an explicit signature lifetime name. A local may bind a reference that
+  carries it, such as the parameter itself or a borrow projected from it, or
+  have one assigned to it. Diagnostics spell it `<elided N>`, where N counts
+  the signature's elided references from 1.
 - Explicit and elided input references may coexist. Distinct explicit lifetime
   names count separately; repeated explicit names count once.
 - An elided output reference is assigned the sole distinct input lifetime when

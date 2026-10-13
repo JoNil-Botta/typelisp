@@ -178,7 +178,10 @@
       (str_cat.str-cat "expected an integer, found `" (string.copy text) "`"))))
 
 (define (ir-text-int! [cur : (&mut cur IrTextCursor)]) : i64
-  (ir-text-int-of cur (ir-text-word! cur ",()[]:")))
+  ;; Read the word before lending the cursor shared to the integer parse.
+  (let
+    [text : String (ir-text-word! cur ",()[]:")]
+    (ir-text-int-of cur text)))
 
 (define (ir-text-var! [cur : (&mut cur IrTextCursor)]) : i64
   (ir-text-expect! cur "%")
@@ -279,8 +282,8 @@
     [(string.eq head "Tuple") (ast.ast-ty-tuple (ir-text-type-list! cur))]
     [(string.eq head "CFunc")
       (let
-        [mode : ast.AstCFunctionMode
-          (ir-text-c-function-mode cur (ir-text-word! cur "()"))]
+        [mode-word : String (ir-text-word! cur "()")]
+        [mode : ast.AstCFunctionMode (ir-text-c-function-mode cur mode-word)]
         [signature : i64 (ir-text-type-id! cur)]
         (ir-text-expect! cur ")")
         (CFunc signature mode))]
@@ -693,7 +696,14 @@
           [value : ir.CompilerIrValue (ir-text-value! cur)]
           (Mov dst value (ir-text-typed! cur)))]
       [(string.eq op "alloc") (Alloc dst (ir-text-type! cur))]
-      [(string.eq op "addr_of") (AddrOf dst (ir-text-var! cur))]
+      [(string.eq op "addr_of")
+        (let
+          [source : i64 (ir-text-var! cur)]
+          [words : i64
+            (if (ir-text-accept! cur "storage")
+              (ir-text-int! cur)
+              0)]
+          (AddrOf dst source words))]
       [(string.eq op "gep")
         (let
           [base : ir.CompilerIrValue (ir-text-value! cur)]
@@ -1112,6 +1122,61 @@
         unit))
     (ir.compiler-ir-param-builder-to-seq builder)))
 
+(define (ir-text-return-storage! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrFunctionAbi
+  (let
+    [kind : String
+      (begin
+        (ir-text-expect! cur "return-storage")
+        (ir-text-word! cur "()"))]
+    [convention : ir.CompilerIrReturnStorageConvention
+      (cond
+        [(string.eq kind "internal-leading")
+          (ir.CompilerIrReturnStorageConvention.InternalLeading)]
+        [(string.eq kind "internal-trailing")
+          (ir.CompilerIrReturnStorageConvention.InternalTrailing)]
+        [(string.eq kind "sysv") (ir.CompilerIrReturnStorageConvention.SysV)]
+        [(string.eq kind "win64") (ir.CompilerIrReturnStorageConvention.Win64)]
+        [else (ir-text-error cur "unknown return-storage convention")])]
+    [index : i64
+      (begin
+        (ir-text-expect! cur "arg")
+        (ir-text-int! cur))]
+    [bytes : i64
+      (begin
+        (ir-text-expect! cur "bytes")
+        (ir-text-int! cur))]
+    [alignment : i64
+      (if (ir-text-accept! cur "align")
+        (ir-text-int! cur)
+        8)]
+    [output : ast.AstType
+      (begin
+        (ir-text-expect! cur "output")
+        (ir-text-type! cur))]
+    [result : ast.AstType
+      (begin
+        (ir-text-expect! cur "result")
+        (ir-text-type! cur))]
+    [params : ast.AstTypeList
+      (begin
+        (ir-text-expect! cur "params (")
+        (ir-text-type-list! cur))]
+    [source : ast.AstType
+      (begin
+        (ir-text-expect! cur "source")
+        (ir-text-type! cur))]
+    (ir.CompilerIrFunctionAbi.ReturnStorage
+      (box
+        (ir.CompilerIrReturnStorageAbi
+          convention
+          index
+          bytes
+          alignment
+          output
+          result
+          params
+          source)))))
+
 (define (ir-text-function! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrFunction
   (let
     [cur : IrTextCursor (ir-text-cursor (ir-text-lines-take! doc))]
@@ -1131,6 +1196,10 @@
       (begin
         (ir-text-expect! (&mut cur) "vars")
         (ir-text-int! (&mut cur)))]
+    [abi : ir.CompilerIrFunctionAbi
+      (if (ir-text-accept! (&mut cur) "abi")
+        (ir-text-return-storage! (&mut cur))
+        (Ordinary))]
     (ir-text-expect! (&mut cur) "{")
     (if (ir-text-at-end? (&mut cur))
       unit
@@ -1138,7 +1207,7 @@
     (let
       [blocks : ir.CompilerIrBlockList (ir-text-blocks! doc)]
       (if (string.eq (ir-text-lines-take! doc) "}")
-        (Function name params ret vars blocks Ordinary)
+        (Function name params ret vars blocks abi)
         (ir-text-fail cur.line "function without a closing `}`")))))
 
 (define (ir-text-global-line [line : String]) : ir.CompilerIrGlobal
@@ -1225,7 +1294,8 @@
     (Program
       (ir.compiler-ir-global-builder-to-seq globals)
       (ir.compiler-ir-function-builder-to-seq functions)
-      (ir.compiler-ir-extern-seq-empty))))
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (ir-text-session) : cis.InternStructuralSessionHandle
   (cis.InternStructuralSessionHandle 0))

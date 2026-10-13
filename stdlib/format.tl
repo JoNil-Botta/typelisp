@@ -385,23 +385,25 @@
               (let
                 [larger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
                 (if (> sink.len 0)
-                  (string.str-copy-bytes-into
-                    (unsafe
-                      (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
-                    (unsafe
-                      (__tl_array-data larger))
-                    0
-                    sink.len)
+                  (unsafe
+                    (string.str-copy-bytes-into
+                      (unsafe
+                        (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
+                      (unsafe
+                        (__tl_array-data larger))
+                      0
+                      sink.len))
                   unit)
                 (set! sink.slots larger)))
             unit)
-          (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& data)))
-            (unsafe
-              (__tl_array-data sink.slots))
-            sink.len
-            count)
+          (unsafe
+            (string.str-copy-bytes-into
+              (unsafe
+                (string-data (& data)))
+              (unsafe
+                (__tl_array-data sink.slots))
+              sink.len
+              count))
           (set! sink.len required)
           (unsafe
             (ptr-write! slot sink))
@@ -556,7 +558,8 @@
         [source : (Ptr u8)
           (unsafe
             (ptr-offset (string-data rendered) source-start))]
-        (string.str-copy-bytes-into source dst destination-start count)))))
+        (unsafe
+          (string.str-copy-bytes-into source dst destination-start count))))))
 
 ;: Resolve the byte length visible to shared Display padding.
 ;:
@@ -585,6 +588,12 @@
   [rendered : String]
   [numeric? : bool]
   [options : FormatOptions]) : String
+  ;; FormatOptions is public; parser validation is not a caller capability.
+  (when
+    (or
+      (< options.width 0)
+      (and options.precision-present (< options.precision 0)))
+    (format-runtime-abort-string "format: negative width or precision"))
   (let
     [rendered-len : i64 (string.string-length (& rendered))]
     [display-len : i64
@@ -6897,13 +6906,22 @@
 
 ;: Render exact decimal digits at `scale`, extending to requested precision.
 ;:
-;: `precision >= scale`. Rounding has already happened when precision is below
-;: the source value's exact terminating-decimal scale.
+;: Digits must be nonempty and `precision >= scale`. Rounding has already
+;: happened when precision is below the source value's exact decimal scale.
 (define (ftoa-render-fixed
   [neg : bool]
   [digits : String]
   [scale : i64]
   [precision : i64]) : String
+  ;; This helper is callable directly; establish its documented shape before
+  ;; deriving any raw destination ranges from scale or precision.
+  (when
+    (or (< scale 0) (< precision scale))
+    (format-runtime-abort-string
+      "format: invalid fixed float scale or precision"))
+  (when
+    (= (string.string-length (& digits)) 0)
+    (format-runtime-abort-string "format: fixed float digits must not be empty"))
   (let
     [digits-len : i64 (string.string-length (& digits))]
     [decimal-position : i64 (- digits-len scale)]

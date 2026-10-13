@@ -5,6 +5,11 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
+The [ownership IR design and migration inventory](ownership-ir.md) records the
+typed control-flow foundation under development for #8449. Its standalone core
+does not yet replace the production AST ownership checks described by the
+pipeline below.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)

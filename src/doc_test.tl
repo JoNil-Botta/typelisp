@@ -1747,7 +1747,7 @@
       [dep-root : String
         (compiler_load.compiler-load-normalize-path
           (if (compiler_load.compiler-load-absolute-path? dep-path)
-            dep-path
+            (string.copy (& dep-path))
             (compiler_load.compiler-load-join-root-path
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view dep-path))))]

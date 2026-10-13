@@ -135,9 +135,9 @@
 (unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
 (defstruct Arena (handle i64))
 (defstruct ArenaMark (handle i64))
-(define (arena-make) : Arena (Arena (tl_arena_make)))
-(define (arena-make-atomic) : Arena (Arena (tl_arena_make_atomic)))
-(define (arena-current) : Arena (Arena (tl_arena_current)))
+(define (arena-make) : Arena (unsafe (Arena (tl_arena_make))))
+(define (arena-make-atomic) : Arena (unsafe (Arena (tl_arena_make_atomic))))
+(define (arena-current) : Arena (unsafe (Arena (tl_arena_current))))
 (define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
 (define (arena-raw-handle [arena : Arena]) : i64 arena.handle)
 (define (arena-mark-raw-handle [mark : ArenaMark]) : i64 mark.handle)
@@ -274,15 +274,20 @@
   (let
     [capacity : i64 (ast_tests.ty-node-pool-capacity)]
     (ast.ty-node-pool-reset!)
-    (ast.ty-node-pool-truncate! capacity)
+    ;; Fill every installed slot with distinct nodes; a truncation cannot
+    ;; extend the live length past written nodes.
+    (while (< (ast.ty-node-pool-len) capacity)
+      (begin
+        (ast.ty-node-push (& (ast.AstType.Var (ast.ty-node-pool-len))))
+        unit))
     (let
       [result : tc_core.ResultCompilerTypecheck
         (tc_api.typecheck-compiler-source "(define (main) : i64 0)")]
       [grew : bool (> (ast_tests.ty-node-pool-capacity) capacity)]
       [ok : bool
         (match result
-          [(Ok _) grew]
-          [(Err _) false])]
+          [(tc_core.ResultCompilerTypecheck.Ok _) grew]
+          [(tc_core.ResultCompilerTypecheck.Err _) false])]
       (ast.ty-node-pool-reset!)
       ok)))
 
@@ -369,6 +374,23 @@
     [(Ok _) true]
     [(Err _) false]))
 
+(define (compiler-typecheck-selected-dotted-ok?) : bool
+  (compiler-typecheck-ok?
+    "(import stdlib.comptime)
+(defstruct SelectedPair (start i64) (value i64))
+(defmacro (read-selected [source : Expr]) : Expr
+  `(let [selected ,source] (+ selected.start 1)))
+(defmacro (write-selected [source : Expr]) : Expr
+  `(let [selected ,source]
+    (begin (set! selected.start (+ selected.start 1)) (+ selected.start selected.value))))
+(defmacro (selected-reader) : Expr
+  `(lambda ([selected : SelectedPair]) : i64 (+ selected.start 1)))
+(define (main) : i64
+  (let [reader : (-> SelectedPair i64) (selected-reader)]
+    (if (and (= (read-selected (SelectedPair 41 0)) 42)
+      (= (write-selected (SelectedPair 40 1)) 42)
+      (= (reader (SelectedPair 41 0)) 42)) 42 1)))"))
+
 (define (compiler-typecheck-bad-call-source) : String
   "(define (id [x : i64]) : i64 x)
 (define (main) : i64 (id true))")
@@ -446,7 +468,7 @@
 (define (compiler-typecheck-escape-diagnostic-tests-ok?) : bool
   (and
     (compiler-typecheck-error-shape-ok?
-      "(define (main [n : i64]) : (& n i64)
+      "(define (main [r : (& n i64)]) : (& n i64)
   (let [x : i64 1] (& x)))"
       "typecheck: reference value would escape lexical scope"
       2
@@ -611,8 +633,8 @@
   (unsafe (clone (raw-make))))"
       "typecheck: clone unsupported type (MutPtr i64)")
     (compiler-typecheck-error-ok?
-      "(define (main [n : i64]) : (& n i64)
-  (clone (& n)))"
+      "(define (main [r : (& n i64)]) : (& n i64)
+  (clone r))"
       "typecheck: clone unsupported type (& n i64)")
     (compiler-typecheck-error-count-ok?
       "(module hashmap.clone.values)
@@ -3139,7 +3161,7 @@
 (define (main) : Raw (init : Raw))"
       "typecheck: init supports only default-layout structs")
     (compiler-typecheck-error-ok?
-      "(define (main [n : i64]) : (& n i64) (init : (& n i64)))"
+      "(define (main [r : (& n i64)]) : (& n i64) (init : (& n i64)))"
       "typecheck: init unsupported type (& n i64)")
     (compiler-typecheck-error-ok?
       "(define (close-fd [fd : i64]) : unit unit)
@@ -4438,8 +4460,13 @@
 
 (define (compiler-typecheck-reference-return-param-ref-source) : String
   "(define (id [r : (& n i64)]) : (& n i64) r)
-(define (main [n : i64]) : (& n i64)
-  (id (& n)))")
+(define (main [m : (& n i64)]) : (& n i64)
+  (id m))")
+
+;; A borrow of a by-value parameter cannot leave the call, directly or through
+;; a helper: the parameter's storage belongs to the call (Rust E0515).
+(define (compiler-typecheck-reference-return-by-value-param-message) : String
+  "typecheck: returned reference lifetime `n` is a by-value parameter's own storage, which does not outlive the call; return a reference derived from a reference parameter")
 
 (define (compiler-typecheck-owner-model-tests-ok?) : bool
   (and
@@ -4449,7 +4476,7 @@
     [x : i64 1]
     (let [r : (& x i64) (& x)] x)))")
     (compiler-typecheck-error-ok?
-      "(define (main [n : i64]) : (& n i64)
+      "(define (main [r : (& n i64)]) : (& n i64)
   (let [x : i64 1] (& x)))"
       "typecheck: reference value would escape lexical scope")
     (compiler-typecheck-ok?
@@ -4763,8 +4790,19 @@
   (take (& other n)))"
         "typecheck: borrow lifetime mismatch")]
     [return-ok : bool
-      (compiler-typecheck-ok? "(define (main [n : i64]) : (& n i64)
-  (& n))")]
+      (compiler-typecheck-ok? "(define (main [r : (& n i64)]) : (& n i64)
+  r)")]
+    [return-by-value-param-error-ok : bool
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (main [n : i64]) : (& n i64)
+  (& n))"
+          (compiler-typecheck-reference-return-by-value-param-message))
+        (compiler-typecheck-error-ok?
+          "(define (id [r : (& n i64)]) : (& n i64) r)
+(define (main [n : i64]) : (& n i64)
+  (id (& n)))"
+          (compiler-typecheck-reference-return-by-value-param-message)))]
     [return-param-ref-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-return-param-ref-source))]
@@ -4775,7 +4813,7 @@
         "typecheck: returned reference lifetime must be tied to a parameter")]
     [return-local-escape-error-ok : bool
       (compiler-typecheck-error-ok?
-        "(define (main [n : i64]) : (& n i64)
+        "(define (main [r : (& n i64)]) : (& n i64)
   (let [x : i64 1] (& x)))"
         "typecheck: reference value would escape lexical scope")]
     ;; `program` outlives every lifetime, so a return or a returned aggregate
@@ -4792,20 +4830,24 @@
         "(define (main [n : i64]) : (& program i64)
   (& n))"
         "typecheck: return type mismatch: expected (& program i64), found (& n i64); source lifetime `n` does not outlive required lifetime `program`")]
+    ;; A struct or enum holding a reference must declare its lifetimes: a
+    ;; value of an unparameterized one could outlive its referent (#8449 M5).
     [struct-field-ok : bool
-      (compiler-typecheck-ok?
+      (compiler-typecheck-error-ok?
         "(defstruct RefBox (value (& n i64)))
 (define (main [n : i64]) : i64
   (let
     [box : RefBox (RefBox (& n))]
-    (let [value : (& n i64) box.value] 0)))")]
+    (let [value : (& n i64) box.value] 0)))"
+        "typecheck: `RefBox` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")]
     [enum-payload-ok : bool
-      (compiler-typecheck-ok?
+      (compiler-typecheck-error-ok?
         "(defenum RefOption (SomeRef (& n i64)) (NoRef))
 (define (main [n : i64]) : i64
   (match (SomeRef (& n))
     [(SomeRef value) 0]
-    [(NoRef) 1]))")]
+    [(NoRef) 1]))"
+        "typecheck: `RefOption` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")]
     [lifetime-struct-return-ok : bool
       (compiler-typecheck-ok?
         "(defstruct RefBox (:lifetimes a) (value (& a i64)))
@@ -4914,13 +4956,12 @@
   (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
     [Empty (slot-missing bag)]))
-(define (bad [bag : Bag]) : unit
+(define (seen [text : (& str)]) : i64 1)
+(define (bad [bag : Bag]) : i64
   (match (lookup (& bag))
     [(SlotFound value)
-      (begin
-        (set! bag (Bag (__tl_make-array Slot 1)))
-        (let [still : (& bag str) value] unit))]
-    [SlotMissing unit]))"
+      (begin (set! bag (Bag (__tl_make-array Slot 1))) (seen value))]
+    [SlotMissing 0]))"
         "typecheck: cannot assign to borrowed place `bag`")]
     [returned-borrowed-lookup-array-set-error-ok : bool
       (compiler-typecheck-error-ok?
@@ -4933,13 +4974,11 @@
   (match (& (array-ref bag.slots 0))
     [(Occupied v) (slot-found v)]
     [Empty (slot-missing bag)]))
-(define (bad [bag : Bag]) : unit
+(define (seen [text : (& str)]) : i64 1)
+(define (bad [bag : Bag]) : i64
   (match (lookup (& bag))
-    [(SlotFound value)
-      (begin
-        (set! (array-ref bag.slots 0) Empty)
-        (let [still : (& bag str) value] unit))]
-    [SlotMissing unit]))"
+    [(SlotFound value) (begin (set! (array-ref bag.slots 0) Empty) (seen value))]
+    [SlotMissing 0]))"
         "typecheck: cannot assign to borrowed place `bag.slots[0]`")]
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
@@ -4998,7 +5037,7 @@
     [lifetime-local-escape-error-ok : bool
       (compiler-typecheck-error-ok?
         "(defstruct RefBox (:lifetimes a) (value (& a i64)))
-(define (main [n : i64]) : (RefBox n)
+(define (main [r : (& n i64)]) : (RefBox n)
   (let [x : i64 1] (RefBox (& x))))"
         "typecheck: reference value would escape lexical scope")]
     [array-stored-ok : bool
@@ -5019,13 +5058,13 @@
         "(defstruct RefBox (value (& n i64)))
 (define (main [n : i64]) : RefBox
   (RefBox (& n)))"
-        "typecheck: cannot store region-tagged value into return value; region value would escape")]
+        "typecheck: `RefBox` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")]
     [struct-local-escape-error-ok : bool
       (compiler-typecheck-error-ok?
         "(defstruct RefBox (value (& x i64)))
 (define (main) : RefBox
   (let [x : i64 1] (RefBox (& x))))"
-        "typecheck: reference value would escape lexical scope")]
+        "typecheck: `RefBox` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")]
     [lambda-return-ok : bool
       (compiler-typecheck-ok?
         "(define (main [n : i64]) : i64
@@ -5097,6 +5136,7 @@
       temp-error-ok
       mismatch-error-ok
       return-ok
+      return-by-value-param-error-ok
       return-param-ref-ok
       return-untied-error-ok
       return-local-escape-error-ok
@@ -5515,11 +5555,19 @@
   (let
     [a : (Array f32 2) (array 1.0 2.0)]
     (array-ref a 0)))")
-    (compiler-typecheck-ok?
-      "(define (ret [x : f32]) : f64 x)
-(define (io.arg [x : f64]) : f64 x)
-(define (call [x : f32]) : f64 (io.arg x))
-(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))")
+    ;; No implicit numeric conversions (SPEC 3.8): an `f32` where an `f64` is
+    ;; expected needs `(cast x : f64)`. Lowering never widened a returned,
+    ;; joined or stored `f32`, so accepting one miscompiled.
+    (compiler-typecheck-error-ok?
+      "(define (ret [x : f32]) : f64 x)"
+      "typecheck: return type mismatch: expected f64, found f32")
+    (compiler-typecheck-error-ok?
+      "(define (arg [x : f64]) : f64 x)
+(define (call [x : f32]) : f64 (arg x))"
+      "typecheck: call `arg` argument 1 (parameter `x`) type mismatch: expected f64, found f32")
+    (compiler-typecheck-error-ok?
+      "(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))"
+      "typecheck: if branches must match")
     (compiler-typecheck-error-ok?
       "(define (main [x : f64]) : f32 x)"
       "typecheck: return type mismatch: expected f32, found f64")
@@ -7638,7 +7686,7 @@
     (IterMutNext.Done)
     (begin
       (set! state.done true)
-      (IterMutNext.Item state.value))))
+      (IterMutNext.Item (&mut (deref state.value))))))
 (define (into-iterator [items : Bag]) : IntoIter
   (IntoIter items.value false))
 (define (into-next [state : (&mut state IntoIter)]) : IntoNext
@@ -8588,6 +8636,9 @@
       (take-tuple (tuple 4 5)))))"))
 
 (define (compiler-typecheck-self-test-basics) : unit
+  (unless
+    (compiler-typecheck-selected-dotted-ok?)
+    (io.panic "typecheck: selected inference lost dotted source identity"))
   (if (intern_tests.intern-id-space-capacity-tests-ok?)
     unit
     (io.panic
@@ -9051,18 +9102,18 @@
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
-    (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))"
-      "typecheck: cannot read mutably borrowed place `items[0]`")
+    (let [s : (&mut items i64) (&mut (array-ref items 0))] (set! (deref r) 1))))"
+      "typecheck: cannot mutably borrow borrowed place `items`")
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (& items i64) (& (array-ref items 0))]
-    (let [s : (&mut items i64) (&mut (array-ref items 0))] unit)))"
-      "typecheck: cannot mutably borrow borrowed place `items[0]`")
+    (let [s : (&mut items i64) (&mut (array-ref items 0))] (begin (deref r) unit))))"
+      "typecheck: cannot mutably borrow borrowed place `items`")
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
-    (let [s : (& items i64) (& (array-ref items 0))] unit)))"
-      "typecheck: cannot read mutably borrowed place `items[0]`")
+    (let [s : (& items i64) (& (array-ref items 0))] (set! (deref r) 1))))"
+      "typecheck: cannot immutably borrow mutably borrowed place `items`")
     (compiler-typecheck-error-ok?
       "(define (take2 [a : (&mut n i64)] [b : (&mut n i64)]) : unit unit)
 (define (bad [n : i64]) : unit
@@ -9071,12 +9122,12 @@
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
-    (set! (array-ref items 0) 2)))"
+    (begin (set! (array-ref items 0) 2) (set! (deref r) 1))))"
       "typecheck: cannot assign to borrowed place `items[0]`")
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [borrowed : (&mut items i64) (&mut (array-ref items 0))]
-    (set! (array-ref items 0) 7)))"
+    (begin (set! (array-ref items 0) 7) (set! (deref borrowed) 1))))"
       "typecheck: cannot assign to borrowed place `items[0]`")))
 
 (define (compiler-typecheck-param-storage-tests-ok?) : bool
@@ -9153,29 +9204,6 @@
 (define (change [value : Big]) : unit
   (set! value.a 7))")))
 
-(define (compiler-typecheck-moved-set-growth
-  [set : tc_core.TcMovedSet]
-  [root-id : i64]
-  [start : i64]
-  [count : i64]
-  [origin : ast.AstExpr]) : tc_core.TcMovedSet
-  (let
-    [out : tc_core.TcMovedSet set]
-    [end : i64 (+ start count)]
-    (for [index (iterator.range start end)]
-      (set!
-        out
-        (tc_core.tc-moved-add-path-fact
-          out
-          (tc_core.TcMovePath
-            root-id
-            (tc_core.tc-move-path-segments-append-array
-              (tc_core.tc-move-path-segments-empty)
-              index))
-          (BorrowShared)
-          (ast.ast-node-push (ast.ast-global-shared-view origin)))))
-    out))
-
 (define (compiler-typecheck-moved-facts-same-dense-snapshot?
   [a : tc_core.TcMovedPathFacts]
   [b : tc_core.TcMovedPathFacts]) : bool
@@ -9215,562 +9243,6 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-typecheck-global-loan-protection-result) : tc_core.ResultTcUnit
-  (let
-    [program (try (parser.parse-ast-source "(define g : i64 0)"))]
-    [symbols (try (csym.build-compiler-symbols program))]
-    [registries (try (csym.build-compiler-registries program))]
-    [root : i64 (ci.intern "g")]
-    [saved : i64 (ci.intern "saved")]
-    [store : ast.AstExpr (Set saved (ast.ast-node-push (Var root)))]
-    [ctx : tc_core.TcContext
-      (tc_core.tc-context-new
-        (ast.ast-global-shared-view program)
-        symbols
-        registries
-        ""
-        cbi.compiler-builtin-id-fix-empty
-        (ast.ast-node-pool-context-capture-active))]
-    [path : tc_core.TcMovePath
-      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
-    [global-path : tc_core.TcMovePath
-      (tc_core.tc-borrow-check-capture-owner ctx (tc_core.tc-moved-empty) path)]
-    [shadowed-locals : tc_core.TcMovedSet
-      (tc_core.tc-moved-add (tc_core.tc-moved-empty) root)]
-    [scalar : ast.AstType (I64)]
-    [env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id
-        (tc_core.tc-bind-id (tc_core.tc-type-env-new) root (I64))
-        saved
-        (ast.ast-ty-ref root (& scalar)))]
-    [local : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        path
-        (BorrowShared)
-        -1)]
-    [global : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        global-path
-        (BorrowShared)
-        -1)]
-    [carried : tc_core.TcMovedSet
-      (tc_core.tc-borrow-check-loop-protect-carried-facts
-        ctx
-        env
-        (tc_core.tc-global-shared-view local)
-        (tc_core.tc-global-shared-view global)
-        (tc_core.tc-global-shared-view local))]
-    [stored : tc_core.TcMovedSet
-      (tc_core.tc-borrow-check-protect-stored-facts-loop
-        ctx
-        (tc_core.tc-context-expr-bases ctx)
-        env
-        store
-        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
-        (tc_core.tc-global-shared-view local))]
-    [returned : tc_core.TcMovedSet
-      (tc_core.tc-borrow-check-propagate-return-borrows-at
-        ctx
-        env
-        (tc_core.tc-moved-empty)
-        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
-        (tc_core.tc-name-id-list-cons (Nil) root)
-        (Some path)
-        local)]
-    (if (and
-      (< global-path.root 0)
-      (=
-        (tc_core.tc-borrow-check-capture-owner
-          ctx
-          (tc_core.tc-global-shared-view shadowed-locals)
-          path).root
-        root)
-      (=
-        (tc_core.tc-borrow-check-capture-owner
-          ctx
-          (tc_core.tc-global-shared-view shadowed-locals)
-          global-path).root
-        global-path.root)
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths carried)
-        global-path
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths stored)
-        global-path
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths returned)
-        global-path
-        (BorrowShared)))
-      (Ok)
-      (Err "global loan identity lost during protection"))))
-
-(define (compiler-typecheck-global-loan-provenance-ok?) : bool
-  (let
-    [root : i64 (ci.intern "global-loan-root")]
-    [path : tc_core.TcMovePath
-      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
-    [origin : ast.AstExpr (Var root)]
-    [local : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        path
-        (BorrowShared)
-        -1)]
-    [global : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared)
-        -1)]
-    [global-first : tc_core.TcMovedSet
-      (tc_core.tc-moved-union (& global) (tc_core.tc-global-shared-view local))]
-    [local-first : tc_core.TcMovedSet
-      (tc_core.tc-moved-union (& local) (tc_core.tc-global-shared-view global))]
-    [global-ref : i64 (ci.intern "global-ref")]
-    [local-ref : i64 (ci.intern "local-ref")]
-    [global-marker : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowLending global-ref)
-        -1)]
-    [both-markers : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        global-marker
-        path
-        (BorrowLending local-ref)
-        -1)]
-    [used-global : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowLendingUsed global-ref)
-        -1)]
-    [propagated : tc_core.TcMovedSet
-      (tc_core.tc-borrow-check-propagate-lending-uses used-global both-markers)]
-    [shadowed : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state
-        (tc_core.tc-global-shared-view global-first)
-        root
-        true)]
-    [local-view : tc_core.TcMovedSet
-      (tc_core.tc-global-shared-view global-first)]
-    [without-global : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-path-kind
-        (tc_core.tc-global-shared-view global-first)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared))]
-    [restored : tc_core.TcMovedSet
-      (tc_core.tc-moved-restore-root-state
-        (tc_core.tc-global-shared-view local)
-        (tc_core.tc-moved-root-snapshot
-          (tc_core.tc-global-shared-view global)
-          (bit-xor root -1)))]
-    [grown : tc_core.TcMovedSet
-      (compiler-typecheck-moved-set-growth
-        (tc_core.tc-moved-clone (& global))
-        (ci.intern "other-root")
-        0
-        128
-        origin)]
-    (and
-      (match (compiler-typecheck-global-loan-protection-result)
-        [(Ok) true]
-        [(Err _) false])
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths propagated)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowLendingUsed global-ref))
-      (=
-        (tc_core.tc-moved-path-facts-len
-          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global-first)))
-        2)
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths shadowed)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths local-view)
-        path
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths without-global)
-        path
-        (BorrowShared))
-      (not
-        (tc_core.tc-moved-same-facts?
-          (& global)
-          (& local)
-          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
-          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local))))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths global-first)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths local-first)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths restored)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared))
-      (tc_core.tc-moved-path-facts-contains-exact-kind?
-        (tc_core.tc-moved-paths grown)
-        (tc_core.tc-move-path-capture-owner path 137)
-        (BorrowShared)))))
-
-(define (compiler-typecheck-moved-set-metrics-ok?) : bool
-  (let
-    [alpha-id : i64 (ci.intern "alpha")]
-    [beta-id : i64 (ci.intern "beta")]
-    [origin-root-id : i64 (ci.intern "origin-root")]
-    [items-id : i64 (ci.intern "items")]
-    [shadowed-id : i64 (ci.intern "shadowed")]
-    [shared-id : i64 (ci.intern "shared")]
-    [growth-id : i64 (ci.intern "growth")]
-    [items0 : tc_core.TcMovePath
-      (tc_core.TcMovePath
-        items-id
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-empty)
-          0))]
-    [items1 : tc_core.TcMovePath
-      (tc_core.TcMovePath
-        items-id
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-empty)
-          1))]
-    [items-root : tc_core.TcMovePath
-      (tc_core.TcMovePath items-id (tc_core.tc-move-path-segments-empty))]
-    [shadowed-root : tc_core.TcMovePath
-      (tc_core.TcMovePath shadowed-id (tc_core.tc-move-path-segments-empty))]
-    [growth0 : tc_core.TcMovePath
-      (tc_core.TcMovePath
-        growth-id
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-empty)
-          0))]
-    [growth1 : tc_core.TcMovePath
-      (tc_core.TcMovePath
-        growth-id
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-empty)
-          1))]
-    [growth63 : tc_core.TcMovePath
-      (tc_core.TcMovePath
-        growth-id
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-empty)
-          63))]
-    [origin-a : ast.AstExpr (Var (ci.intern "origin-a"))]
-    [origin-b : ast.AstExpr (Var (ci.intern "origin-b"))]
-    [empty : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
-    [one : tc_core.TcMovedSet (tc_core.tc-moved-add empty alpha-id)]
-    [dupe : tc_core.TcMovedSet
-      (tc_core.tc-moved-add (tc_core.tc-moved-clone one) alpha-id)]
-    [two : tc_core.TcMovedSet
-      (tc_core.tc-moved-add (tc_core.tc-moved-clone dupe) beta-id)]
-    [removed : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove (tc_core.tc-moved-clone two) alpha-id)]
-    [origin-whole : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-origin
-        (tc_core.tc-moved-empty)
-        origin-root-id
-        (ast.ast-global-shared-view origin-a))]
-    [origin-whole-id : i64
-      (match (tc_core.tc-moved-conflict
-        (tc_core.tc-global-shared-view origin-whole)
-        origin-root-id)
-        [(Some key origin-id)
-          (if (string.eq key "origin-root")
-            origin-id
-            (tc_core.tc-moved-no-origin-id))]
-        [No (tc_core.tc-moved-no-origin-id)])]
-    [origin-whole-ok : bool
-      (not (= origin-whole-id (tc_core.tc-moved-no-origin-id)))]
-    [origin-clone-ok : bool
-      (match (tc_core.tc-moved-conflict
-        (tc_core.tc-moved-clone origin-whole)
-        origin-root-id)
-        [(Some _ origin-id) (= origin-id origin-whole-id)]
-        [No false])]
-    [partial : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-projection-path
-        (tc_core.tc-moved-add-projection-path
-          (tc_core.tc-moved-empty)
-          items-id
-          items0
-          (ast.ast-global-shared-view origin-a))
-        items-id
-        items1
-        (ast.ast-global-shared-view origin-b))]
-    [partial-exact-conflict : bool
-      (match (tc_core.tc-moved-path-conflict
-        (tc_core.tc-global-shared-view partial)
-        items0)
-        [(Some key origin-id)
-          (and
-            (string.eq key "items[0]")
-            (not (= origin-id (tc_core.tc-moved-no-origin-id))))]
-        [No false])]
-    [partial-parent-conflict : bool
-      (match (tc_core.tc-moved-path-conflict
-        (tc_core.tc-global-shared-view partial)
-        items-root)
-        [(Some _ origin-id) (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-        [No false])]
-    [partial-root-conflict : bool
-      (match (tc_core.tc-moved-root-conflict
-        (tc_core.tc-global-shared-view partial)
-        items-id)
-        [(Some _ origin-id) (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-        [No false])]
-    [partial-one : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-exact-path
-        (tc_core.tc-moved-clone partial)
-        items-id
-        items0)]
-    [partial-clear : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-exact-path
-        (tc_core.tc-moved-clone partial-one)
-        items-id
-        items1)]
-    [partial-keeps-sibling : bool
-      (match (tc_core.tc-moved-path-exact-conflict
-        (tc_core.tc-global-shared-view partial-one)
-        items1)
-        [(Some _ _) true]
-        [No false])]
-    [partial-keeps-marker : bool
-      (tc_core.tc-moved-partial? partial-one items-id)]
-    [partial-clears-sibling : bool
-      (not
-        (match (tc_core.tc-moved-path-exact-conflict
-          (tc_core.tc-global-shared-view partial-clear)
-          items1)
-          [(Some _ _) true]
-          [No false]))]
-    [partial-clears-marker : bool
-      (not (tc_core.tc-moved-partial? partial-clear items-id))]
-    [root-path : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-moved-empty)
-        shadowed-root
-        (Move)
-        (tc_core.tc-moved-no-origin-id))]
-    [root-path-clear : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state root-path shadowed-id false)]
-    [root-path-clears : bool
-      (match (tc_core.tc-moved-path-exact-conflict
-        root-path-clear
-        shadowed-root)
-        [(Some _ _) false]
-        [No true])]
-    [retained-parent : tc_core.TcMovedSet
-      (compiler-typecheck-moved-set-growth
-        (tc_core.tc-moved-empty)
-        items-id
-        0
-        2
-        (ast.ast-global-shared-view origin-a))]
-    [sibling-successor : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-path-fact
-        (tc_core.tc-global-shared-view retained-parent)
-        shadowed-root
-        (BorrowShared)
-        (ast.ast-node-push (ast.ast-global-shared-view origin-b)))]
-    [growth-successor : tc_core.TcMovedSet
-      (compiler-typecheck-moved-set-growth
-        (tc_core.tc-global-shared-view retained-parent)
-        growth-id
-        0
-        64
-        origin-a)]
-    [retained-parent-isolated : bool
-      (and
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          retained-parent
-          items0
-          (BorrowShared))
-          [(Some _ _) true]
-          [No false])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          retained-parent
-          shadowed-root
-          (BorrowShared))
-          [(Some _ _) false]
-          [No true])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          retained-parent
-          growth63
-          (BorrowShared))
-          [(Some _ _) false]
-          [No true]))]
-    [successors-isolated : bool
-      (and
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          growth-successor
-          items0
-          (BorrowShared))
-          [(Some _ origin-id)
-            (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
-          [No false])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          growth-successor
-          growth63
-          (BorrowShared))
-          [(Some _ _) true]
-          [No false])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          growth-successor
-          shadowed-root
-          (BorrowShared))
-          [(Some _ _) false]
-          [No true])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
-          items0
-          (BorrowShared))
-          [(Some _ _) true]
-          [No false])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
-          shadowed-root
-          (BorrowShared))
-          [(Some _ _) true]
-          [No false])
-        (match (tc_core.tc-moved-path-exact-conflict-kind
-          sibling-successor
-          growth63
-          (BorrowShared))
-          [(Some _ _) false]
-          [No true]))]
-    [query-agrees-with-facts : bool
-      (and
-        (tc_core.tc-moved-path-facts-contains-exact-kind?
-          (tc_core.tc-moved-paths
-            (tc_core.tc-global-shared-view growth-successor))
-          items0
-          (BorrowShared))
-        (not
-          (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths growth-successor)
-            shadowed-root
-            (BorrowShared))))]
-    [separate-store : tc_core.TcMovedSet
-      (compiler-typecheck-moved-set-growth
-        (tc_core.tc-moved-empty)
-        growth-id
-        0
-        2
-        origin-b)]
-    [cross-store-union : tc_core.TcMovedSet
-      (tc_core.tc-moved-union retained-parent separate-store)]
-    [cross-store-facts : tc_core.TcMovedPathFacts
-      (tc_core.tc-moved-paths (tc_core.tc-global-shared-view cross-store-union))]
-    [cross-store-destination-ok : bool
-      (compiler-typecheck-moved-facts-same-dense-store?
-        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view retained-parent))
-        (tc_core.tc-global-shared-view cross-store-facts))]
-    [cross-store-order-ok : bool
-      (tc_core.tc-move-path-eq?
-        (core_tests.tc-moved-path-fact-path
-          (tc_core.tc-moved-path-facts-head cross-store-facts))
-        growth0)]
-    [cross-store-removed : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-path-kind
-        (tc_core.tc-global-shared-view cross-store-union)
-        growth1
-        (BorrowShared))]
-    [cross-store-remove-ok : bool
-      (and
-        (=
-          (tc_core.tc-moved-path-facts-len
-            (tc_core.tc-moved-paths
-              (tc_core.tc-global-shared-view cross-store-removed)))
-          3)
-        (tc_core.tc-moved-path-facts-contains-exact-kind?
-          (tc_core.tc-moved-paths
-            (tc_core.tc-global-shared-view cross-store-removed))
-          growth0
-          (BorrowShared))
-        (not
-          (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths cross-store-removed)
-            growth1
-            (BorrowShared))))]
-    [missing-removal : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-path-kind
-        (tc_core.tc-global-shared-view cross-store-union)
-        shadowed-root
-        (Move))]
-    [missing-removal-preserves-snapshot : bool
-      (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths
-          (tc_core.tc-global-shared-view cross-store-union))
-        (tc_core.tc-moved-paths missing-removal))]
-    [missing-filter : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state
-        (tc_core.tc-global-shared-view cross-store-union)
-        shadowed-id
-        false)]
-    [missing-filter-preserves-snapshot : bool
-      (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths
-          (tc_core.tc-global-shared-view cross-store-union))
-        (tc_core.tc-moved-paths missing-filter))]
-    [filtered-growth : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state cross-store-union growth-id false)]
-    [changed-filter-reuses-tail : bool
-      (compiler-typecheck-moved-facts-same-dense-snapshot?
-        (tc_core.tc-moved-paths retained-parent)
-        (tc_core.tc-moved-paths filtered-growth))]
-    [union-left : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 101)]
-    [union-right : tc_core.TcMovedSet
-      (tc_core.tc-moved-add-value (tc_core.tc-moved-empty) shared-id 202)]
-    [union-origin-left : bool
-      (match (tc_core.tc-moved-conflict
-        (tc_core.tc-moved-union union-left union-right)
-        shared-id)
-        [(Some _ origin-id) (= origin-id 101)]
-        [No false])]
-    (and
-      (=
-        (let
-          [set (tc_core.tc-moved-empty)]
-          (tc_core.tc-moved-len set))
-        0)
-      (= (tc_core.tc-moved-len dupe) 1)
-      (= (tc_core.tc-moved-len two) 2)
-      (>= (core_tests.tc-moved-capacity two) 8)
-      (not (tc_core.tc-moved-contains? removed alpha-id))
-      origin-whole-ok
-      origin-clone-ok
-      partial-exact-conflict
-      partial-parent-conflict
-      partial-root-conflict
-      partial-keeps-sibling
-      partial-keeps-marker
-      partial-clears-sibling
-      partial-clears-marker
-      root-path-clears
-      retained-parent-isolated
-      successors-isolated
-      query-agrees-with-facts
-      cross-store-destination-ok
-      cross-store-order-ok
-      cross-store-remove-ok
-      missing-removal-preserves-snapshot
-      missing-filter-preserves-snapshot
-      changed-filter-reuses-tail
-      union-origin-left)))
-
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
 ;; aggregate/projection sharing, one-shot owner transfers, branch isolation,
@@ -9796,48 +9268,6 @@
 "
     src))
 
-(define (compiler-typecheck-scope-owner-state-isolation-ok?) : bool
-  (let
-    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
-    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
-    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
-    [name : i64 (ci.intern-compat-state-intern (&mut owner) "handle")]
-    (ci.intern-compat-state-intern (&mut decoy) "other-0")
-    (ci.intern-compat-state-intern (&mut decoy) "other-1")
-    (ci.intern-compat-state-intern (&mut decoy) "other-2")
-    (ci.intern-compat-state-intern (&mut decoy) "other-3")
-    (ci.intern-compat-state-install! (& owner))
-    (let
-      [locals : tc_core.TcMovedSet
-        (tc_core.tc-move-enter-loop-body
-          (tc_core.tc-move-bind-let-obligation (tc_core.tc-moved-empty) name 42))]
-      (ci.intern-compat-state-capture-from-globals! (&mut owner))
-      (ci.intern-compat-state-install! (& decoy))
-      (let
-        [foreign : tc_core.TcMovedSet
-          (tc_core.tc-move-bind-let-obligation (tc_core.tc-moved-empty) name 43)]
-        [ok : bool
-          (and
-            (tc_core.tc-move-owners-in-scope?
-              (tc_core.tc-global-shared-view locals))
-            (=
-              (tc_core.tc-move-loop-depth
-                (tc_core.tc-global-shared-view locals))
-              1)
-            (tc_core.tc-move-let-obligated?
-              (tc_core.tc-global-shared-view locals)
-              name)
-            (tc_core.tc-move-owners-in-scope?
-              (tc_core.tc-global-shared-view foreign))
-            (= (tc_core.tc-move-loop-depth foreign) 0))]
-        (ci.intern-compat-state-install! (& installed))
-        (unsafe
-          (ci.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena (& owner)))
-          (ci.tl_arena_destroy
-            (ci.intern-compat-state-persistent-arena (& decoy))))
-        ok))))
-
 (define (compiler-typecheck-deep-owner-source [body : String]) : String
   (let
     [nested : String body]
@@ -9851,7 +9281,6 @@
 
 (define (compiler-typecheck-let-obligation-tests-ok?) : bool
   (and
-    (compiler-typecheck-scope-owner-state-isolation-ok?)
     (compiler-typecheck-ok?
       (compiler-typecheck-deep-owner-source
         "(let [h : FileHandle (open 2)] (begin (while true (break)) (cleanup-file-handle h)))"))
@@ -9902,7 +9331,7 @@
     (begin
       (if c (cleanup-file-handle h) unit)
       0)))")
-      "typecheck: cleanup obligation of `h` is discharged on only some paths through this branch")
+      "typecheck: cleanup obligation of `h` is discharged on only some paths at the end of its let scope")
     ;; A same-shaped function is not the declared disposer.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-let-obligation-source
@@ -9935,8 +9364,6 @@
 
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
-    (compiler-typecheck-global-loan-provenance-ok?)
-    (compiler-typecheck-moved-set-metrics-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-use-after-move-source)
       "typecheck: use of moved value `s`")
@@ -10018,17 +9445,18 @@
   (Closed))
 (define (cleanup-enum-match [ticket : Ticket]) : i64
   (match ticket [(Open code) code] [(Closed) 0]))")
-    (compiler-typecheck-error-ok?
+    ;; A by-value match moves only the parts it binds by move (Rust's place
+    ;; semantics): binding a Copy payload leaves the owner whole.
+    (compiler-typecheck-ok?
       "(defenum Ticket
   (:cleanup cleanup-ticket)
   (Open i64)
   (Closed))
 (define (take-ticket [ticket : Ticket]) : unit unit)
-(define (bad-cleanup-enum-match-param-reuse [ticket : Ticket]) : unit
+(define (cleanup-enum-match-param-reuse [ticket : Ticket]) : unit
   (begin
     (match ticket [(Open code) unit] [(Closed) unit])
-    (take-ticket ticket)))"
-      "typecheck: use of moved value `ticket`")
+    (take-ticket ticket)))")
     (compiler-typecheck-error-ok?
       "(defenum Ticket
   (:cleanup cleanup-ticket)
@@ -10040,7 +9468,7 @@
     (begin
       (match ticket [(Open code) unit] [(Closed) unit])
       (take-ticket ticket))))"
-      "typecheck: use of moved value `ticket`")
+      "typecheck: cleanup owner `ticket` moved before with scope exit")
     (compiler-typecheck-ok?
       (str_cat.str-cat
         (compiler-typecheck-move-cleanup-enum-payload-prefix)
@@ -10109,14 +9537,14 @@
     (take-holder (Holder h 1))
     h.fd))"
       "typecheck: use of moved value `h`")
-    (compiler-typecheck-error-ok?
+    ;; The use after `return` is unreachable.
+    (compiler-typecheck-ok?
       "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-return [h : FileHandle]) : FileHandle
-  (begin (return h) h))"
-      "typecheck: use of moved value `h`")
+(define (owner-return [h : FileHandle]) : FileHandle
+  (begin (return h) h))")
     (compiler-typecheck-ok?
       "(defstruct Counter
   (value i64))
@@ -10592,7 +10020,7 @@
     (compiler-typecheck-error-ok?
       "(define (lambda-body-discard [s : String]) : String
   (begin (lambda () : unit (let [t : String s] unit)) s))"
-      "typecheck: closure capability would be erased by escaping the direct local binding")
+      "typecheck: use of moved value `s`")
     (compiler-typecheck-error-ok?
       "(define (owner-lambda-capture-box-ok [cell : (Box i64)]) : (-> i64)
   (lambda () : i64 (deref cell)))"
@@ -10613,7 +10041,7 @@
       "(define (take-cell [cell : (Box i64)]) : unit unit)
 (define (bad-owner-lambda-body-reuse [cell : (Box i64)]) : (-> i64)
   (lambda () : i64 (begin (take-cell cell) (deref cell))))"
-      "typecheck: closure capability would be erased by escaping the direct local binding")
+      "typecheck: use of moved value `cell`")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-while-loop-carried-param-source)
       "typecheck: cannot move loop-carried owner value `s`")
@@ -11016,16 +10444,19 @@
       (break))
     (set! (array-ref items 0) 4)
     (read-refs refs)))")
-    ;; A continue nested in an operand reaches the backedge, from which the
-    ;; loop exits.
-    (compiler-typecheck-borrow-operand-loop-error-ok?
-      "(define (continue-operand [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+    ;; A continue nested in an operand reaches the backedge with the borrow
+    ;; stored, so the next trip borrows `items[0]` mutably again while
+    ;; `refs` holds it (Rust's E0499), before the write after the loop.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-borrow-operand-loop-source
+        "(define (continue-operand [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
   (begin
     (while run
       (keep (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (continue)) 1)))
       (break))
     (set! (array-ref items 0) 4)
     (read-refs refs)))")
+      "typecheck: cannot mutably borrow borrowed place `items`")
     ;; Accepted: a body-local borrow ended at the break, a stored borrow read
     ;; only through its holder, and breaks with no borrow live.
     (compiler-typecheck-ok?

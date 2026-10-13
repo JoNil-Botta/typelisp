@@ -368,8 +368,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (__tl_dyn-array i64) left.words]
-    [right-words : (__tl_dyn-array i64) right.words]
+    [left-words : (__tl_dyn-array i64) (compiler-live-shared-view left.words)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-shared-view right.words)]
     [left-count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     (if (= right-count 0)
@@ -450,8 +450,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (__tl_dyn-array i64) left.words]
-    [right-words : (__tl_dyn-array i64) right.words]
+    [left-words : (__tl_dyn-array i64) (compiler-live-shared-view left.words)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-shared-view right.words)]
     [count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     [probe-count : i64 (compiler-live-set-min count right-count)]
@@ -505,8 +505,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
   (let
-    [left-words : (__tl_dyn-array i64) left.words]
-    [right-words : (__tl_dyn-array i64) right.words]
+    [left-words : (__tl_dyn-array i64) (compiler-live-shared-view left.words)]
+    [right-words : (__tl_dyn-array i64) (compiler-live-shared-view right.words)]
     [left-count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     [count : i64
@@ -914,7 +914,7 @@
     [instr : ir.CompilerIrInstr
       (owned_view.compiler-owned-reference-shared-view instr)]
     (match (compiler-live-shared-view instr)
-      [(AddrOf _ src) (compiler-live-set1 src)]
+      [(AddrOf _ src _storage-words) (compiler-live-set1 src)]
       [_
         (ir.compiler-ir-instr-fold-uses
           instr
@@ -1062,7 +1062,7 @@
     n
     (compiler-live-use-ids-add-spmd-args-seq!
       out
-      (match (array-ref seq.slots index)
+      (match (owned_view.compiler-owned-element-view seq.slots index)
         [(Arg _ value _) (compiler-live-use-ids-add-value! out n (& value))])
       seq
       (+ index 1))))
@@ -1085,7 +1085,7 @@
     [(or (Alloc _ _) (LaneId _ _ _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
          (Jump _))
       0]
-    [(AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
+    [(AddrOf _ src _storage-words) (compiler-live-use-ids-push! out 0 src)]
     [(or (Gep _ base offset _) (StorePtr base offset _)
          (StoreOwned base offset _) (CopyBytes base offset _)
          (BoundsCheck base offset _) (BinOp _ _ base offset _)
@@ -1955,7 +1955,7 @@
         (set!
           (array-ref out index)
           (if at-live-out?
-            live-out
+            (compiler-live-shared-view live-out)
             (compiler-live-scratch-freeze (& words) active-count)))
         (set! at-live-out? false)
         (set!
@@ -2277,10 +2277,11 @@
   [sets : (& sets CompilerLiveInstrSetVec)]
   [index : i64]) : CompilerLiveI64Set
   (let
-    [items : (__tl_dyn-array CompilerLiveI64Set) sets.items]
+    [items : (__tl_dyn-array CompilerLiveI64Set)
+      (owned_view.compiler-owned-reference-shared-view (& sets.items))]
     (if (or (< index 0) (>= index (array-length items)))
       (compiler-live-set-empty)
-      (array-ref items index))))
+      (owned_view.compiler-owned-element-view items index))))
 
 (define (compiler-live-after
   [liveness : (& CompilerFunctionLiveness)]

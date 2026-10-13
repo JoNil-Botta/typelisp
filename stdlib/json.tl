@@ -118,7 +118,11 @@
     [i : i64 0]
     (set! (array-ref slots 0) head)
     (while (< i n)
-      (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
+      ;; `items` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots (+ i 1))
+        (unsafe
+          (json-array-element-shared-view items.slots i)))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 
@@ -138,7 +142,11 @@
     [i : i64 0]
     (set! (array-ref slots 0) (JsonMember key value))
     (while (< i n)
-      (set! (array-ref slots (+ i 1)) (array-ref items.slots i))
+      ;; `items` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots (+ i 1))
+        (unsafe
+          (json-array-element-shared-view items.slots i)))
       (set! i (+ i 1)))
     (JsonMemberSeq slots count)))
 
@@ -351,7 +359,11 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (while (< i n)
-      (set! (array-ref slots i) (array-ref items.slots (- (- n 1) i)))
+      ;; `items` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (json-array-element-shared-view items.slots (- (- n 1) i))))
       (set! i (+ i 1)))
     (JsonSeq slots n)))
 
@@ -362,7 +374,11 @@
     [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (while (< i n)
-      (set! (array-ref slots i) (array-ref items.slots (- (- n 1) i)))
+      ;; `items` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (json-array-element-shared-view items.slots (- (- n 1) i))))
       (set! i (+ i 1)))
     (JsonMemberSeq slots n)))
 
@@ -408,7 +424,11 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (while (< i count)
-      (set! (array-ref slots i) (array-ref items.slots (+ i 1)))
+      ;; `items` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (json-array-element-shared-view items.slots (+ i 1))))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 
@@ -424,11 +444,18 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (while (< i ln)
-      (set! (array-ref slots i) (array-ref left.slots i))
+      ;; `left` and `right` are consumed: each element moves bitwise once.
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (json-array-element-shared-view left.slots i)))
       (set! i (+ i 1)))
     (set! i 0)
     (while (< i rn)
-      (set! (array-ref slots (+ ln i)) (array-ref right.slots i))
+      (set!
+        (array-ref slots (+ ln i))
+        (unsafe
+          (json-array-element-shared-view right.slots i)))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 

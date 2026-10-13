@@ -170,18 +170,18 @@
   (secondary-direct bool))
 
 (define (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [root-id : i64]
   [secondary-root-id : i64]) : unit
+  ;; A top-level query may follow a completed batch entry whose inactive
+  ;; observer frame belonged to the reclaimed entry arena. Clear it before
+  ;; preserving the ordinary push/pop semantics used by the demand walker.
+  (if (load.compiler-load-session-state-lazy-qualified-observer-active? state)
+    unit
+    (load.compiler-load-session-state-lazy-qualified-observer-reset! state))
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
-    ;; A top-level query may follow a completed batch entry whose inactive
-    ;; observer frame belonged to the reclaimed entry arena. Clear it before
-    ;; preserving the ordinary push/pop semantics used by the demand walker.
-    (if (load.compiler-load-session-state-lazy-qualified-observer-active? state)
-      unit
-      (load.compiler-load-session-state-lazy-qualified-observer-reset! state))
+    [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+      (&mut state.lazy-qualified-observer)]
     (set!
       (array-ref observer.stack 0)
       (compiler-load-lazy-qualified-observer-stack-push
@@ -214,18 +214,26 @@
     (load.compiler-load-lazy-qualified-observer-flag-set! observer 3 false)))
 
 (define (compiler-load-session-state-lazy-qualified-observer-end-pair!
-  [state : (& state load.CompilerLoadSessionState)]) : CompilerLoadLazyQualifiedObserverResult
+  [state : (&mut state load.CompilerLoadSessionState)]) : CompilerLoadLazyQualifiedObserverResult
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
     [out : CompilerLoadLazyQualifiedObserverResult
       (CompilerLoadLazyQualifiedObserverResult
-        (load.compiler-load-lazy-qualified-observer-members observer 0)
-        (load.compiler-load-lazy-qualified-observer-members observer 1)
-        (load.compiler-load-lazy-qualified-observer-flag observer 2)
-        (load.compiler-load-lazy-qualified-observer-flag observer 3))]
+        (load.compiler-load-lazy-qualified-observer-members
+          (& state.lazy-qualified-observer)
+          0)
+        (load.compiler-load-lazy-qualified-observer-members
+          (& state.lazy-qualified-observer)
+          1)
+        (load.compiler-load-lazy-qualified-observer-flag
+          (& state.lazy-qualified-observer)
+          2)
+        (load.compiler-load-lazy-qualified-observer-flag
+          (& state.lazy-qualified-observer)
+          3))]
     [stack : load.CompilerLoadLazyQualifiedObserverStack
-      (load.compiler-load-global-array-element-shared-view observer.stack 0)]
+      (load.compiler-load-global-array-element-shared-view
+        state.lazy-qualified-observer.stack
+        0)]
     [len : i64 (compiler-load-lazy-qualified-observer-stack-count stack)]
     (if (= len 0)
       ;; Preserve the historical empty-pop behavior: return the current
@@ -234,6 +242,8 @@
       (let
         [frame : load.CompilerLoadLazyQualifiedObserverFrame
           (clone (array-ref stack.slots (- len 1)))]
+        [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+          (&mut state.lazy-qualified-observer)]
         (set!
           (array-ref observer.stack 0)
           (load.CompilerLoadLazyQualifiedObserverStack stack.slots (- len 1)))
@@ -471,7 +481,7 @@
               [_ false])
             (string.eq
               bytes
-              (ctfe.ctfe-embedded-stdlib-binary-data-bytes (& want-source))))]
+              (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 (& want-source))))]
         [_ false])]
     [_ false]))
 
@@ -812,6 +822,8 @@
 (define (compiler-load-surface-summary-shape-ok?
   [summary : load.CompilerLoadSurfaceSummary]) : bool
   (let
+    ;; Read the whole summary before its lists move out of it.
+    [eager? : bool (compiler-load-surface-summary-requires-eager? summary)]
     [imports : load.CompilerLoadSurfaceImportList summary.imports]
     [decls : load.CompilerLoadSurfaceDeclList summary.decls]
     (and
@@ -888,7 +900,7 @@
       summary.has-export-metadata
       summary.has-generated-decls
       summary.has-decl-emitting-macro
-      (compiler-load-surface-summary-requires-eager? summary))))
+      eager?)))
 
 (define (compiler-load-surface-mark-generated-value! [program : ast.AstProgram]) : bool
   (match program
@@ -4147,7 +4159,7 @@
         (owned_view.compiler-owned-shared-view state-a))]
     [_admit : bool
       (load.compiler-load-session-state-program-admission-record
-        state-a
+        (&mut state-a)
         program-key)]
     [prelude-key : load.CompilerLoadPreludeCacheKey
       (load.CompilerLoadPreludeCacheKey
@@ -4683,7 +4695,7 @@
         (load.compiler-load-session-state-dotted-path-cache-reset!
           (owned_view.compiler-owned-shared-view state-b))
         (load.compiler-load-session-state-dotted-path-cache-store!
-          state-b
+          (&mut state-b)
           dotted-id
           "pkg/member.tl")
         (load.compiler-load-session-state-dotted-path-cache-reset!
@@ -4700,11 +4712,11 @@
         (load.compiler-load-session-state-lazy-import-record-skip!
           (owned_view.compiler-owned-shared-view state-a))
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-          state-a
+          (&mut state-a)
           alias-a-id
           secondary-root-id)
         (load.compiler-load-session-state-lazy-qualified-observer-note!
-          state-a
+          (&mut state-a)
           alias-a-member-id))]
     [_record-b : unit
       (begin
@@ -4716,18 +4728,20 @@
         (load.compiler-load-session-state-lazy-import-record-skip!
           (owned_view.compiler-owned-shared-view state-b))
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-          state-b
+          (&mut state-b)
           alias-b-id
           secondary-root-id)
         (load.compiler-load-session-state-lazy-qualified-observer-note!
-          state-b
+          (&mut state-b)
           alias-b-member-id))]
     [observed-b : CompilerLoadLazyQualifiedObserverResult
-      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-b)]
+      (compiler-load-session-state-lazy-qualified-observer-end-pair!
+        (&mut state-b))]
     [a-still-active : bool
       (load.compiler-load-session-state-lazy-qualified-observer-active? state-a)]
     [observed-a : CompilerLoadLazyQualifiedObserverResult
-      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-a)]
+      (compiler-load-session-state-lazy-qualified-observer-end-pair!
+        (&mut state-a))]
     [_finish : unit
       (begin
         (load.compiler-load-session-state-surface-summary-load-exit!
@@ -4908,12 +4922,12 @@
   (= (% level 4) 2))
 
 (define (compiler-load-lazy-qualified-observer-test-configure!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [offset : i64]
   [level : i64]) : unit
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
+    [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+      (&mut state.lazy-qualified-observer)]
     ;; Production begin-pair makes every active query exhaustive. Vary this
     ;; internal bit here so the frame test proves it is snapshotted rather
     ;; than accidentally derived from active state during a pop.
@@ -5064,7 +5078,7 @@
     (not result.secondary-direct)))
 
 (define (compiler-load-lazy-qualified-observer-test-push-depth!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [offset : i64]
   [depth : i64]) : unit
   (for [level (iterator.range 0 depth)]
@@ -5093,23 +5107,23 @@
     [ok : bool true]
     (while (< level depth)
       (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-        state-a
+        (&mut state-a)
         (compiler-load-lazy-qualified-observer-test-root offset-a level)
         (compiler-load-lazy-qualified-observer-test-secondary-root
           offset-a
           level))
       (compiler-load-lazy-qualified-observer-test-configure!
-        state-a
+        (&mut state-a)
         offset-a
         level)
       (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-        state-b
+        (&mut state-b)
         (compiler-load-lazy-qualified-observer-test-root offset-b level)
         (compiler-load-lazy-qualified-observer-test-secondary-root
           offset-b
           level))
       (compiler-load-lazy-qualified-observer-test-configure!
-        state-b
+        (&mut state-b)
         offset-b
         level)
       (+= level 1))
@@ -5118,7 +5132,7 @@
       (let
         [result-b : CompilerLoadLazyQualifiedObserverResult
           (compiler-load-session-state-lazy-qualified-observer-end-pair!
-            state-b)]
+            (&mut state-b))]
         (set!
           ok
           (and
@@ -5138,7 +5152,7 @@
           (let
             [result-a : CompilerLoadLazyQualifiedObserverResult
               (compiler-load-session-state-lazy-qualified-observer-end-pair!
-                state-a)]
+                (&mut state-a))]
             (set!
               ok
               (and
@@ -5159,11 +5173,11 @@
     ;; A reset from a deep live stack must discard its backing slots rather
     ;; than leave an arena-owned array reachable through the session state.
     (compiler-load-lazy-qualified-observer-test-push-depth!
-      state-reset
+      (&mut state-reset)
       offset-reset
       depth)
     (load.compiler-load-session-state-lazy-qualified-observer-reset!
-      state-reset)
+      (&mut state-reset))
     (set!
       ok
       (and
@@ -5175,17 +5189,17 @@
           state-reset)))
     ;; The state remains reusable after that reset.
     (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-      state-reset
+      (&mut state-reset)
       (compiler-load-lazy-qualified-observer-test-root offset-reset 0)
       (compiler-load-lazy-qualified-observer-test-secondary-root offset-reset 0))
     (compiler-load-lazy-qualified-observer-test-configure!
-      state-reset
+      (&mut state-reset)
       offset-reset
       0)
     (let
       [reset-result : CompilerLoadLazyQualifiedObserverResult
         (compiler-load-session-state-lazy-qualified-observer-end-pair!
-          state-reset)]
+          (&mut state-reset))]
       (set!
         ok
         (and
@@ -5201,9 +5215,11 @@
     ;; leave both independent states inactive.
     (let
       [underflow-a : CompilerLoadLazyQualifiedObserverResult
-        (compiler-load-session-state-lazy-qualified-observer-end-pair! state-a)]
+        (compiler-load-session-state-lazy-qualified-observer-end-pair!
+          (&mut state-a))]
       [underflow-b : CompilerLoadLazyQualifiedObserverResult
-        (compiler-load-session-state-lazy-qualified-observer-end-pair! state-b)]
+        (compiler-load-session-state-lazy-qualified-observer-end-pair!
+          (&mut state-b))]
       (and
         ok
         (compiler-load-lazy-qualified-observer-test-empty-result?
@@ -5516,7 +5532,8 @@
       (load.compiler-load-global-shared-view other-state)
       false)
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [outer-root : String
           (load.compiler-load-canonical-path

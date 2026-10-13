@@ -1,11 +1,25 @@
-# id|mode|source|expected-code-or--|stderr-contains-or--
+# id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
 # mode is check-ok, check-fail, run-exit, or run-trap. check-ok-windows and
 # check-fail-windows check for the Windows target on either host, through both
 # the source and the embedded stdlib, and never execute.
+# For check-fail, field 4 is the primary diagnostic source, optionally followed
+# by :line:column; '-' means the fixture source. The diagnostic must exit 1 and
+# match field 5 in its message/metadata, not merely in echoed source text.
 #
 # This corpus consolidates the SPEC.md "Safe code: no undefined behavior"
 # contract into TypeLisp fixtures. Comments name the safety area each fixture
 # locks down.
+
+# Canonical arena construction and exclusive representation access require unsafe.
+arena_raw_constructor_reject|check-fail|tests/safety/arena_raw_constructor_reject.tl|-|requires unsafe context
+arena_raw_constructor_helper_reject|check-fail|tests/safety/arena_raw_constructor_helper_reject.tl|-|requires unsafe context
+arena_raw_constructor_alias_reject|check-fail|tests/safety/arena_raw_constructor_alias_reject.tl|-|requires unsafe context
+arena_raw_constructor_value_reject|check-fail|tests/safety/arena_raw_constructor_value_reject.tl|-|requires unsafe context
+arena_raw_constructor_macro_reject|check-fail|tests/safety/arena_raw_constructor_macro_reject.tl|-|requires unsafe context
+arena_raw_field_write_reject|check-fail|tests/safety/arena_raw_field_write_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_replace_reject|check-fail|tests/safety/arena_raw_field_replace_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_borrow_reject|check-fail|tests/safety/arena_raw_field_borrow_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_parameter_reject|check-fail|tests/safety/arena_raw_field_parameter_reject.tl|-|mutation of Arena.handle requires unsafe context
 
 # Integer overflow wraps; supported integer/char casts have defined results.
 integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|-
@@ -16,7 +30,7 @@ division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|integer
 shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out of range: count=-1 width=32
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
-fixed_make_array_runtime_count_reject|check-fail|tests/safety/fixed_make_array_runtime_count_reject.tl|-|make-array length must be a non-negative compile-time integer
+fixed_make_array_runtime_count_reject|check-fail|tests/safety/fixed_make_array_runtime_count_reject.tl|tests/safety/fixed_make_array_runtime_count_reject.tl:2:3|make-array length must be a non-negative compile-time integer
 fixed_make_array_negative_count_reject|check-fail|tests/safety/fixed_make_array_negative_count_reject.tl|-|make-array length must be a non-negative compile-time integer
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 dead_frame_abort_only_trap|run-trap|tests/safety/dead_frame_abort_only_trap.tl|134|array index out of bounds: index=7 length=4
@@ -92,7 +106,7 @@ slice_record_shared_borrow_ok|run-exit|tests/safety/slice_record_shared_borrow_o
 slice_scalar_refs_ok|run-exit|tests/safety/slice_scalar_refs_ok.tl|42|-
 slice_record_view_escape_reject|check-fail|tests/safety/slice_record_view_escape_reject.tl|-|reference value would escape lexical scope
 slice_record_text_escape_reject|check-fail|tests/safety/slice_record_text_escape_reject.tl|-|reference value would escape lexical scope
-slice_record_mut_alias_reject|check-fail|tests/safety/slice_record_mut_alias_reject.tl|-|cannot read mutably borrowed place `items`
+slice_record_mut_alias_reject|check-fail|tests/safety/slice_record_mut_alias_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
 slice_record_mut_shorten_reject|check-fail|tests/safety/slice_record_mut_shorten_reject.tl|-|mutable reference referent type is invariant
 slice_macro_kind_reject|check-fail|tests/safety/slice_macro_kind_reject.tl|-|macro slice-only type operand S rejects i64: expected one of :kind slice
 slice_macro_nested_element_reject|check-fail|tests/safety/slice_macro_nested_element_reject.tl|-|bare Slice type is unsized; borrow it
@@ -133,7 +147,7 @@ slice_view_str_source_reject|check-fail|tests/safety/slice_view_str_source_rejec
 bytes_mut_view_shared_source_reject|check-fail|tests/safety/bytes_mut_view_shared_source_reject.tl|-|__tl_bytes-mut-view requires a mutable borrowed source
 bytes_mut_view_parent_child_reject|check-fail|tests/safety/bytes_mut_view_parent_child_reject.tl|-|cannot mutably borrow borrowed place `parent`
 bytes_view_escape_reject|check-fail|tests/safety/bytes_view_escape_reject.tl|-|returned reference lifetime must be tied to a parameter
-slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot read mutably borrowed place `parent[0]`
+slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot immutably borrow mutably borrowed place `parent`
 slice_view_parent_child_shared_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_shared_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_parent_child_mut_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_mut_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_nested_last_use_ok|run-exit|tests/safety/slice_view_nested_last_use_ok.tl|42|-
@@ -147,10 +161,10 @@ slice_split_at_mut_shared_reject|check-fail|tests/safety/slice_split_at_mut_shar
 slice_split_at_noninteger_reject|check-fail|tests/safety/slice_split_at_noninteger_reject.tl|-|argument 2 type mismatch: expected integer
 slice_split_at_arity_reject|check-fail|tests/safety/slice_split_at_arity_reject.tl|-|slice-split-at expected 2 arguments
 slice_split_at_source_live_reject|check-fail|tests/safety/slice_split_at_source_live_reject.tl|-|cannot read mutably borrowed place `items[0]`
-slice_split_at_parent_live_reject|check-fail|tests/safety/slice_split_at_parent_live_reject.tl|-|cannot read mutably borrowed place `view[0]`
-slice_split_at_child_parent_live_reject|check-fail|tests/safety/slice_split_at_child_parent_live_reject.tl|-|cannot read mutably borrowed place `left[0]`
+slice_split_at_parent_live_reject|check-fail|tests/safety/slice_split_at_parent_live_reject.tl|-|cannot immutably borrow mutably borrowed place `view`
+slice_split_at_child_parent_live_reject|check-fail|tests/safety/slice_split_at_child_parent_live_reject.tl|-|cannot immutably borrow mutably borrowed place `left`
 slice_split_at_escape_reject|check-fail|tests/safety/slice_split_at_escape_reject.tl|-|reference value would escape lexical scope
-slice_split_at_forge_reject|check-fail|tests/safety/slice_split_at_forge_reject.tl|-|use of moved value `view`
+slice_split_at_forge_reject|check-fail|tests/safety/slice_split_at_forge_reject.tl|-|cannot mutably borrow borrowed place `view`
 slice_split_at_tuple_forge_reject|check-fail|tests/safety/slice_split_at_tuple_forge_reject.tl|-|use of moved value `view`
 slice_split_at_shadow_check_ok|check-ok|tests/safety/slice_split_at_shadow_check_ok.tl|-|-
 
@@ -204,14 +218,14 @@ removed_string_to_int_reject|check-fail|tests/safety/removed_string_to_int_rejec
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
-mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items[0]`
-mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
-mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot read mutably borrowed place `bags.left[0]`
+mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place `items`
+mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
+mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
 mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 mut_to_immut_reborrow_return_live_reject|check-fail|tests/safety/mut_to_immut_reborrow_return_live_reject.tl|-|cannot assign to borrowed place
-mutable_reference_read_array_length_reject|check-fail|tests/safety/mutable_reference_read_array_length_reject.tl|-|cannot read mutably borrowed place `items`
-mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items[0]`
-mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_reference_read_struct_get_reject.tl|-|cannot read mutably borrowed place `bag.left`
+mutable_reference_read_array_length_reject|check-fail|tests/safety/mutable_reference_read_array_length_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
+mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items`
+mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_reference_read_struct_get_reject.tl|-|cannot move borrowed place `bag.left`
 global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
@@ -353,9 +367,9 @@ composite_arg_loan_loop_break_assignment_reject|check-fail|tests/safety/composit
 composite_arg_loan_field_store_reject|check-fail|tests/safety/composite_arg_loan_field_store_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_shadowed_assignment_reject|check-fail|tests/safety/composite_arg_loan_shadowed_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_assignment_move_reject|check-fail|tests/safety/composite_arg_loan_assignment_move_reject.tl|-|cannot move borrowed place `pair.left`
-composite_arg_loan_untracked_for_store_reject|check-fail|tests/safety/composite_arg_loan_untracked_for_store_reject.tl|-|under bindings the borrow checker does not track
+composite_arg_loan_untracked_for_store_reject|check-fail|tests/safety/composite_arg_loan_untracked_for_store_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_returned_assignment_reject|check-fail|tests/safety/composite_arg_loan_returned_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
-composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot read mutably borrowed place `pair.left`
+composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_move_reject|check-fail|tests/safety/composite_arg_loan_move_reject.tl|-|cannot move borrowed place `pair`
 composite_arg_loan_returned_reject|check-fail|tests/safety/composite_arg_loan_returned_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
 composite_arg_loan_unrelated_ok|check-ok|tests/safety/composite_arg_loan_unrelated_ok.tl|-|-
@@ -388,11 +402,11 @@ lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_i
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
 signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|error[E0210]: typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`
 signature_lifetime_alias_local_return_reject|check-fail|tests/safety/signature_lifetime_alias_local_return_reject.tl|-|typecheck: borrow lifetime mismatch
-lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
-vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
-vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_live_reject.tl|-|cannot read mutably borrowed place `values`
-vector_iter_mut_set_live_reject|check-fail|tests/safety/vector_iter_mut_set_live_reject.tl|-|cannot read mutably borrowed place `values`
-vector_iter_mut_pop_live_reject|check-fail|tests/safety/vector_iter_mut_pop_live_reject.tl|-|cannot read mutably borrowed place `values`
+lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot mutably borrow borrowed place `iter`
+vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot mutably borrow borrowed place `iter`
+vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_set_live_reject|check-fail|tests/safety/vector_iter_mut_set_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_pop_live_reject|check-fail|tests/safety/vector_iter_mut_pop_live_reject.tl|-|cannot mutably borrow borrowed place `values`
 vector_iter_mut_escape_reject|check-fail|tests/safety/vector_iter_mut_escape_reject.tl|-|reference value would escape lexical scope
 vector_iter_shared_push_live_reject|check-fail|tests/safety/vector_iter_shared_push_live_reject.tl|-|cannot mutably borrow borrowed place `values`
 vector_iter_shared_set_live_reject|check-fail|tests/safety/vector_iter_shared_set_live_reject.tl|-|cannot mutably borrow borrowed place `values`
@@ -409,13 +423,13 @@ reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborr
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
-reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot read mutably borrowed place `values`
+reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot mutably borrow borrowed place `values`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_box_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_box_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
 borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
-borrow_call_arg_final_use_before_nested_write_ok|check-ok|tests/safety/borrow_call_arg_final_use_before_nested_write_ok.tl|-|-
+borrow_call_arg_nested_write_before_call_reject|check-fail|tests/safety/borrow_call_arg_nested_write_before_call_reject.tl|tests/safety/borrow_call_arg_nested_write_before_call_reject.tl:13:17|cannot assign to borrowed place `n`
 borrow_call_arg_three_pending_reject|check-fail|tests/safety/borrow_call_arg_three_pending_reject.tl|-|cannot assign to borrowed place `n`
 borrow_call_outer_pending_reject|check-fail|tests/safety/borrow_call_outer_pending_reject.tl|-|cannot assign to borrowed place `n`
 borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_final_use_before_owner_write_ok.tl|-|-
@@ -436,7 +450,7 @@ substring_view_move_live_reject|check-fail|tests/safety/substring_view_move_live
 substring_view_arena_escape_reject|check-fail|tests/safety/substring_view_arena_escape_reject.tl|-|cannot escape with-arena
 byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_reject.tl|-|cannot move borrowed place `buf`
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
-byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
+byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
 fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
@@ -503,7 +517,7 @@ fs_rooted_linux_reopen_directory_copy_reject|check-fail|tests/safety/fs_rooted_l
 fs_rooted_linux_read_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_read_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
 fs_rooted_linux_arena_escape_reject|check-fail|tests/safety/fs_rooted_linux_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 unsafe_callable_value_launder_reject|check-fail|tests/safety/unsafe_callable_value_launder_reject.tl|-|danger is an unsafe callable and cannot be used as a plain function value
-format_pointer_safe_reject|check-fail|tests/safety/format_pointer_safe_reject.tl|-|ptr->int requires unsafe context
+format_pointer_safe_reject|check-fail|tests/safety/format_pointer_safe_reject.tl|stdlib/format.tl|ptr->int requires unsafe context
 format_pointer_box_reject|check-fail|tests/safety/format_pointer_box_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_checked_ref_reject|check-fail|tests/safety/format_pointer_checked_ref_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_function_reject|check-fail|tests/safety/format_pointer_function_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
@@ -514,7 +528,7 @@ format_pointer_nominal_reject|check-fail|tests/safety/format_pointer_nominal_rej
 format_pointer_slice_reject|check-fail|tests/safety/format_pointer_slice_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_string_reject|check-fail|tests/safety/format_pointer_string_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_arguments_lifetime_escape_reject|check-fail|tests/safety/format_arguments_lifetime_escape_reject.tl|-|reference value would escape lexical scope
-format_direct_hook_wrong_signature_reject|check-fail|tests/safety/format_direct_hook_wrong_signature_reject.tl|-|call `format-write` argument 1
+format_direct_hook_wrong_signature_reject|check-fail|tests/safety/format_direct_hook_wrong_signature_reject.tl|stdlib/format.tl|call `format-write` argument 1
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|typecheck: syscall requires unsafe context
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported
@@ -698,7 +712,7 @@ spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocati
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
 dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|typecheck: dotted field access p.0 cannot use numeric field segments; use tuple-ref or array-ref
 dotted_field_mut_borrow_dotted_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
-dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_borrow_bound_reject.tl|-|cannot read mutably borrowed place `pair.left`
+dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_borrow_bound_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
 dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
@@ -729,10 +743,11 @@ struct_match_pattern_wrong_head_reject|check-fail|tests/safety/struct_match_patt
 struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match_pattern_refutable_field_reject.tl|-|struct field pattern only supports binding, wildcard, or nested struct patterns
 struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
 tuple_match_pattern_arity_reject|check-fail|tests/safety/tuple_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
-tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair`
+tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair.0`
 tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`
+tuple_nested_second_move_reject|check-fail|tests/safety/tuple_nested_second_move_reject.tl|tests/safety/tuple_nested_second_move_reject.tl:6:25|use of moved value `pair.0.1`
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
-tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Tuple (Box i64) i64)` out of a shared reference
+tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Box i64)` out of a shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # A pattern matched through a shared reference binds Copy parts by value and a
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
@@ -748,7 +763,8 @@ match_copy_shadowed_owner_loan_reject|check-fail|tests/safety/match_copy_shadowe
 match_reference_shadowed_result_loan_reject|check-fail|tests/safety/match_reference_shadowed_result_loan_reject.tl|-|cannot assign to borrowed place `label`
 borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
 box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
-box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path
+box_deref_non_copy_projection_move_reject|check-ok|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|-
+box_deref_projection_move_consumes_box_reject|check-fail|tests/safety/box_deref_projection_move_consumes_box_reject.tl|-|use of moved value `b`
 # Value forms (#8268): a consumer moves the places at the value tails of the
 # `if`, `match`, `begin`, `let` or `with` it consumes when the value carries a
 # cleanup obligation. Each reject fails on main by acceptance.
@@ -804,7 +820,7 @@ move_shadow_inner_move_ok|run-exit|tests/safety/move_shadow_inner_move_ok.tl|42|
 fixed_array_match_pattern_arity_reject|check-fail|tests/safety/fixed_array_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
 fixed_array_match_pattern_wrong_type_reject|check-fail|tests/safety/fixed_array_match_pattern_wrong_type_reject.tl|-|tuple match requires (tuple ...)
 fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_array_match_pattern_refutable_nested_reject.tl|-|requires binding, wildcard, or nested tuple, struct, or box pattern
-fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
+fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items[0]`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
 borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
@@ -846,16 +862,16 @@ type_expr_macro_escape_reject|check-fail|tests/safety/type_expr_macro_escape_rej
 serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
 serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
-serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
+serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|tests/safety/serialize_bad_object_finish_hook_format.tl:20:4|typecheck: return type mismatch
 
 # Serialize view macros add no `unsafe` of their own, and generator helpers
 # check a caller's value expression in the caller's context.
-serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
-serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
-serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
-serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
-serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
-serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
+serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
+serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
+serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
+serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
+serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
 serialize_helper_caller_index_reject|check-fail|tests/safety/serialize_helper_caller_index_reject.tl|-|typecheck: ptr-read requires unsafe context
 serialize_views_explicit_unsafe_ok|run-exit|tests/safety/serialize_views_explicit_unsafe_ok.tl|42|-
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
@@ -878,12 +894,12 @@ generated_module_fixed_field_access_reject|check-fail|tests/safety/generated_mod
 generated_module_substituted_condition_reject|check-fail|tests/safety/generated_module_substituted_condition_reject.tl|-|typecheck: if condition must be bool: expected bool, found u8
 generated_module_fixed_constructor_argument_reject|check-fail|tests/safety/generated_module_fixed_constructor_argument_reject.tl|-|typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8
 generated_module_partial_catalog_ok|check-ok|tests/safety/generated_module_partial_catalog_ok.tl|-|-
-generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|generated_module_sibling_value_dependency_reject.tl:27:11
+generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|tests/safety/generated_module_sibling_value_dependency_reject.tl:27:11|error[E0206]: typecheck: integer operator expects matching integer operands
 generated_module_sibling_value_dependency_reject_message|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|error[E0206]: typecheck: integer operator expects matching integer operands
 
 serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
 serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char
-import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
+import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|tests/safety/import_arg_mismatch_lib.tl:5:14|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|cleanup obligation of `guard` is not discharged at the end of its let scope
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
@@ -900,7 +916,7 @@ thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_
 thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
 thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
-thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|tests/safety/thread_spawn_i64_shadowed_atomic_arena_lib.tl|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_borrowed_str_capture_reject|check-fail|tests/safety/thread_spawn_i64_borrowed_str_capture_reject.tl|-|lambda cannot capture immutable reference
@@ -931,7 +947,7 @@ arena_branded_control_flow_join_reject|check-fail|tests/safety/arena_branded_con
 arena_bare_cannot_rebrand_reject|check-fail|tests/safety/arena_bare_cannot_rebrand_reject.tl|-|expected (stdlib.arena/Arena owner), found stdlib.arena/Arena
 arena_branded_arity_reject|check-fail|tests/safety/arena_branded_arity_reject.tl|-|nominal lifetime argument arity mismatch
 arena_branded_return_only_reject|check-fail|tests/safety/arena_branded_return_only_reject.tl|-|returned reference lifetime must be tied to a parameter
-arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|scoped-region and lifetime-parameterized values cannot cross thread boundaries
+arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|lambda cannot capture immutable reference; reference value would escape lexical scope
 arena_branded_in_arena_wrong_assignment_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_assignment_reject.tl|-|cannot store region-tagged value into struct field
 arena_branded_in_arena_wrong_storage_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_storage_reject.tl|-|cannot store region-tagged value into constructor result
 arena_branded_in_arena_wrong_return_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_return_reject.tl|-|cannot store region-tagged value into return value
@@ -993,7 +1009,7 @@ arena_invalidate_unannotated_forward_reject|check-fail|tests/safety/arena_invali
 arena_invalidate_result_tied_reject|check-fail|tests/safety/arena_invalidate_result_tied_reject.tl|-|an :invalidate call cannot return a value tied to the arena it destroys
 arena_invalidate_duplicate_argument_reject|check-fail|tests/safety/arena_invalidate_duplicate_argument_reject.tl|-|a call cannot invalidate the same arena through two arguments
 arena_invalidate_missing_destroy_reject|check-fail|tests/safety/arena_invalidate_missing_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
-arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths through this branch
+arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
 arena_invalidate_match_one_arm_reject|check-fail|tests/safety/arena_invalidate_match_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
 arena_invalidate_loop_reject|check-fail|tests/safety/arena_invalidate_loop_reject.tl|-|cannot move loop-carried owner value `owner`
 arena_invalidate_double_destroy_reject|check-fail|tests/safety/arena_invalidate_double_destroy_reject.tl|-|use of moved value `owner`
@@ -1053,6 +1069,8 @@ arena_atomic_destroy_value_use_after_reject|check-fail|tests/safety/arena_atomic
 arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct arena owner
 arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct arena owner
 arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
+arena_phase_token_after_25_locals_ok|run-exit|tests/safety/arena_phase_token_after_25_locals_ok.tl|42|-
+arena_phase_token_after_57_locals_ok|run-exit|tests/safety/arena_phase_token_after_57_locals_ok.tl|42|-
 arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`
 function_lifetime_elision_ambiguous_return_reject|check-fail|tests/safety/function_lifetime_elision_ambiguous_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
@@ -1108,7 +1126,7 @@ vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_ite
 for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
 for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference
 macro_reference_type_unquote_ok|run-exit|tests/safety/macro_reference_type_unquote_ok.tl|42|-
-for_reference_item_annotation_mismatch_reject|check-fail|tests/safety/for_reference_item_annotation_mismatch_reject.tl|-|pattern binding type mismatch: expected (& a i32), found (& a i64)
+for_reference_item_annotation_mismatch_reject|check-fail|tests/safety/for_reference_item_annotation_mismatch_reject.tl|stdlib/core_macros.tl|pattern binding type mismatch: expected (& a i32), found (& a i64)
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
@@ -1124,15 +1142,16 @@ let_obligation_transfer_missing_reject|check-fail|tests/safety/let_obligation_tr
 let_obligation_return_reject|check-fail|tests/safety/let_obligation_return_reject.tl|-|cleanup obligation of `h` is not discharged before this return
 let_obligation_try_reject|check-fail|tests/safety/let_obligation_try_reject.tl|-|cleanup obligation of `h` is not discharged before this try can propagate an error
 let_obligation_break_reject|check-fail|tests/safety/let_obligation_break_reject.tl|-|cleanup obligation of `h` is not discharged before this break leaves its loop
-let_obligation_one_arm_reject|check-fail|tests/safety/let_obligation_one_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this branch
-let_obligation_match_arm_reject|check-fail|tests/safety/let_obligation_match_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this match
+let_obligation_one_arm_reject|check-fail|tests/safety/let_obligation_one_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
+let_obligation_match_arm_reject|check-fail|tests/safety/let_obligation_match_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
 let_obligation_and_reject|check-fail|tests/safety/let_obligation_and_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
-let_obligation_outer_loop_break_reject|check-fail|tests/safety/let_obligation_outer_loop_break_reject.tl|-|cleanup obligation of `h` is discharged on only some paths out of this loop
+let_obligation_outer_loop_break_reject|check-fail|tests/safety/let_obligation_outer_loop_break_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
 let_obligation_lost_call_reject|check-fail|tests/safety/let_obligation_lost_call_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
 let_obligation_lookalike_reject|check-fail|tests/safety/let_obligation_lookalike_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
 let_obligation_partial_reject|check-fail|tests/safety/let_obligation_partial_reject.tl|-|cleanup obligation of `p` is only partly discharged at the end of its let scope
 let_obligation_double_reject|check-fail|tests/safety/let_obligation_double_reject.tl|-|use of moved value `h`
 let_obligation_value_tails_ok|run-exit|tests/safety/let_obligation_value_tails_ok.tl|42|-
+let_obligation_never_arm_ok|run-exit|tests/safety/let_obligation_never_arm_ok.tl|42|-
 let_obligation_never_ok|run-exit|tests/safety/let_obligation_never_ok.tl|42|-
 let_obligation_value_shadow_reject|check-fail|tests/safety/let_obligation_value_shadow_reject.tl|-|cleanup obligation of `h` is not discharged at the end of its let scope
 let_obligation_lambda_exits_ok|run-exit|tests/safety/let_obligation_lambda_exits_ok.tl|42|-
@@ -1175,7 +1194,7 @@ move_out_of_reference_tuple_element_reject|check-fail|tests/safety/move_out_of_r
 move_out_of_reference_mut_reject|check-fail|tests/safety/move_out_of_reference_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a mutable reference; `Pt` is not Copy
 move_out_of_reference_branch_reject|check-fail|tests/safety/move_out_of_reference_branch_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
 move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borrow_ok.tl|42|-
-deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
+deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|tests/safety/deref_raw_pointer_reject.tl:2:3|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
 # A raw-pointer deref is an unsafe place only as a struct-field projection
 # receiver; a (Ptr T) pointee is read-only.
 raw_pointer_field_set_safe_reject|check-fail|tests/safety/raw_pointer_field_set_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
@@ -1205,7 +1224,7 @@ global_move_return_reject|check-fail|tests/safety/global_move_return_reject.tl|-
 global_move_lambda_reject|check-fail|tests/safety/global_move_lambda_reject.tl|-|cannot move out of global `global-owner`
 global_move_projection_reject|check-fail|tests/safety/global_move_projection_reject.tl|-|cannot move out of global `global-owner`
 global_move_match_reject|check-fail|tests/safety/global_move_match_reject.tl|-|cannot move out of global `global-choice`
-global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_reject.tl|tests/safety/global_move_qualified_helper.tl|cannot move out of global `helper.global-text`
+global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_reject.tl|tests/safety/global_move_qualified_reject.tl:6:22|cannot move out of global `helper.global-text`
 global_move_generated_reject|check-fail|tests/safety/global_move_generated_reject.tl|-|cannot move out of global `generated.global-text`
 global_move_task_reject|check-fail|tests/safety/global_move_task_reject.tl|-|cannot move out of global `global-text`
 global_move_spmd_reject|check-fail|tests/safety/global_move_spmd_reject.tl|-|cannot move out of global `global-text`
@@ -1276,10 +1295,10 @@ loop_mut_borrow_exit_paths_ok|check-ok|tests/safety/loop_mut_borrow_exit_paths_o
 loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_return_ok.tl|-|-
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
-loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot mutably borrow borrowed place `items`
 loop_mut_borrow_operand_edges_ok|check-ok|tests/safety/loop_mut_borrow_operand_edges_ok.tl|-|-
 loop_mut_borrow_operand_break_reject|check-fail|tests/safety/loop_mut_borrow_operand_break_reject.tl|-|cannot assign to borrowed place `items[0]`
-loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot mutably borrow borrowed place `items`
 # A `try` operand keeps its own break, continue and return edges in the loop
 # move and borrow walkers.
 try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
@@ -1330,9 +1349,9 @@ thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explici
 thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-
 
 # Enabled generated cfg imports must resolve before checking even if unused.
-generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|-|cannot read import
+generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|tests/safety/nonexistent_cfg_active_dependency.tl:1:1|cannot read import
 generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate
-decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|-|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
+decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|tests/safety/nonexistent_decls_generated_dependency.tl:1:1|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
 decls_generated_conflicting_import_reject|check-fail|tests/safety/decls_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
 module_generated_conflicting_import_reject|check-fail|tests/safety/module_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
 generated_import_alias_source_first_reject|check-fail|tests/safety/generated_import_alias_source_first_reject.tl|-|ambiguous import alias 'dep'
@@ -1349,7 +1368,7 @@ macro_operand_unbound_suggestion_reject|check-fail|tests/safety/macro_operand_un
 source_selected_generated_ok|check-ok|tests/safety/source_selected_generated_ok.tl|-|-
 source_selected_generated_missing_reject|check-fail|tests/safety/source_selected_generated_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_generated_seen_missing_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
-source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|source_selected_generated_seen_missing_reject.tl:3:1
+source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|tests/safety/source_selected_generated_seen_missing_reject.tl:3:1|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_plain_missing_reject|check-fail|tests/safety/source_selected_plain_missing_reject.tl|-|module 'decls_generated_conflict_left' has no selected item 'missing'
 decls_generated_wildcard_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
@@ -1361,7 +1380,7 @@ module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/modul
 # labelled at its generator.
 import_local_collision_generated_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|collides with the declaration of 'answer' in the entry module
 import_local_collision_generated_label_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|import_local_collision_generated_reject.tl:10:1
-generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import
+generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|tests/safety/nonexistent_cfg_active_dependency.tl:1:1|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride
 # (#7921) resolve through their own declaration, never a later one's members:
@@ -1376,13 +1395,13 @@ wide_struct_1002_alone_reject|check-fail|tests/safety/wide_struct_1002_alone_rej
 wide_struct_1003_next_reject|check-fail|tests/safety/wide_struct_1003_next_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_struct_1003_alone_reject|check-fail|tests/safety/wide_struct_1003_alone_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_struct_2500_next_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|if condition must be bool: expected bool, found i64
-wide_struct_2500_next_span_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|wide_struct_2500_next_reject.tl:20:3
+wide_struct_2500_next_span_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|tests/safety/wide_struct_2500_next_reject.tl:20:3|if condition must be bool: expected bool, found i64
 wide_struct_2500_alone_reject|check-fail|tests/safety/wide_struct_2500_alone_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_struct_literal_reject|check-fail|tests/safety/wide_struct_literal_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_enum_1003_next_constructor_reject|check-fail|tests/safety/wide_enum_1003_next_constructor_reject.tl|-|call `Big.V1001` argument 1 type mismatch: expected i64, found bool
 wide_enum_1003_next_match_reject|check-fail|tests/safety/wide_enum_1003_next_match_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_enum_2500_alone_constructor_reject|check-fail|tests/safety/wide_enum_2500_alone_constructor_reject.tl|-|call `Big.V2499` argument 1 type mismatch: expected i64, found bool
-wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|-|unbound name wide-aggregates-count-must-be-an-integer-literal
+wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|tests/integration/wide_aggregates.tl:39:10|unbound name wide-aggregates-count-must-be-an-integer-literal
 
 # A global initialized from a non-Copy global moves out of it and is rejected
 # (#7804); Copy values are read by value (tests/integration global_reference_initializers).
@@ -1396,7 +1415,7 @@ foreign_global_selected_as_set_reject|check-fail|tests/safety/foreign_global_sel
 foreign_global_wildcard_set_reject|check-fail|tests/safety/foreign_global_wildcard_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_alias_set_reject|check-fail|tests/safety/foreign_global_alias_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_canonical_set_reject|check-fail|tests/safety/foreign_global_canonical_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
-foreign_global_field_set_reject|check-fail|tests/safety/foreign_global_field_set_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
+foreign_global_field_set_reject|check-fail|tests/safety/foreign_global_field_set_reject.tl|tests/safety/foreign_global_field_set_reject.tl:7:11|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
 foreign_global_alias_field_set_reject|check-fail|tests/safety/foreign_global_alias_field_set_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
 foreign_global_tuple_set_reject|check-fail|tests/safety/foreign_global_tuple_set_reject.tl|-|typecheck: cannot assign to part of global `tup` owned by module `foreign_global_dep`
 foreign_global_element_set_reject|check-fail|tests/safety/foreign_global_element_set_reject.tl|-|typecheck: cannot assign to an element of global `slots` owned by module `foreign_global_dep`
@@ -1410,8 +1429,10 @@ foreign_global_slice_mut_view_reject|check-fail|tests/safety/foreign_global_slic
 foreign_global_unsafe_set_reject|check-fail|tests/safety/foreign_global_unsafe_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_lambda_set_reject|check-fail|tests/safety/foreign_global_lambda_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_initializer_set_reject|check-fail|tests/safety/foreign_global_initializer_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
-foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_write_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
-foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
+foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_write_reject.tl|tests/safety/foreign_global_dep.tl:24:10|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+macro_nested_frame_template_reject|check-fail|tests/safety/macro_nested_frame_template_reject.tl|tests/safety/macro_nested_frame_dep.tl:5:4|tests/safety/macro_nested_frame_dep.tl:8:4
+macro_nested_frame_caller_reject|check-fail|tests/safety/macro_nested_frame_caller_reject.tl|tests/safety/macro_nested_frame_caller_reject.tl:9:21|tests/safety/macro_nested_frame_dep.tl:14:4
+foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|tests/safety/foreign_global_dep.tl:32:4|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
 foreign_global_access_defined|run-exit|tests/safety/foreign_global_access_defined.tl|42|-
 foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_defined.tl|42|-
 
@@ -1435,7 +1456,7 @@ opaque_foreign_struct_field_reject|check-fail|tests/safety/opaque_foreign_struct
 opaque_foreign_tuple_reject|check-fail|tests/safety/opaque_foreign_tuple_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_box_reject|check-fail|tests/safety/opaque_foreign_box_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_by_value_fn_reject|check-fail|tests/safety/opaque_foreign_by_value_fn_reject.tl|-|typecheck: cannot use opaque_dep.make, which holds by value the opaque type opaque_dep/Connection outside its module family
-opaque_foreign_macro_reject|check-fail|tests/safety/opaque_foreign_macro_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_macro_reject|check-fail|tests/safety/opaque_foreign_macro_reject.tl|tests/safety/opaque_dep.tl|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_ptr_read_borrow_reject|check-fail|tests/safety/opaque_foreign_ptr_read_borrow_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_deref_match_reject|check-fail|tests/safety/opaque_foreign_deref_match_reject.tl|-|typecheck: cannot dereference by value the opaque type opaque_dep/State outside its module family
@@ -1450,15 +1471,15 @@ json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|
 
 # JSON view macros add no `unsafe` of their own: safe callers reject at the raw
 # read however they reach the macro, and explicit caller `unsafe` compiles.
-json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
-json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|stdlib/json.tl:41:4|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|stdlib/json.tl:41:4|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|stdlib/json.tl:41:4|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|stdlib/json.tl:46:4|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|stdlib/json.tl:46:4|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|stdlib/json.tl:46:4|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|stdlib/json.tl:55:6|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|stdlib/json.tl:55:6|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|stdlib/json.tl:55:6|typecheck: ptr-read requires unsafe context
 json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
 
 # A typecheck code follows the raise site's kind, not words in the message.
@@ -1477,8 +1498,264 @@ function_set_selected_reject|check-fail|tests/safety/function_set_selected_rejec
 function_set_selected_as_reject|check-fail|tests/safety/function_set_selected_as_reject.tl|-|typecheck: cannot assign to function
 function_set_wildcard_reject|check-fail|tests/safety/function_set_wildcard_reject.tl|-|typecheck: cannot assign to function
 function_set_imported_extern_reject|check-fail|tests/safety/function_set_imported_extern_reject.tl|-|typecheck: cannot assign to function
-function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|-|typecheck: cannot assign to function
+function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|tests/safety/function_assignment_dep.tl:10:10|typecheck: cannot assign to function
 function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl|42|-
+# Raw stdlib pointer/count contracts (#7945). Deliberately invalid ranges are
+# check-only. Pin the intended callable effect and primary source location;
+# accepted-invalid, diagnostic-then-crash and unrelated rejection all fail.
+string_raw_copy_reject|check-fail|stdlib/tests/string_raw_copy_reject.tl|stdlib/tests/string_raw_copy_reject.tl:5:3|typecheck: string/str-copy-bytes-into requires unsafe context
+string_raw_owned_copy_reject|check-fail|stdlib/tests/string_raw_owned_copy_reject.tl|stdlib/tests/string_raw_owned_copy_reject.tl:5:3|typecheck: string/str-copy-owned-bytes-into requires unsafe context
+string_raw_borrowed_copy_reject|check-fail|stdlib/tests/string_raw_borrowed_copy_reject.tl|stdlib/tests/string_raw_borrowed_copy_reject.tl:5:3|typecheck: text/str-copy-borrowed-bytes-into requires unsafe context
+string_raw_substring_reject|check-fail|stdlib/tests/string_raw_substring_reject.tl|stdlib/tests/string_raw_substring_reject.tl:5:3|typecheck: string/substring-copy-checked requires unsafe context
+string_raw_integer_byte_reject|check-fail|stdlib/tests/string_raw_integer_byte_reject.tl|stdlib/tests/string_raw_integer_byte_reject.tl:5:3|typecheck: string/int->string-write-byte! requires unsafe context
+string_raw_integer_digits_reject|check-fail|stdlib/tests/string_raw_integer_digits_reject.tl|stdlib/tests/string_raw_integer_digits_reject.tl:5:3|typecheck: string/int->string-write-negative-digits! requires unsafe context
+string_raw_copy_function_value_reject|check-fail|stdlib/tests/string_raw_copy_function_value_reject.tl|stdlib/tests/string_raw_copy_function_value_reject.tl:5:3|typecheck: string/str-copy-bytes-into is an unsafe callable and cannot be used as a plain function value
+format_raw_copy_reject|check-fail|stdlib/tests/format_raw_copy_reject.tl|stdlib/tests/format_raw_copy_reject.tl:5:3|typecheck: format/format-copy-rendered-range! requires unsafe context
+format_raw_fill_reject|check-fail|stdlib/tests/format_raw_fill_reject.tl|stdlib/tests/format_raw_fill_reject.tl:5:3|typecheck: format/format-write-fill! requires unsafe context
+format_raw_debug_read_reject|check-fail|stdlib/tests/format_raw_debug_read_reject.tl|stdlib/tests/format_raw_debug_read_reject.tl:5:3|typecheck: format/format-debug-source-byte requires unsafe context
+format_raw_debug_length_reject|check-fail|stdlib/tests/format_raw_debug_length_reject.tl|stdlib/tests/format_raw_debug_length_reject.tl:5:3|typecheck: format/format-debug-rendered-length requires unsafe context
+format_raw_debug_write_reject|check-fail|stdlib/tests/format_raw_debug_write_reject.tl|stdlib/tests/format_raw_debug_write_reject.tl:5:3|typecheck: format/format-debug-write-code! requires unsafe context
+format_raw_debug_byte_reject|check-fail|stdlib/tests/format_raw_debug_byte_reject.tl|stdlib/tests/format_raw_debug_byte_reject.tl:5:3|typecheck: format/format-debug-write-byte! requires unsafe context
+format_raw_debug_render_reject|check-fail|stdlib/tests/format_raw_debug_render_reject.tl|stdlib/tests/format_raw_debug_render_reject.tl:5:3|typecheck: format/format-debug-bytes-core requires unsafe context
+# Ownership MIR call slice (#8449): ordinary calls of declared functions are
+# checked by the normalized ownership graph; move diagnostics name the binder.
+mir_call_use_after_move_reject|check-fail|tests/safety/mir_call_use_after_move_reject.tl|tests/safety/mir_call_use_after_move_reject.tl:7:30|use of moved value `text`
+mir_call_branch_move_reject|check-fail|tests/safety/mir_call_branch_move_reject.tl|tests/safety/mir_call_branch_move_reject.tl:11:23|use of moved value `text`
+mir_call_loop_move_reject|check-fail|tests/safety/mir_call_loop_move_reject.tl|tests/safety/mir_call_loop_move_reject.tl:12:41|cannot move loop-carried owner value `text`
+mir_call_moves_ok|run-exit|tests/safety/mir_call_moves_ok.tl|42|-
+mir_macro_move_reject|check-fail|tests/safety/mir_macro_move_reject.tl|tests/safety/mir_macro_move_reject.tl:10:18|use of moved value `text`
+mir_raw_read_ok|run-exit|tests/safety/mir_raw_read_ok.tl|42|-
+mir_ref_nested_write_owned_reject|check-fail|tests/safety/mir_ref_nested_write_owned_reject.tl|tests/safety/mir_ref_nested_write_owned_reject.tl:19:15|cannot assign to borrowed place `v`
+mir_ref_two_phase_ok|run-exit|tests/safety/mir_ref_two_phase_ok.tl|42|-
+mir_ref_two_phase_move_reject|check-fail|tests/safety/mir_ref_two_phase_move_reject.tl|tests/safety/mir_ref_two_phase_move_reject.tl:12:24|cannot move borrowed place `d`
+mir_ref_alias_mut_param_reject|check-fail|tests/safety/mir_ref_alias_mut_param_reject.tl|tests/safety/mir_ref_alias_mut_param_reject.tl:9:10|cannot mutably borrow borrowed place `c`
+mir_ref_shared_while_mut_reject|check-fail|tests/safety/mir_ref_shared_while_mut_reject.tl|tests/safety/mir_ref_shared_while_mut_reject.tl:14:20|cannot immutably borrow mutably borrowed place `c`
+mir_field_partial_move_ok|run-exit|tests/safety/mir_field_partial_move_ok.tl|42|-
+mir_field_partial_whole_reject|check-fail|tests/safety/mir_field_partial_whole_reject.tl|tests/safety/mir_field_partial_whole_reject.tl:13:21|use of moved value `h`
+mir_field_branch_move_reject|check-fail|tests/safety/mir_field_branch_move_reject.tl|tests/safety/mir_field_branch_move_reject.tl:14:11|use of moved value `h.items`
+mir_field_mut_through_shared_reject|check-fail|tests/safety/mir_field_mut_through_shared_reject.tl|tests/safety/mir_field_mut_through_shared_reject.tl:10:9|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+mir_field_view_conflict_reject|check-fail|tests/safety/mir_field_view_conflict_reject.tl|tests/safety/mir_field_view_conflict_reject.tl:16:20|cannot mutably borrow borrowed place `h.items`
+mir_match_ok|run-exit|tests/safety/mir_match_ok.tl|42|-
+mir_match_field_twice_reject|check-fail|tests/safety/mir_match_field_twice_reject.tl|tests/safety/mir_match_field_twice_reject.tl:18:5|use of moved value `h.slot`
+mir_match_payload_whole_reject|check-fail|tests/safety/mir_match_payload_whole_reject.tl|tests/safety/mir_match_payload_whole_reject.tl:17:11|use of moved value `s`
+mir_match_borrowed_conflict_reject|check-fail|tests/safety/mir_match_borrowed_conflict_reject.tl|tests/safety/mir_match_borrowed_conflict_reject.tl:14:15|cannot assign to borrowed place `s`
+mir_construct_builtin_ok|run-exit|tests/safety/mir_construct_builtin_ok.tl|42|-
+mir_construct_moved_reject|check-fail|tests/safety/mir_construct_moved_reject.tl|tests/safety/mir_construct_moved_reject.tl:9:30|use of moved value `items`
+mir_builtin_while_mut_reject|check-fail|tests/safety/mir_builtin_while_mut_reject.tl|tests/safety/mir_builtin_while_mut_reject.tl:9:28|cannot immutably borrow mutably borrowed place `items`
+mir_array_forms_ok|run-exit|tests/safety/mir_array_forms_ok.tl|42|-
+mir_array_push_moved_reject|check-fail|tests/safety/mir_array_push_moved_reject.tl|tests/safety/mir_array_push_moved_reject.tl:7:21|use of moved value `name`
+mir_array_set_moved_reject|check-fail|tests/safety/mir_array_set_moved_reject.tl|tests/safety/mir_array_set_moved_reject.tl:7:21|use of moved value `name`
+mir_array_loop_store_reject|check-fail|tests/safety/mir_array_loop_store_reject.tl|tests/safety/mir_array_loop_store_reject.tl:10:39|cannot move loop-carried owner value `value`
+mir_array_ref_while_mut_reject|check-fail|tests/safety/mir_array_ref_while_mut_reject.tl|tests/safety/mir_array_ref_while_mut_reject.tl:9:14|cannot read mutably borrowed place `items`
+mir_array_field_set_through_shared_reject|check-fail|tests/safety/mir_array_field_set_through_shared_reject.tl|tests/safety/mir_array_field_set_through_shared_reject.tl:7:20|cannot mutably borrow `cache.ready` behind a shared reference
+mir_nll_dead_mut_borrow_ok|run-exit|tests/safety/mir_nll_dead_mut_borrow_ok.tl|42|-
+mir_nll_loop_if_join_reference_ok|run-exit|tests/safety/mir_nll_loop_if_join_reference_ok.tl|42|-
+mir_nll_loop_if_join_reference_live_reject|check-fail|tests/safety/mir_nll_loop_if_join_reference_live_reject.tl|tests/safety/mir_nll_loop_if_join_reference_live_reject.tl:16:26|cannot assign to borrowed place `values`
+mir_nll_loop_if_join_reference_copy_reject|check-fail|tests/safety/mir_nll_loop_if_join_reference_copy_reject.tl|tests/safety/mir_nll_loop_if_join_reference_copy_reject.tl:17:26|cannot assign to borrowed place `values`
+mir_reference_copy_then_write_reject|check-fail|tests/safety/mir_reference_copy_then_write_reject.tl|tests/safety/mir_reference_copy_then_write_reject.tl:9:13|cannot assign to borrowed place `a`
+mir_reference_holder_move_then_write_reject|check-fail|tests/safety/mir_reference_holder_move_then_write_reject.tl|tests/safety/mir_reference_holder_move_then_write_reject.tl:14:13|cannot assign to borrowed place `a`
+mir_reference_loop_reissue_held_reject|check-fail|tests/safety/mir_reference_loop_reissue_held_reject.tl|tests/safety/mir_reference_loop_reissue_held_reject.tl:18:24|cannot assign to borrowed place `p.a[0]`
+mir_reference_loop_reissue_shared_ok|run-exit|tests/safety/mir_reference_loop_reissue_shared_ok.tl|42|-
+mir_reference_loop_reissue_borrowed_holder_reject|check-fail|tests/safety/mir_reference_loop_reissue_borrowed_holder_reject.tl|tests/safety/mir_reference_loop_reissue_borrowed_holder_reject.tl:22:24|cannot assign to borrowed place `p.a[0]`
+mir_reference_loop_reissue_borrowed_holder_ok|run-exit|tests/safety/mir_reference_loop_reissue_borrowed_holder_ok.tl|42|-
+mir_array_element_field_store_reject|check-fail|tests/safety/mir_array_element_field_store_reject.tl|tests/safety/mir_array_element_field_store_reject.tl:19:13|cannot assign to borrowed place `p.r`
+mir_array_element_field_store_ok|run-exit|tests/safety/mir_array_element_field_store_ok.tl|42|-
+mir_array_element_replace_reject|check-fail|tests/safety/mir_array_element_replace_reject.tl|tests/safety/mir_array_element_replace_reject.tl:16:15|cannot assign to borrowed place `p.l`
+mir_local_ref_conflict_reject|check-fail|tests/safety/mir_local_ref_conflict_reject.tl|tests/safety/mir_local_ref_conflict_reject.tl:7:25|cannot assign to borrowed place `items`
+mir_local_ref_field_read_ok|run-exit|tests/safety/mir_local_ref_field_read_ok.tl|42|-
+mir_local_ref_field_set_shared_reject|check-fail|tests/safety/mir_local_ref_field_set_shared_reject.tl|tests/safety/mir_local_ref_field_set_shared_reject.tl:10:24|cannot mutably borrow `cache.ready` behind a shared reference
+mir_qualified_variant_moved_reject|check-fail|tests/safety/mir_qualified_variant_moved_reject.tl|tests/safety/mir_qualified_variant_moved_reject.tl:9:27|use of moved value `name`
+mir_nullary_variant_ok|run-exit|tests/safety/mir_nullary_variant_ok.tl|42|-
+mir_box_ok|run-exit|tests/safety/mir_box_ok.tl|42|-
+mir_box_moved_reject|check-fail|tests/safety/mir_box_moved_reject.tl|tests/safety/mir_box_moved_reject.tl:5:43|use of moved value `items`
+mir_box_construct_moved_reject|check-fail|tests/safety/mir_box_construct_moved_reject.tl|tests/safety/mir_box_construct_moved_reject.tl:5:19|use of moved value `items`
+mir_box_borrow_conflict_reject|check-fail|tests/safety/mir_box_borrow_conflict_reject.tl|tests/safety/mir_box_borrow_conflict_reject.tl:6:20|cannot assign to borrowed place `items`
+box_set_through_reference_borrow_live_reject|check-fail|tests/safety/box_set_through_reference_borrow_live_reject.tl|tests/safety/box_set_through_reference_borrow_live_reject.tl:10:20|cannot assign to borrowed place `p`
+return_by_value_param_reference_reject|check-fail|tests/safety/return_by_value_param_reference_reject.tl|tests/safety/return_by_value_param_reference_reject.tl:4:3|is a by-value parameter's own storage, which does not outlive the call
+return_by_value_param_field_reference_reject|check-fail|tests/safety/return_by_value_param_field_reference_reject.tl|tests/safety/return_by_value_param_field_reference_reject.tl:7:3|is a by-value parameter's own storage, which does not outlive the call
+return_by_value_param_aggregate_reference_reject|check-fail|tests/safety/return_by_value_param_aggregate_reference_reject.tl|tests/safety/return_by_value_param_aggregate_reference_reject.tl:4:3|is a by-value parameter's own storage, which does not outlive the call
+return_by_value_param_arena_use_after_destroy_reject|check-fail|tests/safety/return_by_value_param_arena_use_after_destroy_reject.tl|tests/safety/return_by_value_param_arena_use_after_destroy_reject.tl:8:3|is a by-value parameter's own storage, which does not outlive the call
+mir_array_literal_moved_reject|check-fail|tests/safety/mir_array_literal_moved_reject.tl|tests/safety/mir_array_literal_moved_reject.tl:5:19|use of moved value `items`
+mir_reference_array_loan_reject|check-fail|tests/safety/mir_reference_array_loan_reject.tl|tests/safety/mir_reference_array_loan_reject.tl:7:25|cannot assign to borrowed place `items`
+mir_value_field_ok|run-exit|tests/safety/mir_value_field_ok.tl|42|-
+mir_call_result_loan_ok|run-exit|tests/safety/mir_call_result_loan_ok.tl|42|-
+mir_call_result_loan_reject|check-fail|tests/safety/mir_call_result_loan_reject.tl|tests/safety/mir_call_result_loan_reject.tl:13:13|cannot assign to borrowed place `pair.right`
+mir_field_set_ok|run-exit|tests/safety/mir_field_set_ok.tl|42|-
+mir_field_set_borrowed_reject|check-fail|tests/safety/mir_field_set_borrowed_reject.tl|tests/safety/mir_field_set_borrowed_reject.tl:10:13|cannot assign to borrowed place `holder.items`
+mir_global_ok|run-exit|tests/safety/mir_global_ok.tl|42|-
+mir_global_borrow_conflict_reject|check-fail|tests/safety/mir_global_borrow_conflict_reject.tl|tests/safety/mir_global_borrow_conflict_reject.tl:12:24|cannot assign to borrowed place `items[0]`
+mir_match_loop_nil_ok|run-exit|tests/safety/mir_match_loop_nil_ok.tl|42|-
+mir_match_loop_moved_reject|check-fail|tests/safety/mir_match_loop_moved_reject.tl|tests/safety/mir_match_loop_moved_reject.tl:14:9|use of moved value `cursor`
+mir_macro_constructor_double_move_reject|check-fail|tests/safety/mir_macro_constructor_double_move_reject.tl|tests/safety/mir_macro_constructor_double_move_reject.tl:13:12|use of moved value `value`
+mir_extern_read_ok|check-ok|tests/safety/mir_extern_read_ok.tl|-|-
+mir_extern_borrow_ok|check-ok|tests/safety/mir_extern_borrow_ok.tl|-|-
+mir_extern_borrow_conflict_reject|check-fail|tests/safety/mir_extern_borrow_conflict_reject.tl|tests/safety/mir_extern_borrow_conflict_reject.tl:10:29|cannot immutably borrow mutably borrowed place `items`
+mir_deref_reference_ok|run-exit|tests/safety/mir_deref_reference_ok.tl|62|-
+mir_deref_borrow_conflict_reject|check-fail|tests/safety/mir_deref_borrow_conflict_reject.tl|tests/safety/mir_deref_borrow_conflict_reject.tl:10:13|cannot mutably borrow borrowed place `n`
+mir_temporary_projection_ok|run-exit|tests/safety/mir_temporary_projection_ok.tl|49|-
+mir_element_operand_ok|run-exit|tests/safety/mir_element_operand_ok.tl|42|-
+mir_element_operand_borrow_conflict_reject|check-fail|tests/safety/mir_element_operand_borrow_conflict_reject.tl|tests/safety/mir_element_operand_borrow_conflict_reject.tl:8:39|cannot immutably borrow mutably borrowed place `names`
+mir_mut_borrow_through_shared_reject|check-fail|tests/safety/mir_mut_borrow_through_shared_reject.tl|tests/safety/mir_mut_borrow_through_shared_reject.tl:21:23|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+mir_try_ok|run-exit|tests/safety/mir_try_ok.tl|42|-
+mir_try_moved_reject|check-fail|tests/safety/mir_try_moved_reject.tl|tests/safety/mir_try_moved_reject.tl:13:47|use of moved value `items`
+mir_holder_ok|run-exit|tests/safety/mir_holder_ok.tl|5|-
+mir_holder_borrow_conflict_reject|check-fail|tests/safety/mir_holder_borrow_conflict_reject.tl|tests/safety/mir_holder_borrow_conflict_reject.tl:16:13|cannot mutably borrow borrowed place `items`
+mir_unreachable_tail_ok|check-ok|tests/safety/mir_unreachable_tail_ok.tl|-|-
+mir_call_result_lifetime_ok|run-exit|tests/safety/mir_call_result_lifetime_ok.tl|42|-
+mir_reborrow_shared_from_mut_reject|check-fail|tests/safety/mir_reborrow_shared_from_mut_reject.tl|tests/safety/mir_reborrow_shared_from_mut_reject.tl:14:13|cannot assign to borrowed place `exclusive.value`
+mir_call_result_deref_reject|check-fail|tests/safety/mir_call_result_deref_reject.tl|tests/safety/mir_call_result_deref_reject.tl:14:13|cannot assign to borrowed place `x.value`
+mir_global_assign_ok|run-exit|tests/safety/mir_global_assign_ok.tl|42|-
+mir_global_assign_borrowed_reject|check-fail|tests/safety/mir_global_assign_borrowed_reject.tl|tests/safety/mir_global_assign_borrowed_reject.tl:12:13|cannot assign to borrowed place `names`
+mir_reference_element_shift_ok|check-ok|tests/safety/mir_reference_element_shift_ok.tl|-|-
+mir_in_arena_bare_ok|run-exit|tests/safety/mir_in_arena_bare_ok.tl|42|-
+mir_in_arena_borrow_conflict_reject|check-fail|tests/safety/mir_in_arena_borrow_conflict_reject.tl|tests/safety/mir_in_arena_borrow_conflict_reject.tl:13:26|cannot assign to borrowed place `items[0]`
+mir_element_move_through_ref_reject|check-fail|tests/safety/mir_element_move_through_ref_reject.tl|tests/safety/mir_element_move_through_ref_reject.tl:10:3|cannot move owner-consuming value out of dynamic array element
+mir_element_move_owned_param_reject|check-fail|tests/safety/mir_element_move_owned_param_reject.tl|tests/safety/mir_element_move_owned_param_reject.tl:10:3|cannot move owner-consuming value out of dynamic array element
+mir_element_match_reject|check-fail|tests/safety/mir_element_match_reject.tl|tests/safety/mir_element_match_reject.tl:10:10|cannot move owner-consuming value out of dynamic array element
+mir_element_field_read_ok|run-exit|tests/safety/mir_element_field_read_ok.tl|42|-
+mir_move_out_of_reference_reject|check-fail|tests/safety/mir_move_out_of_reference_reject.tl|tests/safety/mir_move_out_of_reference_reject.tl:9:3|out of a shared reference; `Item` is not Copy
+mir_slice_view_ok|run-exit|tests/safety/mir_slice_view_ok.tl|42|-
+mir_slice_mut_view_ok|run-exit|tests/safety/mir_slice_mut_view_ok.tl|42|-
+mir_slice_view_conflict_reject|check-fail|tests/safety/mir_slice_view_conflict_reject.tl|tests/safety/mir_slice_view_conflict_reject.tl:7:24|cannot assign to borrowed place `items[1]`
+mir_slice_mut_view_conflict_reject|check-fail|tests/safety/mir_slice_mut_view_conflict_reject.tl|-|cannot read mutably borrowed place `items[1]`
+mir_reborrow_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_outlives_reference_reject.tl|tests/safety/mir_reborrow_outlives_reference_reject.tl:19:13|cannot assign to borrowed place `x.len`
+mir_reborrow_shared_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl:18:13|cannot assign to borrowed place `x.len`
+mir_by_value_borrow_escape_reject|check-fail|tests/safety/mir_by_value_borrow_escape_reject.tl|tests/safety/mir_by_value_borrow_escape_reject.tl:17:35|mutable borrow of by-value place cannot outlive the call
+mir_struct_pattern_ok|run-exit|tests/safety/mir_struct_pattern_ok.tl|42|-
+mir_struct_pattern_moved_reject|check-fail|tests/safety/mir_struct_pattern_moved_reject.tl|tests/safety/mir_struct_pattern_moved_reject.tl:18:13|use of moved value `pair.name`
+mir_view_scrutinee_ok|run-exit|tests/safety/mir_view_scrutinee_ok.tl|42|-
+mir_view_scrutinee_conflict_reject|check-fail|tests/safety/mir_view_scrutinee_conflict_reject.tl|tests/safety/mir_view_scrutinee_conflict_reject.tl:17:15|cannot assign to borrowed place `decl.kind`
+mir_view_if_move_out_reject|check-fail|tests/safety/mir_view_if_move_out_reject.tl|tests/safety/mir_view_if_move_out_reject.tl:9:5|cannot move non-Copy value through shared reference
+mir_view_return_move_out_reject|check-fail|tests/safety/mir_view_return_move_out_reject.tl|tests/safety/mir_view_return_move_out_reject.tl:7:3|cannot move non-Copy value through shared reference
+mir_view_binder_write_reject|check-fail|tests/safety/mir_view_binder_write_reject.tl|tests/safety/mir_view_binder_write_reject.tl:11:24|cannot mutably borrow `counts.items` behind a shared reference
+mir_view_binder_mut_borrow_reject|check-fail|tests/safety/mir_view_binder_mut_borrow_reject.tl|tests/safety/mir_view_binder_mut_borrow_reject.tl:13:14|cannot mutably borrow `counts.items` behind a shared reference
+mir_view_copy_read_ok|run-exit|tests/safety/mir_view_copy_read_ok.tl|42|-
+mir_view_binder_read_ok|run-exit|tests/safety/mir_view_binder_read_ok.tl|42|-
+mir_view_if_owned_ok|run-exit|tests/safety/mir_view_if_owned_ok.tl|42|-
+mir_indirect_call_ok|run-exit|tests/safety/mir_indirect_call_ok.tl|42|-
+mir_indirect_call_moved_reject|check-fail|tests/safety/mir_indirect_call_moved_reject.tl|tests/safety/mir_indirect_call_moved_reject.tl:8:19|use of moved value `items`
+mir_indirect_call_borrow_reject|check-fail|tests/safety/mir_indirect_call_borrow_reject.tl|tests/safety/mir_indirect_call_borrow_reject.tl:10:10|cannot mutably borrow borrowed place `items`
+mir_arena_destroy_shadowed_use_reject|check-fail|tests/safety/mir_arena_destroy_shadowed_use_reject.tl|tests/safety/mir_arena_destroy_shadowed_use_reject.tl:16:29|use of moved value `text`
+mir_arena_owner_handle_ok|run-exit|tests/safety/mir_arena_owner_handle_ok.tl|42|-
+mir_closure_escape_argument_reject|check-fail|tests/safety/mir_closure_escape_argument_reject.tl|tests/safety/mir_closure_escape_argument_reject.tl:12:7|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_escape_field_reject|check-fail|tests/safety/mir_closure_escape_field_reject.tl|tests/safety/mir_closure_escape_field_reject.tl:13:9|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_escape_branch_return_reject|check-fail|tests/safety/mir_closure_escape_branch_return_reject.tl|tests/safety/mir_closure_escape_branch_return_reject.tl:7:5|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_mut_capture_calls_ok|run-exit|tests/safety/mir_closure_mut_capture_calls_ok.tl|42|-
+mir_closure_moved_local_call_ok|run-exit|tests/safety/mir_closure_moved_local_call_ok.tl|42|-
+mir_closure_once_per_branch_ok|run-exit|tests/safety/mir_closure_once_per_branch_ok.tl|42|-
+mir_closure_shared_capture_write_reject|check-fail|tests/safety/mir_closure_shared_capture_write_reject.tl|tests/safety/mir_closure_shared_capture_write_reject.tl:12:13|cannot assign to borrowed place `x`
+mir_thread_send_branch_destroy_reject|check-fail|tests/safety/mir_thread_send_branch_destroy_reject.tl|tests/safety/mir_thread_send_branch_destroy_reject.tl:22:11|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
+mir_thread_send_other_branch_destroy_ok|check-ok|tests/safety/mir_thread_send_other_branch_destroy_ok.tl|-|-
+mir_thread_unjoined_handle_destroy_reject|check-fail|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl:17:7|requires atomic arena user `spawned` to be joined or released before invalidating `owner`
+mir_thread_join_then_destroy_ok|check-ok|tests/safety/mir_thread_join_then_destroy_ok.tl|-|-
+mir_view_field_assign_reject|check-fail|tests/safety/mir_view_field_assign_reject.tl|tests/safety/mir_view_field_assign_reject.tl:18:13|cannot assign to borrowed place `outer.inner`
+mir_view_field_after_last_use_ok|run-exit|tests/safety/mir_view_field_after_last_use_ok.tl|42|-
+mir_foreach_loop_carried_move_reject|check-fail|tests/safety/mir_foreach_loop_carried_move_reject.tl|tests/safety/mir_foreach_loop_carried_move_reject.tl:13:62|cannot move loop-carried owner value `text`
+mir_foreach_shared_view_ok|run-exit|tests/safety/mir_foreach_shared_view_ok.tl|42|-
+mir_spmd_reduce_borrow_assign_reject|check-fail|tests/safety/mir_spmd_reduce_borrow_assign_reject.tl|tests/safety/mir_spmd_reduce_borrow_assign_reject.tl:8:24|cannot assign to borrowed place `values[0]`
+mir_spmd_reduce_view_last_use_ok|run-exit|tests/safety/mir_spmd_reduce_view_last_use_ok.tl|42|-
+mir_slice_split_halves_ok|run-exit|tests/safety/mir_slice_split_halves_ok.tl|42|-
+mir_slice_split_source_write_reject|check-fail|tests/safety/mir_slice_split_source_write_reject.tl|tests/safety/mir_slice_split_source_write_reject.tl:11:24|cannot assign to borrowed place `items[0]`
+mir_slice_child_parent_reuse_ok|run-exit|tests/safety/mir_slice_child_parent_reuse_ok.tl|42|-
+mir_slice_element_place_ok|run-exit|tests/safety/mir_slice_element_place_ok.tl|42|-
+mir_init_default_ok|run-exit|tests/safety/mir_init_default_ok.tl|42|-
+mir_immediate_lambda_ref_capture_ok|run-exit|tests/safety/mir_immediate_lambda_ref_capture_ok.tl|42|-
+mir_immediate_lambda_consumed_capture_reject|check-fail|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl:13:37|use of moved value `text`
+mir_ptr_addr_of_element_ok|run-exit|tests/safety/mir_ptr_addr_of_element_ok.tl|42|-
+mir_tuple_pattern_partial_ok|run-exit|tests/safety/mir_tuple_pattern_partial_ok.tl|42|-
+mir_array_pattern_partial_ok|run-exit|tests/safety/mir_array_pattern_partial_ok.tl|42|-
+mir_array_pattern_moved_element_reject|check-fail|tests/safety/mir_array_pattern_moved_element_reject.tl|tests/safety/mir_array_pattern_moved_element_reject.tl:11:5|use of moved value `items[0]`
+mir_borrowed_tuple_pattern_ok|run-exit|tests/safety/mir_borrowed_tuple_pattern_ok.tl|42|-
+mir_borrowed_array_pattern_conflict_reject|check-fail|tests/safety/mir_borrowed_array_pattern_conflict_reject.tl|tests/safety/mir_borrowed_array_pattern_conflict_reject.tl:15:7|cannot assign to borrowed place `items[1]`
+mir_with_arena_scoped_ok|run-exit|tests/safety/mir_with_arena_scoped_ok.tl|42|-
+mir_with_arena_moved_outer_reject|check-fail|tests/safety/mir_with_arena_moved_outer_reject.tl|tests/safety/mir_with_arena_moved_outer_reject.tl:13:29|use of moved value `owned`
+mir_with_arena_borrow_conflict_reject|check-fail|tests/safety/mir_with_arena_borrow_conflict_reject.tl|tests/safety/mir_with_arena_borrow_conflict_reject.tl:11:28|cannot assign to borrowed place `values[0]`
+mir_cfunc_value_call_ok|check-ok|tests/safety/mir_cfunc_value_call_ok.tl|-|-
+mir_cfunc_unsafe_call_reject|check-fail|tests/safety/mir_cfunc_unsafe_call_reject.tl|tests/safety/mir_cfunc_unsafe_call_reject.tl:7:3|C function pointer requires unsafe context
+mir_array_literal_move_ok|run-exit|tests/safety/mir_array_literal_move_ok.tl|42|-
+mir_array_literal_move_twice_reject|check-fail|tests/safety/mir_array_literal_move_twice_reject.tl|tests/safety/mir_array_literal_move_twice_reject.tl:9:21|use of moved value `items[0]`
+mir_array_literal_move_computed_read_reject|check-fail|tests/safety/mir_array_literal_move_computed_read_reject.tl|tests/safety/mir_array_literal_move_computed_read_reject.tl:10:27|use of moved value `items`
+mir_array_literal_move_computed_store_reject|check-fail|tests/safety/mir_array_literal_move_computed_store_reject.tl|tests/safety/mir_array_literal_move_computed_store_reject.tl:11:24|use of moved value `items`
+mir_box_field_scrutinee_ok|run-exit|tests/safety/mir_box_field_scrutinee_ok.tl|42|-
+mir_box_field_scrutinee_moved_reject|check-fail|tests/safety/mir_box_field_scrutinee_moved_reject.tl|tests/safety/mir_box_field_scrutinee_moved_reject.tl:19:12|use of moved value `boxed`
+mir_raw_spawn_atomic_owner_capture_ok|run-exit|tests/safety/mir_raw_spawn_atomic_owner_capture_ok.tl|42|-
+mir_spawn_named_owner_capture_ok|run-exit|tests/safety/mir_spawn_named_owner_capture_ok.tl|42|-
+mir_cleanup_holder_assign_reject|check-fail|tests/safety/mir_cleanup_holder_assign_reject.tl|-|cannot assign to borrowed place `h`
+mir_cleanup_holder_assign_ok|run-exit|tests/safety/mir_cleanup_holder_assign_ok.tl|6|-
+mir_cleanup_holder_return_reject|check-fail|tests/safety/mir_cleanup_holder_return_reject.tl|-|cannot assign to borrowed place `h`
+mir_cleanup_holder_param_ok|run-exit|tests/safety/mir_cleanup_holder_param_ok.tl|5|-
+mir_cleanup_field_store_through_ref_reject|check-fail|tests/safety/mir_cleanup_field_store_through_ref_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_cleanup_store_through_ref_reject|check-fail|tests/safety/mir_cleanup_store_through_ref_reject.tl|-|cannot overwrite initialized cleanup-owning place
+lower_word_view_slice_reference_ok|run-exit|tests/safety/lower_word_view_slice_reference_ok.tl|3|-
+mir_box_pattern_binder_loan_reject|check-fail|tests/safety/mir_box_pattern_binder_loan_reject.tl|-|cannot assign to borrowed place `xs`
+mir_cleanup_slice_store_reject|check-fail|tests/safety/mir_cleanup_slice_store_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_comptime_syntax_move_reject|check-fail|tests/safety/mir_comptime_syntax_move_reject.tl|tests/safety/mir_comptime_syntax_move_reject.tl:9:20|use of moved value `item`
+mir_comptime_syntax_match_ok|check-ok|tests/safety/mir_comptime_syntax_match_ok.tl|-|-
+mir_referent_match_move_out_reject|check-fail|tests/safety/mir_referent_match_move_out_reject.tl|tests/safety/mir_referent_match_move_out_reject.tl:15:6|cannot move non-Copy value through shared reference
+mir_referent_box_match_move_out_reject|check-fail|tests/safety/mir_referent_box_match_move_out_reject.tl|tests/safety/mir_referent_box_match_move_out_reject.tl:15:6|cannot move non-Copy value through shared reference
+mir_referent_match_test_ok|run-exit|tests/safety/mir_referent_match_test_ok.tl|42|-
+mir_referent_nested_match_move_out_reject|check-fail|tests/safety/mir_referent_nested_match_move_out_reject.tl|tests/safety/mir_referent_nested_match_move_out_reject.tl:18:10|cannot move non-Copy value through shared reference
+mir_box_bridge_duplicate_reject|check-fail|tests/safety/mir_box_bridge_duplicate_reject.tl|-|use of moved value `boxed`
+mir_box_bridge_shared_write_reject|check-fail|tests/safety/mir_box_bridge_shared_write_reject.tl|tests/safety/mir_box_bridge_shared_write_reject.tl:11:12|cannot mutably borrow `state.storage` behind a shared reference
+mir_extern_view_borrow_reject|check-fail|tests/safety/mir_extern_view_borrow_reject.tl|tests/safety/mir_extern_view_borrow_reject.tl:19:23|cannot move borrowed place `text`
+mir_extern_view_borrow_ok|run-exit|tests/safety/mir_extern_view_borrow_ok.tl|9|-
+mir_referent_copy_payload_ok|run-exit|tests/safety/mir_referent_copy_payload_ok.tl|42|-
+mir_string_compare_read_ok|check-ok|tests/safety/mir_string_compare_read_ok.tl|-|-
+mir_string_compare_moved_reject|check-fail|tests/safety/mir_string_compare_moved_reject.tl|tests/safety/mir_string_compare_moved_reject.tl:11:12|use of moved value `text`
+mir_function_array_ok|run-exit|tests/safety/mir_function_array_ok.tl|42|-
+mir_box_pattern_move_reject|check-fail|tests/safety/mir_box_pattern_move_reject.tl|tests/safety/mir_box_pattern_move_reject.tl:11:32|use of moved value `cell`
+mir_box_pattern_copy_ok|run-exit|tests/safety/mir_box_pattern_copy_ok.tl|42|-
+mir_deref_reference_read_ok|run-exit|tests/safety/mir_deref_reference_read_ok.tl|42|-
+mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:13:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:18:13|cannot mutably borrow borrowed place `pair`
+mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:16:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_return_ok|check-ok|tests/safety/mir_reference_array_return_ok.tl|-|-
+mir_reference_slice_param_ok|check-ok|tests/safety/mir_reference_slice_param_ok.tl|-|-
+mir_box_reference_borrow_reject|check-fail|tests/safety/mir_box_reference_borrow_reject.tl|tests/safety/mir_box_reference_borrow_reject.tl:15:13|cannot mutably borrow borrowed place `pair`
+mir_lifetime_shortening_ok|run-exit|tests/safety/mir_lifetime_shortening_ok.tl|42|-
+mir_match_literal_arm_move_reject|check-fail|tests/safety/mir_match_literal_arm_move_reject.tl|tests/safety/mir_match_literal_arm_move_reject.tl:22:16|use of moved value `c`
+mir_match_literal_arm_ok|run-exit|tests/safety/mir_match_literal_arm_ok.tl|42|-
+mir_macro_operand_location_reject|check-fail|tests/safety/mir_macro_operand_location_reject.tl|tests/safety/mir_macro_operand_location_reject.tl:14:35|use of moved value `s`
+mir_macro_clause_location_reject|check-fail|tests/safety/mir_macro_clause_location_reject.tl|tests/safety/mir_macro_clause_location_reject.tl:13:42|use of moved value `s`
+mir_macro_and_location_reject|check-fail|tests/safety/mir_macro_and_location_reject.tl|tests/safety/mir_macro_and_location_reject.tl:13:40|use of moved value `s`
+mir_nested_reference_array_reject|check-fail|tests/safety/mir_nested_reference_array_reject.tl|tests/safety/mir_nested_reference_array_reject.tl:8:13|cannot assign to borrowed place `x`
+mir_nested_reference_array_copy_reject|check-fail|tests/safety/mir_nested_reference_array_copy_reject.tl|tests/safety/mir_nested_reference_array_copy_reject.tl:8:13|cannot assign to borrowed place `x`
+mir_nested_reference_array_ok|run-exit|tests/safety/mir_nested_reference_array_ok.tl|42|-
+mir_store_receiver_shared_borrow_reject|check-fail|tests/safety/mir_store_receiver_shared_borrow_reject.tl|tests/safety/mir_store_receiver_shared_borrow_reject.tl:12:11|cannot assign to borrowed place `items[0]`
+mir_store_receiver_mut_borrow_reject|check-fail|tests/safety/mir_store_receiver_mut_borrow_reject.tl|tests/safety/mir_store_receiver_mut_borrow_reject.tl:10:11|cannot assign to borrowed place `items[0]`
+mir_store_receiver_moved_reject|check-fail|tests/safety/mir_store_receiver_moved_reject.tl|tests/safety/mir_store_receiver_moved_reject.tl:16:11|use of moved value `items`
+mir_store_receiver_through_shared_reject|check-fail|tests/safety/mir_store_receiver_through_shared_reject.tl|tests/safety/mir_store_receiver_through_shared_reject.tl:9:11|cannot mutably borrow `r` behind a shared reference
+mir_store_receiver_rhs_reads_ok|run-exit|tests/safety/mir_store_receiver_rhs_reads_ok.tl|42|-
+mir_store_receiver_move_only_ok|run-exit|tests/safety/mir_store_receiver_move_only_ok.tl|42|-
+mir_for_owned_source_reuse_reject|check-fail|tests/safety/mir_for_owned_source_reuse_reject.tl|tests/safety/mir_for_owned_source_reuse_reject.tl:11:38|use of moved value `strings`
+mir_for_owned_item_twice_reject|check-fail|tests/safety/mir_for_owned_item_twice_reject.tl|tests/safety/mir_for_owned_item_twice_reject.tl:13:48|use of moved value `s`
+mir_for_owned_borrowed_source_reject|check-fail|tests/safety/mir_for_owned_borrowed_source_reject.tl|tests/safety/mir_for_owned_borrowed_source_reject.tl:10:15|cannot move borrowed place `strings`
+mir_element_reference_mut_reject|check-fail|tests/safety/mir_element_reference_mut_reject.tl|tests/safety/mir_element_reference_mut_reject.tl:14:20|cannot assign to borrowed place `holder`
+mir_call_reference_field_mut_reject|check-fail|tests/safety/mir_call_reference_field_mut_reject.tl|tests/safety/mir_call_reference_field_mut_reject.tl:13:20|cannot assign to borrowed place `holder`
+mir_for_owned_items_ok|run-exit|tests/safety/mir_for_owned_items_ok.tl|42|-
+mir_for_owned_break_ok|run-exit|tests/safety/mir_for_owned_break_ok.tl|42|-
+mir_element_reference_ok|run-exit|tests/safety/mir_element_reference_ok.tl|42|-
+mir_scalar_widening_ok|run-exit|tests/safety/mir_scalar_widening_ok.tl|42|-
+mir_arena_branded_construct_destroy_reject|check-fail|tests/safety/mir_arena_branded_construct_destroy_reject.tl|tests/safety/mir_arena_branded_construct_destroy_reject.tl:17:29|use of moved value `box`
+mir_arena_atomic_place_destroy_unjoined_reject|check-fail|tests/safety/mir_arena_atomic_place_destroy_unjoined_reject.tl|tests/safety/mir_arena_atomic_place_destroy_unjoined_reject.tl:23:11|arena.destroy-safe!/rewind-safe! requires atomic arena user `worker` to be joined or released before
+mir_arena_branded_construct_ok|run-exit|tests/safety/mir_arena_branded_construct_ok.tl|42|-
+mir_resource_limit_reject|check-fail|tests/safety/mir_resource_limit_reject.tl|tests/safety/mir_resource_limit_reject.tl:5:3|the ownership checker does not support a construct in this function body
+mir_shift_count_type_ok|run-exit|tests/safety/mir_shift_count_type_ok.tl|42|-
+mir_reference_scalar_match_ok|run-exit|tests/safety/mir_reference_scalar_match_ok.tl|42|-
+mir_reference_scalar_match_move_reject|check-fail|tests/safety/mir_reference_scalar_match_move_reject.tl|tests/safety/mir_reference_scalar_match_move_reject.tl:10:18|use of moved value `c`
+mir_match_literal_arithmetic_arm_ok|run-exit|tests/safety/mir_match_literal_arithmetic_arm_ok.tl|42|-
+mir_nested_reference_read_ok|check-ok|tests/safety/mir_nested_reference_read_ok.tl|-|-
+mir_nested_reference_move_out_reject|check-fail|tests/safety/mir_nested_reference_move_out_reject.tl|tests/safety/mir_nested_reference_move_out_reject.tl:5:31|cannot move a `(&mut inner i64)` out of a shared reference
+mir_accessor_element_move_reject|check-fail|tests/safety/mir_accessor_element_move_reject.tl|tests/safety/mir_accessor_element_move_reject.tl:14:3|cannot move owner-consuming value out of dynamic array element
+mir_varargs_extern_call_ok|check-ok|tests/safety/mir_varargs_extern_call_ok.tl|-|-
+mir_runtime_quasiquote_ok|check-ok|tests/safety/mir_runtime_quasiquote_ok.tl|-|-
+mir_tuple_ref_call_result_ok|run-exit|tests/safety/mir_tuple_ref_call_result_ok.tl|42|-
+mir_free_lifetime_field_escape_reject|check-fail|tests/safety/mir_free_lifetime_field_escape_reject.tl|tests/safety/mir_free_lifetime_field_escape_reject.tl:10:13|source lifetime `x` does not outlive required lifetime `n`
+mir_scalar_var_widening_ok|run-exit|tests/safety/mir_scalar_var_widening_ok.tl|42|-
+scalar_implicit_widening_reject|check-fail|tests/safety/scalar_implicit_widening_reject.tl|tests/safety/scalar_implicit_widening_reject.tl:5:3|return type mismatch: expected f64, found f32
+mir_in_arena_literal_in_scratch_ok|run-exit|tests/safety/mir_in_arena_literal_in_scratch_ok.tl|42|-
+mir_free_lifetime_field_reject|check-fail|tests/safety/mir_free_lifetime_field_reject.tl|tests/safety/mir_free_lifetime_field_reject.tl:8:3|holds a reference but declares no lifetimes
+mir_declared_lifetime_field_ok|run-exit|tests/safety/mir_declared_lifetime_field_ok.tl|42|-
 
 # Bare variant names (SPEC 3.5.1, 4.4.3): an expected enum type resolves them,
 # even for an imported enum; without one they see only enums the module
@@ -1487,15 +1764,58 @@ function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl
 variant_expected_imported_ok|check-ok|tests/safety/variant_expected_imported_ok.tl|-|-
 variant_unimported_module_reject|check-fail|tests/safety/variant_unimported_module_reject.tl|-|typecheck: unbound name Pass
 variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_bare_reject.tl|-|typecheck: unbound name Pass
-variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
-variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
+variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|tests/safety/variant_resolution_function_conflict.tl|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
+variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|tests/safety/variant_resolution_conflict.tl|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
 variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder
 
 # Packed compiler state is addressed only through its schema's typed accessors (#7021).
 compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
 compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
-compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
+compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|src/compiler_state_schema.tl|array assignment value type mismatch: expected i64, found String
 compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type
 
 global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
 global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed
+slice_rest_element_update_ok|check-ok|tests/safety/slice_rest_element_update_ok.tl|-|-
+slice_element_borrow_with_mut_slice_reject|check-fail|tests/safety/slice_element_borrow_with_mut_slice_reject.tl|-|cannot mutably borrow borrowed place `rest`
+slice_element_borrow_with_mut_param_reject|check-fail|tests/safety/slice_element_borrow_with_mut_param_reject.tl|-|cannot mutably borrow borrowed place `xs`
+spmd_foreach2_body_move_reject|check-fail|tests/safety/spmd_foreach2_body_move_reject.tl|-|cannot move loop-carried owner value `text`
+call_store_contract_reject|check-fail|tests/safety/call_store_contract_reject.tl|tests/safety/call_store_contract_reject.tl:21:11|cannot assign to borrowed place `p.r`
+call_store_contract_ok|run-exit|tests/safety/call_store_contract_ok.tl|42|-
+call_store_contract_returned_ref_reject|check-fail|tests/safety/call_store_contract_returned_ref_reject.tl|tests/safety/call_store_contract_returned_ref_reject.tl:25:11|cannot assign to borrowed place `p.r`
+call_store_contract_returned_ref_ok|run-exit|tests/safety/call_store_contract_returned_ref_ok.tl|42|-
+mir_box_holder_read_reject|check-fail|tests/safety/mir_box_holder_read_reject.tl|tests/safety/mir_box_holder_read_reject.tl:13:11|cannot assign to borrowed place `pair.b`
+mir_box_holder_read_ok|run-exit|tests/safety/mir_box_holder_read_ok.tl|42|-
+mir_box_holder_element_push_reject|check-fail|tests/safety/mir_box_holder_element_push_reject.tl|tests/safety/mir_box_holder_element_push_reject.tl:9:23|cannot assign to borrowed place `xs`
+mir_box_holder_store_reject|check-fail|tests/safety/mir_box_holder_store_reject.tl|tests/safety/mir_box_holder_store_reject.tl:19:13|cannot assign to borrowed place `p.r`
+mir_box_holder_nested_store_reject|check-fail|tests/safety/mir_box_holder_nested_store_reject.tl|tests/safety/mir_box_holder_nested_store_reject.tl:19:11|cannot assign to borrowed place `p.r`
+mir_opaque_referent_read_reject|check-fail|tests/safety/mir_opaque_referent_read_reject.tl|tests/safety/mir_opaque_referent_read_reject.tl:22:13|cannot assign to borrowed place `p.l`
+mir_reborrow_call_store_reject|check-fail|tests/safety/mir_reborrow_call_store_reject.tl|tests/safety/mir_reborrow_call_store_reject.tl:26:11|cannot assign to borrowed place `p.r`
+mir_reborrow_param_call_store_reject|check-fail|tests/safety/mir_reborrow_param_call_store_reject.tl|tests/safety/mir_reborrow_param_call_store_reject.tl:22:3|cannot assign to borrowed place `p.r`
+mir_reborrow_holder_ok|run-exit|tests/safety/mir_reborrow_holder_ok.tl|42|-
+mir_closure_result_loan_reject|check-fail|tests/safety/mir_closure_result_loan_reject.tl|tests/safety/mir_closure_result_loan_reject.tl:15:11|cannot assign to borrowed place `p.l`
+mir_closure_result_loan_ok|run-exit|tests/safety/mir_closure_result_loan_ok.tl|42|-
+mir_shared_mut_reference_push_reject|check-fail|tests/safety/mir_shared_mut_reference_push_reject.tl|tests/safety/mir_shared_mut_reference_push_reject.tl:4:21|cannot mutably borrow `r` behind a shared reference
+mir_shared_mut_reference_field_push_reject|check-fail|tests/safety/mir_shared_mut_reference_field_push_reject.tl|tests/safety/mir_shared_mut_reference_field_push_reject.tl:8:21|cannot mutably borrow `h` behind a shared reference
+mir_shared_mut_reference_field_set_reject|check-fail|tests/safety/mir_shared_mut_reference_field_set_reject.tl|tests/safety/mir_shared_mut_reference_field_set_reject.tl:7:3|cannot mutably borrow `r.a` behind a shared reference
+mir_box_holder_move_out_reject|check-fail|tests/safety/mir_box_holder_move_out_reject.tl|tests/safety/mir_box_holder_move_out_reject.tl:9:23|cannot assign to borrowed place `xs`
+mir_box_holder_struct_move_out_reject|check-fail|tests/safety/mir_box_holder_struct_move_out_reject.tl|tests/safety/mir_box_holder_struct_move_out_reject.tl:12:23|cannot assign to borrowed place `xs`
+mir_box_holder_move_out_ok|run-exit|tests/safety/mir_box_holder_move_out_ok.tl|42|-
+mir_nested_param_store_then_grow_reject|check-fail|tests/safety/mir_nested_param_store_then_grow_reject.tl|tests/safety/mir_nested_param_store_then_grow_reject.tl:12:21|cannot assign to borrowed place `xs`
+mir_nested_param_field_store_then_grow_reject|check-fail|tests/safety/mir_nested_param_field_store_then_grow_reject.tl|tests/safety/mir_nested_param_field_store_then_grow_reject.tl:15:21|cannot assign to borrowed place `xs`
+mir_nested_param_store_ok|check-ok|tests/safety/mir_nested_param_store_ok.tl|-|-
+call_store_contract_holder_reject|check-fail|tests/safety/call_store_contract_holder_reject.tl|tests/safety/call_store_contract_holder_reject.tl:25:11|cannot assign to borrowed place `p.r`
+call_store_contract_holder_ok|run-exit|tests/safety/call_store_contract_holder_ok.tl|42|-
+mir_by_value_param_store_then_grow_reject|check-fail|tests/safety/mir_by_value_param_store_then_grow_reject.tl|tests/safety/mir_by_value_param_store_then_grow_reject.tl:16:21|cannot assign to borrowed place `h`
+mir_by_value_param_store_ok|run-exit|tests/safety/mir_by_value_param_store_ok.tl|42|-
+mir_box_param_move_out_store_reject|check-fail|tests/safety/mir_box_param_move_out_store_reject.tl|tests/safety/mir_box_param_move_out_store_reject.tl:13:23|cannot assign to borrowed place `xs`
+mut_param_store_then_write_reject|check-fail|tests/safety/mut_param_store_then_write_reject.tl|tests/safety/mut_param_store_then_write_reject.tl:9:16|borrowed place `p`
+mut_param_whole_store_then_write_reject|check-fail|tests/safety/mut_param_whole_store_then_write_reject.tl|tests/safety/mut_param_whole_store_then_write_reject.tl:10:16|borrowed place `p`
+for_item_loan_array_reject|check-fail|tests/safety/for_item_loan_array_reject.tl|tests/safety/for_item_loan_array_reject.tl:18:15|cannot assign to borrowed place `p.l`
+match_field_payload_move_in_loop_reject|check-fail|tests/safety/match_field_payload_move_in_loop_reject.tl|tests/safety/match_field_payload_move_in_loop_reject.tl:21:7|use of moved value `w.val`
+reassigned_ref_branch_reject|check-fail|tests/safety/reassigned_ref_branch_reject.tl|tests/safety/reassigned_ref_branch_reject.tl:18:11|cannot assign to borrowed place `p.l`
+reassigned_ref_loop_reject|check-fail|tests/safety/reassigned_ref_loop_reject.tl|tests/safety/reassigned_ref_loop_reject.tl:18:11|cannot assign to borrowed place `p.l`
+reassigned_ref_copy_reject|check-fail|tests/safety/reassigned_ref_copy_reject.tl|tests/safety/reassigned_ref_copy_reject.tl:16:11|cannot assign to borrowed place `p.l`
+reassigned_ref_ok|run-exit|tests/safety/reassigned_ref_ok.tl|42|-
+reassigned_ref_call_store_reject|check-fail|tests/safety/reassigned_ref_call_store_reject.tl|tests/safety/reassigned_ref_call_store_reject.tl:22:11|cannot assign to borrowed place `p.z`
+reassigned_ref_call_store_ok|run-exit|tests/safety/reassigned_ref_call_store_ok.tl|42|-

@@ -61,7 +61,8 @@
 
 (define (package-surface-capture-error! [message : String]) : unit
   (in-arena
-    (arena.Arena package-surface-capture-result-arena)
+    (unsafe
+      (arena.Arena package-surface-capture-result-arena))
     (set!
       (array-ref package-surface-capture-state 0)
       (PackageSurfaceCaptureState.Err (string.copy message)))))
@@ -241,7 +242,8 @@
         macro-decl-count
         result-arena)
       (in-arena
-        (arena.Arena result-arena)
+        (unsafe
+          (arena.Arena result-arena))
         (let
           [facts : surface_facts.SurfaceTypecheckFacts
             (surface_facts.surface-typecheck-facts-recording-finish

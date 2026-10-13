@@ -68,7 +68,7 @@
     (match result
       [(Ok program _)
         (match program
-          [(Program _ functions _)
+          [(Program _ functions _ _authority)
             (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
       [(Err _) false])))
 
@@ -134,7 +134,7 @@
     (match result
       [(Ok program _)
         (match program
-          [(Program _ functions _)
+          [(Program _ functions _ _authority)
             (let
               [rendered : String
                 (compiler-lower-spmd-package-uniform-helper-render functions)]
@@ -691,7 +691,7 @@
     "spmd_fixture")
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (and
             (string.eq
               (ir.compiler-ir-spmd-private-abi-program-error functions)

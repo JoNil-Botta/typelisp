@@ -393,7 +393,8 @@
         1
         (* old-capacity 2))]
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [bigger : (__tl_dyn-array CloneRootEntry)
           (__tl_make-array CloneRootEntry new-capacity)]
@@ -606,7 +607,8 @@
                     (clone-root-entries-store-read target-address)]
                   [owner : i64 target-store.arena]
                   (in-arena
-                    (arena.Arena owner)
+                    (unsafe
+                      (arena.Arena owner))
                     (if (>=
                       target-store.len
                       (array-length target-store.entries))

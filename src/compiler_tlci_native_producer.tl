@@ -122,7 +122,7 @@
         (set! index (- index 1))))
     (if (< found 0)
       ""
-      (array-ref
+      (owned_view.compiler-owned-element-view
         (embedded-native-global-shared-view embedded-native-data-local-texts)
         found))))
 
@@ -186,7 +186,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (tlci-native-macro-captures-copy-range! dst src (+ index 1) count)))
 
 (define (tlci-native-macro-captures-grow!

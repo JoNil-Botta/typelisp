@@ -186,12 +186,13 @@
         needed
         doubled)]
     [bigger : (MutPtr u8) (string.string-runtime-alloc capacity)]
-    (string.str-copy-bytes-into
-      (unsafe
-        (ptr-cast buf.data : (Ptr u8)))
-      bigger
-      0
-      buf.len)
+    (unsafe
+      (string.str-copy-bytes-into
+        (unsafe
+          (ptr-cast buf.data : (Ptr u8)))
+        bigger
+        0
+        buf.len))
     (set! buf.data bigger)
     (set! buf.cap capacity)))
 

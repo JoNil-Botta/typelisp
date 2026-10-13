@@ -473,9 +473,13 @@
       (__tl_make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 5)]
-    (set! (array-ref dense-slots 0) head)
-    (set! (array-ref dense-slots 1) colon)
-    (set! (array-ref dense-slots 2) typ)
+    (set!
+      (array-ref dense-slots 0)
+      (owned_view.compiler-owned-shared-view head))
+    (set!
+      (array-ref dense-slots 1)
+      (owned_view.compiler-owned-shared-view colon))
+    (set! (array-ref dense-slots 2) (owned_view.compiler-owned-shared-view typ))
     (set! (array-ref offset-slots 1) head)
     (set! (array-ref offset-slots 2) colon)
     (set! (array-ref offset-slots 3) typ)

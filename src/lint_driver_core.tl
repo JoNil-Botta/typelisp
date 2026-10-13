@@ -869,7 +869,9 @@
 
 (defstruct SelfhostLintUnsafeSurfaceName
   (name String)
-  (requires-unsafe bool))
+  (requires-unsafe bool)
+  (struct-constructor bool)
+  (declaration-module String))
 
 ;; Append-only and read front to back: contiguous slots with a doubling push.
 (defstruct SelfhostLintUnsafeSurfaceNames
@@ -894,7 +896,9 @@
         [bigger : (__tl_dyn-array SelfhostLintUnsafeSurfaceName)
           (__tl_make-array SelfhostLintUnsafeSurfaceName (* n 2))]
         (while (< index n)
-          (set! (array-ref bigger index) (array-ref cells index))
+          (set!
+            (array-ref bigger index)
+            (owned_view.compiler-owned-element-view cells index))
           (set! index (+ index 1)))
         (set! cells bigger)))
     (set! (array-ref cells n) fact)
@@ -930,7 +934,7 @@
         index))))
 
 ;; The cache arena is the explicit batch's outer arena. Entries copy only path,
-;; declaration name, and safety bits out of each file scratch; no AST nodes,
+;; declaration/module names and safety bits out of each file scratch; no AST nodes,
 ;; signatures, or pool-backed lists survive their owner arena.
 (define selfhost-lint-unsafe-surface-cache-arena : i64
   0)
@@ -1007,6 +1011,12 @@
     [(CompilerLoadSurfaceDispatch) true]
     [_ false]))
 
+(define (selfhost-lint-unsafe-surface-struct?
+  [kind : compiler_load.CompilerLoadSurfaceDeclKind]) : bool
+  (match kind
+    [(CompilerLoadSurfaceStruct) true]
+    [_ false]))
+
 (define (selfhost-lint-unsafe-surface-copy-decls
   [decls : compiler_load.CompilerLoadSurfaceDeclList]
   [root-module : i64]
@@ -1027,7 +1037,11 @@
             (selfhost-lint-unsafe-surface-names-add
               (SelfhostLintUnsafeSurfaceName
                 (string.copy (ci.intern-str decl.name))
-                decl.was-unsafe)
+                decl.was-unsafe
+                (selfhost-lint-unsafe-surface-struct? decl.kind)
+                (if (= root-module 0)
+                  ""
+                  (string.copy (ci.intern-str root-module))))
               result))
           unit)
         (set! index (+ index 1))))
@@ -1063,7 +1077,8 @@
   [path : (& path str)]
   [summary : compiler_load.CompilerLoadSurfaceSummary]) : unit
   (in-arena
-    (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+    (unsafe
+      (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
     (selfhost-lint-unsafe-surface-cache-push!
       (SelfhostLintUnsafeSurfaceCacheEntry
         (string.copy path)
@@ -1076,7 +1091,8 @@
 (define (selfhost-lint-unsafe-surface-cache-store-invalid!
   [path : (& path str)]) : unit
   (in-arena
-    (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+    (unsafe
+      (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
     (selfhost-lint-unsafe-surface-cache-push!
       (SelfhostLintUnsafeSurfaceCacheEntry
         (string.copy path)
@@ -1134,37 +1150,53 @@
 
 (define (selfhost-lint-unsafe-surface-import-alias
   [import-edge : (& import-edge compiler_load.CompilerLoadSurfaceImport)]) : String
+  ;; The alias text stays owned by the import edge; return a copy.
   (match import-edge.alias
-    [(CompilerLoadSurfaceSomeString alias) alias]
+    [(CompilerLoadSurfaceSomeString alias) (string.copy (& alias))]
     [(CompilerLoadSurfaceNoString)
       (match import-edge.default-alias
-        [(CompilerLoadSurfaceSomeString alias) alias]
+        [(CompilerLoadSurfaceSomeString alias) (string.copy (& alias))]
         [(CompilerLoadSurfaceNoString) ""])]))
 
 (define (selfhost-lint-unsafe-surface-add-names!
   [alias : String]
+  [source-module : String]
   [names : SelfhostLintUnsafeSurfaceNames]) : unit
   (let
     [n : i64 names.len]
     [index : i64 0]
+    [source-module-id : i64 (ci.intern source-module)]
     (while (< index n)
       (let
         [fact : SelfhostLintUnsafeSurfaceName
           (owned_view.compiler-owned-array-element-shared-view
             names.slots
             index)]
+        [canonical-module-id : i64
+          (if (string.eq fact.declaration-module "")
+            source-module-id
+            (ci.intern fact.declaration-module))]
+        [requires-unsafe : bool
+          (or
+            fact.requires-unsafe
+            (and
+              fact.struct-constructor
+              (tc.tc-struct-constructor-unsafe?
+                (tc.tc-module-name-id-by-id
+                  canonical-module-id
+                  (ci.intern (owned_view.compiler-owned-shared-view fact.name))))))]
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "."
             (owned_view.compiler-owned-shared-view fact.name))
-          fact.requires-unsafe)
+          requires-unsafe)
         (lint_core.lint-unused-unsafe-classifier-add-exact-name!
           (str_cat.str-cat
             (owned_view.compiler-owned-shared-view alias)
             "/"
             fact.name)
-          fact.requires-unsafe)
+          requires-unsafe)
         (set! index (+ index 1))))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
@@ -1179,10 +1211,22 @@
         (if (and
           (= decl.module root-module)
           (not decl.has-generated-meta)
-          (selfhost-lint-unsafe-surface-value-kind? decl.kind))
+          (selfhost-lint-unsafe-surface-value-kind? decl.kind)
+          ;; A moduleless entry has no canonical nominal identity in this
+          ;; surface summary. Leave its constructors Unknown for typed
+          ;; fallback rather than assert that they are safe.
+          (or
+            decl.was-unsafe
+            (not (selfhost-lint-unsafe-surface-struct? decl.kind))
+            (not (= root-module 0))))
           (lint_core.lint-unused-unsafe-classifier-add-exact-name!
             (string.copy (ci.intern-str decl.name))
-            decl.was-unsafe)
+            (or
+              decl.was-unsafe
+              (and
+                (selfhost-lint-unsafe-surface-struct? decl.kind)
+                (tc.tc-struct-constructor-unsafe?
+                  (tc.tc-module-name-id-by-id root-module decl.name)))))
           unit)
         ;; A top-level declaration can shadow an import alias. Only qualified
         ;; references consult this root blocker, so unqualified local facts
@@ -1225,14 +1269,17 @@
           (match (selfhost-lint-unsafe-surface-resolve-import
             (owned_view.compiler-owned-shared-view path)
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            import-edge)
+            (owned_view.compiler-owned-shared-view import-edge))
             [(Err _) unit]
             [(Ok resolved)
               (match (selfhost-lint-unsafe-surface-cache-load! resolved cfgs)
                 [(Miss) unit]
                 [(Hit valid names)
                   (if valid
-                    (selfhost-lint-unsafe-surface-add-names! alias names)
+                    (selfhost-lint-unsafe-surface-add-names!
+                      alias
+                      import-edge.import-path
+                      names)
                     unit)])]))
         (set! index (+ index 1))))))
 
@@ -1594,7 +1641,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (selfhost-lint-dead-decls-copy-range dst src (+ index 1) count)))
 
 (define (selfhost-lint-dead-decls-grow [items : SelfhostLintDeadDecls]) : SelfhostLintDeadDecls
@@ -1636,7 +1685,10 @@
   (let
     [items : SelfhostLintDeadDecls
       (owned_view.compiler-owned-reference-shared-view items)]
-    (array-ref (selfhost-lint-dead-decls-slots items) index)))
+    (owned_view.compiler-owned-element-view
+      (selfhost-lint-dead-decls-slots
+        (owned_view.compiler-owned-shared-view items))
+      index)))
 
 (define (selfhost-lint-dead-decls-set
   [items : SelfhostLintDeadDecls]
@@ -3445,7 +3497,8 @@
           ;; reclaims the arena, and rebuild global state in the enclosing
           ;; owner while the old scratch-backed nodes are still mapped.
           (if (arena.eq?
-            (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+            (unsafe
+              (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
             (selfhost-lint-unsafe-surface-cache-release!)
             unit)
@@ -3493,7 +3546,8 @@
               name-case
               dead-decls)]
           (if (arena.eq?
-            (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+            (unsafe
+              (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
             (selfhost-lint-unsafe-surface-cache-release!)
             unit)

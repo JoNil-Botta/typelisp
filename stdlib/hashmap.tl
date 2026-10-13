@@ -452,11 +452,7 @@
             unit)
           (let
             [hash : i64 (hash-key ,owned-query-key)]
-            (match (probe
-              (& map.slots)
-              (capacity-mut map)
-              ,owned-query-key
-              hash)
+            (match (probe (& map.slots) (capacity map) ,owned-query-key hash)
               [(GeneratedHashmapProbe.Found index) ,update-slot-body]
               [(GeneratedHashmapProbe.Absent index)
                 (let

@@ -433,6 +433,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           false

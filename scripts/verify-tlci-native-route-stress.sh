@@ -430,14 +430,16 @@ assert_macro_profile_counts \
 # comparison that `string.eq` and `string.is-string-prefix-at` both expand adds
 # two more conjunctions to each, and the prefix check's range test one more
 # disjunction, in imported stdlib source. The text-buffer family's file write
-# path contributes three conjunctions.
+# path contributes three conjunctions. The formatter's public-options
+# validation (negative width or precision) adds one conjunction and one
+# disjunction, and the fixed-float shape check one more disjunction.
 assert_macro_profile_counts \
-    "$NATIVE_STDERR" stdlib.core_macros/and 2 84 84 "$ROW_COUNT"
+    "$NATIVE_STDERR" stdlib.core_macros/and 2 85 85 "$ROW_COUNT"
 # The Windows open-error mapping contributes two more `or` expansions
 # than Linux for every Windows compiler batch entry.
-CORE_OR_CALLS=20
+CORE_OR_CALLS=22
 if [ "$NL_HOST_OS" = windows ]; then
-    CORE_OR_CALLS=22
+    CORE_OR_CALLS=24
 fi
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/or 2 \

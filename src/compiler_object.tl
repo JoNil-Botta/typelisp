@@ -230,7 +230,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-object-instr-builder-copy-range!
@@ -240,7 +242,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-object-symbol-builder-copy-range!
@@ -250,7 +254,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-object-relocation-builder-copy-range!
@@ -260,7 +266,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-object-section-builder-copy-range!
@@ -270,7 +278,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-object-data-record-builder-grow
@@ -419,7 +429,7 @@
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (array-ref slots index)
+      (match (owned_view.compiler-owned-element-view slots index)
         [(Symbol found-name found-binding found-kind _)
           (if (and
             (string.eq found-name name)

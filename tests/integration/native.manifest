@@ -41,10 +41,8 @@ inline_aggregate_global|linux|0,1,2|tests/integration/inline_aggregate_global.tl
 inline_aggregate_global_escape|all|-|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_escape|linux|0,1|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
-# Preserve the original live-borrow shape until #7904 rejects it.
-inline_aggregate_global_live_borrow|all|-|tests/integration/inline_aggregate_global_live_borrow.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
-inline_aggregate_global_live_borrow|linux|0,1|tests/integration/inline_aggregate_global_live_borrow.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl|-
-inline_aggregate_global_live_borrow_opt2|linux|2|tests/integration/inline_aggregate_global_live_borrow.tl|42|9\n|-|stdlib/io.tl stdlib/string.tl|-
+# The original live-borrow shape is rejected on both targets at every opt
+# level by check-global-call-borrow-legacy-matrix in public-check.cases.
 inline_aggregate_global_three_field|all|-|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl|-
 cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-
@@ -689,6 +687,9 @@ borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|4
 borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-
 borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-|-|-|-
 match_copy_loan_ends|all|0,1,2|tests/safety/match_copy_loan_ends_ok.tl|42|-|-|-|-
+global_call_match_local_shadow|all|0,1,2|tests/safety/global_call_match_local_shadow_ok.tl|42|-|-|-|-
+global_call_argument_local_mutation|all|0,1,2|tests/safety/global_call_argument_local_mutation_ok.tl|42|-|-|-|-
+global_call_pure_constructor|all|0,1,2|tests/safety/global_call_pure_constructor_ok.tl|1|-|-|-|-
 box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
@@ -922,3 +923,5 @@ replayed_loop_call_lagged_3|all|0,1,2|tests/integration/replayed_loop_call_lagge
 replayed_loop_call_lagged_10|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=8 d=-10\n|10|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_65|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=63 d=-65\n|65|stdlib/io.tl stdlib/string.tl|stage-stdlib
 linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl|stage-stdlib
+
+global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-

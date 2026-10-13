@@ -525,3 +525,57 @@ stderr empty
 stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
+
+case check-global-call-borrow-diagnostic
+file main.tl
+(defstruct Big (a i64) (b i64) (c i64) (d i64))
+(define g : Big (Big 1 2 3 4))
+(define (reset!) : unit (set! g (Big 9 9 9 9)))
+(define (observe [value : (& r Big)]) : i64 (reset!) value.a)
+(define (main) : i64
+  (observe (& g)))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0222]
+stderr contains while global `g` is borrowed
+stderr contains (via observe -> reset!)
+stderr contains main.tl:6:3
+stderr contains main.tl:6:12
+stderr contains borrow of `g` remains live
+
+case check-global-call-shadow-borrow-diagnostic-matrix
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+file main.tl
+(defstruct Big (a i64) (b i64) (c i64) (d i64))
+(define g : Big (Big 1 2 3 4))
+(define (rebind!) : unit (set! g (Big 9 9 9 9)))
+(define (use [r : (& r Big)] [n : i64]) : i64 (+ r.a n))
+(define (main) : i64
+  (use (& g)
+    (let [g : Big (Big 40 2 3 4)]
+      [local-ref (& g)]
+      (rebind!)
+      local-ref.a)))
+end-file
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit nonzero
+stdout empty
+stderr contains error[E0222]
+stderr contains while global `g` is borrowed
+stderr contains (via rebind!)
+stderr contains main.tl:9:7
+stderr contains main.tl:6:8
+stderr contains borrow of `g` remains live
+
+case check-global-call-borrow-legacy-matrix
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile tests/safety/inline_aggregate_global_live_borrow_reject.tl --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/legacy.s"
+exit nonzero
+stdout empty
+stderr contains error[E0222]
+stderr contains while global `held` is borrowed
+stderr contains (via observe -> install!)

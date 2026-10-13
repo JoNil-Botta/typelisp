@@ -480,3 +480,30 @@ test -x "{{dir}}/target/release/dep_abi_pkg{{exe}}"
 step dep-abi-run
 exec "{{dir}}/target/release/dep_abi_pkg{{exe}}"
 exit 42
+
+case package-global-call-borrow-callback
+file typelisp.pkg
+(package (name "borrow_consumer") (version "0.1.0") (kind "bin")
+  (dependencies (callback "vendor/callback")))
+end-file
+file vendor/callback/typelisp.pkg
+(package (name "borrow_callback") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/callback/src/lib.tl
+(define secret : i64 1)
+(define (apply! [f : (-> unit)]) : unit (f))
+(define (answer) : i64 secret)
+end-file
+file src/main.tl
+(import callback.src.lib as callback)
+(defstruct Big (a i64) (b i64) (c i64) (d i64))
+(define g : Big (Big 1 2 3 4))
+(define (reset!) : unit (set! g (Big 9 9 9 9)))
+(define (observe [value : (& r Big)]) : i64 (callback.apply! reset!) value.a)
+(define (main) : i64 (observe (& g)))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr contains error[E0222]
+stderr contains while global `g` is borrowed
+stderr contains (via observe -> apply! -> <indirect call/lambda> -> reset!)

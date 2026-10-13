@@ -637,6 +637,38 @@ See also:
     SPEC.md, \"Opaque aggregates\"; tests/safety/opaque_foreign_construct_reject.tl.
 ")
 
+(define (diagnostic-explain-e0222) : String
+  "E0222: call may write a borrowed global
+
+Description:
+    A call can assign, mutably borrow or take the address of a global while
+    an explicit or automatic borrow of that global is live. The write may
+    occur in a transitive callee. The diagnostic names the global and a call
+    chain to the writer; its secondary label identifies the live borrow.
+    Earlier arguments and borrowed match scrutinees also keep loans live.
+    Indirect calls conservatively include functions and lambdas whose values
+    are taken anywhere in the program. Package interfaces expose no global
+    places; calls with unavailable bodies conservatively include consumer
+    callbacks. Package source checks include its own globals normally.
+
+Minimal failing example:
+    (defstruct Cell (value i64))
+    (define g : Cell (Cell 1))
+    (define (reset!) : unit (set! g (Cell 9)))
+    (define (observe [c : (& c Cell)]) : i64
+      (reset!)
+      c.value)
+    (define (main) : i64 (observe (& g)))
+
+Fix:
+    Finish reading through the borrow before calling the writer. For a Copy
+    value, pass a by-value copy instead. Alternatively, make the mutation
+    explicit through an &mut parameter so ordinary exclusivity checks apply.
+
+See also:
+    SPEC.md, \"Global places\"; E0207 (borrow violation).
+")
+
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
@@ -780,6 +812,10 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-typecheck-opaque-representation))
       (DiagnosticExplainDetailed (diagnostic-explain-e0221))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-typecheck-global-borrow-call))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0222))]
     [(diagnostic-explain-ascii-case-eq
         code
         (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter))

@@ -22,6 +22,8 @@
 (import compiler_allocation_profile as allocation_profile)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_surface_facts as surface_facts)
+(import compiler_global_effects as global_effects)
+(import (vector.vector i64 core) as effect_words)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
 (import compiler_parse_core as parser)
 (import read as reader)
@@ -900,7 +902,8 @@
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slots 0-10 hold the lazy macro substates and slot 11 is
-      ;; unused. Slot 12 keeps the owner beside the lazy addresses, while
+      ;; reserved for global call effects. Slot 12 keeps the owner beside the
+      ;; lazy addresses, while
       ;; slot 13 carries the combined source-name/structural-intern session,
       ;; slot 14 lazily owns the non-macro lazy-import table, and slots 15-16
       ;; own the nominal/type-name and clone families. Profile/test builds use
@@ -1039,6 +1042,8 @@
   9)
 (define tc-macro-state-slot-identity : i64
   10)
+(define tc-macro-state-slot-global-call-effects : i64
+  11)
 (define tc-macro-state-slot-lazy-import : i64
   14)
 (define tc-macro-state-slot-nominal-cache : i64
@@ -2329,6 +2334,7 @@
 ;; not tear down caller-owned inlay or retained-let-fact generations active for
 ;; the whole request. The explicit compiler file reset releases both.
 (define (tc-job-state-reset-derived-caches! [state : TcJobState]) : unit
+  (tc-global-call-effects-finish! state)
   (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state))
   (tc-topenv-membership-state-reset! (tc-job-state-topenv-membership state))
   (tc-thread-name-kind-state-reset! (tc-job-state-thread-name-kind state))
@@ -2363,6 +2369,7 @@
       (unless
         (= (tc-macro-walk-field state macro-hygiene-env-root-depth) 0)
         (io.panic "typecheck: cannot retire an active macro hygiene owner")))
+    (tc-global-call-effects-finish! job)
     (tc-job-state-reset-advisories! job)
     (tc-job-state-release-scratch-arenas! job)
     (tc-checked-let-binding-facts-finish!
@@ -52201,6 +52208,11 @@
                 (tc-context-body-state ctx)
                 operand-box
                 (tc-global-shared-view operand-ty))]
+            [_cleanup-effect : unit
+              (tc-global-effect-record-temporary-cleanup!
+                ctx
+                operand-box
+                (tc-global-shared-view operand-ty))]
             (cond
               [(and
                   (tc-type-contains-reference?
@@ -64155,6 +64167,9 @@
   (len i64))
 
 (defstruct TcMovePath
+  ;; A nonnegative root identifies a lexical place. Its bitwise complement
+  ;; identifies the same source name in the global namespace, captured before
+  ;; a later local can shadow it. A missing place is represented by No.
   (root i64)
   (segments TcMovePathSegments))
 
@@ -64184,6 +64199,8 @@
 (defstruct TcMovedPathFact
   (path TcMovePath)
   (kind TcMovedPathKind)
+  ;; Origins and captured source names belong to this body's immutable
+  ;; context/symbol/source owner; neither is narrowed or packed together.
   (origin i64))
 
 ;; Moved-path facts are persistent snapshots over an append-only node store.
@@ -64191,7 +64208,9 @@
 ;; address, their newest node, and their logical length.
 (defstruct TcMovedPathFactNode
   (fact TcMovedPathFact)
-  (parent i64))
+  (parent i64)
+  ;; Exact over this immutable parent chain, including non-borrow markers.
+  (has-globals bool))
 
 (defstruct TcMovedPathFactStoreData
   (nodes (__tl_dyn-array TcMovedPathFactNode))
@@ -64208,7 +64227,7 @@
   (Removed TcMovedPathFacts))
 
 (defenum TcMovedPathFactsFilter
-  (Root i64)
+  (Root i64 bool)
   (Lending TcMovePath)
   (Pending i64))
 
@@ -64418,7 +64437,9 @@
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
       (__tl_make-array TcMovedPathFactNode 4)]
     [owner : i64 (arena.tl_arena_current)]
-    (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
+    (set!
+      (array-ref nodes 0)
+      (TcMovedPathFactNode first -1 (< first.path.root 0)))
     (box (TcMovedPathFactStoreData nodes 1 owner))))
 
 (define (tc-moved-path-fact-store-grow!
@@ -64464,7 +64485,8 @@
                         node.fact.path.segments.len))
                     kind
                     node.fact.origin)
-                  node.parent))))
+                  node.parent
+                  node.has-globals))))
           (set! data.nodes next))))))
 
 (define (tc-moved-path-fact-store-push!
@@ -64474,7 +64496,14 @@
   (let
     [index : i64 data.len]
     (tc-moved-path-fact-store-grow! data (+ index 1))
-    (set! (array-ref data.nodes index) (TcMovedPathFactNode fact parent))
+    (let
+      [has-globals : bool
+        (or
+          (< fact.path.root 0)
+          (and (>= parent 0) (array-ref data.nodes parent).has-globals))]
+      (set!
+        (array-ref data.nodes index)
+        (TcMovedPathFactNode fact parent has-globals)))
     (set! data.len (+ index 1))
     index))
 
@@ -64483,6 +64512,13 @@
   [index : i64]) : TcMovedPathFactNode
   (unsafe
     (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
+
+(define (tc-moved-path-facts-have-globals? [facts : TcMovedPathFacts]) : bool
+  (match facts
+    [(Nil) false]
+    [(One fact) (< fact.path.root 0)]
+    [(Dense store tail _)
+      (array-ref (__tl-box-place store).nodes tail).has-globals]))
 
 (define (tc-moved-path-facts-empty-impl [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -64809,6 +64845,16 @@
 (define (tc-move-path-root-id [path : TcMovePath]) : i64
   path.root)
 
+(define (tc-move-path-source-root-id [path : TcMovePath]) : i64
+  (if (< path.root 0)
+    (bit-xor path.root -1)
+    path.root))
+
+(define (tc-move-path-capture-owner [path : TcMovePath] [owner : i64]) : TcMovePath
+  (if (and (>= owner 0) (>= path.root 0))
+    (TcMovePath (bit-xor path.root -1) path.segments)
+    path))
+
 (define tc-move-path-segment-kind-field : i64
   0)
 (define tc-move-path-segment-kind-tuple : i64
@@ -65015,7 +65061,7 @@
 
 (define (tc-move-path-render [path : TcMovePath]) : String
   (str_cat.str-cat
-    (tc-env-key-name-text path.root)
+    (tc-env-key-name-text (tc-move-path-source-root-id path))
     (tc-move-path-segments-render path.segments)))
 
 (define (tc-moved-path-kind-eq? [a : TcMovedPathKind] [b : TcMovedPathKind]) : bool
@@ -65056,12 +65102,6 @@
       (match b
         [(ObligationDischarged) true]
         [_ false])]))
-
-(define (tc-moved-path-fact-new
-  [path : TcMovePath]
-  [kind : TcMovedPathKind]
-  [origin : i64]) : TcMovedPathFact
-  (TcMovedPathFact path kind origin))
 
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   fact.origin)
@@ -65134,6 +65174,7 @@
           [(Missing) (Missing)]
           [(Removed tail) (Removed (tc-moved-path-facts-cons tail fact))])))))
 
+;; Exact comparisons use the captured namespace as part of the path key.
 (define (tc-moved-path-facts-contains-exact-kind?
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
@@ -65149,6 +65190,7 @@
         true
         (tc-moved-path-facts-contains-exact-kind? rest path kind)))))
 
+;; Path keys already capture the namespace at their source-place boundary.
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
   [path : TcMovePath]
@@ -65160,7 +65202,7 @@
     kind)
     set
     (let
-      [fact : TcMovedPathFact (tc-moved-path-fact-new path kind origin)]
+      [fact : TcMovedPathFact (TcMovedPathFact path kind origin)]
       (TcMovedSet
         (tc-moved-roots (tc-global-shared-view set))
         (tc-moved-partials (tc-global-shared-view set))
@@ -65606,7 +65648,14 @@
   [fact : TcMovedPathFact]
   [filter : TcMovedPathFactsFilter]) : bool
   (match filter
-    [(Root root-id) (= (tc-move-path-root-id fact.path) root-id)]
+    [(Root root-id preserve-global?)
+      (if preserve-global?
+        (= fact.path.root root-id)
+        (=
+          (tc-move-path-source-root-id fact.path)
+          (if (< root-id 0)
+            (bit-xor root-id -1)
+            root-id)))]
     [(Lending path)
       (and
         (tc-move-path-eq? fact.path path)
@@ -65648,17 +65697,22 @@
 
 (define (tc-moved-path-facts-remove-root
   [facts : TcMovedPathFacts]
-  [root-id : i64]) : TcMovedPathFacts
-  (tc-moved-path-facts-filter facts (Root root-id)))
+  [root-id : i64]
+  [preserve-global? : bool]) : TcMovedPathFacts
+  (tc-moved-path-facts-filter facts (Root root-id preserve-global?)))
 
-(define (tc-moved-remove-root-state [set : TcMovedSet] [name-id : i64]) : TcMovedSet
+(define (tc-moved-remove-root-state
+  [set : TcMovedSet]
+  [name-id : i64]
+  [preserve-global? : bool]) : TcMovedSet
   (let
     [without-root : TcMovedSet
       (tc-moved-remove-partial (tc-moved-remove set name-id) name-id)]
     [facts : TcMovedPathFacts
       (tc-moved-path-facts-remove-root
         (tc-moved-paths (tc-global-shared-view without-root))
-        name-id)]
+        name-id
+        preserve-global?)]
     (TcMovedSet
       (tc-moved-roots (tc-global-shared-view without-root))
       (tc-moved-partials (tc-global-shared-view without-root))
@@ -65749,7 +65803,7 @@
   [snapshot : TcMovedRootSnapshot]) : TcMovedSet
   (let
     [name-id : i64 snapshot.name-id]
-    [cleared : TcMovedSet (tc-moved-remove-root-state set name-id)]
+    [cleared : TcMovedSet (tc-moved-remove-root-state set name-id false)]
     [with-root : TcMovedSet
       (if snapshot.moved?
         (tc-moved-add-value cleared name-id snapshot.moved-origin)
@@ -66642,8 +66696,8 @@
       (-= remaining 1))
     result))
 
-;; Union keeps the left input's value for duplicate facts. Branch merging
-;; therefore reports the origin from the first/left arm deterministically.
+;; Union keeps the left origin for duplicate facts with the same provenance.
+;; A captured global and a same-named local remain distinct facts.
 (define (tc-moved-union [a : (& a TcMovedSet)] [b : TcMovedSet]) : TcMovedSet
   (let
     [a : TcMovedSet (owned_view.compiler-owned-reference-shared-view a)]
@@ -67124,7 +67178,7 @@
     [(Some path)
       (if (tc-moved-contains? locals path.root)
         (if (= path.segments.len 0)
-          (tc-moved-remove-root-state moved path.root)
+          (tc-moved-remove-root-state moved path.root false)
           (tc-moved-remove-exact-path moved path.root path))
         moved)]
     [(No) moved]))
@@ -67514,7 +67568,7 @@
           (tc-global-shared-view moved)
           init)
         No)]
-    [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id)]
+    [cleared : TcMovedSet (tc-moved-remove-root-state moved name-id false)]
     (match origin
       [(Some parameter-id)
         (tc-param-storage-origin-bind-in-set cleared name-id parameter-id)]
@@ -68333,7 +68387,7 @@
           origin)
         (Ok
           (tc-moved-add-origin
-            (tc-moved-remove-root-state moved name-id)
+            (tc-moved-remove-root-state moved name-id false)
             name-id
             origin)))]
     [(tc-moved-contains? loop-carried name-id)
@@ -70319,7 +70373,7 @@
                     locals
                     name
                     (tc-global-shared-view init)))
-                (tc-moved-remove-root-state loop-carried name)
+                (tc-moved-remove-root-state loop-carried name false)
                 (tc-move-rebind-lambda-owner-dependencies
                   expr-bases
                   env
@@ -70464,7 +70518,7 @@
                 (if move-aware?
                   (tc-moved-add locals name)
                   (tc-move-bind-with-owner locals name init-box))
-                (tc-moved-remove-root-state loop-carried name)
+                (tc-moved-remove-root-state loop-carried name false)
                 (tc-param-storage-rebind-from-init
                   ctx
                   expr-bases
@@ -70500,7 +70554,7 @@
         [owner.move-aware
           (tc-move-check-cleanup-owner-exit
             expr-bases
-            (tc-moved-remove-root-state moved name-id)
+            (tc-moved-remove-root-state moved name-id false)
             roots
             scope
             (+ index 1))]
@@ -70538,7 +70592,9 @@
     [cursor : TcNameIdList names]
     [out : TcMovedSet moved]
     (while (not (tc-name-id-list-empty? cursor))
-      (set! out (tc-moved-remove-root-state out (tc-name-id-list-head cursor)))
+      (set!
+        out
+        (tc-moved-remove-root-state out (tc-name-id-list-head cursor) false))
       (set! cursor (tc-name-id-list-rest cursor)))
     out))
 
@@ -71821,8 +71877,8 @@
                           locals
                           name
                           (tc-global-shared-view init)))
-                      (tc-moved-remove-root-state loop-carried name)
-                      (tc-moved-remove-root-state outer-loop-carried name)
+                      (tc-moved-remove-root-state loop-carried name false)
+                      (tc-moved-remove-root-state outer-loop-carried name false)
                       (tc-param-storage-rebind-from-init
                         ctx
                         expr-bases
@@ -72815,16 +72871,19 @@
                     (I64))
                   (tc-moved-add (tc-moved-add locals source-name) index-name)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state loop-carried source-name)
-                    index-name)
+                    (tc-moved-remove-root-state loop-carried source-name false)
+                    index-name
+                    false)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state moved2 source-name)
-                    index-name)
+                    (tc-moved-remove-root-state moved2 source-name false)
+                    index-name
+                    false)
                   body-id))]
             (Ok
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state moved3 source-name)
-                index-name)))))]
+                (tc-moved-remove-root-state moved3 source-name false)
+                index-name
+                false)))))]
     [(ForOwnedStep payload)
       (let
         [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
@@ -72886,10 +72945,13 @@
                           binding-name
                           (tc-context-type-get ctx elem-id))
                         (tc-moved-add locals binding-name)
-                        (tc-moved-remove-root-state loop-carried binding-name)
-                        (tc-moved-remove-root-state moved3 binding-name)
+                        (tc-moved-remove-root-state
+                          loop-carried
+                          binding-name
+                          false)
+                        (tc-moved-remove-root-state moved3 binding-name false)
                         body-id))]
-                  (Ok (tc-moved-remove-root-state moved4 binding-name)))]
+                  (Ok (tc-moved-remove-root-state moved4 binding-name false)))]
               [_
                 (Err
                   "typecheck: scalar for owned step requires fixed-array state")]))))]
@@ -73849,7 +73911,8 @@
                     (tc-global-shared-view locals)
                     (tc-moved-remove-root-state
                       (tc-global-shared-view loop-carried)
-                      name)
+                      name
+                      false)
                     moved
                     rhs-box))]
               [_
@@ -73887,7 +73950,7 @@
                         (tc-global-shared-view rhs))
                       name
                       rhs))]
-                [(Err _) (Ok (tc-moved-remove-root-state moved2 name))])))))]
+                [(Err _) (Ok (tc-moved-remove-root-state moved2 name false))])))))]
     [(Borrow mutable _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -74017,8 +74080,8 @@
               (tc-moved-add
                 (tc-move-enter-loop-body (tc-moved-clone locals))
                 index)
-              (tc-moved-remove-root-state body-loop-carried index)
-              (tc-moved-remove-root-state loop-carried index)
+              (tc-moved-remove-root-state body-loop-carried index false)
+              (tc-moved-remove-root-state loop-carried index false)
               (tc-moved-clone moved2)
               body)
               [(Ok _ _ breaks? break-moved-box)
@@ -74068,8 +74131,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-union locals (tc-moved-clone loop-carried))
-                  outer)
-                inner)]
+                  outer
+                  false)
+                inner
+                false)]
             (match (tc-move-check-loop-body
               ctx
               expr-bases
@@ -74084,8 +74149,9 @@
                 inner)
               body-loop-carried
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state loop-carried outer)
-                inner)
+                (tc-moved-remove-root-state loop-carried outer false)
+                inner
+                false)
               (tc-moved-clone moved2)
               (ast.ast-expr-segment-bases-get expr-bases body-box))
               [(Ok _ _ breaks? break-moved-box)
@@ -74637,8 +74703,8 @@
           expr-bases
           (tc-bind-id env lane (I64))
           (tc-moved-add (tc-move-enter-loop-body (tc-moved-clone locals)) lane)
-          (tc-moved-remove-root-state body-loop-carried lane)
-          (tc-moved-remove-root-state loop-carried lane)
+          (tc-moved-remove-root-state body-loop-carried lane false)
+          (tc-moved-remove-root-state loop-carried lane false)
           (tc-moved-clone moved)
           (ast.ast-expr-segment-bases-get expr-bases body-box))
           [(Ok _ _ breaks? break-moved-box)
@@ -76243,12 +76309,34 @@
     "` remains live because a later reference use may still depend on it"))
 
 (define (tc-borrow-check-conflict-origin
+  [expr-bases : i64]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcBorrowConflictOrigin
-  (match (tc-moved-path-conflict-kind borrowed path kind)
-    [(Some _ origin-id) (Some origin-id)]
-    [No No]))
+  (let
+    [facts : TcMovedPathFacts (tc-moved-paths borrowed)]
+    (while (not (tc-moved-path-facts-empty? facts))
+      (let
+        [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+        (when
+          (and
+            (tc-moved-path-kind-eq? fact.kind kind)
+            (tc-move-path-conflicts? fact.path path))
+          ;; Local diagnostics identify the borrowed operand. Captured global
+          ;; proofs retain their original borrow-site span through shadowing.
+          (when
+            (>= fact.path.root 0)
+            (let
+              [origin : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases fact.origin)]
+              (match (ast.ast-expr-unspan-with-segment-bases
+                expr-bases
+                (& origin))
+                [(Borrow _ _ place) (return (Some place))]
+                [_ unit])))
+          (return (Some fact.origin)))
+        (set! facts (tc-moved-path-facts-rest facts))))
+    No))
 
 (define (tc-borrow-check-rich-conflict-message
   [expr-bases : i64]
@@ -76260,6 +76348,7 @@
   (match (tc-expr-maybe-span expr-bases primary)
     [(Some primary-span)
       (match (tc-borrow-check-conflict-origin
+        expr-bases
         borrowed
         conflict-path
         conflict-kind)
@@ -76292,6 +76381,7 @@
             (tc-borrow-check-origin-label (tc-move-path-render conflict-path)))])]
     [(No)
       (match (tc-borrow-check-conflict-origin
+        expr-bases
         borrowed
         conflict-path
         conflict-kind)
@@ -76687,8 +76777,34 @@
   [env : TcTypeEnv]
   [path : TcMovePath]) : i64
   (let
-    [root-id : i64 (tc-move-path-root-id path)]
-    (match (tc-lookup-visible-id ctx env root-id)
+    [root-id : i64 (tc-move-path-source-root-id path)]
+    [found : ResultTcType
+      (if (< path.root 0)
+        ;; A captured global retains its declaration's lifetime after a local
+        ;; shadows its source name. Suspend scoped locals while the ordinary
+        ;; definition-site resolver handles module aliases and macro hygiene.
+        (let
+          [saved : TcTypeEnvScopedRuntimeSave
+            (tc-type-env-scoped-runtime-suspend! env)]
+          [result : ResultTcType
+            (match (tc-hygiene-definition-env-id-inner
+              ctx
+              (tc-context-module ctx)
+              (tc-context-module-id ctx))
+              [(Ok globals)
+                (tc-var-expr-after-local-field-check-mode
+                  ctx
+                  globals
+                  root-id
+                  (tc-hygiene-name-text-id-for-session
+                    (tc-context-structural-session ctx)
+                    root-id)
+                  false)]
+              [(Err message) (Err message)])]
+          (tc-type-env-scoped-runtime-restore! saved)
+          result)
+        (tc-lookup-visible-id ctx env root-id))]
+    (match found
       [(Ok ty)
         (let
           [resolved : ast.AstType (tc-resolve-type ctx ty)]
@@ -76705,11 +76821,14 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [root-id : i64]) : bool
-  (or
-    (tc-moved-contains? locals root-id)
-    (match (tc-lookup-visible-id ctx env root-id)
-      [(Ok _) true]
-      [(Err _) false])))
+  (if (< root-id 0)
+    (csym.compiler-symbols-handle-found?
+      (tc-global-effect-handle ctx Nil (bit-xor root-id -1)))
+    (or
+      (tc-moved-contains? locals root-id)
+      (match (tc-lookup-visible-id ctx env root-id)
+        [(Ok _) true]
+        [(Err _) false]))))
 
 (define (tc-borrow-check-type-contains-lifetime?
   [ctx : TcContext]
@@ -76904,12 +77023,20 @@
           [_ false])]
       [keep-direct : bool
         (match direct-path
-          [(Some direct) (tc-move-path-conflicts? path direct)]
+          [(Some direct)
+            (tc-move-path-conflicts?
+              path
+              (tc-borrow-check-capture-owner
+                ctx
+                (tc-global-shared-view outer-locals)
+                direct))]
           [(No) true])]
       [missing : bool
-        (match (tc-moved-path-exact-conflict-kind out path kind)
-          [(Some _ _) false]
-          [No true])]
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view out))
+            path
+            kind))]
       [out2 : TcMovedSet
         (if (and
           keep-kind
@@ -76991,9 +77118,11 @@
           [(BorrowShared) true]
           [_ false])]
       [new : bool
-        (match (tc-moved-path-exact-conflict-kind prior path fact.kind)
-          [(Some _ _) false]
-          [No true])]
+        (not
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view prior))
+            path
+            fact.kind))]
       [out2 : TcMovedSet
         (if (and
           shared
@@ -77156,6 +77285,8 @@
       [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
       [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
       [path : TcMovePath fact.path]
+      [visible : TcMovedSet (tc-global-shared-view out)]
+      [visible-protected : TcMovedSet (tc-global-shared-view protected)]
       [shared : bool
         (match fact.kind
           [(BorrowShared) true]
@@ -77164,25 +77295,25 @@
         (if (or
           (not shared)
           (tc-borrow-check-pending-path-at?
-            (tc-moved-paths (tc-global-shared-view out))
+            (tc-moved-paths (tc-global-shared-view visible))
             path)
           (and
             (not
               (tc-borrow-check-has-lending-binding?
-                (tc-global-shared-view out)
+                (tc-global-shared-view visible)
                 path))
             (tc-borrow-check-protected-path?
-              (tc-global-shared-view protected)
+              (tc-global-shared-view visible-protected)
               path)))
           out
           (match (tc-borrow-check-lending-binding
-            (tc-moved-paths (tc-global-shared-view out))
+            (tc-moved-paths (tc-global-shared-view visible))
             path)
             [(Some lending-binding-id)
               (cond
                 [(not
                     (tc-borrow-check-lending-binding-used-at?
-                      (tc-moved-paths (tc-global-shared-view out))
+                      (tc-moved-paths (tc-global-shared-view visible))
                       path
                       lending-binding-id))
                   out]
@@ -77255,12 +77386,16 @@
     [(No) (No)]))
 
 (define (tc-borrow-check-add-borrow-path
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [mutable : bool]
   [origin : ast.AstExpr]) : TcMovedSet
   (let
     [origin-id : i64 (ast.ast-node-push origin)]
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
     [borrowed1 : TcMovedSet
       (tc-moved-add-path-fact borrowed path (BorrowShared) origin-id)]
     (if mutable
@@ -77268,18 +77403,21 @@
       borrowed1)))
 
 (define (tc-borrow-check-add-two-phase-mut-borrow-path
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [origin : ast.AstExpr]) : TcMovedSet
   (tc-moved-add-path-fact
     borrowed
-    path
+    (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)
     (BorrowTwoPhaseMut)
     (ast.ast-node-push origin)))
 
 (define (tc-borrow-check-add-two-phase-mut-place
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]
   [origin : ast.AstExpr]) : TcBorrowCheckResult
@@ -77289,148 +77427,193 @@
         [_
           (try
             (tc-borrow-check-mutably-borrow-conflict
+              ctx
               expr-bases
+              (tc-global-shared-view locals)
               (tc-global-shared-view borrowed)
               path
               (tc-global-shared-view origin)))]
         (Ok
-          (tc-borrow-check-add-two-phase-mut-borrow-path borrowed path origin)))]
+          (tc-borrow-check-add-two-phase-mut-borrow-path
+            ctx
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            origin)))]
     [(No) (Ok borrowed)]))
 
 (define (tc-borrow-check-remove-two-phase-mut-place
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]) : TcMovedSet
   (match (tc-borrow-check-place-path expr-bases place)
-    [(Some path) (tc-moved-remove-path-kind borrowed path (BorrowTwoPhaseMut))]
+    [(Some path)
+      (tc-moved-remove-path-kind
+        borrowed
+        (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)
+        (BorrowTwoPhaseMut))]
     [(No) borrowed]))
 
 (define (tc-borrow-check-move-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
-        borrowed
-        path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-move-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-move-message (tc-move-path-render path))))]
-      [No Ok])))
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (let
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-move-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-move-message (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-assign-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
-        borrowed
-        path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-assign-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-assign-message (tc-move-path-render path))))]
-      [No Ok])))
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (let
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-assign-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-assign-message (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-mutably-borrow-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
-        borrowed
-        path
-        (BorrowShared)
-        primary
-        (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))
-    (match (tc-borrow-check-two-phase-mut-conflict
-      (tc-global-shared-view borrowed)
-      path)
-      [(Some _ _)
-        (Err
-          (tc-borrow-check-two-phase-mut-conflict-message
-            expr-bases
-            borrowed
-            path
-            primary
-            (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))]
-      [No Ok])))
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (let
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
+    (if (tc-moved-path-conflict? (tc-global-shared-view borrowed) path)
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowShared)
+          primary
+          (tc-borrow-check-mutably-borrow-message (tc-move-path-render path))))
+      (match (tc-borrow-check-two-phase-mut-conflict
+        (tc-global-shared-view borrowed)
+        path)
+        [(Some _ _)
+          (Err
+            (tc-borrow-check-two-phase-mut-conflict-message
+              expr-bases
+              borrowed
+              path
+              primary
+              (tc-borrow-check-mutably-borrow-message
+                (tc-move-path-render path))))]
+        [No Ok]))))
 
 (define (tc-borrow-check-immutably-borrow-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (match (tc-moved-path-conflict-kind
-    (tc-global-shared-view borrowed)
-    path
-    (BorrowMut))
-    [(Some _ _) true]
-    [No false])
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
-        borrowed
-        path
-        (BorrowMut)
-        primary
-        (tc-borrow-check-immutably-borrow-message (tc-move-path-render path))))
-    Ok))
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (let
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
+    (if (match (tc-moved-path-conflict-kind
+      (tc-global-shared-view borrowed)
+      path
+      (BorrowMut))
+      [(Some _ _) true]
+      [No false])
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowMut)
+          primary
+          (tc-borrow-check-immutably-borrow-message (tc-move-path-render path))))
+      Ok)))
 
 (define (tc-borrow-check-read-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [path : TcMovePath]
   [primary : ast.AstExpr]) : ResultTcUnit
-  (if (match (tc-moved-path-conflict-kind
-    (tc-global-shared-view borrowed)
-    path
-    (BorrowMut))
-    [(Some _ _) true]
-    [No false])
-    (Err
-      (tc-borrow-check-rich-conflict-message
-        expr-bases
-        borrowed
-        path
-        (BorrowMut)
-        primary
-        (tc-borrow-check-read-message (tc-move-path-render path))))
-    Ok))
+  (when (tc-moved-path-facts-empty? borrowed.paths) (return Ok))
+  (let
+    [path : TcMovePath
+      (tc-borrow-check-capture-owner ctx (tc-global-shared-view locals) path)]
+    (if (match (tc-moved-path-conflict-kind
+      (tc-global-shared-view borrowed)
+      path
+      (BorrowMut))
+      [(Some _ _) true]
+      [No false])
+      (Err
+        (tc-borrow-check-rich-conflict-message
+          expr-bases
+          borrowed
+          path
+          (BorrowMut)
+          primary
+          (tc-borrow-check-read-message (tc-move-path-render path))))
+      Ok)))
 
 (define (tc-borrow-check-place-read-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]
   [primary : ast.AstExpr]) : TcBorrowCheckResult
@@ -77442,7 +77625,9 @@
           [_
             (try
               (tc-borrow-check-read-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 primary))]
@@ -77450,8 +77635,9 @@
       [(No) (Ok borrowed)])))
 
 (define (tc-borrow-check-add-place-with-mutability
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [mutable : bool]
   [place : ast.AstExpr]
@@ -77463,25 +77649,44 @@
           [_
             (try
               (tc-borrow-check-mutably-borrow-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 (tc-global-shared-view origin)))]
-          (Ok (tc-borrow-check-add-borrow-path borrowed path true origin)))
+          (Ok
+            (tc-borrow-check-add-borrow-path
+              ctx
+              (tc-global-shared-view locals)
+              borrowed
+              path
+              true
+              origin)))
         (let
           [_
             (try
               (tc-borrow-check-immutably-borrow-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 path
                 (tc-global-shared-view origin)))]
-          (Ok (tc-borrow-check-add-borrow-path borrowed path false origin))))]
+          (Ok
+            (tc-borrow-check-add-borrow-path
+              ctx
+              (tc-global-shared-view locals)
+              borrowed
+              path
+              false
+              origin))))]
     [(No) (Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowCheckResult
   (match (tc-borrow-check-place-path expr-bases (tc-global-shared-view expr))
@@ -77490,7 +77695,9 @@
         [_
           (try
             (tc-borrow-check-move-conflict
+              ctx
               expr-bases
+              (tc-global-shared-view locals)
               (tc-global-shared-view borrowed)
               path
               expr))]
@@ -77513,7 +77720,7 @@
       env
       (tc-global-shared-view locals)
       (tc-global-shared-view expr)))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed expr)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-move-only-value
@@ -77531,7 +77738,7 @@
     (tc-global-shared-view locals)
     (tc-global-shared-view expr)
     (tc-resolve-type ctx target-ty))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed expr)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed expr)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-reading-value
@@ -77552,6 +77759,7 @@
       (tc-global-shared-view expr)))
     (Ok borrowed)
     (tc-borrow-check-place-read-conflict
+      ctx
       expr-bases
       locals
       borrowed
@@ -77574,7 +77782,7 @@
       env
       (tc-global-shared-view locals)
       (tc-global-shared-view init)))
-    (tc-borrow-check-after-consuming-place expr-bases locals borrowed init)
+    (tc-borrow-check-after-consuming-place ctx expr-bases locals borrowed init)
     (Ok borrowed)))
 
 (define (tc-borrow-check-after-bind-id
@@ -77590,12 +77798,18 @@
       [(Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env locals name-id))
+          (tc-move-var-move-only-id?
+            ctx
+            env
+            (tc-global-shared-view locals)
+            name-id))
           (let
             [_
               (try
                 (tc-borrow-check-move-conflict
+                  ctx
                   expr-bases
+                  (tc-global-shared-view locals)
                   (tc-global-shared-view borrowed)
                   (TcMovePath name-id (tc-move-path-segments-empty))
                   init))]
@@ -80307,8 +80521,13 @@
         (match (tc-borrow-check-place-path
           expr-bases
           (tc-global-shared-view place))
-          [(Some path)
+          [(Some source-path)
             (let
+              [path : TcMovePath
+                (tc-borrow-check-capture-owner
+                  ctx
+                  (tc-global-shared-view locals)
+                  source-path)]
               [without-temporary
                 : TcMovedSet
                 ;; A second binding of the same lending borrow must not erase
@@ -80321,7 +80540,10 @@
                   (owned_view.compiler-owned-shared-view borrowed)
                   (tc-borrow-check-remove-borrow-path
                     (tc-global-shared-view borrowed)
-                    path))]
+                    (tc-borrow-check-capture-owner
+                      ctx
+                      (tc-global-shared-view locals)
+                      path)))]
               (match (tc-expr ctx env (tc-global-shared-view arg))
                 [(Ok borrow-ty)
                   (match (tc-borrow-check-first-overlapping-lifetime
@@ -80333,8 +80555,9 @@
                         [borrowed1
                           (try
                             (tc-borrow-check-add-place-with-mutability
+                              ctx
                               expr-bases
-                              locals
+                              (tc-global-shared-view locals)
                               without-temporary
                               true
                               place
@@ -80342,7 +80565,10 @@
                         (Ok
                           (tc-borrow-check-add-lending-marker
                             borrowed1
-                            path
+                            (tc-borrow-check-capture-owner
+                              ctx
+                              (tc-global-shared-view locals)
+                              path)
                             binding-id
                             arg)))]
                     [(No) (Ok borrowed)])]
@@ -80488,12 +80714,18 @@
       [(Some name-id name)
         (if (and
           (tc-moved-contains? locals name-id)
-          (tc-move-var-move-only-id? ctx env locals name-id))
+          (tc-move-var-move-only-id?
+            ctx
+            env
+            (tc-global-shared-view locals)
+            name-id))
           (let
             [_
               (try
                 (tc-borrow-check-move-conflict
+                  ctx
                   expr-bases
+                  (tc-global-shared-view locals)
                   (tc-global-shared-view borrowed)
                   (TcMovePath name-id (tc-move-path-segments-empty))
                   init))]
@@ -80627,20 +80859,24 @@
     borrowed))
 
 (define (tc-borrow-check-assignment
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [name-id : i64]
   [primary : ast.AstExpr]) : ResultTcUnit
   (tc-borrow-check-assign-conflict
+    ctx
     expr-bases
+    (tc-global-shared-view locals)
     borrowed
     (TcMovePath name-id (tc-move-path-segments-empty))
     primary))
 
 (define (tc-borrow-check-array-set-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [array : ast.AstExpr]
   [index : ast.AstExpr]
@@ -80651,18 +80887,27 @@
     [(Some root-id)
       (match (tc-move-array-set-path expr-bases array index)
         [(Some path)
-          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
+          (tc-borrow-check-assign-conflict
+            ctx
+            expr-bases
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            primary)]
         [(No)
           (tc-borrow-check-assign-conflict
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             borrowed
             (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(No) Ok]))
 
 (define (tc-borrow-check-struct-set-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [receiver : ast.AstExpr]
   [field-id : i64]
@@ -80673,25 +80918,36 @@
     [(Some root-id)
       (match (tc-move-struct-set-path expr-bases receiver field-id)
         [(Some path)
-          (tc-borrow-check-assign-conflict expr-bases borrowed path primary)]
+          (tc-borrow-check-assign-conflict
+            ctx
+            expr-bases
+            (tc-global-shared-view locals)
+            borrowed
+            path
+            primary)]
         [(No)
           (tc-borrow-check-assign-conflict
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             borrowed
             (TcMovePath root-id (tc-move-path-segments-empty))
             primary)])]
     [(No) Ok]))
 
 (define (tc-borrow-check-root-mutation-conflict
+  [ctx : TcContext]
   [expr-bases : i64]
-  [_locals : TcMovedSet]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : ast.AstExpr]
   [primary : ast.AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var-id expr-bases place)
     [(Some root-id)
       (tc-borrow-check-assign-conflict
+        ctx
         expr-bases
+        (tc-global-shared-view locals)
         borrowed
         (TcMovePath root-id (tc-move-path-segments-empty))
         primary)]
@@ -80752,7 +81008,9 @@
               [_
                 (try
                   (tc-borrow-check-assign-conflict
+                    ctx
                     expr-bases
+                    (tc-global-shared-view locals)
                     (tc-global-shared-view borrowed)
                     (TcMovePath key (tc-move-path-segments-empty))
                     (tc-global-shared-view primary)))]
@@ -80833,7 +81091,9 @@
               [_
                 (try
                   (tc-borrow-check-assign-conflict
+                    ctx
                     expr-bases
+                    (tc-global-shared-view locals)
                     (tc-global-shared-view borrowed)
                     (TcMovePath key (tc-move-path-segments-empty))
                     (tc-global-shared-view primary)))]
@@ -80879,7 +81139,9 @@
           [_
             (try
               (tc-borrow-check-assign-conflict
+                ctx
                 expr-bases
+                (tc-global-shared-view locals)
                 (tc-global-shared-view borrowed)
                 (TcMovePath pid (tc-move-path-segments-empty))
                 (tc-global-shared-view primary)))]
@@ -80930,7 +81192,9 @@
                     [_
                       (try
                         (tc-borrow-check-assign-conflict
+                          ctx
                           expr-bases
+                          (tc-global-shared-view locals)
                           (tc-global-shared-view borrowed)
                           owner-place
                           (tc-global-shared-view primary)))]
@@ -80989,7 +81253,9 @@
                   (ast.ast-expr-segment-bases-get expr-bases arg-box))
                   [(Some owner-place)
                     (tc-borrow-check-assign-conflict
+                      ctx
                       expr-bases
+                      (tc-global-shared-view locals)
                       (tc-global-shared-view borrowed)
                       owner-place
                       (tc-global-shared-view primary))]
@@ -81108,6 +81374,1858 @@
     (if (< text-len suffix-len)
       false
       (tc-string-has-suffix-at? text suffix (- text-len suffix-len) suffix-len))))
+
+(defstruct TcGlobalEffectCollector
+  (graph global_effects.Graph)
+  (temporary-callers tc_i64_i64_map.Map)
+  (typed-temporaries tc_i64_i64_map.Map)
+  (collected (__tl_dyn-array i64))
+  (pending effect_words.Vec)
+  (prefix-only bool)
+  (address-only bool)
+  (bindings ast.AstLetBindingList)
+  (declaration i64)
+  (first-contextual-declaration i64))
+
+(defstruct TcGlobalBorrowQuery
+  (global i64)
+  (callee i64)
+  (root i64)
+  (primary TcMaybeAstSourceSpan)
+  (origin TcMaybeAstSourceSpan)
+  (label String)
+  (source-path String)
+  (path-bound bool)
+  (epoch i64)
+  (next i64))
+
+(defstruct TcGlobalCallEffects
+  (arena i64)
+  (program u64)
+  (symbols u64)
+  (count i64)
+  (expr-bases i64)
+  (source-owner i64)
+  (structural-owner i64)
+  (generation i64)
+  (graph global_effects.Graph)
+  (temporary-callers tc_i64_i64_map.Map)
+  (typed-temporaries tc_i64_i64_map.Map)
+  (collected (__tl_dyn-array i64))
+  (pending i64))
+
+(define (tc-global-effect-name-part
+  [ctx : TcContext]
+  [name : i64]
+  [leading : bool]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [source : i64 (tc-dotted-name-source-id session name)]
+    [part : i64
+      (if (and (>= source 0) (< source (ci.intern-capacity)))
+        (if leading
+          (ci.intern-leading-dot-id source)
+          (ci.intern-dotted-prefix-id source))
+        -1)]
+    (if (< part 0)
+      -1
+      (tc-dotted-name-with-source-id session name part))))
+
+;; The symbol handle supplies declaration identity across aliases and modules.
+;; Lexical binders win before symbol lookup; projected names peel only after
+;; exact lookup fails, matching ordinary global-place disambiguation.
+(define (tc-global-effect-handle
+  [ctx : TcContext]
+  [bound : TcNameIdList]
+  [name : i64]) : i64
+  (if (or (< name 0) (tc-name-id-list-contains bound name))
+    (csym.compiler-symbols-missing-handle)
+    (let
+      [leading : i64
+        (if (tc-name-id-list-empty? bound)
+          -1
+          (tc-global-effect-name-part ctx name true))]
+      (if (and (>= leading 0) (tc-name-id-list-contains bound leading))
+        (csym.compiler-symbols-missing-handle)
+        (let
+          [direct : i64 (tc-move-value-symbol-handle-id ctx name)]
+          [handle : i64
+            (if (or
+              (csym.compiler-symbols-handle-found? direct)
+              (<
+                (tc-name-first-dot-id (tc-context-structural-session ctx) name)
+                0))
+              direct
+              (match (tc-source-name-lookup-key-with-field-check-lookup
+                ctx
+                (tc-empty-env)
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  name)
+                name
+                false)
+                [(Ok _ key)
+                  (csym.compiler-symbols-lookup-value-id-or
+                    (tc-context-symbols ctx)
+                    key
+                    direct)]
+                [(Err _) direct]))]
+          (if (csym.compiler-symbols-handle-found? handle)
+            handle
+            (let
+              [prefix : i64 (tc-global-effect-name-part ctx name false)]
+              (if (and (>= prefix 0) (!= prefix name))
+                (tc-global-effect-handle ctx bound prefix)
+                handle))))))))
+
+(define (tc-global-effect-enqueue!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]) : unit
+  (unless
+    (or collector.prefix-only (!= (array-ref collector.collected node) 0))
+    (set! (array-ref collector.collected node) 1)
+    (effect_words.push-ref! (&mut collector.pending) node)))
+
+(define (tc-global-effect-add-call!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [caller : i64]
+  [callee : i64]) : unit
+  (unless
+    (or collector.prefix-only collector.address-only)
+    (global_effects.add-call! (&mut collector.graph) caller callee)
+    ;; Merely defining a lambda or taking a function value does not execute
+    ;; the indirect union. Its outgoing edges become relevant when queried.
+    (when
+      (or
+        (!= caller collector.graph.indirect)
+        (!= (array-ref collector.collected collector.graph.indirect) 0))
+      (tc-global-effect-enqueue! collector callee))))
+
+(define (tc-global-effect-write-name!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [name : i64]) : unit
+  (when (or collector.prefix-only collector.address-only) (return unit))
+  (let
+    [handle : i64 (tc-global-effect-handle ctx bound name)]
+    (when
+      (and
+        (csym.compiler-symbols-handle-found? handle)
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-value-define)))
+      (global_effects.add-write!
+        (&mut collector.graph)
+        node
+        (csym.compiler-symbol-handle-index handle)))))
+
+(define (tc-global-effect-write-place!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [place : i64]) : unit
+  (match (tc-move-root-projection-var-id
+    (tc-context-expr-bases ctx)
+    (tc-context-expr-get ctx place))
+    [(Some name) (tc-global-effect-write-name! ctx collector node bound name)]
+    [(No) unit]))
+
+(define (tc-global-effect-callee
+  [ctx : TcContext]
+  [bound : TcNameIdList]
+  [func : ast.AstExpr]
+  [indirect : i64]) : i64
+  (let
+    [name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view func))]
+    [handle : i64 (tc-global-effect-handle ctx bound name)]
+    (cond
+      [(csym.compiler-symbols-handle-found? handle)
+        (let
+          [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+          (cond
+            [(or
+                (= kind (csym.compiler-symbol-kind-function-define))
+                (= kind (csym.compiler-symbol-kind-defdispatch))
+                (= kind (csym.compiler-symbol-kind-struct-cleanup))
+                (= kind (csym.compiler-symbol-kind-enum-cleanup)))
+              (csym.compiler-symbol-handle-index handle)]
+            [(or
+                (= kind (csym.compiler-symbol-kind-defstruct))
+                (= kind (csym.compiler-symbol-kind-enum-variant)))
+              -1]
+            [(= kind (csym.compiler-symbol-kind-extern))
+              (match (csym.compiler-symbols-decl-at-index
+                (tc-context-symbols ctx)
+                (csym.compiler-symbol-handle-index handle))
+                [(Ok decl)
+                  (match (ast.ast-decl-unwrapped (& decl))
+                    [(Extern _ _ _ metadata _)
+                      (match (ast.ast-extern-metadata-abi
+                        (ast.ast-extern-metadata-box-shared-view metadata))
+                        [(TypeLisp) (csym.compiler-symbol-handle-index handle)]
+                        [_ -1])]
+                    [_ -1])]
+                [_ -1])]
+            [else indirect]))]
+      [(or
+          (tc-name-id-list-contains bound name)
+          (tc-name-id-list-contains
+            bound
+            (tc-global-effect-name-part ctx name true)))
+        indirect]
+      ;; A valid unresolved bare value can name a variant supplied by its
+      ;; expected enum, including one imported only through a type alias.
+      ;; Ordinary declarations and lexical callables have already won above.
+      [(or
+          (tc-move-check-constructor-call? ctx func)
+          (and
+            (>= name 0)
+            (< name (ci.intern-capacity))
+            (tc-bare-variant-name-id? name)
+            (tc-bare-variant-declared-name? ctx name)))
+        -1]
+      ;; Compiler-owned primitives do not execute a user function. Resolve
+      ;; declarations and lexical callable bindings before this fallback so
+      ;; a shadowing function retains its actual effects.
+      [(let
+          [builtin : i64
+            (tc-builtin-call-name-id
+              (tc-context-structural-session ctx)
+              name
+              (tc-hygiene-global-name-id?
+                (tc-context-structural-session ctx)
+                name))]
+          (and
+            (>= builtin 0)
+            (< builtin (ci.intern-capacity))
+            (or
+              (cbi.compiler-builtin-typecheck-length-call-id? builtin)
+              (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
+              (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
+              (cbi.compiler-builtin-typecheck-clone-id? builtin)
+              (cbi.compiler-builtin-private-intrinsic-id? builtin)
+              (cbi.compiler-builtin-typecheck-syntactic-unsafe-call-id? builtin)
+              (let
+                [text : String (tc-env-key-name-text builtin)]
+                (or
+                  (not
+                    (=
+                      (tc-slice-view-spelling-kind (& text))
+                      TcSliceViewCallKind.None))
+                  (tc-layout-query-name? (tc-global-shared-view text))))
+              (cbi.compiler-builtin-typecheck-tls-current-arena-id? builtin)
+              (cbi.compiler-builtin-lower-arena-id? builtin)
+              (cbi.compiler-builtin-c-fn-check-id? builtin))))
+        -1]
+      [else indirect])))
+
+(define (tc-global-effect-bind!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [bound : TcNameIdList]
+  [name : i64]
+  [annotation : ast.AstMaybeType]
+  [init : i64]) : TcNameIdList
+  (ast.ast-let-binding-list-push
+    (&mut collector.bindings)
+    (ast.AstLetBinding.Binding name annotation init))
+  (tc-name-id-list-add bound name))
+
+;; Resolve only declared or syntactically known types; never re-enter body
+;; typechecking from the effect walk. The binding's index limits initializer
+;; lookup to its incoming scope, including same-name sequential bindings.
+(define (tc-global-effect-known-type
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [id : i64]
+  [limit : i64]) : ast.AstMaybeType
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _) (Borrow _ _ inner))
+      (tc-global-effect-known-type ctx collector inner limit)]
+    [(Ann _ ty) (Some (tc-resolve-type ctx (ast.ty-node-get ty)))]
+    [(Literal value) (Some (tc-literal-type value))]
+    [(Var name)
+      (let
+        [index : i64 (- limit 1)]
+        (while (>= index 0)
+          (match (ast.ast-let-binding-list-get
+            (& collector.bindings)
+            index
+            (ast.ast-let-binding-fallback))
+            [(Binding local annotation init)
+              (when
+                (= local name)
+                (return
+                  (match annotation
+                    [(Some ty) (Some (tc-resolve-type ctx ty))]
+                    [(No)
+                      (if (>= init 0)
+                        (tc-global-effect-known-type ctx collector init index)
+                        (No))])))])
+          (-= index 1))
+        (tc-global-effect-declared-type ctx name false))]
+    [(Call func _)
+      (let
+        [name : i64
+          (tc-expr-var-name-id
+            (tc-context-expr-bases ctx)
+            (tc-context-expr-get ctx func))]
+        [local : bool false]
+        (for [index (iterator.range 0 limit)]
+          (match (ast.ast-let-binding-list-get
+            (& collector.bindings)
+            index
+            (ast.ast-let-binding-fallback))
+            [(Binding bound _ _) (when (= name bound) (set! local true))]))
+        (if local
+          (match (tc-global-effect-known-type ctx collector func limit)
+            [(Some ty)
+              (match (tc-type-strip-region ty)
+                [(Func _ ret) (Some (ast.ty-node-get ret))]
+                [_ (No)])]
+            [(No) (No)])
+          (tc-global-effect-declared-type ctx name true)))]
+    [(If _ yes no)
+      (match (tc-global-effect-known-type ctx collector yes limit)
+        [(Some left)
+          (match (tc-global-effect-known-type ctx collector no limit)
+            [(Some right)
+              (if (tc-type-eq (tc-global-shared-view left) right)
+                (Some left)
+                (No))]
+            [(No) (No)])]
+        [(No) (No)])]
+    [(Begin items)
+      (if (> items.len 0)
+        (tc-global-effect-known-type
+          ctx
+          collector
+          (ast.ast-expr-list-get (& items) (- items.len 1) 0)
+          limit)
+        (Some (ast.AstType.Unit)))]
+    [(StructGet base field)
+      (match (tc-global-effect-known-type ctx collector base limit)
+        [(Some ty)
+          (match (tc-struct-get-result-type-id ctx ty field)
+            [(Ok result) (Some result)]
+            [_ (No)])]
+        [(No) (No)])]
+    [_ (No)]))
+
+(define (tc-global-effect-declared-type
+  [ctx : TcContext]
+  [name : i64]
+  [called : bool]) : ast.AstMaybeType
+  (let
+    [direct : i64 (tc-global-effect-handle ctx Nil name)]
+    [handle : i64
+      (if (or
+        (csym.compiler-symbols-handle-found? direct)
+        (< name 0)
+        (>= name (ci.intern-capacity))
+        (not (tc-bare-variant-name-id? name)))
+        direct
+        (tc-bare-variant-visible-handle ctx name))]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      (No)
+      (let
+        [index : i64
+          (if (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-enum-variant))
+            (csym.compiler-registry-handle-owner-index handle)
+            (csym.compiler-symbol-handle-index handle))]
+        [module : i64
+          (csym.compiler-symbols-owner-module-id-at-index-or
+            (tc-context-symbols ctx)
+            index
+            cbi.compiler-builtin-id-fix-empty)]
+        [owner : TcContext
+          (tc-context-with-module-id ctx (tc-env-key-name-text module) module)]
+        (if (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-enum-variant))
+          (Some (ast.AstType.Enum (tc-variant-owner-id-or ctx handle -1)))
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            index)
+            [(Ok decl)
+              (match (ast.ast-decl-unwrapped (& decl))
+                [(DefFn _ _ _ ret _ _)
+                  (if called
+                    (Some (tc-resolve-type owner ret))
+                    (No))]
+                [(Def _ _ annotation _)
+                  (if called
+                    (No)
+                    (match annotation
+                      [(Some ty) (Some (tc-resolve-type owner ty))]
+                      [(No) (No)]))]
+                [_ (No)])]
+            [_ (No)]))))))
+
+(define (tc-global-effect-nullary-pattern? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(or (Var _ _) (Binding _)) true]
+    [(Or alternatives)
+      (let
+        [items : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives)]
+        (for [index (iterator.range 0 items.len)]
+          (when
+            (tc-global-effect-nullary-pattern?
+              (ast.ast-pattern-list-get
+                (& items)
+                index
+                (ast.ast-pattern-fallback)))
+            (return true)))
+        false)]
+    [_ false]))
+
+(define (tc-global-effect-bind-pattern
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [pattern : ast.AstPattern]
+  [bound : TcNameIdList]
+  [enum-arm : bool]) : TcNameIdList
+  (let
+    [names : TcNameIdList
+      (if enum-arm
+        (tc-enum-arm-pattern-bound-name-ids pattern Nil)
+        (tc-pattern-add-bound-name-ids pattern Nil))]
+    [scope : TcNameIdList bound]
+    (while (not (tc-name-id-list-empty? names))
+      (let
+        [name : i64 (tc-name-id-list-head names)]
+        ;; A qualified top-level name can only denote a nullary variant.
+        (unless
+          (or
+            (tc-name-qualified-id? (tc-context-structural-session ctx) name)
+            (>=
+              (tc-name-first-dot-id (tc-context-structural-session ctx) name)
+              0))
+          (set! scope (tc-global-effect-bind! collector scope name (No) -1)))
+        (set! names (tc-name-id-list-rest names))))
+    scope))
+
+(define (tc-global-effect-scan-list!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [items : (& items ast.AstExprList)]) : unit
+  (for [index (iterator.range 0 items.len)]
+    (tc-global-effect-scan!
+      ctx
+      collector
+      node
+      bound
+      (ast.ast-expr-list-get items index 0)
+      false)))
+
+(define (tc-global-effect-global-place?
+  [ctx : TcContext]
+  [bound : TcNameIdList]
+  [id : i64]
+  [explicit-borrow : bool]) : bool
+  (match (tc-move-root-projection-var-id
+    (tc-context-expr-bases ctx)
+    (tc-context-expr-get ctx id))
+    [(Some root)
+      (let
+        [handle : i64 (tc-global-effect-handle ctx bound root)]
+        (and
+          (csym.compiler-symbols-handle-found? handle)
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-value-define))
+          ;; Copy arguments create no global-place loan. Explicit borrows
+          ;; retain their provenance even when the referent itself is Copy.
+          (or
+            explicit-borrow
+            (match (csym.compiler-symbols-decl-at-index
+              (tc-context-symbols ctx)
+              (csym.compiler-symbol-handle-index handle))
+              [(Ok decl)
+                (let
+                  [owner : TcContext
+                    (tc-context-with-nominal-owner-index-module
+                      ctx
+                      (csym.compiler-symbol-handle-index handle))]
+                  (match (ast.ast-decl-unwrapped (& decl))
+                    [(Def _ _ (Some ty) _)
+                      (not (tc-move-global-target-shallow-copyable? owner ty))]
+                    [(Def _ _ (No) init)
+                      (let
+                        [expr : ast.AstExpr (tc-context-expr-get ctx init)]
+                        (match (ast.ast-expr-unspan-with-segment-bases
+                          (tc-context-expr-segment-bases ctx)
+                          (& expr))
+                          [(Literal lit)
+                            (not
+                              (tc-move-global-target-shallow-copyable?
+                                owner
+                                (tc-literal-type lit)))]
+                          [_ true]))]
+                    [_ true]))]
+              [_ true]))))]
+    [(No) false]))
+
+(define (tc-global-effect-contextual!
+  [collector : (&mut collector TcGlobalEffectCollector)]) : unit
+  (when
+    (< collector.declaration collector.first-contextual-declaration)
+    (set! collector.first-contextual-declaration collector.declaration)))
+
+;; Cached source-prefix type/borrow proofs do not include the current
+;; program's callable union or inferred temporary cleanup edges. Recheck the
+;; prefix when it contains a global-place argument/borrow or a borrowed
+;; temporary. Pure prefixes keep the ordinary checked-prefix fast path.
+(define (tc-global-effect-prefix-needs-check?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [count : i64]) : bool
+  (let
+    [prefix : ast.AstDeclList (tc-decl-list-take decls count)]
+    ;; Source-prefix counts include module/import markers; effect nodes use
+    ;; canonical symbol indices, including declarations inside module bodies.
+    [indexed : i64 (csym.compiler-decl-list-index-count (& prefix))]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    (unsafe
+      (arena.tl_arena_set scratch))
+    (let
+      [collector : TcGlobalEffectCollector
+        (TcGlobalEffectCollector
+          (global_effects.new 0)
+          (tc_i64_i64_map.with-capacity 0)
+          (tc_i64_i64_map.with-capacity 0)
+          (__tl_make-array i64 0)
+          (effect_words.new)
+          true
+          false
+          (ast.ast-let-binding-list-new)
+          -1
+          indexed)]
+      (for [index (iterator.range 0 indexed)]
+        (tc-global-effect-scan-declaration! ctx (&mut collector) index)
+        (when (< collector.first-contextual-declaration indexed) (break)))
+      (let
+        [contextual : bool (< collector.first-contextual-declaration indexed)]
+        (unsafe
+          (arena.tl_arena_set enclosing)
+          (arena.tl_arena_destroy scratch))
+        contextual))))
+
+(define (tc-global-effect-scan!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [id : i64]
+  [call-head : bool]) : unit
+  (when
+    (and
+      collector.prefix-only
+      (>= collector.first-contextual-declaration 0)
+      (<= collector.first-contextual-declaration collector.declaration))
+    (return unit))
+  (let
+    [entry : i64 collector.bindings.len]
+    [expr : ast.AstExpr (tc-context-expr-get ctx id)]
+    (match (tc-global-shared-view expr)
+      [(or (Quote _) (Quasiquote _) (Comptime _) (TypeLiteral _)) unit]
+      [(or (Spanned inner _) (MacroExpansion inner _ _))
+        (tc-global-effect-scan! ctx collector node bound inner call-head)]
+      [(Var _)
+        (unless
+          (or call-head collector.prefix-only)
+          (let
+            [target : i64
+              (tc-global-effect-callee ctx bound expr collector.graph.indirect)]
+            (when
+              (and (>= target 0) (!= target collector.graph.indirect))
+              (global_effects.add-call!
+                (&mut collector.graph)
+                collector.graph.indirect
+                target)
+              (when
+                (!= (array-ref collector.collected collector.graph.indirect) 0)
+                (tc-global-effect-enqueue! collector target)))))]
+      [(Call func args)
+        (let
+          [callee : i64
+            (if (or collector.prefix-only collector.address-only)
+              -1
+              (tc-global-effect-callee
+                ctx
+                bound
+                (tc-context-expr-get ctx func)
+                collector.graph.indirect))]
+          (when
+            (>= callee 0)
+            (tc-global-effect-add-call! collector node callee))
+          (when
+            collector.prefix-only
+            (for [index (iterator.range 0 args.len)]
+              (when
+                (tc-global-effect-global-place?
+                  ctx
+                  bound
+                  (ast.ast-expr-list-get (& args) index 0)
+                  false)
+                (tc-global-effect-contextual! collector))))
+          (tc-global-effect-scan! ctx collector node bound func true)
+          (tc-global-effect-scan-list! ctx collector node bound (& args)))]
+      [(Lambda payload)
+        (match (ast.ast-lambda-box-shared-view payload)
+          [(Lambda params _ body)
+            (let
+              [discovery : bool collector.address-only]
+              (set! collector.address-only false)
+              (tc-global-effect-scan!
+                ctx
+                collector
+                collector.graph.indirect
+                (tc-global-effect-bind-params collector params bound)
+                body
+                false)
+              (set! collector.address-only discovery))])]
+      [(Let payload)
+        (match (ast.ast-let-box-shared-view payload)
+          [(Let bindings body)
+            (let
+              [scope : TcNameIdList bound]
+              (for [index (iterator.range 0 bindings.len)]
+                (match (ast.ast-let-binding-list-get
+                  (& bindings)
+                  index
+                  (ast.ast-let-binding-fallback))
+                  [(Binding name annotation init)
+                    (tc-global-effect-scan! ctx collector node scope init false)
+                    (set!
+                      scope
+                      (tc-global-effect-bind!
+                        collector
+                        scope
+                        name
+                        annotation
+                        init))]))
+              (tc-global-effect-scan! ctx collector node scope body false))])]
+      [(Match payload)
+        (match (ast.ast-match-box-shared-view payload)
+          [(Match scrut arms)
+            (tc-global-effect-scan! ctx collector node bound scrut false)
+            (let
+              [needs-type : bool false]
+              (for [index (iterator.range 0 arms.len)]
+                (match (ast.ast-match-arm-list-get
+                  (& arms)
+                  index
+                  (ast.ast-match-arm-fallback))
+                  [(Arm pattern _)
+                    (when
+                      (tc-global-effect-nullary-pattern? pattern)
+                      (set! needs-type true))]))
+              (let
+                [known : ast.AstMaybeType
+                  (if needs-type
+                    (tc-global-effect-known-type
+                      ctx
+                      collector
+                      scrut
+                      collector.bindings.len)
+                    (No))]
+                [enum-arm : bool
+                  (match (tc-global-shared-view known)
+                    [(Some ty)
+                      (match (tc-type-strip-region
+                        (tc-match-coverage-type ctx ty))
+                        [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
+                          true]
+                        [_ false])]
+                    [(No) false])]
+                [uncertain : bool
+                  (match (tc-global-shared-view known)
+                    [(Some ty)
+                      (match (tc-type-strip-region
+                        (tc-match-coverage-type ctx ty))
+                        [(or (ast.AstType.Var _) (ast.AstType.VarArgs _ _))
+                          true]
+                        [_ false])]
+                    [(No) true])]
+                [entry : i64 collector.bindings.len]
+                (for [index (iterator.range 0 arms.len)]
+                  (match (ast.ast-match-arm-list-get
+                    (& arms)
+                    index
+                    (ast.ast-match-arm-fallback))
+                    [(Arm pattern body)
+                      (tc-global-effect-scan!
+                        ctx
+                        collector
+                        node
+                        (tc-global-effect-bind-pattern
+                          ctx
+                          collector
+                          (tc-global-shared-view pattern)
+                          bound
+                          enum-arm)
+                        body
+                        false)
+                      (set! collector.bindings.len entry)
+                      ;; An unresolved scrutinee may be an enum. Visit both
+                      ;; scope interpretations instead of hiding a global write.
+                      (when
+                        (and needs-type uncertain)
+                        (tc-global-effect-scan!
+                          ctx
+                          collector
+                          node
+                          (tc-global-effect-bind-pattern
+                            ctx
+                            collector
+                            (tc-global-shared-view pattern)
+                            bound
+                            true)
+                          body
+                          false)
+                        (set! collector.bindings.len entry))]))))])]
+      [(WithResource payload)
+        (match (ast.ast-with-resource-box-shared-view payload)
+          [(WithResource bindings body)
+            (let
+              [scope : TcNameIdList bound]
+              (for [index (iterator.range 0 bindings.len)]
+                (match (ast.ast-resource-binding-list-get
+                  (& bindings)
+                  index
+                  (ast.ast-resource-binding-fallback))
+                  [(Binding name init cleanup _)
+                    (tc-global-effect-scan! ctx collector node scope init false)
+                    (tc-global-effect-scan!
+                      ctx
+                      collector
+                      node
+                      scope
+                      cleanup
+                      false)
+                    (let
+                      [callee : i64
+                        (tc-global-effect-callee
+                          ctx
+                          scope
+                          (tc-context-expr-get ctx cleanup)
+                          collector.graph.indirect)]
+                      (when
+                        (>= callee 0)
+                        (tc-global-effect-add-call! collector node callee)))
+                    (set!
+                      scope
+                      (tc-global-effect-bind! collector scope name (No) init))]))
+              (tc-global-effect-scan-list! ctx collector node scope (& body)))])]
+      [(or (WithRegion name items) (WithEscape name items))
+        (tc-global-effect-scan-list!
+          ctx
+          collector
+          node
+          (tc-global-effect-bind! collector bound name (No) -1)
+          (& items))]
+      [(ForOwnedState payload)
+        (tc-global-effect-scan!
+          ctx
+          collector
+          node
+          bound
+          (ast.ast-for-owned-state-source (& payload))
+          false)
+        (tc-global-effect-scan!
+          ctx
+          collector
+          node
+          (tc-global-effect-bind!
+            collector
+            (tc-global-effect-bind!
+              collector
+              bound
+              (tc-for-owned-name-id
+                (tc-context-expr-bases ctx)
+                (ast.ast-for-owned-state-source-name (& payload)))
+              (No)
+              -1)
+            (tc-for-owned-name-id
+              (tc-context-expr-bases ctx)
+              (ast.ast-for-owned-state-index-name (& payload)))
+            (Some (ast.AstType.I64))
+            -1)
+          (ast.ast-for-owned-state-body (& payload))
+          false)]
+      [(ForOwnedStep payload)
+        (tc-global-effect-scan-scoped-children!
+          ctx
+          collector
+          node
+          bound
+          expr
+          (ast.ast-for-owned-step-body (& payload))
+          (tc-global-effect-bind!
+            collector
+            bound
+            (tc-for-owned-name-id
+              (tc-context-expr-bases ctx)
+              (ast.ast-for-owned-step-binding-name (& payload)))
+            (No)
+            -1)
+          1)]
+      [(Foreach payload)
+        (match (ast.ast-foreach-box-shared-view payload)
+          [(Foreach index _ _ _ body)
+            (tc-global-effect-scan-scoped-children!
+              ctx
+              collector
+              node
+              bound
+              expr
+              body
+              (tc-global-effect-bind!
+                collector
+                bound
+                index
+                (Some (ast.AstType.I64))
+                -1)
+              1)]
+          [(Foreach2 outer _ _ _ inner _ _ _ body)
+            (tc-global-effect-scan-scoped-children!
+              ctx
+              collector
+              node
+              bound
+              expr
+              body
+              (tc-global-effect-bind!
+                collector
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  outer
+                  (Some (ast.AstType.I64))
+                  -1)
+                inner
+                (Some (ast.AstType.I64))
+                -1)
+              2)])]
+      [(SpmdReduce payload)
+        (match (ast.ast-spmd-reduce-box-shared-view payload)
+          [(Reduce _ index _ _ _ _ value)
+            (tc-global-effect-scan-scoped-children!
+              ctx
+              collector
+              node
+              bound
+              expr
+              value
+              (tc-global-effect-bind!
+                collector
+                bound
+                index
+                (Some (ast.AstType.I64))
+                -1)
+              1)])]
+      [(SpmdScan payload)
+        (match (ast.ast-spmd-scan-box-shared-view payload)
+          [(Scan _ index _ start end prefix _ init value body)
+            (tc-global-effect-scan! ctx collector node bound start false)
+            (tc-global-effect-scan! ctx collector node bound end false)
+            (tc-global-effect-scan! ctx collector node bound init false)
+            (let
+              [scope : TcNameIdList
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  index
+                  (Some (ast.AstType.I64))
+                  -1)]
+              (tc-global-effect-scan! ctx collector node scope value false)
+              (tc-global-effect-scan!
+                ctx
+                collector
+                node
+                (tc-global-effect-bind! collector scope prefix (No) -1)
+                body
+                false))])]
+      [(SpmdCompact payload)
+        (match (ast.ast-spmd-compact-box-shared-view payload)
+          [(Compact index _ start end slot _ init keep body)
+            (tc-global-effect-scan! ctx collector node bound start false)
+            (tc-global-effect-scan! ctx collector node bound end false)
+            (tc-global-effect-scan! ctx collector node bound init false)
+            (let
+              [scope : TcNameIdList
+                (tc-global-effect-bind!
+                  collector
+                  bound
+                  index
+                  (Some (ast.AstType.I64))
+                  -1)]
+              (tc-global-effect-scan! ctx collector node scope keep false)
+              (tc-global-effect-scan!
+                ctx
+                collector
+                node
+                (tc-global-effect-bind! collector scope slot (No) -1)
+                body
+                false))])]
+      [(ForeachActive lane body)
+        (tc-global-effect-scan!
+          ctx
+          collector
+          node
+          (tc-global-effect-bind!
+            collector
+            bound
+            lane
+            (Some (ast.AstType.I64))
+            -1)
+          body
+          false)]
+      [_
+        (match (tc-global-shared-view expr)
+          [(Set name _)
+            (tc-global-effect-write-name! ctx collector node bound name)]
+          [(or (Replace place _) (StructSet place _ _) (ArraySet place _ _)
+               (ArrayPush place _) (BoxSet place _) (PtrAddrOf place))
+            (tc-global-effect-write-place! ctx collector node bound place)]
+          [(Borrow mutable _ place)
+            (when
+              (and
+                collector.prefix-only
+                (or
+                  (tc-global-effect-global-place? ctx bound place true)
+                  (tc-borrow-operand-id-temporary?
+                    (tc-context-expr-bases ctx)
+                    place)))
+              (tc-global-effect-contextual! collector))
+            (when
+              mutable
+              (tc-global-effect-write-place! ctx collector node bound place))
+            (when
+              (and
+                (not collector.prefix-only)
+                (not collector.address-only)
+                (tc-borrow-operand-id-temporary?
+                  (tc-context-expr-bases ctx)
+                  place))
+              (let
+                [head : i64
+                  (tc_i64_i64_map.get-value-or
+                    (& collector.temporary-callers)
+                    place
+                    0)]
+                [next : i64
+                  (global_effects.link! (&mut collector.graph) node head)]
+                (tc_i64_i64_map.insert-ref!
+                  (&mut collector.temporary-callers)
+                  place
+                  next)
+                (let
+                  [cleanup : i64
+                    (tc_i64_i64_map.get-value-or
+                      (& collector.typed-temporaries)
+                      place
+                      0)]
+                  (when
+                    (> cleanup 0)
+                    (tc-global-effect-add-call! collector node (- cleanup 1))))))]
+          [(ArrayTake place live _)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            (tc-global-effect-write-place! ctx collector node bound live)]
+          [_ unit])
+        (let
+          [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+          (tc-global-effect-scan-list! ctx collector node bound (& children)))])
+    (set! collector.bindings.len entry)))
+
+(define (tc-global-effect-scan-scoped-children!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [expr : ast.AstExpr]
+  [body : i64]
+  [scope : TcNameIdList]
+  [bindings : i64]) : unit
+  (let
+    [full : i64 collector.bindings.len]
+    [saved : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
+    [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+    ;; Descending into an incoming-scope child can reuse the stack slots that
+    ;; hold body binders. Preserve their values, not just the stack length.
+    (ast.ast-let-binding-list-append-from
+      (&mut saved)
+      collector.bindings
+      (- full bindings))
+    (for [index (iterator.range 0 children.len)]
+      (let
+        [child : i64 (ast.ast-expr-list-get (& children) index 0)]
+        (when
+          (= child body)
+          (for [index (iterator.range 0 bindings)]
+            (set!
+              (array-ref collector.bindings.slots (+ (- full bindings) index))
+              (ast.ast-let-binding-list-get
+                (& saved)
+                index
+                (ast.ast-let-binding-fallback)))))
+        (set!
+          collector.bindings.len
+          (if (= child body)
+            full
+            (- full bindings)))
+        (tc-global-effect-scan!
+          ctx
+          collector
+          node
+          (if (= child body)
+            scope
+            bound)
+          child
+          false)))
+    (set! collector.bindings.len full)))
+
+(define (tc-global-effect-bind-params
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [params : ast.AstParamList]
+  [bound : TcNameIdList]) : TcNameIdList
+  (let
+    [out : TcNameIdList bound]
+    (for [index (iterator.range 0 params.len)]
+      (match (ast.ast-param-list-get (& params) index (ast.ast-param-fallback))
+        [(Param name ty _)
+          (set! out (tc-global-effect-bind! collector out name (Some ty) -1))]))
+    out))
+
+;; Nominal disposers are synthesized during lowering. Their field/payload
+;; hooks are call edges even though no function body exists in the checked AST.
+(define (tc-global-effect-cleanup-call!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [name : i64]) : unit
+  (let
+    [callee : i64
+      (tc-global-effect-callee ctx Nil (Var name) collector.graph.indirect)]
+    (when (>= callee 0) (tc-global-effect-add-call! collector node callee))))
+
+(define (tc-global-effect-owned-cleanup-call!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [ty : ast.AstType]) : unit
+  (let
+    [handle : i64 (tc-move-declared-cleanup-handle ctx ty)]
+    (when
+      (csym.compiler-symbols-handle-found? handle)
+      (tc-global-effect-add-call!
+        collector
+        node
+        (csym.compiler-symbol-handle-index handle)))))
+
+(define (tc-global-effect-scan-declaration!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [index : i64]) : unit
+  (set! collector.declaration index)
+  (set! collector.bindings.len 0)
+  (let
+    [module-id : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        (tc-context-symbols ctx)
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    [owner : TcContext
+      (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id)]
+    (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) index)
+      [(Ok decl)
+        (unless
+          ;; Generated runtime declarations carry comptime provenance;
+          ;; only uninstantiated templates have no runtime effects.
+          (and
+            (ast.ast-decl-comptime-only? decl)
+            (match (ast.ast-decl-generated-meta decl)
+              [(No) true]
+              [_ false]))
+          (match (ast.ast-decl-unwrapped (& decl))
+            [(DefFn _ _ params _ body _)
+              (tc-global-effect-scan!
+                owner
+                collector
+                index
+                (tc-global-effect-bind-params collector params Nil)
+                body
+                false)]
+            [(Def _ _ _ init)
+              (tc-global-effect-scan! owner collector index Nil init false)]
+            [(or (DefStruct _ _ _ cleanup fields)
+                 (DefStructLifetimes _ _ _ _ cleanup fields))
+              (when
+                (ast.ast-struct-cleanup? cleanup)
+                (for [field (iterator.range 0 fields.len)]
+                  (match (ast.ast-field-def-list-get
+                    (& fields)
+                    field
+                    (ast.ast-field-def-fallback))
+                    [(Def _ ty hook)
+                      (match hook
+                        [(Fn name)
+                          (tc-global-effect-cleanup-call!
+                            owner
+                            collector
+                            index
+                            (ci.intern-syntax-id-value name))]
+                        [(Owned)
+                          (tc-global-effect-owned-cleanup-call!
+                            owner
+                            collector
+                            index
+                            ty)]
+                        [_ unit])])))]
+            [(or (DefEnum _ _ cleanup variants)
+                 (DefEnumLifetimes _ _ _ cleanup variants))
+              (when
+                (ast.ast-enum-cleanup? cleanup)
+                (for [variant (iterator.range 0 variants.len)]
+                  (match (ast.ast-variant-def-list-get
+                    (& variants)
+                    variant
+                    (ast.ast-variant-def-fallback))
+                    [(Def _ types hooks)
+                      (for [field (iterator.range 0 types.len)]
+                        (match (ast.ast-variant-payload-cleanup-list-get
+                          (& hooks)
+                          field
+                          (ast.ast-variant-payload-cleanup-fallback))
+                          [(Fn name)
+                            (tc-global-effect-cleanup-call!
+                              owner
+                              collector
+                              index
+                              (ci.intern-syntax-id-value name))]
+                          [(Owned)
+                            (tc-global-effect-owned-cleanup-call!
+                              owner
+                              collector
+                              index
+                              (ast.ty-node-get
+                                (ast.ast-type-list-get
+                                  (& types)
+                                  field
+                                  (ast.ast-type-id-fallback))))]
+                          [_ unit]))])))]
+            [(Extern _ _ _ metadata _)
+              (let
+                [meta : ast.AstExternMetadata
+                  (ast.ast-extern-metadata-box-shared-view metadata)]
+                (match (ast.ast-extern-metadata-imported-spmd meta)
+                  [(Package _ _ _ _)
+                    ;; Dependency interfaces export functions and types,
+                    ;; never global places. Their hidden bodies can still
+                    ;; invoke a consumer callback, including one retained
+                    ;; by an earlier call: use the whole callable union.
+                    (tc-global-effect-add-call!
+                      collector
+                      index
+                      collector.graph.indirect)]
+                  [_ unit]))]
+            [(DefDispatch _ _ variants)
+              (for [variant (iterator.range 0 variants.len)]
+                (match (ast.ast-dispatch-variant-list-get
+                  (& variants)
+                  variant
+                  (ast.ast-dispatch-variant-fallback))
+                  [(Variant _ name)
+                    (let
+                      [callee : i64
+                        (tc-global-effect-callee
+                          owner
+                          Nil
+                          (ast.AstExpr.Var name)
+                          collector.graph.indirect)]
+                      (when
+                        (>= callee 0)
+                        (tc-global-effect-add-call! collector index callee)))]))]
+            [_ unit]))]
+      [_ unit])))
+
+(define (tc-global-call-effects-ensure! [ctx : TcContext]) : (MutPtr
+    TcGlobalCallEffects)
+  (let
+    [owner : TcMacroState (tc-context-macro-state ctx)]
+    [address : i64
+      (tc-macro-state-slot-address
+        owner
+        tc-macro-state-slot-global-call-effects)]
+    [count : i64 (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [source-owner : i64
+      (ci.intern-source-name-session-handle-table-id
+        (tc-context-source-names ctx))]
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [structural-owner : i64 (cis.intern-structural-session-owner session)]
+    [generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
+    [symbols : u64
+      (unsafe
+        (ptr->int
+          (__tl_array-data
+            (csym.compiler-symbols-decls (tc-context-symbols ctx)))))]
+    (when
+      (!= address 0)
+      (let
+        [state : (Ptr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (Ptr TcGlobalCallEffects)))]
+        (when
+          (unsafe
+            (or
+              (!= (deref state).program ctx.program-decls)
+              (!= (deref state).symbols symbols)
+              (!= (deref state).count count)
+              (!= (deref state).expr-bases expr-bases)
+              (!= (deref state).source-owner source-owner)
+              (!= (deref state).structural-owner structural-owner)
+              (!= (deref state).generation generation)))
+          (tc-global-call-effects-finish! (tc-context-job-state ctx))
+          (set! address 0))))
+    (when
+      (= address 0)
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [storage : i64 (arena.tl_arena_make_small)]
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [cell : (__tl_dyn-array TcGlobalCallEffects)
+            (__tl_make-array TcGlobalCallEffects 1)]
+          (set!
+            (array-ref cell 0)
+            (TcGlobalCallEffects
+              storage
+              ctx.program-decls
+              symbols
+              count
+              expr-bases
+              source-owner
+              structural-owner
+              generation
+              (global_effects.new count)
+              (tc_i64_i64_map.with-capacity 0)
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array i64 (+ count 1))
+              0))
+          (set!
+            address
+            (unsafe
+              (cast (ptr->int (__tl_array-data cell)) : i64))))
+        (unsafe
+          (arena.tl_arena_set enclosing))
+        (tc-macro-state-slot-address-set!
+          owner
+          tc-macro-state-slot-global-call-effects
+          address)))
+    (unsafe
+      (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))))
+
+(define (tc-global-call-effects-collect!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [root : i64]) : unit
+  (let
+    [collected : (__tl_dyn-array i64)
+      (unsafe
+        (deref state).collected)]
+    (when (!= (array-ref collected root) 0) (return unit))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (arena.tl_arena_make_small)]
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [collector : TcGlobalEffectCollector
+          (TcGlobalEffectCollector
+            (global_effects.new
+              (unsafe
+                (deref state).count))
+            (tc_i64_i64_map.with-capacity 0)
+            (unsafe
+              (deref state).typed-temporaries)
+            collected
+            (effect_words.new)
+            false
+            false
+            (ast.ast-let-binding-list-new)
+            -1
+            (unsafe
+              (deref state).count))]
+        [cursor : i64 0]
+        (tc-global-effect-enqueue! (&mut collector) root)
+        (while (< cursor (effect_words.len (& collector.pending)))
+          (let
+            [node : i64 (effect_words.get (& collector.pending) cursor 0)]
+            (if (= node collector.graph.indirect)
+              (begin
+                ;; Callable values in every runtime body contribute to the
+                ;; indirect union, even when their enclosing body is uncalled.
+                (set! collector.address-only true)
+                (for [index (iterator.range 0 collector.graph.indirect)]
+                  (tc-global-effect-scan-declaration!
+                    ctx
+                    (&mut collector)
+                    index))
+                (set! collector.address-only false))
+              (tc-global-effect-scan-declaration! ctx (&mut collector) node)))
+          (+= cursor 1))
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (let
+          [graph : global_effects.Graph
+            (unsafe
+              (deref state).graph)]
+          [callers : tc_i64_i64_map.Map
+            (unsafe
+              (deref state).temporary-callers)]
+          (global_effects.append! (&mut graph) (& collector.graph))
+          (for [index
+            (iterator.range
+              0
+              (tc_i64_i64_map.capacity (& collector.temporary-callers)))]
+            (match (tc_i64_i64_map.entry-at
+              (& collector.temporary-callers)
+              index)
+              [(EntrySome operand head)
+                (while (!= head 0)
+                  (let
+                    [edge : global_effects.Edge
+                      (global_effects.link-at
+                        (& collector.graph.links)
+                        (- head 1))]
+                    [next : i64
+                      (global_effects.link!
+                        (&mut graph)
+                        edge.node
+                        (tc_i64_i64_map.get-value-or (& callers) operand 0))]
+                    (tc_i64_i64_map.insert-ref! (&mut callers) operand next)
+                    (set! head edge.next)))]
+              [_ unit]))
+          (unsafe
+            (set! (deref state).graph graph)
+            (set! (deref state).temporary-callers callers))))
+      (unsafe
+        (arena.tl_arena_set enclosing)
+        (arena.tl_arena_destroy scratch)))))
+
+(define (tc-global-call-effects-finish! [job : TcJobState]) : unit
+  (let
+    [owner : TcMacroState (tc-job-state-macro-state job)]
+    [address : i64
+      (tc-macro-state-slot-address
+        owner
+        tc-macro-state-slot-global-call-effects)]
+    (when
+      (!= address 0)
+      (let
+        [state : (Ptr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (Ptr TcGlobalCallEffects)))]
+        [storage : i64
+          (unsafe
+            (deref state).arena)]
+        (unsafe
+          (tc-macro-state-slot-address-set!
+            owner
+            tc-macro-state-slot-global-call-effects
+            0)
+          (arena.tl_arena_destroy storage))))))
+
+;; Temporary cleanup is chosen from its actual inferred operand type. Publish
+;; these edges without retaining body facts or pointers into function scratch.
+(define (tc-global-effect-record-temporary-cleanup!
+  [ctx : TcContext]
+  [operand : i64]
+  [ty : ast.AstType]) : unit
+  (let
+    [handle : i64 (tc-move-declared-cleanup-handle ctx ty)]
+    (when
+      (csym.compiler-symbols-handle-found? handle)
+      (let
+        [state : (MutPtr TcGlobalCallEffects)
+          (tc-global-call-effects-ensure! ctx)]
+        [reachable : bool false]
+        [enclosing : i64 (arena.tl_arena_current)]
+        [storage : i64
+          (unsafe
+            (deref state).arena)]
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [seen : tc_i64_i64_map.Map
+            (unsafe
+              (deref state).typed-temporaries)]
+          (when
+            (= (tc_i64_i64_map.get-value-or (& seen) operand 0) 0)
+            (let
+              [graph : global_effects.Graph
+                (unsafe
+                  (deref state).graph)]
+              [callers : tc_i64_i64_map.Map
+                (unsafe
+                  (deref state).temporary-callers)]
+              [head : i64 (tc_i64_i64_map.get-value-or (& callers) operand 0)]
+              [collected : (__tl_dyn-array i64)
+                (unsafe
+                  (deref state).collected)]
+              (set! reachable (!= (array-ref collected graph.indirect) 0))
+              (while (!= head 0)
+                (let
+                  [edge : global_effects.Edge
+                    (global_effects.link-at (& graph.links) (- head 1))]
+                  (when (!= edge.node graph.indirect) (set! reachable true))
+                  (global_effects.add-call!
+                    (&mut graph)
+                    edge.node
+                    (csym.compiler-symbol-handle-index handle))
+                  (set! head edge.next)))
+              (tc_i64_i64_map.insert-ref!
+                (&mut seen)
+                operand
+                (+ (csym.compiler-symbol-handle-index handle) 1))
+              (unsafe
+                (set! (deref state).graph graph)
+                (set! (deref state).typed-temporaries seen))))
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (when
+            reachable
+            (tc-global-call-effects-collect!
+              ctx
+              state
+              (csym.compiler-symbol-handle-index handle))))))))
+
+;; A negative reachability result remains provisional until all bodies have
+;; supplied their inferred temporary cleanup edges. Retain spans and rendered
+;; labels only: a moved-path store belongs to the current function scratch.
+(define (tc-global-effect-defer-query!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [global : i64]
+  [callee : i64]
+  [borrowed : TcMovedSet]
+  [fact : TcMovedPathFact]
+  [call-expr : ast.AstExpr]) : unit
+  (let
+    [graph : global_effects.Graph
+      (unsafe
+        (deref state).graph)]
+    [callers : tc_i64_i64_map.Map
+      (unsafe
+        (deref state).temporary-callers)]
+    (when
+      (> (tc_i64_i64_map.len (& callers)) 0)
+      (let
+        [bases : i64 (tc-context-expr-bases ctx)]
+        [primary : TcMaybeAstSourceSpan (tc-expr-maybe-span bases call-expr)]
+        [origin : TcMaybeAstSourceSpan
+          (match (tc-borrow-check-conflict-origin
+            bases
+            borrowed
+            fact.path
+            fact.kind)
+            [(Some id) (tc-expr-maybe-span bases (tc-context-expr-get ctx id))]
+            [(No) (No)])]
+        [enclosing : i64 (arena.tl_arena_current)]
+        [storage : i64
+          (unsafe
+            (deref state).arena)]
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [cell : (__tl_dyn-array TcGlobalBorrowQuery)
+            (__tl_make-array TcGlobalBorrowQuery 1)]
+          (set!
+            (array-ref cell 0)
+            (TcGlobalBorrowQuery
+              global
+              callee
+              (tc-move-path-source-root-id fact.path)
+              primary
+              origin
+              (tc-borrow-check-origin-label (tc-move-path-render fact.path))
+              ""
+              false
+              (effect_words.len (& graph.links))
+              (unsafe
+                (deref state).pending)))
+          (unsafe
+            (set!
+              (deref state).pending
+              (cast (ptr->int (__tl_array-data cell)) : i64))
+            (arena.tl_arena_set enclosing)))))))
+
+(define (tc-global-effect-bind-query-path! [ctx : TcContext] [path : String]) : unit
+  (let
+    [address : i64
+      (tc-macro-state-slot-address
+        (tc-context-macro-state ctx)
+        tc-macro-state-slot-global-call-effects)]
+    (when
+      (!= address 0)
+      (let
+        [state : (Ptr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (Ptr TcGlobalCallEffects)))]
+        [head : i64
+          (unsafe
+            (deref state).pending)]
+        [enclosing : i64 (arena.tl_arena_current)]
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (while (!= head 0)
+          (let
+            [query : (MutPtr TcGlobalBorrowQuery)
+              (unsafe
+                (int->ptr (cast head : u64) : (MutPtr TcGlobalBorrowQuery)))]
+            (when
+              (unsafe
+                (deref query).path-bound)
+              (break))
+            (unsafe
+              (set! (deref query).source-path (string.copy (& path)))
+              (set! (deref query).path-bound true)
+              (set! head (deref query).next))))
+        (unsafe
+          (arena.tl_arena_set enclosing))))))
+
+(define (tc-global-effect-node-name [ctx : TcContext] [node : i64]) : String
+  (if (= node (csym.compiler-symbols-decl-count (tc-context-symbols ctx)))
+    "<indirect call/lambda>"
+    (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) node)
+      [(Ok decl)
+        (tc-env-key-name-text
+          (match (ast.ast-decl-unwrapped (& decl))
+            [(or (DefStruct _ name _ cleanup _)
+                 (DefStructLifetimes _ name _ _ cleanup _))
+              (match cleanup
+                [(Fn hook) (ci.intern-syntax-id-value hook)]
+                [_ name])]
+            [(or (DefEnum _ name cleanup _)
+                 (DefEnumLifetimes _ name _ cleanup _))
+              (match cleanup
+                [(Fn hook) (ci.intern-syntax-id-value hook)]
+                [_ name])]
+            [_
+              (csym.compiler-symbols-decl-name-id-at-index
+                (tc-context-symbols ctx)
+                node)]))]
+      [_ "<unknown callee>"])))
+
+(define (tc-global-effect-message
+  [ctx : TcContext]
+  [root : i64]
+  [path : (& path effect_words.Vec)]) : String
+  (let
+    [global-name : String (tc-move-global-source-name root)]
+    [chain : String ""]
+    (for [index (iterator.range 0 (effect_words.len path))]
+      (set!
+        chain
+        (str_cat.str-cat
+          chain
+          (if (= index 0)
+            ""
+            " -> ")
+          (tc-global-effect-node-name ctx (effect_words.get path index 0)))))
+    (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag (GlobalBorrowCall))
+      "typecheck: cannot call `"
+      (tc-global-effect-node-name ctx (effect_words.get path 0 0))
+      "` while global `"
+      (string.copy (& global-name))
+      "` is borrowed: it may assign `"
+      global-name
+      "` (via "
+      chain
+      ")")))
+
+(define (tc-borrow-check-global-call-message
+  [ctx : TcContext]
+  [borrowed : TcMovedSet]
+  [place : TcMovePath]
+  [kind : TcMovedPathKind]
+  [call-expr : ast.AstExpr]
+  [path : (& path effect_words.Vec)]) : String
+  (tc-borrow-check-rich-conflict-message
+    (tc-context-expr-bases ctx)
+    borrowed
+    (tc-global-shared-view place)
+    kind
+    call-expr
+    (tc-global-effect-message ctx (tc-move-path-source-root-id place) path)))
+
+(define (tc-global-effect-witness!
+  [state : (MutPtr TcGlobalCallEffects)]
+  [callee : i64]
+  [global : i64]) : effect_words.Vec
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [storage : i64
+      (unsafe
+        (deref state).arena)]
+    (unsafe
+      (arena.tl_arena_set storage))
+    (let
+      [graph : global_effects.Graph
+        (unsafe
+          (deref state).graph)]
+      [path : effect_words.Vec
+        (global_effects.witness! (&mut graph) callee global)]
+      (unsafe
+        (set! (deref state).graph graph)
+        (arena.tl_arena_set enclosing))
+      path)))
+
+(define (tc-borrow-check-capture-owner
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [path : TcMovePath]) : TcMovePath
+  ;; An encoded key already captured its owner before any local shadowing.
+  (if (or (< path.root 0) (tc-moved-contains? locals path.root))
+    path
+    (let
+      [leading-root : i64 (tc-global-effect-name-part ctx path.root true)]
+      [handle : i64
+        (if (and (>= leading-root 0) (tc-moved-contains? locals leading-root))
+          (csym.compiler-symbols-missing-handle)
+          (tc-global-effect-handle ctx Nil path.root))]
+      (if (and
+        (csym.compiler-symbols-handle-found? handle)
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-value-define)))
+        (tc-move-path-capture-owner path handle)
+        path))))
+
+(define (tc-borrow-check-global-call-effects
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : ast.AstExpr]
+  [func : ast.AstExpr]
+  [known-callee : i64]) : ResultTcUnit
+  (unless
+    (tc-moved-path-facts-have-globals? (tc-global-shared-view borrowed.paths))
+    (return Ok))
+  (let
+    [facts : TcMovedPathFacts (tc-moved-paths (tc-global-shared-view borrowed))]
+    (while (not (tc-moved-path-facts-empty? facts))
+      (let
+        [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+        [handle : i64
+          (if (< fact.path.root 0)
+            (tc-global-effect-handle
+              ctx
+              Nil
+              (tc-move-path-source-root-id fact.path))
+            (csym.compiler-symbols-missing-handle))]
+        (when
+          (and
+            (match fact.kind
+              [(or (BorrowShared) (BorrowMut) (BorrowTwoPhaseMut)) true]
+              [_ false])
+            (csym.compiler-symbols-handle-found? handle)
+            (=
+              (csym.compiler-symbol-handle-kind handle)
+              (csym.compiler-symbol-kind-value-define)))
+          (let
+            [state : (MutPtr TcGlobalCallEffects)
+              (tc-global-call-effects-ensure! ctx)]
+            [global-borrowed : TcMovedSet (tc-global-shared-view borrowed)]
+            [name : i64
+              (tc-expr-var-name-id
+                (tc-context-expr-bases ctx)
+                (tc-global-shared-view func))]
+            [leading : i64 (tc-global-effect-name-part ctx name true)]
+            [callee : i64
+              (if (>= known-callee 0)
+                known-callee
+                (if (or
+                  (tc-moved-contains? locals name)
+                  (and (>= leading 0) (tc-moved-contains? locals leading)))
+                  (unsafe
+                    (deref state).graph.indirect)
+                  (tc-global-effect-callee
+                    ctx
+                    Nil
+                    (tc-global-shared-view func)
+                    (unsafe
+                      (deref state).graph.indirect))))]
+            (when
+              (>= callee 0)
+              (tc-global-call-effects-collect! ctx state callee)
+              (let
+                [path : effect_words.Vec
+                  (tc-global-effect-witness!
+                    state
+                    callee
+                    (csym.compiler-symbol-handle-index handle))]
+                (if (= (effect_words.len (& path)) 0)
+                  (tc-global-effect-defer-query!
+                    ctx
+                    state
+                    (csym.compiler-symbol-handle-index handle)
+                    callee
+                    (tc-global-shared-view global-borrowed)
+                    (tc-global-shared-view fact)
+                    (tc-global-shared-view call-expr))
+                  unit)
+                (when
+                  (> (effect_words.len (& path)) 0)
+                  (return
+                    (Err
+                      (tc-borrow-check-global-call-message
+                        ctx
+                        (tc-global-shared-view global-borrowed)
+                        fact.path
+                        fact.kind
+                        (tc-global-shared-view call-expr)
+                        (& path)))))))))
+        (set! facts (tc-moved-path-facts-rest facts))))
+    Ok))
+
+(define (tc-global-effect-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
+  (let
+    [out : cdiag.CompilerDiagnosticList (cdiag.compiler-diagnostic-list-empty)]
+    [address : i64
+      (tc-macro-state-slot-address
+        (tc-context-macro-state ctx)
+        tc-macro-state-slot-global-call-effects)]
+    (when
+      (!= address 0)
+      (let
+        [state : (MutPtr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))]
+        [graph : global_effects.Graph
+          (unsafe
+            (deref state).graph)]
+        [head : i64
+          (unsafe
+            (deref state).pending)]
+        (while (!= head 0)
+          (let
+            [query : TcGlobalBorrowQuery
+              (unsafe
+                (ptr-read
+                  (int->ptr (cast head : u64) : (Ptr TcGlobalBorrowQuery))))]
+            [epoch : i64 (effect_words.len (& graph.links))]
+            (when
+              (!= epoch query.epoch)
+              (let
+                [path : effect_words.Vec
+                  (tc-global-effect-witness! state query.callee query.global)]
+                (when
+                  (> (effect_words.len (& path)) 0)
+                  (let
+                    [message : String
+                      (tc-global-effect-message ctx query.root (& path))]
+                    [rich : String
+                      (match query.primary
+                        [(Some primary)
+                          (tc-rich-error-one-secondary
+                            primary
+                            message
+                            (tc-borrow-check-help)
+                            (match query.origin
+                              [(Some span) span]
+                              [(No) primary])
+                            (tc-global-shared-view query.label))]
+                        [(No)
+                          (match query.origin
+                            [(Some origin)
+                              (tc-rich-error-one-secondary
+                                origin
+                                message
+                                (tc-borrow-check-help)
+                                origin
+                                (tc-global-shared-view query.label))]
+                            [(No) message])])]
+                    (cdiag.compiler-diagnostic-list-push!
+                      (&mut out)
+                      (cdiag.compiler-diagnostic-with-fallback-path
+                        (tc-diag-at-start rich)
+                        (tc-global-shared-view query.source-path)))))))
+            (set! head query.next)))))
+    out))
+
+(define (tc-global-effect-check-result
+  [checked : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
+  (match checked
+    [(Ok summary ctx top-env paths)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (tc-global-effect-late-diagnostics ctx)]
+        (if (= (cdiag.compiler-diagnostic-list-count diagnostics) 0)
+          (Ok summary ctx top-env paths)
+          (Partial (box diagnostics) ctx top-env paths)))]
+    ;; An earlier error already rejects the program; do not publish provisional
+    ;; negatives from bodies whose typechecking could not finish.
+    [(Partial diagnostics ctx top-env paths)
+      (Partial diagnostics ctx top-env paths)]
+    [(Err diagnostics) (Err diagnostics)]))
+
+(define (tc-borrow-check-temporary-cleanup-effects
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : ast.AstExpr]
+  [args : ast.AstExprList]) : ResultTcUnit
+  (unless
+    (tc-moved-path-facts-have-globals? (tc-global-shared-view borrowed.paths))
+    (return Ok))
+  (for [index (iterator.range 0 args.len)]
+    (let
+      [operand : i64
+        (tc-call-temporary-borrow-operand-id-at
+          (tc-context-expr-bases ctx)
+          (ast.ast-expr-list-get (& args) index 0))]
+      (when
+        (>= operand 0)
+        (let
+          [ty : ast.AstType
+            (try
+              (tc-body-type-fact-expr-id
+                "borrow.temporary.cleanup"
+                ctx
+                env
+                operand))]
+          [handle : i64 (tc-move-declared-cleanup-handle ctx ty)]
+          (when
+            (csym.compiler-symbols-handle-found? handle)
+            (try
+              (tc-borrow-check-global-call-effects
+                ctx
+                (tc-global-shared-view locals)
+                (tc-global-shared-view borrowed)
+                (tc-global-shared-view call-expr)
+                (Var -1)
+                (csym.compiler-symbol-handle-index handle))))))))
+  Ok)
 
 (define (tc-borrow-check-after-call-effects
   [ctx : TcContext]
@@ -81264,6 +83382,7 @@
       (if (= (tc-moved-len borrowed1) 0)
         (Ok borrowed1)
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -81394,14 +83513,13 @@
         [(BorrowTwoPhaseMut)
           (let
             [path : TcMovePath fact.path]
-            (match (tc-moved-path-conflict
-              (tc-global-shared-view borrowed)
-              path)
+            [visible : TcMovedSet (tc-global-shared-view borrowed)]
+            (match (tc-moved-path-conflict (tc-global-shared-view visible) path)
               [(Some _ _)
                 (Err
                   (tc-borrow-check-rich-conflict-message
                     expr-bases
-                    borrowed
+                    visible
                     path
                     (BorrowShared)
                     primary
@@ -81442,6 +83560,7 @@
     [borrowed0
       (try
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           (tc-global-shared-view locals)
           borrowed
@@ -81458,6 +83577,7 @@
           (tc-global-shared-view place)))]
     [_ (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
     (tc-borrow-check-add-two-phase-mut-place
+      ctx
       expr-bases
       locals
       borrowed1
@@ -81744,6 +83864,7 @@
               [place : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed
@@ -81871,81 +83992,101 @@
         (tc-global-shared-view types)
         foreign-boundary)]
     [checked-borrowed : TcMovedSet (try validation-result)]
+    [_global-effects
+      (try
+        (tc-borrow-check-global-call-effects
+          ctx
+          (tc-global-shared-view locals)
+          (tc-global-shared-view checked-borrowed)
+          (tc-global-shared-view call-expr)
+          (tc-global-shared-view func)
+          -1))]
     [borrowed-with-uses : TcMovedSet
       (tc-borrow-check-propagate-lending-uses checked-borrowed borrowed)]
-    (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-      (let
-        [borrowed2
-          (try
-            (tc-borrow-check-auto-borrowed-call-args
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view borrowed-with-uses)
-              (tc-global-shared-view args)
-              (tc-global-shared-view types)))]
-        [borrowed3
-          (try
-            (tc-borrow-check-thread-channel-send-message
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view borrowed2)
-              (tc-global-shared-view func)
-              (tc-global-shared-view args)
-              (tc-global-shared-view types)))]
-        [borrowed4
-          (try
+    [after : TcMovedSet
+      (try
+        (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+          (let
+            [borrowed2
+              (try
+                (tc-borrow-check-auto-borrowed-call-args
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view borrowed-with-uses)
+                  (tc-global-shared-view args)
+                  (tc-global-shared-view types)))]
+            [borrowed3
+              (try
+                (tc-borrow-check-thread-channel-send-message
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view borrowed2)
+                  (tc-global-shared-view func)
+                  (tc-global-shared-view args)
+                  (tc-global-shared-view types)))]
+            [borrowed4
+              (try
+                (tc-borrow-check-after-call-effects
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  borrowed3
+                  (tc-global-shared-view call-expr)
+                  func
+                  (tc-global-shared-view args)
+                  types
+                  return-lifetimes))]
+            ;; Auto-borrows are call temporaries unless the resolved
+            ;; result type retains their lifetime. This is the same
+            ;; type-driven lifetime pruning used for assignment
+            ;; values; it must not depend on the callee's spelling.
+            (if (= (tc-moved-len borrowed2) (tc-moved-len borrowed-with-uses))
+              (TcBorrowCheckResult.Ok borrowed4)
+              (TcBorrowCheckResult.Ok
+                (tc-borrow-check-prune-value-temporaries
+                  ctx
+                  expr-bases
+                  env
+                  borrowed-with-uses
+                  borrowed4
+                  (tc-global-shared-view call-expr)))))
+          (let
+            [borrowed2
+              (try
+                (tc-borrow-check-thread-channel-send-message
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  borrowed-with-uses
+                  (tc-global-shared-view func)
+                  (tc-global-shared-view args)
+                  (tc-global-shared-view types)))]
             (tc-borrow-check-after-call-effects
               ctx
               expr-bases
               env
-              locals
-              borrowed3
+              (tc-global-shared-view locals)
+              borrowed2
               (tc-global-shared-view call-expr)
               func
-              args
-              types
-              return-lifetimes))]
-        ;; Auto-borrows are call temporaries unless the resolved
-        ;; result type retains their lifetime. This is the same
-        ;; type-driven lifetime pruning used for assignment
-        ;; values; it must not depend on the callee's spelling.
-        (if (= (tc-moved-len borrowed2) (tc-moved-len borrowed-with-uses))
-          (Ok borrowed4)
-          (Ok
-            (tc-borrow-check-prune-value-temporaries
-              ctx
-              expr-bases
-              env
-              borrowed-with-uses
-              borrowed4
-              call-expr))))
-      (let
-        [borrowed2
-          (try
-            (tc-borrow-check-thread-channel-send-message
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              borrowed-with-uses
-              (tc-global-shared-view func)
               (tc-global-shared-view args)
-              (tc-global-shared-view types)))]
-        (tc-borrow-check-after-call-effects
-          ctx
-          expr-bases
-          env
-          locals
-          borrowed2
-          call-expr
-          func
-          args
-          types
-          return-lifetimes)))))
+              types
+              return-lifetimes))))]
+    (try
+      (tc-borrow-check-temporary-cleanup-effects
+        ctx
+        env
+        (tc-global-shared-view locals)
+        (tc-global-shared-view after)
+        (tc-global-shared-view call-expr)
+        (tc-global-shared-view args)))
+    (TcBorrowCheckResult.Ok after)))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
@@ -82119,14 +84260,7 @@
         borrowed
         protected
         exprs)]
-    [_
-      (tc-borrow-check-expr
-        ctx
-        expr-bases
-        env
-        locals
-        borrowed
-        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]))
+    [_ (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)]))
 
 (define (tc-borrow-check-expr-id-retry-after-prune
   [ctx : TcContext]
@@ -82392,12 +84526,14 @@
       [kind : TcMovedPathKind fact.kind]
       [out2 : TcMovedSet
         (if (or
-          (match (tc-moved-path-exact-conflict-kind before path kind)
-            [(Some _ _) true]
-            [No false])
-          (match (tc-moved-path-exact-conflict-kind out path kind)
-            [(Some _ _) true]
-            [No false]))
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view before))
+            path
+            kind)
+          (tc-moved-path-facts-contains-exact-kind?
+            (tc-moved-paths (tc-global-shared-view out))
+            path
+            kind))
           out
           (tc-moved-add-path-fact
             out
@@ -82439,9 +84575,10 @@
       [path : TcMovePath fact.path]
       [kind : TcMovedPathKind fact.kind]
       [out2 : TcMovedSet
-        (if (match (tc-moved-path-exact-conflict-kind out path kind)
-          [(Some _ _) true]
-          [No false])
+        (if (tc-moved-path-facts-contains-exact-kind?
+          (tc-moved-paths (tc-global-shared-view out))
+          path
+          kind)
           out
           (let
             [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
@@ -82602,7 +84739,7 @@
     loop-env
     entry
     (if (>= remove-root-id 0)
-      (tc-moved-remove-root-state state remove-root-id)
+      (tc-moved-remove-root-state state remove-root-id true)
       state)))
 
 ;; Drop ROOT-ID's borrow state from every edge of RESULT, as an exit edge
@@ -82619,11 +84756,13 @@
         [break : TcMovedSet (tc-moved-set-box-shared-view break-box)]
         (Ok
           normal?
-          (box (tc-moved-remove-root-state (tc-moved-clone normal) root-id))
+          (box
+            (tc-moved-remove-root-state (tc-moved-clone normal) root-id true))
           repeats?
-          (box (tc-moved-remove-root-state (tc-moved-clone repeat) root-id))
+          (box
+            (tc-moved-remove-root-state (tc-moved-clone repeat) root-id true))
           breaks?
-          (box (tc-moved-remove-root-state (tc-moved-clone break) root-id))))]))
+          (box (tc-moved-remove-root-state (tc-moved-clone break) root-id true))))]))
 
 (define (tc-borrow-loop-result-exit-state
   [ctx : TcContext]
@@ -83351,7 +85490,10 @@
                             init-box
                             (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+              (tc-moved-remove-root-state
+                (tc-moved-clone outer-borrowed)
+                index
+                true)]
             [keep-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -83367,8 +85509,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-clone keep-borrowed)
-                  index)
-                slot)]
+                  index
+                  true)
+                slot
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -83386,8 +85530,9 @@
                 env
                 keep-borrowed
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  slot))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  slot
+                  true))))])]
     [_
       (tc-borrow-check-expr
         ctx
@@ -83652,6 +85797,7 @@
           [borrowed2
             (try
               (tc-borrow-check-place-read-conflict
+                ctx
                 expr-bases
                 (tc-global-shared-view locals)
                 borrowed1
@@ -83686,6 +85832,7 @@
               [place : ast.AstExpr
                 (ast.ast-expr-segment-bases-get expr-bases place-box)]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed
@@ -84251,7 +86398,7 @@
                     locals
                     name
                     init)
-                  (tc-moved-remove-root-state borrowed5 name)
+                  (tc-moved-remove-root-state borrowed5 name true)
                   protected
                   bindings
                   body-box
@@ -84378,7 +86525,7 @@
               name
               (tc-type-without-regions init-ty))
             (tc-moved-add locals name)
-            (tc-moved-remove-root-state borrowed2 name)
+            (tc-moved-remove-root-state borrowed2 name true)
             bindings
             (+ index 1)))])))
 
@@ -84546,6 +86693,7 @@
       [borrowed2
         (try
           (tc-borrow-check-add-place-with-mutability
+            ctx
             expr-bases
             (tc-global-shared-view locals)
             borrowed1
@@ -84569,13 +86717,19 @@
         "typecheck: slice-view expects exactly three arguments"))))
 
 (define (tc-borrow-check-add-slice-split-provenance
+  [ctx : TcContext]
+  [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [base : TcMovePath]
   [mutable : bool]
   [split-id : i64]
   [origin : ast.AstExpr]) : TcMovedSet
   (tc-borrow-check-add-borrow-path
+    ctx
+    (tc-global-shared-view locals)
     (tc-borrow-check-add-borrow-path
+      ctx
+      (tc-global-shared-view locals)
       borrowed
       (tc-move-slice-split-half-path base split-id 0)
       mutable
@@ -84616,6 +86770,7 @@
       [borrowed2
         (try
           (tc-borrow-check-add-place-with-mutability
+            ctx
             expr-bases
             (tc-global-shared-view locals)
             (tc-global-shared-view borrowed1)
@@ -84627,6 +86782,8 @@
           (match (tc-borrow-check-split-provenance expr-bases borrowed1 source)
             [(Some base)
               (tc-borrow-check-add-slice-split-provenance
+                ctx
+                (tc-global-shared-view locals)
                 borrowed2
                 base
                 mutable
@@ -84648,7 +86805,7 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowCheckResult
-  (match (tc-global-shared-view expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
          (Unary _ inner-box))
       (tc-borrow-check-expr-id ctx expr-bases env locals borrowed inner-box)]
@@ -84701,14 +86858,16 @@
                     (I64))
                   (tc-moved-add (tc-moved-add locals source-name) index-name)
                   (tc-moved-remove-root-state
-                    (tc-moved-remove-root-state borrowed2 source-name)
-                    index-name)
+                    (tc-moved-remove-root-state borrowed2 source-name true)
+                    index-name
+                    true)
                   borrowed
                   body-id))]
             (Ok
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state borrowed3 source-name)
-                index-name)))))]
+                (tc-moved-remove-root-state borrowed3 source-name true)
+                index-name
+                true)))))]
     [(ForOwnedStep payload)
       (let
         [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
@@ -84767,10 +86926,10 @@
                           binding-name
                           (tc-context-type-get ctx elem-id))
                         (tc-moved-add locals binding-name)
-                        (tc-moved-remove-root-state borrowed3 binding-name)
+                        (tc-moved-remove-root-state borrowed3 binding-name true)
                         borrowed
                         body-id))]
-                  (Ok (tc-moved-remove-root-state borrowed4 binding-name)))]
+                  (Ok (tc-moved-remove-root-state borrowed4 binding-name true)))]
               [_
                 (Err
                   "typecheck: scalar for owned step requires fixed-array state")]))))]
@@ -85066,6 +87225,7 @@
               borrowed
               inner))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -85139,6 +87299,7 @@
               borrowed1
               index))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed2
@@ -85191,6 +87352,7 @@
         [_
           (try
             (tc-borrow-check-array-set-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed4)
@@ -85236,6 +87398,7 @@
         [_
           (try
             (tc-borrow-check-array-set-conflict
+              ctx
               expr-bases
               (tc-global-shared-view locals)
               (tc-global-shared-view borrowed3)
@@ -85246,6 +87409,7 @@
           [_
             (try
               (tc-borrow-check-array-set-conflict
+                ctx
                 expr-bases
                 locals
                 (tc-global-shared-view borrowed3)
@@ -85287,7 +87451,7 @@
               ctx
               expr-bases
               env
-              locals
+              (tc-global-shared-view locals)
               rhs-borrowed
               (tc-global-shared-view replacement)
               place-ty))]
@@ -85307,7 +87471,9 @@
               expr))]
         (Ok
           (tc-borrow-check-remove-two-phase-mut-place
+            ctx
             expr-bases
+            (tc-global-shared-view locals)
             activated
             place)))]
     [(StructSet receiver-box field value-box)
@@ -85346,6 +87512,7 @@
         [_
           (try
             (tc-borrow-check-struct-set-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -85389,6 +87556,7 @@
         [_
           (try
             (tc-borrow-check-root-mutation-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -85419,6 +87587,7 @@
               borrowed1
               index))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed2
@@ -85535,6 +87704,7 @@
             [_
               (try
                 (tc-borrow-check-assignment
+                  ctx
                   expr-bases
                   locals
                   (tc-global-shared-view borrowed3)
@@ -85578,21 +87748,23 @@
                     env
                     (tc-global-shared-view inner)))]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed1
                 mutable
                 (tc-global-shared-view inner)
-                inner))
+                (tc-global-shared-view expr)))
             (let
               [borrowed0
                 (try
                   (tc-borrow-check-place-read-conflict
+                    ctx
                     expr-bases
                     (tc-global-shared-view locals)
                     borrowed
                     (tc-global-shared-view inner)
-                    expr))]
+                    (tc-global-shared-view expr)))]
               [borrowed1
                 (try
                   (tc-borrow-check-expr
@@ -85610,12 +87782,13 @@
                     env
                     (tc-global-shared-view inner)))]
               (tc-borrow-check-add-place-with-mutability
+                ctx
                 expr-bases
                 locals
                 borrowed1
                 mutable
                 (tc-global-shared-view inner)
-                inner)))))]
+                (tc-global-shared-view expr))))))]
     [(Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(Match scrut-box arms)
@@ -85688,7 +87861,7 @@
             [body-locals : TcMovedSet
               (tc-moved-add (tc-moved-clone locals) index)]
             [body-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone borrowed2) index)]
+              (tc-moved-remove-root-state (tc-moved-clone borrowed2) index true)]
             (tc-borrow-loop-result-exit-state
               ctx
               env
@@ -85743,8 +87916,9 @@
                                 (& (ast.ast-expr-list-new)))))))))))]
             [body-entry : TcMovedSet
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state bounds-borrowed outer)
-                inner)]
+                (tc-moved-remove-root-state bounds-borrowed outer true)
+                inner
+                true)]
             (tc-borrow-loop-result-exit-state
               ctx
               env
@@ -85858,13 +88032,23 @@
                   value-env
                   env
                   value-locals
-                  (tc-moved-remove-root-state (tc-moved-clone borrowed3) index)
-                  (tc-moved-remove-root-state (tc-moved-clone borrowed3) index)
+                  (tc-moved-remove-root-state
+                    (tc-moved-clone borrowed3)
+                    index
+                    true)
+                  (tc-moved-remove-root-state
+                    (tc-moved-clone borrowed3)
+                    index
+                    true)
                   value))]
             [body-entry : TcMovedSet
               (tc-moved-remove-root-state
-                (tc-moved-remove-root-state (tc-moved-clone borrowed4) index)
-                prefix)]
+                (tc-moved-remove-root-state
+                  (tc-moved-clone borrowed4)
+                  index
+                  true)
+                prefix
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -85882,8 +88066,9 @@
                 env
                 borrowed4
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  prefix))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  prefix
+                  true))))])]
     [(SpmdCompact compact-box)
       (match (__tl-box-place compact-box)
         [(Compact
@@ -85927,7 +88112,10 @@
                             init-box
                             (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
-              (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
+              (tc-moved-remove-root-state
+                (tc-moved-clone outer-borrowed)
+                index
+                true)]
             [keep-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -85943,8 +88131,10 @@
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
                   (tc-moved-clone keep-borrowed)
-                  index)
-                slot)]
+                  index
+                  true)
+                slot
+                true)]
             [body-borrowed
               (try
                 (tc-borrow-check-expr-loop
@@ -85962,8 +88152,9 @@
                 env
                 keep-borrowed
                 (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state body-borrowed index)
-                  slot))))])]
+                  (tc-moved-remove-root-state body-borrowed index true)
+                  slot
+                  true))))])]
     [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
       (let
         [value : ast.AstExpr
@@ -86047,19 +88238,36 @@
             env
             locals
             (tc-moved-clone borrowed)
-            bindings)
+            (tc-global-shared-view bindings))
             [(Ok body-env body-locals body-borrowed)
               (let
-                [_
+                [after-body
                   (try
                     (tc-borrow-check-exprs-with-protected
                       ctx
                       expr-bases
                       body-env
-                      body-locals
+                      (tc-global-shared-view body-locals)
                       body-borrowed
                       (tc-global-shared-view borrowed)
                       exprs))]
+                (for [index (iterator.range 0 bindings.len)]
+                  (match (ast.ast-resource-binding-list-get
+                    (& bindings)
+                    index
+                    (ast.ast-resource-binding-fallback))
+                    [(Binding _ _ cleanup-id _)
+                      (let
+                        [cleanup : ast.AstExpr
+                          (tc-context-expr-get ctx cleanup-id)]
+                        (try
+                          (tc-borrow-check-global-call-effects
+                            ctx
+                            (tc-global-shared-view body-locals)
+                            (tc-global-shared-view after-body)
+                            (tc-global-shared-view cleanup)
+                            cleanup
+                            -1)))]))
                 (Ok borrowed))]
             [(Err message) (Err message)])])]
     [(BoxGet inner-box)
@@ -86076,6 +88284,7 @@
               borrowed
               inner))]
         (tc-borrow-check-place-read-conflict
+          ctx
           expr-bases
           locals
           borrowed1
@@ -86129,6 +88338,7 @@
                     [_ (Ok borrowed1)])]
                 [(Err _) (Ok borrowed1)])
               (tc-borrow-check-place-read-conflict
+                ctx
                 expr-bases
                 locals
                 borrowed1
@@ -86171,6 +88381,7 @@
         [_
           (try
             (tc-borrow-check-root-mutation-conflict
+              ctx
               expr-bases
               locals
               (tc-global-shared-view borrowed3)
@@ -86296,7 +88507,7 @@
     [(ForeachActive lane body-box)
       (let
         [body-entry : TcMovedSet
-          (tc-moved-remove-root-state (tc-moved-clone borrowed) lane)]
+          (tc-moved-remove-root-state (tc-moved-clone borrowed) lane true)]
         (tc-borrow-loop-result-exit-state
           ctx
           env
@@ -86337,21 +88548,33 @@
 
 ;; A callee that keeps no borrow past the call: each parameter is free of
 ;; lifetimes or a reference to a referent free of them, and so is the result.
-;; Such a call's borrows end when it returns, so in a body with no other
-;; borrow-relevant form the borrow check can only object to two of its
-;; arguments using the same variable.
-(define (tc-borrow-gate-call-scoped-callee? [ctx : TcContext] [func-id : i64]) : bool
+;; Such a call's borrows end when it returns. Local arguments can only
+;; conflict with other arguments, but a global reference argument also conflicts with
+;; writes performed by the callee or its transitive callees.
+(define (tc-borrow-gate-call-scoped-inert?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [func-id : i64]
+  [args : ast.AstExprList]) : bool
   (match (tc-body-type-fact-lookup (tc-context-body-state ctx) func-id)
     [(Hit fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(Func params ret)
-          (and
-            (not
-              (tc-type-contains-any-region
-                (tc-resolve-type ctx (ast.ty-node-get ret))))
-            (tc-borrow-gate-call-scoped-params-at?
-              ctx
-              (ast.ast-type-list-box-shared-view params)))]
+          (let
+            [param-types : ast.AstTypeList
+              (ast.ast-type-list-box-shared-view params)]
+            (and
+              (not
+                (tc-type-contains-any-region
+                  (tc-resolve-type ctx (ast.ty-node-get ret))))
+              (tc-borrow-gate-call-scoped-params-at?
+                ctx
+                (tc-global-shared-view param-types))
+              (tc-borrow-gate-call-scoped-args-inert?
+                ctx
+                expr-bases
+                args
+                param-types)))]
         [_ false])]
     [(Miss) false]))
 
@@ -86416,7 +88639,9 @@
 (define (tc-borrow-gate-call-scoped-args-inert?
   [ctx : TcContext]
   [expr-bases : i64]
-  [args : ast.AstExprList]) : bool
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]) : bool
+  (when (> args.len params.len) (return false))
   (let
     [count : i64 (ast.ast-expr-list-len (& args))]
     [i : i64 0]
@@ -86434,6 +88659,25 @@
           [(>= root 0)
             (when
               (or
+                ;; A callee may write a borrowed global even when no
+                ;; second argument mentions that place.
+                (and
+                  (or
+                    (match (ast.ast-expr-unspan-with-segment-bases
+                      expr-bases
+                      (& arg))
+                      [(Borrow _ _ _) true]
+                      [_ false])
+                    (match (tc-resolve-type
+                      ctx
+                      (ast.ty-node-get
+                        (ast.ast-type-list-get
+                          (& params)
+                          i
+                          (ast.ast-type-id-fallback))))
+                      [(or (Ref _ _) (MutRef _ _)) true]
+                      [_ false]))
+                  (tc-move-ordinary-global-value-id? ctx root))
                 (tc-borrow-gate-dotted-name? ctx root)
                 (tc-borrow-gate-name-in-other-args?
                   ctx
@@ -86671,10 +88915,7 @@
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases func-box))
         (if (tc-borrow-gate-call-has-region? ctx func-box)
-          (not
-            (and
-              (tc-borrow-gate-call-scoped-callee? ctx func-box)
-              (tc-borrow-gate-call-scoped-args-inert? ctx expr-bases args)))
+          (not (tc-borrow-gate-call-scoped-inert? ctx expr-bases func-box args))
           (tc-borrow-gate-exprs-relevant? ctx expr-bases args)))]
     [(or (BracketClause items) (Tuple items) (Array items) (DynArray items)
          (Begin items) (Unsafe items) (WithScratch items) (Syscall items))
@@ -114371,20 +116612,32 @@
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
-  (begin
-    (tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache)
-    (cfg
-      compile-profile
-      (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))
-    (tc-check-decls-with-paths-in-module
-      ctx
-      top-env
-      (tc-decl-list-drop decls count)
-      (tc-decl-path-list-drop paths count)
-      summary
-      module
-      module-id
-      (tc-empty-module-local-env-cache))))
+  (if (tc-global-effect-prefix-needs-check?
+    ctx
+    (tc-global-shared-view decls)
+    count)
+    (begin
+      (tc-prefix-snapshot-cache-note-miss-for-state! prefix-cache)
+      (tc-check-decls-with-paths-cold
+        ctx
+        top-env
+        decls
+        paths
+        (CompilerTypecheckSummary 0 0 0)))
+    (begin
+      (tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache)
+      (cfg
+        compile-profile
+        (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))
+      (tc-check-decls-with-paths-in-module
+        ctx
+        top-env
+        (tc-decl-list-drop decls count)
+        (tc-decl-path-list-drop paths count)
+        summary
+        module
+        module-id
+        (tc-empty-module-local-env-cache)))))
 
 (define (tc-check-decls-with-prefix-miss
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -114452,6 +116705,7 @@
         "compile-profile-detail|prelude.typecheck_decl_checks|0\n"))))
 
 (define (tc-check-decls-with-surface-prefix-hit
+  [load-state : cload.CompilerLoadSessionState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : ast.AstDeclList]
@@ -114460,24 +116714,39 @@
   [module : String]
   [module-id : i64]
   [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
-  (begin
-    (tc-clone-root-collection-apply-surface-facts! ctx)
-    (cfg compile-profile (tc-profile-surface-prefix-hit))
-    (cfg
-      compile-profile
-      (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))
-    (tc-check-decls-with-paths-in-module
+  (if (tc-global-effect-prefix-needs-check?
+    ctx
+    (tc-global-shared-view decls)
+    count)
+    (tc-check-decls-with-paths-cold
       ctx
       top-env
-      (tc-decl-list-drop decls count)
-      (tc-decl-path-list-drop paths count)
-      (CompilerTypecheckSummary
-        facts.summary-values
-        facts.summary-functions
-        facts.summary-externs)
-      module
-      module-id
-      (tc-empty-module-local-env-cache))))
+      decls
+      paths
+      (CompilerTypecheckSummary 0 0 0))
+    (begin
+      (when
+        (surface_facts.surface-typecheck-facts-composite-active?)
+        (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
+          load-state
+          count))
+      (tc-clone-root-collection-apply-surface-facts! ctx)
+      (cfg compile-profile (tc-profile-surface-prefix-hit))
+      (cfg
+        compile-profile
+        (compiler-tc-decl-profile-reset (tc-context-job-state ctx)))
+      (tc-check-decls-with-paths-in-module
+        ctx
+        top-env
+        (tc-decl-list-drop decls count)
+        (tc-decl-path-list-drop paths count)
+        (CompilerTypecheckSummary
+          facts.summary-values
+          facts.summary-functions
+          facts.summary-externs)
+        module
+        module-id
+        (tc-empty-module-local-env-cache)))))
 
 (define (tc-summary-decl-prefix [decls : ast.AstDeclList] [count : i64]) : CompilerTypecheckSummary
   (let
@@ -114549,21 +116818,16 @@
             [facts : surface_facts.SurfaceTypecheckFacts
               (surface_facts.surface-typecheck-facts-current)]
             (if (and rebased (= count facts.prefix-decl-count))
-              (begin
-                (if (surface_facts.surface-typecheck-facts-composite-active?)
-                  (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
-                    load-state
-                    count)
-                  unit)
-                (tc-check-decls-with-surface-prefix-hit
-                  ctx
-                  top-env
-                  decls
-                  paths
-                  count
-                  module
-                  module-id
-                  facts))
+              (tc-check-decls-with-surface-prefix-hit
+                (tc-global-shared-view load-state)
+                ctx
+                top-env
+                decls
+                paths
+                count
+                module
+                module-id
+                facts)
               (begin
                 (surface_facts.surface-typecheck-facts-clear!)
                 (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]
@@ -115002,11 +117266,17 @@
                           cur-decls.offset
                           (tc-global-shared-view decl-path)
                           (tc-global-shared-view decl))))
-                    (match (tc-check-decl-with-global-env
-                      decl-ctx
-                      cur-local-env
-                      cur-global-env
-                      (tc-global-shared-view decl))
+                    (match (let
+                      [checked : ResultTcUnit
+                        (tc-check-decl-with-global-env
+                          decl-ctx
+                          cur-local-env
+                          cur-global-env
+                          (tc-global-shared-view decl))]
+                      (tc-global-effect-bind-query-path!
+                        decl-ctx
+                        (tc-global-shared-view decl-path))
+                      checked)
                       [(Ok)
                         (tc-unused-unsafe-restore-current-path!
                           unused-unsafe
@@ -115235,19 +117505,21 @@
     [_start-body-state : unit
       (tc-body-early-exit-facts-start! body-state pools)]
     [checked : ResultCompilerTypecheckChecked
-      (tc-typecheck-checked-result-with-pool-check
-        job-state
-        (tc-typecheck-specialized-program-checked-inner
-          load-state
-          prefix-cache
-          program
-          paths
-          stdlib-roots
-          cache-scope
-          pools
-          job-source-names
-          body-state
-          semantic-observer))]
+      (tc-global-effect-check-result
+        (tc-typecheck-checked-result-with-pool-check
+          job-state
+          (tc-typecheck-specialized-program-checked-inner
+            load-state
+            prefix-cache
+            program
+            paths
+            stdlib-roots
+            cache-scope
+            pools
+            job-source-names
+            body-state
+            semantic-observer)))]
+    (tc-global-call-effects-finish! job-state)
     (ast.ast-node-pool-context-capture-active! pools)
     (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
     (match checked

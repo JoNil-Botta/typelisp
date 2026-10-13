@@ -119,6 +119,7 @@ case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|none|direct
 end
 
 case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|none|direct
+case|selfhost_compiler_global_effects|src/compiler_global_effects.tl|assembly|none|direct
 end
 
 case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|none|direct

@@ -1690,6 +1690,9 @@ mir_cleanup_store_through_ref_reject|check-fail|tests/safety/mir_cleanup_store_t
 lower_word_view_slice_reference_ok|run-exit|tests/safety/lower_word_view_slice_reference_ok.tl|3|-
 mir_box_pattern_binder_loan_reject|check-fail|tests/safety/mir_box_pattern_binder_loan_reject.tl|-|cannot assign to borrowed place `xs`
 mir_cleanup_slice_store_reject|check-fail|tests/safety/mir_cleanup_slice_store_reject.tl|-|cannot overwrite initialized cleanup-owning place
+variance_recursive_swapped_invariant_reject|check-fail|tests/safety/variance_recursive_swapped_invariant_reject.tl|-|lifetime parameter 1 of `L` is invariant
+variance_recursive_through_holder_invariant_reject|check-fail|tests/safety/variance_recursive_through_holder_invariant_reject.tl|-|lifetime parameter 1 of `Outer` is invariant
+variance_cfunc_parameter_reject|check-fail|tests/safety/variance_cfunc_parameter_reject.tl|-|contravariant lifetime parameter 1 of `S`
 mir_comptime_syntax_move_reject|check-fail|tests/safety/mir_comptime_syntax_move_reject.tl|tests/safety/mir_comptime_syntax_move_reject.tl:9:20|use of moved value `item`
 mir_comptime_syntax_match_ok|check-ok|tests/safety/mir_comptime_syntax_match_ok.tl|-|-
 mir_referent_match_move_out_reject|check-fail|tests/safety/mir_referent_match_move_out_reject.tl|tests/safety/mir_referent_match_move_out_reject.tl:15:6|cannot move non-Copy value through shared reference
@@ -1833,3 +1836,9 @@ region_view_call_argument_ok|run-exit|tests/safety/region_view_call_argument_ok.
 region_by_value_holder_store_reborrow_ok|run-exit|tests/safety/region_by_value_holder_store_reborrow_ok.tl|42|-
 mir_holder_disjoint_lifetime_store_ok|run-exit|tests/safety/mir_holder_disjoint_lifetime_store_ok.tl|42|-
 mir_reborrow_returned_holder_ok|run-exit|tests/safety/mir_reborrow_returned_holder_ok.tl|42|-
+reassigned_array_call_store_reject|check-fail|tests/safety/reassigned_array_call_store_reject.tl|tests/safety/reassigned_array_call_store_reject.tl:22:11|cannot assign to borrowed place `p.z`
+reassigned_field_lifetime_order_reject|check-fail|tests/safety/reassigned_field_lifetime_order_reject.tl|tests/safety/reassigned_field_lifetime_order_reject.tl:27:13|cannot assign to borrowed place `q.r`
+region_type_depth_bound_reject|check-fail|tests/safety/region_type_depth_bound_reject.tl|tests/safety/region_type_depth_bound_reject.tl:4:3|the ownership checker does not support
+mir_field_store_uses_holder_reject|check-fail|tests/safety/mir_field_store_uses_holder_reject.tl|tests/safety/mir_field_store_uses_holder_reject.tl:26:15|cannot mutably borrow borrowed place `rb`
+region_covariant_holder_overwrite_ok|run-exit|tests/safety/region_covariant_holder_overwrite_ok.tl|42|-
+region_borrow_after_overwrite_ok|run-exit|tests/safety/region_borrow_after_overwrite_ok.tl|42|-

@@ -186,6 +186,45 @@
   (fields (__tl_dyn-array i64))
   (names (__tl_dyn-array i64)))
 
+;; The declared variance of struct and enum lifetime parameters, from typing
+;; (`tc-nominal-lifetime-variance-at`): nominal `names[i]`'s parameter `k` is
+;; covariant when `covariant[starts[i] + k]` holds, for `k` below
+;; `counts[i]`. Region nodes relate a nominal type's lifetime arguments by
+;; that variance, as Rust's do; a nominal or parameter missing here relates
+;; invariantly.
+(defstruct OwnershipNormalizeVariances
+  (names (__tl_dyn-array i64))
+  (starts (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (covariant (__tl_dyn-array bool)))
+
+(define (ownership-normalize-variances-empty) : OwnershipNormalizeVariances
+  (OwnershipNormalizeVariances
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)))
+
+;; Whether nominal `name`'s lifetime parameter `index` is declared covariant.
+(define (normalize-nominal-covariant?
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [name : i64]
+  [index : i64]) : bool
+  (let
+    [at : i64 0]
+    (while (< at (array-length variances.names))
+      (when
+        (= (array-ref variances.names at) name)
+        (return
+          (and
+            (>= index 0)
+            (< index (array-ref variances.counts at))
+            (array-ref
+              variances.covariant
+              (+ (array-ref variances.starts at) index)))))
+      (set! at (+ at 1)))
+    false))
+
 ;; Body type indices: 0-12 are the primitive codes, 13 is reserved for Never
 ;; (an exit, never storage), and classified value types follow.
 (define normalize-first-value-type : i64
@@ -723,6 +762,27 @@
   [to : i64]) : NormalizeUnit
   (normalize-note-edge! state from to false true))
 
+;; A read of `from` (a place of a split binding) redirected to the binding's
+;; definition value `root`: the read keeps its own place, whose type spells the
+;; binding's lifetime names, and takes its regions from `root`, whose type is
+;; the binding's (`normalize-region-edges` relates regions by name).
+(define (normalize-note-redirect!
+  [state : (&mut state NormalizeState)]
+  [from : i64]
+  [root : i64]
+  [to : i64]) : NormalizeUnit
+  (let
+    [count : i64 state.flow-count]
+    (when
+      (!= (normalize-reference-kind (& state) root) 0)
+      (try (normalize-note-edge! state from to false false))
+      (when
+        (> state.flow-count count)
+        (set!
+          (array-ref state.flow-from count)
+          (normalize-place-root (& state) root))))
+    (NormalizeUnit.Ok unit)))
+
 ;; `to` (a reborrow made through the reference `from`) must not outlive the
 ;; loans `from` holds: they stay live while `to` is.
 (define (normalize-note-outlives!
@@ -1121,6 +1181,7 @@
   (reservation-loans (__tl_dyn-array i64))
   ;; Product shapes by class key; keys this body projects take their shape.
   (products (__tl_dyn-array OwnershipNormalizeProduct))
+  (variances OwnershipNormalizeVariances)
   (projected (__tl_dyn-array bool))
   ;; The class key of each body type (-1 for primitives) and the field name id
   ;; of each place (-1 for a root).
@@ -1650,6 +1711,26 @@
       state
       block
       (own.OwnershipInstruction operation copy))
+    (NormalizeUnit.Ok unit)))
+
+;; The initialization check of a Copy destination about to be overwritten. The
+;; overwrite reads nothing, so it demands none of the loans the old value
+;; holds (as in Rust, where assigning to a reference variable does not use it);
+;; the write itself still conflicts with every loan of the destination.
+(define (normalize-emit-init-check!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (let
+    [copy : own.OwnershipSource (try (normalize-source-copy! state source))]
+    (try (normalize-charge! state 1 1 0))
+    (normalize-instruction-append!
+      state
+      block
+      (own.OwnershipInstruction
+        (own.OwnershipOperation.Read (normalize-place-id (& state) place))
+        copy))
     (NormalizeUnit.Ok unit)))
 
 (define (normalize-terminate!
@@ -3346,11 +3427,7 @@
         (when
           (and assign? (normalize-copy-type? (& state) type))
           (try
-            (normalize-emit!
-              state
-              value.block
-              (own.OwnershipOperation.Read (normalize-place-id (& state) dest))
-              (& node.source))))
+            (normalize-emit-init-check! state value.block dest (& node.source))))
         (when
           (and (not assign?) (!= (normalize-reference-kind (& state) dest) 0))
           (let
@@ -4843,16 +4920,28 @@
     (if (< loan 0)
       (begin
         ;; A Copy destination is always initialized; a move-only one is
-        ;; reinitialized by the store.
+        ;; reinitialized by the store. A store into part of a root uses the
+        ;; root, whose other parts stay (Rust's liveness counts it as a use of
+        ;; the local); overwriting a whole root reads nothing.
         (when
           (normalize-copy-type? (& state) formed.type)
-          (try
-            (normalize-emit!
-              state
-              value.block
-              (own.OwnershipOperation.Read
-                (normalize-place-id (& state) formed.place))
-              (& node.source))))
+          (if (<
+            (own.ownership-parent
+              (& (array-ref state.body.places formed.place)))
+            0)
+            (try
+              (normalize-emit-init-check!
+                state
+                value.block
+                formed.place
+                (& node.source)))
+            (try
+              (normalize-emit!
+                state
+                value.block
+                (own.OwnershipOperation.Read
+                  (normalize-place-id (& state) formed.place))
+                (& node.source)))))
         (try
           (normalize-transfer!
             state
@@ -6165,8 +6254,8 @@
           (try (normalize-value! state active node.type (& node.source)))]
         ;; A call relates its operands and result through its callee's
         ;; signature, instantiated afresh for this call
-        ;; (`normalize-region-edges`). Any other operation (a primitive, a
-        ;; constructor) may put any operand's loans in its result.
+        ;; (`normalize-region-edges`). An operation without one (a
+        ;; primitive) may put any operand's loans in its result.
         (let
           [signature : i64
             (match (& node.operation)
@@ -6942,10 +7031,12 @@
 ;; each read's flow edge, and each use, is redirected to the value places of
 ;; its reaching definitions (copies or moves into the whole binding), found by
 ;; a reaching-definitions pass over the blocks. A binding with an origin noted
-;; on it directly, or with any incoming flow edge besides the one each such
-;; definition records (a store through a reference to it, a call's store
-;; contract, a field write), keeps its per-place origin (conservative); so does
-;; any read not matched to an instruction.
+;; on it directly, with any incoming flow edge besides the one each such
+;; definition records (a store through a reference to it, a field write), or
+;; borrowed anywhere (a call may store through the borrow, which relates only
+;; regions), keeps its per-place origin (conservative); so does any read not
+;; matched to an instruction. A redirected read keeps its own place, so a
+;; field read still relates the field's lifetimes (`normalize-note-redirect!`).
 ;; Whether `loan` is in the union of the rows of `alt-places[start..start+count)`.
 (define (normalize-alt-row-has?
   [bits : (& bits (__tl_dyn-array bool))]
@@ -7042,16 +7133,23 @@
         (set! (array-ref flow-total at) 0)
         (set! (array-ref opaque at) false)
         (set! at (+ at 1))))
-    ;; Every flow edge into a place; a whole definition accounts for one.
+    ;; Every flow edge into a place; a whole definition accounts for one. A
+    ;; borrowed place may also be written through the borrow (a call storing
+    ;; through its `&mut` argument relates only regions, no flow), so it is
+    ;; never split.
     (let
       [at : i64 0]
       (try (normalize-charge! state 0 (array-length state.flow-to) 0))
       (while (< at (array-length state.flow-to))
         (let
           [to : i64 (array-ref state.flow-to at)]
+          [from : i64 (array-ref state.flow-from at)]
           (when
             (and (>= to 0) (< to places))
-            (set! (array-ref flow-total to) (+ (array-ref flow-total to) 1))))
+            (set! (array-ref flow-total to) (+ (array-ref flow-total to) 1)))
+          (when
+            (and (array-ref state.flow-contents at) (>= from 0) (< from places))
+            (set! (array-ref opaque from) true)))
         (set! at (+ at 1))))
     ;; Origins noted on a place directly are not definitions it can split.
     (let
@@ -7292,12 +7390,13 @@
                             (set! unreached true))
                           (while (< r (array-length reaching))
                             (try
-                              (normalize-note-flow!
+                              (normalize-note-redirect!
                                 state
+                                (array-ref state.flow-from-place edge)
                                 (array-ref
                                   def-value
                                   (array-ref defs (array-ref reaching r)))
-                                to))
+                                (array-ref state.flow-to-place edge)))
                             (set! r (+ r 1))))))
                     (set! i (+ i 1))))
                 (set! b (+ b 1)))
@@ -7532,8 +7631,9 @@
 ;; shared by every parameter and the return; each call adds one node per
 ;; formal lifetime of its callee. Every recorded value transfer relates the
 ;; nodes of its two types position by position with variance (`&mut T` makes
-;; `T` invariant; nominal arguments are invariant here), a reborrow relates by
-;; name to its root's nodes, and each region outlives the references it lies
+;; `T` invariant; a nominal argument has its declaration's variance, from
+;; typing, and is invariant unless covariant), a reborrow relates by name to
+;; its root's nodes, and each region outlives the references it lies
 ;; under, so a reference stored through any chain of `&mut` lands in the
 ;; region the target's own type names. A use of a root demands the loans of
 ;; all its nodes; every return demands the universal nodes'. Where a
@@ -7551,8 +7651,10 @@
   (starts NormalizeI64s)
   (lens NormalizeI64s)
   ;; Per shape: whether its first name is a view's region tag (a value read
-  ;; through a reference, which reaches the viewed memory).
+  ;; through a reference, which reaches the viewed memory), and whether it is
+  ;; a reference's own outer region.
   (views NormalizeBools)
+  (references NormalizeBools)
   ;; Per place: its shape, or -1 when its type is unknown.
   (place-shapes (__tl_dyn-array i64))
   ;; Per call operand (aligned with `call-operands`): the formal parameter's
@@ -7589,19 +7691,21 @@
   (__tl_array-push! out.outers outer))
 
 (define (normalize-shape-walk
+  [variances : (& variances OwnershipNormalizeVariances)]
   [ty : ast.AstType]
   [inv? : bool]
   [out : (&mut out NormalizeShapeOut)]
   [outer : i64]
-  [depth : i64]) : unit
-  (when
-    (< depth 32)
+  [depth : i64]) : bool
+  (if (>= depth 32)
+    false
     (let
       [here : i64 (array-length out.names)]
       (match ty
         [(ast.AstType.Ref lifetime inner)
           (normalize-shape-push! out lifetime inv? outer)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get inner)
             inv?
             out
@@ -7610,6 +7714,7 @@
         [(ast.AstType.MutRef lifetime inner)
           (normalize-shape-push! out lifetime inv? outer)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get inner)
             true
             out
@@ -7618,6 +7723,7 @@
         [(ast.AstType.Region lifetime inner)
           (normalize-shape-push! out lifetime inv? outer)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get inner)
             inv?
             out
@@ -7626,24 +7732,34 @@
         [(ast.AstType.Invalidate lifetime inner)
           (normalize-shape-push! out lifetime true outer)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get inner)
             true
             out
             here
             (+ depth 1))]
-        [(or (ast.AstType.EnumArgs _ lifetimes)
-             (ast.AstType.StructArgs _ lifetimes))
+        [(or (ast.AstType.EnumArgs name lifetimes)
+             (ast.AstType.StructArgs name lifetimes))
           (normalize-shape-lifetimes
+            variances
+            name
             (ast.ast-lifetime-list-box-shared-view lifetimes)
+            inv?
             out
-            outer)]
+            outer)
+          true]
         [(ast.AstType.VarArgs _ lifetimes)
           (normalize-shape-lifetimes
+            variances
+            -1
             (ast.ast-lifetime-list-box-shared-view lifetimes)
+            true
             out
-            outer)]
+            outer)
+          true]
         [(ast.AstType.Tuple elems)
           (normalize-shape-list
+            variances
             (ast.ast-type-list-box-shared-view elems)
             inv?
             out
@@ -7651,15 +7767,24 @@
             (+ depth 1))]
         ;; A function type's lifetimes are its own: nothing outlives through it.
         [(ast.AstType.Func args ret)
-          (normalize-shape-list
-            (ast.ast-type-list-box-shared-view args)
-            true
-            out
-            -1
-            (+ depth 1))
-          (normalize-shape-walk (ast.ty-node-get ret) true out -1 (+ depth 1))]
+          (and
+            (normalize-shape-list
+              variances
+              (ast.ast-type-list-box-shared-view args)
+              true
+              out
+              -1
+              (+ depth 1))
+            (normalize-shape-walk
+              variances
+              (ast.ty-node-get ret)
+              true
+              out
+              -1
+              (+ depth 1)))]
         [(ast.AstType.Array elem _)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get elem)
             inv?
             out
@@ -7667,6 +7792,7 @@
             (+ depth 1))]
         [(ast.AstType.DynArray elem)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get elem)
             inv?
             out
@@ -7674,6 +7800,7 @@
             (+ depth 1))]
         [(ast.AstType.Box elem)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get elem)
             inv?
             out
@@ -7681,15 +7808,21 @@
             (+ depth 1))]
         [(ast.AstType.Slice elem)
           (normalize-shape-walk
+            variances
             (ast.ty-node-get elem)
             inv?
             out
             outer
             (+ depth 1))]
-        [_ unit]))))
+        [_ true]))))
 
+;; A nominal type's lifetime arguments: each is invariant unless declared
+;; covariant (`name` -1 declares none) and in a covariant context.
 (define (normalize-shape-lifetimes
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [name : i64]
   [lifetimes : ast.AstLifetimeList]
+  [inv? : bool]
   [out : (&mut out NormalizeShapeOut)]
   [outer : i64]) : unit
   (let
@@ -7698,27 +7831,33 @@
       (normalize-shape-push!
         out
         (ast.ast-lifetime-list-get (& lifetimes) index -1)
-        true
+        (or inv? (not (normalize-nominal-covariant? variances name index)))
         outer)
       (set! index (+ index 1)))))
 
 (define (normalize-shape-list
+  [variances : (& variances OwnershipNormalizeVariances)]
   [types : ast.AstTypeList]
   [inv? : bool]
   [out : (&mut out NormalizeShapeOut)]
   [outer : i64]
-  [depth : i64]) : unit
+  [depth : i64]) : bool
   (let
     [index : i64 0]
+    [complete : bool true]
     (while (< index (ast.ast-type-list-len (& types)))
-      (normalize-shape-walk
-        (ast.ty-node-get
-          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
-        inv?
-        out
-        outer
-        depth)
-      (set! index (+ index 1)))))
+      (unless
+        (normalize-shape-walk
+          variances
+          (ast.ty-node-get
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
+          inv?
+          out
+          outer
+          depth)
+        (set! complete false))
+      (set! index (+ index 1)))
+    complete))
 
 ;; The referent type of a reference type, reached through containers of
 ;; references (an element of an array of references): the type a synthetic
@@ -7736,10 +7875,12 @@
         (normalize-referent-ast (ast.ty-node-get elem) (+ depth 1))]
       [_ ast.AstType.Unit])))
 
-;; Append the shape of `ty`; returns its id.
+;; Append the shape of `ty`; returns its id. A type nested past the walk's
+;; depth bound has no complete shape, and the body fails closed.
 (define (normalize-shape-add!
   [shapes : (&mut shapes NormalizeShapes)]
-  [ty : ast.AstType]) : i64
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [ty : ast.AstType]) : NormalizeInt
   (let
     [id : i64 shapes.starts.len]
     [out : NormalizeShapeOut
@@ -7752,20 +7893,28 @@
       (match (& ty)
         [(ast.AstType.Region _ _) true]
         [_ false])]
-    (normalize-shape-walk ty false (&mut out) -1 0)
+    [reference? : bool
+      (match (& ty)
+        [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)) true]
+        [_ false])]
+    (unless
+      (normalize-shape-walk variances ty false (&mut out) -1 0)
+      (return (NormalizeInt.Err OwnershipNormalizeFailure.Resource)))
     (normalize-i64s-push! (&mut shapes.starts) shapes.names.len)
     (normalize-i64s-push! (&mut shapes.lens) (array-length out.names))
     (normalize-bools-push! (&mut shapes.views) view?)
+    (normalize-bools-push! (&mut shapes.references) reference?)
     (while (< index (array-length out.names))
       (normalize-i64s-push! (&mut shapes.names) (array-ref out.names index))
       (normalize-bools-push! (&mut shapes.invariant) (array-ref out.vars index))
       (normalize-i64s-push! (&mut shapes.outers) (array-ref out.outers index))
       (set! index (+ index 1)))
-    id))
+    (NormalizeInt.Ok id)))
 
 ;; The shape of typed type record `typed` (cached per record).
 (define (normalize-typed-shape!
   [shapes : (&mut shapes NormalizeShapes)]
+  [variances : (& variances OwnershipNormalizeVariances)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [record : i64]
@@ -7783,17 +7932,26 @@
         (when (> hit 0) (return (NormalizeInt.Ok (- hit 1))))))
     (match (typed.typed-type-value-at! store lease record)
       [(typed.TypedTypeValueResult.Ok value)
+        ;; A referent walk stopped at the depth bound gives `Unit`; the
+        ;; reference it is reached through has this record's plain shape,
+        ;; which fails.
         (let
-          [id : i64
+          [added : NormalizeInt
             (if deref?
-              (normalize-shape-add! shapes (normalize-referent-ast value 0))
-              (normalize-shape-add! shapes value))]
-          (when
-            cached?
-            (if deref?
-              (set! (array-ref shapes.cache-deref record) (+ id 1))
-              (set! (array-ref shapes.cache-plain record) (+ id 1))))
-          (NormalizeInt.Ok id))]
+              (normalize-shape-add!
+                shapes
+                variances
+                (normalize-referent-ast value 0))
+              (normalize-shape-add! shapes variances value))]
+          (match added
+            [(NormalizeInt.Ok id)
+              (when
+                cached?
+                (if deref?
+                  (set! (array-ref shapes.cache-deref record) (+ id 1))
+                  (set! (array-ref shapes.cache-plain record) (+ id 1))))
+              (NormalizeInt.Ok id)]
+            [(NormalizeInt.Err failure) (NormalizeInt.Err failure)]))]
       [(typed.TypedTypeValueResult.Err error)
         (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])))
 
@@ -7849,6 +8007,7 @@
         (normalize-i64s)
         (normalize-i64s)
         (normalize-bools)
+        (normalize-bools)
         (__tl_make-array i64 state.place-count)
         (normalize-i64s)
         (normalize-i64s)
@@ -7868,6 +8027,7 @@
             [(>= record 0)
               (match (normalize-typed-shape!
                 (&mut shapes)
+                (& state.variances)
                 store
                 lease
                 record
@@ -7878,6 +8038,7 @@
             [(and (>= through 0) (>= (array-ref state.place-typed through) 0))
               (match (normalize-typed-shape!
                 (&mut shapes)
+                (& state.variances)
                 store
                 lease
                 (array-ref state.place-typed through)
@@ -7911,19 +8072,29 @@
                       (if (and
                         (>= operand first)
                         (< (- operand first) (ast.ast-type-list-len (& params))))
-                        (normalize-shape-add!
+                        (match (normalize-shape-add!
                           (&mut shapes)
+                          (& state.variances)
                           (ast.ty-node-get
                             (ast.ast-type-list-get
                               (& params)
                               (- operand first)
                               (ast.ast-type-id-fallback))))
+                          [(NormalizeInt.Ok id) id]
+                          [(NormalizeInt.Err failure)
+                            (return (NormalizeShapesResult.Err failure))])
                         -1)]
                     (normalize-i64s-push! (&mut shapes.call-shapes) shape))
                   (set! operand (+ operand 1)))
                 (let
                   [shape : i64
-                    (normalize-shape-add! (&mut shapes) (ast.ty-node-get ret))]
+                    (match (normalize-shape-add!
+                      (&mut shapes)
+                      (& state.variances)
+                      (ast.ty-node-get ret))
+                      [(NormalizeInt.Ok id) id]
+                      [(NormalizeInt.Err failure)
+                        (return (NormalizeShapesResult.Err failure))])]
                   (normalize-i64s-push! (&mut shapes.call-ret-shapes) shape)))]
             [_
               (let
@@ -7949,6 +8120,7 @@
             (>= record 0)
             (match (normalize-typed-shape!
               (&mut shapes)
+              (& state.variances)
               store
               lease
               record
@@ -7965,6 +8137,7 @@
       (>= return-type 0)
       (match (normalize-typed-shape!
         (&mut shapes)
+        (& state.variances)
         store
         lease
         return-type
@@ -8136,6 +8309,10 @@
 (defstruct NormalizeRegionEdges
   (from NormalizeI64s)
   (to NormalizeI64s)
+  ;; At most `limit` edges are built (the work budget left); past it the
+  ;; graph is `exhausted` and the body fails closed.
+  (limit i64)
+  (exhausted bool)
   ;; An outlives edge (a reborrow's from the reference it went through, a
   ;; well-formedness one): it keeps those loans live, but they are not where
   ;; the target points.
@@ -8154,9 +8331,12 @@
   [outlives? : bool]) : unit
   (when
     (and (>= from 0) (>= to 0) (!= from to))
-    (normalize-i64s-push! (&mut edges.from) from)
-    (normalize-i64s-push! (&mut edges.to) to)
-    (normalize-bools-push! (&mut edges.outlives) outlives?)))
+    (if (>= edges.from.len edges.limit)
+      (set! edges.exhausted true)
+      (begin
+        (normalize-i64s-push! (&mut edges.from) from)
+        (normalize-i64s-push! (&mut edges.to) to)
+        (normalize-bools-push! (&mut edges.outlives) outlives?)))))
 
 ;; Every node of key `key` (a root's own, a call's, or for -1 the universal
 ;; nodes), into `out`.
@@ -8202,6 +8382,51 @@
             (__tl_array-push! out node)))
         (set! index (+ index 1))))))
 
+;; An indirect call's callee value (root `root`, shape `shape`): its regions,
+;; a closure's captures, relate both ways with every region of the call's
+;; signature instance `key`. When the operand is a borrow of the closure, its
+;; own outer region (the borrow's loan) is left out.
+(define (normalize-relate-callee!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [nodes : (& nodes NormalizeNodes)]
+  [shapes : (& shapes NormalizeShapes)]
+  [root : i64]
+  [shape : i64]
+  [key : i64]) : unit
+  (let
+    [callee : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [call : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [outer : i64
+      (if (and
+        (>= shape 0)
+        (array-ref shapes.references.items shape)
+        (> (array-ref shapes.lens.items shape) 0))
+        (normalize-node-of
+          nodes
+          shapes
+          root
+          (array-ref shapes.names.items (array-ref shapes.starts.items shape)))
+        -1)]
+    [i : i64 0]
+    (normalize-key-nodes-into! nodes shapes root shape (&mut callee))
+    (normalize-key-nodes-into! nodes shapes key -1 (&mut call))
+    (while (and (< i (array-length callee)) (not edges.exhausted))
+      (unless
+        (= (array-ref callee i) outer)
+        (let
+          [j : i64 0]
+          (while (< j (array-length call))
+            (normalize-region-edge!
+              edges
+              (array-ref callee i)
+              (array-ref call j))
+            (normalize-region-edge!
+              edges
+              (array-ref call j)
+              (array-ref callee i))
+            (set! j (+ j 1)))))
+      (set! i (+ i 1)))))
+
 ;; Relate every node of one side with every node of the other, both ways: a
 ;; transfer whose shapes do not line up.
 (define (normalize-relate-all!
@@ -8218,7 +8443,7 @@
     [i : i64 0]
     (normalize-key-nodes-into! nodes shapes from-key from-shape (&mut left))
     (normalize-key-nodes-into! nodes shapes to-key to-shape (&mut right))
-    (while (< i (array-length left))
+    (while (and (< i (array-length left)) (not edges.exhausted))
       (let
         [j : i64 0]
         (while (< j (array-length right))
@@ -8459,7 +8684,12 @@
   [nodes : (& nodes NormalizeNodes)]) : NormalizeRegionEdges
   (let
     [edges : NormalizeRegionEdges
-      (NormalizeRegionEdges (normalize-i64s) (normalize-i64s) (normalize-bools))]
+      (NormalizeRegionEdges
+        (normalize-i64s)
+        (normalize-i64s)
+        (- state.limits.work state.work)
+        false
+        (normalize-bools))]
     [index : i64 0]
     (while (< index state.flow-count)
       (when
@@ -8467,7 +8697,10 @@
         (let
           [from : i64 (array-ref state.flow-from-place index)]
           [to : i64 (array-ref state.flow-to-place index)]
-          [from-key : i64 (normalize-region-root state from)]
+          ;; The flow's root, which a redirected read of a split binding
+          ;; replaces with the definition value (`normalize-note-redirect!`).
+          [from-key : i64
+            (normalize-region-root state (array-ref state.flow-from index))]
           [to-key : i64 (normalize-region-root state to)]
           [from-shape : i64 (array-ref shapes.place-shapes from)]
           [to-shape : i64 (array-ref shapes.place-shapes to)]
@@ -8533,14 +8766,13 @@
             (when
               (>= place 0)
               (if (< formal 0)
-                (normalize-relate-all!
+                (normalize-relate-callee!
                   (&mut edges)
                   nodes
                   shapes
                   (normalize-region-root state place)
                   (array-ref shapes.place-shapes place)
-                  key
-                  -1)
+                  key)
                 (normalize-relate!
                   (&mut edges)
                   nodes
@@ -8814,13 +9046,20 @@
         [count : i64 (+ nodes.keys.len aim-nodes.keys.len)]
         [words : i64 (/ (+ width 63) 64)]
         (unless
-          (<= (+ count 2) (/ 16777216 words))
+          (and
+            (not edges.exhausted)
+            (not aim-edges.exhausted)
+            (<= (+ count 2) (/ 16777216 words)))
           (return (NormalizeUnit.Err OwnershipNormalizeFailure.Resource)))
         (try
           (normalize-charge!
             state
             0
-            (+ (* (+ count 2) words) (* 2 places width))
+            (+
+              (* (+ count 2) words)
+              (* 2 places width)
+              edges.from.len
+              aim-edges.from.len)
             0))
         (let
           [node-bits : (__tl_dyn-array i64)
@@ -9059,9 +9298,55 @@
         (set! index (+ index 1))))
     (NormalizeUnit.Ok unit)))
 
+;; Per root: the root a reference made there by a borrow reaches its referent
+;; through (`normalize-note-contents!`), or -1, also when borrows of several
+;; roots meet there or the borrowed root is a synthetic referent (which has
+;; the regions of the reference it stands behind, not its own).
+(define (normalize-lenders [state : (& state NormalizeState)]) : (__tl_dyn-array
+    i64)
+  (let
+    [places : i64 (array-length state.body.places)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 places)]
+    [mixed : (__tl_dyn-array bool) (__tl_make-array bool places)]
+    [index : i64 0]
+    (while (< index places)
+      (set! (array-ref out index) -1)
+      (set! (array-ref mixed index) false)
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index state.flow-count)
+      (let
+        [from : i64 (array-ref state.flow-from index)]
+        [to : i64 (array-ref state.flow-to index)]
+        (when
+          (and
+            (array-ref state.flow-contents index)
+            (>= from 0)
+            (< from places)
+            (>= to 0)
+            (< to places)
+            (!= from to)
+            (not (array-ref mixed to)))
+          (if (!= (normalize-region-root state from) from)
+            (begin
+              (set! (array-ref mixed to) true)
+              (set! (array-ref out to) -1))
+            (cond
+              [(< (array-ref out to) 0) (set! (array-ref out to) from)]
+              [(!= (array-ref out to) from)
+                (set! (array-ref mixed to) true)
+                (set! (array-ref out to) -1)]
+              [else unit]))))
+      (set! index (+ index 1)))
+    out))
+
 ;; Rebuild each block once, inserting a use's MayUseLoan operations before the
 ;; instruction it was recorded at (or before the terminator). Uses of one block
-;; were recorded in nondecreasing instruction order.
+;; were recorded in nondecreasing instruction order. A use names the root
+;; whose value holds each loan: a reference made by a borrow holds its own
+;; loan, while the loans of its referent are held by the borrowed root (the
+;; regions are one), so they end where that root is overwritten whole before
+;; the borrow, as in Rust, where a borrow is a use of the borrowed variable.
 (define (normalize-insert-loan-uses!
   [state : (&mut state NormalizeState)]
   [bits : (& bits (__tl_dyn-array bool))]
@@ -9075,10 +9360,19 @@
     [order : (__tl_dyn-array i64)
       (__tl_make-array i64 (array-length state.use-places))]
     [fill : (__tl_dyn-array i64) (__tl_make-array i64 (+ blocks 1))]
+    [lenders : (__tl_dyn-array i64) (normalize-lenders (& state))]
     [index : i64 0]
     [block : i64 0]
     (try
-      (normalize-charge! state 0 (+ blocks (array-length state.use-places)) 0))
+      (normalize-charge!
+        state
+        0
+        (+
+          blocks
+          (array-length state.use-places)
+          (array-length state.body.places)
+          state.flow-count)
+        0))
     ;; Stable bucket sort of the recorded uses by block.
     (while (< index (array-length state.use-blocks))
       (set!
@@ -9141,7 +9435,17 @@
                           (array-ref alt-count use)
                           loan)
                         (array-ref bits (+ row loan)))
-                      (begin
+                      (let
+                        [used : i64 (array-ref state.use-places use)]
+                        [through : i64 (array-ref lenders used)]
+                        ;; The root whose value holds the loan.
+                        [holder : i64
+                          (if (and
+                            (>= through 0)
+                            (= (array-ref alt-count use) 0)
+                            (array-ref bits (+ (* through width) loan)))
+                            through
+                            used)]
                         (try (normalize-charge! state 1 1 0))
                         (normalize-instruction-append!
                           state
@@ -9151,10 +9455,7 @@
                               (own.OwnershipLoanId
                                 (typed.typed-body-copy (& state.body.id))
                                 loan)
-                              ;; The root whose value this use reads.
-                              (normalize-place-id
-                                (& state)
-                                (array-ref state.use-places use)))
+                              (normalize-place-id (& state) holder))
                             (own.ownership-source-copy (& source))))))
                     (set! loan (+ loan 1)))
                   (set! cursor (+ cursor 1))))
@@ -9699,6 +10000,7 @@
     return-type
     classes
     (__tl_make-array OwnershipNormalizeProduct 0)
+    (ownership-normalize-variances-empty)
     limits))
 
 ;; A signature lifetime is the caller's region: whatever a body stores into a
@@ -9992,6 +10294,7 @@
   [return-type : typed.TypedTypeId]
   [classes : (__tl_dyn-array OwnershipNormalizeTypeClass)]
   [products : (__tl_dyn-array OwnershipNormalizeProduct)]
+  [variances : OwnershipNormalizeVariances]
   [limits : OwnershipNormalizeLimits]) : OwnershipNormalizeResult
   ;; A hard depth ceiling bounds compiler stack use even for caller-supplied
   ;; limits (the compiler runs on the runtime's 1 GiB main stack). All
@@ -10057,6 +10360,7 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           products
+          variances
           (__tl_make-array bool 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)

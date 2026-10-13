@@ -928,7 +928,10 @@
 ;; before p5 is overwritten, so %loan0 is dead there although p5's later read
 ;; may carry it. Mode 2 is mode 1 without p7's MayUseLoan run, as in a Move
 ;; synthesized by cleanup elaboration: the transfer's loans are unknown and
-;; every demand continues.
+;; every demand continues. Mode 3: p7's run names %loan0 through root p6 (a
+;; borrowed root holding a reference's referent loans), and p1 is written
+;; after the move, before p5 is read: %loan0 crosses the move as p6's demand
+;; and the write conflicts.
 (define (loan-test-may-use [loan : i64] [holder : i64]) : own.OwnershipInstruction
   (own.OwnershipInstruction
     (own.OwnershipOperation.MayUseLoan
@@ -946,16 +949,17 @@
 (define (loan-test-holder-body [mode : i64]) : own.OwnershipBody
   (let
     [instructions : (__tl_dyn-array own.OwnershipInstruction)
-      (if (= mode 0)
-        (__tl_make-array
-          (loan-test-op 7 0 7)
-          (loan-test-op 0 0 0)
-          (loan-test-op 0 1 0)
-          (loan-test-may-use 0 7)
-          (loan-test-move 7 5)
-          (loan-test-op 7 0 1)
-          (loan-test-may-use 0 5))
-        (if (= mode 1)
+      (cond
+        [(= mode 0)
+          (__tl_make-array
+            (loan-test-op 7 0 7)
+            (loan-test-op 0 0 0)
+            (loan-test-op 0 1 0)
+            (loan-test-may-use 0 7)
+            (loan-test-move 7 5)
+            (loan-test-op 7 0 1)
+            (loan-test-may-use 0 5))]
+        [(= mode 1)
           (__tl_make-array
             (loan-test-op 0 0 0)
             (loan-test-op 7 0 7)
@@ -964,7 +968,18 @@
             (loan-test-may-use 1 7)
             (loan-test-move 7 5)
             (loan-test-may-use 0 5)
-            (loan-test-may-use 1 5))
+            (loan-test-may-use 1 5))]
+        [(= mode 3)
+          (__tl_make-array
+            (loan-test-op 0 0 0)
+            (loan-test-op 7 0 7)
+            (loan-test-op 0 1 0)
+            (loan-test-may-use 1 7)
+            (loan-test-may-use 0 6)
+            (loan-test-move 7 5)
+            (loan-test-op 7 0 1)
+            (loan-test-may-use 0 5))]
+        [else
           (__tl_make-array
             (loan-test-op 0 0 0)
             (loan-test-op 7 0 7)
@@ -972,7 +987,7 @@
             (loan-test-op 7 0 1)
             (loan-test-move 7 5)
             (loan-test-may-use 0 5)
-            (loan-test-may-use 1 5))))]
+            (loan-test-may-use 1 5))])]
     [body : own.OwnershipBody
       (loan-test-body
         (__tl_make-array
@@ -1017,6 +1032,7 @@
     [(!= (loan-test-result (loan-test-holder-body 2)) 1) 603]
     [(!= (loan-test-holder-live-at-write? 1) 0) 604]
     [(!= (loan-test-holder-live-at-write? 2) 1) 605]
+    [(!= (loan-test-result (loan-test-holder-body 3)) 1) 606]
     [else 42]))
 
 (test

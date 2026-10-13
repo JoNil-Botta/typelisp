@@ -11720,6 +11720,7 @@
       return-type
       table.classes
       table.products
+      table.variances
       (ownership_normalize.ownership-normalize-default-limits)))
     [(ownership_normalize.OwnershipNormalizeResult.Err failure)
       (match (tc-selected-normalization-failure-in ctx store lease failure)
@@ -44364,7 +44365,7 @@
   [ctx : TcContext]
   [types : (& types ast.AstTypeList)]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [position : TcVariance]
   [index : i64]) : TcVariance
   (if (>= index (ast.ast-type-list-len types))
@@ -44375,13 +44376,13 @@
         (ast.ty-node-get
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         lifetime-id
-        stack
+        table
         position)
       (tc-type-list-lifetime-variance-at
         ctx
         types
         lifetime-id
-        stack
+        table
         position
         (+ index 1)))))
 
@@ -44389,15 +44390,15 @@
   [ctx : TcContext]
   [types : ast.AstTypeList]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [position : TcVariance]) : TcVariance
-  (tc-type-list-lifetime-variance-at ctx (& types) lifetime-id stack position 0))
+  (tc-type-list-lifetime-variance-at ctx (& types) lifetime-id table position 0))
 
 (define (tc-field-list-lifetime-variance-at
   [ctx : TcContext]
   [fields : (& fields ast.AstFieldDefList)]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [index : i64]) : TcVariance
   (if (>= index fields.len)
     (TcVarianceBivariant)
@@ -44411,20 +44412,20 @@
             ctx
             ty
             lifetime-id
-            stack
+            table
             (TcVarianceCovariant))
           (tc-field-list-lifetime-variance-at
             ctx
             fields
             lifetime-id
-            stack
+            table
             (+ index 1)))])))
 
 (define (tc-variant-list-lifetime-variance-at
   [ctx : TcContext]
   [variants : (& variants ast.AstVariantDefList)]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [index : i64]) : TcVariance
   (if (>= index variants.len)
     (TcVarianceBivariant)
@@ -44438,20 +44439,89 @@
             ctx
             payloads
             lifetime-id
-            stack
+            table
             (TcVarianceCovariant))
           (tc-variant-list-lifetime-variance-at
             ctx
             variants
             lifetime-id
-            stack
+            table
             (+ index 1)))])))
 
+;; Variance of a nominal's lifetime parameters, solved as Rust's variance
+;; inference solves it: every parameter position reachable from the one asked
+;; for starts bivariant, each is recomputed from its declaration with the
+;; current answers for the nominal positions it names, and the passes repeat
+;; until no answer changes. Answers only grow (bivariant, then co- or
+;; contravariant, then invariant), so each position changes at most three
+;; times, and a cycle that permutes the parameters (`(L b a)` inside `L`)
+;; gets the variance of the position it fills.
 (define (tc-nominal-lifetime-variance-at
   [ctx : TcContext]
   [name-id : i64]
   [index : i64]
-  [stack : TcNameIdList]) : TcVariance
+  [_stack : TcNameIdList]) : TcVariance
+  (let
+    [table : TcVarianceTable
+      (TcVarianceTable
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0))]
+    [first : TcVariance (tc-variance-table-at! ctx (&mut table) name-id index)]
+    [changed : bool true]
+    [at : i64 0]
+    (when (= (array-length table.keys) 0) (return first))
+    (while changed
+      (set! changed false)
+      (set! at 0)
+      (while (< at (array-length table.keys))
+        (let
+          [code : i64
+            (tc-variance-code
+              (tc-variance-table-walk!
+                ctx
+                (&mut table)
+                (array-ref table.handles at)
+                (array-ref table.indices at)))]
+          (when
+            (!= code (array-ref table.codes at))
+            (set! (array-ref table.codes at) code)
+            (set! changed true)))
+        (set! at (+ at 1))))
+    (tc-variance-of-code (array-ref table.codes 0))))
+
+;; The parameter positions a variance solution has reached: per position, the
+;; nominal's owner id * 4096 + the parameter index, the symbol handle of its
+;; declaration, the index, and the answer so far (`tc-variance-code`).
+(defstruct TcVarianceTable
+  (keys (__tl_dyn-array i64))
+  (handles (__tl_dyn-array i64))
+  (indices (__tl_dyn-array i64))
+  (codes (__tl_dyn-array i64)))
+
+(define (tc-variance-code [variance : TcVariance]) : i64
+  (match variance
+    [(TcVarianceBivariant) 0]
+    [(TcVarianceCovariant) 1]
+    [(TcVarianceContravariant) 2]
+    [(TcVarianceInvariant) 3]))
+
+(define (tc-variance-of-code [code : i64]) : TcVariance
+  (cond
+    [(= code 0) (TcVarianceBivariant)]
+    [(= code 1) (TcVarianceCovariant)]
+    [(= code 2) (TcVarianceContravariant)]
+    [else (TcVarianceInvariant)]))
+
+;; The current answer for parameter `index` of the nominal `name-id` names in
+;; `ctx` (its declaring module's names), adding the position, bivariant, when
+;; the solution has not reached it yet. An unknown nominal is invariant.
+(define (tc-variance-table-at!
+  [ctx : TcContext]
+  [table : (&mut table TcVarianceTable)]
+  [name-id : i64]
+  [index : i64]) : TcVariance
   (let
     [handle : i64
       (csym.compiler-symbols-lookup-type-id-or
@@ -44462,55 +44532,72 @@
       (TcVarianceInvariant)
       (let
         [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-        (if (or (< nominal-id 0) (tc-name-id-list-contains stack nominal-id))
-          ;; A recursive occurrence transmits its surrounding polarity. Using
-          ;; covariance here is the conservative one-step fixed point: a
-          ;; mutable-pointer/invariant wrapper still turns the cycle invariant.
-          (TcVarianceCovariant)
-          (let
-            [owner-ctx : TcContext
-              (tc-context-with-nominal-owner-index-module
-                ctx
-                (csym.compiler-symbol-handle-index handle))]
-            [next-stack : TcNameIdList (tc-name-id-list-add stack nominal-id)]
-            (match (csym.compiler-symbols-decl-at-index
-              (tc-context-symbols owner-ctx)
-              (csym.compiler-symbol-handle-index handle))
-              [(Ok decl)
-                (match decl
-                  [(DefStructLifetimes _ _ lifetimes _ _ fields)
-                    (if (>= index (tc-lifetime-list-count lifetimes))
-                      (TcVarianceInvariant)
-                      (tc-field-list-lifetime-variance-at
-                        owner-ctx
-                        (& fields)
-                        (ast.ast-lifetime-list-get
-                          (& lifetimes)
-                          index
-                          (ast.ast-lifetime-fallback))
-                        next-stack
-                        0))]
-                  [(DefEnumLifetimes _ _ lifetimes _ variants)
-                    (if (>= index (tc-lifetime-list-count lifetimes))
-                      (TcVarianceInvariant)
-                      (tc-variant-list-lifetime-variance-at
-                        owner-ctx
-                        (& variants)
-                        (ast.ast-lifetime-list-get
-                          (& lifetimes)
-                          index
-                          (ast.ast-lifetime-fallback))
-                        next-stack
-                        0))]
-                  [_ (TcVarianceInvariant)])]
-              [(Err _) (TcVarianceInvariant)])))))))
+        [key : i64 (+ (* nominal-id 4096) index)]
+        [at : i64 0]
+        (when
+          (or (< nominal-id 0) (< index 0) (>= index 4096))
+          (return (TcVarianceInvariant)))
+        (while (< at (array-length table.keys))
+          (when
+            (= (array-ref table.keys at) key)
+            (return (tc-variance-of-code (array-ref table.codes at))))
+          (set! at (+ at 1)))
+        (__tl_array-push! table.keys key)
+        (__tl_array-push! table.handles handle)
+        (__tl_array-push! table.indices index)
+        (__tl_array-push! table.codes 0)
+        (TcVarianceBivariant)))))
+
+;; Parameter `index`'s variance in the declaration of nominal `handle`, in its
+;; own module, from the table's current answers for the positions it names.
+(define (tc-variance-table-walk!
+  [ctx : TcContext]
+  [table : (&mut table TcVarianceTable)]
+  [handle : i64]
+  [index : i64]) : TcVariance
+  (let
+    [owner-ctx : TcContext
+      (tc-context-with-nominal-owner-index-module
+        ctx
+        (csym.compiler-symbol-handle-index handle))]
+    (match (csym.compiler-symbols-decl-at-index
+      (tc-context-symbols owner-ctx)
+      (csym.compiler-symbol-handle-index handle))
+      [(Ok decl)
+        (match decl
+          [(DefStructLifetimes _ _ lifetimes _ _ fields)
+            (if (>= index (tc-lifetime-list-count lifetimes))
+              (TcVarianceInvariant)
+              (tc-field-list-lifetime-variance-at
+                owner-ctx
+                (& fields)
+                (ast.ast-lifetime-list-get
+                  (& lifetimes)
+                  index
+                  (ast.ast-lifetime-fallback))
+                table
+                0))]
+          [(DefEnumLifetimes _ _ lifetimes _ variants)
+            (if (>= index (tc-lifetime-list-count lifetimes))
+              (TcVarianceInvariant)
+              (tc-variant-list-lifetime-variance-at
+                owner-ctx
+                (& variants)
+                (ast.ast-lifetime-list-get
+                  (& lifetimes)
+                  index
+                  (ast.ast-lifetime-fallback))
+                table
+                0))]
+          [_ (TcVarianceInvariant)])]
+      [(Err _) (TcVarianceInvariant)])))
 
 (define (tc-nominal-args-lifetime-variance-at
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [position : TcVariance]
   [index : i64]) : TcVariance
   (if (>= index (ast.ast-lifetime-list-len (& lifetimes)))
@@ -44530,7 +44617,7 @@
             (TcVarianceInvariant)
             (tc-variance-compose
               position
-              (tc-nominal-lifetime-variance-at ctx name-id index stack)))
+              (tc-variance-table-at! ctx table name-id index)))
           (TcVarianceBivariant))]
       (tc-variance-merge
         head
@@ -44539,7 +44626,7 @@
           name-id
           lifetimes
           lifetime-id
-          stack
+          table
           position
           (+ index 1))))))
 
@@ -44547,7 +44634,7 @@
   [ctx : TcContext]
   [ty : ast.AstType]
   [lifetime-id : i64]
-  [stack : TcNameIdList]
+  [table : (&mut table TcVarianceTable)]
   [position : TcVariance]) : TcVariance
   (match (tc-resolve-type ctx ty)
     [(Func params ret)
@@ -44556,27 +44643,35 @@
           ctx
           (ast.ast-type-list-box-shared-view params)
           lifetime-id
-          stack
+          table
           (tc-variance-flip position))
         (tc-type-lifetime-variance
           ctx
           (ast.ty-node-get ret)
           lifetime-id
-          stack
+          table
           position))]
+    ;; A C function pointer is variant like the function type it points to.
+    [(CFunc inner _)
+      (tc-type-lifetime-variance
+        ctx
+        (ast.ty-node-get inner)
+        lifetime-id
+        table
+        position)]
     [(Tuple elems)
       (tc-type-list-lifetime-variance
         ctx
         (ast.ast-type-list-box-shared-view elems)
         lifetime-id
-        stack
+        table
         position)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem))
       (tc-type-lifetime-variance
         ctx
         (ast.ty-node-get elem)
         lifetime-id
-        stack
+        table
         position)]
     ;; An owned dynamic array is a move-only handle whose elements change only
     ;; through its owning place or a `&mut` to it (invariant in its referent),
@@ -44587,7 +44682,7 @@
         ctx
         (ast.ty-node-get elem)
         lifetime-id
-        stack
+        table
         (TcVarianceInvariant))]
     [(or (Ref lifetime inner) (Region lifetime inner))
       (tc-variance-merge
@@ -44598,7 +44693,7 @@
           ctx
           (ast.ty-node-get inner)
           lifetime-id
-          stack
+          table
           position))]
     [(MutRef lifetime inner)
       (tc-variance-merge
@@ -44609,7 +44704,7 @@
           ctx
           (ast.ty-node-get inner)
           lifetime-id
-          stack
+          table
           (TcVarianceInvariant)))]
     [(Invalidate lifetime inner)
       (tc-variance-merge
@@ -44620,7 +44715,7 @@
           ctx
           (ast.ty-node-get inner)
           lifetime-id
-          stack
+          table
           position))]
     [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (tc-nominal-args-lifetime-variance-at
@@ -44628,7 +44723,7 @@
         name
         (ast.ast-lifetime-list-box-shared-view lifetimes)
         lifetime-id
-        stack
+        table
         position
         0)]
     [(VarArgs _ lifetimes)
@@ -117021,6 +117116,7 @@
         return-type
         table.classes
         table.products
+        table.variances
         limits))
       [(ownership_normalize.OwnershipNormalizeResult.Err failure)
         (let
@@ -117696,7 +117792,8 @@
   (representative-classes
     (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass))
   (representative-indices (__tl_dyn-array i64))
-  (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct)))
+  (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))
+  (variances ownership_normalize.OwnershipNormalizeVariances))
 
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
   (TcSelectedTypeTable
@@ -117705,7 +117802,8 @@
     (__tl_make-array ast.AstType 0)
     (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
     (__tl_make-array i64 0)
-    (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)))
+    (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
+    (ownership_normalize.ownership-normalize-variances-empty)))
 
 ;; The ownership graph's type for a typechecker type: arena regions are erased
 ;; (`tc-selected-arena-erase`) and a region tag on a Copy value is dropped.
@@ -118850,8 +118948,122 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0))])))
 
+;; The declared variance of each lifetime parameter of every struct and enum
+;; the typed store's types name, as typing relates them
+;; (`tc-nominal-args-lifetime-variance-at`, Arena's brand invariant): the
+;; ownership graph relates a nominal type's lifetime arguments by it.
+(define (tc-selected-nominal-variances!
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (tc-selected-type-record-count store lease))
+      (match (typed.typed-type-value-at! store lease index)
+        [(typed.TypedTypeValueResult.Ok value)
+          (tc-selected-nominal-variances-in! ctx value out 0)]
+        [(typed.TypedTypeValueResult.Err _) unit])
+      (set! index (+ index 1)))))
+
+;; Records the nominal types `ty` names, to the normalizer's depth bound (a
+;; deeper type's shape fails closed there).
+(define (tc-selected-nominal-variances-in!
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]
+  [depth : i64]) : unit
+  (when
+    (< depth 32)
+    (match ty
+      [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner)
+           (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner))
+        (tc-selected-nominal-variances-in!
+          ctx
+          (ast.ty-node-get inner)
+          out
+          (+ depth 1))]
+      [(or (ast.AstType.Array elem _) (ast.AstType.DynArray elem)
+           (ast.AstType.Box elem) (ast.AstType.Slice elem))
+        (tc-selected-nominal-variances-in!
+          ctx
+          (ast.ty-node-get elem)
+          out
+          (+ depth 1))]
+      [(ast.AstType.Tuple elems)
+        (tc-selected-nominal-variances-list!
+          ctx
+          (ast.ast-type-list-box-shared-view elems)
+          out
+          (+ depth 1))]
+      [(ast.AstType.Func args ret)
+        (tc-selected-nominal-variances-list!
+          ctx
+          (ast.ast-type-list-box-shared-view args)
+          out
+          (+ depth 1))
+        (tc-selected-nominal-variances-in!
+          ctx
+          (ast.ty-node-get ret)
+          out
+          (+ depth 1))]
+      [(or (ast.AstType.EnumArgs name lifetimes)
+           (ast.AstType.StructArgs name lifetimes))
+        (tc-selected-nominal-variance-add!
+          ctx
+          name
+          (ast.ast-lifetime-list-len
+            (& (ast.ast-lifetime-list-box-shared-view lifetimes)))
+          out)]
+      [_ unit])))
+
+(define (tc-selected-nominal-variances-list!
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]
+  [depth : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-type-list-len (& types)))
+      (tc-selected-nominal-variances-in!
+        ctx
+        (ast.ty-node-get
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
+        out
+        depth)
+      (set! index (+ index 1)))))
+
+(define (tc-selected-nominal-variance-add!
+  [ctx : TcContext]
+  [name-id : i64]
+  [count : i64]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]) : unit
+  (let
+    [at : i64 0]
+    [index : i64 0]
+    (while (< at (array-length out.names))
+      (when (= (array-ref out.names at) name-id) (return unit))
+      (set! at (+ at 1)))
+    (__tl_array-push! out.names name-id)
+    (__tl_array-push! out.starts (array-length out.covariant))
+    (__tl_array-push! out.counts count)
+    (while (< index count)
+      (__tl_array-push!
+        out.covariant
+        (and
+          (not (and (tc-arena-nominal-name-id? name-id) (= index 0)))
+          (match (tc-nominal-lifetime-variance-at
+            ctx
+            name-id
+            index
+            TcNameIdList.Nil)
+            [(TcVarianceCovariant) true]
+            [_ false])))
+      (set! index (+ index 1)))))
+
 ;; The classes plus the product shape of every struct or tuple class the body
-;; takes fields of (field and element projections of its typed places).
+;; takes fields of (field and element projections of its typed places), and
+;; the declared variance of the nominal types they name.
 (define (tc-selected-type-shapes!
   [ctx : TcContext]
   [store : (&mut store typed.TypedStore)]
@@ -118865,6 +119077,7 @@
         [(typed.TypedCountResult.Err _) 0])]
     [index : i64 0]
     (tc-selected-classify! ctx store lease (&mut table))
+    (tc-selected-nominal-variances! ctx store lease (&mut table.variances))
     (while (< index count)
       (let
         ;; The container's typed index and the struct declaration (-1 for a

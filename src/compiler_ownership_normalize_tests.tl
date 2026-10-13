@@ -947,6 +947,7 @@
       result-type
       classes
       products
+      (norm.ownership-normalize-variances-empty)
       (norm.ownership-normalize-default-limits))
       [(norm.OwnershipNormalizeResult.Ok _) (= mode 1)]
       [(norm.OwnershipNormalizeResult.Err failure)

@@ -2199,8 +2199,11 @@
 ;; at this point and stop checking it. A transfer the normalizer emits reads
 ;; its source, and that use's MayUseLoan operations, one per loan of the
 ;; source's origin, precede it (cleanup elaboration may put a RequireEmpty in
-;; between): a demanded loan among them continues as that MayUseLoan's own
-;; demand, and one missing from them cannot be in the new value and ends here.
+;; between). Each names the root holding its loan: the source, or for a loan
+;; of a borrowed referent, the borrowed root. A demanded loan among them
+;; continues as that MayUseLoan's own demand (another use's operations in the
+;; same run only keep more loans), and one missing from them cannot be in the
+;; new value and ends here.
 ;; Without such operations (a source with no recorded origin, or a Move
 ;; synthesized by cleanup elaboration) the loans the transfer carries are
 ;; unknown, so each demand continues as the source's demand of its loan if it
@@ -2240,9 +2243,9 @@
                 (while (and (not found) (< k instruction))
                   (unless (ownership-charge! work limit 1) (return false))
                   (match (& (array-ref instructions k).operation)
-                    [(OwnershipOperation.MayUseLoan used via)
+                    [(OwnershipOperation.MayUseLoan used _)
                       (when
-                        (and (= via.index source) (= used.index loan))
+                        (= used.index loan)
                         (let
                           [bridge : i64
                             (array-ref demands.point-pair (+ offset k))]
@@ -2319,7 +2322,7 @@
 ;; the loan's definition: a UseLoan, EndLoan or AccessThrough, a reborrow's
 ;; parent, an ancestor of a used loan, or a MayUseLoan whose holder is never
 ;; overwritten whole. A pair bit is a MayUseLoan's demand through its holder,
-;; the root whose value is read. Like the liveness of the variable a Rust
+;; the root whose value holds the loan. Like the liveness of the variable a Rust
 ;; reference lives in, it also ends where a Copy or Move overwrites that whole
 ;; root: the value read later was stored there, and the transfer is itself a
 ;; use of its source (`normalize-emit!` records it), whose loans are therefore

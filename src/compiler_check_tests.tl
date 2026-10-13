@@ -269,6 +269,30 @@
       5
       10)))
 
+;; An error raised while checking a captured caller operand is located at the
+;; whole operand, the span its own Spanned view carried before the operand's
+;; caller-origin marker took that view's place.
+(define (compiler-check-caller-operand-view-spans-ok?) : bool
+  (compiler-check-first-diagnostic-exact?
+    "tests/caller_operand_view.tl"
+    "(defmacro (once [e : Expr]) : unit
+  e)
+
+(define (f) : i64
+  (let
+    [total : i64 0]
+    [s : String \"a\"]
+    (once (set! total s))
+    0))
+
+(define (main) : i64
+  0)"
+    "typecheck: assignment type mismatch: expected i64, found String"
+    8
+    11
+    8
+    24))
+
 (define (compiler-check-qualified-near-miss-ok?) : bool
   (match (tc_api.typecheck-compiler-source
     "(module data)
@@ -839,6 +863,7 @@
     (compiler-check-semantic-access-ok?)
     (compiler-check-advisory-result-ok?)
     (compiler-check-subform-diagnostic-spans-ok?)
+    (compiler-check-caller-operand-view-spans-ok?)
     (compiler-check-qualified-near-miss-ok?)
     (compiler-check-qualified-unbound-display-ok?)
     (compiler-check-caller-operand-diagnostic-path-ok?)

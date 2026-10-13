@@ -11408,16 +11408,19 @@
 (define (ast-expr-unspan-with-segment-bases
   [segment-bases : i64]
   [expr : (& AstExpr)]) : AstExpr
-  ;; Only the innermost node is copied out; the wrappers above it are read
-  ;; through the reference.
-  (match expr
-    [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
-      (ast-expr-unspan-with-segment-bases
-        segment-bases
-        ;; The callee receives the row directly. Neither this frame nor the
-        ;; recursive walk mutates or installs an expression-pool context.
-        (& (ast-expr-segment-bases-shared-view segment-bases inner-id)))]
-    [_ (owned_view.compiler-owned-reference-shared-view expr)]))
+  ;; The walk uses constant stack space and never changes the owning pool.
+  ;; Consume each stable row before selecting the next, then copy out the leaf.
+  (let
+    [current : AstExpr (owned_view.compiler-owned-reference-shared-view expr)]
+    (while true
+      ;; Only Copy wrapper IDs survive reassignment of this shallow snapshot.
+      (match (ast-place-shared-view current)
+        [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
+          (set!
+            current
+            (ast-expr-segment-bases-shared-view segment-bases inner-id))]
+        [_ (return current)]))
+    current))
 
 (define (ast-struct-repr-c? [repr : (& repr AstStructRepr)]) : bool
   (match repr

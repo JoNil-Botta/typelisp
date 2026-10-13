@@ -4431,6 +4431,56 @@
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
     (and plain repeat latest indexed newer reindexed)))
 
+(define (compiler-parse-origin-reindex-storage-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [ok : bool true]
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (parser.compiler-parse-origin-alias-insert!
+          (+ 100 key)
+          index
+          1
+          (+ 200 index)
+          key
+          false)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-parse-origin-lookup-alias-source-ok?
+              2
+              (+ 100 key)
+              index
+              (+ 200 index)
+              key)))))
+    ;; Interleaved keys must keep each other's ranges while rebuilding into a
+    ;; temporary tail. Retained ranges grow geometrically, not per lookup.
+    (set! ok (and ok (< parser.compiler-parse-origin-segment-len 16000)))
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (for [domain (iterator.range 1 3)]
+          (set!
+            ok
+            (and
+              ok
+              (compiler-parse-origin-lookup-alias-source-ok?
+                domain
+                (+ 100 key)
+                index
+                (+ 200 index)
+                key))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    (set!
+      ok
+      (and ok (= (parser.compiler-parse-semantic-origin-lookup 2 100 0).kind 0)))
+    (parser.compiler-parse-origin-alias-insert! 100 0 1 9000 7 false)
+    (set!
+      ok
+      (and ok (compiler-parse-origin-lookup-alias-source-ok? 2 100 0 9000 7)))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source
     "(import stdlib.test)
@@ -4463,6 +4513,7 @@
         (compiler-parse-module-body-malformed-ok?)
         (compiler-parse-origin-lookup-cache-tests-ok?)
         (compiler-parse-origin-lookup-alias-run-tests-ok?)
+        (compiler-parse-origin-reindex-storage-tests-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)

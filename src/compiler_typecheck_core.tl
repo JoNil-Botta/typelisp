@@ -7632,10 +7632,8 @@
         (ast.ast-decl-generated-meta decl)
         (tc-decl-location-diag expr-bases decl message))]))
 
-;; ORIGIN-KEY and ORIGIN-SLOT name the declaration's slot in its declaration
-;; list. Its recorded origin span is looked up only for a diagnostic that has
-;; no span of its own: the lookup indexes every origin record of the
-;; compilation, which a diagnostic with a span never needs (#8855).
+;; Declaration origins supply a fallback only when the diagnostic has no span.
+;; Avoid building the origin index when its result would be discarded.
 (define (tc-decl-diag-with-origin
   [expr-bases : i64]
   [origin-key : i64]
@@ -116986,13 +116984,9 @@
           (tc-bind-id out (array-ref names.slots index) (tc-poison-type))))
       out)))
 
-;; The environments the decl walk entered one module with while names were
-;; poisoned. Every module switch rebinds every poisoned name over the module's
-;; environments, and the walk switches modules thousands of times: rebinding
-;; all of them on each switch grew one error in `check src/main.tl` by 600 MB
-;; (#8855). A revisit with the same module environments instead extends the
-;; environments it built last time with the names poisoned since, which yields
-;; the same bindings in the same order.
+;; Within one declaration walk, poisoned names only append. A module revisit
+;; with identical source environments extends its cached environments with the
+;; suffix, preserving binding order and duplicate-name shadowing.
 (defstruct TcPoisonModuleEnv
   (module-id i64)
   (global-source TcTypeEnv)
@@ -117075,9 +117069,15 @@
             (array-ref envs.entries index).global-source.head
             global-source.head)
           (=
+            (array-ref envs.entries index).global-source.abi-pad
+            global-source.abi-pad)
+          (=
             (array-ref envs.entries index).local-source.store
             local-source.store)
-          (= (array-ref envs.entries index).local-source.head local-source.head))
+          (= (array-ref envs.entries index).local-source.head local-source.head)
+          (=
+            (array-ref envs.entries index).local-source.abi-pad
+            local-source.abi-pad))
           (let
             [bound : i64 (array-ref envs.entries index).bound]
             [known-global : TcTypeEnv

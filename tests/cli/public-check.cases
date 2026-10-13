@@ -526,14 +526,8 @@ stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
 
-# A few type errors in a large program must not multiply the check's memory
-# (#8855). Four E0208/E0205 errors in widely used compiler_ir_types accessors
-# poison hundreds of dependent declarations; checking the compiler's own
-# src/main.tl with them peaked at 5.4 GB, against 1.4 GB for the clean tree,
-# because the first declaration diagnostic expanded every origin alias into a
-# per-slot table and every module switch rebound every poisoned name. With
-# both fixed it peaks near 1.6 GB. The cap leaves room above that, far below
-# the old peak; a check killed by it exits 137 instead of 1.
+# Poisoned declarations and origin aliases must fit below the check's memory
+# cap while preserving every diagnostic. A cap kill exits 137 instead of 1.
 case check-type-errors-memory
 hosts linux
 sh mkdir -p "{{dir}}/tree" && cp -R src "{{dir}}/tree/src"

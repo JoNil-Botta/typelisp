@@ -87,12 +87,7 @@
 ;; resets its pool.
 ;;
 ;; Direct records (one semantic run or one declaration span per slot) go into
-;; an open-addressing table. An origin alias maps a whole run of destination
-;; slots onto a source run, and every pipeline copy of the program's
-;; declaration list adds one. Expanding aliases per slot made the table hold
-;; one entry per declaration per copy: 6.5 million entries, 2.4 GB with the
-;; tables it outgrew, at the first diagnostic of `check src/main.tl` (#8855).
-;; Aliases therefore stay runs, chained per destination key from newest to
+;; an open-addressing table. Aliases stay runs, chained per destination key from newest to
 ;; oldest, and a lookup takes whichever of the slot's direct entry and newest
 ;; covering run came last. A key built from many source lists can carry tens
 ;; of thousands of runs, so a long chain is indexed on first lookup: its
@@ -139,7 +134,9 @@
   (decl-segment-start i64)
   (decl-segment-len i64)
   (semantic-segment-start i64)
-  (semantic-segment-len i64))
+  (semantic-segment-len i64)
+  ;; Both domain ranges share a reusable, geometrically grown reservation.
+  (segment-capacity i64))
 
 ;; Slots [start, end) of a key whose newest covering run is RUN.
 (defstruct CompilerParseOriginSegment
@@ -154,8 +151,8 @@
 
 ;; The tables share one arena that is never reset. A cache reset keeps them for
 ;; reuse (entries of an older generation read as empty, run and segment counts
-;; restart at 0), and growth abandons the outgrown array, so the arena holds at
-;; most about twice the largest index.
+;; restart at 0). Arrays and per-key segment reservations grow geometrically;
+;; rebuilding a key reuses its reservation instead of retaining each index.
 (define compiler-parse-semantic-origin-lookup-arena : i64
   (arena.tl_arena_make))
 (define compiler-parse-semantic-origin-lookup-slots : (__tl_dyn-array
@@ -808,16 +805,6 @@
     source-slot
     compiler-parse-semantic-origin-lookup-order))
 
-(define (compiler-parse-origin-alias-runs-shared) : (__tl_dyn-array
-    CompilerParseOriginAliasRun)
-  (unsafe
-    (ptr-read (ptr-addr-of compiler-parse-origin-alias-runs))))
-
-(define (compiler-parse-origin-alias-heads-shared) : (__tl_dyn-array
-    CompilerParseOriginAliasHead)
-  (unsafe
-    (ptr-read (ptr-addr-of compiler-parse-origin-alias-heads))))
-
 ;; The head slot of KEY: its occupied slot, or the free slot where it belongs.
 (define (compiler-parse-origin-alias-head-slot [key : i64]) : i64
   (let
@@ -837,7 +824,7 @@
 (define (compiler-parse-origin-alias-heads-grow!) : unit
   (let
     [old : (__tl_dyn-array CompilerParseOriginAliasHead)
-      (compiler-parse-origin-alias-heads-shared)]
+      (owned_view.compiler-owned-shared-view compiler-parse-origin-alias-heads)]
     [old-capacity : i64 (array-length old)]
     [next-capacity : i64
       (if (< old-capacity 1)
@@ -862,7 +849,7 @@
 (define (compiler-parse-origin-alias-runs-grow!) : unit
   (let
     [old : (__tl_dyn-array CompilerParseOriginAliasRun)
-      (compiler-parse-origin-alias-runs-shared)]
+      (owned_view.compiler-owned-shared-view compiler-parse-origin-alias-runs)]
     [next-capacity : i64
       (if (< (array-length old) 1)
         64
@@ -930,12 +917,14 @@
           head.decl-segment-start
           head.decl-segment-len
           head.semantic-segment-start
-          head.semantic-segment-len)
+          head.semantic-segment-len
+          head.segment-capacity)
         (CompilerParseOriginAliasHead
           compiler-parse-semantic-origin-lookup-generation
           key
           index
           1
+          0
           0
           0
           0
@@ -955,31 +944,34 @@
     (< slot (+ run.target-start run.count))
     (or (!= domain 1) (not run.repeat))))
 
-(define (compiler-parse-origin-segments-push!
-  [start : i64]
-  [end : i64]
-  [run : i64]) : unit
+(define (compiler-parse-origin-segments-reserve! [count : i64]) : unit
   (when
-    (>=
-      compiler-parse-origin-segment-len
-      (array-length compiler-parse-origin-segments))
+    (> count (array-length compiler-parse-origin-segments))
     (let
       [old : (__tl_dyn-array CompilerParseOriginSegment)
-        (unsafe
-          (ptr-read (ptr-addr-of compiler-parse-origin-segments)))]
+        (owned_view.compiler-owned-shared-view compiler-parse-origin-segments)]
+      [capacity : i64
+        (if (< (array-length old) 1)
+          64
+          (array-length old))]
+      (while (< capacity count)
+        (set! capacity (* capacity 2)))
       (set!
         compiler-parse-origin-segments
         (in-arena
           (arena.Arena compiler-parse-semantic-origin-lookup-arena)
-          (__tl_make-array
-            CompilerParseOriginSegment
-            (if (< (array-length old) 1)
-              64
-              (* (array-length old) 2)))))
+          (__tl_make-array CompilerParseOriginSegment capacity)))
       (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
         (set!
           (array-ref compiler-parse-origin-segments index)
-          (array-ref old index)))))
+          (array-ref old index))))))
+
+(define (compiler-parse-origin-segments-push!
+  [start : i64]
+  [end : i64]
+  [run : i64]) : unit
+  (compiler-parse-origin-segments-reserve!
+    (+ compiler-parse-origin-segment-len 1))
   (set!
     (array-ref compiler-parse-origin-segments compiler-parse-origin-segment-len)
     (CompilerParseOriginSegment start end run))
@@ -1065,6 +1057,30 @@
         (compiler-parse-origin-alias-segments-build! head.newest 2 lo (- hi lo))]
       [semantic-start : i64
         (compiler-parse-origin-alias-segments-build! head.newest 1 lo (- hi lo))]
+      [decl-len : i64 (- semantic-start decl-start)]
+      [semantic-len : i64 (- compiler-parse-origin-segment-len semantic-start)]
+      [count : i64 (+ decl-len semantic-len)]
+      [start : i64 head.decl-segment-start]
+      [capacity : i64 head.segment-capacity]
+      ;; Rebuild in the table's temporary tail, then reuse the key's reserved
+      ;; range. Only a geometric capacity increase retains a new range; an
+      ;; append/lookup sequence must not retain every superseded index.
+      (if (<= count capacity)
+        (begin
+          (for [index (iterator.range 0 count)]
+            (set!
+              (array-ref compiler-parse-origin-segments (+ start index))
+              (array-ref compiler-parse-origin-segments (+ decl-start index))))
+          (set! compiler-parse-origin-segment-len decl-start))
+        (begin
+          (set! start decl-start)
+          (set!
+            capacity
+            (if (> count (* capacity 2))
+              count
+              (* capacity 2)))
+          (compiler-parse-origin-segments-reserve! (+ start capacity))
+          (set! compiler-parse-origin-segment-len (+ start capacity))))
       (set!
         (array-ref compiler-parse-origin-alias-heads head-slot)
         (CompilerParseOriginAliasHead
@@ -1073,10 +1089,11 @@
           head.newest
           head.runs
           head.runs
-          decl-start
-          (- semantic-start decl-start)
-          semantic-start
-          (- compiler-parse-origin-segment-len semantic-start))))))
+          start
+          decl-len
+          (+ start decl-len)
+          semantic-len
+          capacity)))))
 
 ;; The run of the segment in [START, START + LEN) that covers SLOT, or -1.
 (define (compiler-parse-origin-segments-find

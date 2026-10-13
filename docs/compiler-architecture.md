@@ -664,6 +664,13 @@ exactly as parsed, so none of these can inherit an earlier check's rewrites:
 - a later `typelisp test` file;
 - a later doc example.
 
+A semantic rewrite can reuse a valid alternate-span record when its view ID,
+resolved semantic ID and all source-span coordinates are unchanged. Records
+outside a snapshot's count remain missing even if its shared backing array
+contains them. Reuse follows the protected write journal and keeps the
+conservative prefix rollback scan; changed targets, spans and semantic-node
+rewrites still register their provenance normally.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,

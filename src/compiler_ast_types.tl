@@ -1669,6 +1669,59 @@
       id
       (+ index 1))))
 
+;; A reusable alternate view must still belong to this node and describe the
+;; newly resolved identity and complete span. Snapshot counts exclude records
+;; left in shared backing storage by a newer generation.
+(define (ast-expr-respan-slot-reusable?
+  [pool : (& pool AstExprNodePoolState)]
+  [slot : i64]
+  [view : i64]
+  [inner : i64]
+  [span : AstSourceSpan]) : bool
+  (if (or (>= slot 0) (< pool.respan-count 1) (< slot (- 0 pool.respan-count)))
+    false
+    (let
+      [record : AstExprReSpan (array-ref pool.respan-records (- (- 0 slot) 1))]
+      (if (or
+        (!= (cast record.view-node : i64) view)
+        (!= record.span.start-line span.start-line)
+        (!= record.span.start-col span.start-col)
+        (!= record.span.end-line span.end-line)
+        (!= record.span.end-col span.end-col))
+        false
+        (let
+          [inner-slot : i64
+            (if (or (< inner 0) (>= inner pool.count))
+              0
+              (ast-expr-span-slot-get-from-bases
+                pool.span-slot-segment-bases
+                inner))]
+          [stored-semantic : i64
+            (ast-expr-semantic-node-from-span-slot
+              inner-slot
+              (&
+                (unsafe
+                  (ptr-read
+                    (ptr-cast
+                      (__tl_array-data (array (& pool.canonical-span-records)))
+                      : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord))))))
+              pool.canonical-span-count
+              (&
+                (unsafe
+                  (ptr-read
+                    (ptr-cast
+                      (__tl_array-data (array (& pool.respan-records)))
+                      : (Ptr (__tl_dyn-array AstExprReSpan))))))
+              pool.respan-count)]
+          [semantic : i64
+            (if (>= stored-semantic 0)
+              stored-semantic
+              (ast-expr-semantic-node-from-bases
+                pool.segment-bases
+                pool.count
+                inner))]
+          (and (>= semantic 0) (= (cast record.semantic-node : i64) semantic)))))))
+
 (define (ast-expr-span-note-active! [id : i64] [node : (& AstExpr)]) : unit
   (match node
     [(Spanned inner span)
@@ -1888,7 +1941,28 @@
       ;; copied wrapper additionally establishes its per-use view immediately;
       ;; prefix rollback later rebuilds records in id order.
       (match (ast-global-shared-view node)
-        [(Spanned _ _)
+        [(Spanned inner span)
+          (when
+            (< prior-slot 0)
+            (ast-expr-span-slot-set-in-bases!
+              ast-node-span-slot-segment-bases
+              id
+              0)
+            (when
+              (ast-expr-respan-slot-reusable?
+                (& (ast-node-pool-state-capture))
+                prior-slot
+                id
+                inner
+                span)
+              (ast-expr-span-slot-set-in-bases!
+                ast-node-span-slot-segment-bases
+                id
+                prior-slot)
+              ;; Rewrites retain the conservative prefix rollback scan.
+              (set! ast-node-span-records-monotonic? false)
+              (ast-node-pool-active-context-capture-expr!)
+              (return unit)))
           (let
             [canonical-before : i64 ast-node-canonical-span-count]
             [respan-before : i64 ast-node-respan-count]
@@ -2801,7 +2875,19 @@
         id
         (ast-global-shared-view node))]
     (match (ast-global-shared-view node)
-      [(Spanned _ _)
+      [(Spanned inner span)
+        (when
+          (< prior-slot 0)
+          (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
+          (when
+            (ast-expr-respan-slot-reusable? (& pool) prior-slot id inner span)
+            (ast-expr-span-slot-set-in-bases!
+              pool.span-slot-segment-bases
+              id
+              prior-slot)
+            ;; Rewrites retain the conservative prefix rollback scan.
+            (return
+              (ast-expr-node-pool-state-with-span-record-order pool false))))
         (let
           [canonical-before : i64 pool.canonical-span-count]
           [respan-before : i64 pool.respan-count]

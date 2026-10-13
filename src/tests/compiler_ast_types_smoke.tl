@@ -2789,6 +2789,189 @@
             " views")))
       (set! index (+ index 1)))))
 
+(define (compiler-ast-rewrite-view-line?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [view : i64]
+  [line : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-view-span pools view)
+    [(Some span) (= (cast span.start-line : i64) line)]
+    [_ false]))
+
+(define (compiler-ast-rewrite-view!
+  [pools : ast.AstNodePoolContext]
+  [view : i64]
+  [inner : i64]
+  [line : i64]
+  [installed : bool]) : unit
+  (let
+    [node : ast.AstExpr (Spanned inner (ast.ast-source-span line 1 line 2))]
+    (if installed
+      (ast.ast-node-set! view node)
+      (ast.ast-node-pool-context-expr-set! pools view (& node)))))
+
+(define (compiler-ast-respan-rewrite-boundary? [installed : bool]) : bool
+  (let
+    [previous (ast.ast-node-pool-context-capture-active)]
+    [pools (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [b
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 9)))]
+    [_ca
+      (ast.ast-expr-spanned-with-pools pools a (ast.ast-source-span 1 1 1 2))]
+    [_cb
+      (ast.ast-expr-spanned-with-pools pools b (ast.ast-source-span 3 1 3 2))]
+    [view
+      (ast.ast-expr-spanned-with-pools pools a (ast.ast-source-span 2 1 2 2))]
+    (for [index (iterator.range 0 63)]
+      (let
+        [line (+ index 10)]
+        (ast.ast-expr-spanned-with-pools
+          pools
+          a
+          (ast.ast-source-span line 1 line 2))))
+    (let
+      [mark (ast.ast-node-pool-context-expr-len pools)]
+      (when installed (ast.ast-node-pool-context-install! pools))
+      (ast.ast-node-protected-floor-set! mark)
+      (for [index (iterator.range 0 200)]
+        (compiler-ast-rewrite-view! pools view a 2 installed))
+      (let
+        [same-ok
+          (and
+            (= (ast.ast-node-pool-context-expr-respan-count pools) 64)
+            (=
+              (array-length
+                (__tl-project-field
+                  (ast.ast-expr-pool-cell-read pools.expr-pool)
+                  respan-records))
+              64)
+            (= (ast.ast-node-protected-journal-count) 200)
+            (= (ast.ast-node-pool-context-expr-source-owner pools view) view)
+            (compiler-ast-rewrite-view-line? (& pools) view 2)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+        (compiler-ast-rewrite-view! pools view a 4 installed)
+        (when installed (set! pools (ast.ast-node-pool-context-capture-active)))
+        (let
+          [span-ok
+            (and
+              (= (ast.ast-node-pool-context-expr-respan-count pools) 65)
+              (compiler-ast-rewrite-view-line? (& pools) view 4))]
+          (compiler-ast-rewrite-view! pools view b 4 installed)
+          (when
+            installed
+            (set! pools (ast.ast-node-pool-context-capture-active)))
+          (let
+            [target-ok
+              (and
+                (= (ast.ast-node-pool-context-expr-respan-count pools) 66)
+                (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+            (compiler-ast-rewrite-view! pools view -1 4 installed)
+            (when
+              installed
+              (set! pools (ast.ast-node-pool-context-capture-active)))
+            (let
+              [invalid-ok
+                (match (ast.ast-node-pool-context-expr-view-span pools view)
+                  [(No) true]
+                  [_ false])]
+              (ast.ast-node-protected-restore!)
+              (ast.ast-node-protected-floor-set! 0)
+              (ast.ast-node-pool-context-expr-truncate! pools mark)
+              (let
+                [restored-ok
+                  (and
+                    (= (ast.ast-node-protected-journal-count) 0)
+                    (match (ast.ast-node-pool-context-expr-get pools view)
+                      [(Spanned inner _) (= inner a)]
+                      [_ false])
+                    (compiler-ast-rewrite-view-line? (& pools) view 2)
+                    (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+                (ast.ast-node-pool-context-install! previous)
+                (and same-ok span-ok target-ok invalid-ok restored-ok)))))))))
+
+(define (compiler-ast-respan-rewrite-fallback? [installed : bool]) : bool
+  (let
+    [previous (ast.ast-node-pool-context-capture-active)]
+    [pools (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [frame (ast.ast-node-pool-context-expr-push pools (MacroExpansion a 0 0))]
+    [_canonical
+      (ast.ast-expr-spanned-with-pools pools a (ast.ast-source-span 1 1 1 2))]
+    [view
+      (ast.ast-expr-spanned-with-pools
+        pools
+        frame
+        (ast.ast-source-span 2 1 2 2))]
+    [missing-slot
+      (ast.ast-expr-span-slot-get-from-bases
+        (__tl-project-field
+          (ast.ast-expr-pool-cell-read pools.expr-pool)
+          span-slot-segment-bases)
+        frame)]
+    (when installed (ast.ast-node-pool-context-install! pools))
+    (for [index (iterator.range 0 10)]
+      (compiler-ast-rewrite-view! pools view frame 2 installed))
+    (let
+      [ok
+        (and
+          (= missing-slot 0)
+          (= (ast.ast-node-pool-context-expr-respan-count pools) 1)
+          (= (ast.ast-node-pool-context-expr-source-owner pools view) view)
+          (compiler-ast-rewrite-view-line? (& pools) view 2))]
+      (let
+        [spans : (Array ast.AstSourceSpan 4)
+          (array
+            (ast.ast-source-span 2 2 2 2)
+            (ast.ast-source-span 2 2 3 2)
+            (ast.ast-source-span 2 2 3 3)
+            (ast.ast-source-span 3 2 3 3))]
+        (for [index (iterator.range 0 (array-length spans))]
+          (let
+            [node : ast.AstExpr (Spanned frame (array-ref spans index))]
+            (if installed
+              (ast.ast-node-set! view node)
+              (ast.ast-node-pool-context-expr-set! pools view (& node)))
+            (when
+              installed
+              (set! pools (ast.ast-node-pool-context-capture-active))))))
+      (let
+        [changed-ok
+          (and
+            (= (ast.ast-node-pool-context-expr-respan-count pools) 5)
+            (compiler-ast-rewrite-view-line? (& pools) view 3))]
+        (ast.ast-node-pool-context-install! previous)
+        (and ok changed-ok)))))
+
+(define (compiler-ast-respan-rewrite-stale-snapshot?) : bool
+  (let
+    [pools (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [_canonical
+      (ast.ast-expr-spanned-with-pools pools a (ast.ast-source-span 1 1 1 2))]
+    [view
+      (ast.ast-expr-spanned-with-pools pools a (ast.ast-source-span 2 1 2 2))]
+    [snapshot (ast.ast-node-pool-context-snapshot pools)]
+    (compiler-ast-rewrite-view! pools view a 4 false)
+    (compiler-ast-rewrite-view! snapshot view a 4 false)
+    (and
+      (= (ast.ast-node-pool-context-expr-respan-count snapshot) 2)
+      (compiler-ast-rewrite-view-line? (& snapshot) view 4)
+      (ast.ast-node-pool-context-expr-span-oracle-ok? snapshot))))
+
+(test
+  compiler-ast-respan-rewrite
+  (tl_test.assert-true
+    (and
+      (compiler-ast-respan-rewrite-boundary? false)
+      (compiler-ast-respan-rewrite-boundary? true)
+      (compiler-ast-respan-rewrite-fallback? false)
+      (compiler-ast-respan-rewrite-fallback? true)
+      (compiler-ast-respan-rewrite-stale-snapshot?))
+    "unchanged alternate views reuse provenance across growth, rollback and snapshots"))
+
 (define (main) : i64
   (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
   (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
@@ -2812,6 +2995,14 @@
   (unless (compiler-ast-stale-canonical-span-slot-recovery-smoke?) (return 20))
   (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
   (unless (compiler-ast-span-record-growth-smoke?) (return 22))
+  (unless
+    (and
+      (compiler-ast-respan-rewrite-boundary? false)
+      (compiler-ast-respan-rewrite-boundary? true)
+      (compiler-ast-respan-rewrite-fallback? false)
+      (compiler-ast-respan-rewrite-fallback? true)
+      (compiler-ast-respan-rewrite-stale-snapshot?))
+    (return 30))
   (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
   (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
   (unless (compiler-ast-generated-key-shared-compaction-smoke?) (return 26))

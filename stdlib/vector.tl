@@ -140,6 +140,20 @@
     [reverse-helper-name : Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".reverse-ref!"))]
+    ;; `next-mut`'s iterator parameter: the item borrows the iterator, so its
+    ;; lifetime is the iterator borrow's. A compiler without
+    ;; `compiler-reborrow-bound` (the bootstrap seed) types the element
+    ;; reborrow with the vector's lifetime instead and builds the earlier
+    ;; form, whose item names that.
+    [next-mut-state : Expr
+      (let
+        ;; The seed's value: a compiler that enables the cfg overwrites it.
+        ;; lint-allow: unused-assignment
+        [lending? : bool false]
+        (cfg compiler-reborrow-bound (set! lending? true))
+        (if lending?
+          `(&mut item (IterMut source))
+          `(&mut state (IterMut item))))]
     [cleanup-owning : bool (type-cleanup-owning? T)]
     [cleanup-function : String
       (if (type-cleanup-owning? T)
@@ -165,9 +179,9 @@
             (len i64)
             (index i64))
           (defenum IterMutNext
-            (:lifetimes source)
+            (:lifetimes item)
             (Done)
-            (Item (&mut source ,T)))
+            (Item (&mut item ,T)))
           ;; Consuming cleanup storage is intentionally reachable only through
           ;; a raw state pointer. All declared fields are source-visible, so a
           ;; typed Vec/dynamic-array field here would let safe callers project a
@@ -225,8 +239,7 @@
                   (IterNext.Item (& (array-ref iter.slots index)))))))
           (define (iterator-mut [v : (&mut source Vec)]) : (IterMut source)
             (IterMut (&mut v.state.slots) v.len 0))
-          (define (next-mut [iter : (&mut state (IterMut source))]) : (IterMutNext
-              source)
+          (define (next-mut [iter : ,next-mut-state]) : (IterMutNext item)
             (let
               [index : i64 iter.index]
               (if (>= index iter.len)
@@ -553,19 +566,21 @@
                   (Done)
                   (Item (& source ,iter-item-type)))
                 ;; This state owns the vector's exclusive source borrow. `next-mut`
-                ;; reborrows one element from that stored reference, so the item keeps
-                ;; the vector lifetime rather than the short borrow of the state.
+                ;; reborrows one element through the state, so the item keeps the
+                ;; state's borrow: an exclusive reference reached through another
+                ;; lives no longer than the outer one.
                 (defstruct ,iter-mut-name
                   (:lifetimes source)
                   (slots (&mut source (__tl_dyn-array ,T)))
                   (len i64)
                   (index i64))
-                ;; Mutable iteration is lending: an Item keeps the source borrow live,
-                ;; so callers must finish with it before asking for the next item.
+                ;; Mutable iteration is lending: an Item keeps the state's borrow
+                ;; live, so callers must finish with it before asking for the next
+                ;; item.
                 (defenum ,iter-mut-next-name
-                  (:lifetimes source)
+                  (:lifetimes item)
                   (Done)
-                  (Item (,iter-mut-borrow-name source ,iter-mut-item-type)))
+                  (Item (,iter-mut-borrow-name item ,iter-mut-item-type)))
                 ;; Consuming iteration owns the moved backing storage. The bitmap
                 ;; records which live-prefix slots still own values, so each Item
                 ;; can move exactly once through private `__tl_array-take!`.
@@ -600,8 +615,8 @@
                 (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
                     source)
                   (,iter-mut-name (&mut v.slots) v.len 0))
-                (define (next-mut [iter : (&mut state (,iter-mut-name source))]) : (,iter-mut-next-name
-                    source)
+                (define (next-mut [iter : ,next-mut-state]) : (,iter-mut-next-name
+                    item)
                   (let
                     [index : i64 iter.index]
                     (if (>= index iter.len)

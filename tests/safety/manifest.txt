@@ -424,6 +424,7 @@ reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/re
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_item_outlives_iterator_reject|check-fail|tests/safety/vector_iter_mut_item_outlives_iterator_reject.tl|-|reference value would escape lexical scope
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
@@ -1819,3 +1820,16 @@ reassigned_ref_copy_reject|check-fail|tests/safety/reassigned_ref_copy_reject.tl
 reassigned_ref_ok|run-exit|tests/safety/reassigned_ref_ok.tl|42|-
 reassigned_ref_call_store_reject|check-fail|tests/safety/reassigned_ref_call_store_reject.tl|tests/safety/reassigned_ref_call_store_reject.tl:22:11|cannot assign to borrowed place `p.z`
 reassigned_ref_call_store_ok|run-exit|tests/safety/reassigned_ref_call_store_ok.tl|42|-
+reborrow_through_mut_holder_bound_reject|check-fail|tests/safety/reborrow_through_mut_holder_bound_reject.tl|tests/safety/reborrow_through_mut_holder_bound_reject.tl:19:3|return type mismatch
+reborrow_through_shared_holder_bound_reject|check-fail|tests/safety/reborrow_through_shared_holder_bound_reject.tl|tests/safety/reborrow_through_shared_holder_bound_reject.tl:13:3|return type mismatch
+reborrow_lending_cursor_reject|check-fail|tests/safety/reborrow_lending_cursor_reject.tl|tests/safety/reborrow_lending_cursor_reject.tl:17:23|cannot assign to borrowed place `xs`
+region_signature_store_then_write_reject|check-fail|tests/safety/region_signature_store_then_write_reject.tl|tests/safety/region_signature_store_then_write_reject.tl:21:18|cannot assign to borrowed place `d`
+mir_job_field_store_after_rebind_reject|check-fail|tests/safety/mir_job_field_store_after_rebind_reject.tl|tests/safety/mir_job_field_store_after_rebind_reject.tl:27:11|cannot assign to borrowed place `p.r`
+mir_by_value_deep_holder_store_then_write_reject|check-fail|tests/safety/mir_by_value_deep_holder_store_then_write_reject.tl|tests/safety/mir_by_value_deep_holder_store_then_write_reject.tl:19:16|cannot assign to borrowed place `h`
+mir_by_value_holder_call_store_then_write_reject|check-fail|tests/safety/mir_by_value_holder_call_store_then_write_reject.tl|tests/safety/mir_by_value_holder_call_store_then_write_reject.tl:17:16|cannot assign to borrowed place `x`
+reborrow_through_mut_holder_bound_ok|run-exit|tests/safety/reborrow_through_mut_holder_bound_ok.tl|42|-
+reborrow_lending_cursor_ok|run-exit|tests/safety/reborrow_lending_cursor_ok.tl|42|-
+region_view_call_argument_ok|run-exit|tests/safety/region_view_call_argument_ok.tl|42|-
+region_by_value_holder_store_reborrow_ok|run-exit|tests/safety/region_by_value_holder_store_reborrow_ok.tl|42|-
+mir_holder_disjoint_lifetime_store_ok|run-exit|tests/safety/mir_holder_disjoint_lifetime_store_ok.tl|42|-
+mir_reborrow_returned_holder_ok|run-exit|tests/safety/mir_reborrow_returned_holder_ok.tl|42|-

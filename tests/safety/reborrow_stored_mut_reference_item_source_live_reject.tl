@@ -1,17 +1,18 @@
-;: A mutable item reborrowed through iterator state still protects its source
-;: after the state leaves scope.
+;: A mutable item reborrowed through iterator state lends from the state,
+;: which holds the source borrow: while the item is live the source stays
+;: borrowed (#8449).
 (defstruct MutReborrowIter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum MutReborrowNext
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source i64)))
+  (Item (&mut item i64)))
 
-(define (mut-next [iter : (&mut state (MutReborrowIter source))]) : (MutReborrowNext
-    source)
+(define (mut-next [iter : (&mut item (MutReborrowIter source))]) : (MutReborrowNext
+    item)
   (let
     [index : i64 iter.index]
     (if (>= index 1)
@@ -28,11 +29,8 @@
 (define (main) : unit
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (let
-      [first : (MutReborrowNext items)
-        (let
-          [iter : (MutReborrowIter items) (MutReborrowIter (&mut items) 0)]
-          (mut-next (&mut iter)))]
-      (begin
-        (set! (array-ref items 0) 42)
-        (consume first)))))
+    [iter : (MutReborrowIter items) (MutReborrowIter (&mut items) 0)]
+    [first : (MutReborrowNext iter) (mut-next (&mut iter))]
+    (begin
+      (set! (array-ref items 0) 42)
+      (consume first))))

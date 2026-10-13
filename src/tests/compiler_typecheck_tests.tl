@@ -7664,7 +7664,7 @@
 (defstruct Iter (:lifetimes source) (value (& source i64)) (done bool))
 (defenum IterNext (:lifetimes source) (Done) (Item (& source i64)))
 (defstruct IterMut (:lifetimes source) (value (&mut source i64)) (done bool))
-(defenum IterMutNext (:lifetimes source) (Done) (Item (&mut source i64)))
+(defenum IterMutNext (:lifetimes state) (Done) (Item (&mut state i64)))
 (defstruct IntoIter
   (:cleanup cleanup-into-iter)
   (value i64)
@@ -7681,7 +7681,7 @@
 (define (iterator-mut [items : (&mut source Bag)]) : (IterMut source)
   (IterMut (&mut items.value) false))
 (define (next-mut [state : (&mut state (IterMut source))]) : (IterMutNext
-    source)
+    state)
   (if state.done
     (IterMutNext.Done)
     (begin

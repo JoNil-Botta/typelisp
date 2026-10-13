@@ -689,6 +689,113 @@ The ordinary Copy specialization uses checked
 This resolves the confirmed length-forgery path; it does not establish complete
 representation safety for the vector family.
 
+### Loan origins: Rust's region method (#8449)
+
+The normalizer first decided which loans a value may hold by tracing value
+flows between places (points-to origins). Whenever a reference's target was
+not a place the graph names, it needed another rule: opaque referents with
+flows both ways, call store contracts and a deep walk behind them, a callee
+flow for closures, caller-memory marks, placeholder referents typed like
+by-value parameters. Six review rounds each found more shapes those rules
+missed, all of one kind: a reference stored through a chain of `&mut` into
+memory the graph does not name. A rustc oracle (below) found 95 more in 3,000
+generated programs with no reviewer. The model asked where a pointer points;
+Rust never asks that. Origins now follow Rust's borrow checker (NLL, RFC 2094;
+Polonius states the same rules as Datalog): type-directed and modular, with
+the lifetimes the typechecker already carries in every type it publishes.
+
+- **Regions.** A region is a pair of a root place (a local, a temporary, a
+  parameter) and a lifetime name its type spells. A projection of a root
+  (field, element, box contents, dereference) uses the root's regions: the
+  typechecker instantiates projection types with the root's names. A
+  parameter's signature lifetimes and the return type's are universal regions,
+  shared by every parameter and live at every return. Each call instantiates
+  its callee's signature lifetimes as fresh regions of its own.
+- **Shapes.** A type's shape lists its lifetime positions in order, each with
+  its variance (`&` covariant; the referent of `&mut`, a nominal lifetime
+  argument and a function type invariant) and the reference it lies under.
+- **Constraints.** An edge `x -> y` means the loans of `x` are loans of `y`.
+  Every value transfer relates the source's shape to the destination's
+  position by position: covariant one way, invariant both ways. A borrow's
+  referent positions are the borrowed place's own regions; when its type does
+  not spell them all (a closure's captures), they relate with its inner
+  regions, and its outer region, which holds the borrow's own loan, only
+  outlives them. A reborrow's type
+  is a projection of its root's type, so its names are the root's regions:
+  its outer region is outlived by the root's region of that name (the typing
+  below picked the reference that bounds it), and every inner name is that
+  region itself. A call relates its operands to the callee's formal parameter
+  types and the formal result type to its result, through its own instance of
+  the signature; a return relates the returned value to the universal return
+  regions. Well-formedness: each region outlives the references it lies under
+  (`(&mut r (T s))` has `s` outliving `r`), so a call result typed with `r`
+  keeps the loans behind it. A transfer whose shapes do not line up relates
+  everything both ways, and an operation without a signature (a primitive, a
+  constructor) may put any operand's loans in its result.
+- **Loans and uses.** A borrow's loan starts in its reference's outer region;
+  region loan sets are closed over the edges. A use of a root demands every
+  loan of every region of the root, and every return demands every universal
+  region. The core's loan liveness and conflict checks are unchanged.
+- **Where a reference points.** The core keeps loans in a tree, so a reborrow
+  names one parent loan and a dereference of a local reference binder is
+  checked against the loan it was initialized from. That one question is
+  answered on a second graph in which each parameter's regions are its own
+  and outlives edges (reborrows, well-formedness) are left out: a reference
+  points at the loans that reached its outer region by value. A joined or
+  unknown answer still fails closed (E0211).
+
+**Typing: a reborrow is bounded by what it reborrows through.** A borrow
+through a reference lives no longer than any reference on its path, up to and
+including the first shared one (Rust's supporting prefixes); a well-formed
+`(&mut o (Holder i a))` has `i` outliving `o`, so the reference closest to the
+root bounds it. `(&mut (deref (deref h).m))` with `h : (&mut o (Holder i a))`
+was typed `(&mut i ...)`, letting a function hand out the holder's exclusive
+reference while the holder could still use it; main accepts that
+(`reborrow_through_mut_holder_bound_reject`,
+`reborrow_through_shared_holder_bound_reject`) and rejected the `o` version
+Rust accepts (`reborrow_through_mut_holder_bound_ok`). A stored shared
+reference is still copied out with its own lifetime.
+
+A mutable iterator over a stored `&mut` therefore lends: its item borrows the
+iterator, as a Rust lending iterator's does (a non-lending one needs private
+fields and an unchecked split). `stdlib/vector`'s `next-mut` takes
+`(&mut item (IterMut source))` and returns `(IterMutNext item)`
+(`vector_iter_mut_item_outlives_iterator_reject`), and the
+safety and integration programs that typed a `&mut` item with the source
+lifetime only through the old rule now name the iterator's borrow; their checks
+are unchanged. Main's seed cannot type the lending body, so `vector` selects
+the earlier form under a seed: every compiler from this one enables the cfg
+name `compiler-reborrow-bound` whatever its `--cfg` flags (as Rust's
+`cfg(bootstrap)` selects library code by compiler). It and the seed form go
+once the seed has this rule.
+
+**What this replaced.** Opaque-referent flows and their fixpoint, call store
+contracts and their deep walk, the closure callee flow, caller-memory marks,
+and placeholder referents typed like by-value parameters. Opaque referent
+*places* remain: they are what a dereference reaches, for conflicts, and they
+use the regions of the reference they are reached through.
+
+**Validation against rustc.** Three generators render one random program as
+TypeLisp and as Rust using only constructs whose ownership semantics coincide,
+and rustc's verdict is the oracle: `main` bodies over pairs, reference holders,
+jobs, boxes and arrays with stores, reads, writes, pushes and calls (1,000);
+function bodies over lifetime-carrying parameters (nested `&mut`, by-value
+holders, boxes, vectors) with loops and branches (3,000); and the first with
+lending signatures and the vector iterator against a hand-written Rust
+`IterMut` of the same signature (2,000). TypeLisp accepts no program rustc
+rejects in any of them. It rejects none rustc accepts among the function
+bodies; the 29 and 51 it rejects among the others are typing differences, not
+ownership (a lexical owner-named lifetime in an annotation or field type,
+E0206, and a region-tagged constructor value, E0205). Every review finding is
+a fixture, each oracle hole family has one
+(`region_signature_store_then_write_reject`), and the precision cases the
+second graph decides are pinned (`region_view_call_argument_ok`,
+`region_by_value_holder_store_reborrow_ok`).
+
+**Cost.** `__tl_array-push!` copies its whole array, so every column the
+region pass grows is grown geometrically. Checking the compiler takes the same
+memory as before the change (1.50 GB) and 4% less time.
+
 ### Verdict and diagnostic changes from the rebase onto main 08eae4017
 
 Main's semantics were ported into the selected producer and normalizer. Where
@@ -699,10 +806,10 @@ is deliberate and has a regression twin:
   table below).** A shared element borrow
   stays live across a `&mut` reborrow of its slice
   (`slice_element_borrow_with_mut_slice_reject`,
-  `slice_element_borrow_with_mut_param_reject`). A call whose `(&mut T)`
-  parameter's referent names a lifetime another argument carries flows that
-  argument's loans into the borrowed place (`call_store_contract_reject`,
-  valid twin `call_store_contract_ok`).
+  `slice_element_borrow_with_mut_param_reject`). A call relates its arguments
+  through its signature, so an argument stored through another's `(&mut T)`
+  keeps its loans in the borrowed place (`call_store_contract_reject`, valid
+  twin `call_store_contract_ok`).
 - **Precision: non-lexical lifetimes.** A borrow ends at its last use, as in
   Rust, where main's walkers held it to the end of its scope; code after a
   `return` is unreachable and checks nothing; a part moved out by a pattern
@@ -728,8 +835,8 @@ is deliberate and has a regression twin:
   loans that can reach it: `reassigned_ref_ok` is accepted, while
   `reassigned_ref_branch_reject`, `reassigned_ref_loop_reject` and
   `reassigned_ref_copy_reject` keep main's rejection. A binding that also
-  receives a value another way (a call's store contract, a store through a
-  reference to it, a field write) is not split
+  receives a value another way (a store through a call argument, a store
+  through a reference to it, a field write) is not split
   (`reassigned_ref_call_store_reject`, valid twin
   `reassigned_ref_call_store_ok`). A store into a field of an owned array
   element flows the stored value's loans into the array, and `replace!` of an
@@ -738,15 +845,13 @@ is deliberate and has a regression twin:
   `mir_array_element_replace_reject`); main rejected the valid twin
   `mir_array_element_field_store_ok`. An access through a reference whose
   referent the graph does not name (one returned by a call, held in a field
-  or behind another reference) reaches whatever the reference may point to:
-  loans flow both ways between its opaque referent and the place each loan of
-  the reference borrows, so a store lands there and a read sees what is
-  there (`call_store_contract_returned_ref_reject`, valid twin
+  or behind another reference) uses that reference's regions, so a store
+  through it reaches every holder of those regions and a read sees what they
+  hold (`call_store_contract_returned_ref_reject`, valid twin
   `call_store_contract_returned_ref_ok`, `mir_opaque_referent_read_reject`).
-  A child loan of an implicit reborrow points where the reborrowed binder
-  points, and its parent is the binder's single loan in that sense, not the
-  loans its referent holds: a reborrow of a `&mut` to a value holding a
-  reference was rejected with E0211 before (`mir_reborrow_holder_ok`;
+  A reborrow's parent is the one loan its binder points at, not the loans its
+  referent holds: a reborrow of a `&mut` to a value holding a reference was
+  rejected with E0211 before (`mir_reborrow_holder_ok`;
   `mir_reborrow_call_store_reject`, `mir_reborrow_param_call_store_reject`).
 - **Holes the cutover opened, closed (third review).** Main's former walkers
   rejected these programs, mostly as moves out of a reference; the graph
@@ -760,28 +865,28 @@ is deliberate and has a regression twin:
     loans along (`mir_box_holder_move_out_reject`,
     `mir_box_holder_struct_move_out_reject`, valid twin
     `mir_box_holder_move_out_ok`);
-  - a reference stored through a `&mut` reached via a parameter's referent
-    lands in caller memory the graph does not name; such an opaque referent
-    (one level or more below a parameter's referent) is used at every return
-    like the referent itself (`mir_nested_param_store_then_grow_reject`,
+  - a reference stored through a `&mut` reached from a parameter, at any
+    depth, lands in a signature region, live at every return
+    (`mir_nested_param_store_then_grow_reject`,
     `mir_nested_param_field_store_then_grow_reject`; main rejected the valid
     twin `mir_nested_param_store_ok` as a move out of a reference). A
-    by-value parameter holding references reaches caller memory the same
-    way: its placeholder referent takes the parameter's type, so loans stored
-    through the `&mut` references it holds (or one moved out of it) are held
-    there until return (`mir_by_value_param_store_then_grow_reject`,
-    `mir_box_param_move_out_store_reject`, valid twin
+    by-value parameter holding references has signature regions too, so
+    loans stored through the `&mut` references it holds (or one moved out of
+    it) stay live until return (`mir_by_value_param_store_then_grow_reject`,
+    `mir_box_param_move_out_store_reject`,
+    `mir_by_value_deep_holder_store_then_write_reject`,
+    `mir_by_value_holder_call_store_then_write_reject`, valid twin
     `mir_by_value_param_store_ok`);
-  - a call store contract through a `(&mut T)` whose `T` holds a `&mut`
-    flowed the source's loans only into the borrowed place, while the callee
-    may store through that `&mut`: the loans now also flow into every place
-    the target reaches through exclusive loans
-    (`call_store_contract_holder_reject`, valid twin
-    `call_store_contract_holder_ok`);
+  - a store through a `&mut` held inside a call's `(&mut T)` argument: the
+    call's instance of its signature relates the stored argument to the
+    region the inner `&mut`'s referent names
+    (`call_store_contract_holder_reject`, `mir_job_field_store_after_rebind_reject`,
+    valid twins `call_store_contract_holder_ok`,
+    `mir_holder_disjoint_lifetime_store_ok`);
   - a call through a closure passed none of the closure's captured loans to
     its result (`mir_closure_result_loan_reject`, valid twin
-    `mir_closure_result_loan_ok`). A closure borrowed for the call passes its
-    captures' loans, not the borrow of the closure;
+    `mir_closure_result_loan_ok`). A closure value's regions, its captures',
+    relate to the call's whole signature instance;
   - a `&mut` reached through a `&` took an exclusive loan on its referent.
     Through a shared loan every inner loan is shared, whatever the access, so
     a push, an element or field store, or a mutable borrow through it is
@@ -847,8 +952,8 @@ is deliberate and has a regression twin:
 
 #### Every safety case main accepts and this compiler rejects
 
-These 62 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
-main at e10dcb268 and are rejected here, each with the diagnostic its manifest
+These 66 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
+main at be3f903ee and are rejected here, each with the diagnostic its manifest
 row names. Each fixture's leading comment states the rule. One of
 them was an accepted case in main's manifest:
 `borrow_call_arg_final_use_before_nested_write_ok` is the same program as
@@ -867,8 +972,9 @@ implicit `f32` to `f64` widening now expect the rejections.
 | Partial and match moves: a value with a moved field cannot be used whole; matching a field by value moves its payload (twice, or on the next loop trip); a loop flag does not reinitialize a moved cursor; a computed index may name a moved element. | `mir_field_partial_whole_reject`, `mir_match_field_twice_reject`, `match_field_payload_move_in_loop_reject`, `mir_match_loop_moved_reject`, `mir_array_literal_move_computed_read_reject`, `mir_array_literal_move_computed_store_reject` |
 | Moves out from behind references and out of elements (Rust E0507): a non-Copy element or payload reached through a shared reference, a Box view, a nested match or an `if` cannot be moved out; a computed-index element of an owned array cannot move; a by-value match of an element moves it. | `mir_element_move_through_ref_reject`, `mir_element_move_owned_param_reject`, `mir_element_match_reject`, `mir_view_if_move_out_reject`, `mir_referent_match_move_out_reject`, `mir_referent_box_match_move_out_reject`, `mir_referent_nested_match_move_out_reject` |
 | Writes through shared references and views: an element or field write, a mutable borrow of a view binder, the `__tl-box-place` bridge and a control-flow store receiver reached through `&` are mutations through it. | `mir_array_field_set_through_shared_reject`, `mir_local_ref_field_set_shared_reject`, `mir_view_binder_write_reject`, `mir_view_binder_mut_borrow_reject`, `mir_box_bridge_shared_write_reject`, `mir_store_receiver_through_shared_reject` |
-| Loan conflicts: an earlier argument's borrow lives until the call; one `&mut` cannot fill two mutable parameters; a view of a matched or projected part keeps its owner borrowed; a control-flow store receiver writes the place it selects (and that place must not be moved by the right-hand side); a mutable borrow of a register-resident local cannot outlive the call; a shared element borrow across a `&mut` reborrow of its slice; call store contracts, including into a binding assigned whole more than once, through a reference a call returned and through one an implicit reborrow made; a store through a `&mut` held in a box. | `borrow_call_arg_nested_write_before_call_reject`, `mir_ref_nested_write_owned_reject`, `mir_ref_alias_mut_param_reject`, `mir_view_scrutinee_conflict_reject`, `mir_view_field_assign_reject`, `mir_store_receiver_shared_borrow_reject`, `mir_store_receiver_mut_borrow_reject`, `mir_store_receiver_moved_reject`, `mir_by_value_borrow_escape_reject`, `slice_element_borrow_with_mut_slice_reject`, `slice_element_borrow_with_mut_param_reject`, `call_store_contract_reject`, `reassigned_ref_call_store_reject`, `call_store_contract_returned_ref_reject`, `mir_reborrow_call_store_reject`, `mir_reborrow_param_call_store_reject`, `mir_box_holder_nested_store_reject` |
+| Loan conflicts: an earlier argument's borrow lives until the call; one `&mut` cannot fill two mutable parameters; a view of a matched or projected part keeps its owner borrowed; a control-flow store receiver writes the place it selects (and that place must not be moved by the right-hand side); a mutable borrow of a register-resident local cannot outlive the call; a shared element borrow across a `&mut` reborrow of its slice; stores through call arguments, including into a binding assigned whole more than once, through a reference a call returned and through one an implicit reborrow made; a store through a `&mut` held in a box. | `borrow_call_arg_nested_write_before_call_reject`, `mir_ref_nested_write_owned_reject`, `mir_ref_alias_mut_param_reject`, `mir_view_scrutinee_conflict_reject`, `mir_view_field_assign_reject`, `mir_store_receiver_shared_borrow_reject`, `mir_store_receiver_mut_borrow_reject`, `mir_store_receiver_moved_reject`, `mir_by_value_borrow_escape_reject`, `slice_element_borrow_with_mut_slice_reject`, `slice_element_borrow_with_mut_param_reject`, `call_store_contract_reject`, `reassigned_ref_call_store_reject`, `call_store_contract_returned_ref_reject`, `mir_reborrow_call_store_reject`, `mir_reborrow_param_call_store_reject`, `mir_box_holder_nested_store_reject` |
 | Arena invalidation: destroying an arena invalidates every binder carrying its brand, including a shadowed one. | `mir_arena_destroy_shadowed_use_reject` |
+| A reborrow through a reference lives no longer than it (Rust's supporting prefixes): `inner` handed out the `&mut` a holder stores while the holder could still use it, a shared view of it the same way, and a vector's mutable iterator item, which now borrows the iterator, outlived the iterator or a push to its vector. | `reborrow_through_mut_holder_bound_reject`, `reborrow_through_shared_holder_bound_reject`, `reborrow_stored_generated_vector_item_source_live_reject`, `vector_iter_mut_item_outlives_iterator_reject` |
 | A reference joined from two branches inside a loop still holds the loan of the branch that borrowed the element written next, when it (or a copy of it) is read after the write. | `mir_nll_loop_if_join_reference_live_reject`, `mir_nll_loop_if_join_reference_copy_reject` |
 | A borrow taken again on every loop trip stays live while a reference still holds an earlier trip's borrow and is read after a write to the borrowed place (Rust E0506). | `mir_reference_loop_reissue_held_reject` |
 | Returned borrows of by-value parameters (Rust E0515): a by-value parameter's storage belongs to the call, so a return type cannot name its lifetime, directly, through a field or inside a tuple or array. Main accepted these; with `in-arena` placing the parameter in an arena, the returned reference was read after `destroy-safe!` (freed memory). | `return_by_value_param_reference_reject`, `return_by_value_param_field_reference_reject`, `return_by_value_param_aggregate_reference_reject`, `return_by_value_param_arena_use_after_destroy_reject` |

@@ -25833,7 +25833,7 @@
               type-env
               place-expr))]
         (match place
-          [(TcBorrowPlace lifetime referent-ty _)
+          [(TcBorrowPlace lifetime referent-ty _ _)
             (Ok
               (if mutable
                 (ast.ast-ty-mut-ref-with-pools

@@ -17319,7 +17319,7 @@
       (tc-elaborated-lifetime-hidden? lifetime-id)
       (and
         (not (tc-name-bound-locally-id? env lifetime-id))
-        (tc-move-ordinary-global-value-id? ctx env lifetime-id)))))
+        (tc-move-ordinary-global-value-id? ctx lifetime-id)))))
 
 (define (tc-reference-lifetimes-visible-or-outer?
   [ctx : TcContext]

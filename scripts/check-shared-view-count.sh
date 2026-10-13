@@ -12,6 +12,10 @@ set -eu
 # checked-in baseline, so no change can add views. When the count drops, the
 # change that removed them lowers the baseline to the new count.
 #
+# It also reports, without gating, the views weighted by the call sites of the
+# function or macro that holds them, so a view hidden inside a widely called
+# accessor is not counted as one.
+#
 # usage: scripts/check-shared-view-count.sh [--self-test]
 
 usage() {
@@ -66,6 +70,70 @@ count_uses() {
     echo $((_heads - _definitions))
 }
 
+# Report only: the views weighted by how often the code holding them runs a
+# call site. A view inside a function body or macro template counts once per
+# call site of that function or macro (at least once; call sites of a name
+# that several modules define are shared among them), so a view hidden inside
+# a widely called accessor weighs what it costs. Views inside the
+# `*-shared-view` wrappers themselves are not weighted again; their call sites
+# are. Comments and string literals are skipped.
+count_weighted() {
+    find "$ROOT/src" "$ROOT/stdlib" -type f -name '*.tl' -print |
+        LC_ALL=C sort |
+        while IFS= read -r _file; do
+            cat "$_file"
+            echo
+        done |
+        LC_ALL=C awk '
+            {
+                line = $0
+                gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
+                sub(/;.*/, "", line)
+                definition = 0
+                if (line ~ /^\(/) {
+                    current = ""
+                    if (match(line, /^\((define|defmacro) \([^ ()]+/)) {
+                        current = substr(line, RSTART, RLENGTH)
+                        sub(/^\((define|defmacro) \(/, "", current)
+                        defs[current]++
+                        definition = 1
+                    }
+                }
+                rest = line
+                while (match(rest, /\([A-Za-z0-9_.\/?!*<>=+-]+/)) {
+                    head = substr(rest, RSTART + 1, RLENGTH - 1)
+                    rest = substr(rest, RSTART + RLENGTH)
+                    base = head
+                    sub(/^.*\./, "", base)
+                    heads[base]++
+                    if (head !~ /-shared-view/ || current ~ /-shared-view/) {
+                        continue
+                    }
+                    if (definition && head == current) {
+                        continue
+                    }
+                    views[current]++
+                }
+            }
+            END {
+                total = 0
+                for (name in views) {
+                    if (name == "") {
+                        total += views[name]
+                        continue
+                    }
+                    # Several modules may define the same name (`main`):
+                    # share the call sites among the definitions.
+                    calls = (heads[name] - defs[name]) / defs[name]
+                    if (calls < 1) {
+                        calls = 1
+                    }
+                    total += views[name] * calls
+                }
+                printf "%d\n", total + 0.5
+            }'
+}
+
 read_baseline() {
     [ -f "$BASELINE" ] || {
         echo "check-shared-view-count: missing baseline $BASELINE" >&2
@@ -84,6 +152,7 @@ read_baseline() {
 run_check() {
     _baseline=$(read_baseline)
     _uses=$(count_uses)
+    echo "check-shared-view-count: weighted by call sites of the enclosing function or macro: $(count_weighted) (report only)"
     if [ "$_uses" -gt "$_baseline" ]; then
         echo "check-shared-view-count: $_uses shared-view uses exceed the baseline of $_baseline." >&2
         echo "check-shared-view-count: borrow with (& x), (&mut x), (& (array-ref items i)) or a pattern instead of adding a *-shared-view call." >&2
@@ -111,6 +180,7 @@ EOF
 (define (g [b : (Box i64)]) : i64
   (thing-box-shared-view b))
 (define (h) : i64 (ast.ast-expr-list-box-shared-view? 1))
+(define (m) : i64 (+ (f 1) (f 2)))
 EOF
     cat > "$_work/stdlib/c.tl" <<'EOF'
 ;; mentions compiler-owned-shared-view without calling it
@@ -125,6 +195,14 @@ EOF
         *"5 shared-view uses (baseline 5)"*) ;;
         *)
             echo "self-test: expected 5 uses, got: $_counted" >&2
+            exit 1
+            ;;
+    esac
+    # f holds 2 views and has 2 callers; g, h and k hold 1 each and have none.
+    case "$_counted" in
+        *"call sites of the enclosing function or macro: 7 (report only)"*) ;;
+        *)
+            echo "self-test: expected a weighted count of 7, got: $_counted" >&2
             exit 1
             ;;
     esac

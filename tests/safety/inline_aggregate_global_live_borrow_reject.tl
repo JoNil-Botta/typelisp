@@ -1,5 +1,5 @@
-; The live global borrow crosses a setter call. Keep this escape shape
-; covered while the global-call rule's prerequisite changes the valid case.
+; The live global borrow crosses a setter call and must fail before lowering.
+; Keep the original escape shape at every optimization level on both targets.
 (import stdlib.io)
 
 (defstruct Cell

@@ -5998,7 +5998,7 @@
 ;; Naive ascending marshalling is sound only while no argument source can be
 ;; overwritten before it is read, which a frame home on every arg var would
 ;; guarantee. The backend instead marshals an overflowing all-GP call
-;; stack-first (compiler-backend-emit-call-args-stack-first-into): the stack
+;; stack-first (compiler-backend-emit-call-args-parallel-into): the stack
 ;; args whose source is a register home are stored before any argument register
 ;; is written, the register prefix goes through the sound parallel move, and the
 ;; memory-sourced stack args follow it. No argument source is destroyed before

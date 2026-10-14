@@ -30,10 +30,13 @@
 (defstruct CompilerCtfeMacroStateData
   (result-hygiene-free-node i64)
   ;; The operand node of the last `expr-type` that failed on an operand the
-  ;; macro walk could not typecheck, or -1 (#8871). Only `ctfe-expr-type-value`
-  ;; sets it, and only for a value the walk's own capture marked failed, so the
-  ;; node is a real operand of the call being expanded.
+  ;; macro walk could not typecheck, or -1 (#8871), and the pools the
+  ;; evaluation read it from. Only `ctfe-expr-type-value` sets them, and only
+  ;; for a value the walk's own capture marked failed, so the node is a real
+  ;; operand of the call being expanded. The native route evaluates in its
+  ;; host session's pools, which the caller adopts only when the call succeeds.
   (failed-operand-node i64)
+  (failed-operand-pools ast.AstNodePoolContext)
   (result-may-contain-macro bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
@@ -56,6 +59,7 @@
       (CompilerCtfeMacroStateData
         -1
         -1
+        (ast.AstNodePoolContext 0 0 0)
         false
         (ctfe_key_map.with-capacity 1)
         (ctfe_key_map.with-capacity 1)
@@ -151,18 +155,25 @@
   (unsafe
     (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
 
-;; `expr-type`'s failed-operand channel (#8871): the macro walk clears it before
-;; it evaluates a transformer and takes it when the evaluation fails.
+;; `expr-type`'s failed-operand channel (#8871). The noted operand belongs to the
+;; failing transformer evaluation: the macro walk takes it on that call's error
+;; path, which clears it.
 (define (ctfe-failed-operand-note-for-state!
   [state : CompilerCtfeMacroState]
-  [node : i64]) : unit
+  [node : i64]
+  [pools : ast.AstNodePoolContext]) : unit
   (unsafe
     (set!
       (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-node
-      node)))
+      node)
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-pools
+      pools)))
 
-(define (ctfe-failed-operand-reset-for-state! [state : CompilerCtfeMacroState]) : unit
-  (ctfe-failed-operand-note-for-state! state -1))
+;: The pools of the noted failed operand; read before taking it.
+(define (ctfe-failed-operand-pools-for-state [state : CompilerCtfeMacroState]) : ast.AstNodePoolContext
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).failed-operand-pools))
 
 ;: The noted failed operand, or -1; the channel is cleared either way.
 (define (ctfe-failed-operand-take-for-state! [state : CompilerCtfeMacroState]) : i64
@@ -170,7 +181,10 @@
     [node : i64
       (unsafe
         (deref (compiler-ctfe-macro-state-view state)).failed-operand-node)]
-    (ctfe-failed-operand-reset-for-state! state)
+    (ctfe-failed-operand-note-for-state!
+      state
+      -1
+      (ast.AstNodePoolContext 0 0 0))
     node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
@@ -7402,7 +7416,7 @@
       (begin
         (when
           (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
-          (ctfe-failed-operand-note-for-state! state node))
+          (ctfe-failed-operand-note-for-state! state node pools))
         (Err (ctfe-expr-type-untyped-message)))
       (Ok
         (Type

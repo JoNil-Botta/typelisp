@@ -91653,34 +91653,47 @@
 
 ;; Report the error of the operand a macro asked `expr-type` about, at the
 ;; operand, in place of the generic `expr-type` message (#8871). The transformer
-;; evaluation notes that operand in the job's CTFE macro state rather than in
-;; the message, so a macro's own error text can never name a node. The note is
-;; taken here whether it is used or not. It replaces the diagnostic only when
-;; the diagnostic is that `expr-type` failure, the node is in this context's
-;; pool, and the operand, checked again in the environment of the macro call
-;; (the one its capture used), still fails.
+;; evaluation notes that operand, with the pools it read it from, in the job's
+;; CTFE macro state rather than in the message, so a macro's own error text can
+;; never name a node. Every failing transformer call reaches this on its error
+;; path, which takes the note whether it is used or not.
+;;
+;; The native route evaluates in its host session's pools, which hold the
+;; operand's caller-origin marker but which the call adopts only on success, so
+;; the error path adopts them the same way first. The diagnostic is replaced
+;; only when it is that `expr-type` failure and the operand, checked again in
+;; the environment of the macro call (the one its capture used), still fails.
+;; The pool-range test is a guard, not a filter: after the adoption every noted
+;; node is in range.
 (define (macro-failed-operand-diagnostic
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (let
-    [node : i64
-      (ctfe_support.ctfe-failed-operand-take-for-state!
-        (tc-context-ctfe-macro-state ctx))]
-    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+    [state : ctfe_support.CompilerCtfeMacroState
+      (tc-context-ctfe-macro-state ctx)]
+    [noted-pools : ast.AstNodePoolContext
+      (ctfe_support.ctfe-failed-operand-pools-for-state state)]
+    [node : i64 (ctfe_support.ctfe-failed-operand-take-for-state! state)]
     (if (and
       (>= node 0)
-      (< node (ast.ast-node-pool-context-expr-len pools))
       (string.eq
         (cdiag.compiler-diagnostic-message (& diag))
         (ctfe_support.ctfe-expr-type-untyped-message)))
-      (match (tc-expr ctx type-env (tc-context-expr-get ctx node))
-        [(Err message)
-          (tc-expr-diag
-            (tc-context-expr-bases ctx)
-            (tc-context-expr-get ctx node)
-            message)]
-        [(Ok _) diag])
+      (begin
+        (ast.ast-node-pool-context-adopt-newer!
+          (tc-context-pools-live ctx)
+          noted-pools)
+        (tc-context-install-pools! ctx)
+        (if (< node (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+          (match (tc-expr ctx type-env (tc-context-expr-get ctx node))
+            [(Err message)
+              (tc-expr-diag
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx node)
+                message)]
+            [(Ok _) diag])
+          diag))
       diag)))
 
 (define (macro-diagnostic-with-expansion-site
@@ -108453,8 +108466,6 @@
   [args : ast.AstExprList]
   [depth : i64]
   [call-expr : ast.AstExpr]) : ResultMacroExpr
-  (ctfe_support.ctfe-failed-operand-reset-for-state!
-    (tc-context-ctfe-macro-state ctx))
   (match (macro-expand-call-unframed
     ctx
     type-env
@@ -110721,8 +110732,6 @@
   [context : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (ctfe_support.ctfe-failed-operand-reset-for-state!
-    (tc-context-ctfe-macro-state ctx))
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]

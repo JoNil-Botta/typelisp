@@ -4956,22 +4956,23 @@
   [_origin : (& ast.AstExpr)]) : ResultSpecEnsure
   (match (owned_view.compiler-owned-reference-shared-view template)
     [(Item order module name-id params ret body)
-      (match (spec-place-shared-view state)
+      (match state
         [(State generated cache ctfe-env pools)
           (let
             [name : String
               (spec_ci.intern-compat-state-str
-                (spec-state-intern state)
+                (spec-owner-intern-state (& pools))
                 name-id)]
             [structural-key : SpecStructuralKey
               (spec-specialization-structural-key-with-owner
-                (spec-state-owner state)
+                (& pools)
                 module
                 (& name)
                 values)]
             [cache-key-id : i64 (spec-structural-key-raw structural-key)]
             (match (spec_id_i64_map.get (& cache) cache-key-id)
-              [(LookupFound cached-name-id) (Ok cached-name-id state)]
+              [(LookupFound cached-name-id)
+                (Ok cached-name-id (State generated cache ctfe-env pools))]
               [(LookupMissing)
                 (let
                   [generated-name-id : i64
@@ -4991,7 +4992,7 @@
                         [valued-body
                           (try
                             (spec-substitute-expr-with-owner
-                              (spec-state-owner state)
+                              (& pools)
                               (& body)
                               (& subs)))]
                         [next-cache : spec_id_i64_map.Map cache]
@@ -5000,6 +5001,8 @@
                           cache-key-id
                           generated-name-id)
                         (let
+                          [valued-body-expr : ast.AstExpr
+                            (spec-owner-expr-get (& pools) valued-body)]
                           [cached-state : SpecState
                             (State generated next-cache ctfe-env pools)]
                           ;; The body resolves names in its own module, and no
@@ -5012,11 +5015,11 @@
                                   module))
                               runtime-params)]
                           (match (spec-rewrite-expr
-                            (& (spec-state-expr-get state valued-body))
+                            (& valued-body-expr)
                             body-templates
                             cached-state)
                             [(Ok rewritten-body rewritten-state)
-                              (match (spec-place-shared-view rewritten-state)
+                              (match rewritten-state
                                 [(State
                                     rewritten-generated
                                     rewritten-cache
@@ -5031,11 +5034,11 @@
                                           (ast.ast-decl-def-fn-id
                                             generated-name-id
                                             (spec-substitute-param-types-with-owner
-                                              (spec-state-owner rewritten-state)
+                                              (& rewritten-pools)
                                               (& runtime-params)
                                               type-subs)
                                             (spec-substitute-type-with-owner
-                                              (spec-state-owner rewritten-state)
+                                              (& rewritten-pools)
                                               ret
                                               type-subs)
                                             rewritten-body)))
@@ -5098,10 +5101,7 @@
                   (& state)
                   expr)]
               [(None)
-                (match (spec-rewrite-expr
-                  (& func)
-                  templates
-                  (spec-place-shared-view state))
+                (match (spec-rewrite-expr (& func) templates state)
                   [(Ok rewritten-func func-state)
                     (match (spec-rewrite-expr-list
                       (& args)
@@ -5110,17 +5110,14 @@
                       [(Ok rewritten-args args-state)
                         (Ok
                           (ast.ast-expr-call-with-pools
-                            (spec-state-pools state)
+                            (spec-state-pools args-state)
                             rewritten-func
                             rewritten-args)
                           args-state)]
                       [(Err diag) (Err diag)])]
                   [(Err diag) (Err diag)])])]
           [(None)
-            (match (spec-rewrite-expr
-              (& func)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& func) templates state)
               [(Ok rewritten-func func-state)
                 (match (spec-rewrite-expr-list
                   (& args)
@@ -5129,7 +5126,7 @@
                   [(Ok rewritten-args args-state)
                     (Ok
                       (ast.ast-expr-call-with-pools
-                        (spec-state-pools state)
+                        (spec-state-pools args-state)
                         rewritten-func
                         rewritten-args)
                       args-state)]
@@ -5161,14 +5158,11 @@
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
             [body-templates : SpecTemplateEnv
               (spec-template-env-shadow-params templates params)]
-            (match (spec-rewrite-expr
-              (& body)
-              body-templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& body) body-templates state)
               [(Ok rewritten-body body-state)
                 (Ok
                   (ast.ast-expr-lambda-with-pools
-                    (spec-state-pools state)
+                    (spec-state-pools body-state)
                     params
                     ret
                     rewritten-body)
@@ -5237,10 +5231,7 @@
         [(Match scrutinee-box arms)
           (let
             [scrutinee : ast.AstExpr (spec-state-expr-get state scrutinee-box)]
-            (match (spec-rewrite-expr
-              (& scrutinee)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& scrutinee) templates state)
               [(Ok rewritten-scrutinee scrutinee-state)
                 (match (spec-rewrite-match-arms
                   (& arms)
@@ -5249,7 +5240,7 @@
                   [(Ok rewritten-arms arms-state)
                     (Ok
                       (ast.ast-expr-match-with-pools
-                        (spec-state-pools state)
+                        (spec-state-pools arms-state)
                         rewritten-scrutinee
                         rewritten-arms)
                       arms-state)]
@@ -5264,10 +5255,7 @@
             [body : ast.AstExpr (spec-state-expr-get state body-box)]
             [body-templates : SpecTemplateEnv
               (spec-template-env-shadow-name templates index)]
-            (match (spec-rewrite-expr
-              (& start)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& start) templates state)
               [(Ok rewritten-start start-state)
                 (match (spec-rewrite-expr (& end) templates start-state)
                   [(Ok rewritten-end end-state)
@@ -5275,7 +5263,7 @@
                       [(Ok rewritten-body body-state)
                         (Ok
                           (ast.ast-expr-foreach-id-with-pools
-                            (spec-state-pools state)
+                            (spec-state-pools body-state)
                             index
                             index-ty
                             rewritten-start
@@ -5307,10 +5295,7 @@
               (spec-template-env-shadow-name templates outer)]
             [body-templates : SpecTemplateEnv
               (spec-template-env-shadow-name outer-templates inner)]
-            (match (spec-rewrite-expr
-              (& outer-start)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& outer-start) templates state)
               [(Ok rewritten-outer-start state0)
                 (match (spec-rewrite-expr (& outer-end) templates state0)
                   [(Ok rewritten-outer-end state1)
@@ -5328,7 +5313,7 @@
                               [(Ok rewritten-body body-state)
                                 (Ok
                                   (ast.ast-expr-foreach2-id-with-pools
-                                    (spec-state-pools state)
+                                    (spec-state-pools body-state)
                                     outer
                                     outer-ty
                                     rewritten-outer-start
@@ -5349,14 +5334,11 @@
         [body : ast.AstExpr (spec-state-expr-get state body-box)]
         [body-templates : SpecTemplateEnv
           (spec-template-env-shadow-name templates lane)]
-        (match (spec-rewrite-expr
-          (& body)
-          body-templates
-          (spec-place-shared-view state))
+        (match (spec-rewrite-expr (& body) body-templates state)
           [(Ok rewritten-body body-state)
             (Ok
               (ast.ast-expr-foreach-active-with-pools
-                (spec-state-pools state)
+                (spec-state-pools body-state)
                 lane
                 rewritten-body)
               body-state)]
@@ -5371,10 +5353,7 @@
             [value : ast.AstExpr (spec-state-expr-get state value-box)]
             [value-templates : SpecTemplateEnv
               (spec-template-env-shadow-name templates index)]
-            (match (spec-rewrite-expr
-              (& start)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& start) templates state)
               [(Ok rewritten-start start-state)
                 (match (spec-rewrite-expr (& end) templates start-state)
                   [(Ok rewritten-end end-state)
@@ -5387,7 +5366,7 @@
                           [(Ok rewritten-value value-state)
                             (Ok
                               (ast.ast-expr-spmd-reduce-id-with-pools
-                                (spec-state-pools state)
+                                (spec-state-pools value-state)
                                 op
                                 index
                                 index-ty
@@ -5423,10 +5402,7 @@
               (spec-template-env-shadow-name templates index)]
             [body-templates : SpecTemplateEnv
               (spec-template-env-shadow-name value-templates prefix)]
-            (match (spec-rewrite-expr
-              (& start)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& start) templates state)
               [(Ok rewritten-start start-state)
                 (match (spec-rewrite-expr (& end) templates start-state)
                   [(Ok rewritten-end end-state)
@@ -5444,7 +5420,7 @@
                               [(Ok rewritten-body body-state)
                                 (Ok
                                   (ast.ast-expr-spmd-scan-id-with-pools
-                                    (spec-state-pools state)
+                                    (spec-state-pools body-state)
                                     op
                                     index
                                     index-ty
@@ -5483,10 +5459,7 @@
               (spec-template-env-shadow-name templates index)]
             [body-templates : SpecTemplateEnv
               (spec-template-env-shadow-name keep-templates slot)]
-            (match (spec-rewrite-expr
-              (& start)
-              templates
-              (spec-place-shared-view state))
+            (match (spec-rewrite-expr (& start) templates state)
               [(Ok rewritten-start start-state)
                 (match (spec-rewrite-expr (& end) templates start-state)
                   [(Ok rewritten-end end-state)
@@ -5504,7 +5477,7 @@
                               [(Ok rewritten-body body-state)
                                 (Ok
                                   (ast.ast-expr-spmd-compact-id-with-pools
-                                    (spec-state-pools state)
+                                    (spec-state-pools body-state)
                                     index
                                     index-ty
                                     rewritten-start

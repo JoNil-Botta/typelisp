@@ -2098,7 +2098,11 @@
               (& early)
               (& views)
               (- early-total 1))
-            (ast.ast-node-pool-context-expr-span-oracle-ok? early))]
+            ;; Every copy of a pool state shares the live node count (one
+            ;; cursor, so a stale copy appends instead of overwriting), so
+            ;; the early snapshot's oracle would read nodes past its own span
+            ;; records; the live pool's oracle is checked here instead.
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
         [snapshot : ast.AstNodePoolContext
           (ast.ast-node-pool-context-snapshot pools)]
         [mark : i64 (ast.ast-node-pool-context-expr-len pools)]

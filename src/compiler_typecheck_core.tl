@@ -8913,13 +8913,16 @@
                                     (& arms)
                                     index
                                     (ast.ast-match-arm-fallback))
-                                    [(ast.AstMatchArm.Arm _ body-id)
+                                    [(ast.AstMatchArm.Arm pattern body-id)
                                       (tc-selected-view-move-out-error
                                         ctx
                                         env
                                         body-id
                                         (tc-global-shared-view merged)
-                                        0)]))))
+                                        0
+                                        (tc-pattern-add-bound-name-ids
+                                          pattern
+                                          TcNameIdList.Nil))]))))
                             (set! index (+ index 1)))
                           (if (> (string.string-length (& move-out)) 0)
                             (TcSelectedResult.Err move-out after)
@@ -50961,7 +50964,8 @@
                             env
                             then-branch-id
                             (tc-global-shared-view then-ty)
-                            0)
+                            0
+                            TcNameIdList.Nil)
                           done)))
                     (when
                       (tc-selected-branch-move-out?
@@ -50976,7 +50980,8 @@
                             env
                             else-branch-id
                             (tc-global-shared-view else-ty)
-                            0)
+                            0
+                            TcNameIdList.Nil)
                           done)))
                     (tc-selected-publish-if
                       joined
@@ -62284,7 +62289,8 @@
           env
           init-id
           (tc-global-shared-view init-ty)
-          1)
+          1
+          TcNameIdList.Nil)
         sink)))
   (match init
     [(TcSelectedOccurrence.Unrepresented)
@@ -118448,29 +118454,76 @@
           (not (tc-type-copyable? ctx (tc-global-shared-view want))))]
       [_ false])))
 
+;; BOUND plus the names the `let`s bind on the way from `expr` to its value
+;; through `let` bodies and `begin` tails: names that may shadow the ones the
+;; value reads.
+(define (tc-selected-tail-let-bound-name-ids
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [bound : TcNameIdList]) : TcNameIdList
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body-box)
+          (tc-selected-tail-let-bound-name-ids
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body-box)
+            (tc-let-binding-list-add-bound-name-ids-at (& bindings) bound 0))])]
+    [(Begin items)
+      (if (> (ast.ast-expr-list-len (& items)) 0)
+        (tc-selected-tail-let-bound-name-ids
+          expr-bases
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get
+              (& items)
+              (- (ast.ast-expr-list-len (& items)) 1)
+              0))
+          bound)
+        bound)]
+    [_ bound]))
+
 ;; The move-out rejection for a view operand `expr-id` of type `ty` (see
 ;; `tc-selected-view-move-out?`). A view is read through a reference, so this
 ;; is always a move out of borrowed content (E0208, Rust E0507), worded as
 ;; typing words it (#8554) whatever holds the value; `context` is the use
-;; (`tc-selected-move-out-reference-help`).
+;; (`tc-selected-move-out-reference-help`). The reference's kind is looked up
+;; in `env`, so that wording is used only when the read's root name is not
+;; rebound inside the operand: by a `let` on the way to its value, or by
+;; `shadowing` (an arm's pattern binders). Otherwise the generic E0208 is
+;; reported.
 (define (tc-selected-view-move-out-error
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-id : i64]
   [ty : ast.AstType]
-  [context : i64]) : String
+  [context : i64]
+  [shadowing : TcNameIdList]) : String
   (let
     [help : String (tc-selected-move-out-reference-help context)]
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [rebound : TcNameIdList
+      (tc-selected-tail-let-bound-name-ids
+        expr-bases
+        (tc-context-expr-get ctx expr-id)
+        shadowing)]
+    [env-names-read? : bool
+      (match (tc-move-root-projection-var-id
+        expr-bases
+        (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id)))
+        [(TcMaybeNameId.Some name)
+          (not (tc-name-id-list-contains rebound name))]
+        [(TcMaybeNameId.No) true])]
     [moved : String
-      (tc-move-out-of-reference-error
-        ctx
-        (tc-context-expr-bases ctx)
-        env
-        (tc-body-tail-expr
-          (tc-context-expr-bases ctx)
-          (tc-context-expr-get ctx expr-id))
-        ty
-        (string.copy (& help)))]
+      (if env-names-read?
+        (tc-move-out-of-reference-error
+          ctx
+          expr-bases
+          env
+          (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id))
+          ty
+          (string.copy (& help)))
+        "")]
     (if (> (string.string-length (& moved)) 0)
       moved
       (let
@@ -118478,7 +118531,7 @@
           (tc-kind-message
             (cdiag.CompilerTypecheckKind.MoveViolation)
             "typecheck: cannot move non-Copy value through shared reference")]
-        (match (tc-expr-id-maybe-span (tc-context-expr-bases ctx) expr-id)
+        (match (tc-expr-id-maybe-span expr-bases expr-id)
           [(TcMaybeAstSourceSpan.Some span)
             (tc-rich-error-with-help span message help)]
           [(TcMaybeAstSourceSpan.No) message])))))
@@ -120599,11 +120652,9 @@
   [body : ast.AstExpr]
   [reason : String]) : String
   (let
-    ;; E0200, the code main gives a construct it does not implement: this is
-    ;; a limit of the checker, not a resource-ownership (E0211) finding.
     [message : String
       (tc-kind-message
-        (cdiag.CompilerTypecheckKind.Unclassified)
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
         "typecheck: the ownership checker does not support a construct in this function body")]
     (match (tc-expr-maybe-span (tc-context-expr-bases ctx) body)
       [(TcMaybeAstSourceSpan.Some span)
@@ -120863,7 +120914,8 @@
                       comparison-env
                       body-box
                       (tc-global-shared-view got)
-                      4))
+                      4
+                      TcNameIdList.Nil))
                   (match (tc-selected-prepare-named-body
                     ctx
                     name

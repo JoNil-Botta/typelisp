@@ -299,7 +299,7 @@
           (__tl_make-array SpannedSexpr new-cap)]
         [i : i64 0]
         (while (< i sp-builder-count)
-          (set! (array-ref new-slots i) (sp-builder-shared-view i))
+          (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
           (set! i (+ i 1)))
         (set! sp-builder-slots new-slots)))))
 
@@ -423,9 +423,9 @@
           (< sp-node-pool-slot-count end-slot)
           (set! sp-node-pool-slot-count end-slot))))))
 
-;; Reader nodes and builder rows live in the reader's arena-backed pools. These
-;; compatibility accessors expose immutable/shared views without transferring
-;; ownership out of their global storage.
+;; Reader nodes live in the reader's arena-backed segmented pool. This
+;; compatibility accessor exposes an immutable/shared view without transferring
+;; ownership out of its global storage.
 (define (sp-node-pool-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read
@@ -438,13 +438,6 @@
                 : (Ptr i64))
               (shr id sp-node-segment-bits)))
           : (Ptr SpannedSexpr))
-        id))))
-
-(define (sp-builder-shared-view [id : i64]) : SpannedSexpr
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (ptr-cast (__tl_array-data sp-builder-slots) : (Ptr SpannedSexpr))
         id))))
 
 (define (sp-node-get [id : i64]) : SpannedSexpr
@@ -561,7 +554,7 @@
               (set! slot (+ slot covered))
               (set! sp-node-pool-slot-count slot))))))
     (while (< index sp-builder-count)
-      (set! (array-ref next-builders index) (sp-builder-shared-view index))
+      (set! (array-ref next-builders index) (array-ref sp-builder-slots index))
       (set! index (+ index 1)))
     (set! sp-builder-slots next-builders)
     (set! sp-node-pool-base-arena transfer-arena)
@@ -657,7 +650,7 @@
     (while (< i len)
       (sp-node-pool-fill!
         (+ start i)
-        (sp-builder-shared-view (+ builder-start i)))
+        (array-ref sp-builder-slots (+ builder-start i)))
       (set! i (+ i 1)))
     (set! sp-node-pool-count (+ start len))
     (set! sp-builder-count builder-start)

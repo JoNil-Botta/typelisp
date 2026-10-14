@@ -442,6 +442,7 @@ make_array_zero|all|-|tests/integration/make_array_zero.tl|0|-|-|-|-
 mutable_reference_array|all|-|tests/integration/mutable_reference_array.tl|42|-|-|-|-
 mutable_reference_by_value_writeback|all|-|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-|-
 mutable_reference_by_value_writeback_growth|all|-|tests/integration/mutable_reference_by_value_writeback_growth.tl|42|-|-|-|-
+mut_borrow_narrow_writeback|all|0,1,2|tests/integration/mut_borrow_narrow_writeback.tl|42|-|-|-|-
 mutable_reference_disjoint_fields|all|-|tests/integration/mutable_reference_disjoint_fields.tl|42|-|-|-|-
 mutable_reference_disjoint_read|all|-|tests/safety/mutable_reference_read_disjoint_ok.tl|42|-|-|-|-
 enum_string_payload|all|-|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl|-

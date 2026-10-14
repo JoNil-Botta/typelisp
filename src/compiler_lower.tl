@@ -24902,16 +24902,19 @@
                             rest-writebacks)]
                         [(Err message) (Err message)])])]))])))))
 
+;; Reload the representation written to the call slot: scalar width and
+;; floating-point type must survive the temporary storage.
 (define (lower-apply-arg-writeback
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [writeback : LowerArgWriteback]) : LowerState
   (match writeback
     [(LowerArgWriteback.Writeback local-id storage referent-ty origin)
-      (match (lower-load-register-resident-from-ptr
+      (match (lower-load-inline-value-at-offset
         ctx
         state
         storage
+        0
         (lower-global-shared-view referent-ty))
         [(LowerExpr.Expr load-state loaded _)
           (lower-state-emit-at-expr
@@ -24921,10 +24924,11 @@
             origin)])]
     [(LowerArgWriteback.Cleanup value value-ty copied cleanup-symbol origin)
       (match (if copied
-        (lower-load-register-resident-from-ptr
+        (lower-load-inline-value-at-offset
           ctx
           state
           value
+          0
           (lower-global-shared-view value-ty))
         (LowerExpr.Expr state value value-ty))
         [(LowerExpr.Expr load-state current _)

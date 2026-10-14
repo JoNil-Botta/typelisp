@@ -7047,10 +7047,13 @@
 
 ;; Captured children determine the result's domain even when an unrelated
 ;; binding is the environment's most recently retained syntax value. Refresh
-;; only compatible state cells before appending, then publish the new cursor.
+;; only compatible state cells before appending, then publish the new cursor
+;; to both input contexts and the retained/active contexts in that domain.
 (define (ctfe-list-builder-publish-pools!
   [env : (& env CtfeEnv)]
-  [pools : ast.AstNodePoolContext]) : unit
+  [pools : ast.AstNodePoolContext]
+  [peer : ast.AstNodePoolContext]) : unit
+  (ast.ast-node-pool-context-adopt-newer! peer pools)
   (ctfe-env-adopt-captured-pools! env pools)
   (when
     (ast.ast-node-pool-has-active-context?)
@@ -7072,7 +7075,7 @@
     (ast.ast-node-pool-context-adopt-newer!
       tail
       (ast.ast-node-pool-context-active-live)))
-  (ctfe-list-builder-publish-pools! env tail)
+  (ctfe-list-builder-publish-pools! env tail head)
   tail)
 
 (define (ctfe-eval-expr-list-cons-call
@@ -7179,7 +7182,10 @@
                               owner
                               callee-node
                               (& call-args))]
-                          (ctfe-list-builder-publish-pools! (& env) owner)
+                          (ctfe-list-builder-publish-pools!
+                            (& env)
+                            owner
+                            callee-pools)
                           (Ok
                             (CapturedExpr node (ctfe-untyped-expr-type) owner)
                             args-fuel))

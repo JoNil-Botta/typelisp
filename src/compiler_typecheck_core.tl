@@ -116011,8 +116011,7 @@
           (tc-type-env-type-resolution-cache-state env)
           address))]
     (tc-chain-state-set! store (tc-chain-state-address env.store))
-    (set! env.store store)
-    env))
+    (TcTypeEnv store env.head env.abi-pad)))
 
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates

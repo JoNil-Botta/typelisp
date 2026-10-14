@@ -123022,10 +123022,10 @@
       (+= at 1))
     (= left 0)))
 
-;; The emitted and priced pipelines defer forwarding until a preserved call or
-;; store boundary. Substituting earlier can change inline admission and extend
-;; a global's live range. Analysis-only views may forward immediately; their
-;; bodies never replace the emitted or priced input.
+;; Before inlining, forwarding waits for a preserved call or store boundary.
+;; The final live pipeline can forward immediately under the completeness
+;; policy; the frozen priced pipeline omits this normalization. Analysis-only
+;; views may also forward immediately and never replace emitted input.
 (define (opt-global-snapshot-seq
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -129101,6 +129101,32 @@
 (define opt-pure-call-inline-memory-on : bool
   false)
 
+;; Removing a rematerialized capture must not delete unrelated definitions
+;; before the inline census, where even a dead function value is address-taken.
+(define (opt-global-snapshot-keep-instr
+  [cell : (& cell OptGlobalCellSummary)]
+  [uses : (& (__tl_dyn-array i64))]
+  [builder : ir.CompilerIrInstrBuilder]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstrBuilder
+  (unless
+    (and
+      (opt-global-snapshot-candidate? cell (& instr))
+      (not (opt-used-array-contains uses (ir.compiler-ir-instr-dst instr))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
+  builder)
+
+(define (opt-global-snapshot-prune-seq
+  [cell : (& cell OptGlobalCellSummary)]
+  [uses : (& (__tl_dyn-array i64))]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (ir.compiler-ir-instr-builder-to-seq
+    (opt-instrs-fold
+      instrs
+      (ir.compiler-ir-instr-builder-with-capacity instrs.len)
+      opt-global-snapshot-keep-instr
+      cell
+      uses)))
+
 (define (opt-global-snapshot-normalize-functions
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -129129,9 +129155,11 @@
               blocks
               opt-global-snapshot-candidate?
               (& summaries.global-cell))
-              (opt-dce-block-list-array
-                (& (opt-collect-blocks-uses-array frame (& blocks)))
-                (& blocks))
+              (opt-blocks-map-seq
+                blocks
+                opt-global-snapshot-prune-seq
+                (& summaries.global-cell)
+                (& (opt-collect-blocks-uses-array frame (& blocks))))
               blocks)))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
@@ -129149,7 +129177,7 @@
         (opt-function-index-capacity (opt-function-seq-count functions))))
     (set! opt-pure-call-inline-memory-on true)
     ;; Preserve forwarding across a read-only call before inlining removes its
-    ;; boundary. Keep the same deferred rule in the emitted and priced pipelines.
+    ;; boundary. Cleanup removes only dead captures before the inline census.
     (let
       [summaries (opt-program-summaries-empty)]
       (opt-global-snapshot-normalize-functions

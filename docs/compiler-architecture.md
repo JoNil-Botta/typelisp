@@ -1106,9 +1106,11 @@ block before a write barrier; otherwise the saved descriptor remains the one
 base for its loads. A forward scan uses the shared IR operand walker and the
 same write barriers to prove completeness. The frozen priced pipeline omits
 this live normalization, preserving the checked inliner's calibrated stages.
-Normalization builds private function slots and applies existing dead-code
-elimination only to bodies containing capture candidates. Borrowed input slots
-must never acquire replacement bodies from a shorter-lived arena.
+Normalization builds private function slots and removes only dead capture
+moves. Unrelated definitions remain intact before the inline census; pruning
+those definitions would make inline admission depend on whether the function
+also captured a global. Borrowed input slots must never acquire replacement
+bodies from a shorter-lived arena.
 
 Constant-length summary construction uses a private normalized view inside its
 existing scratch arena. That analysis may forward immediately to distinguish a

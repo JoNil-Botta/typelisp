@@ -62279,7 +62279,7 @@
       bases
       (opt.opt-function-name fixture)
       summaries
-      (opt.opt-function-params fixture)
+      (& (opt.opt-function-params fixture))
       (opt.opt-function-frame fixture)
       (opt.opt-function-blocks fixture))))
 
@@ -77018,3 +77018,20 @@
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
       "an addition cannot fault")))
+
+(test
+  global-snapshot-inline-census
+  (test.assert-true
+    (opt-snapshot-early-test-ok?
+      "entry:
+         %0 = mov fn@snapshot_reader : (-> i64)
+         %1 = mov @mr_a : i64
+         %2 = call snapshot_reader() : i64
+         %3 = add %1, %2 : i64
+         return %3"
+      "entry:
+         %0 = mov fn@snapshot_reader : (-> i64)
+         %2 = call snapshot_reader() : i64
+         %3 = add @mr_a, %2 : i64
+         return %3")
+    "snapshot cleanup leaves unrelated pre-inline definitions intact"))

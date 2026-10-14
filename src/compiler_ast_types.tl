@@ -2449,12 +2449,18 @@
   [pool : AstExprNodePoolState]
   [mark : i64]) : AstExprNodePoolState
   (if (= mark 0)
-    (begin
-      (set! pool.count mark)
-      (set! pool.canonical-span-count 0)
-      (set! pool.respan-count 0)
-      (set! pool.span-records-monotonic? true)
-      pool)
+    (AstExprNodePoolState
+      pool.segment-bases
+      mark
+      pool.base-arena
+      pool.storage-arena
+      pool.segment-count
+      pool.span-slot-segment-bases
+      pool.canonical-span-records
+      0
+      pool.respan-records
+      0
+      true)
     (if pool.span-records-monotonic?
       (let
         [id : i64 mark]
@@ -2505,11 +2511,18 @@
               : i64)
             mark))
           (-= respan-count 1))
-        (set! pool.count mark)
-        (set! pool.canonical-span-count canonical-count)
-        (set! pool.respan-count respan-count)
-        (set! pool.span-records-monotonic? true)
-        pool)
+        (AstExprNodePoolState
+          pool.segment-bases
+          mark
+          pool.base-arena
+          pool.storage-arena
+          pool.segment-count
+          pool.span-slot-segment-bases
+          pool.canonical-span-records
+          canonical-count
+          pool.respan-records
+          respan-count
+          true))
       (let
         [id : i64 mark]
         ;; A rare in-place rewrite can append an older record after newer
@@ -2545,9 +2558,18 @@
               unit)
             (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
             (+= id 1)))
-        (set! pool.count mark)
-        (set! pool.span-records-monotonic? false)
-        pool))))
+        (AstExprNodePoolState
+          pool.segment-bases
+          mark
+          pool.base-arena
+          pool.storage-arena
+          pool.segment-count
+          pool.span-slot-segment-bases
+          pool.canonical-span-records
+          pool.canonical-span-count
+          pool.respan-records
+          pool.respan-count
+          false)))))
 
 (define (ast-expr-node-pool-state-reset-to
   [pool : AstExprNodePoolState]

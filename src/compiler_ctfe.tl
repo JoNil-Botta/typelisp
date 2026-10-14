@@ -1435,9 +1435,7 @@
       (ctfe-env-arena-push!
         (&mut (__tl-box-place store))
         (CtfeEnvBinding name-id value ty env.head mutable-local))]
-    (set! env.head index)
-    (set! env.syntax-pools syntax-pools)
-    env))
+    (CtfeEnv env.arena-store index syntax-pools env.metadata env.macro-state)))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]

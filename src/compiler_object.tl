@@ -274,55 +274,50 @@
       (set! index (+ index 1)))))
 
 (define (compiler-object-data-record-builder-grow
-  [builder : (& CompilerObjectDataRecordBuilder)]) : CompilerObjectDataRecordBuilder
+  [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectDataRecord)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
+    [slots : (__tl_dyn-array CompilerObjectDataRecord) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectDataRecord)
       (__tl_make-array CompilerObjectDataRecord (* (array-length slots) 2))]
     (compiler-object-data-record-builder-copy-range! (&mut bigger) slots count)
     (CompilerObjectDataRecordBuilder bigger count)))
 
 (define (compiler-object-instr-builder-grow
-  [builder : (& CompilerObjectX64InstrBuilder)]) : CompilerObjectX64InstrBuilder
+  [builder : CompilerObjectX64InstrBuilder]) : CompilerObjectX64InstrBuilder
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectX64Instr)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
+    [slots : (__tl_dyn-array CompilerObjectX64Instr) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectX64Instr)
       (__tl_make-array CompilerObjectX64Instr (* (array-length slots) 2))]
     (compiler-object-instr-builder-copy-range! (&mut bigger) slots count)
     (CompilerObjectX64InstrBuilder bigger count)))
 
 (define (compiler-object-symbol-builder-grow
-  [builder : (& CompilerObjectSymbolBuilder)]) : CompilerObjectSymbolBuilder
+  [builder : CompilerObjectSymbolBuilder]) : CompilerObjectSymbolBuilder
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectSymbol)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
+    [slots : (__tl_dyn-array CompilerObjectSymbol) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSymbol)
       (__tl_make-array CompilerObjectSymbol (* (array-length slots) 2))]
     (compiler-object-symbol-builder-copy-range! (&mut bigger) slots count)
     (CompilerObjectSymbolBuilder bigger count)))
 
 (define (compiler-object-relocation-builder-grow
-  [builder : (& CompilerObjectRelocationBuilder)]) : CompilerObjectRelocationBuilder
+  [builder : CompilerObjectRelocationBuilder]) : CompilerObjectRelocationBuilder
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectRelocation)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
+    [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectRelocation)
       (__tl_make-array CompilerObjectRelocation (* (array-length slots) 2))]
     (compiler-object-relocation-builder-copy-range! (&mut bigger) slots count)
     (CompilerObjectRelocationBuilder bigger count)))
 
 (define (compiler-object-section-builder-grow
-  [builder : (& CompilerObjectSectionBuilder)]) : CompilerObjectSectionBuilder
+  [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionBuilder
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectSection)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
+    [slots : (__tl_dyn-array CompilerObjectSection) builder.slots]
     [bigger : (__tl_dyn-array CompilerObjectSection)
       (__tl_make-array CompilerObjectSection (* (array-length slots) 2))]
     (compiler-object-section-builder-copy-range! (&mut bigger) slots count)
@@ -338,7 +333,7 @@
       (set! (array-ref slots count) record)
       (CompilerObjectDataRecordBuilder slots (+ count 1)))
     (compiler-object-data-record-builder-push
-      (compiler-object-data-record-builder-grow (& builder))
+      (compiler-object-data-record-builder-grow builder)
       record)))
 
 (define (compiler-object-instr-builder-push
@@ -351,7 +346,7 @@
       (set! (array-ref slots count) instr)
       (CompilerObjectX64InstrBuilder slots (+ count 1)))
     (compiler-object-instr-builder-push
-      (compiler-object-instr-builder-grow (& builder))
+      (compiler-object-instr-builder-grow builder)
       instr)))
 
 (define (compiler-object-symbol-builder-push
@@ -364,7 +359,7 @@
       (set! (array-ref slots count) symbol)
       (CompilerObjectSymbolBuilder slots (+ count 1)))
     (compiler-object-symbol-builder-push
-      (compiler-object-symbol-builder-grow (& builder))
+      (compiler-object-symbol-builder-grow builder)
       symbol)))
 
 (define (compiler-object-relocation-builder-push
@@ -377,7 +372,7 @@
       (set! (array-ref slots count) reloc)
       (CompilerObjectRelocationBuilder slots (+ count 1)))
     (compiler-object-relocation-builder-push
-      (compiler-object-relocation-builder-grow (& builder))
+      (compiler-object-relocation-builder-grow builder)
       reloc)))
 
 (define (compiler-object-section-builder-push
@@ -390,7 +385,7 @@
       (set! (array-ref slots count) section)
       (CompilerObjectSectionBuilder slots (+ count 1)))
     (compiler-object-section-builder-push
-      (compiler-object-section-builder-grow (& builder))
+      (compiler-object-section-builder-grow builder)
       section)))
 
 (define (compiler-object-data-record-builder-finish
@@ -413,6 +408,16 @@
   [builder : CompilerObjectSectionBuilder]) : CompilerObjectSectionList
   (CompilerObjectSectionList builder.slots builder.count))
 
+;; Fresh empty lists: each section that has no records or instructions owns
+;; its own.
+(define (compiler-object-data-record-list-empty) : CompilerObjectDataRecordList
+  (compiler-object-data-record-builder-finish
+    (compiler-object-data-record-builder-with-capacity 1)))
+
+(define (compiler-object-instr-list-empty) : CompilerObjectX64InstrList
+  (compiler-object-instr-builder-finish
+    (compiler-object-instr-builder-with-capacity 1)))
+
 (define (compiler-object-symbol-builder-contains?
   [builder : (& CompilerObjectSymbolBuilder)]
   [name : (& name str)]
@@ -420,12 +425,10 @@
   [kind : CompilerObjectSymbolKind]) : bool
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectSymbol)
-      (owned_view.compiler-owned-reference-shared-view (& builder.slots))]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (array-ref slots index)
+      (match (& (array-ref builder.slots index))
         [(Symbol found-name found-binding found-kind _)
           (if (and
             (string.eq found-name name)
@@ -625,13 +628,13 @@
       (let
         [section : CompilerObjectSection
           (compiler-object-section-list-ref sections index)]
-        (match (owned_view.compiler-owned-shared-view section)
+        (if (match (& section)
           [(Section found-kind _ _)
-            (if (compiler-object-section-kind-eq? found-kind kind)
-              (begin
-                (set! result section)
-                (set! found true))
-              (set! index (+ index 1)))])))
+            (compiler-object-section-kind-eq? found-kind kind)])
+          (begin
+            (set! result section)
+            (set! found true))
+          (set! index (+ index 1)))))
     result))
 
 (define (compiler-object-symbol-list-contains?

@@ -739,7 +739,7 @@
   [name : String]) : i64
   (layout.compiler-object-layout-instr-label-offset-from
     (& (compiler-tlci-native-section-instrs image (Text)))
-    name
+    (& name)
     0))
 
 ;; Emit the layout's base fixups as a tlci fixups section: one u64 slot offset

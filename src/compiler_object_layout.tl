@@ -2,7 +2,6 @@
 ;; ELF and COFF object writers: little-endian byte pushers, section sizes and
 ;; label offsets, text instruction encodings and their rel32 fixups, and the
 ;; relocation-list checks both formats apply.
-(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -163,13 +162,15 @@
 ;; The rel32 fields of one text instruction and the symbols they target.
 ;; Each field is the instruction's last four bytes, except that Branch
 ;; (`test %rax; jnz true; jmp false`) has its jnz field at bytes 5..8.
+;; The targets are borrowed from the instruction.
 (defenum CompilerObjectLayoutFixup
+  (:lifetimes a)
   (None)
-  (One cobj.CompilerObjectRelocationKind String)
-  (Branch String String))
+  (One cobj.CompilerObjectRelocationKind (& a str))
+  (Branch (& a str) (& a str)))
 
 (define (compiler-object-layout-instr-fixup
-  [instr : cobj.CompilerObjectX64Instr]) : CompilerObjectLayoutFixup
+  [instr : (& a cobj.CompilerObjectX64Instr)]) : (CompilerObjectLayoutFixup a)
   (match instr
     [(Call target) (One (Call) target)]
     [(TailCall target) (One (TailCall) target)]
@@ -186,8 +187,7 @@
 
 (define (compiler-object-layout-instr-relocation-count
   [instr : (& cobj.CompilerObjectX64Instr)]) : i64
-  (match (compiler-object-layout-instr-fixup
-    (owned_view.compiler-owned-reference-shared-view instr))
+  (match (compiler-object-layout-instr-fixup instr)
     [(None) 0]
     [(One _ _) 1]
     [(Branch _ _) 2]))
@@ -281,7 +281,7 @@
 
 (define (compiler-object-layout-data-label-offset-from
   [records : (& records cobj.CompilerObjectDataRecordList)]
-  [label : String]
+  [label : (& str)]
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
@@ -311,7 +311,7 @@
 
 (define (compiler-object-layout-instr-label-offset-from
   [instrs : (& cobj.CompilerObjectX64InstrList)]
-  [label : String]
+  [label : (& str)]
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
@@ -340,24 +340,27 @@
 (define (compiler-object-layout-section-label-offset
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]
-  [label : String]) : i64
+  [label : (& str)]) : i64
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data instrs)
       (match kind
         [(Text)
-          (compiler-object-layout-instr-label-offset-from (& instrs) label 0)]
-        [_ (compiler-object-layout-data-label-offset-from data label 0)])]))
+          (compiler-object-layout-instr-label-offset-from
+            (& instrs)
+            (& label)
+            0)]
+        [_ (compiler-object-layout-data-label-offset-from data (& label) 0)])]))
 
 (define (compiler-object-layout-symbol-value
   [image : (& image cobj.CompilerObjectImage)]
-  [name : String]
+  [name : (& str)]
   [section : cobj.CompilerObjectMaybeSection]) : i64
   (match section
     [(No) 0]
     [(Some kind)
       (let
         [offset : i64
-          (compiler-object-layout-section-label-offset image kind name)]
+          (compiler-object-layout-section-label-offset image kind (& name))]
         (if (< offset 0)
           0
           offset))]))
@@ -386,21 +389,23 @@
         [index : i64 0]
         [ok : bool true]
         (while (and ok (< index count))
-          (set!
-            ok
-            (match (compiler-object-layout-instr-fixup
-              (cobj.compiler-object-instr-list-ref instrs index))
-              [(None) true]
-              [(One _ target)
-                (compiler-object-layout-symbol-known? image.symbols target)]
-              [(Branch true-target false-target)
-                (and
-                  (compiler-object-layout-symbol-known?
-                    image.symbols
-                    true-target)
-                  (compiler-object-layout-symbol-known?
-                    image.symbols
-                    false-target))]))
+          (let
+            [instr : cobj.CompilerObjectX64Instr
+              (cobj.compiler-object-instr-list-ref instrs index)]
+            (set!
+              ok
+              (match (compiler-object-layout-instr-fixup (& instr))
+                [(None) true]
+                [(One _ target)
+                  (compiler-object-layout-symbol-known? image.symbols target)]
+                [(Branch true-target false-target)
+                  (and
+                    (compiler-object-layout-symbol-known?
+                      image.symbols
+                      true-target)
+                    (compiler-object-layout-symbol-known?
+                      image.symbols
+                      false-target))])))
           (set! index (+ index 1)))
         ok)]))
 

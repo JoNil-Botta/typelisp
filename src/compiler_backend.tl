@@ -77851,10 +77851,9 @@ tl_shared_object_init:
               (RipAddress)
               (RipValue))
             (compiler-backend-global-shared-view symbol))
-          (&
-            (if inline?
-              (LoadRipAddress symbol)
-              (LoadRip symbol)))))]
+          (if inline?
+            (LoadRipAddress symbol)
+            (LoadRip symbol))))]
     [(GlobalAddr name)
       (let
         [symbol : String
@@ -77867,7 +77866,7 @@ tl_shared_object_init:
             site
             (RipAddress)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRipAddress symbol))))]
+          (LoadRipAddress symbol)))]
     [(String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
@@ -77877,7 +77876,7 @@ tl_shared_object_init:
             site
             (RipAddress)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRipAddress symbol))))]
+          (LoadRipAddress symbol)))]
     [(Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -77887,7 +77886,7 @@ tl_shared_object_init:
             site
             (RipAddress)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRipAddress symbol))))]
+          (LoadRipAddress symbol)))]
     [(F64 bits)
       (let
         [symbol : String (compiler-backend-f64-label bits)]
@@ -77897,7 +77896,7 @@ tl_shared_object_init:
             site
             (RipValue)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRip symbol))))]
+          (LoadRip symbol)))]
     [(Function name)
       (let
         [symbol : String
@@ -77909,7 +77908,7 @@ tl_shared_object_init:
             site
             (RipAddress)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRipAddress symbol))))]
+          (LoadRipAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-value-ref-with-type
@@ -77928,7 +77927,7 @@ tl_shared_object_init:
             site
             (RipValue)
             (compiler-backend-global-shared-view symbol))
-          (& (LoadRip symbol))))]
+          (LoadRip symbol)))]
     [_ (compiler-backend-object-value-ref parts site value program-index)]))
 
 (define (compiler-backend-object-value-seq-ref-from
@@ -77989,14 +77988,14 @@ tl_shared_object_init:
   [bytes : String]) : object_target.CompilerBackendObjectTargetParts
   (if (= (string.string-length bytes) 0)
     parts
-    (object_target.compiler-backend-object-add-text parts (& (Bytes bytes)))))
+    (object_target.compiler-backend-object-add-text parts (Bytes bytes))))
 
 (define (compiler-backend-object-add-machine
   [parts : object_target.CompilerBackendObjectTargetParts]
   [instr : mx.MachineInstr]) : object_target.CompilerBackendObjectTargetParts
   (object_target.compiler-backend-object-add-text
     parts
-    (& (Machine (mx.compiler-machine-x64-checked instr)))))
+    (Machine (mx.compiler-machine-x64-checked instr))))
 
 ;; `movq $value, %reg` in its sign-extending imm32 form.
 (define (compiler-backend-object-add-mov-imm32
@@ -78684,11 +78683,11 @@ tl_shared_object_init:
               (object_target.compiler-backend-object-add-rodata-relocation
                 (object_target.compiler-backend-object-add-rodata
                   parts
-                  (& (Label (compiler-backend-global-shared-view entry-label))))
+                  (Label (compiler-backend-global-shared-view entry-label)))
                 entry-label
                 (Abs64)
                 (compiler-backend-global-shared-view target))
-              (& (SymbolAddress target)))
+              (SymbolAddress target))
             label-scope
             table-label
             cases
@@ -78712,8 +78711,8 @@ tl_shared_object_init:
             (compiler-backend-global-shared-view table-label)
             (Rodata)
             (Data))
-          (& (Align 8)))
-        (& (Label (compiler-backend-global-shared-view table-label))))
+          (Align 8))
+        (Label (compiler-backend-global-shared-view table-label)))
       label-scope
       table-label
       cases
@@ -78749,15 +78748,13 @@ tl_shared_object_init:
         with-index
         (object_target.compiler-backend-object-add-text
           with-index
-          (& (Bytes (compiler-backend-object-sub-imm32-rax-bytes base)))))]
+          (Bytes (compiler-backend-object-sub-imm32-rax-bytes base))))]
     [with-cmp : object_target.CompilerBackendObjectTargetParts
       (if total-switch
         with-base
         (object_target.compiler-backend-object-add-text
           with-base
-          (&
-            (Bytes
-              (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1))))))]
+          (Bytes (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1)))))]
     [with-ja : object_target.CompilerBackendObjectTargetParts
       (if total-switch
         with-cmp
@@ -78767,7 +78764,7 @@ tl_shared_object_init:
             (compiler-backend-global-shared-view function-symbol)
             (Branch)
             (compiler-backend-global-shared-view default-symbol))
-          (& (Ja default-symbol))))]
+          (Ja default-symbol)))]
     [with-table : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         (object_target.compiler-backend-object-add-text-relocation
@@ -78775,10 +78772,10 @@ tl_shared_object_init:
           function-symbol
           (RipAddress)
           (compiler-backend-global-shared-view table-label))
-        (& (LoadRipAddressR11 table-label)))]
+        (LoadRipAddressR11 table-label))]
     (object_target.compiler-backend-object-add-text
       with-table
-      (& (Bytes (compiler-backend-object-switch-indirect-jump-bytes))))))
+      (Bytes (compiler-backend-object-switch-indirect-jump-bytes)))))
 
 (define (compiler-backend-object-switch
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -79095,7 +79092,7 @@ tl_shared_object_init:
           site
           (Call)
           (compiler-backend-global-shared-view symbol))
-        (& (Call symbol)))
+        (Call symbol))
       (compiler-backend-object-add-rsp-bytes space))))
 
 (define (compiler-backend-object-param-spills-from
@@ -79513,7 +79510,7 @@ tl_shared_object_init:
       site
       (Branch)
       (compiler-backend-global-shared-view symbol))
-    (& (Jcc cc symbol))))
+    (Jcc cc symbol)))
 
 ;; A jump to `label`'s block, left out when that block is emitted next.
 (define (compiler-backend-object-jump
@@ -79532,7 +79529,7 @@ tl_shared_object_init:
         site
         (Branch)
         (compiler-backend-global-shared-view symbol))
-      (& (Jump symbol)))))
+      (Jump symbol))))
 
 (define (compiler-backend-object-instr
   [type-segment-bases : i64]
@@ -79598,11 +79595,10 @@ tl_shared_object_init:
               (if (compiler-backend-f64-type? ty)
                 (compiler-backend-f64-sign-bit-label)
                 (compiler-backend-f32-sign-bit-label))
-              (&
-                (XorpdRip
-                  (if (compiler-backend-f64-type? ty)
-                    (compiler-backend-f64-sign-bit-label)
-                    (compiler-backend-f32-sign-bit-label)))))
+              (XorpdRip
+                (if (compiler-backend-f64-type? ty)
+                  (compiler-backend-f64-sign-bit-label)
+                  (compiler-backend-f32-sign-bit-label))))
             dst
             "%rax")
           (compiler-backend-object-store-reg-to-var
@@ -79652,7 +79648,7 @@ tl_shared_object_init:
                 callee
                 "%r11"
                 program-index)
-              (& (Bytes (compiler-backend-object-call-r11-bytes))))
+              (Bytes (compiler-backend-object-call-r11-bytes)))
             (compiler-backend-object-add-rsp-bytes space))
           dst
           "%rax"))]
@@ -79692,7 +79688,7 @@ tl_shared_object_init:
             (compiler-backend-global-shared-view function)
             (TailCall)
             (compiler-backend-global-shared-view call-target))
-          (& (TailCall call-target))))]
+          (TailCall call-target)))]
     [(Store name value ty)
       (let
         [symbol : String
@@ -79718,7 +79714,7 @@ tl_shared_object_init:
                 function
                 (RipAddress)
                 (compiler-backend-global-shared-view symbol))
-              (& (LoadRipAddressR11 symbol)))
+              (LoadRipAddressR11 symbol))
             (compiler-backend-object-inline-aggregate-copy-bytes inline-size))
           (object_target.compiler-backend-object-add-text
             (object_target.compiler-backend-object-add-text-relocation
@@ -79732,7 +79728,7 @@ tl_shared_object_init:
               (compiler-backend-global-shared-view function)
               (RipAddress)
               (compiler-backend-global-shared-view symbol))
-            (& (StoreRip symbol)))))]
+            (StoreRip symbol))))]
     [(Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
@@ -79811,7 +79807,7 @@ tl_shared_object_init:
                 (compiler-backend-global-shared-view function)
                 (Branch)
                 (compiler-backend-global-shared-view false-symbol))
-              (& (Branch true-symbol false-symbol)))
+              (Branch true-symbol false-symbol))
             (let
               [tested : object_target.CompilerBackendObjectTargetParts
                 (compiler-backend-object-branch-test
@@ -79874,7 +79870,7 @@ tl_shared_object_init:
                     (compiler-backend-global-shared-view true-edge)
                     (Text)
                     (Function))
-                  (& (Label true-edge)))
+                  (Label true-edge))
                 (compiler-backend-global-shared-view function)
                 true-copies
                 program-index)]
@@ -79893,7 +79889,7 @@ tl_shared_object_init:
                     (compiler-backend-global-shared-view false-edge)
                     (Text)
                     (Function))
-                  (& (Label false-edge)))
+                  (Label false-edge))
                 (compiler-backend-global-shared-view function)
                 false-copies
                 program-index)
@@ -80238,7 +80234,7 @@ tl_shared_object_init:
                   (compiler-backend-global-shared-view block-label)
                   (Text)
                   (Function))
-                (& (Label block-label)))
+                (Label block-label))
               target
               (compiler-backend-global-shared-view function-symbol)
               (compiler-backend-global-shared-view label-scope)
@@ -80332,7 +80328,7 @@ tl_shared_object_init:
                       (compiler-backend-global-shared-view symbol)
                       (Text)
                       (Function))
-                    (& (Label (compiler-backend-global-shared-view symbol))))
+                    (Label (compiler-backend-global-shared-view symbol)))
                   (compiler-backend-object-prologue-bytes
                     target
                     (compiler-backend-frame-size
@@ -80368,24 +80364,23 @@ tl_shared_object_init:
   [value : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match value
-    [(I64 n) (object_target.compiler-backend-object-add-data parts (& (I64 n)))]
+    [(I64 n) (object_target.compiler-backend-object-add-data parts (I64 n))]
     [(Bool b)
       (object_target.compiler-backend-object-add-data
         parts
-        (&
-          (I64
-            (if b
-              1
-              0))))]
+        (I64
+          (if b
+            1
+            0)))]
     [(Char c)
       (object_target.compiler-backend-object-add-data
         parts
-        (& (I64 (compiler-backend-char-code c))))]
-    [(Unit) (object_target.compiler-backend-object-add-data parts (& (I64 0)))]
+        (I64 (compiler-backend-char-code c)))]
+    [(Unit) (object_target.compiler-backend-object-add-data parts (I64 0))]
     [(F64 bits)
       (object_target.compiler-backend-object-add-data
         parts
-        (& (compiler-backend-float-object-data ty bits)))]
+        (compiler-backend-float-object-data ty bits))]
     [(String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
@@ -80395,7 +80390,7 @@ tl_shared_object_init:
             site
             (Abs64)
             (compiler-backend-global-shared-view symbol))
-          (& (SymbolAddress symbol))))]
+          (SymbolAddress symbol)))]
     [(Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -80405,7 +80400,7 @@ tl_shared_object_init:
             site
             (Abs64)
             (compiler-backend-global-shared-view symbol))
-          (& (SymbolAddress symbol))))]
+          (SymbolAddress symbol)))]
     [(or (Global name) (GlobalAddr name))
       (let
         [symbol : String
@@ -80418,7 +80413,7 @@ tl_shared_object_init:
             site
             (Abs64)
             (compiler-backend-global-shared-view symbol))
-          (& (SymbolAddress symbol))))]
+          (SymbolAddress symbol)))]
     [(Function name)
       (let
         [symbol : String
@@ -80430,7 +80425,7 @@ tl_shared_object_init:
             site
             (Abs64)
             (compiler-backend-global-shared-view symbol))
-          (& (SymbolAddress symbol))))]
+          (SymbolAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-globals-from
@@ -80457,18 +80452,17 @@ tl_shared_object_init:
                     (compiler-backend-global-shared-view symbol)
                     (Bss)
                     (Data))
-                  (& (Label symbol)))
+                  (Label symbol))
                 ;; IAG-1: an inline aggregate global reserves the aggregate.
-                (&
-                  (Zero
-                    (let
-                      [inline-size : i64
-                        (compiler-backend-inline-aggregate-global-size
-                          program-index.backend-state
-                          name)]
-                      (if (> inline-size 0)
-                        inline-size
-                        8)))))
+                (Zero
+                  (let
+                    [inline-size : i64
+                      (compiler-backend-inline-aggregate-global-size
+                        program-index.backend-state
+                        name)]
+                    (if (> inline-size 0)
+                      inline-size
+                      8))))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
                   (object_target.compiler-backend-object-symbol-export-section
@@ -80476,7 +80470,7 @@ tl_shared_object_init:
                     (compiler-backend-global-shared-view symbol)
                     (Data)
                     (Data))
-                  (& (Label (compiler-backend-global-shared-view symbol))))
+                  (Label (compiler-backend-global-shared-view symbol)))
                 symbol
                 ty
                 value
@@ -80518,20 +80512,19 @@ tl_shared_object_init:
                           (compiler-backend-global-shared-view data-symbol)
                           (Rodata)
                           (Data))
-                        (&
-                          (Label
-                            (compiler-backend-global-shared-view data-symbol))))
-                      (& (String (compiler-backend-global-shared-view text))))
+                        (Label
+                          (compiler-backend-global-shared-view data-symbol)))
+                      (String (compiler-backend-global-shared-view text)))
                     (compiler-backend-global-shared-view fat-symbol)
                     (Rodata)
                     (Data))
-                  (& (Align 8)))
+                  (Align 8))
                 (compiler-backend-global-shared-view fat-symbol)
                 (Abs64)
                 (compiler-backend-global-shared-view data-symbol))
-              (& (Label fat-symbol)))
-            (& (SymbolAddress data-symbol)))
-          (& (I64 (string.string-length text))))
+              (Label fat-symbol))
+            (SymbolAddress data-symbol))
+          (I64 (string.string-length text)))
         strings
         (+ index 1)))))
 
@@ -80564,21 +80557,18 @@ tl_shared_object_init:
                           (compiler-backend-global-shared-view fat-symbol)
                           (Data)
                           (Data))
-                        (& (Align 8)))
-                      (&
-                        (Label
-                          (compiler-backend-global-shared-view data-symbol))))
-                    (&
-                      (if (= (string.string-length bytes) 0)
-                        (Zero 1)
-                        (Bytes (compiler-backend-global-shared-view bytes)))))
+                        (Align 8))
+                      (Label (compiler-backend-global-shared-view data-symbol)))
+                    (if (= (string.string-length bytes) 0)
+                      (Zero 1)
+                      (Bytes (compiler-backend-global-shared-view bytes))))
                   (compiler-backend-global-shared-view fat-symbol)
                   (Abs64)
                   (compiler-backend-global-shared-view data-symbol))
-                (& (Align 8)))
-              (& (Label fat-symbol)))
-            (& (SymbolAddress data-symbol)))
-          (& (I64 (string.string-length bytes))))
+                (Align 8))
+              (Label fat-symbol))
+            (SymbolAddress data-symbol))
+          (I64 (string.string-length bytes)))
         items
         (+ index 1)))))
 
@@ -80597,13 +80587,12 @@ tl_shared_object_init:
             (compiler-backend-global-shared-view symbol)
             (Rodata)
             (Data))
-          (&
-            (Align
-              (if (compiler-backend-f64-type? ty)
-                8
-                4))))
-        (& (Label symbol)))
-      (& (compiler-backend-float-object-data ty bits)))))
+          (Align
+            (if (compiler-backend-f64-type? ty)
+              8
+              4)))
+        (Label symbol))
+      (compiler-backend-float-object-data ty bits))))
 
 (define (compiler-backend-object-floats
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -80637,10 +80626,10 @@ tl_shared_object_init:
                 (compiler-backend-global-shared-view symbol)
                 (Rodata)
                 (Data))
-              (& (Align 16)))
-            (& (Label symbol)))
-          (& (I64 -9223372036854775808)))
-        (& (I64 0))))
+              (Align 16))
+            (Label symbol))
+          (I64 -9223372036854775808))
+        (I64 0)))
     parts))
 
 (define (compiler-backend-object-f32-sign-bit
@@ -80658,10 +80647,10 @@ tl_shared_object_init:
                 (compiler-backend-global-shared-view symbol)
                 (Rodata)
                 (Data))
-              (& (Align 16)))
-            (& (Label symbol)))
-          (& (I64 2147483648)))
-        (& (I64 0))))
+              (Align 16))
+            (Label symbol))
+          (I64 2147483648))
+        (I64 0)))
     parts))
 
 (define (compiler-backend-object-closure-descriptors
@@ -80696,13 +80685,13 @@ tl_shared_object_init:
                         (compiler-backend-global-shared-view entry)
                         (Text)
                         (Function))
-                      (& (Align 8)))
-                    (& (Label (compiler-backend-global-shared-view descriptor))))
+                      (Align 8))
+                    (Label (compiler-backend-global-shared-view descriptor)))
                   descriptor
                   (Abs64)
                   (compiler-backend-global-shared-view entry))
-                (& (SymbolAddress entry)))
-              (& (I64 0)))]
+                (SymbolAddress entry))
+              (I64 0))]
           [(No) parts])
         names
         (+ index 1)

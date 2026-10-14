@@ -7735,7 +7735,7 @@
         (compiler-ir-call-args-array-render (& values) 0))]))
 
 (define (compiler-ir-call-args-count [args : (& CompilerIrCallArgs)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view args)
+  (match args
     [(Nil) 0]
     [(One _) 1]
     [(Two _ _) 2]

@@ -105446,16 +105446,29 @@
 
 ;; Return-to-mov cloning rewrites the callee return into a Mov of the returned
 ;; value into the call's destination. That reproduces the call boundary exactly
-;; for the non-owning scalars -- integers, Bool, Char, and Unit. Each is a
-;; single-register value the Mov carries under its own declared type, and none
-;; of them owns storage, so retiring the boundary retires nothing else with it.
+;; for the non-owning scalars -- integers, Bool, Char, and Unit -- and for
+;; references, shared or mutable. Each is a single-register value the Mov
+;; carries under its own declared type, and none of them owns storage, so
+;; retiring the boundary retires nothing else with it. A reference is the
+;; address the body computed (a Gep off a parameter, typically), and the region
+;; it carries is a typechecker fact the optimizer never reads, so the Mov keeps
+;; it exactly as the Return did.
+;;
+;; References matter here because the element accessor of every sequence type
+;; is this exact shape: `(& (array-ref seq.slots i))` is a bounds check, a few
+;; loads and a Gep, returning `(& T)`. Its by-value twin returns an aggregate
+;; and stays out of this path, so without the reference arm a by-reference
+;; accessor would keep its call boundary at every non-constant site (the
+;; generic path refuses has-bounds callees there) while the copy it replaced
+;; was being inlined.
+;;
 ;; Owned String and aggregate results stay out of this path; their call boundary
 ;; carries cleanup semantics that the bounds-leaf expansion does not reproduce.
 (define (opt-inline-bounds-leaf-return-type? [ty : (& ast.AstType)]) : bool
   (if (opt-integer-type? ty)
     true
     (match ty
-      [(or (Unit) (Bool) (Char)) true]
+      [(or (Unit) (Bool) (Char) (Ref _ _) (MutRef _ _)) true]
       [_ false])))
 
 (define (opt-inline-bounds-leaf-ok?
@@ -114544,9 +114557,11 @@
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (if (>= pos count)
-    ;; The copy of `instrs` keeps this an ordinary call. As a tail call its
-    ;; stack-argument marshalling writes %rdi before it moves `instrs` out of
-    ;; %rdi into %r8 (a backend bug, reported separately).
+    ;; The copy of `instrs` keeps this an ordinary call. As a tail call, a
+    ;; stage0 without the parallel tail-call marshalling
+    ;; (`compiler-backend-emit-direct-tail-call-args-parallel`) writes %rdi
+    ;; before it moves `instrs` out of %rdi into %r8. Drop the copy once stage0
+    ;; carries that fix.
     (opt-inline-rewrite-single-block-seq-with-spans
       block-label
       head-label

@@ -2128,11 +2128,7 @@
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(DefStruct _ _ repr _ _)
-            (tuple
-              (ast.ast-struct-repr-declared-align repr)
-              (ast.ast-struct-repr-field-declared-align repr field))]
-          [(DefStructLifetimes _ _ _ repr _ _)
+          [(or (DefStruct _ _ repr _ _) (DefStructLifetimes _ _ _ repr _ _))
             (tuple
               (ast.ast-struct-repr-declared-align repr)
               (ast.ast-struct-repr-field-declared-align repr field))]
@@ -4333,6 +4329,243 @@
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
     ok))
 
+(define (compiler-parse-origin-lookup-alias-source-ok?
+  [domain : i64]
+  [key : i64]
+  [slot : i64]
+  [source-key : i64]
+  [source-slot : i64]) : bool
+  (let
+    [found : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup domain key slot)]
+    (and
+      (= found.kind 2)
+      (= found.source-key source-key)
+      (= found.source-slot source-slot))))
+
+;; Alias records stay runs (#8855): a lookup takes the latest of the slot's
+;; direct record and the newest run covering it, domain 1 skips repeat runs,
+;; and a chain longer than the walk limit answers through its segment index,
+;; also after runs are added to an indexed key.
+(define (compiler-parse-origin-lookup-alias-run-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 2 500 3 3 10 1 10 9)
+  (parser.compiler-parse-origin-alias-insert! 600 10 5 500 0 false)
+  (let
+    [plain : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 13 500 3)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 600 13 500 3))]
+    [_repeat : unit
+      (parser.compiler-parse-origin-alias-insert! 600 12 2 700 4 true)]
+    [repeat : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 13 700 4)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 600 13 500 3))]
+    [_direct-after : unit
+      (parser.compiler-parse-semantic-origin-lookup-insert!
+        2
+        600
+        14
+        3
+        20
+        1
+        20
+        5)]
+    [_direct-before : unit
+      (parser.compiler-parse-semantic-origin-lookup-insert! 2 800 1 3 1 1 1 2)]
+    [_alias-after : unit
+      (parser.compiler-parse-origin-alias-insert! 800 0 3 900 7 false)]
+    [latest : bool
+      (and
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 14).kind 3)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 14).run-start 20)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 12 700 4)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 800 1 900 8)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 15).kind 0)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 9).kind 0))]
+    [_long-chain : unit
+      (begin
+        (for [index (iterator.range 0 40)]
+          (parser.compiler-parse-origin-alias-insert!
+            1000
+            (* index 2)
+            2
+            (+ 2000 index)
+            0
+            false))
+        (parser.compiler-parse-origin-alias-insert! 1000 3 4 3000 0 false))]
+    [indexed : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 0 2000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 5 3000 2)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 7 2003 1)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 1000 80).kind 0))]
+    [_newer : unit
+      (parser.compiler-parse-origin-alias-insert! 1000 79 1 4000 0 true)]
+    [newer : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 79 4000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1))]
+    [_reindex : unit
+      (for [index (iterator.range 0 20)]
+        (parser.compiler-parse-origin-alias-insert!
+          1000
+          (+ 100 index)
+          1
+          (+ 5000 index)
+          0
+          false))]
+    [reindexed : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 110 5010 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 79 4000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 5 3000 2)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 1000 99).kind 0))]
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    (and plain repeat latest indexed newer reindexed)))
+
+(define (compiler-parse-origin-reindex-storage-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [ok : bool true]
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (parser.compiler-parse-origin-alias-insert!
+          (+ 100 key)
+          index
+          1
+          (+ 200 index)
+          key
+          false)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-parse-origin-lookup-alias-source-ok?
+              2
+              (+ 100 key)
+              index
+              (+ 200 index)
+              key)))))
+    ;; Interleaved keys must keep each other's ranges while rebuilding into a
+    ;; temporary tail. Retained ranges grow geometrically, not per lookup.
+    (set! ok (and ok (< parser.compiler-parse-origin-segment-len 16000)))
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (for [domain (iterator.range 1 3)]
+          (set!
+            ok
+            (and
+              ok
+              (compiler-parse-origin-lookup-alias-source-ok?
+                domain
+                (+ 100 key)
+                index
+                (+ 200 index)
+                key))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    (set!
+      ok
+      (and ok (= (parser.compiler-parse-semantic-origin-lookup 2 100 0).kind 0)))
+    (parser.compiler-parse-origin-alias-insert! 100 0 1 9000 7 false)
+    (set!
+      ok
+      (and ok (compiler-parse-origin-lookup-alias-source-ok? 2 100 0 9000 7)))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
+(define (compiler-parse-origin-lookup-model-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [kinds : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [sources : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [positions : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [ok : bool true]
+    ;; The oracle expands each alias into slots. Production keeps ranges;
+    ;; compare their answers across overlaps, gaps, domains and rebuilds.
+    (for [step (iterator.range 0 512)]
+      (let
+        [key : i64 (% step 4)]
+        [start : i64 (% (* step 17) 32)]
+        [width : i64 (+ (% step 7) 1)]
+        [count : i64
+          (if (> (+ start width) 32)
+            (- 32 start)
+            width)]
+        [repeat : bool (= (% step 5) 0)]
+        (if (= (% step 3) 0)
+          (let
+            [domain : i64 (+ (% step 2) 1)]
+            [kind : i64
+              (if (= domain 1)
+                1
+                3)]
+            [index : i64 (+ (* (- domain 1) 128) (* key 32) start)]
+            (parser.compiler-parse-semantic-origin-lookup-insert!
+              domain
+              (+ 100 key)
+              start
+              kind
+              step
+              1
+              0
+              0)
+            (set! (array-ref kinds index) kind)
+            (set! (array-ref sources index) 0)
+            (set! (array-ref positions index) step))
+          (begin
+            (parser.compiler-parse-origin-alias-insert!
+              (+ 100 key)
+              start
+              count
+              (+ 9000 step)
+              (* step 2)
+              repeat)
+            (for [domain (iterator.range 1 3)]
+              (unless
+                (and (= domain 1) repeat)
+                (for [offset (iterator.range 0 count)]
+                  (let
+                    [index : i64
+                      (+ (* (- domain 1) 128) (* key 32) start offset)]
+                    (set! (array-ref kinds index) 2)
+                    (set! (array-ref sources index) (+ 9000 step))
+                    (set!
+                      (array-ref positions index)
+                      (+
+                        (* step 2)
+                        (if repeat
+                          0
+                          offset)))))))))
+        (when
+          (= (% step 8) 7)
+          (for [domain (iterator.range 1 3)]
+            (for [key (iterator.range 0 4)]
+              (for [slot (iterator.range 0 32)]
+                (let
+                  [index : i64 (+ (* (- domain 1) 128) (* key 32) slot)]
+                  [found : parser.CompilerParseSemanticOriginLookupSlot
+                    (parser.compiler-parse-semantic-origin-lookup
+                      domain
+                      (+ 100 key)
+                      slot)]
+                  (set!
+                    ok
+                    (and
+                      ok
+                      (= found.kind (array-ref kinds index))
+                      (= found.source-key (array-ref sources index))
+                      (=
+                        (if (= found.kind 2)
+                          found.source-slot
+                          found.run-start)
+                        (array-ref positions index)))))))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source
     "(import stdlib.test)
@@ -4364,6 +4597,9 @@
         (compiler-parse-module-body-ok?)
         (compiler-parse-module-body-malformed-ok?)
         (compiler-parse-origin-lookup-cache-tests-ok?)
+        (compiler-parse-origin-lookup-alias-run-tests-ok?)
+        (compiler-parse-origin-reindex-storage-tests-ok?)
+        (compiler-parse-origin-lookup-model-tests-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)

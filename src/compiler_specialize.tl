@@ -2926,13 +2926,13 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& ast.AstMaybeType)]
   [b : (& ast.AstMaybeType)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(No)
       (match b
         [(No) true]
         [_ false])]
     [(Some a-ty)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Some b-ty) (ctfe.ctfe-type-eq-in-env env a-ty b-ty)]
         [_ false])]))
 
@@ -2953,9 +2953,9 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& ast.AstParam)]
   [b : (& ast.AstParam)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(Param a-name a-ty a-comptime)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Param b-name b-ty b-comptime)
           (and
             (= a-name b-name)
@@ -2995,15 +2995,15 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& ast.AstMacroParam)]
   [b : (& ast.AstMacroParam)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(Param a-name a-ty a-variadic a-type-kinds)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Param b-name b-ty b-variadic b-type-kinds)
           (and
             (= a-name b-name)
             (ctfe.ctfe-type-eq-in-env env a-ty b-ty)
             (= a-variadic b-variadic)
-            (ast.ast-macro-type-kind-list-eq? (& a-type-kinds) (& b-type-kinds)))])]))
+            (ast.ast-macro-type-kind-list-eq? a-type-kinds b-type-kinds))])]))
 
 (define (gen-macro-param-list-eq-at-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3040,9 +3040,9 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& ast.AstFieldDef)]
   [b : (& ast.AstFieldDef)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(Def a-name a-ty a-cleanup)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Def b-name b-ty b-cleanup)
           (and
             (spec_ci.intern-syntax-id-eq? a-name b-name)
@@ -3156,15 +3156,15 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& ast.AstDecl)]
   [b : (& ast.AstDecl)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(Def _ a-name a-ty a-value-box)
       (let
         [a-value : ast.AstExpr (spec-owner-expr-get owner a-value-box)]
-        (match (owned_view.compiler-owned-reference-shared-view b)
+        (match b
           [(Def _ b-name b-ty b-value-box)
             (and
               (= a-name b-name)
-              (gen-maybe-type-eq-with-owner owner env (& a-ty) (& b-ty))
+              (gen-maybe-type-eq-with-owner owner env a-ty b-ty)
               (gen-expr-eq-with-owner
                 owner
                 env
@@ -3172,62 +3172,50 @@
                 (& (spec-owner-expr-get owner b-value-box))))]
           [_ false]))]
     [(DefFn _ a-name a-params a-ret a-body-box a-metadata)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefFn _ b-name b-params b-ret b-body-box b-metadata)
           (and
             (= a-name b-name)
-            (gen-param-list-eq-with-owner owner env (& a-params) (& b-params))
+            (gen-param-list-eq-with-owner owner env a-params b-params)
             (ctfe.ctfe-type-eq-in-env env a-ret b-ret)
             (gen-expr-eq-with-owner
               owner
               env
               (& (spec-owner-expr-get owner a-body-box))
               (& (spec-owner-expr-get owner b-body-box)))
-            (gen-fn-metadata-eq-with-owner
-              owner
-              env
-              (& a-metadata)
-              (& b-metadata)))]
+            (gen-fn-metadata-eq-with-owner owner env a-metadata b-metadata))]
         [_ false])]
     [(DefEnum a-meta a-name a-cleanup a-variants)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefEnum b-meta b-name b-cleanup b-variants)
           (and
-            (gen-aggregate-markers-eq? (& a-meta) (& b-meta))
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
-            (gen-variant-list-eq-with-owner
-              owner
-              env
-              (& a-variants)
-              (& b-variants)))]
+            (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
     [(DefEnumLifetimes a-meta a-name a-lifetimes a-cleanup a-variants)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefEnumLifetimes b-meta b-name b-lifetimes b-cleanup b-variants)
           (and
-            (gen-aggregate-markers-eq? (& a-meta) (& b-meta))
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
+            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
-            (gen-variant-list-eq-with-owner
-              owner
-              env
-              (& a-variants)
-              (& b-variants)))]
+            (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
     [(DefStruct a-meta a-name a-repr a-cleanup a-fields)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefStruct b-meta b-name b-repr b-cleanup b-fields)
           (and
-            (gen-aggregate-markers-eq? (& a-meta) (& b-meta))
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (gen-struct-repr-eq? (& a-repr) (& b-repr))
+            (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
-            (gen-field-list-eq-with-owner owner env (& a-fields) (& b-fields)))]
+            (gen-field-list-eq-with-owner owner env a-fields b-fields))]
         [_ false])]
     [(DefStructLifetimes a-meta a-name a-lifetimes a-repr a-cleanup a-fields)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefStructLifetimes
             b-meta
             b-name
@@ -3236,23 +3224,19 @@
             b-cleanup
             b-fields)
           (and
-            (gen-aggregate-markers-eq? (& a-meta) (& b-meta))
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
-            (gen-struct-repr-eq? (& a-repr) (& b-repr))
+            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
-            (gen-field-list-eq-with-owner owner env (& a-fields) (& b-fields)))]
+            (gen-field-list-eq-with-owner owner env a-fields b-fields))]
         [_ false])]
     [(DefMacro _ a-name a-params a-ret a-body-box)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(DefMacro _ b-name b-params b-ret b-body-box)
           (and
             (= a-name b-name)
-            (gen-macro-param-list-eq-with-owner
-              owner
-              env
-              (& a-params)
-              (& b-params))
+            (gen-macro-param-list-eq-with-owner owner env a-params b-params)
             (ctfe.ctfe-type-eq-in-env env a-ret b-ret)
             (gen-expr-eq-with-owner
               owner
@@ -3261,31 +3245,31 @@
               (& (spec-owner-expr-get owner b-body-box))))]
         [_ false])]
     [(Import _ a-spec)
-      (match (owned_view.compiler-owned-reference-shared-view b)
-        [(Import _ b-spec) (gen-import-spec-eq? (& a-spec) (& b-spec))]
+      (match b
+        [(Import _ b-spec) (gen-import-spec-eq? a-spec b-spec)]
         [_ false])]
     [(IncludeStr a-name a-path)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(IncludeStr b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(IncludeStrComptime a-name a-path)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(IncludeStrComptime b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(IncludeStrLzss a-name a-path)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(IncludeStrLzss b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(IncludeBin a-name a-path)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(IncludeBin b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(Test a-name a-body-box a-metadata _)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Test b-name b-body-box b-metadata _)
           (and
             (= a-name b-name)
@@ -3301,7 +3285,7 @@
         [(Module b-name) (= a-name b-name)]
         [_ false])]
     [(ModuleBody a-name a-body-box)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(ModuleBody b-name b-body-box)
           (and
             (= a-name b-name)
@@ -3312,7 +3296,7 @@
               (& (deref b-body-box))))]
         [_ false])]
     [(Unsafe a-inner-box)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Unsafe b-inner-box)
           (gen-decl-eq-with-owner
             owner
@@ -3920,101 +3904,68 @@
     [env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
     (cbi.compiler-builtin-refresh!)
     (match value
-      [(I64 _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (I64))]
-      [(F64 _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (F64))]
-      [(F32 _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (F32))]
-      [(Bool _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Bool))]
-      [(Char _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Char))]
+      [(I64 _) (ctfe.ctfe-type-eq-in-env env ty (& (I64)))]
+      [(F64 _) (ctfe.ctfe-type-eq-in-env env ty (& (F64)))]
+      [(F32 _) (ctfe.ctfe-type-eq-in-env env ty (& (F32)))]
+      [(Bool _) (ctfe.ctfe-type-eq-in-env env ty (& (Bool)))]
+      [(Char _) (ctfe.ctfe-type-eq-in-env env ty (& (Char)))]
       [(or (String _ _) (Name _ _))
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (String))]
-      [(Unit)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Unit))]
+        (ctfe.ctfe-type-eq-in-env env ty (& (String)))]
+      [(Unit) (ctfe.ctfe-type-eq-in-env env ty (& (Unit)))]
       [(or (Expr _ _) (CapturedExpr _ _ _))
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Expr))]
+        (ctfe.ctfe-type-eq-in-env env ty (& (Expr)))]
       [(or (ExprList _) (CapturedExprList _ _))
-        (ctfe.ctfe-type-eq-in-env
-          env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (ExprList))]
+        (ctfe.ctfe-type-eq-in-env env ty (& (ExprList)))]
       [(or (ExprClause _) (CapturedExprClause _ _))
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-ExprClause))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-ExprClause)))]
       [(or (ExprClauseList _) (CapturedExprClauseList _ _))
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-ExprClauseList)))]
       [(ExprBindingClause _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-ExprBindingClause)))]
       [(ExprBindingClauseList _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList)))]
       [(Pattern _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-Pattern))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-Pattern)))]
       [(PatternList _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-PatternList))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-PatternList)))]
       [(MatchArm _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-MatchArm))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-MatchArm)))]
       [(MatchArmList _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-MatchArmList))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-MatchArmList)))]
       [(LetBinding _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-LetBinding))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-LetBinding)))]
       [(LetBindingList _)
         (ctfe.ctfe-type-eq-in-env
           env
-          (owned_view.compiler-owned-reference-shared-view ty)
-          (Var cbi.compiler-builtin-id-fix-LetBindingList))]
+          ty
+          (& (Var cbi.compiler-builtin-id-fix-LetBindingList)))]
       [(or (Type _) (TypeInfo _) (TypeInfoBox _) (TypeInfoList _)
            (TypeField _ _) (TypeFieldList _) (TypeVariantPayload _)
            (TypeVariantPayloadList _) (TypeVariant _ _) (TypeVariantList _))

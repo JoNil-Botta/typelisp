@@ -3275,23 +3275,8 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(Eq)
-      (Ok
-        (Bool
-          (ctfe-type-eq-in-env
-            env
-            (owned_view.compiler-owned-reference-shared-view a)
-            (owned_view.compiler-owned-reference-shared-view b)))
-        fuel)]
-    [(Ne)
-      (Ok
-        (Bool
-          (not
-            (ctfe-type-eq-in-env
-              env
-              (owned_view.compiler-owned-reference-shared-view a)
-              (owned_view.compiler-owned-reference-shared-view b))))
-        fuel)]
+    [(Eq) (Ok (Bool (ctfe-type-eq-in-env env a b)) fuel)]
+    [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env a b))) fuel)]
     [_
       (Err
         (box
@@ -3388,8 +3373,8 @@
       (match (owned_view.compiler-owned-reference-shared-view rv)
         [(Type b)
           (match op
-            [(Eq) (Ok (Bool (ctfe-type-eq-in-env env a b)) fuel)]
-            [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env a b))) fuel)]
+            [(Eq) (Ok (Bool (ctfe-type-eq-in-env env (& a) (& b))) fuel)]
+            [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env (& a) (& b)))) fuel)]
             [_
               (Err
                 (box
@@ -3414,7 +3399,7 @@
                       env
                       (& (ctfe-ast-get env a))
                       (& (ctfe-ast-get env b)))
-                    (ctfe-type-eq-in-env env a-ty b-ty)))
+                    (ctfe-type-eq-in-env env (& a-ty) (& b-ty))))
                 fuel)]
             [(Ne)
               (Ok
@@ -3425,7 +3410,7 @@
                         env
                         (& (ctfe-ast-get env a))
                         (& (ctfe-ast-get env b)))
-                      (ctfe-type-eq-in-env env a-ty b-ty))))
+                      (ctfe-type-eq-in-env env (& a-ty) (& b-ty)))))
                 fuel)]
             [_
               (Err
@@ -6649,9 +6634,12 @@
                   (and
                     (ctfe-type-eq-in-env
                       env
-                      (ctfe-ty-get env inner)
-                      expected-type)
-                    (ctfe-type-eq-in-env env (ctfe-ty-get env ret) (String)))]
+                      (& (ctfe-ty-get env inner))
+                      (& expected-type))
+                    (ctfe-type-eq-in-env
+                      env
+                      (& (ctfe-ty-get env ret))
+                      (& (String))))]
                 [_ false]))
             false))]
       [_ false])))
@@ -7935,8 +7923,8 @@
   (or
     (ctfe-type-eq-in-env
       env
-      (clone (owned_view.compiler-owned-reference-shared-view ty))
-      (Bool))
+      (& (clone (owned_view.compiler-owned-reference-shared-view ty)))
+      (& (Bool)))
     (ctfe-untyped-expr-type? ty)))
 
 (define (ctfe-expr-if-branch-types-compatible?
@@ -7946,8 +7934,8 @@
   (or
     (ctfe-type-eq-in-env
       env
-      (clone (owned_view.compiler-owned-reference-shared-view then-ty))
-      (clone (owned_view.compiler-owned-reference-shared-view else-ty)))
+      (& (clone (owned_view.compiler-owned-reference-shared-view then-ty)))
+      (& (clone (owned_view.compiler-owned-reference-shared-view else-ty))))
     (ctfe-untyped-expr-type? then-ty)
     (ctfe-untyped-expr-type? else-ty)))
 
@@ -7955,10 +7943,7 @@
   [env : (& env CtfeEnv)]
   [then-ty : ast.AstType]
   [else-ty : (& ast.AstType)]) : ast.AstType
-  (if (ctfe-type-eq-in-env
-    env
-    (clone then-ty)
-    (owned_view.compiler-owned-reference-shared-view else-ty))
+  (if (ctfe-type-eq-in-env env (& (clone then-ty)) else-ty)
     then-ty
     (ctfe-untyped-expr-type)))
 
@@ -13799,60 +13784,43 @@
   [env : (& env CtfeEnv)]
   [a : (& ast.AstMaybeType)]
   [b : (& ast.AstMaybeType)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(No)
       (match b
         [(No) true]
         [_ false])]
     [(Some a-ty)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Some b-ty) (ctfe-type-eq-in-env env a-ty b-ty)]
         [_ false])]))
 
 (define (ctfe-pattern-eq-in-env
   [env : CtfeEnv]
-  [a : ast.AstPattern]
-  [b : ast.AstPattern]) : bool
+  [a : (& ast.AstPattern)]
+  [b : (& ast.AstPattern)]) : bool
   (match a
     [(Var a-name a-ty)
       (match b
         [(Var b-name b-ty)
-          (and
-            (= a-name b-name)
-            (ctfe-maybe-type-eq-in-env env (& a-ty) (& b-ty)))]
+          (and (= a-name b-name) (ctfe-maybe-type-eq-in-env env a-ty b-ty))]
         [_ false])]
     [(Tuple a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Tuple b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(Tuple b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(Array a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Array b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(Array b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(Slice a-items-box a-rest)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Slice b-items-box b-rest)
-            (and
-              (= a-rest b-rest)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]
+      (match b
+        [(Slice b-items-box b-rest)
+          (and
+            (= a-rest b-rest)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]
     [(Wildcard)
       (match b
         [(Wildcard) true]
@@ -13862,57 +13830,34 @@
         [(Binding b-name) (= a-name b-name)]
         [_ false])]
     [(Variant a-name a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Variant b-name b-items-box)
-            (and
-              (= a-name b-name)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]
+      (match b
+        [(Variant b-name b-items-box)
+          (and
+            (= a-name b-name)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]
     [(Literal a-lit)
       (match b
         [(Literal b-lit)
-          (ctfe-literal-eq
-            (ctfe-env-structural-session (& env))
-            (& a-lit)
-            (& b-lit))]
+          (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
         [_ false])]
     [(ast.AstPattern.Or a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Or b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(ast.AstPattern.Or b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(ast.AstPattern.Fields a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Fields b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(ast.AstPattern.Fields b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(ast.AstPattern.Field a-name a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Field b-name b-items-box)
-            (and
-              (= a-name b-name)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]))
+      (match b
+        [(ast.AstPattern.Field b-name b-items-box)
+          (and
+            (= a-name b-name)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]))
 
 (define (ctfe-pattern-list-eq-in-env
   [env : CtfeEnv]
@@ -13928,8 +13873,8 @@
     (unless
       (ctfe-pattern-eq-in-env
         env
-        (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback))
-        (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback)))
+        (& (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback)))
+        (& (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback))))
       (return false))
     unit)
   true)
@@ -13957,13 +13902,13 @@
   (ctfe-expr-eq-in-env env (& (ctfe-ast-get env a)) (& (ctfe-ast-get env b))))
 
 (define (ctfe-type-id-eq-in-env [env : CtfeEnv] [a : i64] [b : i64]) : bool
-  (ctfe-type-eq-in-env env (ctfe-ty-get env a) (ctfe-ty-get env b)))
+  (ctfe-type-eq-in-env env (& (ctfe-ty-get env a)) (& (ctfe-ty-get env b))))
 
 (define (ctfe-literal-eq-in-env
   [env : CtfeEnv]
-  [a : ast.AstLiteral]
-  [b : ast.AstLiteral]) : bool
-  (ctfe-literal-eq (ctfe-env-structural-session (& env)) (& a) (& b)))
+  [a : (& ast.AstLiteral)]
+  [b : (& ast.AstLiteral)]) : bool
+  (ctfe-literal-eq (ctfe-env-structural-session (& env)) a b))
 
 (define (ctfe-expr-eq-in-env
   [env : CtfeEnv]
@@ -14313,9 +14258,9 @@
 
 (define (ctfe-type-eq-in-env
   [env : (& env CtfeEnv)]
-  [a : ast.AstType]
-  [b : ast.AstType]) : bool
-  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) (& a) (& b)))
+  [a : (& ast.AstType)]
+  [b : (& ast.AstType)]) : bool
+  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) a b))
 
 (define (ctfe-type-list-eq [a : (& ast.AstTypeList)] [b : (& ast.AstTypeList)]) : bool
   (let
@@ -14325,7 +14270,4 @@
 (define (ctfe-type-eq [a : (& ast.AstType)] [b : (& ast.AstType)]) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    (ctfe-type-eq-in-env
-      env
-      (owned_view.compiler-owned-reference-shared-view a)
-      (owned_view.compiler-owned-reference-shared-view b))))
+    (ctfe-type-eq-in-env env a b)))

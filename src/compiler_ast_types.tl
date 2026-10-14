@@ -7730,7 +7730,7 @@
         [_ false])]
     [(AstMaybeType.Some a)
       (match ,right
-        [(AstMaybeType.Some b) (,on-type ,@contexts a b)]
+        [(AstMaybeType.Some b) (,on-type ,@contexts (& a) (& b))]
         [_ false])]))
 
 (defmacro (ast-expr-list-eq?
@@ -7823,7 +7823,7 @@
                 same
                 (and
                   (= a-name b-name)
-                  (,on-type ,@contexts a-ty b-ty)
+                  (,on-type ,@contexts (& a-ty) (& b-ty))
                   (= a-comptime b-comptime)))])])
       (set! index (+ index 1)))
     same))
@@ -7848,7 +7848,7 @@
               (set!
                 same
                 (and
-                  (,on-pattern ,@contexts a-pattern b-pattern)
+                  (,on-pattern ,@contexts (& a-pattern) (& b-pattern))
                   (,on-expr ,@contexts a-body b-body)))])])
       (set! index (+ index 1)))
     same))
@@ -7910,7 +7910,7 @@
           [_ false])]
       [(AstExpr.Literal a0)
         (match ,r
-          [(AstExpr.Literal b0) (,on-literal ,@x a0 b0)]
+          [(AstExpr.Literal b0) (,on-literal ,@x (& a0) (& b0))]
           [_ false])]
       [(AstExpr.Var a0)
         (match ,r
@@ -8058,7 +8058,7 @@
                   [(AstForeach.Foreach n1 t1 b0 b1 b2)
                     (and
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2))]
@@ -8072,8 +8072,8 @@
                     (and
                       (= m0 m1)
                       (= n0 n1)
-                      (,ty ,@x u0 u1)
-                      (,ty ,@x v0 v1)
+                      (,ty ,@x (& u0) (& u1))
+                      (,ty ,@x (& v0) (& v1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2)
@@ -8091,7 +8091,7 @@
                     (and
                       (= op0 op1)
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2)
@@ -8107,11 +8107,11 @@
                     (and
                       (= op0 op1)
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (= p0 p1)
-                      (,ty ,@x u0 u1)
+                      (,ty ,@x (& u0) (& u1))
                       (,e ,@x a2 b2)
                       (,e ,@x a3 b3)
                       (,e ,@x a4 b4))])]
@@ -8125,11 +8125,11 @@
                   [(AstSpmdCompact.Compact n1 t1 b0 b1 p1 u1 b2 b3 b4)
                     (and
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (= p0 p1)
-                      (,ty ,@x u0 u1)
+                      (,ty ,@x (& u0) (& u1))
                       (,e ,@x a2 b2)
                       (,e ,@x a3 b3)
                       (,e ,@x a4 b4))])]

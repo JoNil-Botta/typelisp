@@ -3064,7 +3064,9 @@
       (= live.storage-arena active.storage-arena)
       (= live.segment-count active.segment-count)
       (= live.span-slot-segment-bases active.span-slot-segment-bases)
+      (= live.canonical-span-records active.canonical-span-records)
       (= live.canonical-span-count active.canonical-span-count)
+      (= live.respan-records active.respan-records)
       (= live.respan-count active.respan-count)
       (=
         (ast.ast-expr-span-table-capacity live.canonical-span-records)

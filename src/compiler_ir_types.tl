@@ -9735,7 +9735,7 @@
     (compiler-source-spans-lookup-instr-location spans function instr)))
 
 (define (compiler-source-spans-count [spans : (& CompilerSourceSpans)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view spans)
+  (match spans
     [(Spans entries _ _) (compiler-source-spans-entry-list-count entries)]))
 
 (define (compiler-source-spans-instr-count [spans : (& CompilerSourceSpans)]) : i64
@@ -9875,7 +9875,7 @@
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : (& CompilerIrInstr)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Phi _ inputs _) (compiler-ir-phi-input-seq-count inputs)]
     [_ 0]))
 
@@ -9915,7 +9915,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (+
             (if (= (compiler-ir-instr-seq-count instrs) 0)
@@ -9928,7 +9928,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (compiler-ir-max-i64
             (compiler-ir-instr-seq-count instrs)
@@ -10121,7 +10121,7 @@
       true)))
 
 (define (compiler-ir-function-block-count [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _) (compiler-ir-block-list-count blocks)]))
 
 (define (compiler-ir-function-instruction-count [func : (& CompilerIrFunction)]) : i64
@@ -10130,7 +10130,7 @@
       (compiler-ir-block-list-instruction-count (& blocks))]))
 
 (define (compiler-ir-function-empty-block-count [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-empty-count (compiler-ir-block-list-view blocks))]))
 
@@ -10142,19 +10142,19 @@
 
 (define (compiler-ir-function-max-block-instruction-count
   [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-max-instruction-count
         (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-call-arg-count [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-call-arg-count
         (compiler-ir-block-list-view blocks))]))
 
 (define (compiler-ir-function-phi-input-count [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-phi-input-count
         (compiler-ir-block-list-view blocks))]))

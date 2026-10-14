@@ -90,7 +90,9 @@
           (match kind
             [(or (Pdata) (Xdata) (Rsrc)) (set! ok false)]
             [_
-              (if (layout.compiler-object-layout-instrs-encodable? instrs true)
+              (if (layout.compiler-object-layout-instrs-encodable?
+                (& instrs)
+                true)
                 (set! index (+ index 1))
                 (set! ok false))])]))
     ok))
@@ -98,7 +100,7 @@
 ;; `SymbolRva32` is a PE image-relative address with no ELF counterpart; the
 ;; shared layout would otherwise serialize it as a silent zero (#7732).
 (define (compiler-object-elf-data-record-supported?
-  [record : cobj.CompilerObjectDataRecord]) : bool
+  [record : (& cobj.CompilerObjectDataRecord)]) : bool
   (match record
     [(SymbolRva32 _) false]
     [_ true]))
@@ -121,9 +123,10 @@
               (set!
                 ok
                 (compiler-object-elf-data-record-supported?
-                  (cobj.compiler-object-data-record-list-ref
-                    (& records)
-                    record-index)))
+                  (&
+                    (cobj.compiler-object-data-record-list-ref
+                      (& records)
+                      record-index))))
               (set! record-index (+ record-index 1)))
             (set! index (+ index 1)))]))
     ok))
@@ -291,7 +294,7 @@
 
 (define (compiler-object-elf-push-shstrtab-name!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [name : String]) : unit
+  [name : (& str)]) : unit
   (layout.compiler-object-layout-push-string-bytes! out name)
   (layout.compiler-object-layout-push-u8! out 0))
 
@@ -495,8 +498,8 @@
 (define (compiler-object-elf-render-relocation!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [reloc : cobj.CompilerObjectRelocation]) : unit
-  (match reloc
+  [reloc : (& cobj.CompilerObjectRelocation)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view reloc)
     [(Relocation section site kind target)
       (compiler-object-elf-render-relocation-record!
         out
@@ -520,10 +523,7 @@
               (cobj.compiler-object-instr-list-ref instrs index)]
             (set!
               end
-              (+
-                end
-                (layout.compiler-object-layout-instr-size
-                  (owned_view.compiler-owned-shared-view instr))))
+              (+ end (layout.compiler-object-layout-instr-size (& instr))))
             (match (layout.compiler-object-layout-instr-fixup instr)
               [(None) unit]
               [(One kind target)
@@ -561,10 +561,10 @@
       (let
         [reloc : cobj.CompilerObjectRelocation
           (cobj.compiler-object-relocation-list-ref relocs index)]
-        (match (owned_view.compiler-owned-shared-view reloc)
+        (match (& reloc)
           [(Relocation section _ _ _)
             (if (cobj.compiler-object-section-kind-eq? section kind)
-              (compiler-object-elf-render-relocation! out image reloc)
+              (compiler-object-elf-render-relocation! out image (& reloc))
               unit)])
         (set! index (+ index 1))))
     unit))
@@ -656,8 +656,8 @@
 (define (compiler-object-elf-render-symbol!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [symbol : cobj.CompilerObjectSymbol]) : unit
-  (match symbol
+  [symbol : (& cobj.CompilerObjectSymbol)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view symbol)
     [(Symbol name binding kind section)
       (layout.compiler-object-layout-push-u32!
         out
@@ -686,12 +686,12 @@
       (let
         [symbol : cobj.CompilerObjectSymbol
           (cobj.compiler-object-symbol-list-ref symbols index)]
-        (match (owned_view.compiler-owned-shared-view symbol)
+        (match (& symbol)
           [(Symbol _ binding _ _)
             (if (=
               (compiler-object-elf-symbol-binding-local? binding)
               want-local)
-              (compiler-object-elf-render-symbol! out image symbol)
+              (compiler-object-elf-render-symbol! out image (& symbol))
               unit)])
         (set! index (+ index 1))))
     unit))
@@ -1397,7 +1397,7 @@
 (cfg
   test
   (define (compiler-object-elf-rodata-record-image
-    [record : cobj.CompilerObjectDataRecord]) : cobj.CompilerObjectImage
+    [record : (& cobj.CompilerObjectDataRecord)]) : cobj.CompilerObjectImage
     (let
       [empty-data : cobj.CompilerObjectDataRecordList
         (cobj.compiler-object-data-record-builder-finish
@@ -1418,7 +1418,9 @@
           rodata0
           (Label "_tl_table"))]
       [rodata2 : cobj.CompilerObjectDataRecordBuilder
-        (cobj.compiler-object-data-record-builder-push rodata1 record)]
+        (cobj.compiler-object-data-record-builder-push
+          rodata1
+          (owned_view.compiler-owned-reference-shared-view record))]
       [sections0 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-with-capacity 4)]
       [sections1 : cobj.CompilerObjectSectionBuilder
@@ -1466,9 +1468,9 @@
   (define (compiler-object-elf-rva32-rejected-ok?) : bool
     (let
       [rva : cobj.CompilerObjectImage
-        (compiler-object-elf-rodata-record-image (SymbolRva32 "_tl_cell"))]
+        (compiler-object-elf-rodata-record-image (& (SymbolRva32 "_tl_cell")))]
       [control : cobj.CompilerObjectImage
-        (compiler-object-elf-rodata-record-image (SymbolAddress "_tl_cell"))]
+        (compiler-object-elf-rodata-record-image (& (SymbolAddress "_tl_cell")))]
       (and
         (not (compiler-object-elf-image-supported? rva))
         (match (compiler-object-elf-render rva)

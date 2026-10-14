@@ -33,9 +33,11 @@
 
 (define (compiler-backend-object-add-text
   [parts : CompilerBackendObjectTargetParts]
-  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectTargetParts
+  [instr : (& cobj.CompilerObjectX64Instr)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
-    (cobj.compiler-object-instr-builder-push parts.text instr)
+    (cobj.compiler-object-instr-builder-push
+      parts.text
+      (owned_view.compiler-owned-reference-shared-view instr))
     parts.data
     parts.rodata
     parts.bss
@@ -46,10 +48,12 @@
 
 (define (compiler-backend-object-add-data
   [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
+  [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
     parts.text
-    (cobj.compiler-object-data-record-builder-push parts.data record)
+    (cobj.compiler-object-data-record-builder-push
+      parts.data
+      (owned_view.compiler-owned-reference-shared-view record))
     parts.rodata
     parts.bss
     parts.pdata
@@ -59,11 +63,13 @@
 
 (define (compiler-backend-object-add-rodata
   [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
+  [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
     parts.text
     parts.data
-    (cobj.compiler-object-data-record-builder-push parts.rodata record)
+    (cobj.compiler-object-data-record-builder-push
+      parts.rodata
+      (owned_view.compiler-owned-reference-shared-view record))
     parts.bss
     parts.pdata
     parts.xdata
@@ -72,12 +78,14 @@
 
 (define (compiler-backend-object-add-bss
   [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
+  [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
     parts.text
     parts.data
     parts.rodata
-    (cobj.compiler-object-data-record-builder-push parts.bss record)
+    (cobj.compiler-object-data-record-builder-push
+      parts.bss
+      (owned_view.compiler-owned-reference-shared-view record))
     parts.pdata
     parts.xdata
     parts.symbols
@@ -85,27 +93,31 @@
 
 (define (compiler-backend-object-add-pdata
   [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
+  [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
     parts.text
     parts.data
     parts.rodata
     parts.bss
-    (cobj.compiler-object-data-record-builder-push parts.pdata record)
+    (cobj.compiler-object-data-record-builder-push
+      parts.pdata
+      (owned_view.compiler-owned-reference-shared-view record))
     parts.xdata
     parts.symbols
     parts.relocations))
 
 (define (compiler-backend-object-add-xdata
   [parts : CompilerBackendObjectTargetParts]
-  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectTargetParts
+  [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
   (CompilerBackendObjectTargetParts
     parts.text
     parts.data
     parts.rodata
     parts.bss
     parts.pdata
-    (cobj.compiler-object-data-record-builder-push parts.xdata record)
+    (cobj.compiler-object-data-record-builder-push
+      parts.xdata
+      (owned_view.compiler-owned-reference-shared-view record))
     parts.symbols
     parts.relocations))
 
@@ -170,15 +182,12 @@
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
-    parts.symbols
+    (& parts.symbols)
     name
     (Extern)
     kind)
     parts
-    (compiler-backend-object-symbol-extern
-      (owned_view.compiler-owned-shared-view parts)
-      name
-      kind)))
+    (compiler-backend-object-symbol-extern parts name kind)))
 
 (define (compiler-backend-object-add-text-relocation
   [parts : CompilerBackendObjectTargetParts]
@@ -208,7 +217,7 @@
   [target : String]) : CompilerBackendObjectTargetParts
   (compiler-backend-object-add-relocation parts (Pdata) site kind target))
 
-(define (compiler-backend-object-bytes-from-hex [hex : String]) : String
+(define (compiler-backend-object-bytes-from-hex [hex : (& str)]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (layout.compiler-object-layout-push-hex! (&mut out) hex)
@@ -219,7 +228,7 @@
   [bytes : String]) : CompilerBackendObjectTargetParts
   (compiler-backend-object-add-text
     parts
-    (cobj.CompilerObjectX64Instr.Bytes bytes)))
+    (& (cobj.CompilerObjectX64Instr.Bytes bytes))))
 
 (define (compiler-backend-object-add-call-instr
   [parts : CompilerBackendObjectTargetParts]
@@ -231,14 +240,14 @@
       site
       (Call)
       (owned_view.compiler-owned-shared-view target))
-    (cobj.CompilerObjectX64Instr.Call target)))
+    (& (cobj.CompilerObjectX64Instr.Call target))))
 
 (define (compiler-backend-object-add-rip-instr
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]
-  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectTargetParts
+  [instr : (& cobj.CompilerObjectX64Instr)]) : CompilerBackendObjectTargetParts
   (compiler-backend-object-add-text
     (compiler-backend-object-add-text-relocation parts site kind target)
     instr))
@@ -260,13 +269,13 @@
       (compiler-backend-object-add-text-bytes
         (compiler-backend-object-add-text
           parts
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+          (& (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry")))
         entry-bytes)]
     (if macro-entry
       (compiler-backend-object-add-text-bytes
         (compiler-backend-object-add-text
           with-image-entry
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+          (& (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry")))
         macro-entry-bytes)
       with-image-entry)))
 
@@ -279,7 +288,7 @@
     (cobj.compiler-object-instr-builder-with-capacity 1)))
 
 (define (compiler-backend-object-base-sections
-  [parts : CompilerBackendObjectTargetParts]
+  [parts : (& CompilerBackendObjectTargetParts)]
   [capacity : i64]) : cobj.CompilerObjectSectionBuilder
   (let
     [empty-data : cobj.CompilerObjectDataRecordList
@@ -294,32 +303,38 @@
         (Section
           (Text)
           empty-data
-          (cobj.compiler-object-instr-builder-finish parts.text)))]
+          (cobj.compiler-object-instr-builder-finish
+            (owned_view.compiler-owned-reference-shared-view (& parts.text)))))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
         (Section
           (Data)
-          (cobj.compiler-object-data-record-builder-finish parts.data)
+          (cobj.compiler-object-data-record-builder-finish
+            (owned_view.compiler-owned-reference-shared-view (& parts.data)))
           (owned_view.compiler-owned-shared-view empty-instrs)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (Section
           (Rodata)
-          (cobj.compiler-object-data-record-builder-finish parts.rodata)
+          (cobj.compiler-object-data-record-builder-finish
+            (owned_view.compiler-owned-reference-shared-view (& parts.rodata)))
           (owned_view.compiler-owned-shared-view empty-instrs)))]
     (cobj.compiler-object-section-builder-push
       sections3
       (Section
         (Bss)
-        (cobj.compiler-object-data-record-builder-finish parts.bss)
+        (cobj.compiler-object-data-record-builder-finish
+          (owned_view.compiler-owned-reference-shared-view (& parts.bss)))
         empty-instrs))))
 
 (define (compiler-backend-object-base-symbols
-  [parts : CompilerBackendObjectTargetParts]) : cobj.CompilerObjectSymbolList
-  (cobj.compiler-object-symbol-builder-finish parts.symbols))
+  [parts : (& CompilerBackendObjectTargetParts)]) : cobj.CompilerObjectSymbolList
+  (cobj.compiler-object-symbol-builder-finish
+    (owned_view.compiler-owned-reference-shared-view (& parts.symbols))))
 
 (define (compiler-backend-object-base-relocations
-  [parts : CompilerBackendObjectTargetParts]) : cobj.CompilerObjectRelocationList
-  (cobj.compiler-object-relocation-builder-finish parts.relocations))
+  [parts : (& CompilerBackendObjectTargetParts)]) : cobj.CompilerObjectRelocationList
+  (cobj.compiler-object-relocation-builder-finish
+    (owned_view.compiler-owned-reference-shared-view (& parts.relocations))))

@@ -615,17 +615,17 @@
   (match (let
     [source-spans (ir.compiler-source-spans-empty)]
     (opt.opt-inline-expand-instrs-with-spans
-      instrs
+      (& instrs)
       dst
-      ret
-      sa
+      (& ret)
+      (& sa)
       np
       base
       label-prefix
       source-spans
       (ir.compiler-source-spans-empty)
       0
-      (opt-test-inline-no-span-call)
+      (& (opt-test-inline-no-span-call))
       0))
     [(State expanded _ _ _) expanded]))
 
@@ -54226,10 +54226,10 @@
           type-segment-bases
           8
           summaries
-          params
+          (& params)
           roots
           (opt_i64_i64_map.with-capacity 1)
-          blocks)))))
+          (& blocks))))))
 
 (define (opt-call-block-scan-case?
   [count : i64]
@@ -54308,10 +54308,10 @@
       type-segment-bases
       0
       summaries
-      (ir.compiler-ir-param-seq-empty)
+      (& (ir.compiler-ir-param-seq-empty))
       (opt.opt-licm-root-env-with-capacity 1 (opt_i64_i64_map.with-capacity 1))
       (opt_i64_i64_map.with-capacity 1)
-      blocks)))
+      (& blocks))))
 
 (define (opt-call-block-scan-early-exits? [unresolved : i64]) : bool
   (let
@@ -59082,7 +59082,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-test-symbol "sl_fn")
         (& summaries)
-        (irt.params "overlap=%26:str, unknown=%35:str")
+        (& (irt.params "overlap=%26:str, unknown=%35:str"))
         38
         (opt-sl-test-blocks))]
     (cond

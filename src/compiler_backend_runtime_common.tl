@@ -521,10 +521,10 @@ tl_startup_profile_process_entry_tick:
 
 ;; One bump stub per size class 8, 16, ..., 64.
 (define (compiler-backend-runtime-fast-alloc-functions
-  [current-arena-load : String]
-  [usable-end-offset : String]
-  [size-reg : String]
-  [next-reg : String]
+  [current-arena-load : (& str)]
+  [usable-end-offset : (& str)]
+  [size-reg : (& str)]
+  [next-reg : (& str)]
   [profile : bool]) : String
   (let
     [out : String ""]

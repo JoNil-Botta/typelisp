@@ -3644,11 +3644,13 @@
     (or left.stdlib-string-bare-use right.stdlib-string-bare-use)))
 
 (define (lint-unsafe-scan-require [children : LintUnsafeScan]) : LintUnsafeScan
-  (LintUnsafeScan true children.candidate children.stdlib-string-bare-use))
+  (set! children.requires true)
+  children)
 
 (define (lint-unsafe-scan-note-stdlib-string-bare-use
   [children : LintUnsafeScan]) : LintUnsafeScan
-  (LintUnsafeScan children.requires children.candidate true))
+  (set! children.stdlib-string-bare-use true)
+  children)
 
 (define (lint-unsafe-scope-add-id [scope : LintUnsafeScope] [name-id : i64]) : LintUnsafeScope
   (LintUnsafeScope
@@ -6917,7 +6919,9 @@
     [end : i64
       (lint-source-span-end-index state.source (lint-no-effect-span-id body))]
     (if (> end state.cursor)
-      (LintNameCaseDeclState state.source end state.findings)
+      (begin
+        (set! state.cursor end)
+        state)
       state)))
 
 (define (lint-name-case-in-decl

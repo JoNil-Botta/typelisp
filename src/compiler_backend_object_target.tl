@@ -34,92 +34,62 @@
 (define (compiler-backend-object-add-text
   [parts : CompilerBackendObjectTargetParts]
   [instr : (& cobj.CompilerObjectX64Instr)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
+  (set!
+    parts.text
     (cobj.compiler-object-instr-builder-push
       parts.text
-      (owned_view.compiler-owned-reference-shared-view instr))
-    parts.data
-    parts.rodata
-    parts.bss
-    parts.pdata
-    parts.xdata
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view instr)))
+  parts)
 
 (define (compiler-backend-object-add-data
   [parts : CompilerBackendObjectTargetParts]
   [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
-    parts.text
+  (set!
+    parts.data
     (cobj.compiler-object-data-record-builder-push
       parts.data
-      (owned_view.compiler-owned-reference-shared-view record))
-    parts.rodata
-    parts.bss
-    parts.pdata
-    parts.xdata
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view record)))
+  parts)
 
 (define (compiler-backend-object-add-rodata
   [parts : CompilerBackendObjectTargetParts]
   [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
-    parts.text
-    parts.data
+  (set!
+    parts.rodata
     (cobj.compiler-object-data-record-builder-push
       parts.rodata
-      (owned_view.compiler-owned-reference-shared-view record))
-    parts.bss
-    parts.pdata
-    parts.xdata
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view record)))
+  parts)
 
 (define (compiler-backend-object-add-bss
   [parts : CompilerBackendObjectTargetParts]
   [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
-    parts.text
-    parts.data
-    parts.rodata
+  (set!
+    parts.bss
     (cobj.compiler-object-data-record-builder-push
       parts.bss
-      (owned_view.compiler-owned-reference-shared-view record))
-    parts.pdata
-    parts.xdata
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view record)))
+  parts)
 
 (define (compiler-backend-object-add-pdata
   [parts : CompilerBackendObjectTargetParts]
   [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
-    parts.text
-    parts.data
-    parts.rodata
-    parts.bss
+  (set!
+    parts.pdata
     (cobj.compiler-object-data-record-builder-push
       parts.pdata
-      (owned_view.compiler-owned-reference-shared-view record))
-    parts.xdata
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view record)))
+  parts)
 
 (define (compiler-backend-object-add-xdata
   [parts : CompilerBackendObjectTargetParts]
   [record : (& cobj.CompilerObjectDataRecord)]) : CompilerBackendObjectTargetParts
-  (CompilerBackendObjectTargetParts
-    parts.text
-    parts.data
-    parts.rodata
-    parts.bss
-    parts.pdata
+  (set!
+    parts.xdata
     (cobj.compiler-object-data-record-builder-push
       parts.xdata
-      (owned_view.compiler-owned-reference-shared-view record))
-    parts.symbols
-    parts.relocations))
+      (owned_view.compiler-owned-reference-shared-view record)))
+  parts)
 
 (define (compiler-backend-object-add-symbol
   [parts : CompilerBackendObjectTargetParts]

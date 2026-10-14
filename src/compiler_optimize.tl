@@ -144,6 +144,8 @@
         `(compiler-opt-global-shared-view ,source))]
     [_ source]))
 
+;; The element local gives a borrowing callback a place; owned callbacks
+;; receive the same element value and neither kind retains the local.
 (defmacro (opt-instrs-walk
   [mode : Expr]
   [var : Expr]
@@ -155,12 +157,9 @@
     [walk-count : i64 (ir.compiler-ir-instr-seq-count walk-instrs)]
     [walk-at : i64 0]
     (while (opt-walk-going ,mode ,var (< walk-at walk-count))
-      (opt-walk-step
-        ,mode
-        ,var
-        ,f
-        (ir.compiler-ir-instr-seq-ref walk-instrs walk-at)
-        ,@contexts)
+      (let
+        [walk-instr (ir.compiler-ir-instr-seq-ref walk-instrs walk-at)]
+        (opt-walk-step ,mode ,var ,f walk-instr ,@contexts))
       (set! walk-at (+ walk-at 1)))))
 
 ;; One block of a walk: its instructions one by one (`level` `instr`), its
@@ -88340,13 +88339,10 @@
         [index : i64 0]
         [found : bool false]
         (while (and (not found) (< index (- count 1)))
-          (match (compiler-opt-global-array-element-shared-view slots index)
+          (match (& (array-ref slots index))
             [(Gep dst _ (I64 _) _)
               (let
-                [next
-                  (compiler-opt-global-array-element-shared-view
-                    slots
-                    (+ index 1))]
+                [next (& (array-ref slots (+ index 1)))]
                 (when
                   (and
                     (opt-load-sink-crossable? next)
@@ -88355,16 +88351,11 @@
             [(Load load-dst (Var gep-dst) _)
               (when
                 (> index 0)
-                (match (compiler-opt-global-array-element-shared-view
-                  slots
-                  (- index 1))
+                (match (& (array-ref slots (- index 1)))
                   [(Gep gep _ _ _)
                     (if (= gep gep-dst)
                       (let
-                        [next : ir.CompilerIrInstr
-                          (compiler-opt-global-array-element-shared-view
-                            slots
-                            (+ index 1))]
+                        [next (& (array-ref slots (+ index 1)))]
                         (if (and
                           (opt-load-sink-crossable? next)
                           (not (opt-load-sink-instr-uses-var? next load-dst)))
@@ -113705,7 +113696,9 @@
       [devirt : ir.CompilerIrFunctionSeq
         (opt-pure-call-inline-memory-install!
           type-segment-bases
-          (opt-tailrec-function-seq! (opt-devirt-known-function-seq functions)))]
+          (&
+            (opt-tailrec-function-seq!
+              (opt-devirt-known-function-seq functions))))]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
       [_loop-calls : unit
         (opt-loop-call-cache-index! (compiler-opt-global-shared-view index))]
@@ -116047,10 +116040,6 @@
       (opt_i64_i64_map.contains?
         (& summaries.init-functions)
         (ir.compiler-ir-symbol-id name))]
-    [capture-lengths : opt_i64_i64_map.Map
-      (if initializer?
-        (opt_i64_i64_map.with-capacity 1)
-        (owned_view.compiler-owned-reference-shared-view lengths))]
     [global-geps : opt_i64_i64_map.Map
       (if (or (= (opt_i64_i64_map.len (& lengths)) 0) initializer?)
         (opt_i64_i64_map.with-capacity 8)
@@ -116063,7 +116052,8 @@
     [geps : opt_i64_i64_map.Map
       (opt-descriptor-length-geps
         type-segment-bases
-        (& capture-lengths)
+        lengths
+        (not initializer?)
         params
         frame
         (& blocks)
@@ -116086,6 +116076,7 @@
 (define (opt-descriptor-length-geps
   [type-segment-bases : i64]
   [lengths : (& lengths opt_i64_i64_map.Map)]
+  [globals? : bool]
   [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -116096,7 +116087,8 @@
         blocks
         (opt_i64_i64_map.with-capacity 8)
         opt-descriptor-length-collect-var
-        lengths)]
+        lengths
+        globals?)]
     [has-literal-gep : bool
       (not
         (opt-blocks-every?
@@ -116125,6 +116117,7 @@
 ;; address-taken guards apply where the var is used as a gep base.
 (define (opt-descriptor-length-collect-var
   [lengths : (& lengths opt_i64_i64_map.Map)]
+  [globals? : bool]
   [out : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
   (let
@@ -116136,9 +116129,11 @@
           dst
           (string.string-length text))]
       [(Mov dst (Global name) _)
-        (match (opt_i64_i64_map.get lengths (ir.compiler-ir-symbol-id name))
-          [(LookupFound n) (opt_i64_i64_map.insert-ref! (&mut next) dst n)]
-          [(LookupMissing) unit])]
+        (when
+          globals?
+          (match (opt_i64_i64_map.get lengths (ir.compiler-ir-symbol-id name))
+            [(LookupFound n) (opt_i64_i64_map.insert-ref! (&mut next) dst n)]
+            [(LookupMissing) unit]))]
       [_ unit])
     next))
 
@@ -116415,9 +116410,6 @@
         (arena.Arena scratch)
         (let
           [summaries (opt-program-summaries-empty)]
-          (set!
-            summaries.global-cell.call-memory
-            (owned_view.compiler-owned-reference-shared-view call-memory))
           ;; Proven rematerialization and dead captures must not look like an
           ;; escape. This equivalent analysis view cannot change inline costs
           ;; or overwrite bodies already placed in optimizer-input chunks.
@@ -116427,8 +116419,9 @@
             (&
               (opt-global-snapshot-normalize-functions
                 (& summaries)
+                call-memory
                 false
-                (owned_view.compiler-owned-reference-shared-view functions)))
+                functions))
             disq
             capacity)))]
     [out : OptConstLengths (clone built)]
@@ -122836,7 +122829,7 @@
 ;; later uses retain the original saved value.
 (define (opt-global-snapshot-candidate?
   [cell : (& cell OptGlobalCellSummary)]
-  [instr : ir.CompilerIrInstr]) : bool
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
     [(Mov _ (Global name) ty)
       (and
@@ -122849,8 +122842,9 @@
 
 (define (opt-global-snapshot-entry-killed?
   [cell : (& cell OptGlobalCellSummary)]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]
-  [entry : OptCopyEntry]) : bool
+  [entry : (& entry OptCopyEntry)]) : bool
   (match entry
     [(Copy _ (Global name))
       (match instr
@@ -122859,7 +122853,7 @@
           (and
             (not
               (match (opt_i64_i64_map.get
-                (& cell.call-memory)
+                call-memory
                 (ir.compiler-ir-symbol-id target))
                 [(LookupFound summary) (= summary 0)]
                 [(LookupMissing) false]))
@@ -122877,6 +122871,7 @@
 
 (define (opt-global-snapshot-filter
   [cell : (& cell OptGlobalCellSummary)]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]
   [env : OptCopyEnv]) : OptCopyEnv
   (let
@@ -122886,8 +122881,9 @@
       (not
         (opt-global-snapshot-entry-killed?
           cell
+          call-memory
           instr
-          (compiler-opt-global-array-element-shared-view env.slots first))))
+          (& (array-ref env.slots first)))))
       (+= first 1))
     (if (= first env.len)
       env
@@ -122895,20 +122891,23 @@
         [out : OptCopyEnv (opt-copy-env-with-capacity env.len)]
         (for [index (iterator.range 0 env.len)]
           (let
-            [entry : OptCopyEntry
-              (compiler-opt-global-array-element-shared-view env.slots index)]
+            [entry (& (array-ref env.slots index))]
             (unless
-              (opt-global-snapshot-entry-killed?
-                cell
-                instr
-                (compiler-opt-global-shared-view entry))
-              (set! out (opt-copy-env-push out entry)))))
+              (opt-global-snapshot-entry-killed? cell call-memory instr entry)
+              (match entry
+                [(Copy dst (Global name))
+                  (set!
+                    out
+                    (opt-copy-env-push
+                      out
+                      (OptCopyEntry.Copy dst (Global name))))]
+                [_ unit]))))
         out))))
 
 (define (opt-global-snapshot-count-geps!
   [uses : (__tl_dyn-array i64)]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match (compiler-opt-global-shared-view instr)
+  [instr : (& instr ir.CompilerIrInstr)]) : unit
+  (match instr
     [(Gep _ _ _ _) (opt-collect-instr-uses-array uses instr)]
     [_ unit]))
 
@@ -122918,6 +122917,7 @@
 ;; bodies never replace the emitted or priced input.
 (define (opt-global-snapshot-seq
   [cell : (& cell OptGlobalCellSummary)]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
   [uses : (& uses (__tl_dyn-array i64))]
   [gep-uses : (& gep-uses (__tl_dyn-array i64))]
@@ -122937,59 +122937,68 @@
             (ir.compiler-ir-instr-seq-ref instrs index)]
           ;; A writing callee must receive the saved operand, even when inlined.
           [_barrier : unit
-            (set! env (opt-global-snapshot-filter cell (& instr) env))]
+            (set!
+              env
+              (opt-global-snapshot-filter cell call-memory (& instr) env))]
           [_delayed-barrier : unit
             (when
               defer?
-              (set! delayed (opt-global-snapshot-filter cell (& instr) delayed)))]
+              (set!
+                delayed
+                (opt-global-snapshot-filter cell call-memory (& instr) delayed)))]
+          [boundary? : bool
+            (match (& instr)
+              [(or (Call _ _ _ _) (TailCall _ _ _) (Store _ _ _)) true]
+              [_ false])]
+          ;; A capture's source is Global, so registering its destination does
+          ;; not rewrite the capture itself. The owned instruction can then
+          ;; move into the existing operand rewriter without a shallow alias.
+          [_capture : unit
+            (when
+              (opt-global-snapshot-candidate? cell (& instr))
+              (match (& instr)
+                [(Mov dst (Global name) _)
+                  (when
+                    (and
+                      (opt-gvn-stable-var? sources dst)
+                      (>= dst 0)
+                      (< dst (array-length uses))
+                      (or
+                        (= (array-ref uses dst) 1)
+                        (and
+                          (> (array-ref uses dst) 0)
+                          (= (array-ref uses dst) (array-ref gep-uses dst)))))
+                    (set!
+                      env
+                      (opt-copy-env-push
+                        env
+                        (OptCopyEntry.Copy dst (Global name)))))]
+                [_ unit]))]
           [rewritten : ir.CompilerIrInstr
             (opt-copy-subst-instr
-              (&
-                (if defer?
-                  (compiler-opt-global-shared-view delayed)
-                  (compiler-opt-global-shared-view env)))
-              (compiler-opt-global-shared-view instr))]
+              (if defer?
+                (& delayed)
+                (& env))
+              instr)]
           (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)
           (when
-            defer?
-            (match (compiler-opt-global-shared-view instr)
-              [(or (Call _ _ _ _) (TailCall _ _ _) (Store _ _ _))
-                (set! delayed (compiler-opt-global-shared-view env))]
-              [_ unit]))
-          (when
-            (opt-global-snapshot-candidate?
-              cell
-              (compiler-opt-global-shared-view instr))
-            (match instr
-              [(Mov dst value _)
-                (when
-                  (and
-                    (opt-gvn-stable-var? sources dst)
-                    (>= dst 0)
-                    (< dst (array-length uses))
-                    (or
-                      (= (array-ref uses dst) 1)
-                      (and
-                        (> (array-ref uses dst) 0)
-                        (= (array-ref uses dst) (array-ref gep-uses dst)))))
-                  (set!
-                    env
-                    (opt-copy-env-push env (OptCopyEntry.Copy dst value))))]
-              [_ unit]))))
+            (and defer? boundary?)
+            (set! delayed (compiler-opt-global-shared-view env)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-global-snapshot-function
   [summaries : (& summaries OptProgramSummaries)]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [defer? : bool]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
+  (match func
     [(Function name params ret-ty frame blocks function-abi)
       (if (not
         (opt-blocks-any?
           blocks
           opt-global-snapshot-candidate?
           (& summaries.global-cell)))
-        func
+        (Function name params ret-ty frame blocks function-abi)
         (let
           [sources : OptValueSources
             (opt-bounds-dom-sources (& params) frame (& blocks))]
@@ -123010,6 +123019,7 @@
               blocks
               opt-global-snapshot-seq
               (& summaries.global-cell)
+              call-memory
               (& sources)
               (& uses)
               (& gep-uses)
@@ -123029,7 +123039,11 @@
   [input : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (let
     [func : ir.CompilerIrFunction
-      (opt-global-snapshot-function (& summaries) true input)]
+      (opt-global-snapshot-function
+        (& summaries)
+        (& summaries.global-cell.call-memory)
+        true
+        input)]
     (match (compiler-opt-global-shared-view func)
       [(Function name params ret-ty frame blocks function-abi)
         (let
@@ -128965,8 +128979,9 @@
 
 (define (opt-global-snapshot-normalize-functions
   [summaries : (& summaries OptProgramSummaries)]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [defer? : bool]
-  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
   (let
     ;; Replacement bodies belong to this scope. The borrowed input's slots
     ;; must never point into an analysis or inline arena that can retire first.
@@ -128976,8 +128991,9 @@
         [normalized
           (opt-global-snapshot-function
             summaries
+            call-memory
             defer?
-            (compiler-opt-global-array-element-shared-view functions.slots slot))]
+            (ir.compiler-ir-function-seq-ref functions slot))]
         [frame (opt-function-frame (& normalized))]
         [blocks (opt-function-blocks (& normalized))]
         (ir.compiler-ir-function-builder-push!
@@ -128997,7 +129013,7 @@
 
 (define (opt-pure-call-inline-memory-install!
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
   (let
     [index : OptProgramIndex (opt-program-index-build functions)]
     (set!
@@ -129012,10 +129028,11 @@
     ;; boundary. Keep the same deferred rule in the emitted and priced pipelines.
     (let
       [summaries (opt-program-summaries-empty)]
-      (set!
-        summaries.global-cell.call-memory
-        (compiler-opt-global-shared-view opt-pure-call-inline-memory))
-      (opt-global-snapshot-normalize-functions (& summaries) true functions))))
+      (opt-global-snapshot-normalize-functions
+        (& summaries)
+        (& opt-pure-call-inline-memory)
+        true
+        functions))))
 
 (define (opt-pure-call-inline-memory-reset!) : unit
   (set! opt-pure-call-inline-memory-on false)

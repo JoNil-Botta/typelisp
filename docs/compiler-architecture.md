@@ -1112,8 +1112,8 @@ descriptor projection from an escape. Only the resulting length maps are
 cloned out; optimizer-input bodies and the checked inline price remain intact.
 The constant-length rewrite follows a direct capture of a proven immutable
 global descriptor using the same definition and address-taken guards as literal
-captures. Global initializers receive no global length facts, because a captured
-global may not yet have its final descriptor.
+captures. The walker excludes global captures in initializers, because a global
+may not yet have its final descriptor.
 
 The constant-length rewrite also recognizes literal String descriptors. Their
 read-only length word contains the byte length, including for empty and UTF-8

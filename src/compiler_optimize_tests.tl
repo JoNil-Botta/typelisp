@@ -8223,10 +8223,7 @@
           (opt.opt-block-eq
             (ast.ast-node-pool-reader-type-segment-bases)
             (& actual)
-            (&
-              (opt-load-sink-run
-                (ir.compiler-ir-blocks
-                  (owned_view.compiler-owned-reference-shared-view (& actual))))))
+            (& (opt-load-sink-run (ir.compiler-ir-blocks (clone actual)))))
           "address scheduling is idempotent"))))
   (let
     [refused
@@ -62009,7 +62006,12 @@
         (& (ir.compiler-ir-extern-seq-empty))
         functions
         2)]
-    [optimized (opt.opt-global-snapshot-function (& summaries) false fixture)]
+    [optimized
+      (opt.opt-global-snapshot-function
+        (& summaries)
+        (& summaries.global-cell.call-memory)
+        false
+        fixture)]
     [expected (opt-snapshot-test-function after)]
     (opt.opt-function-eq bases (& optimized) (& expected))))
 
@@ -62255,9 +62257,7 @@
     [_normalize : unit
       (in-arena
         (arena.Arena scratch)
-        (opt.opt-pure-call-inline-memory-install!
-          bases
-          (opt.compiler-opt-global-shared-view functions))
+        (opt.opt-pure-call-inline-memory-install! bases (& functions))
         unit)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [_destroy : unit
@@ -62271,17 +62271,17 @@
 (define (opt-snapshot-length-fold
   [bases : i64]
   [summaries : (& opt.OptProgramSummaries)]
-  [fixture : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  [fixture : (& fixture ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (opt.opt-function-with-frame-blocks
-    (& fixture)
-    (opt.opt-function-frame (& fixture))
+    fixture
+    (opt.opt-function-frame fixture)
     (opt.opt-const-length-rewrite-summary-blocks
       bases
-      (opt.opt-function-name (& fixture))
+      (opt.opt-function-name fixture)
       summaries
-      (opt.opt-function-params (& fixture))
-      (opt.opt-function-frame (& fixture))
-      (opt.opt-function-blocks (& fixture)))))
+      (opt.opt-function-params fixture)
+      (opt.opt-function-frame fixture)
+      (opt.opt-function-blocks fixture))))
 
 (test
   global-snapshot-constant-length
@@ -62312,8 +62312,9 @@
     [normalized
       (opt.opt-global-snapshot-normalize-functions
         (& summaries)
+        (& summaries.global-cell.call-memory)
         false
-        (opt.compiler-opt-global-shared-view before-inline))]
+        (& before-inline))]
     [expected
       (opt-snapshot-test-function
         "entry:
@@ -62337,11 +62338,7 @@
         16)
       "a captured immutable descriptor retains its proven literal length")
     (let
-      [folded
-        (opt-snapshot-length-fold
-          bases
-          (& summaries)
-          (opt.compiler-opt-global-shared-view fixture))]
+      [folded (opt-snapshot-length-fold bases (& summaries) (& fixture))]
       [expected-fold
         (opt-snapshot-test-function
           "entry:
@@ -62370,10 +62367,7 @@
       (let
         [unstable (opt-snapshot-test-function text)]
         [folded-unstable
-          (opt-snapshot-length-fold
-            bases
-            (& summaries)
-            (opt.compiler-opt-global-shared-view unstable))]
+          (opt-snapshot-length-fold bases (& summaries) (& unstable))]
         (test.assert-true
           (opt.opt-function-eq bases (& folded-unstable) (& unstable))
           "redefined or address-taken descriptor captures retain their loads")))
@@ -62382,11 +62376,7 @@
       (opt.opt-function-name (& fixture))
       1)
     (let
-      [folded-init
-        (opt-snapshot-length-fold
-          bases
-          (& summaries)
-          (opt.compiler-opt-global-shared-view fixture))]
+      [folded-init (opt-snapshot-length-fold bases (& summaries) (& fixture))]
       (test.assert-true
         (opt.opt-function-eq bases (& folded-init) (& fixture))
         "an initializer cannot assume a captured global has its final length"))

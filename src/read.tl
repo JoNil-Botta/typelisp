@@ -440,6 +440,16 @@
           : (Ptr SpannedSexpr))
         id))))
 
+;; An unchecked read of a builder row, for the per-item flush loop of
+;; `spanned-sexpr-list-from-builder`: there `(array-ref ...)` adds a bounds check
+;; per list item, +10.4M self-compile Ir. Rows are Copy.
+(define (sp-builder-shared-view [id : i64]) : SpannedSexpr
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (__tl_array-data sp-builder-slots) : (Ptr SpannedSexpr))
+        id))))
+
 (define (sp-node-get [id : i64]) : SpannedSexpr
   (sp-node-pool-shared-view id))
 
@@ -650,7 +660,7 @@
     (while (< i len)
       (sp-node-pool-fill!
         (+ start i)
-        (array-ref sp-builder-slots (+ builder-start i)))
+        (sp-builder-shared-view (+ builder-start i)))
       (set! i (+ i 1)))
     (set! sp-node-pool-count (+ start len))
     (set! sp-builder-count builder-start)

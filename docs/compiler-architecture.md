@@ -10,6 +10,16 @@ typed control-flow foundation for #8449. Production ownership checks normalize
 typed occurrences into that IR and require the core's certificate before
 lowering. Checked MIR-to-IR lowering remains open.
 
+Internal compiler box views share one API in `compiler_owned_view.tl`: omitting
+its optional field selector preserves the whole-payload view; providing one
+reads only that field. A boxed payload is addressed through its stored pointer,
+and a payload behind a shared reference uses the existing checked field borrow
+and reference bridge. Callers retain the payload owner for the alias's lifetime;
+these representation copies do not transfer ownership. Extra selectors reject
+during macro evaluation. `src/tests/compiler_owned_view_smoke.tl` covers both
+routes and the zero/one-selector boundary; public-check transcripts pin excess
+arity with source and embedded stdlib loading.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)

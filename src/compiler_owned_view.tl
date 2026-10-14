@@ -147,52 +147,49 @@
   [value : Expr]
   ;; Spliced into the generated pointer element type.
   ;; lint-allow: unused-variable
-  [value-ty : Expr]) : Expr
-  `(let
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ,value-ty))))))
-
-;; A value that is not a Box is already the boxed value: a `(Box T)` payload
-;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
-(defmacro (compiler-owned-box-shared-view [value : Expr]) : Expr
+  [value-ty : Expr]
+  [fields : Expr ...]) : Expr
   (let
+    [count : i64 (comptime.expr-list-length fields)]
+    (if (> count 1)
+      (comptime.error "box view accepts at most one field selector")
+      unit)
+    (if (= count 0)
+      `(let
+        [address : u64
+          (unsafe
+            (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr u64))))]
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr ,value-ty)))))
+      `(let
+        [payload : (Ptr ,value-ty)
+          (unsafe
+            (int->ptr
+              (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr u64)))
+              : (Ptr ,value-ty)))]
+        (unsafe
+          (__tl-project-field
+            (deref payload)
+            ,(comptime.expr-list-nth fields 0)))))))
+
+;; A non-Box is already the payload: matching a Box through a shared reference
+;; binds (& T). An optional selector reads just one field, preserving the
+;; payload's other owners; without it the existing whole-payload view is used.
+(defmacro (compiler-owned-box-shared-view [value : Expr] [fields : Expr ...]) : Expr
+  (let
+    [count : i64 (comptime.expr-list-length fields)]
     [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (> count 1)
+      (comptime.error "box view accepts at most one field selector")
+      unit)
     (if (string-eq (type-kind value-ty) "box")
       `(compiler-owned-typed-box-shared-view
         ,value
-        ,(comptime.box-element-type value-ty))
-      value)))
-
-;; One field of a payload, viewed without copying the rest of it: through a
-;; Box, the field alone is read from the payload pointer (a bitwise view, as
-;; `compiler-owned-box-shared-view` gives of the whole payload); a payload
-;; matched through a shared reference is projected directly.
-(defmacro (compiler-owned-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  (let
-    [value-ty : comptime.Expr (comptime.expr-type value)]
-    (if (string-eq (type-kind value-ty) "box")
-      `(compiler-owned-typed-box-field-shared-view
-        ,value
         ,(comptime.box-element-type value-ty)
-        ,field)
-      `(let
-        [payload ,value]
-        (compiler-owned-shared-view (__tl-project-field payload ,field))))))
-
-(defmacro (compiler-owned-typed-box-field-shared-view
-  [value : Expr]
-  ;; Spliced into the generated pointer element type.
-  ;; lint-allow: unused-variable
-  [value-ty : Expr]
-  [field : Expr]) : Expr
-  `(let
-    [payload : (Ptr ,value-ty)
-      (unsafe
-        (int->ptr
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr u64)))
-          : (Ptr ,value-ty)))]
-    (unsafe
-      (__tl-project-field (deref payload) ,field))))
+        ,@fields)
+      (if (= count 0)
+        value
+        `(let
+          [payload ,value]
+          (compiler-owned-reference-shared-view
+            (& (__tl-project-field payload ,(comptime.expr-list-nth fields 0)))))))))

@@ -93,7 +93,7 @@
       value)))
 
 (defmacro (compiler-opt-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(owned_view.compiler-owned-box-field-shared-view ,value ,field))
+  `(owned_view.compiler-owned-box-shared-view ,value ,field))
 
 ;; --- whole-body instruction walks -------------------------------------------
 ;;

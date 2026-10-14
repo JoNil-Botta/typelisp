@@ -275,7 +275,7 @@
   `(owned_view.compiler-owned-box-shared-view ,value))
 
 (defmacro (lower-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(owned_view.compiler-owned-box-field-shared-view ,value ,field))
+  `(owned_view.compiler-owned-box-shared-view ,value ,field))
 
 (defmacro (lower-boxed-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let

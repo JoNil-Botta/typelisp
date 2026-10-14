@@ -341,7 +341,7 @@
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defmacro (compiler-backend-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(owned_view.compiler-owned-box-field-shared-view ,value ,field))
+  `(owned_view.compiler-owned-box-shared-view ,value ,field))
 
 ;; The object path stages an edge's copies in REVERSE instruction order.
 (defmacro (compiler-backend-phi-copy-seq-rev-ref

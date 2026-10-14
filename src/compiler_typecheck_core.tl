@@ -108787,6 +108787,54 @@
   [body : ast.AstExpr]
   [expanded-args : ast.AstExprList]
   [call-expr : ast.AstExpr]) : ResultMacroValue
+  ;; The shared expansion environment lives in the pool's base arena. Its
+  ;; binding store keeps every binding an evaluation appends (operands, `let`
+  ;; locals), so restore its length once the transformer has returned: the next
+  ;; evaluation then reuses those slots instead of adding segments that stay in
+  ;; the base arena until the expanded program is detached. An expression
+  ;; transformer returns syntax, which holds no environment reference; a nested
+  ;; evaluation started inside this one restores its own mark first.
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [env-ready? : bool (tc-macro-walk-field state macro-expand-ctfe-env-ready)]
+    [env : ctfe_support.CtfeEnv
+      (tc-macro-walk-field state macro-expand-ctfe-env-value)]
+    [mark : i64
+      (if env-ready?
+        (ctfe_support.ctfe-env-binding-mark (& env))
+        -1)]
+    [result : ResultMacroValue
+      (macro-eval-transformer-expanded-in-env
+        ctx
+        decls
+        fallback-module
+        fallback-module-id
+        type-env
+        macro-name-id
+        declaration-id
+        macro-name
+        params
+        ret
+        body
+        expanded-args
+        call-expr)]
+    (when env-ready? (ctfe_support.ctfe-env-release-bindings-to! (& env) mark))
+    result))
+
+(define (macro-eval-transformer-expanded-in-env
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name-id : i64]
+  [declaration-id : i64]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [ret : ast.AstType]
+  [body : ast.AstExpr]
+  [expanded-args : ast.AstExprList]
+  [call-expr : ast.AstExpr]) : ResultMacroValue
   (macro-prepare-transformer-pools! ctx)
   (match (macro-try-stdlib-tlci-direct-expression
     ctx

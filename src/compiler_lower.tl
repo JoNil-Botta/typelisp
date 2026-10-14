@@ -26310,9 +26310,8 @@
                     (ResultLowerCallArgs.Err message)])])]
           [(ResultLowerCallArg.Err message) (ResultLowerCallArgs.Err message)])))))
 
-;; A writeback reads its slot back exactly as `lower-borrow-copy-to-inline-storage`
-;; wrote it: a scalar narrower than a word (a `bool`, `u8`, `i32`) occupies
-;; only its own bytes, and a word load would read the rest of the frame.
+;; Reload the representation written to the call slot: scalar width and
+;; floating-point type must survive the temporary storage.
 (define (lower-apply-arg-writeback
   [ctx : tc_core.TcContext]
   [state : LowerState]

@@ -1737,13 +1737,9 @@
             (ctfe-metadata-grown-capacity capacity required))]
         (for [index (iterator.range 0 len)]
           (set! (array-ref grown index) (array-ref slots index)))
-        (CtfeReflectInfoList
-          grown
-          items.index
-          len
-          items.aligns
-          items.aliases
-          items.alias-scope)))))
+        (set! items.slots grown)
+        (set! items.len len)
+        items))))
 
 (define (ctfe-reflect-info-list-contains-key-id?
   [items : (& CtfeReflectInfoList)]
@@ -3888,13 +3884,8 @@
 (define (ctfe-reflect-info-list-in-scope
   [infos : CtfeReflectInfoList]
   [module-id : i64]) : CtfeReflectInfoList
-  (CtfeReflectInfoList
-    infos.slots
-    infos.index
-    infos.len
-    infos.aligns
-    infos.aliases
-    module-id))
+  (set! infos.alias-scope module-id)
+  infos)
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : ast.AstNodePoolContext]

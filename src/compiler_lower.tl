@@ -3473,7 +3473,8 @@
       store.values
       (&mut next-values)
       store.len)
-    (LowerModuleNameCacheStore store.modules next-values store.len)))
+    (set! store.values next-values)
+    store))
 
 (define (lower-module-name-cache-store-lookup
   [store : LowerModuleNameCacheStore]
@@ -3564,16 +3565,8 @@
 (define (lower-name-cache-with-clone-roots
   [cache : LowerNameCache]
   [roots : clone_support.CloneRootEntries]) : LowerNameCache
-  (LowerNameCache
-    cache.ids
-    cache.logical-ids
-    cache.symbol-ids
-    cache.logical-symbols
-    cache.module-paths
-    roots
-    cache.module-id
-    cache.parent
-    cache.owner-address))
+  (set! cache.clone-roots roots)
+  cache)
 
 (define (lower-name-cache-clone-helper-id
   [cache : LowerNameCache]
@@ -7290,7 +7283,8 @@
       store.values
       (&mut next-values)
       store.len)
-    (LowerModuleLocalViewStore store.modules next-values store.len)))
+    (set! store.values next-values)
+    store))
 
 (define (lower-module-local-view-store-lookup
   [store : LowerModuleLocalViewStore]

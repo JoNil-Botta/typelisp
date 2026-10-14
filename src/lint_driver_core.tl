@@ -1671,16 +1671,14 @@
 (define (selfhost-lint-dead-scan-add-decl
   [scan : SelfhostLintDeadScan]
   [decl : SelfhostLintDeadDecl]) : SelfhostLintDeadScan
-  (SelfhostLintDeadScan
-    (selfhost-lint-dead-decls-add decl scan.decls)
-    scan.roots))
+  (set! scan.decls (selfhost-lint-dead-decls-add decl scan.decls))
+  scan)
 
 (define (selfhost-lint-dead-scan-add-root
   [scan : SelfhostLintDeadScan]
   [name : String]) : SelfhostLintDeadScan
-  (SelfhostLintDeadScan
-    scan.decls
-    (selfhost-lint-dead-root-add scan.roots name)))
+  (set! scan.roots (selfhost-lint-dead-root-add scan.roots name))
+  scan)
 
 (define (selfhost-lint-dead-scan-add-roots-from
   [scan : SelfhostLintDeadScan]

@@ -222,7 +222,8 @@
   [items : LintPolicyTrace]
   [entry : LintPolicyTraceEntry]) : LintPolicyTrace
   (set! (array-ref items.slots items.len) entry)
-  (LintPolicyTrace items.slots (+ items.len 1)))
+  (set! items.len (+ items.len 1))
+  items)
 
 ;: Deterministic work census used by bounded-overhead tests and measurements.
 (defstruct LintPolicyStats
@@ -1072,18 +1073,19 @@
       (let
         [rule-index : i64 (lint-policy-rule-index rules name)]
         (if (< rule-index 0)
-          (LintPolicyApplyState
-            state.diagnostics
-            (lint-policy-trace-add
+          (begin
+            (set!
               state.trace
-              (lint-policy-trace-entry
-                assignment-index
-                name
-                (Allow)
-                assignment
-                Rejected
-                "unknown rule"))
-            state.expanded-rule-updates)
+              (lint-policy-trace-add
+                state.trace
+                (lint-policy-trace-entry
+                  assignment-index
+                  name
+                  (Allow)
+                  assignment
+                  Rejected
+                  "unknown rule")))
+            state)
           (lint-policy-apply-to-rule
             decisions
             rule-index

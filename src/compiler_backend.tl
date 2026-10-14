@@ -4333,31 +4333,15 @@
 
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
-  (CompilerBackendProgramCollections
-    collections.functions
-    collections.references
-    collections.strings
-    collections.floats
-    collections.bytes
-    collections.uses-avx2-i64-lane-id
-    collections.uses-avx512-i64-lane-id
-    true
-    false
-    collections.iag))
+  (set! collections.uses-f64-neg true)
+  (set! collections.uses-f32-neg false)
+  collections)
 
 (define (compiler-backend-program-collections-mark-f32-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
-  (CompilerBackendProgramCollections
-    collections.functions
-    collections.references
-    collections.strings
-    collections.floats
-    collections.bytes
-    collections.uses-avx2-i64-lane-id
-    collections.uses-avx512-i64-lane-id
-    false
-    true
-    collections.iag))
+  (set! collections.uses-f64-neg false)
+  (set! collections.uses-f32-neg true)
+  collections)
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a b c d))
@@ -75379,14 +75363,12 @@
   [index : CompilerBackendRuntimeIndex]
   [call-id : i64]
   [link-id : i64]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    index.defines
-    index.externs
-    index.calls
+  (set!
+    index.tlci-macro-entry-call-id
     (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
-      index.tlci-macro-entry-call-id)
-    index.startup-profile))
+      index.tlci-macro-entry-call-id))
+  index)
 
 (define (compiler-backend-runtime-index-with-startup-profile-role
   [index : CompilerBackendRuntimeIndex]
@@ -75395,12 +75377,9 @@
   (if (string.eq
     (compiler-backend-symbol-text-state backend-state link-id)
     "tl_startup_profile_process_entry_tick")
-    (CompilerBackendRuntimeIndex
-      index.defines
-      index.externs
-      index.calls
-      index.tlci-macro-entry-call-id
-      true)
+    (begin
+      (set! index.startup-profile true)
+      index)
     index))
 
 (define (compiler-backend-runtime-index-instr

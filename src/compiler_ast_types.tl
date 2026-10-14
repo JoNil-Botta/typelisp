@@ -2400,18 +2400,8 @@
 (define (ast-expr-node-pool-state-with-span-record-order
   [pool : AstExprNodePoolState]
   [monotonic? : bool]) : AstExprNodePoolState
-  (AstExprNodePoolState
-    pool.segment-bases
-    pool.count
-    pool.base-arena
-    pool.storage-arena
-    pool.segment-count
-    pool.span-slot-segment-bases
-    pool.canonical-span-records
-    pool.canonical-span-count
-    pool.respan-records
-    pool.respan-count
-    monotonic?))
+  (set! pool.span-records-monotonic? monotonic?)
+  pool)
 
 (define (ast-expr-node-pool-state-canonical-records-grow
   [pool : AstExprNodePoolState]) : AstExprNodePoolState
@@ -3289,15 +3279,9 @@
   (let
     [slots : (__tl_dyn-array i64) pool.dedup-slots]
     (ty-node-dedup-slots-clear! (ast-place-shared-view slots))
-    (AstTypeNodePoolState
-      pool.segment-bases
-      pool.count
-      pool.base-arena
-      pool.exhausted
-      slots
-      0
-      pool.storage-arena
-      pool.segment-count)))
+    (set! pool.dedup-slots slots)
+    (set! pool.dedup-count 0)
+    pool))
 
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
@@ -6097,11 +6081,8 @@
     out))
 
 (define (ast-spmd-specialization-clone [item : AstSpmdSpecialization]) : AstSpmdSpecialization
-  (AstSpmdSpecialization
-    item.lanes
-    (box (ast-spmd-param-class-list-clone (& (deref item.args))))
-    item.result
-    item.index-param))
+  (set! item.args (box (ast-spmd-param-class-list-clone (& (deref item.args)))))
+  item)
 
 (define (ast-spmd-specialization-fallback) : AstSpmdSpecialization
   (AstSpmdSpecialization 2 (box (ast-spmd-param-class-list-new)) Unit -1))

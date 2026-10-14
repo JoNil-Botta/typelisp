@@ -5197,22 +5197,12 @@
     ctx.program-decls))
 
 (define (tc-context-with-type-module-id [ctx : TcContext] [module-id : i64]) : TcContext
-  (TcContext
-    ctx.shared
-    ctx.job-state
-    ctx.module-id
-    module-id
-    ctx.module
-    ctx.program-decls))
+  (set! ctx.type-module-id module-id)
+  ctx)
 
 (define (tc-context-with-program [ctx : TcContext] [program : ast.AstProgram]) : TcContext
-  (TcContext
-    ctx.shared
-    ctx.job-state
-    ctx.module-id
-    ctx.type-module-id
-    ctx.module
-    (tc-context-program-bits program)))
+  (set! ctx.program-decls (tc-context-program-bits program))
+  ctx)
 
 (define (tc-context-for-type-resolution [ctx : TcContext]) : TcContext
   (if (= ctx.module-id ctx.type-module-id)
@@ -28199,7 +28189,8 @@
         (if (> mark-len current-len)
           current-len
           mark-len))]
-    (TcSpmdEnv env.bindings restored-len)))
+    (set! env.len restored-len)
+    env))
 
 (define (tc-spmd-env-copy-bindings
   [dst : (__tl_dyn-array TcSpmdBinding)]

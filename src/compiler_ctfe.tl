@@ -1395,6 +1395,28 @@
     (set! store.len (+ index 1))
     index))
 
+;: The number of bindings in ENV's shared binding store. Pass it to
+;: `ctfe-env-release-bindings-to!` to forget every binding appended after it.
+(define (ctfe-env-binding-mark [env : (& env CtfeEnv)]) : i64
+  (__tl-project-field (ctfe-env-arena-read env.arena-store) len))
+
+;; Bindings above `mark` become free slots: the next push overwrites them in the
+;; segments the store already owns, so the store grows only to its high-water
+;; mark. A larger `mark` (the store was replaced or already released) is a no-op.
+(define (ctfe-env-arena-release-to!
+  [store : (&mut store CtfeEnvArena)]
+  [mark : i64]) : unit
+  (when (and (>= mark 0) (< mark store.len)) (set! store.len mark)))
+
+;: Forget the bindings appended to ENV's shared binding store after MARK (from
+;: `ctfe-env-binding-mark`). Only for a finished evaluation: every environment
+;: snapshot whose head lies above MARK is invalid afterwards. CTFE values hold
+;: no environment references, so a value the evaluation returned stays valid.
+(define (ctfe-env-release-bindings-to! [env : (& env CtfeEnv)] [mark : i64]) : unit
+  (let
+    [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
+    (ctfe-env-arena-release-to! (&mut (__tl-box-place store)) mark)))
+
 (define (ctfe-env-append-binding
   [env : CtfeEnv]
   [name-id : i64]

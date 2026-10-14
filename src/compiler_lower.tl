@@ -3473,7 +3473,8 @@
       store.values
       (&mut next-values)
       store.len)
-    (LowerModuleNameCacheStore store.modules next-values store.len)))
+    (set! store.values next-values)
+    store))
 
 (define (lower-module-name-cache-store-lookup
   [store : LowerModuleNameCacheStore]
@@ -3564,16 +3565,8 @@
 (define (lower-name-cache-with-clone-roots
   [cache : LowerNameCache]
   [roots : clone_support.CloneRootEntries]) : LowerNameCache
-  (LowerNameCache
-    cache.ids
-    cache.logical-ids
-    cache.symbol-ids
-    cache.logical-symbols
-    cache.module-paths
-    roots
-    cache.module-id
-    cache.parent
-    cache.owner-address))
+  (set! cache.clone-roots roots)
+  cache)
 
 (define (lower-name-cache-clone-helper-id
   [cache : LowerNameCache]
@@ -7290,7 +7283,8 @@
       store.values
       (&mut next-values)
       store.len)
-    (LowerModuleLocalViewStore store.modules next-values store.len)))
+    (set! store.values next-values)
+    store))
 
 (define (lower-module-local-view-store-lookup
   [store : LowerModuleLocalViewStore]
@@ -7870,6 +7864,13 @@
     (match (lower-global-shared-view expr)
       [(MacroExpansion inner _ _) (lower-context-expr-get ctx inner)]
       [_ expr])))
+
+;; The node `lower-context-expr-get` reads for ID: ID itself, or the generated
+;; node under its expansion wrappers.
+(define (lower-context-expr-transparent-id [ctx : tc_core.TcContext] [id : i64]) : i64
+  (match (tc_core.tc-context-expr-get ctx id)
+    [(MacroExpansion inner _ _) (lower-context-expr-transparent-id ctx inner)]
+    [_ id]))
 
 (define (lower-context-expr-push [ctx : tc_core.TcContext] [expr : ast.AstExpr]) : i64
   (ast.ast-node-pool-context-expr-push (tc_core.tc-context-pools ctx) expr))
@@ -24482,6 +24483,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [arg-id : i64]
   [arg : ast.AstExpr]
   [expected : ast.AstType]
   [arg-ty : ast.AstType]) : ResultLowerCallArg
@@ -24497,6 +24499,7 @@
     (match (tc_core.tc-call-effective-arg-expr
       ctx
       type-env
+      arg-id
       (lower-global-shared-view arg)
       expected)
       [(Ok effective-arg)
@@ -24816,8 +24819,11 @@
     (if (>= index (ast.ast-type-list-len types))
       (Err (box (lower-diagnostic "lower: constructor arity mismatch")))
       (let
-        [arg : ast.AstExpr
-          (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        [arg-id : i64
+          (lower-context-expr-transparent-id
+            ctx
+            (ast.ast-expr-list-get args index 0))]
+        [arg : ast.AstExpr (tc_core.tc-context-expr-get ctx arg-id)]
         [expected-id : i64
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
@@ -24834,6 +24840,7 @@
               state
               env
               type-env
+              arg-id
               arg
               expected
               (lower-global-shared-view arg-ty)))]
@@ -25229,8 +25236,11 @@
     (if (>= index (ast.ast-type-list-len types))
       (Err (box (lower-diagnostic "lower: constructor arity mismatch")))
       (let
-        [arg : ast.AstExpr
-          (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        [arg-id : i64
+          (lower-context-expr-transparent-id
+            ctx
+            (ast.ast-expr-list-get args index 0))]
+        [arg : ast.AstExpr (tc_core.tc-context-expr-get ctx arg-id)]
         [expected-id : i64
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
@@ -25240,6 +25250,7 @@
         (match (tc_core.tc-call-effective-arg-expr
           ctx
           type-env
+          arg-id
           (lower-global-shared-view arg)
           expected)
           [(Ok effective-arg)

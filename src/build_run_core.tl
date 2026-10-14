@@ -299,15 +299,13 @@
   [kind : String]
   [value : String]
   [declared-by : String]) : SourceToolLinkInputs
-  (SourceToolLinkInputs
-    inputs.libs
-    inputs.search-dirs
-    inputs.raw-args
-    inputs.archives
+  (set!
+    inputs.origins
     (SourceToolLinkOrigins
       (source-tool-args-append inputs.origins.kinds kind)
       (source-tool-args-append inputs.origins.values value)
-      (source-tool-args-append inputs.origins.declared-by declared-by))))
+      (source-tool-args-append inputs.origins.declared-by declared-by)))
+  inputs)
 
 (define (source-tool-link-inputs-empty?
   [inputs : (& inputs SourceToolLinkInputs)]) : bool

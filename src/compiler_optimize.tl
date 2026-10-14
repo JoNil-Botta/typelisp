@@ -21943,17 +21943,11 @@
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
-  (OptLicmStoreState
-    (opt-licm-store-summary-merge state.summary summary)
-    state.rooted-summary
-    state.ptrs
-    state.roots
-    state.store-roots
-    state.any-call?
-    (or state.global-write? (opt-licm-store-summary-global-write? summary))
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.summary (opt-licm-store-summary-merge state.summary summary))
+  (set!
+    state.global-write?
+    (or state.global-write? (opt-licm-store-summary-global-write? summary)))
+  state)
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -21988,17 +21982,8 @@
     state.global-obj-writes))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    state.rooted-summary
-    state.ptrs
-    state.roots
-    state.store-roots
-    true
-    state.global-write?
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.any-call? true)
+  state)
 
 ;; Fold one instruction's cell-write mask into the body state. A zero mask --
 ;; the answer for everything that provably writes no cell -- returns the state
@@ -22009,17 +21994,9 @@
   [mask : i64]) : OptLicmStoreState
   (if (= mask 0)
     state
-    (OptLicmStoreState
-      state.summary
-      state.rooted-summary
-      state.ptrs
-      state.roots
-      state.store-roots
-      state.any-call?
-      state.global-write?
-      state.mem-clean-call?
-      (bit-or state.global-cell-writes mask)
-      state.global-obj-writes)))
+    (begin
+      (set! state.global-cell-writes (bit-or state.global-cell-writes mask))
+      state)))
 
 ;; IAG-2's analog of opt-licm-store-state-add-cell-writes, for the set of
 ;; globals whose OWN STORAGE the body may write.
@@ -22028,17 +22005,9 @@
   [mask : i64]) : OptLicmStoreState
   (if (= mask 0)
     state
-    (OptLicmStoreState
-      state.summary
-      state.rooted-summary
-      state.ptrs
-      state.roots
-      state.store-roots
-      state.any-call?
-      state.global-write?
-      state.mem-clean-call?
-      state.global-cell-writes
-      (bit-or state.global-obj-writes mask))))
+    (begin
+      (set! state.global-obj-writes (bit-or state.global-obj-writes mask))
+      state)))
 
 ;; Which global's OWN STORAGE a write through this pointer may land on. The
 ;; classes that answer 0 are the ones the memory model keeps disjoint from a
@@ -22082,17 +22051,8 @@
     state.global-obj-writes))
 
 (define (opt-licm-store-state-mark-mem-clean-call [state : OptLicmStoreState]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    state.rooted-summary
-    state.ptrs
-    state.roots
-    state.store-roots
-    state.any-call?
-    state.global-write?
-    true
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.mem-clean-call? true)
+  state)
 
 ;; Fold a DIRECT call (`Call` or `TailCall`) into the body state: the call
 ;; boundary plus the callee's store facts. A non-returning trap helper
@@ -22297,17 +22257,8 @@
 (define (opt-licm-store-state-invalidate-ptr-def
   [state : OptLicmStoreState]
   [var : i64]) : OptLicmStoreState
-  (OptLicmStoreState
-    state.summary
-    state.rooted-summary
-    (opt-licm-ptr-unbind-bound (& state.ptrs) var)
-    state.roots
-    state.store-roots
-    state.any-call?
-    state.global-write?
-    state.mem-clean-call?
-    state.global-cell-writes
-    state.global-obj-writes))
+  (set! state.ptrs (opt-licm-ptr-unbind-bound (& state.ptrs) var))
+  state)
 
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
@@ -112511,9 +112462,11 @@
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (if (>= pos count)
-    ;; The copy of `instrs` keeps this an ordinary call. As a tail call its
-    ;; stack-argument marshalling writes %rdi before it moves `instrs` out of
-    ;; %rdi into %r8 (a backend bug, reported separately).
+    ;; The copy of `instrs` keeps this an ordinary call. As a tail call, a
+    ;; stage0 without the parallel tail-call marshalling
+    ;; (`compiler-backend-emit-direct-tail-call-args-parallel`) writes %rdi
+    ;; before it moves `instrs` out of %rdi into %r8. Drop the copy once stage0
+    ;; carries that fix.
     (opt-inline-rewrite-single-block-seq-with-spans
       block-label
       head-label
@@ -127429,7 +127382,8 @@
   (OptDeadStoreSet (__tl_make-array OptDeadStoreEntry capacity) 0))
 
 (define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
-  (OptDeadStoreSet pending.slots 0))
+  (set! pending.len 0)
+  pending)
 
 ;; DSE deliberately ignores the stored type carried by the class: it stays
 ;; exactly as conservative as before the typed-word rule.

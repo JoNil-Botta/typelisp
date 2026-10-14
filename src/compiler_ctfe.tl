@@ -29,6 +29,14 @@
 
 (defstruct CompilerCtfeMacroStateData
   (result-hygiene-free-node i64)
+  ;; The operand node of the last `expr-type` that failed on an operand the
+  ;; macro walk could not typecheck, or -1 (#8871), and the pools the
+  ;; evaluation read it from. Only `ctfe-expr-type-value` sets them, and only
+  ;; for a value the walk's own capture marked failed, so the node is a real
+  ;; operand of the call being expanded. The native route evaluates in its
+  ;; host session's pools, which the caller adopts only when the call succeeds.
+  (failed-operand-node i64)
+  (failed-operand-pools ast.AstNodePoolContext)
   (result-may-contain-macro bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
@@ -50,6 +58,8 @@
       (array-ref cell 0)
       (CompilerCtfeMacroStateData
         -1
+        -1
+        (ast.AstNodePoolContext 0 0 0)
         false
         (ctfe_key_map.with-capacity 1)
         (ctfe_key_map.with-capacity 1)
@@ -144,6 +154,38 @@
   [state : CompilerCtfeMacroState]) : i64
   (unsafe
     (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
+
+;; `expr-type`'s failed-operand channel (#8871). The noted operand belongs to the
+;; failing transformer evaluation: the macro walk takes it on that call's error
+;; path, which clears it.
+(define (ctfe-failed-operand-note-for-state!
+  [state : CompilerCtfeMacroState]
+  [node : i64]
+  [pools : ast.AstNodePoolContext]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-node
+      node)
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-pools
+      pools)))
+
+;: The pools of the noted failed operand; read before taking it.
+(define (ctfe-failed-operand-pools-for-state [state : CompilerCtfeMacroState]) : ast.AstNodePoolContext
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).failed-operand-pools))
+
+;: The noted failed operand, or -1; the channel is cleared either way.
+(define (ctfe-failed-operand-take-for-state! [state : CompilerCtfeMacroState]) : i64
+  (let
+    [node : i64
+      (unsafe
+        (deref (compiler-ctfe-macro-state-view state)).failed-operand-node)]
+    (ctfe-failed-operand-note-for-state!
+      state
+      -1
+      (ast.AstNodePoolContext 0 0 0))
+    node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -930,10 +972,30 @@
 (define (ctfe-untyped-expr-type) : ast.AstType
   (Var (ctfe-untyped-expr-type-id)))
 
+;; An operand the macro walk tried to typecheck and could not. It is untyped
+;; everywhere, except that `expr-type` on it notes the operand node in the job's
+;; macro state, so the walk can report the operand's own error instead (#8871).
+(define (ctfe-failed-expr-type-id) : i64
+  -6)
+
+(define (ctfe-failed-expr-type) : ast.AstType
+  (Var (ctfe-failed-expr-type-id)))
+
+(define (ctfe-failed-expr-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Var name) (= name (ctfe-failed-expr-type-id))]
+    [_ false]))
+
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name)
+      (or
+        (= name (ctfe-untyped-expr-type-id))
+        (= name (ctfe-failed-expr-type-id)))]
     [_ false]))
+
+(define (ctfe-expr-type-untyped-message) : String
+  "expr-type requires a typechecked Expr")
 
 (define (ctfe-captured-expr-type-id) : i64
   -4)
@@ -1675,13 +1737,9 @@
             (ctfe-metadata-grown-capacity capacity required))]
         (for [index (iterator.range 0 len)]
           (set! (array-ref grown index) (array-ref slots index)))
-        (CtfeReflectInfoList
-          grown
-          items.index
-          len
-          items.aligns
-          items.aliases
-          items.alias-scope)))))
+        (set! items.slots grown)
+        (set! items.len len)
+        items))))
 
 (define (ctfe-reflect-info-list-contains-key-id?
   [items : (& CtfeReflectInfoList)]
@@ -3213,23 +3271,8 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(Eq)
-      (Ok
-        (Bool
-          (ctfe-type-eq-in-env
-            env
-            (owned_view.compiler-owned-reference-shared-view a)
-            (owned_view.compiler-owned-reference-shared-view b)))
-        fuel)]
-    [(Ne)
-      (Ok
-        (Bool
-          (not
-            (ctfe-type-eq-in-env
-              env
-              (owned_view.compiler-owned-reference-shared-view a)
-              (owned_view.compiler-owned-reference-shared-view b))))
-        fuel)]
+    [(Eq) (Ok (Bool (ctfe-type-eq-in-env env a b)) fuel)]
+    [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env a b))) fuel)]
     [_
       (Err
         (box
@@ -3326,8 +3369,8 @@
       (match (owned_view.compiler-owned-reference-shared-view rv)
         [(Type b)
           (match op
-            [(Eq) (Ok (Bool (ctfe-type-eq-in-env env a b)) fuel)]
-            [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env a b))) fuel)]
+            [(Eq) (Ok (Bool (ctfe-type-eq-in-env env (& a) (& b))) fuel)]
+            [(Ne) (Ok (Bool (not (ctfe-type-eq-in-env env (& a) (& b)))) fuel)]
             [_
               (Err
                 (box
@@ -3352,7 +3395,7 @@
                       env
                       (& (ctfe-ast-get env a))
                       (& (ctfe-ast-get env b)))
-                    (ctfe-type-eq-in-env env a-ty b-ty)))
+                    (ctfe-type-eq-in-env env (& a-ty) (& b-ty))))
                 fuel)]
             [(Ne)
               (Ok
@@ -3363,7 +3406,7 @@
                         env
                         (& (ctfe-ast-get env a))
                         (& (ctfe-ast-get env b)))
-                      (ctfe-type-eq-in-env env a-ty b-ty))))
+                      (ctfe-type-eq-in-env env (& a-ty) (& b-ty)))))
                 fuel)]
             [_
               (Err
@@ -3841,13 +3884,8 @@
 (define (ctfe-reflect-info-list-in-scope
   [infos : CtfeReflectInfoList]
   [module-id : i64]) : CtfeReflectInfoList
-  (CtfeReflectInfoList
-    infos.slots
-    infos.index
-    infos.len
-    infos.aligns
-    infos.aliases
-    module-id))
+  (set! infos.alias-scope module-id)
+  infos)
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : ast.AstNodePoolContext]
@@ -6587,9 +6625,12 @@
                   (and
                     (ctfe-type-eq-in-env
                       env
-                      (ctfe-ty-get env inner)
-                      expected-type)
-                    (ctfe-type-eq-in-env env (ctfe-ty-get env ret) (String)))]
+                      (& (ctfe-ty-get env inner))
+                      (& expected-type))
+                    (ctfe-type-eq-in-env
+                      env
+                      (& (ctfe-ty-get env ret))
+                      (& (String))))]
                 [_ false]))
             false))]
       [_ false])))
@@ -7460,12 +7501,18 @@
 (define (ctfe-expr-type-value
   [pools : ast.AstNodePoolContext]
   [reflections : (& reflections CtfeReflectInfoList)]
+  [state : CompilerCtfeMacroState]
+  [node : i64]
   [ty : (& ast.AstType)]) : CtfeBuilt
   (let
     [actual-ty : ast.AstType
       (ctfe-captured-expr-type-inner-with-pools pools ty)]
     (if (ctfe-untyped-expr-type? actual-ty)
-      (Err "expr-type requires a typechecked Expr")
+      (begin
+        (when
+          (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
+          (ctfe-failed-operand-note-for-state! state node pools))
+        (Err (ctfe-expr-type-untyped-message)))
       (Ok
         (Type
           (ctfe-reflect-resolve-type-with-pools pools reflections actual-ty))))))
@@ -7483,14 +7530,26 @@
           (let
             [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
             (match value
-              [(Expr _ ty)
+              [(Expr node ty)
                 (ctfe-built-result
-                  (ctfe-expr-type-value (ctfe-env-pools env) reflections (& ty))
+                  (ctfe-expr-type-value
+                    (ctfe-env-pools env)
+                    reflections
+                    (ctfe-env-macro-state env)
+                    node
+                    (& ty))
                   expr
                   arg-fuel)]
+              ;; A captured list element's node names another pool, so its
+              ;; diagnostic stays generic.
               [(CapturedExpr _ ty pools)
                 (ctfe-built-result
-                  (ctfe-expr-type-value pools reflections (& ty))
+                  (ctfe-expr-type-value
+                    pools
+                    reflections
+                    (ctfe-env-macro-state env)
+                    -1
+                    (& ty))
                   expr
                   arg-fuel)]
               [_
@@ -7855,8 +7914,8 @@
   (or
     (ctfe-type-eq-in-env
       env
-      (clone (owned_view.compiler-owned-reference-shared-view ty))
-      (Bool))
+      (& (clone (owned_view.compiler-owned-reference-shared-view ty)))
+      (& (Bool)))
     (ctfe-untyped-expr-type? ty)))
 
 (define (ctfe-expr-if-branch-types-compatible?
@@ -7866,8 +7925,8 @@
   (or
     (ctfe-type-eq-in-env
       env
-      (clone (owned_view.compiler-owned-reference-shared-view then-ty))
-      (clone (owned_view.compiler-owned-reference-shared-view else-ty)))
+      (& (clone (owned_view.compiler-owned-reference-shared-view then-ty)))
+      (& (clone (owned_view.compiler-owned-reference-shared-view else-ty))))
     (ctfe-untyped-expr-type? then-ty)
     (ctfe-untyped-expr-type? else-ty)))
 
@@ -7875,10 +7934,7 @@
   [env : (& env CtfeEnv)]
   [then-ty : ast.AstType]
   [else-ty : (& ast.AstType)]) : ast.AstType
-  (if (ctfe-type-eq-in-env
-    env
-    (clone then-ty)
-    (owned_view.compiler-owned-reference-shared-view else-ty))
+  (if (ctfe-type-eq-in-env env (& (clone then-ty)) else-ty)
     then-ty
     (ctfe-untyped-expr-type)))
 
@@ -13719,60 +13775,43 @@
   [env : (& env CtfeEnv)]
   [a : (& ast.AstMaybeType)]
   [b : (& ast.AstMaybeType)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(No)
       (match b
         [(No) true]
         [_ false])]
     [(Some a-ty)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Some b-ty) (ctfe-type-eq-in-env env a-ty b-ty)]
         [_ false])]))
 
 (define (ctfe-pattern-eq-in-env
   [env : CtfeEnv]
-  [a : ast.AstPattern]
-  [b : ast.AstPattern]) : bool
+  [a : (& ast.AstPattern)]
+  [b : (& ast.AstPattern)]) : bool
   (match a
     [(Var a-name a-ty)
       (match b
         [(Var b-name b-ty)
-          (and
-            (= a-name b-name)
-            (ctfe-maybe-type-eq-in-env env (& a-ty) (& b-ty)))]
+          (and (= a-name b-name) (ctfe-maybe-type-eq-in-env env a-ty b-ty))]
         [_ false])]
     [(Tuple a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Tuple b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(Tuple b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(Array a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Array b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(Array b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(Slice a-items-box a-rest)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Slice b-items-box b-rest)
-            (and
-              (= a-rest b-rest)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]
+      (match b
+        [(Slice b-items-box b-rest)
+          (and
+            (= a-rest b-rest)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]
     [(Wildcard)
       (match b
         [(Wildcard) true]
@@ -13782,57 +13821,34 @@
         [(Binding b-name) (= a-name b-name)]
         [_ false])]
     [(Variant a-name a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(Variant b-name b-items-box)
-            (and
-              (= a-name b-name)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]
+      (match b
+        [(Variant b-name b-items-box)
+          (and
+            (= a-name b-name)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]
     [(Literal a-lit)
       (match b
         [(Literal b-lit)
-          (ctfe-literal-eq
-            (ctfe-env-structural-session (& env))
-            (& a-lit)
-            (& b-lit))]
+          (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
         [_ false])]
     [(ast.AstPattern.Or a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Or b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(ast.AstPattern.Or b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(ast.AstPattern.Fields a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Fields b-items-box)
-            (ctfe-pattern-list-eq-in-env
-              env
-              (& a-items)
-              (& (deref b-items-box)))]
-          [_ false]))]
+      (match b
+        [(ast.AstPattern.Fields b-items-box)
+          (ctfe-pattern-list-eq-in-env env a-items-box b-items-box)]
+        [_ false])]
     [(ast.AstPattern.Field a-name a-items-box)
-      (let
-        [a-items : ast.AstPatternList (deref a-items-box)]
-        (match b
-          [(ast.AstPattern.Field b-name b-items-box)
-            (and
-              (= a-name b-name)
-              (ctfe-pattern-list-eq-in-env
-                env
-                (& a-items)
-                (& (deref b-items-box))))]
-          [_ false]))]))
+      (match b
+        [(ast.AstPattern.Field b-name b-items-box)
+          (and
+            (= a-name b-name)
+            (ctfe-pattern-list-eq-in-env env a-items-box b-items-box))]
+        [_ false])]))
 
 (define (ctfe-pattern-list-eq-in-env
   [env : CtfeEnv]
@@ -13848,8 +13864,8 @@
     (unless
       (ctfe-pattern-eq-in-env
         env
-        (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback))
-        (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback)))
+        (& (ast.ast-pattern-list-get a index (ast.ast-pattern-fallback)))
+        (& (ast.ast-pattern-list-get b index (ast.ast-pattern-fallback))))
       (return false))
     unit)
   true)
@@ -13877,13 +13893,13 @@
   (ctfe-expr-eq-in-env env (& (ctfe-ast-get env a)) (& (ctfe-ast-get env b))))
 
 (define (ctfe-type-id-eq-in-env [env : CtfeEnv] [a : i64] [b : i64]) : bool
-  (ctfe-type-eq-in-env env (ctfe-ty-get env a) (ctfe-ty-get env b)))
+  (ctfe-type-eq-in-env env (& (ctfe-ty-get env a)) (& (ctfe-ty-get env b))))
 
 (define (ctfe-literal-eq-in-env
   [env : CtfeEnv]
-  [a : ast.AstLiteral]
-  [b : ast.AstLiteral]) : bool
-  (ctfe-literal-eq (ctfe-env-structural-session (& env)) (& a) (& b)))
+  [a : (& ast.AstLiteral)]
+  [b : (& ast.AstLiteral)]) : bool
+  (ctfe-literal-eq (ctfe-env-structural-session (& env)) a b))
 
 (define (ctfe-expr-eq-in-env
   [env : CtfeEnv]
@@ -14233,9 +14249,9 @@
 
 (define (ctfe-type-eq-in-env
   [env : (& env CtfeEnv)]
-  [a : ast.AstType]
-  [b : ast.AstType]) : bool
-  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) (& a) (& b)))
+  [a : (& ast.AstType)]
+  [b : (& ast.AstType)]) : bool
+  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) a b))
 
 (define (ctfe-type-list-eq [a : (& ast.AstTypeList)] [b : (& ast.AstTypeList)]) : bool
   (let
@@ -14245,7 +14261,4 @@
 (define (ctfe-type-eq [a : (& ast.AstType)] [b : (& ast.AstType)]) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    (ctfe-type-eq-in-env
-      env
-      (owned_view.compiler-owned-reference-shared-view a)
-      (owned_view.compiler-owned-reference-shared-view b))))
+    (ctfe-type-eq-in-env env a b)))

@@ -106,6 +106,115 @@ exercise_backend() {
     echo "[linux-memory-limit] $_memory_backend pass/fail fixtures passed"
 }
 
+# Pin the observation order: the workload cannot allocate until the second
+# RSS collection, and that collection waits for its kernel OOM before returning.
+# A separate RSS-only case keeps the fallback termination path mandatory.
+exercise_sampled_observation_races() (
+    TYPELISP_MEMORY_RACE_PS=$(command -v ps)
+    TYPELISP_MEMORY_RACE_AWK=$(command -v awk)
+    export TYPELISP_MEMORY_RACE_PS TYPELISP_MEMORY_RACE_AWK
+    mkdir -p "$WORKDIR/rss-race-bin"
+    cat > "$WORKDIR/rss-race-bin/ps" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$*" = '-e -o pid= -o pgid= -o rss=' ] || exec "$TYPELISP_MEMORY_RACE_PS" "$@"
+while read -r line; do
+    case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}" ;; esac
+done < /proc/self/cgroup
+case $cgroup in */sampler) workload="$cgroup/../workload" ;; *) exit 1 ;; esac
+if mkdir "$TYPELISP_MEMORY_RACE_DIR/first-sample" 2>/dev/null; then
+    # Process-group publication can precede the gated child's cgroup move.
+    placement=0
+    while ! read -r pid < "$workload/cgroup.procs"; do
+        [ "$placement" -lt 100 ] || exit 1
+        placement=$((placement + 1))
+        sleep 0.01
+    done
+    "$TYPELISP_MEMORY_RACE_PS" -o pgid= -p "$pid" | awk 'NR == 1 { print $1 }' \
+        > "$TYPELISP_MEMORY_RACE_DIR/pgid"
+    exec "$TYPELISP_MEMORY_RACE_PS" "$@"
+fi
+: > "$TYPELISP_MEMORY_RACE_DIR/start"
+attempt=0
+while :; do
+    kills=0
+    while read -r key value; do
+        [ "$key" != oom_kill ] || kills=$value
+    done < "$workload/memory.events"
+    if [ "$TYPELISP_MEMORY_RACE_MODE" != kernel ] || [ "$kills" -gt 0 ]; then break; fi
+    [ "$attempt" -lt 200 ] || exit 1
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+cat "$workload/memory.events" > "$TYPELISP_MEMORY_RACE_DIR/events"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = sampling-error ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    : > "$TYPELISP_MEMORY_RACE_DIR/fail-sample"
+fi
+read -r pgid < "$TYPELISP_MEMORY_RACE_DIR/pgid"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = transient ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    printf '%s %s 0\n' "$pgid" "$pgid"
+else
+    : > "$TYPELISP_MEMORY_RACE_DIR/excess-sampled"
+    printf '%s %s 65536\n' "$pgid" "$pgid"
+fi
+EOF
+    cat > "$WORKDIR/rss-race-bin/awk" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in
+    '-v group='*)
+        cat > "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        [ ! -e "$TYPELISP_MEMORY_RACE_DIR/fail-sample" ] || exit 1
+        exec "$TYPELISP_MEMORY_RACE_AWK" "$@" < "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        ;;
+    *) exec "$TYPELISP_MEMORY_RACE_AWK" "$@" ;;
+esac
+EOF
+    cat > "$WORKDIR/rss-race-workload.sh" <<'EOF'
+#!/bin/sh
+set -eu
+while [ ! -e "$TYPELISP_MEMORY_RACE_DIR/start" ]; do sleep 0.01; done
+case $TYPELISP_MEMORY_RACE_MODE in
+    kernel) exec awk 'BEGIN { s = "x"; while (1) s = s s }' ;;
+    rss | transient | sampling-error) exec sleep 30 ;;
+esac
+EOF
+    chmod +x "$WORKDIR/rss-race-bin/ps" "$WORKDIR/rss-race-bin/awk"
+    PATH="$WORKDIR/rss-race-bin:$PATH"
+    export PATH
+    for TYPELISP_MEMORY_RACE_MODE in kernel rss transient sampling-error; do
+        TYPELISP_MEMORY_RACE_DIR="$WORKDIR/rss-race-$TYPELISP_MEMORY_RACE_MODE"
+        export TYPELISP_MEMORY_RACE_MODE TYPELISP_MEMORY_RACE_DIR
+        mkdir "$TYPELISP_MEMORY_RACE_DIR"
+        status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 --timeout-seconds 5 \
+            --report "$TYPELISP_MEMORY_RACE_DIR/report" -- \
+            sh "$WORKDIR/rss-race-workload.sh" \
+            > "$TYPELISP_MEMORY_RACE_DIR/stdout" 2> "$TYPELISP_MEMORY_RACE_DIR/stderr" || status=$?
+        [ "$status" -eq 137 ] || {
+            cat "$TYPELISP_MEMORY_RACE_DIR/stderr" >&2
+            fail "RSS observation fixture $TYPELISP_MEMORY_RACE_MODE returned $status"
+        }
+        if [ "$TYPELISP_MEMORY_RACE_MODE" = kernel ]; then
+            peak=$(sed -n 's/.*systemd summary [0-9]*, sampler \([0-9]*\);.*/\1/p' \
+                "$TYPELISP_MEMORY_RACE_DIR/stderr")
+            kills=$(sed -n 's/.*(oom_kill \([0-9]*\)).*/\1/p' "$TYPELISP_MEMORY_RACE_DIR/stderr")
+            [ "${peak:-0}" -ge 33554432 ] && [ "${kills:-0}" -ge 1 ] ||
+                fail "RSS observation race lost the kernel OOM or sampler peak"
+            if grep -Fq 'memory limit exceeded: aggregate RSS' "$TYPELISP_MEMORY_RACE_DIR/stderr"; then
+                fail "RSS observation race terminated from stale pre-sample OOM state"
+            fi
+        else
+            grep -Fxq 'oom_kill 0' "$TYPELISP_MEMORY_RACE_DIR/events" &&
+                grep -Fq 'memory limit exceeded: aggregate RSS' "$TYPELISP_MEMORY_RACE_DIR/stderr" ||
+                fail "RSS-only excess lost fallback termination without a kernel OOM"
+        fi
+    done
+    echo '[linux-memory-limit] kernel/RSS observation race and RSS-only termination passed'
+)
+
 exercise_sampled_backend() {
     _sampled_prefix="$WORKDIR/sampled"
     "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
@@ -371,6 +480,7 @@ linux_memory_limit_select_backend
 [ "$LINUX_MEMORY_LIMIT_BACKEND" = systemd-user-cgroup ] ||
     fail "Linux memory limiting selected $LINUX_MEMORY_LIMIT_BACKEND, expected systemd-user-cgroup"
 exercise_backend systemd-user-cgroup
+exercise_sampled_observation_races
 exercise_sampled_backend
 exercise_nested_backend systemd-user-cgroup
 

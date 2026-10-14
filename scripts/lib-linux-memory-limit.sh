@@ -432,6 +432,7 @@ linux_memory_limit_sample_process_group() {
         return 137
     fi
     : > "$_linux_memory_limit_gate"
+    _linux_memory_limit_rss_excess_pending=0
 
     while :; do
         if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
@@ -441,6 +442,20 @@ linux_memory_limit_sample_process_group() {
             rm -f "$_linux_memory_limit_gate"
             rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
             linux_memory_limit_record_oom_peak "$_linux_memory_limit_cgroup"
+            return 137
+        fi
+        if [ "$_linux_memory_limit_rss_excess_pending" -gt 0 ]; then
+            echo "memory limit exceeded: aggregate RSS $_linux_memory_limit_rss_excess_pending KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
+            kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
+            sleep 0.1
+            kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
+            wait "$_linux_memory_limit_pid" 2>/dev/null || true
+            rm -f "$_linux_memory_limit_gate"
+            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+            if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+                printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
+                    > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+            fi
             return 137
         fi
         _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
@@ -459,18 +474,11 @@ linux_memory_limit_sample_process_group() {
             _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
         fi
         if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
-            echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
-            kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
-            sleep 0.1
-            kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
-            wait "$_linux_memory_limit_pid" 2>/dev/null || true
-            rm -f "$_linux_memory_limit_gate"
-            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-            if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
-                printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
-                    > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
-            fi
-            return 137
+            # The exact workload cap remains active during one bounded OOM
+            # recheck. A known RSS breach needs no further memory samples.
+            _linux_memory_limit_rss_excess_pending=$_linux_memory_limit_rss
+            sleep 0.05
+            continue
         fi
         sleep "$_linux_memory_limit_poll"
     done

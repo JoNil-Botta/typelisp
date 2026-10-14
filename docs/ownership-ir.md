@@ -1960,7 +1960,8 @@ the per-body checking: under `check`, 95.7K to 356.8K per declaration, 107.2K
 to 721.8K per CFG node, 241.5K to 595.4K per field and 1.15M to 1.45M per
 expansion; opt1 and opt2 rows rose by 1.16x to 2.6x. Growth stays linear
 (1.10 or less on the rows main measured as linear), and no row turns
-quadratic. perf/compiler-scaling-budgets.tsv holds the refreshed rows.
+quadratic. `perf/compiler-scaling-budgets.tsv` keeps main's existing budgets;
+these increases remain acceptance blockers.
 
 Baseline and changed-source cost measurements must use identical workloads and
 record instructions, wall time, peak live memory, virtual reservations, compiler

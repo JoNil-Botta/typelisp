@@ -7,6 +7,7 @@
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.io)
 (import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
@@ -3235,7 +3236,9 @@
     "global span changes reach installed cells and retained captures"))
 
 (define (main) : i64
-  (unless (compiler-ast-installed-span-capture?) (return 31))
+  (unless
+    (compiler-ast-installed-span-capture?)
+    (io.panic "compiler-ast-installed-span-capture failed"))
   (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
   (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
   (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))

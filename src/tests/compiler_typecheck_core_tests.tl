@@ -10882,3 +10882,49 @@
             local-region
             "global lookup restores scoped locals and their lifetimes")
           (tc_core.tc-type-env-scoped-runtime-restore! saved))))))
+
+;; An implicit borrow of a call argument borrows the argument's own node and
+;; adds no row to the pool (#8411).
+(test
+  tc-call-effective-arg-expr-borrows-the-argument-node
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [name : i64 (ci.intern "auto-borrow-operand")]
+    [var : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        var
+        (ast.ast-source-span 2 3 2 22))]
+    [want : ast.AstType
+      (ast.ast-ty-ref-with-pools
+        pools
+        (ci.intern "auto-borrow-region")
+        (& (String)))]
+    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [rows : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [operand : i64
+        (match (tc_core.tc-call-effective-arg-expr
+          ctx
+          env
+          arg
+          (tc_core.tc-context-expr-get ctx arg)
+          want)
+          [(Ok (Borrow mutable _ operand))
+            (if mutable
+              -1
+              operand)]
+          [_ -1])]
+      [rows-after : i64 (ast.ast-node-pool-context-expr-len pools)]
+      (ast.ast-node-pool-context-install! saved)
+      (test.assert-i64-eq
+        operand
+        arg
+        "the implicit borrow borrows the argument's own node")
+      (test.assert-i64-eq rows-after rows "the implicit borrow adds no row"))))

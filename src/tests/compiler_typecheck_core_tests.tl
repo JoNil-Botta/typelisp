@@ -2414,12 +2414,12 @@
       [map-key : i64 (csym.compiler-symbol-name-id-key name-id)]
       [symbols-a : csym.CompilerSymbols
         (csym.compiler-symbols-add-type-alias-key-id
-          (csym.compiler-symbols-empty)
+          (& (csym.compiler-symbols-empty))
           map-key
           101)]
       [symbols-b : csym.CompilerSymbols
         (csym.compiler-symbols-add-type-alias-key-id
-          (csym.compiler-symbols-empty)
+          (& (csym.compiler-symbols-empty))
           map-key
           202)]
       [symbols-growth : csym.CompilerSymbols (csym.compiler-symbols-empty)]
@@ -2478,7 +2478,10 @@
       [growth-before : csym.CompilerSymbolsTypeMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-growth))]
       [symbols-growth-next : csym.CompilerSymbols
-        (csym.compiler-symbols-add-type-alias-key-id symbols-growth map-key 303)]
+        (csym.compiler-symbols-add-type-alias-key-id
+          (& symbols-growth)
+          map-key
+          303)]
       [growth-after : csym.CompilerSymbolsTypeMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-growth-next))]
       [after-add : i64
@@ -2557,12 +2560,12 @@
       [map-key : i64 (csym.compiler-symbol-name-id-key name-id)]
       [symbols-a : csym.CompilerSymbols
         (csym.compiler-symbols-add-type-alias-key-id
-          (csym.compiler-symbols-empty)
+          (& (csym.compiler-symbols-empty))
           map-key
           101)]
       [symbols-b : csym.CompilerSymbols
         (csym.compiler-symbols-add-type-alias-key-id
-          (csym.compiler-symbols-empty)
+          (& (csym.compiler-symbols-empty))
           map-key
           202)]
       ;; An unbound cache neither answers nor records a kind.
@@ -8188,14 +8191,15 @@
         (str_cat.str-cat
           "sym:"
           (spec.spec-string-key
-            (tc_core.macro-internal-resolved-struct-type-marker))))
+            (& (tc_core.macro-internal-resolved-struct-type-marker)))))
       (string.eq
         (tc_core.macro-identity-key-sexpr
           (cis.InternStructuralSessionHandle 0)
           (tc_core.macro-spanned-symbol-id composite-id span))
         (str_cat.str-cat
           "sym:"
-          (spec.spec-string-key (ast.ast-nominal-name-id-display composite-id)))))))
+          (spec.spec-string-key
+            (& (ast.ast-nominal-name-id-display composite-id))))))))
 
 (test
   macro-identity-key-preserves-internal-symbols

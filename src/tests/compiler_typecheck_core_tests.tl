@@ -13817,8 +13817,8 @@
         [(csym.ResultCompilerSymbols.Err message) (io.panic message)])]
     [registries : csym.CompilerRegistries
       (match (csym.build-compiler-registries-with-symbols
-        (tc_core.tc-global-shared-view program)
-        (tc_core.tc-global-shared-view symbols))
+        (& program)
+        (& symbols))
         [(csym.ResultCompilerRegistries.Ok value) value]
         [(csym.ResultCompilerRegistries.Err message) (io.panic message)])]
     [ctx : tc_core.TcContext

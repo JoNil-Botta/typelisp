@@ -14877,10 +14877,7 @@ f:
       (let
         [first : String "    movsd %xmm0, 48(%rbp)\n"]
         (and
-          (>= (string.string-length asm) (string.string-length first))
-          (string.eq
-            (string.substring-copy-checked asm 0 (string.string-length first))
-            first)
+          (string.is-string-prefix-at (& asm) (& first) 0)
           (backend.compiler-backend-string-contains? asm ", %xmm0\n")))]
     [(Err _) false]))
 

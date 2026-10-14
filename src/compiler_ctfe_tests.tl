@@ -4194,6 +4194,7 @@
       (compiler-ctfe-captured-list-builders-ok? 1 false)
       (compiler-ctfe-captured-list-builders-ok? 65 false)
       (compiler-ctfe-captured-list-builders-ok? 1 true)
+      (compiler-ctfe-captured-list-builders-ok? 3 true)
       (compiler-ctfe-list-builder-errors-ok? true)
       (compiler-ctfe-list-builder-errors-ok? false))
       unit
@@ -4327,6 +4328,146 @@
 
 (cfg
   test
+  ;; One context in the caller's storage is newer than the others; a later
+  ;; append goes through a context that a builder must have refreshed:
+  ;;   0  (expr-begin-unit (expr-list-cons head tail)) with a stale tail
+  ;;   1  (expr-call head tail), then (expr-begin-unit tail)
+  ;;   2  (expr-call head tail), then (expr-int 7) through a separate retained
+  ;;      snapshot of the caller storage
+  ;;   3  (expr-call head tail) where only the environment's own pool is
+  ;;      current and the retained pool is unrelated
+  ;;   4  (expr-list-cons head tail), then (expr-int 7) through a stale head
+  ;;      and retained snapshot; the tail's child is the sentinel
+  ;; No append may overwrite the sentinel or a constructed call.
+  (define (compiler-ctfe-list-builder-followup-ok? [shape : i64]) : bool
+    (let
+      [base : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+      [foreign-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities-in-arena
+          2
+          2
+          (arena.tl_arena_current))]
+      [foreign-node : i64
+        (ast.ast-node-pool-context-expr-push
+          foreign-pools
+          (Literal (ast.ast-lit-int 1)))]
+      [caller-pools : ast.AstNodePoolContext
+        (if (= shape 3)
+          (ctfe.ctfe-env-pools base)
+          (ast.ast-node-pool-context-new-with-capacities-in-arena
+            2
+            2
+            (arena.tl_arena_current)))]
+      [node : i64
+        (ast.ast-node-pool-context-expr-push
+          caller-pools
+          (Literal (ast.ast-lit-int 42)))]
+      [stale : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-snapshot caller-pools)]
+      [sentinel : i64
+        (ast.ast-node-pool-context-expr-push
+          caller-pools
+          (Literal (ast.ast-lit-int 55)))]
+      [current : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-snapshot caller-pools)]
+      [head-name : i64 (ci.intern-generated-canonical-name "followup-head")]
+      [tail-name : i64 (ci.intern-generated-canonical-name "followup-tail")]
+      [decoy-name : i64 (ci.intern-generated-canonical-name "followup-decoy")]
+      [env : ctfe.CtfeEnv
+        (ctfe.ctfe-env-extend-id
+          (ctfe.ctfe-env-extend-id
+            (ctfe.ctfe-env-extend-id
+              base
+              head-name
+              (&
+                (CapturedExpr
+                  node
+                  (I64)
+                  (if (>= shape 3)
+                    stale
+                    caller-pools))))
+            tail-name
+            (&
+              (CapturedExprList
+                (ast.ast-expr-cons
+                  (if (= shape 4)
+                    sentinel
+                    node)
+                  (& (ast.ast-expr-list-new)))
+                (if (= shape 4)
+                  caller-pools
+                  stale))))
+          decoy-name
+          (&
+            (cond
+              [(= shape 2) (CapturedExpr sentinel (I64) current)]
+              [(= shape 4) (CapturedExpr node (I64) stale)]
+              [else (CapturedExpr foreign-node (I64) foreign-pools)])))]
+      [head : i64 (ctfe.ctfe-ast-push env (Var head-name))]
+      [tail : i64 (ctfe.ctfe-ast-push env (Var tail-name))]
+      [cons-call : i64
+        (compiler-ctfe-call2-in-env
+          env
+          (ctfe.ctfe-builtin "expr-list-cons")
+          head
+          tail)]
+      [first : i64
+        (cond
+          [(= shape 0)
+            (compiler-ctfe-call1-in-env
+              env
+              (ctfe.ctfe-builtin "expr-begin-unit")
+              cons-call)]
+          [(= shape 4) cons-call]
+          [else
+            (compiler-ctfe-call2-in-env
+              env
+              (ctfe.ctfe-builtin "expr-call")
+              head
+              tail)])]
+      [next : i64
+        (cond
+          [(= shape 1)
+            (compiler-ctfe-call1-in-env
+              env
+              (ctfe.ctfe-builtin "expr-begin-unit")
+              tail)]
+          [(or (= shape 2) (= shape 4))
+            (compiler-ctfe-call1-in-env
+              env
+              (ctfe.ctfe-builtin "expr-int")
+              (ctfe.ctfe-ast-push env (Literal (ast.ast-lit-int 7))))]
+          [else -1])]
+      (match (ctfe.compiler-ctfe-eval
+        (& (ctfe.ctfe-ast-get env first))
+        env
+        (ctfe.ctfe-fuel-limit))
+        [(Ok built _)
+          (and
+            (or
+              (< next 0)
+              (match (ctfe.compiler-ctfe-eval
+                (& (ctfe.ctfe-ast-get env next))
+                env
+                (ctfe.ctfe-fuel-limit))
+                [(Ok _ _) true]
+                [(Err _) false]))
+            (match (ast.ast-node-pool-context-expr-get caller-pools sentinel)
+              [(Literal (Int value _)) (= value 55)]
+              [_ false])
+            (match built
+              [(CapturedExpr result _ owner)
+                (or
+                  (= shape 0)
+                  (match (ast.ast-node-pool-context-expr-get owner result)
+                    [(Call _ _) true]
+                    [_ false]))]
+              [(CapturedExprList _ _) (= shape 4)]
+              [_ false]))]
+        [(Err _) false]))))
+
+(cfg
+  test
   (test
     compiler-ctfe-captured-list-owner
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -4334,7 +4475,12 @@
       (compiler-ctfe-list-builder-owner-ok? 0)
       (compiler-ctfe-list-builder-owner-ok? 1)
       (compiler-ctfe-list-builder-owner-ok? 2)
-      (compiler-ctfe-list-builder-owner-ok? 3))
+      (compiler-ctfe-list-builder-owner-ok? 3)
+      (compiler-ctfe-list-builder-followup-ok? 0)
+      (compiler-ctfe-list-builder-followup-ok? 1)
+      (compiler-ctfe-list-builder-followup-ok? 2)
+      (compiler-ctfe-list-builder-followup-ok? 3)
+      (compiler-ctfe-list-builder-followup-ok? 4))
       unit
       (begin
         (/ 1 0)

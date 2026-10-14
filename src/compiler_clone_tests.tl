@@ -1,5 +1,6 @@
 ;; compiler_clone_tests.tl - White-box tests for the clone name sets and
 ;; root-entry tables.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
@@ -96,14 +97,12 @@
   [end : i64]) : clone_support.CloneRootEntries
   (let
     [out : clone_support.CloneRootEntries roots]
-    [index : i64 start]
-    (while (< index end)
+    (for [index (iterator.range start end)]
       (set!
         out
         (clone_support.clone-root-entries-add-id
           out
-          (clone-root-entries-smoke-key-id index)))
-      (set! index (+ index 1)))
+          (clone-root-entries-smoke-key-id index))))
     out))
 
 (define (clone-root-entries-smoke-order-ok?
@@ -119,7 +118,7 @@
           (clone-root-entries-smoke-key-id (- count (+ index 1)))))
         (set! ok false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (clone-root-entries-smoke-copy-equal?
@@ -139,7 +138,7 @@
           (clone_support.clone-root-entries-helper-id-at-or right index -1)))
         unit
         (set! ok false))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (clone-root-entries-smoke-ok?) : bool

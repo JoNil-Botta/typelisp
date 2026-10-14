@@ -1,5 +1,6 @@
 ;; Deterministic build-time encoder for the embedded stdlib TLCI envelope.
 ;; This module is used by the payload builder and is not linked into `typelisp`.
+(import stdlib.iterator)
 (import compiler_ctfe as ctfe)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
@@ -72,7 +73,7 @@
       (if (!= (string.string-ref data index) (string.string-ref prefix index))
         (set! matches false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     matches))
 
 (define (compiler-embedded-stdlib-tlci-encoder-count [lzss : (& lzss str)]) : ResultCompilerEmbeddedStdlibTlciEncoderFrequencies
@@ -99,8 +100,8 @@
             (if (> raw-len (/ (- max-i64 digit) 10))
               (set! overflow true)
               (set! raw-len (+ (* raw-len 10) digit)))
-            (set! digits (+ digits 1))
-            (set! index (+ index 1))))
+            (+= digits 1)
+            (+= index 1)))
         (cond
           [overflow
             (Err "embedded stdlib tlci encoder: lzss raw length overflows i64")]
@@ -138,7 +139,7 @@
                       lzss
                       token-index)]
                   [bit : i64 0]
-                  (set! token-index (+ token-index 1))
+                  (+= token-index 1)
                   (while (and (< bit 8) (< out-index raw-len))
                     (if (!= (bit-and flags (shl 1 bit)) 0)
                       (begin
@@ -155,8 +156,8 @@
                           (set!
                             (array-ref main literal)
                             (+ (array-ref main literal) 1))
-                          (set! token-index (+ token-index 1))
-                          (set! out-index (+ out-index 1))))
+                          (+= token-index 1)
+                          (+= out-index 1)))
                       (begin
                         (when
                           (> (+ token-index 2) lzss-len)
@@ -194,9 +195,9 @@
                           (set!
                             (array-ref length length-symbol)
                             (+ (array-ref length length-symbol) 1))
-                          (set! token-index (+ token-index 2))
-                          (set! out-index (+ out-index match-length)))))
-                    (set! bit (+ bit 1)))))
+                          (+= token-index 2)
+                          (+= out-index match-length))))
+                    (+= bit 1))))
               (if (!= token-index lzss-len)
                 (Err "embedded stdlib tlci encoder: trailing lzss tokens")
                 (Ok
@@ -230,7 +231,7 @@
   (let
     [position : i64 heap.len]
     [done : bool false]
-    (set! heap.len (+ heap.len 1))
+    (+= heap.len 1)
     (while (and (> position 0) (not done))
       (let
         [parent : i64 (/ (- position 1) 2)]
@@ -302,30 +303,27 @@
         i64
         (+ (compiler-embedded-stdlib-tlci-encoder-max-code-bits) 1))]
     [codes : (__tl_dyn-array i64) (__tl_make-array i64 (array-length lengths))]
-    [symbol : i64 0]
-    (while (< symbol (array-length lengths))
+    (for [symbol (iterator.range 0 (array-length lengths))]
       (let
         [bits : i64 (array-ref lengths symbol)]
         (if (> bits 0)
           (set! (array-ref counts bits) (+ (array-ref counts bits) 1))
-          unit)
-        (set! symbol (+ symbol 1))))
+          unit)))
     (let
-      [bits : i64 1]
       [code : i64 0]
-      (while (<= bits (compiler-embedded-stdlib-tlci-encoder-max-code-bits))
+      (for [bits
+        (iterator.range
+          1
+          (+ (compiler-embedded-stdlib-tlci-encoder-max-code-bits) 1))]
         (set! code (shl (+ code (array-ref counts (- bits 1))) 1))
-        (set! (array-ref next bits) code)
-        (set! bits (+ bits 1))))
-    (set! symbol 0)
-    (while (< symbol (array-length lengths))
+        (set! (array-ref next bits) code)))
+    (for [symbol (iterator.range 0 (array-length lengths))]
       (let
         [bits : i64 (array-ref lengths symbol)]
         (when
           (> bits 0)
           (set! (array-ref codes symbol) (array-ref next bits))
-          (set! (array-ref next bits) (+ (array-ref next bits) 1)))
-        (set! symbol (+ symbol 1))))
+          (set! (array-ref next bits) (+ (array-ref next bits) 1)))))
     (CompilerEmbeddedStdlibTlciEncoderCodes lengths codes)))
 
 (define (compiler-embedded-stdlib-tlci-encoder-build-codes
@@ -341,10 +339,9 @@
         (__tl_make-array i64 node-capacity)
         0)]
     [lengths : (__tl_dyn-array i64) (__tl_make-array i64 alphabet-size)]
-    [symbol : i64 0]
     [active : i64 0]
     [only : i64 -1]
-    (while (< symbol alphabet-size)
+    (for [symbol (iterator.range 0 alphabet-size)]
       (set! (array-ref parents symbol) -1)
       (if (> (array-ref frequencies symbol) 0)
         (begin
@@ -355,10 +352,9 @@
             symbol
             (& weights)
             (& minimums))
-          (set! active (+ active 1))
+          (+= active 1)
           (set! only symbol))
-        unit)
-      (set! symbol (+ symbol 1)))
+        unit))
     (cond
       [(= active 0)
         (Ok (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths))]
@@ -402,24 +398,22 @@
                 node
                 (& weights)
                 (& minimums))
-              (set! node (+ node 1))))
-          (set! symbol 0)
-          (while (< symbol alphabet-size)
+              (+= node 1)))
+          (for [symbol (iterator.range 0 alphabet-size)]
             (if (> (array-ref frequencies symbol) 0)
               (let
                 [cursor : i64 symbol]
                 [bits : i64 0]
                 (while (>= (array-ref parents cursor) 0)
                   (set! cursor (array-ref parents cursor))
-                  (set! bits (+ bits 1)))
+                  (+= bits 1))
                 (when
                   (> bits (compiler-embedded-stdlib-tlci-encoder-max-code-bits))
                   (return
                     (Err
                       "embedded stdlib tlci encoder: huffman code exceeds 31 bits")))
                 (set! (array-ref lengths symbol) bits))
-              unit)
-            (set! symbol (+ symbol 1)))
+              unit))
           (Ok (compiler-embedded-stdlib-tlci-encoder-canonical-codes lengths)))])))
 
 (define (compiler-embedded-stdlib-tlci-encoder-write-code!
@@ -432,8 +426,8 @@
       (set!
         writer.current
         (bit-or (shl writer.current 1) (bit-and (shr code bit) 1)))
-      (set! writer.used (+ writer.used 1))
-      (set! writer.bits (+ writer.bits 1))
+      (+= writer.used 1)
+      (+= writer.bits 1)
       (if (= writer.used 8)
         (begin
           (byte_buf_core.byte-buf-builder-push
@@ -442,7 +436,7 @@
           (set! writer.current 0)
           (set! writer.used 0))
         unit)
-      (set! bit (- bit 1)))))
+      (-= bit 1))))
 
 (define (compiler-embedded-stdlib-tlci-encoder-write-symbol!
   [writer : (&mut writer CompilerEmbeddedStdlibTlciEncoderBitWriter)]
@@ -485,7 +479,7 @@
         [flags : i64
           (compiler-embedded-stdlib-tlci-encoder-byte lzss token-index)]
         [bit : i64 0]
-        (set! token-index (+ token-index 1))
+        (+= token-index 1)
         (while (and (< bit 8) (< out-index frequencies.raw-len))
           (if (!= (bit-and flags (shl 1 bit)) 0)
             (let
@@ -495,8 +489,8 @@
                 (&mut writer)
                 main-codes
                 literal)
-              (set! token-index (+ token-index 1))
-              (set! out-index (+ out-index 1)))
+              (+= token-index 1)
+              (+= out-index 1))
             (let
               [packed : i64
                 (bit-or
@@ -522,22 +516,19 @@
                 (&mut writer)
                 length-codes
                 length-symbol)
-              (set! token-index (+ token-index 2))
-              (set! out-index (+ out-index (+ length-symbol 3)))))
-          (set! bit (+ bit 1)))))
+              (+= token-index 2)
+              (+= out-index (+ length-symbol 3))))
+          (+= bit 1))))
     (compiler-embedded-stdlib-tlci-encoder-finish-bits! (&mut writer))
     writer))
 
 (define (compiler-embedded-stdlib-tlci-encoder-append-lengths!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [codes : (& codes CompilerEmbeddedStdlibTlciEncoderCodes)]) : unit
-  (let
-    [symbol : i64 0]
-    (while (< symbol (array-length codes.lengths))
-      (byte_buf_core.byte-buf-builder-push
-        out
-        (cast (array-ref codes.lengths symbol) : u8))
-      (set! symbol (+ symbol 1)))))
+  (for [symbol (iterator.range 0 (array-length codes.lengths))]
+    (byte_buf_core.byte-buf-builder-push
+      out
+      (cast (array-ref codes.lengths symbol) : u8))))
 
 (define (compiler-embedded-stdlib-tlci-encoder-finish
   [frequencies : (& frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]

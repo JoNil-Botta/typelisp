@@ -60,7 +60,7 @@
     [n : i64 (string.string-length specs)]
     [i : i64 start]
     (while (and (< i n) (cli-spec-space? (string.string-ref specs i)))
-      (set! i (+ i 1)))
+      (+= i 1))
     i))
 
 (define (cli-spec-token-end [specs : (& specs str)] [start : i64]) : i64
@@ -68,7 +68,7 @@
     [n : i64 (string.string-length specs)]
     [i : i64 start]
     (while (and (< i n) (not (cli-spec-space? (string.string-ref specs i))))
-      (set! i (+ i 1)))
+      (+= i 1))
     i))
 
 ;; End of the `|`-separated spelling at `start` in an entry ending at `end`.
@@ -76,7 +76,7 @@
   (let
     [i : i64 start]
     (while (and (< i end) (not (= (string.string-ref specs i) '|')))
-      (set! i (+ i 1)))
+      (+= i 1))
     i))
 
 (define (cli-spec-entry-names?
@@ -116,7 +116,7 @@
             [value : i64 (cli-spec-skip-space specs end)]
             [arity : i64 0]
             (while (and (< value n) (= (string.string-ref specs value) '<'))
-              (set! arity (+ arity 1))
+              (+= arity 1)
               (set!
                 value
                 (cli-spec-skip-space specs (cli-spec-token-end specs value))))

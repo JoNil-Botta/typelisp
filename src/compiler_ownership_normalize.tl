@@ -4874,17 +4874,18 @@
                     (& state)
                     (normalize-place-root (& state) formed.place))
                   (normalize-place-fields (& state) formed.place)
+                  ;; A place reached through a reference is borrowed content
+                  ;; whatever holds it (E0208, Rust E0507); only an owned
+                  ;; container's element is an element move.
                   (cond
+                    [(>= loan 0)
+                      (match (& (array-ref state.body.loans loan).kind)
+                        [(own.OwnershipLoanKind.Exclusive) 2]
+                        [_ 1])]
                     ;; A fixed array's element at a runtime index (a literal
                     ;; index in range is an exact path, moved on its own).
                     [(and indexed fixed) 4]
                     [indexed 0]
-                    [(and
-                        (>= loan 0)
-                        (match (& (array-ref state.body.loans loan).kind)
-                          [(own.OwnershipLoanKind.Exclusive) true]
-                          [_ false]))
-                      2]
                     [else 1])
                   (try (normalize-source-copy! state (& node.source)))
                   (match (typed.typed-occurrence-get!

@@ -8916,7 +8916,10 @@
                                     [(ast.AstMatchArm.Arm _ body-id)
                                       (tc-selected-view-move-out-error
                                         ctx
-                                        body-id)]))))
+                                        env
+                                        body-id
+                                        (tc-global-shared-view merged)
+                                        0)]))))
                             (set! index (+ index 1)))
                           (if (> (string.string-length (& move-out)) 0)
                             (TcSelectedResult.Err move-out after)
@@ -50951,7 +50954,12 @@
                         (& joined))
                       (return
                         (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error ctx then-branch-id)
+                          (tc-selected-view-move-out-error
+                            ctx
+                            env
+                            then-branch-id
+                            (tc-global-shared-view then-ty)
+                            0)
                           done)))
                     (when
                       (tc-selected-branch-move-out?
@@ -50961,7 +50969,12 @@
                         (& joined))
                       (return
                         (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error ctx else-branch-id)
+                          (tc-selected-view-move-out-error
+                            ctx
+                            env
+                            else-branch-id
+                            (tc-global-shared-view else-ty)
+                            0)
                           done)))
                     (tc-selected-publish-if
                       joined
@@ -62123,7 +62136,13 @@
       (tc-global-shared-view init))
       [(ResultTcUnit.Err message) (return (ResultTcLetBinding.Err message))]
       [(ResultTcUnit.Ok) unit])
-    (match (tc-ensure-reference-value-can-bind env init-ty)
+    ;; A non-Copy value read through a reference is reported as the move it
+    ;; would be (E0208), as main's let paths do (#8554).
+    (match (tc-ensure-let-value-can-bind
+      ctx
+      env
+      (tc-global-shared-view init)
+      (tc-global-shared-view init-ty))
       [(ResultTcUnit.Err message) (return (ResultTcLetBinding.Err message))]
       [(ResultTcUnit.Ok) unit])
     (let
@@ -62224,7 +62243,14 @@
       (tc-global-shared-view binding-ty)
       (tc-global-shared-view init-ty))
     (return
-      (TcSelectedResult.Err (tc-selected-view-move-out-error ctx init-id) sink)))
+      (TcSelectedResult.Err
+        (tc-selected-view-move-out-error
+          ctx
+          env
+          init-id
+          (tc-global-shared-view init-ty)
+          1)
+        sink)))
   (match init
     [(TcSelectedOccurrence.Unrepresented)
       (TcSelectedResult.Ok
@@ -118339,52 +118365,40 @@
           (not (tc-type-copyable? ctx (tc-global-shared-view want))))]
       [_ false])))
 
-;; The move-out rejection for a view operand `expr-id` (see
-;; `tc-selected-view-move-out?`), worded as the place-based check words it.
-(define (tc-selected-view-move-out-error [ctx : TcContext] [expr-id : i64]) : String
+;; The move-out rejection for a view operand `expr-id` of type `ty` (see
+;; `tc-selected-view-move-out?`). A view is read through a reference, so this
+;; is always a move out of borrowed content (E0208, Rust E0507), worded as
+;; typing words it (#8554) whatever holds the value; `context` is the use
+;; (`tc-selected-move-out-reference-help`).
+(define (tc-selected-view-move-out-error
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [ty : ast.AstType]
+  [context : i64]) : String
   (let
-    [expr : ast.AstExpr
-      (ast.ast-expr-unspan (& (tc-context-expr-get ctx expr-id)))]
-    [element? : bool
-      (match (& expr)
-        [(ast.AstExpr.ArrayRef _ _) true]
-        [_ false])]
-    [name : String
-      (tc-selected-expr-path-text ctx (tc-global-shared-view expr))]
-    [message : String
-      (if element?
-        (tc-move-dynamic-array-element-message)
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.MoveViolation)
-          "typecheck: cannot move non-Copy value through shared reference"))]
-    [help : String
-      (str_cat.str-cat
-        (if (or element? (= (string.string-length (& name)) 0))
-          ""
-          (str_cat.str-cat "`" name "` is behind a reference; "))
-        (if element?
-          "borrow the element with `(& ...)`, read its `Copy` fields, or take it with `replace!`"
-          "borrow the value with `(& ...)` or read its `Copy` fields"))]
-    (match (tc-expr-id-maybe-span (tc-context-expr-bases ctx) expr-id)
-      [(TcMaybeAstSourceSpan.Some span)
-        (tc-rich-error-with-help span message help)]
-      [(TcMaybeAstSourceSpan.No) message])))
-
-;; A variable or field path as source spells it (`v.items`), or "".
-(define (tc-selected-expr-path-text [ctx : TcContext] [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var name)
-      (tc-hygiene-name-text-id-for-session
-        (tc-context-structural-session ctx)
-        name)]
-    [(ast.AstExpr.StructGet receiver field)
+    [help : String (tc-selected-move-out-reference-help context)]
+    [moved : String
+      (tc-move-out-of-reference-error
+        ctx
+        (tc-context-expr-bases ctx)
+        env
+        (tc-body-tail-expr
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx expr-id))
+        ty
+        (string.copy (& help)))]
+    (if (> (string.string-length (& moved)) 0)
+      moved
       (let
-        [base : String
-          (tc-selected-expr-path-text ctx (tc-context-expr-get ctx receiver))]
-        (if (= (string.string-length (& base)) 0)
-          ""
-          (str_cat.str-cat base "." (ci.intern-str field))))]
-    [_ ""]))
+        [message : String
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.MoveViolation)
+            "typecheck: cannot move non-Copy value through shared reference")]
+        (match (tc-expr-id-maybe-span (tc-context-expr-bases ctx) expr-id)
+          [(TcMaybeAstSourceSpan.Some span)
+            (tc-rich-error-with-help span message help)]
+          [(TcMaybeAstSourceSpan.No) message])))))
 
 ;; Type identity for the ownership graph. `tc-type-eq` ignores region tags,
 ;; but a region-tagged view and an owned value are different occurrences;
@@ -120759,7 +120773,12 @@
                   (tc-global-shared-view resolved-ret)
                   (tc-global-shared-view got))
                   (ResultTcUnit.Err
-                    (tc-selected-view-move-out-error ctx body-box))
+                    (tc-selected-view-move-out-error
+                      ctx
+                      comparison-env
+                      body-box
+                      (tc-global-shared-view got)
+                      4))
                   (match (tc-selected-prepare-named-body
                     ctx
                     name

@@ -1795,9 +1795,9 @@
     [(Some span) (= (ast.ast-source-span-start-line span) line)]
     [(No) false]))
 
-;; Shallow pool snapshots share the dense span-slot table but retain their own
-;; canonical record generation. A slot from a newer generation must be treated
-;; as missing rather than indexing beyond the restored record array.
+;; Shallow pool snapshots share the dense span-slot table and the record table
+;; but keep their own record counts. A slot past a snapshot's canonical count
+;; must be treated as missing rather than read as one of its records.
 (define (compiler-ast-stale-canonical-span-slot-recovery-smoke?) : bool
   (match (ast.ast-expr-node-pool-state-push
     (ast.ast-expr-node-pool-state-create 1)

@@ -1207,16 +1207,19 @@
 ;; records and is added without copying. So a large pool never keeps a dead
 ;; doubled copy, and its unused tail is under one segment. Snapshots of a pool
 ;; copy the table address, not the records, so a record appended or a segment
-;; added through any snapshot is visible to all of them; each snapshot keeps
-;; its own record count, exactly as it shared one array before growth.
+;; added through any snapshot is visible to all of them. Each snapshot keeps
+;; its own record count and reads only below it; records below a count are
+;; never rewritten, and a rollback below a snapshot's count already
+;; invalidates that snapshot through the node segments and span slots it
+;; shares. The accessor macros below spell the segment shift (16) and mask
+;; (65535) of `ast-expr-span-record-segment-size` as literals.
 (define ast-expr-span-record-segment-shift : i64
   16)
 (define ast-expr-span-record-segment-size : i64
   65536)
-(define ast-expr-span-record-segment-mask : i64
-  65535)
 (define ast-expr-span-record-max-segments : i64
-  ;; 64M records, far beyond the four-million-row expression pools.
+  ;; 64M records per kind; growth past them panics instead of writing outside
+  ;; the table.
   1024)
 
 ;; Record kinds share the table code: 0 canonical, 1 ReSpan.
@@ -11393,9 +11396,10 @@
   ;; A destination semantic node gets one canonical record, from the first
   ;; wrapper the traversal reaches, and copies a distinct source node that
   ;; normally owns one already, so the source's record count is the expected
-  ;; size. Reserving it once replaces the doubling copies, which would stay
-  ;; dead in the destination arena for the rest of the compile. It is only a
-  ;; hint: growth stays checked, and the reserve never exceeds the record
+  ;; size. Reserving it sizes the first record segment once instead of
+  ;; doubling it through the small sizes, whose copies would stay dead in the
+  ;; destination arena for the rest of the compile. It is only a hint: growth
+  ;; stays checked, and the reserve never exceeds one segment or the record
   ;; count the source already holds.
   (let
     [cell : (__tl_dyn-array AstExprNodePoolState)

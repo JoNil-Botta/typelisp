@@ -15506,20 +15506,27 @@
                   (OptGlobalFact.Expr key dst block-id pos)))]
             [(None) unit])]
         [(No) unit])]
+    ;; A group whose address is taken lives in memory: a store or a call
+    ;; through that address rewrites its words after the pack, so it gives no
+    ;; word facts at all. A packed var whose address is taken can change the
+    ;; same way after the pack, so it gives no fact for its own word.
     [(PackWord)
       (match instr
         [(Pack group words _)
-          (for [index (iterator.range 0 words.len)]
-            (let
-              [value : ir.CompilerIrValue
-                (ir.compiler-ir-value-seq-ref words index)]
-              (if (and
-                (opt-copy-safe-source? value)
-                (not (opt-value-is-var? value group)))
-                (opt_global_fact_vec.push-ref!
-                  items
-                  (OptGlobalFact.PackWord group index value block-id pos))
-                unit)))]
+          (if (opt-addr-taken-var? addr-taken group)
+            unit
+            (for [index (iterator.range 0 words.len)]
+              (let
+                [value : ir.CompilerIrValue
+                  (ir.compiler-ir-value-seq-ref words index)]
+                (if (and
+                  (opt-copy-safe-source? value)
+                  (not (opt-value-is-var? value group))
+                  (not (opt-addr-taken-value? addr-taken value)))
+                  (opt_global_fact_vec.push-ref!
+                    items
+                    (OptGlobalFact.PackWord group index value block-id pos))
+                  unit))))]
         [_ unit])]
     [_
       (match instr
@@ -15959,8 +15966,15 @@
         dst
         (opt-global-copy-subst-phi-inputs (& facts) (& doms) uses inputs)
         ty)]
+    ;; The group is read through its copies first. A group reaches its readers
+    ;; through a copy as often as not -- `(slice-view ...)` binds its `pack`
+    ;; to a `let` var, so the loop preheader reads `word %v, 1` of `%v = mov
+    ;; %p`, never of `%p` itself -- and the pack fact is keyed by the pack's
+    ;; own dst. Without the copy step the slice length stays an opaque
+    ;; `word`, and an element check `bounds_check i, (word %v, 1)` never meets
+    ;; the loop guard `i < len` that already proves it.
     [(Word dst src index ty)
-      (match src
+      (match (opt-global-copy-resolve facts doms block-id pos src)
         [(Var group)
           (match (opt-global-fact-lookup
             0
@@ -15970,7 +15984,7 @@
             block-id
             pos)
             [(Some value) (Mov dst value ty)]
-            [(No) instr])]
+            [(No) (Word dst (Var group) index ty)])]
         [_ instr])]
     [_
       (opt-rewrite-operands (& (GlobalCopy facts doms block-id pos)) (& instr))]))

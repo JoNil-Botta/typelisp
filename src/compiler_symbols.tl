@@ -46,7 +46,52 @@
   (keys (__tl_dyn-array i64))
   (values (__tl_dyn-array i64))
   (len i64)
-  (deleted i64))
+  (deleted i64)
+  (owner u64)
+  ;; Read-only aliases share this cell. A copied count cannot hide a mutation.
+  (revision (Box u64)))
+
+(defstruct CompilerSymbolMapRevision
+  (owner u64)
+  (revision u64))
+
+;; Serialized identity allocation only; payloads remain with their map owner.
+;; Zero is terminal exhaustion and is never accepted as a resolver capability.
+(define compiler-symbol-map-next-owner : u64
+  (cast 1 : u64))
+
+(define (compiler-symbol-map-new-owner!) : u64
+  (if (= compiler-symbol-map-next-owner (cast 18446744073709551615 : u64))
+    (cast 0 : u64)
+    (let
+      [owner : u64 compiler-symbol-map-next-owner]
+      (set! compiler-symbol-map-next-owner (+ owner (cast 1 : u64)))
+      owner)))
+
+(define (compiler-symbol-map-mutated! [map : (&mut map CompilerSymbolMap)]) : unit
+  (let
+    [revision : u64 (deref map.revision)]
+    (set!
+      (deref map.revision)
+      (if (or
+        (= revision (cast 0 : u64))
+        (= revision (cast 18446744073709551615 : u64)))
+        (cast 0 : u64)
+        (+ revision (cast 1 : u64))))))
+
+(define (compiler-symbol-map-revision [map : (& map CompilerSymbolMap)]) : CompilerSymbolMapRevision
+  (CompilerSymbolMapRevision map.owner (deref map.revision)))
+
+(define (compiler-symbol-map-revision-current?
+  [map : (& map CompilerSymbolMap)]
+  [expected : (& expected CompilerSymbolMapRevision)]) : bool
+  ;; Check the LIVE container's owner before touching its revision cell. No
+  ;; captured pointer into a retired map is retained in the stamp.
+  (and
+    (> expected.owner (cast 0 : u64))
+    (> expected.revision (cast 0 : u64))
+    (= map.owner expected.owner)
+    (= (deref map.revision) expected.revision)))
 
 (defenum CompilerSymbols
   (CompilerSymbols
@@ -106,6 +151,38 @@
 
 (defenum CompilerRegistries
   (CompilerRegistries CompilerSymbolMap CompilerSymbolMap i64))
+
+;; The borrowed containers are the LIVE canonical owner cells, kept alive by
+;; the caller. Stamps contain values only, never pointers to old revision cells.
+(defstruct CompilerResolutionLease
+  (:lifetimes context)
+  (symbols (& context CompilerSymbols))
+  (registries (& context CompilerRegistries))
+  (symbol-revision CompilerSymbolMapRevision)
+  (field-revision CompilerSymbolMapRevision))
+
+(define (compiler-resolution-lease-capture
+  [symbols : (& context CompilerSymbols)]
+  [registries : (& context CompilerRegistries)]) : (CompilerResolutionLease
+    context)
+  (let
+    [symbol-revision : CompilerSymbolMapRevision
+      (match symbols
+        [(CompilerSymbols _ types _ _ _ _) (compiler-symbol-map-revision types)])]
+    [field-revision : CompilerSymbolMapRevision
+      (match registries
+        [(CompilerRegistries _ fields _) (compiler-symbol-map-revision fields)])]
+    (CompilerResolutionLease symbols registries symbol-revision field-revision)))
+
+(define (compiler-resolution-lease-current?
+  [lease : (& lease (CompilerResolutionLease context))]) : bool
+  (and
+    (match lease.symbols
+      [(CompilerSymbols _ types _ _ _ _)
+        (compiler-symbol-map-revision-current? types (& lease.symbol-revision))])
+    (match lease.registries
+      [(CompilerRegistries _ fields _)
+        (compiler-symbol-map-revision-current? fields (& lease.field-revision))])))
 
 (defstruct CompilerRegistriesRef
   (:lifetimes registries)
@@ -347,7 +424,9 @@
       (__tl_make-array i64 capacity)
       (__tl_make-array i64 capacity)
       0
-      0)))
+      0
+      (compiler-symbol-map-new-owner!)
+      (box (cast 1 : u64)))))
 
 (define (compiler-symbol-map-empty) : CompilerSymbolMap
   (compiler-symbol-map-with-capacity 256))
@@ -419,6 +498,7 @@
     [encoded : i64 (+ key 1)]
     [slot : i64 (compiler-symbol-map-first-slot key capacity)]
     [first-deleted : i64 -1]
+    (compiler-symbol-map-mutated! map)
     ;; Growth keeps one empty slot in every probe sequence.
     (while true
       (let
@@ -454,15 +534,19 @@
 
 (define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
   (let
-    [old-keys : (__tl_dyn-array i64) map.keys]
-    [old-values : (__tl_dyn-array i64) map.values]
-    [old-capacity : i64 (array-length old-keys)]
+    [old-capacity : i64 (array-length map.keys)]
     [new-capacity : i64
       (if (> old-capacity 0)
         (* old-capacity 2)
         4)]
-    (set! map.keys (__tl_make-array i64 new-capacity))
-    (set! map.values (__tl_make-array i64 new-capacity))
+    ;; The old tables are taken out as the map gets fresh ones.
+    [old-keys : (__tl_dyn-array i64)
+      (replace! map.keys (__tl_make-array i64 new-capacity))]
+    [old-values : (__tl_dyn-array i64)
+      (replace! map.values (__tl_make-array i64 new-capacity))]
+    ;; Even an empty reallocation invalidates a captured resolver. Appends
+    ;; deliberately invalidate too; no prefix-preservation claim is made.
+    (compiler-symbol-map-mutated! map)
     (set! map.len 0)
     (set! map.deleted 0)
     (for [i (iterator.range 0 old-capacity)]
@@ -503,6 +587,7 @@
             (cond
               [(= present 0) (return false)]
               [(= present encoded)
+                (compiler-symbol-map-mutated! map)
                 (set! (array-ref map.keys slot) -1)
                 (-= map.len 1)
                 (+= map.deleted 1)
@@ -726,8 +811,11 @@
               (__tl_make-array ast.AstDecl next-capacity)]
             [next-owner-module-ids : (__tl_dyn-array i64)
               (__tl_make-array i64 (* next-capacity 2))]
+            (compiler-symbol-map-mutated! (&mut types))
             (for [index (iterator.range 0 decl-count)]
-              (set! (array-ref next-decls index) (array-ref decls index))
+              (set!
+                (array-ref next-decls index)
+                (owned_view.compiler-owned-element-view decls index))
               (set!
                 (array-ref next-owner-module-ids index)
                 (array-ref owner-module-ids index))
@@ -747,6 +835,7 @@
   [decl-count : i64]) : CompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-module-ids _)
+      (compiler-symbol-map-mutated! (&mut types))
       (CompilerSymbols values types macros decls owner-module-ids decl-count)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
@@ -2532,6 +2621,7 @@
       (let
         [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
         (+= compiler-symbols-revision 1)
+        (compiler-symbol-map-mutated! (&mut types))
         (set! (array-ref decls index) indexed)
         (set! (array-ref owner-module-ids index) module-id)
         (set!
@@ -2886,8 +2976,8 @@
                             (+ decl-origin-offset cur-position)
                             decl-master
                             (string.copy (& decl-path))))
-                        (set! result (Err message))
-                        (set! done true)])])]))]))
+                        ;; The symbols moved into the failed step.
+                        (return (Err message))])])]))]))
     result))
 
 (define (build-compiler-symbols [program : (& program ast.AstProgram)]) : ResultCompilerSymbols

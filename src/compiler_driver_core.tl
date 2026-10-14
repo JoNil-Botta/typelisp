@@ -171,7 +171,8 @@
     ;; the process entry arena by a full segment near its capacity boundary.
     [surface-state : CompilerDriverSurfaceState
       (in-arena
-        (arena.Arena surface-arena)
+        (unsafe
+          (arena.Arena surface-arena))
         (State
           (cfg
             (any compile-profile test)
@@ -327,6 +328,8 @@
 
 (define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-job-state-reset-file-state!
+    (compiler-driver-state-typecheck state))
+  (compiler_typecheck_core.tc-job-state-release-selected-certificates!
     (compiler-driver-state-typecheck state)))
 
 ;; An intern reset publishes a new generation before the loader can record the
@@ -377,8 +380,10 @@
 
 (define (compiler-driver-state-session-program-cache-disable
   [state : CompilerDriverState]) : CompilerDriverState
+  ;; The session is a handle: disable its cells through a view, keeping
+  ;; `state` whole.
   (compiler_load.compiler-load-session-state-program-cache-disable!
-    state.load-session)
+    (owned_view.compiler-owned-shared-view state.load-session))
   state)
 
 (define (compiler-driver-state-apply-session-flags!
@@ -593,17 +598,20 @@
 (define (compiler-driver-state-adopt-pools!
   [state : (& state CompilerDriverState)]
   [pools : compiler_ast_types.AstNodePoolContext]) : unit
-  (set!
-    (array-ref state.pool-arena 0)
+  (owned_view.compiler-owned-cell-set!
+    state.pool-arena
+    0
     (compiler_ast_types.ast-node-pool-context-base-arena pools))
   (set!
     (array-ref compiler-driver-active-state-pool-arena 0)
     (compiler_ast_types.ast-node-pool-context-base-arena pools))
-  (set!
-    (array-ref state.expr-pool 0)
+  (owned_view.compiler-owned-cell-set!
+    state.expr-pool
+    0
     (compiler_ast_types.ast-expr-pool-cell-read pools.expr-pool))
-  (set!
-    (array-ref state.type-pool 0)
+  (owned_view.compiler-owned-cell-set!
+    state.type-pool
+    0
     (compiler_ast_types.ast-type-pool-cell-read pools.type-pool)))
 
 (define (compiler-driver-state-can-release-checked-lower-source-pools?
@@ -619,7 +627,8 @@
     ;; retirement can otherwise unmap wrapper cells allocated in the frontend
     ;; arena before an error path gets a chance to release this pool.
     (in-arena
-      (arena.Arena pool-arena)
+      (unsafe
+        (arena.Arena pool-arena))
       (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
         compiler-driver-checked-lower-expr-pool-initial-capacity
         compiler-driver-compile-type-pool-initial-capacity
@@ -652,12 +661,22 @@
       (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)]
     [retained : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-clone-types-only pools)]
+    [retained-program : compiler_ir_types.CompilerIrProgram
+      (in-arena
+        (unsafe
+          (arena.Arena
+            (compiler_ast_types.ast-node-pool-context-base-arena retained)))
+        (compiler_ir_types.compiler-ir-program-after-type-copy
+          pools
+          retained
+          program))]
     (begin
       (compiler-driver-state-adopt-pools! state retained)
       ;; Optimizer/backend type reads use the explicit retained reader below.
       ;; Detach only when the active compatibility pool is the retiring source;
       ;; if another driver state owns it, leave that state's writer pool intact.
       (compiler-driver-state-detach-active-pools-if-owned! pools)
+      (compiler_ast_types.ast-node-pool-context-type-retire! pools)
       ;; Standalone entry points can leave the retiring checked pool active;
       ;; move those to retained storage. Batch entry points instead have a
       ;; distinct caller-owned scratch arena that must remain active through
@@ -683,7 +702,7 @@
         compiler-driver-pending-retired-source-type-storage-arena
         old-type-storage-arena)
       (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
-        program
+        retained-program
         spans
         retained
         (compiler-driver-state-profile state)
@@ -790,17 +809,18 @@
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
     unit
-    (ci.intern-compat-state-persistent-arena-reset!
-      (&mut (array-ref state.intern-state 0)))))
+    ;; The driver state is shared; its intern cell is explicit interior
+    ;; mutability.
+    (let
+      [cells : (__tl_dyn-array ci.InternCompatState)
+        (owned_view.compiler-owned-reference-shared-view (& state.intern-state))]
+      (ci.intern-compat-state-persistent-arena-reset!
+        (&mut (array-ref cells 0)))
+      unit)))
 
 ;; The state's owned builtin/CTFE id snapshot.
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
-  (array-ref state.builtin-ids 0))
-
-(define (compiler-driver-state-owned-builtins-mut [state : CompilerDriverState]) : (&mut
-    state
-    cbi.CompilerBuiltinIdsState)
-  (&mut (array-ref state.builtin-ids 0)))
+  (owned_view.compiler-owned-element-view state.builtin-ids 0))
 
 ;; The state's owned lower traversal/index/cache carrier.
 (define (compiler-driver-state-owned-lower-state
@@ -821,8 +841,11 @@
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
   [state : (&mut state CompilerDriverState)]) : unit
-  (ci.intern-compat-state-capture-from-globals!
-    (&mut (array-ref state.intern-state 0))))
+  (let
+    [cells : (__tl_dyn-array ci.InternCompatState)
+      (owned_view.compiler-owned-reference-shared-view (& state.intern-state))]
+    (ci.intern-compat-state-capture-from-globals! (&mut (array-ref cells 0)))
+    unit))
 
 (define (compiler-driver-state-intern-generation
   [state : (& state CompilerDriverState)]) : i64
@@ -833,12 +856,14 @@
   (let
     [state : CompilerDriverState
       (owned_view.compiler-owned-reference-shared-view state)]
-    (array-ref state.intern-state 0)))
+    (owned_view.compiler-owned-element-view state.intern-state 0)))
 
-(define (compiler-driver-state-owned-interns-mut [state : CompilerDriverState]) : (&mut
-    state
+;; The state's one-element intern cell array, a shallow view: the intern cell
+;; is explicit interior mutability. A caller binds it and mutates
+;; `(array-ref cells 0)`; a reference into a by-value state cannot be returned.
+(define (compiler-driver-state-intern-cells [state : CompilerDriverState]) : (__tl_dyn-array
     ci.InternCompatState)
-  (&mut (array-ref state.intern-state 0)))
+  (owned_view.compiler-owned-reference-shared-view (& state.intern-state)))
 
 ;; Allocate an immutable source-name snapshot in an explicit owner. Production
 ;; batch entries keep their snapshot in the rotating entry scratch arena; only
@@ -848,7 +873,8 @@
   [state : CompilerDriverState]
   [owner : i64]) : ci.InternSourceNameSessionHandle
   (in-arena
-    (arena.Arena owner)
+    (unsafe
+      (arena.Arena owner))
     (let
       [intern-state : ci.InternCompatState
         (compiler-driver-state-owned-interns state)]
@@ -887,14 +913,22 @@
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : (&mut state CompilerDriverState)]) : unit
-  (cbi.state-capture-from-globals! (&mut (array-ref state.builtin-ids 0))))
+  (let
+    [cells : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
+      (owned_view.compiler-owned-reference-shared-view (& state.builtin-ids))]
+    (cbi.state-capture-from-globals! (&mut (array-ref cells 0)))
+    unit))
 
 ;; State-owned builtin reset: clears the state's own metadata and, only when
 ;; this state's table is the installed one, invalidates the compatibility
 ;; globals (CTFE builtin ids share the table and invalidate with it). No
 ;; install bridge: the next parse of this state re-derives the table.
 (define (compiler-driver-state-reset-builtins! [state : CompilerDriverState]) : unit
-  (cbi.state-reset! (compiler-driver-state-owned-builtins-mut state)))
+  (let
+    [cells : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
+      (owned_view.compiler-owned-reference-shared-view (& state.builtin-ids))]
+    (cbi.state-reset! (&mut (array-ref cells 0)))
+    unit))
 
 ;; State-owned lower-arena release: destroys the arenas named by the state's
 ;; own cells, zeroing the compatibility selectors only while they still name
@@ -935,13 +969,18 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [profile-state : profile_state.CompilerProfileState]
   [backend-state : compiler_backend.CompilerBackendState]) : ResultCompilerDriverLowered
-  (Ok
-    program
-    spans
-    (compiler_ast_types.ast-node-pool-context-capture-active)
-    profile-state
-    backend-state
-    (compiler_typecheck_core.tc-serial-job-state)))
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (if (compiler_ast_types.ast-node-pool-compat-context-active?)
+        (compiler_ast_types.ast-node-pool-compat-context-current)
+        (compiler_ast_types.ast-node-pool-context-active-live))]
+    (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
+      program
+      spans
+      pools
+      profile-state
+      backend-state
+      (compiler_typecheck_core.tc-serial-job-state))))
 
 (define (compiler-driver-lowered-from-active-pools-and-profile-state
   [program : compiler_ir_types.CompilerIrProgram]
@@ -965,13 +1004,23 @@
   [profile-state : profile_state.CompilerProfileState]
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerDriverLowered
-  (Ok
-    program
-    spans
-    (compiler_ast_types.ast-node-pool-context-snapshot pools)
-    profile-state
-    backend-state
-    typecheck-state))
+  (let
+    [snapshot : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-snapshot pools)]
+    ;; The snapshot has a distinct state cell. Rebind owned evidence through
+    ;; the checked canonical-prefix handoff, never by relaxing stamp identity.
+    [published : compiler_ir_types.CompilerIrProgram
+      (compiler_ir_types.compiler-ir-program-after-type-copy
+        pools
+        snapshot
+        program)]
+    (ResultCompilerDriverLowered.Ok
+      published
+      spans
+      snapshot
+      profile-state
+      backend-state
+      typecheck-state)))
 
 (define (compiler-driver-runtime-prelude-cache-lookup-with-state
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -2100,6 +2149,8 @@
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
+    [interns : ci.InternCompatState
+      (compiler_backend.compiler-backend-state-intern backend-state)]
     [owner : arena.Arena
       (compiler_backend.compiler-backend-state-prepare-representation-arena!
         backend-state)]
@@ -2109,11 +2160,14 @@
         (compiler_lower.lower-representation-index-stable-words
           (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
           typecheck-state
-          (compiler_ir_types.compiler-ir-representation-index-build
-            (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-            (& program))))]
-    (compiler_backend.compiler-backend-state-set-representations!
+          (compiler_ir_types.compiler-ir-representation-index-with-authority
+            pools
+            interns
+            -1
+            program)))]
+    (compiler_backend.compiler-backend-state-set-representations-for-pools!
       backend-state
+      (& pools)
       (owned_view.compiler-owned-shared-view representations))
     representations))
 
@@ -2151,6 +2205,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           true
@@ -2252,6 +2307,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           true
@@ -2366,6 +2422,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           true
@@ -2524,6 +2581,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           true
@@ -2725,6 +2783,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           true
@@ -2841,7 +2900,8 @@
   [diag : (Box compiler_diagnostic.CompilerDiagnostic)]) : (Box
     compiler_diagnostic.CompilerDiagnostic)
   (in-arena
-    (arena.Arena (compiler-driver-state-surface-arena state))
+    (unsafe
+      (arena.Arena (compiler-driver-state-surface-arena state)))
     (box (compiler_diagnostic.compiler-diagnostic-copy (deref diag)))))
 
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
@@ -3348,7 +3408,8 @@
         (= (string.string-length configuration) 0))
         Missing
         (in-arena
-          (arena.Arena surface-arena)
+          (unsafe
+            (arena.Arena surface-arena))
           (match (embedded_tlci.compiler-embedded-stdlib-tlci-surface
             surface-arena)
             [(Unavailable _) Missing]
@@ -3397,7 +3458,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
-    (arena.Arena compiler_ast_types.node-pool-base-arena)
+    (unsafe
+      (arena.Arena compiler_ast_types.node-pool-base-arena))
     (let
       [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-prelude-cache-key-copy key)]
@@ -3555,7 +3617,8 @@
   [pools : compiler_ast_types.AstNodePoolContext]
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (in-arena
-    (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools))
+    (unsafe
+      (arena.Arena (compiler_ast_types.ast-node-pool-context-base-arena pools)))
     (let
       [persistent-key : compiler_load.CompilerLoadPreludeCacheKey
         (compiler_load.compiler-load-prelude-cache-key-copy key)]
@@ -4046,7 +4109,8 @@
         (compiler_lower.compiler-lower-checked-dest-pools-clear!
           (compiler-driver-state-owned-lower-state state)))]
     (in-arena
-      (arena.Arena (compiler-driver-state-surface-arena state))
+      (unsafe
+        (arena.Arena (compiler-driver-state-surface-arena state)))
       (CompilerDriverCheckedLowerHandoff
         dest-pools
         entry-arena
@@ -4128,7 +4192,8 @@
             (set! result-pools (compiler-driver-state-pool-context state)))]
         [(Ok _ _) unit])]
     (in-arena
-      (arena.Arena (compiler-driver-state-surface-arena state))
+      (unsafe
+        (arena.Arena (compiler-driver-state-surface-arena state)))
       (CompilerDriverCheckedLowerResult
         lowered
         result-pools
@@ -4911,7 +4976,8 @@
   (let
     [loaded : compiler_load.ResultCompilerLoadWithPaths
       (in-arena
-        (arena.Arena (array-ref scope.frontend-arena 0))
+        (unsafe
+          (arena.Arena (array-ref scope.frontend-arena 0)))
         (compiler-driver-load-package-file-with-runtime-cfg
           path
           roots
@@ -4946,7 +5012,8 @@
         ;; Keep their complete publication live through generation/macro source
         ;; retirement; file-state reset clears it before this arena is destroyed.
         (in-arena
-          (arena.Arena (compiler-driver-state-surface-arena state))
+          (unsafe
+            (arena.Arena (compiler-driver-state-surface-arena state)))
           (surface_facts.surface-typecheck-facts-retain-current!))
         (compiler-driver-state-install-lower-arenas!
           (owned_view.compiler-owned-shared-view state))
@@ -5278,6 +5345,7 @@
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
   [pools : compiler_ast_types.AstNodePoolContext]
+  [backend-state : compiler_backend.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
@@ -5296,6 +5364,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           false
@@ -5335,6 +5404,7 @@
               unit)
             (compiler-driver-emit-ir-summary-lowered-with-level
               pools
+              _backend-state
               emit-program
               emit-spans
               opt-level
@@ -5423,6 +5493,7 @@
 
 (define (compiler-driver-emit-ir-text-lowered-with-level
   [pools : compiler_ast_types.AstNodePoolContext]
+  [backend-state : compiler_backend.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
@@ -5442,6 +5513,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
+          (compiler_backend.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           false
@@ -5488,6 +5560,7 @@
               unit)
             (compiler-driver-emit-ir-text-lowered-with-level
               pools
+              _backend-state
               emit-program
               emit-spans
               opt-level

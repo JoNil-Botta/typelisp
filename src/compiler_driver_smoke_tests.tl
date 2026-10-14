@@ -747,8 +747,8 @@
                 backend-state-b)]
             [interns-ok? : bool
               (compiler-driver-reader-context-smoke-mirror-intern-state-ok?
-                intern-a
-                intern-b)]
+                (owned_view.compiler-owned-shared-view intern-a)
+                (owned_view.compiler-owned-shared-view intern-b))]
             [restore-reader : ast.AstNodePoolContext
               (ast.ast-node-pool-reader-context-current)]
             [sentinel : ast.AstNodePoolContext
@@ -775,7 +775,14 @@
                     program-a
                     spans-a
                     pools-b
-                    program-b
+                    ;; B's backend owns an independent intern table; its
+                    ;; return-storage evidence moves there only through the
+                    ;; checked mirror handoff.
+                    (compiler_ir_types.compiler-ir-program-after-intern-mirror
+                      pools-b
+                      (& intern-a)
+                      (& intern-b)
+                      program-b)
                     spans-b
                     backend-state-a
                     backend-state-b
@@ -874,7 +881,9 @@
     ;; owner as the production bridge does, rather than claiming the returned
     ;; state is region-polymorphic under a direct `arena.make` owner.
     [caller-handle : i64 (arena.tl_arena_make)]
-    [caller : arena.Arena (arena.Arena caller-handle)]
+    [caller : arena.Arena
+      (unsafe
+        (arena.Arena caller-handle))]
     [ok : bool
       (in-arena
         caller
@@ -966,10 +975,17 @@
               (let
                 [pools-b : ast.AstNodePoolContext
                   (ast.ast-node-pool-context-clone-types-only pools-a)]
+                ;; A types-only copy is distinct storage: return-storage
+                ;; authority moves to it only through the checked type-copy
+                ;; handoff (validated against the source, re-homed to the
+                ;; copy), exactly as the driver retires a frontend pool.
                 [program-b : compiler_ir_types.CompilerIrProgram
-                  (compiler_ir_types.compiler-ir-clone-program-shell
+                  (compiler_ir_types.compiler-ir-program-after-type-copy
+                    pools-a
                     pools-b
-                    (& program-a))]
+                    (compiler_ir_types.compiler-ir-clone-program-shell
+                      pools-a
+                      (& program-a)))]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
                   (clone spans-a)]
                 (driver.compiler-driver-state-adopt-pools! state-b pools-b)
@@ -1001,13 +1017,15 @@
     (compiler-driver-reader-context-smoke-prepare-state!
       (owned_view.compiler-owned-shared-view state))
     (let
+      [intern-cells : (__tl_dyn-array ci.InternCompatState)
+        (driver.compiler-driver-state-intern-cells
+          (owned_view.compiler-owned-shared-view state))]
       [cfgs : sym_i64_env.SymI64Env
         (if enabled
           (compiler_cfg_core.compiler-cfg-enable-with-intern-state
             (compiler_cfg_core.compiler-cfg-empty)
             "generated-cfg-feature"
-            (driver.compiler-driver-state-owned-interns-mut
-              (owned_view.compiler-owned-shared-view state)))
+            (&mut (array-ref intern-cells 0)))
           (compiler_cfg_core.compiler-cfg-empty))]
       (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
         state

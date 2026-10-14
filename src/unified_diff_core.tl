@@ -455,13 +455,14 @@
               left
               room)]
           [offset : i64 out.stage.len]
-          (string.str-copy-bytes-into
-            (unsafe
-              (ptr-offset (string-data text) cursor))
-            (unsafe
-              (__tl_array-data out.stage.slots))
-            offset
-            n)
+          (unsafe
+            (string.str-copy-bytes-into
+              (unsafe
+                (ptr-offset (string-data text) cursor))
+              (unsafe
+                (__tl_array-data out.stage.slots))
+              offset
+              n))
           (set! out.stage.len (+ offset n))
           (set! cursor (+ cursor n))
           (set! left (- left n)))))))

@@ -127,7 +127,10 @@
   (let
     [owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
     [shared : String
-      (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
+      (in-arena
+        (unsafe
+          (arena.Arena owner))
+        (string.copy "shared reader storage"))]
     [index : i64 0]
     (while (< index 2049)
       (begin

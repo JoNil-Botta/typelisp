@@ -5,11 +5,11 @@
   (index i64))
 
 (defenum Next
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source i64)))
+  (Item (&mut item i64)))
 
-(define (next [iter : (&mut state (Iter source))]) : (Next source)
+(define (next [iter : (&mut item (Iter source))]) : (Next item)
   (let
     [index : i64 iter.index]
     (if (>= index 1)

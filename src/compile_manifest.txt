@@ -29,6 +29,10 @@ contains|call _tl_parse_factor
 contains|call _tl_eval
 end
 
+case|integration_ownership_certified_scalar_control|tests/integration/ownership_certified_scalar_control.tl|assembly|exactly-one|direct
+contains|_tl_ownership_certified_scalar_control_captured_left:
+end
+
 case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
 contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
 contains|_tl_clone_macro_handoff_clone_u24CloneMacroChoice:
@@ -128,6 +132,39 @@ not-contains|_tl_compiler_driver_emit_package_loaded_object_image:
 end
 
 case|selfhost_compiler_ir_types|src/compiler_ir_types.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ir_return_storage|src/compiler_ir_return_storage.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ir_return_storage_tests|src/compiler_ir_return_storage_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_core|src/compiler_ownership_core.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_dump|src/compiler_ownership_dump.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_core_tests|src/compiler_ownership_core_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_loan_tests|src/compiler_ownership_loan_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_cleanup_tests|src/compiler_ownership_cleanup_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_typed_occurrence|src/compiler_typed_occurrence.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_typed_occurrence_tests|src/compiler_typed_occurrence_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_normalize|src/compiler_ownership_normalize.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_normalize_tests|src/compiler_ownership_normalize_tests.tl|assembly|none|direct
 end
 
 case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|none|direct

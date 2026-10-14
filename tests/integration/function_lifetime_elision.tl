@@ -35,23 +35,34 @@
   [item : (& ElisionItem)]) : i64
   (__tl-project-field (view item) value))
 
+;; The item is boxed so `(&mut (deref holder))` borrows its heap cell: a
+;; mutable borrow of a by-value local is a temporary written back after the
+;; call, so a result keeping that borrow's lifetime is rejected. The view keeps
+;; the mutable borrow alive (as in Rust), so it is used on its own before the
+;; item is borrowed again.
 (define (main) : i64
   (let
-    [item : ElisionItem (ElisionItem 41)]
-    [view (increment-and-view (&mut item))]
-    [views : (Array (& item ElisionItem) 1) (array view)]
+    [holder : (Box ElisionItem) (box (ElisionItem 41))]
+    [view-ok : bool
+      (let
+        [view (increment-and-view (&mut (deref holder)))]
+        [views : (Array (& holder ElisionItem) 1) (array view)]
+        (and
+          (= view.value 42)
+          (same-value? view view)
+          (= (__tl-project-field (tuple-ref (tuple-view view) 0) value) 42)
+          (= (__tl-project-field (array-ref (array-view views) 0) value) 42)
+          (=
+            (call-view
+              (lambda ([value : (& ElisionItem)]) : (& ElisionItem)
+                value)
+              view)
+            42)))]
+    [item : (& holder ElisionItem) (& (deref holder))]
     (if (and
-      (= view.value 42)
-      (same-value? view (& item))
-      (= (__tl-project-field (tuple-ref (tuple-view view) 0) value) 42)
-      (= (__tl-project-field (array-ref (array-view views) 0) value) 42)
-      (= (__tl-project-field (shared-left (& item) (& item)) value) 42)
-      (mixed-inputs? (& item) (& item))
-      (=
-        (call-view
-          (lambda ([value : (& ElisionItem)]) : (& ElisionItem)
-            value)
-          view)
-        42))
+      view-ok
+      (same-value? item item)
+      (= (__tl-project-field (shared-left item item) value) 42)
+      (mixed-inputs? item item))
       42
       1)))

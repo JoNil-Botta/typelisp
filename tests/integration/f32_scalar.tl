@@ -39,7 +39,7 @@
 ;; Round-trip an f64 through f32 and back. Narrowing to binary32 then widening
 ;; back to f64 is exact for values that fit in binary32 (like 2.5).
 (define (roundtrip [x : f64]) : f64
-  (cast x : f32))
+  (cast (cast x : f32) : f64))
 
 (define (main) : i64
   (let

@@ -105330,10 +105330,10 @@
     (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
 
 (define (macro-caller-origin-marker-node
+  [ctx : TcContext]
   [expr-cell-address : u64]
   [type-cell-address : u64]
   [node : i64]
-  [provenance-id : i64]
   [span : ast.AstSourceSpan]) : i64
   (tc-context-expr-push-cell-addresses
     expr-cell-address
@@ -105342,7 +105342,10 @@
       (tc-context-expr-push-cell-addresses
         expr-cell-address
         type-cell-address
-        (MacroExpansion node provenance-id -1))
+        (MacroExpansion
+          node
+          (macro-expansion-provenance-id -1 (macro-active-decl-path-id ctx))
+          -1))
       span)))
 
 ;; A caller-origin marker over a spanned operand takes the place of the
@@ -105354,7 +105357,9 @@
 ;; that row is the only record of something below it: over a call, since the
 ;; expansion walk frames a macro call with the Spanned row directly above it;
 ;; over another Spanned view with a different span; and over a macro marker,
-;; whose frame is recognized by the Spanned row above it.
+;; whose frame is recognized by the Spanned row above it. A job with a semantic
+;; observer (LSP, semantic lint) keeps it too, since it records a fact for each
+;; Spanned row the check visits by id. A string literal operand is copied.
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [expr-cell-address : u64]
@@ -105362,19 +105367,16 @@
   [arg-id : i64]
   [arg-expr : ast.AstExpr]
   [record-caller-origin : bool]) : i64
-  (let
-    [provenance-id : i64
-      (macro-expansion-provenance-id -1 (macro-active-decl-path-id ctx))]
-    (match (tc-global-shared-view arg-expr)
-      [(Spanned inner span)
-        (let
-          ;; A job with a semantic observer (LSP, semantic lint) records a
-          ;; fact for each Spanned row the check visits by id. Keep the
-          ;; operand's own row there, so those facts stay exactly as they were.
-          [keep-operand-row? : bool
-            (!=
+  (match (tc-global-shared-view arg-expr)
+    [(Spanned inner span)
+      (let
+        [compact? : bool
+          (and
+            record-caller-origin
+            (=
               (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
-              0)]
+              0))]
+        [operand : i64
           (match (tc-context-expr-get ctx inner)
             [(Literal (String string-id))
               (let
@@ -105383,64 +105385,42 @@
                     expr-cell-address
                     type-cell-address
                     (Literal (String string-id)))]
-                (if (and record-caller-origin (not keep-operand-row?))
-                  (macro-caller-origin-marker-node
+                (if compact?
+                  literal
+                  (tc-context-expr-push-cell-addresses
                     expr-cell-address
                     type-cell-address
-                    literal
-                    provenance-id
-                    span)
-                  (let
-                    [operand : i64
-                      (tc-context-expr-push-cell-addresses
-                        expr-cell-address
-                        type-cell-address
-                        (Spanned literal span))]
-                    (if record-caller-origin
-                      (macro-caller-origin-marker-node
-                        expr-cell-address
-                        type-cell-address
-                        operand
-                        provenance-id
-                        span)
-                      operand))))]
-            [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _))
-              (if record-caller-origin
-                (macro-caller-origin-marker-node
-                  expr-cell-address
-                  type-cell-address
-                  arg-id
-                  provenance-id
-                  span)
-                arg-id)]
+                    (Spanned literal span))))]
+            [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _)) arg-id]
             [_
-              (if record-caller-origin
-                (macro-caller-origin-marker-node
-                  expr-cell-address
-                  type-cell-address
-                  (if keep-operand-row?
-                    arg-id
-                    inner)
-                  provenance-id
-                  span)
-                arg-id)]))]
-      [(Literal (String string-id))
-        (tc-context-expr-push-cell-addresses
-          expr-cell-address
-          type-cell-address
-          (Literal (String string-id)))]
-      [_
+              (if compact?
+                inner
+                arg-id)])]
         (if record-caller-origin
-          (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
-            [(Some span)
-              (macro-caller-origin-marker-node
-                expr-cell-address
-                type-cell-address
-                arg-id
-                provenance-id
-                span)]
-            [(No) arg-id])
-          arg-id)])))
+          (macro-caller-origin-marker-node
+            ctx
+            expr-cell-address
+            type-cell-address
+            operand
+            span)
+          operand))]
+    [(Literal (String string-id))
+      (tc-context-expr-push-cell-addresses
+        expr-cell-address
+        type-cell-address
+        (Literal (String string-id)))]
+    [_
+      (if record-caller-origin
+        (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
+          [(Some span)
+            (macro-caller-origin-marker-node
+              ctx
+              expr-cell-address
+              type-cell-address
+              arg-id
+              span)]
+          [(No) arg-id])
+        arg-id)]))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]

@@ -323,6 +323,26 @@
       25
       2
       25)
+    ;; An operand a template uses twice is one captured node.
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_shared.tl"
+      "(defmacro (twice [e : Expr]) : unit
+  `(begin ,e ,e))
+
+(define (f) : i64
+  (let
+    [total : i64 0]
+    [s : String \"a\"]
+    (twice (set! total s))
+    0))
+
+(define (main) : i64
+  0)"
+      "typecheck: assignment type mismatch: expected i64, found String"
+      8
+      12
+      8
+      25)
     (match (check_core.compiler-check-source
       "tests/caller_operand_boundary.tl"
       "(defmacro (once [e : Expr]) : Expr e)

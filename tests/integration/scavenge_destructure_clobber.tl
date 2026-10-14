@@ -29,6 +29,15 @@
   (SlotEmpty)
   (SlotUsed String i64 i64))
 
+;; A by-value copy of a slot. Matching the element itself by value would move
+;; its key out of the array (a computed-index element cannot be moved out), so
+;; the lookup destructures this copy, keeping the by-value fused field loads
+;; the guard needs.
+(define (slot-snapshot [slot : (& slot Slot)]) : Slot
+  (match slot
+    [(SlotEmpty) SlotEmpty]
+    [(SlotUsed key id hash) (SlotUsed (string.copy key) id hash)]))
+
 ;; Linear-probe lookup mirroring intern-lookup: walk slots, on a hash hit compare
 ;; the (pointer) key against `name`, and on a key match return the (int) id.
 (define (slot-lookup
@@ -43,7 +52,7 @@
     (while (if done
       false
       (< i n))
-      (match (array-ref slots i)
+      (match (slot-snapshot (& (array-ref slots i)))
         [(SlotEmpty)
           (set! out -1)
           (set! done true)]

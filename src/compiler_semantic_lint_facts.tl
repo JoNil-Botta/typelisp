@@ -380,11 +380,11 @@
             [index : i64 ready.facts.expression-count]
             (in-arena
               ready.owner
-              (set! (array-ref ready.facts.expressions index) fact)
               (fact_index.insert-ref!
                 (&mut ready.facts.expression-index)
                 fact.expression
                 index)
+              (set! (array-ref ready.facts.expressions index) fact)
               (set! ready.facts.expression-count (+ index 1))
               (compiler-semantic-fact-recorder-data-set! recorder ready))))))))
 

@@ -44,9 +44,14 @@
       [dst : (MutPtr u8)
         (unsafe
           (__tl_array-data buf))]
-      (if owned
-        (string.str-copy-owned-bytes-into (string.copy (& src)) dst offset len)
-        (string.str-copy-borrowed-bytes-into (& src) dst offset len)))
+      (unsafe
+        (if owned
+          (string.str-copy-owned-bytes-into
+            (string.copy (& src))
+            dst
+            offset
+            len)
+          (string.str-copy-borrowed-bytes-into (& src) dst offset len))))
     (set! i 0)
     (while (< i size)
       (let

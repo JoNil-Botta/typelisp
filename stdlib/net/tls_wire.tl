@@ -572,17 +572,21 @@
   (let
     [old-len : i64 buf.len]
     (byte_buf.check-range (byte_buf.bytes-length src) start count)
+    (byte_buf.check-range (array-length buf.slots) 0 old-len)
     (buffer-reserve! buf (+ old-len count))
     ;; The source range was checked above and the storage now holds
     ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
-    ;; makes, into storage reached through `&mut`.
-    (string.str-copy-bytes-into
-      (unsafe
-        (ptr-offset (byte_buf.bytes-data src) start))
-      (unsafe
-        (__tl_array-data buf.slots))
-      old-len
-      count)
+    ;; makes, into storage reached through `&mut`. Public fields and integer
+    ;; addition still require checking the resulting destination extent.
+    (byte_buf.check-range (array-length buf.slots) old-len count)
+    (unsafe
+      (string.str-copy-bytes-into
+        (unsafe
+          (ptr-offset (byte_buf.bytes-data src) start))
+        (unsafe
+          (__tl_array-data buf.slots))
+        old-len
+        count))
     (set! buf.len (+ old-len count))))
 
 ;; --- decoding cursor ----------------------------------------------------------------

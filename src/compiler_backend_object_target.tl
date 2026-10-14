@@ -170,7 +170,7 @@
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
-    parts.symbols
+    (owned_view.compiler-owned-shared-view parts.symbols)
     name
     (Extern)
     kind)

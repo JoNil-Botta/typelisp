@@ -32,6 +32,7 @@
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
+(import compiler_abort as abort)
 (import compiler_intern as ci)
 (import stdlib.string)
 
@@ -155,7 +156,9 @@
 (define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
     [(Token.Sym id) id]
-    [_ (ci.tl_oob_abort)]))
+    [_
+      (abort.compiler-abort
+        "tl: token.sym-id: unexpected token kind for symbol ID\n")]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
@@ -182,7 +185,9 @@
 (define (str-id [t : (& t Token)]) : ci.InternId
   (match t
     [(Token.Str id) id]
-    [_ (ci.tl_oob_abort)]))
+    [_
+      (abort.compiler-abort
+        "tl: token.str-id: unexpected token kind for string ID\n")]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it

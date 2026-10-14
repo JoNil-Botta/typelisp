@@ -11,6 +11,52 @@
 (import stdlib.string)
 (import stdlib.test)
 
+(test
+  compiler-x64-template-arena-sanitizer-variants
+  (let
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [features : runtime_common.CompilerBackendRuntimeFeatures
+          (runtime_common.CompilerBackendRuntimeFeatures
+            true
+            true
+            true
+            (!= (bit-and mode 1) 0)
+            (!= (bit-and mode 2) 0)
+            false
+            false
+            false
+            63)]
+        [linux : String
+          (runtime_linux.compiler-backend-runtime-functions (& features))]
+        [windows : String
+          (runtime_windows.compiler-backend-runtime-functions (& features))]
+        ;; Each call above passes the exact registered payload identity for
+        ;; its target/profile/debug combination before reaching these checks.
+        (test.assert-true
+          (string.contains (& linux) "tl_arena_sanitize_enable:")
+          "Linux selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& linux) "movq $28, %rax")
+          "Linux quarantine discards resident pages")
+        (test.assert-true
+          (string.contains (& linux) "movq $10, %rax")
+          "Linux quarantine makes retired mappings inaccessible")
+        (test.assert-false
+          (string.contains (& linux) "movq $11, %rax")
+          "Linux retirement never releases quarantined address ranges")
+        (test.assert-true
+          (string.contains (& windows) "tl_arena_sanitize_enable:")
+          "Windows selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& windows) "movq $0x4000, %r8")
+          "Windows quarantine decommits without releasing the reservation")
+        (test.assert-true
+          (string.contains (& windows) "rep stosb")
+          "Windows poisons in-segment rewind ranges")
+        (set! mode (+ mode 1))))))
+
 (define (compiler-x64-template-test-kind-eq?
   [left : x64_events.CompilerX64TemplateEventKind]
   [right : x64_events.CompilerX64TemplateEventKind]) : bool
@@ -146,22 +192,22 @@
               [(Err _) (set! events-valid false)])
             (set! event-at (+ event-at 1)))
           (set! at (+ at 1))))
-      (test.assert-i64-eq ids.len 84 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 100 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
-        96
+        112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        3215
+        4259
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        19062
+        25904
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        71
+        87
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly

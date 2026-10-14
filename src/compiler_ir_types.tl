@@ -37,9 +37,7 @@
       value)))
 
 (defmacro (compiler-ir-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(let
-    [payload (compiler-ir-box-shared-view ,value)]
-    (compiler-ir-global-shared-view (__tl-project-field payload ,field))))
+  `(owned_view.compiler-owned-box-field-shared-view ,value ,field))
 
 (defmacro (compiler-ir-typed-box-shared-view
   [value : Expr]
@@ -246,7 +244,8 @@
     [retired : i64 compiler-ir-label-generation-arena-handle]
     [generation : i64 (arena.tl_arena_make)]
     (in-arena
-      (arena.Arena generation)
+      (unsafe
+        (arena.Arena generation))
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
         [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
@@ -258,7 +257,9 @@
           (let
             [text : String
               (compiler-ir-array-shared-view compiler-ir-label-slots id)]
-            (set! (array-ref slots id) text)
+            (set!
+              (array-ref slots id)
+              (owned_view.compiler-owned-shared-view text))
             ;; Spellings are distinct, so each id takes the first empty
             ;; position of its probe sequence.
             (set! position (compiler-ir-label-home (& text) (& index)))
@@ -345,7 +346,10 @@
           (set! position (compiler-ir-label-position name)))
         (set!
           (array-ref compiler-ir-label-slots id)
-          (in-arena (arena.Arena (compiler-ir-label-arena)) (string.copy name)))
+          (in-arena
+            (unsafe
+              (arena.Arena (compiler-ir-label-arena)))
+            (string.copy name)))
         (set! (array-ref compiler-ir-label-index position) id)
         (set! compiler-ir-label-count (+ id 1))
         id))))
@@ -444,7 +448,9 @@
     [old-len : i64 (array-length compiler-ir-symbol-slots)]
     [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
     (for [index (iterator.range 0 old-len)]
-      (set! (array-ref next index) (array-ref compiler-ir-symbol-slots index)))
+      (set!
+        (array-ref next index)
+        (owned_view.compiler-owned-element-view compiler-ir-symbol-slots index)))
     (set! compiler-ir-symbol-slots next)))
 
 ;; Same arena rationale as the label table above: a symbol id handed to the
@@ -571,8 +577,9 @@
   (One CompilerIrValue)
   (Two CompilerIrValue CompilerIrValue)
   (Array (__tl_dyn-array CompilerIrValue))
-  ;; The indexed argument is a call-scoped output borrow, not an escaping
-  ;; ordinary pointer. Its storage is also aliased by the call result.
+  ;; Assertion that this argument is the hidden output range. Consumers must
+  ;; prove storage provenance and match the current callee ABI before treating
+  ;; it as a call-scoped borrow or the result as its alias.
   (Sret (__tl_dyn-array CompilerIrValue) i64))
 
 (defenum CompilerIrSpmdBackend
@@ -1009,10 +1016,36 @@
   (index CompilerIrSpmdPrivateIndex)
   (result CompilerIrSpmdPrivateResult))
 
-;; Every function states its calling convention. Only generated same-program
-;; SPMD helpers use the private ABI; everything else is `Ordinary`.
+;; Return-storage declarations are part of a signature, not a permission on a
+;; call operand. Lowering records the same checked layout and physical
+;; parameter classification that it uses to emit the function or foreign call.
+;; A Sret argument remains an assertion until a consumer matches it against an
+;; available declaration and proves the caller's storage extent.
+(defenum CompilerIrReturnStorageConvention
+  (InternalLeading)
+  (InternalTrailing)
+  (SysV)
+  (Win64))
+
+(defstruct CompilerIrReturnStorageAbi
+  (convention CompilerIrReturnStorageConvention)
+  (index i64)
+  (bytes i64)
+  (alignment i64)
+  (output ast.AstType)
+  (physical-result ast.AstType)
+  (physical-params ast.AstTypeList)
+  (source-signature ast.AstType))
+
+(defenum CompilerIrReturnStorage
+  (None)
+  (Some (Box CompilerIrReturnStorageAbi)))
+
+;; ReturnStorage uses the ordinary machine calling convention with an explicit
+;; hidden output parameter. SPMD helpers have their own private convention.
 (defenum CompilerIrFunctionAbi
   (Ordinary)
+  (ReturnStorage (Box CompilerIrReturnStorageAbi))
   (SpmdPrivate (Box CompilerIrSpmdPrivateAbi)))
 
 (defenum CompilerIrSpmdCallOrigin
@@ -1042,7 +1075,7 @@
 (defenum CompilerIrInstr
   (Mov i64 CompilerIrValue ast.AstType)
   (Alloc i64 ast.AstType)
-  (AddrOf i64 i64)
+  (AddrOf i64 i64 i64)
   (Gep i64 CompilerIrValue CompilerIrValue ast.AstType)
   (Load i64 CompilerIrValue ast.AstType)
   ;; Checked non-Copy move into an owned aggregate field/path. This is the
@@ -1400,7 +1433,9 @@
         (let
           [index : i64 0]
           (while (< index count)
-            (set! (array-ref dst index) (array-ref src index))
+            (set!
+              (array-ref dst index)
+              (owned_view.compiler-owned-element-view src index))
             (set! index (+ index 1)))))
       (define (,grow-name [builder : (&mut builder ,builder-type)]) : unit
         (let
@@ -1561,7 +1596,7 @@
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
     [(or (CompilerIrInstr.Mov dst _ _) (CompilerIrInstr.Alloc dst _)
-         (CompilerIrInstr.AddrOf dst _) (CompilerIrInstr.Gep dst _ _ _)
+         (CompilerIrInstr.AddrOf dst _ _) (CompilerIrInstr.Gep dst _ _ _)
          (CompilerIrInstr.Load dst _ _) (CompilerIrInstr.Cast dst _ _ _)
          (CompilerIrInstr.Bitcast dst _ _ _) (CompilerIrInstr.BinOp dst _ _ _ _)
          (CompilerIrInstr.UnOp dst _ _ _) (CompilerIrInstr.LaneId dst _ _)
@@ -1657,7 +1692,7 @@
       (match result
         [(Unit) (No)]
         [(Value _ _ ty) (Some ty)])]
-    [(or (Alloc _ _) (AddrOf _ _) (Gep _ _ _ _) (StoreOwned _ _ _)
+    [(or (Alloc _ _) (AddrOf _ _ _) (Gep _ _ _ _) (StoreOwned _ _ _)
          (StorePtr _ _ _) (CopyBytes _ _ _) (BoundsCheck _ _ _) (LaneId _ _ _)
          (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _) (VectorCompare _)
          (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (VectorLoad _ _ _ _ _)
@@ -1672,6 +1707,28 @@
 
 ;; Folds beside compiler-ir-value-seq-visit and compiler-ir-call-args-visit:
 ;; `(folder ctx... acc value)` returns the next accumulator.
+;; The folds below update an accumulator PLACE in place (the `-into!` forms):
+;; an aggregate accumulator is never copied into a fresh binding and back. The
+;; expression forms bind one accumulator and fold into it.
+(defmacro (compiler-ir-value-seq-fold-into!
+  [values : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [value-seq ,values]
+    [source value-seq.slots]
+    [index : i64 0]
+    (while (< index value-seq.len)
+      (set!
+        ,acc
+        (,folder
+          ,@contexts
+          ,acc
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))))
+      (set! index (+ index 1)))))
+
 (defmacro (compiler-ir-value-seq-fold
   [values : Expr]
   [acc : Expr]
@@ -1679,19 +1736,25 @@
   [contexts : Expr ...]) : Expr
   `(let
     [fold-acc ,acc]
-    [value-seq ,values]
-    [source value-seq.slots]
-    [index : i64 0]
-    (while (< index value-seq.len)
-      (set!
-        fold-acc
-        (,folder
-          ,@contexts
-          fold-acc
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data source) index)))))
-      (set! index (+ index 1)))
+    (compiler-ir-value-seq-fold-into! ,values fold-acc ,folder ,@contexts)
     fold-acc))
+
+(defmacro (compiler-ir-call-args-fold-into!
+  [args : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : unit
+  `(match ,args
+    [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
+    [(compiler_ir_types.CompilerIrCallArgs.One value)
+      (set! ,acc (,folder ,@contexts ,acc value))]
+    [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+      (set! ,acc (,folder ,@contexts ,acc a))
+      (set! ,acc (,folder ,@contexts ,acc b))]
+    [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (compiler-ir-value-array-fold-into! values ,acc ,folder ,@contexts)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (compiler-ir-value-array-fold-into! values ,acc ,folder ,@contexts)]))
 
 (defmacro (compiler-ir-call-args-fold
   [args : Expr]
@@ -1700,22 +1763,27 @@
   [contexts : Expr ...]) : Expr
   `(let
     [fold-acc ,acc]
-    (match ,args
-      [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
-      [(compiler_ir_types.CompilerIrCallArgs.One value)
-        (set! fold-acc (,folder ,@contexts fold-acc value))]
-      [(compiler_ir_types.CompilerIrCallArgs.Two a b)
-        (set! fold-acc (,folder ,@contexts fold-acc a))
-        (set! fold-acc (,folder ,@contexts fold-acc b))]
-      [(compiler_ir_types.CompilerIrCallArgs.Array values)
-        (set!
-          fold-acc
-          (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))]
-      [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
-        (set!
-          fold-acc
-          (compiler-ir-value-array-fold values fold-acc ,folder ,@contexts))])
+    (compiler-ir-call-args-fold-into! ,args fold-acc ,folder ,@contexts)
     fold-acc))
+
+(defmacro (compiler-ir-value-array-fold-into!
+  [values : Expr]
+  [acc : Expr]
+  [folder : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [source ,values]
+    [count : i64 (array-length source)]
+    [index : i64 0]
+    (while (< index count)
+      (set!
+        ,acc
+        (,folder
+          ,@contexts
+          ,acc
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))))
+      (set! index (+ index 1)))))
 
 (defmacro (compiler-ir-value-array-fold
   [values : Expr]
@@ -1724,18 +1792,7 @@
   [contexts : Expr ...]) : Expr
   `(let
     [fold-acc ,acc]
-    [source ,values]
-    [count : i64 (array-length source)]
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        fold-acc
-        (,folder
-          ,@contexts
-          fold-acc
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data source) index)))))
-      (set! index (+ index 1)))
+    (compiler-ir-value-array-fold-into! ,values fold-acc ,folder ,@contexts)
     fold-acc))
 
 ;; Shared loop of the phi-input visit and fold. `acc` is `_` to visit, or the
@@ -1916,15 +1973,11 @@
       ["values"
         (if visit?
           `(compiler-ir-value-seq-visit ,operand ,f ,@contexts ,role)
-          `(set!
-            ,acc
-            (compiler-ir-value-seq-fold ,operand ,acc ,f ,@contexts ,role)))]
+          `(compiler-ir-value-seq-fold-into! ,operand ,acc ,f ,@contexts ,role))]
       ["args"
         (if visit?
           `(compiler-ir-call-args-visit ,operand ,f ,@contexts ,role)
-          `(set!
-            ,acc
-            (compiler-ir-call-args-fold ,operand ,acc ,f ,@contexts ,role)))]
+          `(compiler-ir-call-args-fold-into! ,operand ,acc ,f ,@contexts ,role))]
       ["spmd-args"
         `(let
           [spmd-args ,operand]
@@ -2179,7 +2232,7 @@
       [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
         (compiler-ir-use-step value ,scalar src ,@tail)]
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
-      [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
+      [(compiler_ir_types.CompilerIrInstr.AddrOf _ _ _storage-words) unit]
       [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
         (compiler-ir-use-step value ,address base ,@tail)
         (compiler-ir-use-step value ,scalar offset ,@tail)]
@@ -2413,10 +2466,11 @@
         (compiler_ir_types.CompilerIrInstr.Alloc
           (compiler-ir-map-field dst ,@def-tail)
           (compiler-ir-map-field ty ,@type-tail))]
-      [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
+      [(compiler_ir_types.CompilerIrInstr.AddrOf dst src _storage-words)
         (compiler_ir_types.CompilerIrInstr.AddrOf
           (compiler-ir-map-field dst ,@def-tail)
-          src)]
+          src
+          _storage-words)]
       [(compiler_ir_types.CompilerIrInstr.Gep dst base offset ty)
         (compiler_ir_types.CompilerIrInstr.Gep
           (compiler-ir-map-field dst ,@def-tail)
@@ -2790,7 +2844,7 @@
   `(match ,instr
     [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Alloc _ _) unit]
-    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) unit]
+    [(compiler_ir_types.CompilerIrInstr.AddrOf _ _ _storage-words) unit]
     [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.Load _ _ _) unit]
     [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) unit]
@@ -3175,10 +3229,10 @@
             [(compiler_ir_types.CompilerIrInstr.Alloc b-dst b-ty)
               (and (= a-dst b-dst) (compiler-ir-zip-type a-ty b-ty ,@type-tail))]
             [_ false])]
-        [(compiler_ir_types.CompilerIrInstr.AddrOf a-dst a-src)
+        [(compiler_ir_types.CompilerIrInstr.AddrOf a-dst a-src a-words)
           (match zip-b
-            [(compiler_ir_types.CompilerIrInstr.AddrOf b-dst b-src)
-              (and (= a-dst b-dst) (= a-src b-src))]
+            [(compiler_ir_types.CompilerIrInstr.AddrOf b-dst b-src b-words)
+              (and (= a-dst b-dst) (= a-src b-src) (= a-words b-words))]
             [_ false])]
         [(compiler_ir_types.CompilerIrInstr.Gep a-dst a-base a-offset a-ty)
           (match zip-b
@@ -3830,6 +3884,7 @@
 (define (compiler-ir-function-abi-ordinary? [abi : (& CompilerIrFunctionAbi)]) : bool
   (match abi
     [(Ordinary) true]
+    [(ReturnStorage _) true]
     [(SpmdPrivate _) false]))
 
 ;; The number of `Source` parameters, which is also the source parameter count.
@@ -3891,11 +3946,36 @@
             (compiler-ir-clone-spmd-value-class class)
             (compiler-ir-clone-type pools ty))]))))
 
+(define (compiler-ir-clone-return-storage-abi
+  [pools : ast.AstNodePoolContext]
+  [abi : CompilerIrReturnStorageAbi]) : CompilerIrReturnStorageAbi
+  (CompilerIrReturnStorageAbi
+    (clone abi.convention)
+    abi.index
+    abi.bytes
+    abi.alignment
+    (compiler-ir-clone-type pools abi.output)
+    (compiler-ir-clone-type pools abi.physical-result)
+    (compiler-ir-clone-type-list pools abi.physical-params)
+    (compiler-ir-clone-type pools abi.source-signature)))
+
+(define (compiler-ir-clone-return-storage
+  [pools : ast.AstNodePoolContext]
+  [storage : CompilerIrReturnStorage]) : CompilerIrReturnStorage
+  (match storage
+    [(CompilerIrReturnStorage.None) (CompilerIrReturnStorage.None)]
+    [(CompilerIrReturnStorage.Some abi)
+      (CompilerIrReturnStorage.Some
+        (box (compiler-ir-clone-return-storage-abi pools (deref abi))))]))
+
 (define (compiler-ir-clone-function-abi
   [pools : ast.AstNodePoolContext]
   [abi : (& CompilerIrFunctionAbi)]) : CompilerIrFunctionAbi
   (match (owned_view.compiler-owned-reference-shared-view abi)
     [(Ordinary) (Ordinary)]
+    [(ReturnStorage storage)
+      (ReturnStorage
+        (box (compiler-ir-clone-return-storage-abi pools (deref storage))))]
     [(SpmdPrivate private-box)
       (compiler-ir-function-abi-private
         (compiler-ir-clone-spmd-private-abi pools (deref private-box)))]))
@@ -4392,7 +4472,7 @@
   [abi : CompilerIrSpmdPrivateAbi]
   [args : CompilerIrSpmdCallArgSeq]
   [index : i64]) : String
-  (match (array-ref args.slots index)
+  (match (owned_view.compiler-owned-element-view args.slots index)
     [(Arg arg-class _ arg-ty)
       (match (compiler-ir-spmd-private-param-seq-ref abi.params (+ index 1))
         [(Param _ role _)
@@ -4487,7 +4567,7 @@
             (compiler-ir-spmd-private-call-arg-error
               bases
               (compiler-ir-global-shared-view abi)
-              payload.args
+              (compiler-ir-global-shared-view payload.args)
               index))
           (+= index 1))
         (if (> (string.string-length problem) 0)
@@ -4584,7 +4664,7 @@
                             "private SPMD call to @"
                             (compiler-ir-symbol-text payload.callee)
                             ": the call's descriptor differs from the helper's"))]
-                      [(Ordinary)
+                      [_
                         (str_cat.str-cat
                           "private SPMD call to @"
                           (compiler-ir-symbol-text payload.callee)
@@ -4654,6 +4734,7 @@
         [(Function name params ret _ _ function-abi)
           (match function-abi
             [(Ordinary) unit]
+            [(ReturnStorage _) unit]
             [(SpmdPrivate private-box)
               (set!
                 problem
@@ -4775,7 +4856,7 @@
 ;; `compiler-ir-spmd-private-abi-program-error`.
 (define (compiler-ir-spmd-call-descriptor-error
   [payload : CompilerIrInstrSpmdCallPayload]) : String
-  (match payload.origin
+  (match (owned_view.compiler-owned-shared-view payload.origin)
     [(Private private-box)
       (compiler-ir-spmd-private-call-error payload (deref private-box))]
     [(Imported selected-box)
@@ -4822,7 +4903,9 @@
             (and
               (>= selected.index-param 0)
               (< selected.index-param payload.args.len)
-              (match (array-ref payload.args.slots selected.index-param)
+              (match (owned_view.compiler-owned-element-view
+                payload.args.slots
+                selected.index-param)
                 [(Arg class _ ty)
                   (and
                     (match class
@@ -4912,14 +4995,983 @@
     ast.AstExternAbi
     i64
     ast.AstExternLinkInputList
-    bool))
+    bool
+    CompilerIrReturnStorage))
 
 (defstruct CompilerIrExternSeq
   (slots (__tl_dyn-array CompilerIrExtern))
   (len i64))
 
 (defenum CompilerIrProgram
-  (Program CompilerIrGlobalSeq CompilerIrFunctionSeq CompilerIrExternSeq))
+  (Program
+    CompilerIrGlobalSeq
+    CompilerIrFunctionSeq
+    CompilerIrExternSeq
+    CompilerIrReturnStorageAuthority))
+
+;; Canonical semantic evidence is owned separately from mutable IR assertions.
+;; Only lowering's completed typed boundary captures this catalog. Text IR has
+;; no authority; authored tests supply independent canonical fixture evidence.
+(defstruct CompilerIrReturnStorageAuthorityData
+  (stamp ast.AstTypePoolStamp)
+  (intern-table i64)
+  (intern-generation i64)
+  (target i64)
+  (catalog CompilerIrReturnStorageIndex))
+
+(defenum CompilerIrReturnStorageAuthority
+  (None)
+  (Invalid String)
+  (Captured (Box CompilerIrReturnStorageAuthorityData)))
+
+(defstruct CompilerIrReturnStorageDeclaration
+  (name i64)
+  (signature ast.AstType)
+  (c-abi? bool)
+  (storage CompilerIrReturnStorage))
+
+;; A catalog belongs to the program revision from which it was built. These
+;; are declarations, never cached call-site proofs: operands and storage are
+;; checked again against the current function when a declaration is consumed.
+(defstruct CompilerIrReturnStorageIndex
+  (names ir_i64_i64_map.Map)
+  (declarations (__tl_dyn-array CompilerIrReturnStorageDeclaration))
+  (len i64)
+  (type-count i64)
+  (problem String))
+
+(define (compiler-ir-return-storage-index-empty) : CompilerIrReturnStorageIndex
+  (CompilerIrReturnStorageIndex
+    (ir_i64_i64_map.with-capacity 1)
+    (__tl_make-array CompilerIrReturnStorageDeclaration 0)
+    0
+    -1
+    ""))
+
+(define (compiler-ir-type-pool-count [pools : ast.AstNodePoolContext]) : i64
+  (match (ast.ast-node-pool-context-type-stamp pools)
+    [(ast.AstMaybeTypePoolStamp.Some stamp) stamp.count]
+    [(ast.AstMaybeTypePoolStamp.No) -1]))
+
+(define (compiler-ir-return-storage-type-id-valid?
+  [bases : i64]
+  [count : i64]
+  [id : i64]
+  [budget : (&mut budget i64)]
+  [depth : i64]) : bool
+  (and
+    (>= id 0)
+    (< id count)
+    (compiler-ir-return-storage-type-valid?
+      bases
+      count
+      (ast.ast-type-segment-bases-get bases id)
+      budget
+      depth)))
+
+(define (compiler-ir-return-storage-type-list-valid?
+  [bases : i64]
+  [count : i64]
+  [items : (& items ast.AstTypeList)]
+  [budget : (&mut budget i64)]
+  [depth : i64]) : bool
+  (let
+    [i : i64 0]
+    (if (or (< items.len 0) (> items.len (array-length items.slots)))
+      false
+      (begin
+        (while (< i items.len)
+          (unless
+            (compiler-ir-return-storage-type-id-valid?
+              bases
+              count
+              (array-ref items.slots i)
+              budget
+              depth)
+            (return false))
+          (set! i (+ i 1)))
+        true))))
+
+;; Validate every referenced type id before equality/layout code can read it.
+;; Work and depth limits make malformed cyclic or oversized metadata decline.
+(define (compiler-ir-return-storage-type-valid?
+  [bases : i64]
+  [count : i64]
+  [ty : ast.AstType]
+  [budget : (&mut budget i64)]
+  [depth : i64]) : bool
+  (if (or (<= (deref budget) 0) (<= depth 0))
+    false
+    (begin
+      (set! (deref budget) (- (deref budget) 1))
+      (match ty
+        [(ast.AstType.Func args result)
+          (and
+            (compiler-ir-return-storage-type-list-valid?
+              bases
+              count
+              (deref args)
+              budget
+              (- depth 1))
+            (compiler-ir-return-storage-type-id-valid?
+              bases
+              count
+              result
+              budget
+              (- depth 1)))]
+        [(ast.AstType.Tuple items)
+          (compiler-ir-return-storage-type-list-valid?
+            bases
+            count
+            (deref items)
+            budget
+            (- depth 1))]
+        [(ast.AstType.Array inner len)
+          (and
+            (>= len 0)
+            (compiler-ir-return-storage-type-id-valid?
+              bases
+              count
+              inner
+              budget
+              (- depth 1)))]
+        [(ast.AstType.DynArray inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.Slice inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.Box inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.Ptr inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.MutPtr inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.Ref _ inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.MutRef _ inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.Region _ inner)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [(ast.AstType.CFunc inner _)
+          (compiler-ir-return-storage-type-id-valid?
+            bases
+            count
+            inner
+            budget
+            (- depth 1))]
+        [_ true]))))
+
+(define (compiler-ir-return-storage-c?
+  [abi : (& abi CompilerIrReturnStorageAbi)]) : bool
+  (match abi.convention
+    [(CompilerIrReturnStorageConvention.SysV) true]
+    [(CompilerIrReturnStorageConvention.Win64) true]
+    [_ false]))
+
+(define (compiler-ir-return-storage-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Struct _) true]
+    [(ast.AstType.StructArgs _ _) true]
+    [(ast.AstType.Enum _) true]
+    [(ast.AstType.EnumArgs _ _) true]
+    [(ast.AstType.Tuple _) true]
+    [(ast.AstType.Array _ _) true]
+    [_ false]))
+
+(define (compiler-ir-return-storage-shape-error
+  [bases : i64]
+  [type-count : i64]
+  [abi : (& abi CompilerIrReturnStorageAbi)]) : String
+  (let
+    [abi : CompilerIrReturnStorageAbi
+      (owned_view.compiler-owned-reference-shared-view abi)]
+    [count : i64 (ast.ast-type-list-len abi.physical-params)]
+    [budget : i64 4096]
+    (cond
+      [(or (< count 0) (> count (array-length abi.physical-params.slots)))
+        "invalid return-storage physical parameter list"]
+      [(not
+          (and
+            (compiler-ir-return-storage-type-valid?
+              bases
+              type-count
+              (compiler-ir-global-shared-view abi.output)
+              (&mut budget)
+              64)
+            (compiler-ir-return-storage-type-valid?
+              bases
+              type-count
+              (compiler-ir-global-shared-view abi.physical-result)
+              (&mut budget)
+              64)
+            (compiler-ir-return-storage-type-valid?
+              bases
+              type-count
+              (compiler-ir-global-shared-view abi.source-signature)
+              (&mut budget)
+              64)
+            (compiler-ir-return-storage-type-list-valid?
+              bases
+              type-count
+              abi.physical-params
+              (&mut budget)
+              64)))
+        "invalid or excessive return-storage type metadata"]
+      [(or (< abi.index 0) (>= abi.index count))
+        "return-storage hidden argument index out of bounds"]
+      [(or (< abi.bytes 0) (> abi.bytes 9223372036854775800))
+        "return-storage byte extent out of bounds"]
+      [(or
+          (<= abi.alignment 0)
+          (not (= (bit-and abi.alignment (- abi.alignment 1)) 0)))
+        "return-storage alignment must be a positive power of two"]
+      [(not (compiler-ir-return-storage-type? abi.output))
+        "return-storage output must be an inline aggregate"]
+      [(not
+          (match (ast.ast-type-segment-bases-get
+            bases
+            (ast.ast-type-list-get
+              abi.physical-params
+              abi.index
+              (ast.ast-type-id-fallback)))
+            [(ast.AstType.U64) true]
+            [_ false]))
+        "return-storage hidden argument must have physical type u64"]
+      [(and (compiler-ir-return-storage-c? abi) (not (= abi.index 0)))
+        "C return-storage hidden argument must be first"]
+      [(and
+          (match abi.convention
+            [(CompilerIrReturnStorageConvention.InternalTrailing) true]
+            [_ false])
+          (not (= abi.index (- count 1))))
+        "nominal return-storage hidden argument must be last"]
+      [else
+        (match abi.source-signature
+          [(ast.AstType.Func _ result-id)
+            (if (ast.ast-type-eq-with-seg-bases?
+              bases
+              (ast.ast-type-segment-bases-get bases result-id)
+              (compiler-ir-global-shared-view abi.output))
+              (if (match (compiler-ir-global-shared-view abi.physical-result)
+                [(ast.AstType.U64) true]
+                [_
+                  (and
+                    (not (compiler-ir-return-storage-c? abi))
+                    (ast.ast-type-eq-with-seg-bases?
+                      bases
+                      abi.physical-result
+                      abi.output))])
+                ""
+                "return-storage physical result does not return its address")
+              "return-storage source result differs from output type")]
+          [_ "return-storage requires a function source signature"])])))
+
+(define (compiler-ir-return-storage-function-error
+  [bases : i64]
+  [type-count : i64]
+  [params : (& params CompilerIrParamSeq)]
+  [result : ast.AstType]
+  [abi : (& abi CompilerIrReturnStorageAbi)]) : String
+  (let
+    [abi : CompilerIrReturnStorageAbi
+      (owned_view.compiler-owned-reference-shared-view abi)]
+    [problem : String
+      (compiler-ir-return-storage-shape-error bases type-count abi)]
+    [budget : i64 4096]
+    [i : i64 0]
+    (cond
+      [(> (string.string-length problem) 0) problem]
+      [(compiler-ir-return-storage-c? abi)
+        "internal function declares a foreign return-storage convention"]
+      [(or (< params.len 0) (> params.len (array-length params.slots)))
+        "invalid return-storage definition parameter list"]
+      [(not
+          (compiler-ir-return-storage-type-valid?
+            bases
+            type-count
+            (compiler-ir-global-shared-view result)
+            (&mut budget)
+            64))
+        "invalid return-storage definition result type"]
+      [(not (= params.len (ast.ast-type-list-len abi.physical-params)))
+        "return-storage physical parameter count differs from definition"]
+      [(not (ast.ast-type-eq-with-seg-bases? bases result abi.physical-result))
+        "return-storage physical result differs from definition"]
+      [else
+        (while (< i params.len)
+          (begin
+            (match (compiler-ir-param-seq-ref params i)
+              [(CompilerIrParam.Param _ ty _)
+                (unless
+                  (compiler-ir-return-storage-type-valid?
+                    bases
+                    type-count
+                    (compiler-ir-global-shared-view ty)
+                    (&mut budget)
+                    64)
+                  (return "invalid return-storage definition parameter type"))
+                (unless
+                  (ast.ast-type-eq-with-seg-bases?
+                    bases
+                    ty
+                    (ast.ast-type-segment-bases-get
+                      bases
+                      (ast.ast-type-list-get
+                        abi.physical-params
+                        i
+                        (ast.ast-type-id-fallback))))
+                  (return
+                    "return-storage physical parameter differs from definition"))])
+            (set! i (+ i 1))))
+        ""])))
+
+;; Several modules may declare the same foreign symbol (for example stdlib
+;; arena hooks and the compiler's own intern runtime). Identical declarations
+;; denote one entity and are recorded once. Any disagreement, or a repeated
+;; definition, is conflicting evidence: the identity is withdrawn and the whole
+;; catalog reports a problem, so no storage permission survives for it.
+(define (compiler-ir-return-storage-index-add!
+  [bases : i64]
+  [index : (&mut index CompilerIrReturnStorageIndex)]
+  [declaration : CompilerIrReturnStorageDeclaration]) : unit
+  (let
+    [name : i64 declaration.name]
+    [position : i64 index.len]
+    (match (ir_i64_i64_map.get (& index.names) name)
+      [(ir_i64_i64_map.LookupFound at)
+        (unless
+          (and
+            (>= at 0)
+            (< at index.len)
+            declaration.c-abi?
+            (compiler-ir-return-storage-declaration-equal?
+              bases
+              (& (array-ref index.declarations at))
+              (& declaration)))
+          (begin
+            (ir_i64_i64_map.insert-ref! (&mut index.names) name -1)
+            (set!
+              index.problem
+              (str_cat.str-cat
+                "conflicting return-storage declarations of @"
+                (compiler-ir-symbol-text name)))))]
+      [(ir_i64_i64_map.LookupMissing)
+        (ir_i64_i64_map.insert-ref! (&mut index.names) name position)
+        (set! (array-ref index.declarations position) declaration)
+        (set! index.len (+ position 1))])))
+
+(define (compiler-ir-return-storage-abi-equal?
+  [bases : i64]
+  [left : (& left CompilerIrReturnStorageAbi)]
+  [right : (& right CompilerIrReturnStorageAbi)]) : bool
+  (let
+    [left : CompilerIrReturnStorageAbi
+      (owned_view.compiler-owned-reference-shared-view left)]
+    [right : CompilerIrReturnStorageAbi
+      (owned_view.compiler-owned-reference-shared-view right)]
+    [count : i64 (ast.ast-type-list-len left.physical-params)]
+    [i : i64 0]
+    (and
+      (= left.index right.index)
+      (= left.bytes right.bytes)
+      (= left.alignment right.alignment)
+      (string.eq
+        (compiler-ir-return-storage-convention-render left.convention)
+        (compiler-ir-return-storage-convention-render right.convention))
+      (ast.ast-type-eq-with-seg-bases? bases left.output right.output)
+      (ast.ast-type-eq-with-seg-bases?
+        bases
+        left.physical-result
+        right.physical-result)
+      (ast.ast-type-eq-with-seg-bases?
+        bases
+        left.source-signature
+        right.source-signature)
+      (= count (ast.ast-type-list-len right.physical-params))
+      (begin
+        (while (< i count)
+          (unless
+            (ast.ast-type-eq-with-seg-bases?
+              bases
+              (ast.ast-type-segment-bases-get
+                bases
+                (ast.ast-type-list-get
+                  left.physical-params
+                  i
+                  (ast.ast-type-id-fallback)))
+              (ast.ast-type-segment-bases-get
+                bases
+                (ast.ast-type-list-get
+                  right.physical-params
+                  i
+                  (ast.ast-type-id-fallback))))
+            (return false))
+          (set! i (+ i 1)))
+        true))))
+
+(define (compiler-ir-return-storage-declaration-equal?
+  [bases : i64]
+  [left : (& left CompilerIrReturnStorageDeclaration)]
+  [right : (& right CompilerIrReturnStorageDeclaration)]) : bool
+  (let
+    [left : CompilerIrReturnStorageDeclaration
+      (owned_view.compiler-owned-reference-shared-view left)]
+    [right : CompilerIrReturnStorageDeclaration
+      (owned_view.compiler-owned-reference-shared-view right)]
+    (and
+      (= left.name right.name)
+      (= left.c-abi? right.c-abi?)
+      (ast.ast-type-eq-with-seg-bases? bases left.signature right.signature)
+      (match left.storage
+        [(CompilerIrReturnStorage.None)
+          (match right.storage
+            [(CompilerIrReturnStorage.None) true]
+            [(CompilerIrReturnStorage.Some _) false])]
+        [(CompilerIrReturnStorage.Some left-boxed)
+          (match right.storage
+            [(CompilerIrReturnStorage.None) false]
+            [(CompilerIrReturnStorage.Some right-boxed)
+              (let
+                [left-abi : CompilerIrReturnStorageAbi
+                  (compiler-ir-box-shared-view left-boxed)]
+                [right-abi : CompilerIrReturnStorageAbi
+                  (compiler-ir-box-shared-view right-boxed)]
+                (compiler-ir-return-storage-abi-equal? bases left-abi right-abi))])]))))
+
+;; Call only after validating the complete declared type against its live pool.
+;; An extern CFunc is a data symbol whose value has this C function signature;
+;; retain the outer kind in the declaration so a direct call cannot borrow its
+;; indirect-only contract.
+(define (compiler-ir-return-storage-foreign-signature
+  [bases : i64]
+  [signature : ast.AstType]) : ast.AstType
+  (match (compiler-ir-global-shared-view signature)
+    [(ast.AstType.CFunc inner _) (ast.ast-type-segment-bases-get bases inner)]
+    [_ signature]))
+
+(define (compiler-ir-return-storage-index-claims
+  [bases : i64]
+  [type-count : i64]
+  [functions : (& functions CompilerIrFunctionSeq)]
+  [externs : (& externs CompilerIrExternSeq)]) : CompilerIrReturnStorageIndex
+  (when
+    (or
+      (< functions.len 0)
+      (< externs.len 0)
+      (> functions.len (array-length functions.slots))
+      (> externs.len (array-length externs.slots))
+      (> functions.len (- 9223372036854775807 externs.len)))
+    (let
+      [invalid : CompilerIrReturnStorageIndex
+        (compiler-ir-return-storage-index-empty)]
+      (set! invalid.problem "invalid return-storage declaration tables")
+      (return invalid)))
+  (let
+    [index : CompilerIrReturnStorageIndex
+      (CompilerIrReturnStorageIndex
+        (ir_i64_i64_map.with-capacity (+ functions.len externs.len))
+        (__tl_make-array
+          CompilerIrReturnStorageDeclaration
+          (+ functions.len externs.len))
+        0
+        type-count
+        "")]
+    [i : i64 0]
+    (while (< i functions.len)
+      (begin
+        (match (compiler-ir-function-seq-ref functions i)
+          [(CompilerIrFunction.Function name params result _ _ abi)
+            (match abi
+              [(CompilerIrFunctionAbi.ReturnStorage storage)
+                (let
+                  [declaration : CompilerIrReturnStorageAbi
+                    (compiler-ir-box-shared-view storage)]
+                  [problem : String
+                    (compiler-ir-return-storage-function-error
+                      bases
+                      type-count
+                      params
+                      result
+                      declaration)]
+                  (unless
+                    (= (string.string-length problem) 0)
+                    (set! index.problem problem))
+                  (compiler-ir-return-storage-index-add!
+                    bases
+                    (&mut index)
+                    (CompilerIrReturnStorageDeclaration
+                      name
+                      declaration.source-signature
+                      false
+                      (CompilerIrReturnStorage.Some storage))))]
+              [_
+                (compiler-ir-return-storage-index-add!
+                  bases
+                  (&mut index)
+                  (CompilerIrReturnStorageDeclaration
+                    name
+                    (ast.AstType.Unit)
+                    false
+                    (CompilerIrReturnStorage.None)))])])
+        (set! i (+ i 1))))
+    (set! i 0)
+    (while (< i externs.len)
+      (begin
+        (match (compiler-ir-extern-seq-ref externs i)
+          [(CompilerIrExtern.Extern name _ _ signature abi _ _ provided storage)
+            ;; A provided export also has a definition with this identity;
+            ;; the definition is authoritative for internal calls.
+            (unless
+              provided
+              (let
+                [budget : i64 4096]
+                (unless
+                  (compiler-ir-return-storage-type-valid?
+                    bases
+                    type-count
+                    (compiler-ir-global-shared-view signature)
+                    (&mut budget)
+                    64)
+                  (set! index.problem "invalid foreign signature type identity")
+                  (return index))
+                (match (compiler-ir-global-shared-view storage)
+                  [(CompilerIrReturnStorage.None) unit]
+                  [(CompilerIrReturnStorage.Some boxed)
+                    (let
+                      [decl : CompilerIrReturnStorageAbi
+                        (compiler-ir-box-shared-view boxed)]
+                      [problem : String
+                        (compiler-ir-return-storage-shape-error
+                          bases
+                          type-count
+                          decl)]
+                      (cond
+                        [(> (string.string-length problem) 0)
+                          (set! index.problem problem)]
+                        [(or
+                            (not (ast.ast-extern-abi-c? (& abi)))
+                            (not (compiler-ir-return-storage-c? decl))
+                            (not
+                              (ast.ast-type-eq-with-seg-bases?
+                                bases
+                                (compiler-ir-return-storage-foreign-signature
+                                  bases
+                                  (compiler-ir-global-shared-view signature))
+                                decl.source-signature)))
+                          (set!
+                            index.problem
+                            "return-storage differs from foreign declaration")]
+                        [else unit]))])
+                (compiler-ir-return-storage-index-add!
+                  bases
+                  (&mut index)
+                  (CompilerIrReturnStorageDeclaration
+                    name
+                    signature
+                    (ast.ast-extern-abi-c? abi)
+                    storage))))])
+        (set! i (+ i 1))))
+    index))
+
+;; Deep copy each declaration and its type arrays. An IR metadata edit must
+;; never mutate the independent canonical evidence through a shared Box/list.
+(define (compiler-ir-clone-return-storage-index
+  [pools : ast.AstNodePoolContext]
+  [source : (& source CompilerIrReturnStorageIndex)]) : CompilerIrReturnStorageIndex
+  (let
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [out : CompilerIrReturnStorageIndex
+      (CompilerIrReturnStorageIndex
+        (ir_i64_i64_map.with-capacity source.len)
+        (__tl_make-array CompilerIrReturnStorageDeclaration source.len)
+        0
+        source.type-count
+        (string.copy source.problem))]
+    [i : i64 0]
+    (while (< i source.len)
+      (let
+        [item : CompilerIrReturnStorageDeclaration
+          (compiler-ir-array-shared-view source.declarations i)]
+        (compiler-ir-return-storage-index-add!
+          bases
+          (&mut out)
+          (CompilerIrReturnStorageDeclaration
+            item.name
+            ;; Canonical type IDs name the retained job-owned prefix.
+            ;; Clone all owned enum/list/Box payloads, preserving those
+            ;; IDs; appending remapped nodes here would mutate a snapshot
+            ;; independently of the live producer's cursor.
+            (clone item.signature)
+            item.c-abi?
+            (clone item.storage)))
+        (set! i (+ i 1))))
+    out))
+
+;; Called only by the completed typed lowerer, or independently authored
+;; fixtures. Its input is canonical ABI/layout evidence, never mutable claims
+;; recovered from an arbitrary program at a coloring/verification boundary.
+(define (compiler-ir-return-storage-authority-capture
+  [pools : ast.AstNodePoolContext]
+  [interns : (& interns ci.InternCompatState)]
+  [target : i64]
+  [canonical : (& canonical CompilerIrReturnStorageIndex)]) : CompilerIrReturnStorageAuthority
+  (let
+    [owned : CompilerIrReturnStorageIndex
+      (compiler-ir-clone-return-storage-index pools canonical)]
+    (match (ast.ast-node-pool-context-type-stamp pools)
+      [(ast.AstMaybeTypePoolStamp.Some stamp)
+        (CompilerIrReturnStorageAuthority.Captured
+          (box
+            (CompilerIrReturnStorageAuthorityData
+              stamp
+              (ci.intern-compat-state-table-id interns)
+              (ci.intern-compat-state-generation interns)
+              target
+              owned)))]
+      [(ast.AstMaybeTypePoolStamp.No)
+        (CompilerIrReturnStorageAuthority.Invalid
+          "unavailable return-storage type-pool owner")])))
+
+(define (compiler-ir-clone-return-storage-authority
+  [pools : ast.AstNodePoolContext]
+  [authority : CompilerIrReturnStorageAuthority]) : CompilerIrReturnStorageAuthority
+  (match authority
+    [(CompilerIrReturnStorageAuthority.None)
+      (CompilerIrReturnStorageAuthority.None)]
+    [(CompilerIrReturnStorageAuthority.Invalid problem)
+      (CompilerIrReturnStorageAuthority.Invalid (string.copy problem))]
+    [(CompilerIrReturnStorageAuthority.Captured boxed)
+      (let
+        [data : CompilerIrReturnStorageAuthorityData
+          (compiler-ir-box-shared-view boxed)]
+        (if (ast.ast-node-pool-context-type-stamp-valid? pools data.stamp)
+          (compiler-ir-rehome-return-storage-authority pools data)
+          (CompilerIrReturnStorageAuthority.Invalid
+            "stale return-storage type-pool authority")))]))
+
+;; The caller has established an identical canonical type-id prefix in this
+;; destination pool, either the same live pool or the driver's types-only copy.
+(define (compiler-ir-rehome-return-storage-authority
+  [pools : ast.AstNodePoolContext]
+  [data : (& data CompilerIrReturnStorageAuthorityData)]) : CompilerIrReturnStorageAuthority
+  (let
+    [owned : CompilerIrReturnStorageIndex
+      (compiler-ir-clone-return-storage-index pools data.catalog)]
+    (match (ast.ast-node-pool-context-type-stamp pools)
+      [(ast.AstMaybeTypePoolStamp.Some stamp)
+        (CompilerIrReturnStorageAuthority.Captured
+          (box
+            (CompilerIrReturnStorageAuthorityData
+              stamp
+              data.intern-table
+              data.intern-generation
+              data.target
+              owned)))]
+      [(ast.AstMaybeTypePoolStamp.No)
+        (CompilerIrReturnStorageAuthority.Invalid
+          "unavailable return-storage type-pool owner")])))
+
+;; The driver copies the canonical type pool in ID order before retiring the
+;; frontend owner. Check that complete stamped prefix before rebinding evidence
+;; to the new owner; a same-sized unrelated pool is insufficient.
+(define (compiler-ir-return-storage-authority-after-type-copy
+  [old : ast.AstNodePoolContext]
+  [next : ast.AstNodePoolContext]
+  [authority : CompilerIrReturnStorageAuthority]) : CompilerIrReturnStorageAuthority
+  (match authority
+    [(CompilerIrReturnStorageAuthority.None)
+      (CompilerIrReturnStorageAuthority.None)]
+    [(CompilerIrReturnStorageAuthority.Invalid problem)
+      (CompilerIrReturnStorageAuthority.Invalid (string.copy problem))]
+    [(CompilerIrReturnStorageAuthority.Captured boxed)
+      (let
+        [data : CompilerIrReturnStorageAuthorityData
+          (compiler-ir-box-shared-view boxed)]
+        [i : i64 0]
+        [bases : i64 (ast.ast-node-pool-context-type-segment-bases next)]
+        (unless
+          (ast.ast-node-pool-context-type-stamp-valid? old data.stamp)
+          (return
+            (CompilerIrReturnStorageAuthority.Invalid
+              "stale return-storage type-pool authority")))
+        (match (ast.ast-node-pool-context-type-stamp next)
+          [(ast.AstMaybeTypePoolStamp.No)
+            (return
+              (CompilerIrReturnStorageAuthority.Invalid
+                "unavailable return-storage destination pool"))]
+          [(ast.AstMaybeTypePoolStamp.Some stamp)
+            (when
+              (< stamp.count data.stamp.count)
+              (return
+                (CompilerIrReturnStorageAuthority.Invalid
+                  "incomplete return-storage destination prefix")))])
+        (while (< i data.stamp.count)
+          (unless
+            (ast.ast-type-eq-with-seg-bases?
+              bases
+              (ast.ast-node-pool-context-type-get old i)
+              (ast.ast-node-pool-context-type-get next i))
+            (return
+              (CompilerIrReturnStorageAuthority.Invalid
+                "mismatching return-storage destination prefix")))
+          (set! i (+ i 1)))
+        (compiler-ir-rehome-return-storage-authority next data))]))
+
+(define (compiler-ir-program-after-type-copy
+  [old : ast.AstNodePoolContext]
+  [next : ast.AstNodePoolContext]
+  [program : CompilerIrProgram]) : CompilerIrProgram
+  (match program
+    [(CompilerIrProgram.Program globals functions externs authority)
+      (CompilerIrProgram.Program
+        globals
+        functions
+        externs
+        (compiler-ir-return-storage-authority-after-type-copy
+          old
+          next
+          authority))]))
+
+;; Whether `next`, an independently owned intern table, mirrors `old`: the same
+;; source and generated ids name the same spellings in both.
+(define (compiler-ir-interns-mirror?
+  [old : (& old ci.InternCompatState)]
+  [next : (& next ci.InternCompatState)]) : bool
+  (let
+    [source-count : i64 (ci.intern-compat-state-pool-len old)]
+    [generated-count : i64 (ci.intern-compat-state-generated-count old)]
+    [ok : bool
+      (and
+        (= source-count (ci.intern-compat-state-pool-len next))
+        (= generated-count (ci.intern-compat-state-generated-count next)))]
+    [index : i64 0]
+    (while (and ok (< index source-count))
+      (set!
+        ok
+        (string.eq
+          (ci.intern-compat-state-str old index)
+          (ci.intern-compat-state-str next index)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (and ok (< index generated-count))
+      (let
+        [id : i64 (- (- (ci.intern-capacity) 1) index)]
+        (set!
+          ok
+          (string.eq
+            (ci.intern-compat-state-str old id)
+            (ci.intern-compat-state-str next id)))
+        (set! index (+ index 1))))
+    ok))
+
+;; Move return-storage authority captured against `old` to `next`, an
+;; independently owned intern table. The handoff is checked: the authority must
+;; belong to `old`, and `next` must mirror it id for id; anything else
+;; invalidates the authority instead of carrying evidence across tables.
+(define (compiler-ir-program-after-intern-mirror
+  [pools : ast.AstNodePoolContext]
+  [old : (& old ci.InternCompatState)]
+  [next : (& next ci.InternCompatState)]
+  [program : CompilerIrProgram]) : CompilerIrProgram
+  (match program
+    [(CompilerIrProgram.Program globals functions externs authority)
+      (CompilerIrProgram.Program
+        globals
+        functions
+        externs
+        (match authority
+          [(CompilerIrReturnStorageAuthority.Captured boxed)
+            (let
+              [data : CompilerIrReturnStorageAuthorityData
+                (compiler-ir-box-shared-view boxed)]
+              (cond
+                [(not
+                    (and
+                      (=
+                        data.intern-table
+                        (ci.intern-compat-state-table-id old))
+                      (=
+                        data.intern-generation
+                        (ci.intern-compat-state-generation old))))
+                  (CompilerIrReturnStorageAuthority.Invalid
+                    "stale return-storage source-name authority")]
+                [(not (compiler-ir-interns-mirror? old next))
+                  (CompilerIrReturnStorageAuthority.Invalid
+                    "return-storage intern handoff to a non-mirroring table")]
+                [else
+                  (CompilerIrReturnStorageAuthority.Captured
+                    (box
+                      (CompilerIrReturnStorageAuthorityData
+                        data.stamp
+                        (ci.intern-compat-state-table-id next)
+                        (ci.intern-compat-state-generation next)
+                        data.target
+                        (compiler-ir-clone-return-storage-index
+                          pools
+                          data.catalog))))]))]
+          [(CompilerIrReturnStorageAuthority.None)
+            (CompilerIrReturnStorageAuthority.None)]
+          [(CompilerIrReturnStorageAuthority.Invalid problem)
+            (CompilerIrReturnStorageAuthority.Invalid problem)]))]))
+
+;; Missing evidence preserves declaration shape for diagnostics but strips the
+;; storage-reuse permission. Matching a current name alone is never sufficient.
+(define (compiler-ir-return-storage-index-reconcile
+  [bases : i64]
+  [claims : CompilerIrReturnStorageIndex]
+  [canonical : (& canonical CompilerIrReturnStorageIndex)]) : CompilerIrReturnStorageIndex
+  (let
+    [i : i64 0]
+    (when
+      (> (string.string-length canonical.problem) 0)
+      (set!
+        claims.problem
+        (str_cat.str-cat
+          "invalid canonical return-storage catalog: "
+          (string.copy canonical.problem))))
+    (while (< i claims.len)
+      (let
+        [claim : CompilerIrReturnStorageDeclaration
+          (compiler-ir-array-shared-view claims.declarations i)]
+        [permission : CompilerIrReturnStorage (CompilerIrReturnStorage.None)]
+        (match (ir_i64_i64_map.get canonical.names claim.name)
+          [(ir_i64_i64_map.LookupFound at)
+            (when
+              (and (>= at 0) (< at canonical.len))
+              (let
+                [original : CompilerIrReturnStorageDeclaration
+                  (compiler-ir-array-shared-view canonical.declarations at)]
+                (when
+                  (and
+                    (= original.c-abi? claim.c-abi?)
+                    (ast.ast-type-eq-with-seg-bases?
+                      bases
+                      (compiler-ir-global-shared-view original.signature)
+                      (compiler-ir-global-shared-view claim.signature)))
+                  (match original.storage
+                    [(CompilerIrReturnStorage.Some expected)
+                      (match (compiler-ir-global-shared-view claim.storage)
+                        [(CompilerIrReturnStorage.Some actual)
+                          (let
+                            [expected-value : CompilerIrReturnStorageAbi
+                              (compiler-ir-box-shared-view expected)]
+                            [actual-value : CompilerIrReturnStorageAbi
+                              (compiler-ir-box-shared-view actual)]
+                            (if (compiler-ir-return-storage-abi-equal?
+                              bases
+                              expected-value
+                              actual-value)
+                              (set!
+                                permission
+                                (CompilerIrReturnStorage.Some expected))
+                              (set!
+                                claims.problem
+                                "return-storage ABI differs from canonical lowering evidence")))]
+                        [(CompilerIrReturnStorage.None) unit])]
+                    [(CompilerIrReturnStorage.None) unit]))))]
+          [_ unit])
+        (set!
+          (array-ref claims.declarations i)
+          (CompilerIrReturnStorageDeclaration
+            claim.name
+            claim.signature
+            claim.c-abi?
+            permission))
+        (set! i (+ i 1))))
+    claims))
+
+;; Legacy/raw IR has no canonical evidence and therefore never grants reuse.
+(define (compiler-ir-return-storage-index-build
+  [_bases : i64]
+  [_functions : (& functions CompilerIrFunctionSeq)]
+  [_externs : (& externs CompilerIrExternSeq)]) : CompilerIrReturnStorageIndex
+  (compiler-ir-return-storage-index-empty))
+
+(define (compiler-ir-return-storage-index-authorized
+  [pools : ast.AstNodePoolContext]
+  [interns : (& interns ci.InternCompatState)]
+  [target : i64]
+  [functions : (& functions CompilerIrFunctionSeq)]
+  [externs : (& externs CompilerIrExternSeq)]
+  [authority : (& authority CompilerIrReturnStorageAuthority)]) : CompilerIrReturnStorageIndex
+  (let
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [empty : CompilerIrReturnStorageIndex
+      (compiler-ir-return-storage-index-empty)]
+    [canonical : CompilerIrReturnStorageIndex
+      (match (owned_view.compiler-owned-reference-shared-view authority)
+        [(CompilerIrReturnStorageAuthority.None) empty]
+        [(CompilerIrReturnStorageAuthority.Invalid problem)
+          (set! empty.problem (string.copy problem))
+          (return empty)]
+        [(CompilerIrReturnStorageAuthority.Captured boxed)
+          (let
+            [data : CompilerIrReturnStorageAuthorityData
+              (compiler-ir-box-shared-view boxed)]
+            (unless
+              (and
+                (= data.intern-table (ci.intern-compat-state-table-id interns))
+                (=
+                  data.intern-generation
+                  (ci.intern-compat-state-generation interns)))
+              (set! empty.problem "stale return-storage source-name authority")
+              (return empty))
+            (unless
+              (ast.ast-node-pool-context-type-stamp-valid? pools data.stamp)
+              (set! empty.problem "stale return-storage type-pool authority")
+              (return empty))
+            (unless
+              (or (< target 0) (= target data.target))
+              (set! empty.problem "return-storage authority target mismatch")
+              (return empty))
+            data.catalog)])]
+    (compiler-ir-return-storage-index-reconcile
+      bases
+      (compiler-ir-return-storage-index-claims
+        bases
+        (compiler-ir-type-pool-count pools)
+        functions
+        externs)
+      canonical)))
 
 ;; Immutable, job-owned nominal representation facts captured from lowered
 ;; whole-program IR before optimization. The count map uses 0 for conflicting
@@ -4931,7 +5983,8 @@
   (class-masks ir_i64_i64_map.Map)
   ;; Bit w proves that inline word w keeps its declared type across variants.
   ;; Missing facts and words beyond the mask provide no speculation proof.
-  (stable-word-masks ir_i64_i64_map.Map))
+  (stable-word-masks ir_i64_i64_map.Map)
+  (return-storage CompilerIrReturnStorageIndex))
 
 (defenum CompilerIrRepresentationKind
   (KnownOneWord)
@@ -4942,7 +5995,8 @@
   (CompilerIrRepresentationIndex
     (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)
-    (ir_i64_i64_map.with-capacity 1)))
+    (ir_i64_i64_map.with-capacity 1)
+    (compiler-ir-return-storage-index-empty)))
 
 (define (compiler-ir-representation-index-stable-mask-known?
   [index : (& index CompilerIrRepresentationIndex)]
@@ -5243,6 +6297,105 @@
     [(BoundsCheck _ _ _) true]
     [_ false]))
 
+;; Frame-destroying tail transfers need this conservative function-wide guard.
+;; AddrOf creates a pointer to this frame; Alloc is included even before an
+;; address is taken so storage-producing transformations remain conservative.
+;; With neither producer, moves, casts, projections and calls cannot acquire a
+;; pointer to this frame from valid input IR. This does not prove arbitrary IR
+;; valid or validate unsafe integer-to-pointer operations.
+;; Keep the classification exhaustive: a new instruction must make an explicit
+;; decision about exposing local storage before tail transfers can use it.
+(define (compiler-ir-instr-exposes-frame? [instr : (& instr CompilerIrInstr)]) : bool
+  (match instr
+    [(CompilerIrInstr.Alloc _ _) true]
+    [(CompilerIrInstr.AddrOf _ _ _storage-words) true]
+    [(CompilerIrInstr.Mov _ _ _) false]
+    [(CompilerIrInstr.Gep _ _ _ _) false]
+    [(CompilerIrInstr.Load _ _ _) false]
+    [(CompilerIrInstr.StoreOwned _ _ _) false]
+    [(CompilerIrInstr.StorePtr _ _ _) false]
+    [(CompilerIrInstr.CopyBytes _ _ _) false]
+    [(CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(CompilerIrInstr.Cast _ _ _ _) false]
+    [(CompilerIrInstr.Bitcast _ _ _ _) false]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) false]
+    [(CompilerIrInstr.UnOp _ _ _ _) false]
+    [(CompilerIrInstr.LaneId _ _ _) false]
+    [(CompilerIrInstr.Splat _ _ _ _) false]
+    [(CompilerIrInstr.VectorBinOp _) false]
+    [(CompilerIrInstr.VectorPrefix _) false]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) false]
+    [(CompilerIrInstr.VectorCompare _) false]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) false]
+    [(CompilerIrInstr.MaskNot _ _ _) false]
+    [(CompilerIrInstr.MaskReduce _ _ _ _) false]
+    [(CompilerIrInstr.Select _) false]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) false]
+    [(CompilerIrInstr.VectorStore _) false]
+    [(CompilerIrInstr.PredicatedStore _) false]
+    [(CompilerIrInstr.PredicatedLoad _) false]
+    [(CompilerIrInstr.GatherLoad _) false]
+    [(CompilerIrInstr.VectorShuffle _) false]
+    [(CompilerIrInstr.TailMask _ _ _ _) false]
+    [(CompilerIrInstr.EntryArgc _) false]
+    [(CompilerIrInstr.EntryArgv _) false]
+    [(CompilerIrInstr.EntryEnvp _) false]
+    [(CompilerIrInstr.CpuId _ _ _ _) false]
+    [(CompilerIrInstr.Xgetbv _ _) false]
+    [(CompilerIrInstr.Syscall _ _) false]
+    [(CompilerIrInstr.Call _ _ _ _) false]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) false]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) false]
+    [(CompilerIrInstr.CallCAbiStoreResult _) false]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
+    [(CompilerIrInstr.SpmdCall _) false]
+    [(CompilerIrInstr.TailCall _ _ _) false]
+    [(CompilerIrInstr.Store _ _ _) false]
+    [(CompilerIrInstr.Jump _) false]
+    [(CompilerIrInstr.Branch _ _ _) false]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) false]
+    [(CompilerIrInstr.Return _) false]
+    [(CompilerIrInstr.Phi _ _ _) false]
+    [(CompilerIrInstr.Pack _ _ _) false]
+    [(CompilerIrInstr.Word _ _ _ _) false]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) false]
+    [(CompilerIrInstr.Switch _ _ _ _) false]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) false]))
+
+(define (compiler-ir-instrs-expose-frame?
+  [instrs : (& instrs CompilerIrInstrSeq)]) : bool
+  (if (or (< instrs.len 0) (> instrs.len (array-length instrs.slots)))
+    true
+    (let
+      [index : i64 0]
+      (while (< index instrs.len)
+        (when
+          (compiler-ir-instr-exposes-frame? (& (array-ref instrs.slots index)))
+          (return true))
+        (set! index (+ index 1)))
+      false)))
+
+(define (compiler-ir-block-exposes-frame? [block : (& block CompilerIrBlock)]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instrs-expose-frame? instrs)]))
+
+;; Inspect logical entries directly, without converting or cloning block lists.
+;; Invalid sequence lengths deny tail transfer before any slot is accessed.
+(define (compiler-ir-blocks-expose-frame?
+  [blocks : (& blocks CompilerIrBlockList)]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (if (or (< seq.len 0) (> seq.len (array-length seq.slots)))
+        true
+        (let
+          [index : i64 0]
+          (while (< index seq.len)
+            (when
+              (compiler-ir-block-exposes-frame? (& (array-ref seq.slots index)))
+              (return true))
+            (set! index (+ index 1)))
+          false))]))
+
 (define (compiler-ir-instr-seq-phi?
   [instrs : (& instrs CompilerIrInstrSeq)]
   [index : i64]) : bool
@@ -5317,7 +6470,9 @@
       (__tl_make-array CompilerIrParam count)]
     (set! (array-ref slots 0) param)
     (for [index (iterator.range 0 rest.len)]
-      (set! (array-ref slots (+ index 1)) (array-ref rest.slots index)))
+      (set!
+        (array-ref slots (+ index 1))
+        (owned_view.compiler-owned-element-view rest.slots index)))
     (CompilerIrParamSeq slots count)))
 
 (define (compiler-ir-param-seq-append-one
@@ -5328,7 +6483,9 @@
     [slots : (__tl_dyn-array CompilerIrParam)
       (__tl_make-array CompilerIrParam count)]
     (for [index (iterator.range 0 params.len)]
-      (set! (array-ref slots index) (array-ref params.slots index)))
+      (set!
+        (array-ref slots index)
+        (owned_view.compiler-owned-element-view params.slots index)))
     (set! (array-ref slots params.len) param)
     (CompilerIrParamSeq slots count)))
 
@@ -5740,7 +6897,8 @@
     (C)
     name-id
     (ast.ast-extern-link-input-list-new)
-    false))
+    false
+    (CompilerIrReturnStorage.None)))
 
 (define (compiler-ir-clone-value [value : (& CompilerIrValue)]) : CompilerIrValue
   (match value
@@ -6124,7 +7282,16 @@
   [pools : ast.AstNodePoolContext]
   [extern : (& CompilerIrExtern)]) : CompilerIrExtern
   (match (owned_view.compiler-owned-reference-shared-view extern)
-    [(Extern name-id source-name-id name ty abi symbol-id links provided)
+    [(Extern
+        name-id
+        source-name-id
+        name
+        ty
+        abi
+        symbol-id
+        links
+        provided
+        storage)
       (Extern
         name-id
         source-name-id
@@ -6133,7 +7300,8 @@
         (clone abi)
         symbol-id
         (clone links)
-        provided)]))
+        provided
+        (compiler-ir-clone-return-storage pools storage))]))
 
 (define (compiler-ir-clone-extern-seq
   [pools : ast.AstNodePoolContext]
@@ -6159,18 +7327,21 @@
     [dest : (__tl_dyn-array CompilerIrFunction)
       (__tl_make-array CompilerIrFunction count)]
     (for [i (iterator.range 0 count)]
-      (set! (array-ref dest i) (array-ref source i)))
+      (set!
+        (array-ref dest i)
+        (owned_view.compiler-owned-element-view source i)))
     (CompilerIrFunctionSeq dest count)))
 
 (define (compiler-ir-clone-program-shell
   [pools : ast.AstNodePoolContext]
   [program : (& CompilerIrProgram)]) : CompilerIrProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program globals functions externs)
+    [(Program globals functions externs authority)
       (Program
         (compiler-ir-clone-global-seq pools (& globals))
         (compiler-ir-clone-function-seq-shell functions)
-        (compiler-ir-clone-extern-seq pools (& externs)))]))
+        (compiler-ir-clone-extern-seq pools (& externs))
+        (compiler-ir-clone-return-storage-authority pools authority))]))
 
 (define (compiler-ir-type-list-render-at
   [structural-session : cis.InternStructuralSessionHandle]
@@ -6242,22 +7413,35 @@
     (compiler-ir-lifetime-list-render structural-session lifetimes)
     ")"))
 
-;; Type variables and lifetimes carry source or session-owned syntax IDs. Only
-;; decoded renderable IDs may index the intern pool, including in nested types.
 (define (compiler-ir-syntax-name-render
   [structural-session : cis.InternStructuralSessionHandle]
-  [name : i64]) : String
-  (if (ci.intern-renderable-id? name)
-    (ci.intern-str name)
-    (let
-      [source-id : i64
-        (cis.intern-structural-session-syntax-source-name-id-or
+  [name-id : i64]) : String
+  ;; Type variables and lifetimes share the source/syntax identity boundary.
+  ;; Decoding a structural id is not enough: the resulting source slot still
+  ;; belongs to that session, even while a different owner is installed. A
+  ;; session that holds no spelling for the slot defers to the installed
+  ;; pool's own renderable ids.
+  (let
+    [source-id : i64
+      (cis.intern-structural-session-syntax-source-name-id-or
+        structural-session
+        name-id
+        -1)]
+    [session-text : String
+      (if (and
+        (!= structural-session.address 0)
+        (cis.intern-structural-session-source-name-component-valid?
           structural-session
-          name
-          -1)]
-      (if (ci.intern-renderable-id? source-id)
-        (ci.intern-str source-id)
-        (str_cat.str-cat "<id:" (string.int->string name) ">")))))
+          source-id))
+        (ci.intern-source-name-session-handle-str
+          (cis.intern-structural-session-handle-source-names structural-session)
+          source-id)
+        "")]
+    (cond
+      [(> (string.string-length (& session-text)) 0) session-text]
+      [(ci.intern-renderable-id? source-id) (ci.intern-str source-id)]
+      [(ci.intern-renderable-id? name-id) (ci.intern-str name-id)]
+      [else (str_cat.str-cat "<id:" (string.int->string name-id) ">")])))
 
 (define (compiler-ir-type-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -6859,11 +8043,14 @@
         (compiler-ir-dst-render dst)
         "alloc "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(AddrOf dst src)
+    [(AddrOf dst src _storage-words)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "addr_of %"
-        (string.int->string src))]
+        (string.int->string src)
+        (if (= _storage-words 0)
+          ""
+          (str_cat.str-cat " storage " (string.int->string _storage-words))))]
     [(Gep dst base offset ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -7478,6 +8665,13 @@
         (string.int->string vars)
         (match function-abi
           [(Ordinary) ""]
+          [(ReturnStorage storage)
+            (str_cat.str-cat
+              " abi "
+              (compiler-ir-return-storage-render
+                structural-session
+                type-segment-bases
+                (deref storage)))]
           [(SpmdPrivate private-box)
             (str_cat.str-cat
               " abi "
@@ -7491,6 +8685,36 @@
           type-segment-bases
           (& blocks))
         "}\n")]))
+
+(define (compiler-ir-return-storage-convention-render
+  [convention : CompilerIrReturnStorageConvention]) : String
+  (match convention
+    [(CompilerIrReturnStorageConvention.InternalLeading) "internal-leading"]
+    [(CompilerIrReturnStorageConvention.InternalTrailing) "internal-trailing"]
+    [(CompilerIrReturnStorageConvention.SysV) "sysv"]
+    [(CompilerIrReturnStorageConvention.Win64) "win64"]))
+
+(define (compiler-ir-return-storage-render
+  [session : cis.InternStructuralSessionHandle]
+  [bases : i64]
+  [storage : CompilerIrReturnStorageAbi]) : String
+  (str_cat.str-cat
+    "return-storage "
+    (compiler-ir-return-storage-convention-render storage.convention)
+    " arg "
+    (string.int->string storage.index)
+    " bytes "
+    (string.int->string storage.bytes)
+    " align "
+    (string.int->string storage.alignment)
+    " output "
+    (compiler-ir-type-render session bases storage.output)
+    " result "
+    (compiler-ir-type-render session bases storage.physical-result)
+    " params ("
+    (compiler-ir-type-list-render session bases storage.physical-params)
+    ") source "
+    (compiler-ir-type-render session bases storage.source-signature)))
 
 (define (compiler-ir-function-seq-render-into-from
   [structural-session : cis.InternStructuralSessionHandle]
@@ -7580,7 +8804,7 @@
   [type-segment-bases : i64]
   [extern : (& CompilerIrExtern)]) : String
   (match (owned_view.compiler-owned-reference-shared-view extern)
-    [(Extern name _ symbol ty abi _ _ weak)
+    [(Extern name _ symbol ty abi _ _ weak storage)
       (str_cat.str-cat
         "extern @"
         (compiler-ir-symbol-text name)
@@ -7596,6 +8820,15 @@
         (if weak
           " weak"
           "")
+        (match storage
+          [(CompilerIrReturnStorage.None) ""]
+          [(CompilerIrReturnStorage.Some boxed)
+            (str_cat.str-cat
+              " "
+              (compiler-ir-return-storage-render
+                structural-session
+                type-segment-bases
+                (compiler-ir-box-shared-view boxed)))])
         "\n")]))
 
 (define (compiler-ir-extern-seq-render-into
@@ -7621,7 +8854,7 @@
   [type-segment-bases : i64]
   [program : (& CompilerIrProgram)]) : String
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program globals functions externs)
+    [(Program globals functions externs _authority)
       (let
         [globals-buf : text_buf.TextBuf
           (compiler-ir-global-seq-render-into
@@ -7740,9 +8973,9 @@
 
 (define (compiler-ir-instr-effect [instr : (& CompilerIrInstr)]) : CompilerIrEffect
   (match instr
-    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
-         (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _)
-         (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _)
+    [(or (Mov _ _ _) (AddrOf _ _ _) (Gep _ _ _ _) (Cast _ _ _ _)
+         (Bitcast _ _ _ _) (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _)
+         (LaneId _ _ _) (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _)
          (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
          (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _) (TailMask _ _ _ _)
          (Pack _ _ _) (Word _ _ _ _))
@@ -7813,17 +9046,17 @@
          (TailCallIndirect _ _ _))
       Call]
     ;; Safe code reaches a memory access only through its explicit checks.
-    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
-         (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _) (Splat _ _ _ _)
-         (VectorPrefix _) (VectorReduce _ _ _ _ _) (VectorCompare _)
-         (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _)
-         (TailMask _ _ _ _) (Load _ _ _) (StoreOwned _ _ _)
-         (VectorLoad _ _ _ _ _) (PredicatedLoad _) (GatherLoad _) (EntryArgc _)
-         (EntryArgv _) (EntryEnvp _) (CpuId _ _ _ _) (Xgetbv _ _) (Alloc _ _)
-         (StorePtr _ _ _) (CopyBytes _ _ _) (Store _ _ _) (VectorStore _)
-         (PredicatedStore _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
-         (Return _) (Pack _ _ _) (Word _ _ _ _) (Switch _ _ _ _)
-         (TotalEnumSwitch _ _ _ _ _))
+    [(or (Mov _ _ _) (AddrOf _ _ _) (Gep _ _ _ _) (Cast _ _ _ _)
+         (Bitcast _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorPrefix _) (VectorReduce _ _ _ _ _)
+         (VectorCompare _) (MaskBinOp _ _ _ _ _) (MaskNot _ _ _)
+         (MaskReduce _ _ _ _) (Select _) (TailMask _ _ _ _) (Load _ _ _)
+         (StoreOwned _ _ _) (VectorLoad _ _ _ _ _) (PredicatedLoad _)
+         (GatherLoad _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
+         (CpuId _ _ _ _) (Xgetbv _ _) (Alloc _ _) (StorePtr _ _ _)
+         (CopyBytes _ _ _) (Store _ _ _) (VectorStore _) (PredicatedStore _)
+         (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Return _) (Pack _ _ _)
+         (Word _ _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
       None]))
 
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
@@ -8735,6 +9968,158 @@
             [(Block _ instrs) (+= total (compiler-ir-instr-seq-count instrs))]))
         total)]))
 
+;; Result-slot ABI. A function with a nominal result slot returns that slot on
+;; every path: the slot var itself, or the result of a call that received the
+;; slot as its own hidden output and so returns it by the same rule. Callers
+;; may therefore hand a callee any storage nothing else reads as its slot (a
+;; fresh box, a fresh constructor field) and find the result there.
+(define (compiler-ir-value-var-or [value : CompilerIrValue] [fallback : i64]) : i64
+  (match value
+    [(CompilerIrValue.Var id) id]
+    [_ fallback]))
+
+;; The var a call passes as its hidden output: the marked `Sret` argument, or
+;; else the trailing argument (a forwarded slot rides there unmarked); -1 when
+;; that argument is not a var.
+(define (compiler-ir-call-args-slot-var [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(CompilerIrCallArgs.Nil) (- 0 1)]
+    [(CompilerIrCallArgs.One a) (compiler-ir-value-var-or a (- 0 1))]
+    [(CompilerIrCallArgs.Two _ b) (compiler-ir-value-var-or b (- 0 1))]
+    [(CompilerIrCallArgs.Array values)
+      (if (> (array-length values) 0)
+        (compiler-ir-value-var-or
+          (compiler-ir-array-shared-view values (- (array-length values) 1))
+          (- 0 1))
+        (- 0 1))]
+    [(CompilerIrCallArgs.Sret values index)
+      (if (and (>= index 0) (< index (array-length values)))
+        (compiler-ir-value-var-or
+          (compiler-ir-array-shared-view values index)
+          (- 0 1))
+        (- 0 1))]))
+
+;; The var `instr` defines by a call that received `slot-var` as its hidden
+;; output, or -1.
+(define (compiler-ir-instr-slot-call-dst
+  [instr : CompilerIrInstr]
+  [slot-var : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.Call dst _ args _)
+      (if (= (compiler-ir-call-args-slot-var args) slot-var)
+        dst
+        (- 0 1))]
+    [(CompilerIrInstr.CallIndirect dst _ args _)
+      (if (= (compiler-ir-call-args-slot-var args) slot-var)
+        dst
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+;; 1 when `instr` returns something other than the slot or a marked call
+;; result, else 0.
+(define (compiler-ir-instr-slot-return-violation
+  [instr : CompilerIrInstr]
+  [slot-var : i64]
+  [marks : (& marks (__tl_dyn-array i64))]) : i64
+  (match instr
+    [(CompilerIrInstr.Return returned)
+      (match returned
+        [(CompilerIrMaybeValue.Some value)
+          (let
+            [id : i64 (compiler-ir-value-var-or value (- 0 1))]
+            (if (or
+              (= id slot-var)
+              (and
+                (>= id 0)
+                (< id (array-length marks))
+                (= (array-ref marks id) 1)))
+              0
+              1))]
+        [(CompilerIrMaybeValue.No) 1])]
+    [_ 0]))
+
+;; Pass 1 marks the calls that received the slot; pass 2 counts the returns
+;; that hand back anything else.
+(define (compiler-ir-instr-seq-slot-scan
+  [instrs : CompilerIrInstrSeq]
+  [slot-var : i64]
+  [marks : (&mut marks (__tl_dyn-array i64))]
+  [check? : bool]) : i64
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [violations : i64 0]
+    (while (< index count)
+      (if check?
+        (set!
+          violations
+          (+
+            violations
+            (compiler-ir-instr-slot-return-violation
+              (compiler-ir-instr-seq-ref instrs index)
+              slot-var
+              marks)))
+        (let
+          [dst : i64
+            (compiler-ir-instr-slot-call-dst
+              (compiler-ir-instr-seq-ref instrs index)
+              slot-var)]
+          (if (and (>= dst 0) (< dst (array-length marks)))
+            (set! (array-ref marks dst) 1)
+            unit)))
+      (set! index (+ index 1)))
+    violations))
+
+(define (compiler-ir-block-list-slot-scan
+  [blocks : CompilerIrBlockList]
+  [slot-var : i64]
+  [marks : (&mut marks (__tl_dyn-array i64))]
+  [check? : bool]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [total : i64 0]
+        [index : i64 0]
+        (while (< index count)
+          (begin
+            (match (compiler-ir-block-seq-ref seq index)
+              [(CompilerIrBlock.Block _ instrs)
+                (set!
+                  total
+                  (+
+                    total
+                    (compiler-ir-instr-seq-slot-scan
+                      instrs
+                      slot-var
+                      marks
+                      check?)))])
+            (set! index (+ index 1))))
+        total)]))
+
+;; The number of return points of a function with result slot `slot-var` (and
+;; `var-count` vars) that violate the result-slot ABI.
+(define (compiler-ir-block-list-slot-return-violations
+  [blocks : CompilerIrBlockList]
+  [slot-var : i64]
+  [var-count : i64]) : i64
+  (let
+    [marks : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
+    [index : i64 0]
+    (while (< index var-count)
+      (set! (array-ref marks index) 0)
+      (set! index (+ index 1)))
+    (compiler-ir-block-list-slot-scan
+      (compiler-ir-global-shared-view blocks)
+      slot-var
+      (&mut marks)
+      false)
+    (compiler-ir-block-list-slot-scan
+      (compiler-ir-global-shared-view blocks)
+      slot-var
+      (&mut marks)
+      true)))
+
 (define (compiler-ir-function-block-count [func : (& CompilerIrFunction)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ _ blocks _) (compiler-ir-block-list-count blocks)]))
@@ -8876,7 +10261,7 @@
 
 (define (compiler-ir-program-summary [program : (& CompilerIrProgram)]) : CompilerIrSummary
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program globals functions externs)
+    [(Program globals functions externs _authority)
       (Summary
         (compiler-ir-global-seq-count globals)
         (compiler-ir-function-seq-count functions)
@@ -9173,20 +10558,31 @@
   [word-count : i64]
   [class-mask : i64]) : CompilerIrRepresentationIndex
   (let
-    [counts : ir_i64_i64_map.Map index.word-counts]
-    [masks : ir_i64_i64_map.Map index.class-masks]
+    ;; Views: the maps are updated in place and `index` is returned whole.
+    [counts : ir_i64_i64_map.Map
+      (owned_view.compiler-owned-shared-view index.word-counts)]
+    [masks : ir_i64_i64_map.Map
+      (owned_view.compiler-owned-shared-view index.class-masks)]
     (if (< word-count 2)
       (begin
         ;; A malformed group is explicit unresolved evidence, not a one-word
         ;; proof. Preserve any prior conflict and fail closed deterministically.
         (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
         (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
-        (CompilerIrRepresentationIndex counts masks index.stable-word-masks))
+        (CompilerIrRepresentationIndex
+          counts
+          masks
+          index.stable-word-masks
+          index.return-storage))
       (match (ir_i64_i64_map.get (& counts) key)
         [(LookupMissing)
           (ir_i64_i64_map.insert-ref! (&mut counts) key word-count)
           (ir_i64_i64_map.insert-ref! (&mut masks) key class-mask)
-          (CompilerIrRepresentationIndex counts masks index.stable-word-masks)]
+          (CompilerIrRepresentationIndex
+            counts
+            masks
+            index.stable-word-masks
+            index.return-storage)]
         [(LookupFound found-count)
           (match (ir_i64_i64_map.get (& masks) key)
             [(LookupFound found-mask)
@@ -9198,14 +10594,16 @@
                   (CompilerIrRepresentationIndex
                     counts
                     masks
-                    index.stable-word-masks)))]
+                    index.stable-word-masks
+                    index.return-storage)))]
             [(LookupMissing)
               (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
               (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
               (CompilerIrRepresentationIndex
                 counts
                 masks
-                index.stable-word-masks)])]))))
+                index.stable-word-masks
+                index.return-storage)])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
   [index : CompilerIrRepresentationIndex]
@@ -9218,7 +10616,8 @@
       (CompilerIrRepresentationIndex
         counts
         index.class-masks
-        index.stable-word-masks))))
+        index.stable-word-masks
+        index.return-storage))))
 
 (define (compiler-ir-representation-var-type-set!
   [types : (& types CompilerIrRepresentationVarTypes)]
@@ -9226,8 +10625,8 @@
   [ty : ast.AstType]) : unit
   (unless
     (or (< var 0) (>= var (array-length types.present)))
-    (set! (array-ref types.present var) 1)
-    (set! (array-ref types.items var) ty)))
+    (owned_view.compiler-owned-cell-set! types.present var 1)
+    (owned_view.compiler-owned-cell-set! types.items var ty)))
 
 (define (compiler-ir-representation-param-types!
   [params : (& CompilerIrParamSeq)]
@@ -9767,7 +11166,7 @@
   (if (>= position externs.len)
     index
     (match (compiler-ir-extern-seq-ref externs position)
-      [(Extern _ _ _ ty _ _ _ _)
+      [(Extern _ _ _ ty _ _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
           (compiler-ir-representation-collect-one-type
@@ -9791,7 +11190,7 @@
   [type-segment-bases : i64]
   [program : (& CompilerIrProgram)]) : CompilerIrRepresentationIndex
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program globals functions externs)
+    [(Program globals functions externs _authority)
       (let
         ;; Group evidence is complete before positive one-word evidence is
         ;; admitted. Thus an ordinary occurrence of a real group can never
@@ -9802,18 +11201,59 @@
             type-segment-bases
             (& (compiler-ir-representation-index-empty))
             (& functions))]
-        (compiler-ir-representation-collect-one-externs
-          type-segment-bases
-          (&
-            (compiler-ir-representation-collect-one-functions
-              type-segment-bases
-              (&
-                (compiler-ir-representation-collect-one-globals
-                  type-segment-bases
-                  (& groups)
-                  (& globals)))
-              (& functions)))
-          (& externs)))]))
+        [storage : CompilerIrReturnStorageIndex
+          (compiler-ir-return-storage-index-build
+            type-segment-bases
+            functions
+            externs)]
+        [representations : CompilerIrRepresentationIndex
+          (compiler-ir-representation-collect-one-externs
+            type-segment-bases
+            (&
+              (compiler-ir-representation-collect-one-functions
+                type-segment-bases
+                (&
+                  (compiler-ir-representation-collect-one-globals
+                    type-segment-bases
+                    (& groups)
+                    (& globals)))
+                (& functions)))
+            (& externs))]
+        (CompilerIrRepresentationIndex
+          representations.word-counts
+          representations.class-masks
+          representations.stable-word-masks
+          storage))]))
+
+(define (compiler-ir-representation-index-with-authority
+  [pools : ast.AstNodePoolContext]
+  [interns : (& interns ci.InternCompatState)]
+  [target : i64]
+  [program : (& program CompilerIrProgram)]) : CompilerIrRepresentationIndex
+  (match (owned_view.compiler-owned-reference-shared-view program)
+    [(CompilerIrProgram.Program _ functions externs authority)
+      (let
+        ;; Establish owner validity before the nominal representation walk can
+        ;; follow any type IDs belonging to a captured program.
+        [storage : CompilerIrReturnStorageIndex
+          (compiler-ir-return-storage-index-authorized
+            pools
+            interns
+            target
+            functions
+            externs
+            authority)]
+        [base : CompilerIrRepresentationIndex
+          (if (= (string.string-length storage.problem) 0)
+            (compiler-ir-representation-index-build
+              (ast.ast-node-pool-context-type-segment-bases pools)
+              program)
+            (compiler-ir-representation-index-empty))]
+        (CompilerIrRepresentationIndex
+          base.word-counts
+          base.class-masks
+          base.stable-word-masks
+          storage))]))
 
 ;; Test support: a descriptor's rendering without its generated callee name,
 ;; the one part a test cannot spell: "<backend> lanes N [...] index ... result".
@@ -9846,6 +11286,7 @@
         [(Function _ _ _ _ _ function-abi)
           (match function-abi
             [(Ordinary) unit]
+            [(ReturnStorage _) unit]
             [(SpmdPrivate private-box)
               (let
                 [separator : String
@@ -9877,7 +11318,7 @@
       (&mut params)
       (CompilerIrSpmdPrivateParam.Param 0 (ActiveMask) (Bool)))
     (for [index (iterator.range 0 args.len)]
-      (match (array-ref args.slots index)
+      (match (owned_view.compiler-owned-element-view args.slots index)
         [(Arg class _ ty)
           (compiler-ir-spmd-private-param-seq-push!
             (&mut params)

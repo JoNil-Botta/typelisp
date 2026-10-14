@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_windows.tl - Windows backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_sanitize as sanitize)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
 (import stdlib.str_cat_runtime as str_cat)
@@ -32,14 +33,16 @@
 
 (define (compiler-backend-runtime-data
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
-  (str_cat.str-cat
-    (runtime_common.compiler-backend-runtime-common-data
-      features
-      (runtime_common.compiler-backend-runtime-arena-poison-data
-        (runtime_common.compiler-backend-runtime-arena-debug-text?
-          features.arena-debug)))
-    (runtime_common.compiler-backend-runtime-null-arena-data)
-    "    .section .rodata
+  (let
+    [data : String
+      (str_cat.str-cat
+        (runtime_common.compiler-backend-runtime-common-data
+          features
+          (runtime_common.compiler-backend-runtime-arena-poison-data
+            (runtime_common.compiler-backend-runtime-arena-debug-text?
+              features.arena-debug)))
+        (runtime_common.compiler-backend-runtime-null-arena-data)
+        "    .section .rodata
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
     .set .L_tl_main_stack_reservation_msg_len, . - .L_tl_main_stack_reservation_msg
@@ -52,7 +55,10 @@
 .L_tl_main_stack_written:
     .zero 8
 
-"))
+")]
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+      (sanitize.runtime-sanitize-data data)
+      data)))
 
 (define (compiler-backend-runtime-windows-libc-shim-functions
   [startup-profile : bool]) : String
@@ -2064,14 +2070,21 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_catalog.compiler-x64-template-select-four
-          (WindowsRuntimeArena)
-          (WindowsRuntimeArenaDebug)
-          (WindowsRuntimeArenaProfile)
-          (WindowsRuntimeArenaProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-windows-arena-functions profile debug-text))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (WindowsRuntimeArena)
+            (WindowsRuntimeArenaDebug)
+            (WindowsRuntimeArenaProfile)
+            (WindowsRuntimeArenaProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (sanitize.runtime-sanitize-windows-arena
+            (compiler-backend-runtime-windows-arena-functions
+              profile
+              debug-text))
+          (compiler-backend-runtime-windows-arena-functions profile debug-text)))
       (compiler-backend-runtime-windows-render
         profile
         (CommonProfile)
@@ -2102,16 +2115,23 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-windows-render
         features.region-reset
-        (x64_catalog.compiler-x64-template-select-four
-          (WindowsRuntimeRegionReset)
-          (WindowsRuntimeRegionResetDebug)
-          (WindowsRuntimeRegionResetProfile)
-          (WindowsRuntimeRegionResetProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-windows-region-reset-functions
-          profile
-          debug-text))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (WindowsRuntimeRegionReset)
+            (WindowsRuntimeRegionResetDebug)
+            (WindowsRuntimeRegionResetProfile)
+            (WindowsRuntimeRegionResetProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (sanitize.runtime-sanitize-windows-reset
+            (compiler-backend-runtime-windows-region-reset-functions
+              profile
+              debug-text))
+          (compiler-backend-runtime-windows-region-reset-functions
+            profile
+            debug-text)))
       (compiler-backend-runtime-windows-render
         true
         (WindowsRuntimeThread)

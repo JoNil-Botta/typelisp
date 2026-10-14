@@ -416,6 +416,15 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 ## Coverage layers
 
+`compiler-ctfe-captured-list-builders` checks syntax-list and call construction
+with captured lists, empty/singleton/growing inputs, retained pool snapshots,
+unrelated owners and invalid arguments. `compiler-ctfe-captured-list-owner`
+also checks an unrelated retained binding and newer tail, retained or active
+pool cursors, including a subsequent append through either the active context
+or the captured head, without overwriting live nodes. The integration companion
+`comptime_captured_list_builders.tl` composes the builders with nested macros,
+list inspection, begin bodies and quasiquote splicing at opt0/1/2.
+
 ### Module-local self-tests
 
 Put small structural checks in the owning module's `*_tests.tl` companion (for

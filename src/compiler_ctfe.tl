@@ -7045,6 +7045,39 @@
     (Ok (ExprList (ast.ast-expr-list-new)) fuel)
     (Err (box (ctfe-diagnostic-at-expr expr "expr-list-empty expects no args")))))
 
+;; Captured children determine the result's domain even when an unrelated
+;; binding is the environment's most recently retained syntax value. Refresh
+;; only compatible state cells before appending, then publish the new cursor
+;; to both input contexts and the retained/active contexts in that domain.
+(define (ctfe-list-builder-publish-pools!
+  [env : (& env CtfeEnv)]
+  [pools : ast.AstNodePoolContext]
+  [peer : ast.AstNodePoolContext]) : unit
+  (ast.ast-node-pool-context-adopt-newer! peer pools)
+  (ctfe-env-adopt-captured-pools! env pools)
+  (when
+    (ast.ast-node-pool-has-active-context?)
+    (ast.ast-node-pool-context-adopt-newer!
+      (ast.ast-node-pool-context-active-live)
+      pools)))
+
+(define (ctfe-list-builder-pools
+  [env : (& env CtfeEnv)]
+  [head : ast.AstNodePoolContext]
+  [tail : ast.AstNodePoolContext]) : ast.AstNodePoolContext
+  (ast.ast-node-pool-context-adopt-newer! tail head)
+  (ast.ast-node-pool-context-adopt-newer! tail (ctfe-env-pools env))
+  (ast.ast-node-pool-context-adopt-newer!
+    tail
+    (ctfe-env-syntax-pool-context-live env))
+  (when
+    (ast.ast-node-pool-has-active-context?)
+    (ast.ast-node-pool-context-adopt-newer!
+      tail
+      (ast.ast-node-pool-context-active-live)))
+  (ctfe-list-builder-publish-pools! env tail head)
+  tail)
+
 (define (ctfe-eval-expr-list-cons-call
   [args : (& ast.AstExprList)]
   [expr : (& ast.AstExpr)]
@@ -7057,6 +7090,10 @@
       (match (compiler-ctfe-eval (& head-arg) env fuel)
         [(Ok head-value head-fuel)
           (let
+            [head-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools (& head-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [head-node : i64
               (ctfe-syntax-expr-value-node (& head-value) (& env))]
             (if (>= head-node 0)
@@ -7067,6 +7104,21 @@
                       (Ok
                         (ExprList (ast.ast-expr-cons head-node (& tail)))
                         tail-fuel)]
+                    [(CapturedExprList tail pools)
+                      ;; Numeric child ids can be joined only within one syntax
+                      ;; domain. Adopt its newer cursor before returning a list
+                      ;; that a subsequent builder may extend.
+                      (if (ctfe-node-pools-share-storage? head-pools pools)
+                        (Ok
+                          (CapturedExprList
+                            (ast.ast-expr-cons head-node (& tail))
+                            (ctfe-list-builder-pools (& env) head-pools pools))
+                          tail-fuel)
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-list-cons expects head and tail from the same syntax pool"))))]
                     [_
                       (Err
                         (box
@@ -7098,6 +7150,10 @@
       (match (compiler-ctfe-eval (& callee-arg) env fuel)
         [(Ok callee-value callee-fuel)
           (let
+            [callee-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools (& callee-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [callee-node : i64
               (ctfe-syntax-expr-value-node (& callee-value) (& env))]
             (if (>= callee-node 0)
@@ -7115,6 +7171,29 @@
                             (& call-args))
                           (ctfe-untyped-expr-type))
                         args-fuel)]
+                    [(CapturedExprList call-args pools)
+                      (if (ctfe-node-pools-share-storage? callee-pools pools)
+                        (let
+                          [owner : ast.AstNodePoolContext
+                            (ctfe-list-builder-pools (& env) callee-pools pools)]
+                          [node : i64
+                            (ctfe-ast-expr-call-with-provenance
+                              (ctfe-env-macro-state env)
+                              owner
+                              callee-node
+                              (& call-args))]
+                          (ctfe-list-builder-publish-pools!
+                            (& env)
+                            owner
+                            callee-pools)
+                          (Ok
+                            (CapturedExpr node (ctfe-untyped-expr-type) owner)
+                            args-fuel))
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-call expects callee and arguments from the same syntax pool"))))]
                     [_
                       (Err
                         (box

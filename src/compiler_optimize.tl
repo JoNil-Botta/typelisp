@@ -33547,7 +33547,7 @@
         [(Edge _ _ value _ _)
           (if (not (opt-flag-exit-edge-decided? seed value))
             (No)
-            (match (& acc)
+            (match (compiler-opt-global-shared-view acc)
               [(No)
                 (let
                   [edges-2 (opt-flag-exit-edge-tail edges)]
@@ -46646,7 +46646,7 @@
 (define (opt-cfg-straighten-below-threader-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (match (& func)
+  (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ _ blocks _)
       (if (not (opt-cfg-straighten-blocks-have-candidate? blocks))
         (Result func false)
@@ -47114,7 +47114,7 @@
   [state : OptSccpState]
   [block : (& ir.CompilerIrBlock)]
   [block-id : i64]) : OptSccpState
-  (match (& state)
+  (match (compiler-opt-global-shared-view state)
     [(State _ executable _ _ _)
       (match block
         [(Block _ instrs)
@@ -48055,7 +48055,7 @@
   [block : ir.CompilerIrBlock]
   [occupied : (&mut occupied (__tl_dyn-array i64))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptLateTotalSwitchBlock
-  (match (& block)
+  (match (compiler-opt-global-shared-view block)
     [(Block label instrs)
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -48726,7 +48726,7 @@
   (opt-blocks-any-block? blocks opt-switch-block-is-compare-shaped?))
 
 (define (opt-switch-form-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (match (& func)
+  (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ frame blocks _)
       (if (not (opt-switch-blocks-have-compare? blocks))
         (Result func false)
@@ -50250,7 +50250,7 @@
   [table : (& table OptGvnMap)]
   [entry : OptGvnEntry]
   [changes : (& OptGvnScopeChanges)]) : OptGvnScopeChanges
-  (match (& entry)
+  (match (compiler-opt-global-shared-view entry)
     [(Entry key _ _)
       (let
         [buckets : (__tl_dyn-array OptGvnBucket)
@@ -50455,7 +50455,7 @@
   [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [block : ir.CompilerIrBlock]) : OptBlockPassResult
-  (match (& block)
+  (match (compiler-opt-global-shared-view block)
     [(Block label instrs)
       (if (opt-gvn-seq-rewrite-changed?
         type-segment-bases
@@ -68773,7 +68773,7 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (& func)
+  (match (compiler-opt-global-shared-view func)
     [(Function _ params _ frame prescan-blocks _)
       (if (or
         (opt-unroll-blocks-have-candidate?
@@ -84336,7 +84336,7 @@
     drop
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (& instr)
+      (match (compiler-opt-global-shared-view instr)
         [(BoundsCheck idx length _)
           (if (not
             (and
@@ -85312,7 +85312,7 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
-  (match (& func)
+  (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ _ prescan-blocks _)
       (if (or
         (opt-bce-version-blocks-have-candidate?
@@ -88559,7 +88559,7 @@
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-cmp-sink-block-pass [block : ir.CompilerIrBlock]) : OptBlockPassResult
-  (match (& block)
+  (match (compiler-opt-global-shared-view block)
     [(Block label instrs)
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -88875,7 +88875,7 @@
 (define (opt-load-sink-blocks-pass
   [use-counts : (& (__tl_dyn-array i64))]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
-  (match (& blocks)
+  (match (compiler-opt-global-shared-view blocks)
     [(Array seq)
       (let
         [count : i64 seq.len]
@@ -90361,7 +90361,7 @@
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (& instr)
+      (match (compiler-opt-global-shared-view instr)
         [(BinOp _ (Mul) lhs rhs _)
           (when
             (or
@@ -96056,7 +96056,7 @@
     (while (and (< i count) (not (and saw-call saw-copy)))
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (match (& instr)
+        (match (compiler-opt-global-shared-view instr)
           [(ir.CompilerIrInstr.Call _ _ args _)
             (match args
               [(ir.CompilerIrCallArgs.Sret _ _) (set! saw-call true)]
@@ -97100,7 +97100,7 @@
 (define (opt-ubound-function-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (match (& func)
+  (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ frame blocks _)
       (if (not
         (opt-ubound-blocks-have-candidate?
@@ -116119,7 +116119,7 @@
       (let
         [global : ir.CompilerIrGlobal
           (ir.compiler-ir-global-seq-ref globals index)]
-        (match (& global)
+        (match (compiler-opt-global-shared-view global)
           [(Global name ty value)
             (when
               (or
@@ -128363,7 +128363,7 @@
   [kinds : OptLoadPtrKinds]
   [base : i64]
   [index : i64]) : OptLoadPtrKinds
-  (match (& kinds)
+  (match (compiler-opt-global-shared-view kinds)
     [(Dense work _ len _)
       (if (>= index len)
         kinds
@@ -128390,7 +128390,7 @@
 (define (opt-load-kinds-invalidate-def [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (let
     [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
-    (match (& removed)
+    (match (compiler-opt-global-shared-view removed)
       [(Sparse map refs cap)
         (if (<= (opt-load-kinds-ref-count refs var) 0)
           removed
@@ -130032,7 +130032,7 @@
       (let
         [entry : OptDeadStoreEntry
           (compiler-opt-global-array-element-shared-view slots read)]
-        (match (& entry)
+        (match (compiler-opt-global-shared-view entry)
           [(Entry old-index old-class)
             (if (opt-dead-store-classes-exact? old-class class)
               (set! (array-ref dead old-index) 1)
@@ -130069,7 +130069,7 @@
       (let
         [entry : OptDeadStoreEntry
           (compiler-opt-global-array-element-shared-view slots read)]
-        (match (& entry)
+        (match (compiler-opt-global-shared-view entry)
           [(Entry _ old-class)
             (when
               (opt-dead-store-classes-disjoint? class (& old-class))
@@ -130095,7 +130095,7 @@
       (let
         [entry : OptDeadStoreEntry
           (compiler-opt-global-array-element-shared-view slots read)]
-        (match (& entry)
+        (match (compiler-opt-global-shared-view entry)
           [(Entry _ class)
             (unless
               (opt-dead-store-class-uses-var? (& class) var)

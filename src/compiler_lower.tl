@@ -33849,7 +33849,7 @@
   [abi : ast.AstExternAbi]) : ir.CompilerIrReturnStorage
   (match abi
     [(ast.AstExternAbi.C)
-      (match (& signature)
+      (match (lower-global-shared-view signature)
         [(ast.AstType.CFunc inner _)
           (lower-return-storage-extern
             ctx

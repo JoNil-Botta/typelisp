@@ -47412,7 +47412,7 @@
     (let
       [slot : compiler_ir_types.CompilerIrCAbiReturnSlot
         (compiler-backend-global-array-element-shared-view slots index)]
-      (match (& slot)
+      (match (compiler-backend-global-shared-view slot)
         [(Slot ty _)
           (let
             [sse? : bool (compiler-backend-float-type? ty)]

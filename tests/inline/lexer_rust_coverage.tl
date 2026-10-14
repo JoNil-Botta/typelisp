@@ -8,6 +8,7 @@
 ;; lexer and token declarations deduplicate with lex.tl's own token import.
 (import lex)
 (import token)
+(import reader_tests)
 (import compiler_intern)
 (import stdlib.io)
 (import stdlib.string)
@@ -38,28 +39,28 @@
       [(Ok toks)
         (let
           [ok : bool true]
-          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+          (if (= (token.tag-ref (& (array-ref toks 0))) (token.tag-lparen))
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 1))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "define")
+          (if (reader_tests.token-sym-eq? (& toks) 1 "define")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 2))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "x")
+          (if (reader_tests.token-sym-eq? (& toks) 2 "x")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-int))
+          (if (= (token.tag-ref (& (array-ref toks 3))) (token.tag-int))
             unit
             (set! ok false))
           (if (= (token.int (& (array-ref toks 3))) 42)
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+          (if (= (token.tag-ref (& (array-ref toks 4))) (token.tag-rparen))
             unit
             (set! ok false))
           (lexer-assert-bool-eq
@@ -77,28 +78,28 @@
       [(Ok toks)
         (let
           [ok : bool true]
-          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+          (if (= (token.tag-ref (& (array-ref toks 0))) (token.tag-lparen))
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 1))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "->")
+          (if (reader_tests.token-sym-eq? (& toks) 1 "->")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 2))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "i64")
+          (if (reader_tests.token-sym-eq? (& toks) 2 "i64")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 3))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 3)) "i64")
+          (if (reader_tests.token-sym-eq? (& toks) 3 "i64")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+          (if (= (token.tag-ref (& (array-ref toks 4))) (token.tag-rparen))
             unit
             (set! ok false))
           (lexer-assert-bool-eq
@@ -122,8 +123,8 @@
               (compiler_intern.intern-id-eq?
                 (token.sym-id (& (array-ref toks 1)))
                 (token.sym-id (& (array-ref toks 3)))))
-            (string.eq (token.sym (lex.array-shared-view toks 1)) "x")
-            (string.eq (token.sym (lex.array-shared-view toks 3)) "y"))
+            (reader_tests.token-sym-eq? (& toks) 1 "x")
+            (reader_tests.token-sym-eq? (& toks) 3 "y"))
           "duplicate symbols should reuse the same intern id")]
       [(Err e) (lexer-assert-true false e)])))
 
@@ -143,7 +144,7 @@
             (comptime (size-of (type InternSyntaxId)))
             (comptime (size-of (type i64))))
           "mixed syntax ids should retain one-word storage")
-        (match (lex.array-shared-view toks 1)
+        (match (& (array-ref toks 1))
           [(Sym id)
             (let
               [syntax : InternSyntaxId
@@ -162,7 +163,7 @@
                 (string.eq (compiler_intern.intern-syntax-id-text syntax) "x")
                 "renderable syntax ids should retain source text"))]
           [_ (lexer-assert-true false "symbol token should carry an id")])
-        (match (lex.array-shared-view toks 2)
+        (match (& (array-ref toks 2))
           [(Str id)
             (lexer-assert-true
               (compiler_intern.intern-id-eq?
@@ -180,8 +181,8 @@
       [(Ok toks)
         (lexer-assert-true
           (and
-            (= (token.tag (lex.array-shared-view toks 0)) (token.tag-sym))
-            (string.eq (token.sym (lex.array-shared-view toks 0)) ":"))
+            (= (token.tag-ref (& (array-ref toks 0))) (token.tag-sym))
+            (reader_tests.token-sym-eq? (& toks) 0 ":"))
           "standalone lexer should intern a lone colon from its source")]
       [(Err e) (lexer-assert-true false e)])))
 
@@ -313,10 +314,10 @@
     [(Ok toks)
       (lexer-assert-true
         (and
-          (= (token.tag (lex.array-shared-view toks 0)) (token.tag-quote))
-          (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
-          (string.eq (token.sym (lex.array-shared-view toks 1)) "form")
-          (= (token.tag (lex.array-shared-view toks 2)) (token.tag-end)))
+          (= (token.tag-ref (& (array-ref toks 0))) (token.tag-quote))
+          (= (token.tag-ref (& (array-ref toks 1))) (token.tag-sym))
+          (reader_tests.token-sym-eq? (& toks) 1 "form")
+          (= (token.tag-ref (& (array-ref toks 2))) (token.tag-end)))
         "apostrophe quote should still quote forms")]
     [(Err msg) (lexer-assert-true false msg)]))
 
@@ -329,28 +330,28 @@
       [(Ok toks)
         (let
           [ok : bool true]
-          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+          (if (= (token.tag-ref (& (array-ref toks 0))) (token.tag-lparen))
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 1))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "=")
+          (if (reader_tests.token-sym-eq? (& toks) 1 "=")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+          (if (= (token.tag-ref (& (array-ref toks 2))) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "c")
+          (if (reader_tests.token-sym-eq? (& toks) 2 "c")
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-char))
+          (if (= (token.tag-ref (& (array-ref toks 3))) (token.tag-char))
             unit
             (set! ok false))
           (if (= (token.char (& (array-ref toks 3))) ' ')
             unit
             (set! ok false))
-          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+          (if (= (token.tag-ref (& (array-ref toks 4))) (token.tag-rparen))
             unit
             (set! ok false))
           (lexer-assert-bool-eq
@@ -499,7 +500,7 @@
   (let
     [toks : (__tl_dyn-array token.Token) (lex.lex "")]
     (lexer-assert-bool-eq
-      (= (token.tag (lex.array-shared-view toks 0)) (token.tag-end))
+      (= (token.tag-ref (& (array-ref toks 0))) (token.tag-end))
       true
       "empty source should yield just EOF")))
 

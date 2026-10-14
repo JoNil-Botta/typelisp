@@ -156,17 +156,29 @@
   [count : i64]) : i64
   (if (>= count process-borrowed-storage-max-count)
     (+ process-borrowed-storage-max-count 1)
-    (match (borrowed-string-list-shared-view (& args))
+    (match args
       [(ProcessBorrowedStringNil _) count]
       [(ProcessBorrowedStringCons _ rest)
-        (args-count-from
-          (borrowed-string-list-box-shared-view rest)
-          (+ count 1))])))
+        (args-count-from (deref rest) (+ count 1))])))
 
 ;: Return the number of borrowed argv entries in `args`, saturated at one past
 ;: the implementation cap for oversized externally constructed spines.
 (define (args-count [args : (& args (ProcessBorrowedStringList text))]) : i64
-  (args-count-from (borrowed-string-list-shared-view args) 0))
+  (let
+    [cursor : (& args (ProcessBorrowedStringList text)) args]
+    [count : i64 0]
+    [walking : bool true]
+    (while walking
+      (if (>= count process-borrowed-storage-max-count)
+        (begin
+          (set! count (+ process-borrowed-storage-max-count 1))
+          (set! walking false))
+        (match cursor
+          [(ProcessBorrowedStringNil _) (set! walking false)]
+          [(ProcessBorrowedStringCons _ rest)
+            (set! cursor rest)
+            (set! count (+ count 1))])))
+    count))
 
 ;: Walk to one borrowed argv entry without erasing its declared lifetime.
 (define (args-ref-from [args : (ProcessBorrowedStringList text)] [index : i64]) : (&
@@ -174,22 +186,22 @@
     str)
   (if (< index 0)
     (io.panic "process: borrowed argument index out of bounds")
-    (match (borrowed-string-list-shared-view (& args))
-      [(ProcessBorrowedStringNil _)
-        (io.panic "process: borrowed argument index out of bounds")]
-      [(ProcessBorrowedStringCons value rest)
-        (if (= index 0)
-          value
-          (args-ref-from
-            (borrowed-string-list-box-shared-view rest)
-            (- index 1)))])))
+    (args-ref (& args) index)))
 
 ;: Return the borrowed argv entry at a valid `index`. Callers must validate
 ;: indexes against `args-count`; no owned string is created.
 (define (args-ref
   [args : (& args (ProcessBorrowedStringList text))]
   [index : i64]) : (& text str)
-  (args-ref-from (borrowed-string-list-shared-view args) index))
+  (if (< index 0)
+    (io.panic "process: borrowed argument index out of bounds")
+    (match args
+      [(ProcessBorrowedStringNil _)
+        (io.panic "process: borrowed argument index out of bounds")]
+      [(ProcessBorrowedStringCons value rest)
+        (if (= index 0)
+          value
+          (args-ref rest (- index 1)))])))
 
 ;: Prepend a borrowed argument string to an argv list without copying bytes.
 (define (args-cons
@@ -205,12 +217,10 @@
 (define (args-append
   [left : (ProcessBorrowedStringList text)]
   [right : (ProcessBorrowedStringList text)]) : (ProcessBorrowedStringList text)
-  (match (borrowed-string-list-shared-view (& left))
+  (match left
     [(ProcessBorrowedStringNil _) right]
     [(ProcessBorrowedStringCons value rest)
-      (ProcessBorrowedStringCons
-        value
-        (box (args-append (borrowed-string-list-box-shared-view rest) right)))]))
+      (ProcessBorrowedStringCons value (box (args-append (deref rest) right)))]))
 
 ;: Return an empty borrowed environment override list tied to `text`.
 (define (env-empty-like [_text : (& text str)]) : (ProcessBorrowedEnvList text)
@@ -220,36 +230,50 @@
 (define (env-count-from [env : (ProcessBorrowedEnvList text)] [count : i64]) : i64
   (if (>= count process-borrowed-storage-max-count)
     (+ process-borrowed-storage-max-count 1)
-    (match (borrowed-env-list-shared-view (& env))
+    (match env
       [(ProcessBorrowedEnvNil _) count]
       [(ProcessBorrowedEnvCons _ _ rest)
-        (env-count-from (borrowed-env-list-box-shared-view rest) (+ count 1))])))
+        (env-count-from (deref rest) (+ count 1))])))
 
 ;: Return the number of borrowed env overrides in `env`, saturated at one past
 ;: the implementation cap for oversized externally constructed spines.
 (define (env-count [env : (& env (ProcessBorrowedEnvList text))]) : i64
-  (env-count-from (borrowed-env-list-shared-view env) 0))
+  (let
+    [cursor : (& env (ProcessBorrowedEnvList text)) env]
+    [count : i64 0]
+    [walking : bool true]
+    (while walking
+      (if (>= count process-borrowed-storage-max-count)
+        (begin
+          (set! count (+ process-borrowed-storage-max-count 1))
+          (set! walking false))
+        (match cursor
+          [(ProcessBorrowedEnvNil _) (set! walking false)]
+          [(ProcessBorrowedEnvCons _ _ rest)
+            (set! cursor rest)
+            (set! count (+ count 1))])))
+    count))
 
 ;: Walk to one typed environment node.
 (define (env-entry-ref-from [env : (ProcessBorrowedEnvList text)] [index : i64]) : (ProcessBorrowedEnvEntry
     text)
   (if (< index 0)
     (io.panic "process: borrowed environment index out of bounds")
-    (match (borrowed-env-list-shared-view (& env))
-      [(ProcessBorrowedEnvNil _)
-        (io.panic "process: borrowed environment index out of bounds")]
-      [(ProcessBorrowedEnvCons name value rest)
-        (if (= index 0)
-          (ProcessBorrowedEnvEntry name value)
-          (env-entry-ref-from
-            (borrowed-env-list-box-shared-view rest)
-            (- index 1)))])))
+    (env-entry-ref (& env) index)))
 
 ;: Return a borrowed environment entry at a valid `index`.
 (define (env-entry-ref
   [env : (& env (ProcessBorrowedEnvList text))]
   [index : i64]) : (ProcessBorrowedEnvEntry text)
-  (env-entry-ref-from (borrowed-env-list-shared-view env) index))
+  (if (< index 0)
+    (io.panic "process: borrowed environment index out of bounds")
+    (match env
+      [(ProcessBorrowedEnvNil _)
+        (io.panic "process: borrowed environment index out of bounds")]
+      [(ProcessBorrowedEnvCons name value rest)
+        (if (= index 0)
+          (ProcessBorrowedEnvEntry name value)
+          (env-entry-ref rest (- index 1)))])))
 
 ;: Return a borrowed environment name at a valid `index`.
 (define (env-name-ref
@@ -284,13 +308,10 @@
 (define (env-append
   [left : (ProcessBorrowedEnvList text)]
   [right : (ProcessBorrowedEnvList text)]) : (ProcessBorrowedEnvList text)
-  (match (borrowed-env-list-shared-view (& left))
+  (match left
     [(ProcessBorrowedEnvNil _) right]
     [(ProcessBorrowedEnvCons name value rest)
-      (ProcessBorrowedEnvCons
-        name
-        value
-        (box (env-append (borrowed-env-list-box-shared-view rest) right)))]))
+      (ProcessBorrowedEnvCons name value (box (env-append (deref rest) right)))]))
 
 ;: Return a borrowed stdin/cwd value that stores no string but keeps the target
 ;: type lifetime anchored to `text`.
@@ -360,14 +381,11 @@
   [args : (ProcessBorrowedStringList text)]
   [slots : (&mut slots (__tl_dyn-array String))]
   [index : i64]) : unit
-  (match (borrowed-string-list-shared-view (& args))
+  (match args
     [(ProcessBorrowedStringNil _) unit]
     [(ProcessBorrowedStringCons value rest)
       (set! (array-ref slots index) (string-owned value))
-      (args-owned-fill
-        (borrowed-string-list-box-shared-view rest)
-        slots
-        (+ index 1))]))
+      (args-owned-fill (deref rest) slots (+ index 1))]))
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (args-owned [args : (& args (ProcessBorrowedStringList text))]) : process.ProcessStringList
@@ -377,7 +395,16 @@
       (io.panic "process: command storage limit exceeded")
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String n)]
-        (args-owned-fill (borrowed-string-list-shared-view args) (&mut slots) 0)
+        [cursor : (& args (ProcessBorrowedStringList text)) args]
+        [index : i64 0]
+        [walking : bool true]
+        (while walking
+          (match cursor
+            [(ProcessBorrowedStringNil _) (set! walking false)]
+            [(ProcessBorrowedStringCons value rest)
+              (set! (array-ref slots index) (string-owned value))
+              (set! cursor rest)
+              (set! index (+ index 1))]))
         (process.ProcessStringList slots)))))
 
 ;: Copy one typed borrowed environment spine into parallel owned storage.
@@ -386,16 +413,12 @@
   [names : (&mut names (__tl_dyn-array String))]
   [values : (&mut values (__tl_dyn-array String))]
   [index : i64]) : unit
-  (match (borrowed-env-list-shared-view (& env))
+  (match env
     [(ProcessBorrowedEnvNil _) unit]
     [(ProcessBorrowedEnvCons name value rest)
       (set! (array-ref names index) (string-owned name))
       (set! (array-ref values index) (string-owned value))
-      (env-owned-fill
-        (borrowed-env-list-box-shared-view rest)
-        names
-        values
-        (+ index 1))]))
+      (env-owned-fill (deref rest) names values (+ index 1))]))
 
 ;: Copy borrowed env storage to the owned process env representation.
 (define (env-owned [env : (& env (ProcessBorrowedEnvList text))]) : process.ProcessEnvList
@@ -406,11 +429,17 @@
       (let
         [names : (__tl_dyn-array String) (__tl_make-array String n)]
         [values : (__tl_dyn-array String) (__tl_make-array String n)]
-        (env-owned-fill
-          (borrowed-env-list-shared-view env)
-          (&mut names)
-          (&mut values)
-          0)
+        [cursor : (& env (ProcessBorrowedEnvList text)) env]
+        [index : i64 0]
+        [walking : bool true]
+        (while walking
+          (match cursor
+            [(ProcessBorrowedEnvNil _) (set! walking false)]
+            [(ProcessBorrowedEnvCons name value rest)
+              (set! (array-ref names index) (string-owned name))
+              (set! (array-ref values index) (string-owned value))
+              (set! cursor rest)
+              (set! index (+ index 1))]))
         (process.ProcessEnvList names values)))))
 
 ;: Copy a borrowed optional string to the owned process representation.
@@ -577,7 +606,7 @@
 (define (args-validation-error-from
   [args : (ProcessBorrowedStringList text)]
   [count : i64]) : process.ProcessMaybeString
-  (match (borrowed-string-list-shared-view (& args))
+  (match args
     [(ProcessBorrowedStringNil _) (process.no-stdin)]
     [(ProcessBorrowedStringCons value rest)
       (cond
@@ -587,10 +616,7 @@
           (process.stdin-string "process: argument exceeds storage limit")]
         [(process.string-contains-char? value '\0')
           (process.stdin-string "process: argument contains NUL")]
-        [else
-          (args-validation-error-from
-            (borrowed-string-list-box-shared-view rest)
-            (+ count 1))])]))
+        [else (args-validation-error-from (deref rest) (+ count 1))])]))
 
 ;: Return the first borrowed argv validation error, including the storage cap.
 (define (args-validation-error
@@ -601,7 +627,7 @@
 (define (env-validation-error-from
   [env : (ProcessBorrowedEnvList text)]
   [count : i64]) : process.ProcessMaybeString
-  (match (borrowed-env-list-shared-view (& env))
+  (match env
     [(ProcessBorrowedEnvNil _) (process.no-stdin)]
     [(ProcessBorrowedEnvCons name value rest)
       (cond
@@ -624,10 +650,7 @@
         [(process.string-contains-char? value '\0')
           (process.stdin-string
             "process: environment variable value contains NUL")]
-        [else
-          (env-validation-error-from
-            (borrowed-env-list-box-shared-view rest)
-            (+ count 1))])]))
+        [else (env-validation-error-from (deref rest) (+ count 1))])]))
 
 ;: Return the first borrowed environment validation error, or `ProcessNoString`.
 (define (env-validation-error [env : (& env (ProcessBorrowedEnvList text))]) : process.ProcessMaybeString

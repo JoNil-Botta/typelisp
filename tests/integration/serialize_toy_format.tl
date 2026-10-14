@@ -56,7 +56,7 @@
     (let
       [field : Field (clone (array-ref items index))]
       (if (string.eq field.name name)
-        (Found (toy-shared-view field.value))
+        (Found field.value)
         (field-list-get-from items name (+ index 1))))))
 
 (define (field-list-get [fields : (& fields FieldList)] [name : (& name str)]) : Lookup

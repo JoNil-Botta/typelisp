@@ -4,7 +4,6 @@
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
 (import stdlib.byte_buf)
-(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.env)
@@ -18,10 +17,6 @@
 (import compiler_build_identity as build_identity)
 (import (vector.vector String) as doc_site_name_vec)
 (import (vector.vector doc_md.MdBlock core) as doc_site_md_blocks)
-
-(defmacro (doc-site-global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
 
 (defenum DocSiteModule
   (Module String String))
@@ -44,11 +39,14 @@
 
 (define doc-site-status-ok : i64
   0)
-(define doc-site-repo-blob-root : String
+
+(define (doc-site-repo-blob-root) : String
   "https://github.com/JoNil-Botta/typelisp/blob/")
-(define doc-site-repo-tree-root : String
+
+(define (doc-site-repo-tree-root) : String
   "https://github.com/JoNil-Botta/typelisp/tree/")
-(define doc-site-package-identity : String
+
+(define (doc-site-package-identity) : String
   "typelisp@0.1.0")
 
 (define (doc-site-build-identity) : String
@@ -398,8 +396,8 @@
 (define (doc-site-repo-source-url [target : String]) : String
   (str_cat.str-cat
     (if (doc-site-href-file-like? target)
-      (doc-site-global-shared-view doc-site-repo-blob-root)
-      (doc-site-global-shared-view doc-site-repo-tree-root))
+      (doc-site-repo-blob-root)
+      (doc-site-repo-tree-root))
     (doc-site-source-identity)
     "/"
     target
@@ -1088,16 +1086,14 @@ pre {
     (str_cat.str-cat
       (doc_bridge.bridge-doc-html-page-open-with-metadata
         title
-        (owned_view.compiler-owned-shared-view compiler-identity)
-        (owned_view.compiler-owned-shared-view source-identity)
-        (doc-site-global-shared-view doc-site-package-identity))
+        (string.copy (& compiler-identity))
+        (string.copy (& source-identity))
+        (doc-site-package-identity))
       (doc_bridge.bridge-doc-html-header "TypeLisp Docs" subtitle)
       "<p class=\"tl-doc-build-identity\">Package <code>"
-      (doc_bridge.bridge-doc-html-escape
-        (doc-site-global-shared-view doc-site-package-identity))
+      (doc_bridge.bridge-doc-html-escape (doc-site-package-identity))
       "</code> · compiler <code>"
-      (doc_bridge.bridge-doc-html-escape
-        (owned_view.compiler-owned-shared-view compiler-identity))
+      (doc_bridge.bridge-doc-html-escape (& compiler-identity))
       "</code> · source <code>"
       (doc_bridge.bridge-doc-html-escape source-identity)
       "</code></p>\n"
@@ -1159,7 +1155,7 @@ pre {
       sections
       (doc-site-module-output module)
       (doc_bridge.bridge-doc-html-module-section-source-url
-        (owned_view.compiler-owned-shared-view source)
+        (string.copy (& source))
         source-text
         (doc-site-repo-source-url source)))))
 
@@ -1326,9 +1322,9 @@ pre {
                   (str_cat.str-cat
                     (doc-site-guide-output (& guide))
                     "#"
-                    (owned_view.compiler-owned-shared-view anchor))
+                    (string.copy (& anchor)))
                   "heading"
-                  (owned_view.compiler-owned-shared-view heading)
+                  heading
                   (doc-site-guide-source (& guide))
                   (str_cat.str-cat (doc-site-guide-output (& guide)) "#" anchor)
                   ""
@@ -1355,8 +1351,7 @@ pre {
 (define (doc-site-search-guide-record [guide : DocSiteGuidePage]) : String
   (let
     [source : String (doc-site-guide-source (& guide))]
-    [markdown : String
-      (doc-site-read-markdown (owned_view.compiler-owned-shared-view source))]
+    [markdown : String (doc-site-read-markdown (string.copy (& source)))]
     [blocks : doc_site_md_blocks.Vec (doc_md.md-scan-blocks (& markdown))]
     [block-count : i64 (doc_md.md-block-list-count (& blocks))]
     (str_cat.str-cat
@@ -1365,7 +1360,7 @@ pre {
         (doc_bridge.bridge-doc-render-anchor (& source))
         "guide"
         (doc-site-guide-title (& guide))
-        (owned_view.compiler-owned-shared-view source)
+        source
         (doc-site-guide-output (& guide))
         ""
         ""
@@ -1423,8 +1418,7 @@ pre {
       ",\"sourceIdentity\":"
       (doc_bridge.bridge-doc-html-json-string (& source-identity))
       ",\"packageIdentity\":"
-      (doc_bridge.bridge-doc-html-json-string
-        (doc-site-global-shared-view doc-site-package-identity))
+      (doc_bridge.bridge-doc-html-json-string (doc-site-package-identity))
       ",\"records\":Object.freeze(["
       (doc-site-search-records sections)
       "])});\n")))

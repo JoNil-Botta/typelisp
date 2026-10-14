@@ -570,6 +570,15 @@
             (ptr-offset (string-data text) start))]
         (unsafe
           (string-from-bytes data len))))
+    ;: Address one past the last byte of a borrowed tail, for the adjacency
+    ;: test that merges a new slice into the tail.
+    (define (text-buf-borrowed-tail-end [tail : (& tail str)]) : i64
+      (+
+        (cast
+          (unsafe
+            (ptr->int (string-data tail)))
+          : i64)
+        (string-length tail)))
     (define (text-buf-borrowed-empty-owned-chunks) : text_buf.TextBufChunkList
       ,(comptime.expr-struct-get `(text_buf.empty) "chunks"))
     (define (text-buf-borrowed-empty-chunks [_text : (& text str)]) : (TextBufBorrowedChunkList
@@ -618,19 +627,20 @@
             _old-tail-borrowed?)
           (let
             [next-prefix : text_buf.TextBufChunkList
-              (match (text_buf_family.text-buf-family-shared-view prefix)
+              (match prefix
                 [(text_buf.TextBufChunkDense store visible-count)
                   (text_buf.TextBufChunkDense
                     (text_buf_family.text-buf-owned-store-commit!
                       store
                       visible-count
-                      (text_buf_family.text-buf-family-shared-view
-                        old-tail-text))
+                      old-tail-text)
                     (+ visible-count 1))]
-                [_
+                [(text_buf.TextBufChunkInline prefix-chunk)
                   (text_buf.chunk-cons
-                    (text_buf_family.text-buf-family-shared-view old-tail-text)
-                    (text_buf_family.text-buf-family-shared-view prefix))])]
+                    old-tail-text
+                    (text_buf.TextBufChunkInline prefix-chunk))]
+                [(text_buf.TextBufChunkNil)
+                  (text_buf.chunk-cons old-tail-text (text_buf.TextBufChunkNil))])]
             (TextBufBorrowedChunkDense
               anchor
               next-prefix
@@ -658,12 +668,8 @@
             (if (and
               old-borrowed?
               (=
-                (+
-                  (cast
-                    (unsafe
-                      (ptr->int (string-data (& old-tail))))
-                    : i64)
-                  (string-length (& old-tail)))
+                (stdlib.text_buf_borrowed.text-buf-borrowed-tail-end
+                  (& old-tail))
                 new-data))
               (TextBufBorrowedChunkInline
                 anchor
@@ -675,7 +681,7 @@
               (TextBufBorrowedChunkDense
                 anchor
                 (text_buf.chunk-cons
-                  (text_buf_family.text-buf-family-shared-view old-tail)
+                  old-tail
                   (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks))
                 1
                 (stdlib.text_buf_borrowed.text-buf-borrowed-view text start len)
@@ -689,12 +695,8 @@
             (if (and
               old-borrowed?
               (=
-                (+
-                  (cast
-                    (unsafe
-                      (ptr->int (string-data (& old-tail))))
-                    : i64)
-                  (string-length (& old-tail)))
+                (stdlib.text_buf_borrowed.text-buf-borrowed-tail-end
+                  (& old-tail))
                 new-data))
               (TextBufBorrowedChunkDense
                 anchor
@@ -715,10 +717,7 @@
                           visible-count
                           (text_buf_family.text-buf-family-shared-view old-tail))
                         (+ visible-count 1))]
-                    [_
-                      (text_buf.chunk-cons
-                        (text_buf_family.text-buf-family-shared-view old-tail)
-                        (text_buf_family.text-buf-family-shared-view prefix))])]
+                    [_ (text_buf.chunk-cons old-tail prefix)])]
                 (TextBufBorrowedChunkDense
                   anchor
                   next-prefix
@@ -846,16 +845,14 @@
       [tail-borrowed? : bool]) : (TextBufBorrowedChunkList text)
       (let
         [count : i64
-          (text_buf.chunk-count
-            (text_buf_family.text-buf-family-shared-view prefix)
-            0)]
+          (match (& prefix)
+            [(text_buf.TextBufChunkNil) 0]
+            [(text_buf.TextBufChunkInline _) 1]
+            [(text_buf.TextBufChunkDense _ visible-count) visible-count])]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
-        (text_buf.chunks-fill-array-rev
-          (text_buf_family.text-buf-family-shared-view prefix)
-          (&mut items)
-          (- count 1))
+        (text_buf.chunks-fill-array-rev prefix (&mut items) (- count 1))
         (while (< index count)
           (set!
             result
@@ -947,17 +944,15 @@
     (define (text-buf-borrowed-copy-prefix [prefix : text_buf.TextBufChunkList]) : text_buf.TextBufChunkList
       (let
         [count : i64
-          (text_buf.chunk-count
-            (text_buf_family.text-buf-family-shared-view prefix)
-            0)]
+          (match (& prefix)
+            [(text_buf.TextBufChunkNil) 0]
+            [(text_buf.TextBufChunkInline _) 1]
+            [(text_buf.TextBufChunkDense _ visible-count) visible-count])]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]
         [index : i64 0]
-        (text_buf.chunks-fill-array-rev
-          (text_buf_family.text-buf-family-shared-view prefix)
-          (&mut items)
-          (- count 1))
+        (text_buf.chunks-fill-array-rev prefix (&mut items) (- count 1))
         (while (< index count)
           (let
             [entry : String

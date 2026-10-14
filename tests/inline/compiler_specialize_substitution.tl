@@ -11,7 +11,7 @@
 (import stdlib.test)
 
 (define (specialize-rejects-with? [source : String] [message : String]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok program)
       (match (spec.compiler-specialize-program program)
         [(Err boxed-diag)

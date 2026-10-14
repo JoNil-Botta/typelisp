@@ -1,4 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -53,8 +54,12 @@
   (decls (__tl_dyn-array ast.AstDecl))
   (len i64))
 
+;; A function with comptime parameters: its order among the program's
+;; templates, its module, its name, parameters, result type and body. A
+;; template is identified by its module and name, and its instances take its
+;; place, in its module (#8597).
 (defenum SpecTemplate
-  (Item i64 ast.AstParamList ast.AstType ast.AstExpr))
+  (Item i64 i64 i64 ast.AstParamList ast.AstType ast.AstExpr))
 
 ;; Templates are collected once per program and then only counted and indexed,
 ;; so the collection is one contiguous buffer plus a live count.
@@ -83,11 +88,16 @@
 (defstruct SpecTemplateShadowState
   (address i64))
 
+;; `index` maps a name to its first template slot and `next` chains the slots
+;; of same-named templates in other modules, so a bare name resolves in the
+;; current `module`.
 (defstruct SpecTemplateEnvData
   (index spec_id_i64_map.Map)
   (values (__tl_dyn-array SpecMaybeTemplate))
+  (next (__tl_dyn-array i64))
   (shadow-state SpecTemplateShadowState)
-  (shadow-head i64))
+  (shadow-head i64)
+  (module i64))
 
 (defstruct SpecTemplateEnv
   (address u64))
@@ -95,12 +105,14 @@
 (define (spec-template-env-new
   [index : spec_id_i64_map.Map]
   [values : (__tl_dyn-array SpecMaybeTemplate)]
+  [next : (__tl_dyn-array i64)]
   [shadow-state : SpecTemplateShadowState]
-  [shadow-head : i64]) : SpecTemplateEnv
+  [shadow-head : i64]
+  [module : i64]) : SpecTemplateEnv
   (let
     [cell : (__tl_dyn-array SpecTemplateEnvData)
       (__tl_make-array
-        (SpecTemplateEnvData index values shadow-state shadow-head))]
+        (SpecTemplateEnvData index values next shadow-state shadow-head module))]
     (SpecTemplateEnv
       (unsafe
         (ptr->int (__tl_array-data cell))))))
@@ -122,11 +134,14 @@
 ;; session-owned structural recipe until the specialization-to-lowering text
 ;; boundary materializes its deterministic spelling. Recipes form a transient
 ;; queue, not persistent snapshots, so keep them in one dense growable buffer.
+;; `template-order` is the order of the template the symbol instantiates, which
+;; places the instance in the program.
 (defstruct SpecGeneratedSymbolRecord
   (structural-key i64)
   (handle i64)
   (template-name String)
-  (values SpecValueList))
+  (values SpecValueList)
+  (template-order i64))
 
 (defstruct SpecGeneratedSymbolRecords
   (slots (__tl_dyn-array SpecGeneratedSymbolRecord))
@@ -284,7 +299,7 @@
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
     (ctfe.ctfe-env-with-reflections-and-pools-and-source-names
-      reflections
+      (& reflections)
       (spec-owner-pools owner)
       (spec_ci.intern-source-name-session-handle-from-state intern-state))))
 
@@ -474,11 +489,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) head)
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at)))
     (SpecValueList slots (+ count 1))))
 
 (define (spec-value-subst-new) : SpecValueSubst
@@ -492,11 +505,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecValueBinding)
       (__tl_make-array SpecValueBinding (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at)))
     (spec-value-subst-from-slots slots (+ count 1))))
 
 (define (spec-type-subst-new) : SpecTypeSubst
@@ -516,11 +527,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecTypeBinding)
       (__tl_make-array SpecTypeBinding (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at)))
     (spec-type-subst-from-slots slots (+ count 1))))
 
 (defenum SpecMaybeString
@@ -665,42 +674,31 @@
   [expr : ast.AstExpr]) : SpecMaybeSourceSpan
   (match expr
     [(Spanned _ span) (Some span)]
-    [(Unary _ inner)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Ann inner _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Cast inner _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Borrow _ _ inner)
+    [(or (Unary _ inner) (Ann inner _) (Cast inner _) (Borrow _ _ inner))
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
     [_ (None)]))
 
 (define (spec-expr-list-maybe-span-at-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : SpecMaybeSourceSpan
-  (if (>= index (ast.ast-expr-list-len exprs))
-    (None)
+  [exprs : (& exprs ast.AstExprList)]) : SpecMaybeSourceSpan
+  (for [index (iterator.range 0 (ast.ast-expr-list-len exprs))]
     (match (spec-expr-maybe-span-with-owner
       owner
       (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0)))
-      [(Some span) (Some span)]
-      [(None) (spec-expr-list-maybe-span-at-with-owner owner exprs (+ index 1))])))
+      [(Some span) (return (Some span))]
+      [(None) unit]))
+  (None))
 
 (define (spec-expr-list-maybe-span-with-owner
   [owner : (& owner SpecOwnerContext)]
   [exprs : ast.AstExprList]) : SpecMaybeSourceSpan
-  (spec-expr-list-maybe-span-at-with-owner owner (& exprs) 0))
+  (spec-expr-list-maybe-span-at-with-owner owner (& exprs)))
 
 (define (spec-decl-maybe-span-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decl : ast.AstDecl]) : SpecMaybeSourceSpan
   (match decl
-    [(Def decl-meta _ _ body)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
-    [(DefFn decl-meta _ _ _ body _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
-    [(DefMacro decl-meta _ _ _ body)
+    [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (DefMacro _ _ _ _ body))
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
     [(Test _ _ _ span) (Some span)]
     [(Unsafe inner-box)
@@ -771,7 +769,7 @@
   [fuel : i64]) : ctfe.ResultCtfe
   (let
     [ctfe-env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
-    (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
+    (ctfe.compiler-ctfe-eval (& expr) ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
   (cbi.compiler-builtin-refresh!)
@@ -780,17 +778,16 @@
     [_ false]))
 
 (define (spec-param-list-has-comptime? [params : (& params ast.AstParamList)]) : bool
-  (spec-param-list-has-comptime-at? params 0))
+  (spec-param-list-has-comptime-at? params))
 
 (define (spec-param-list-has-comptime-at?
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
-    (if (spec-param-comptime?
-      (ast.ast-param-list-get params index (ast.ast-param-fallback)))
-      true
-      (spec-param-list-has-comptime-at? params (+ index 1)))))
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+    (when
+      (spec-param-comptime?
+        (ast.ast-param-list-get params index (ast.ast-param-fallback)))
+      (return true)))
+  false)
 
 (define (spec-template-shadow-copy-range
   [dst : (&mut dst (__tl_dyn-array i64))]
@@ -954,7 +951,7 @@
               data
               (spec-template-shadow-state-grow-scratch data scratch-len)))
           (set! (array-ref data.scratch scratch-len) wanted)
-          (set! scratch-len (+ scratch-len 1))
+          (+= scratch-len 1)
           (set! wanted (array-ref data.parents wanted)))))
     (while (> scratch-len 0)
       (let
@@ -987,10 +984,36 @@
     (set! (array-ref values index) (SpecMaybeTemplate.None))
     (spec-template-values-fill-empty values (+ index 1) count)))
 
+(define (spec-maybe-template-module [maybe : (& maybe SpecMaybeTemplate)]) : i64
+  (match maybe
+    [(Some (Item _ module _ _ _ _)) module]
+    [(None) -1]))
+
+;; The slot of `module`'s template named `name-id`, or -1.
+(define (spec-template-slot
+  [index : (& index spec_id_i64_map.Map)]
+  [values : (& values (__tl_dyn-array SpecMaybeTemplate))]
+  [next : (& next (__tl_dyn-array i64))]
+  [module : i64]
+  [name-id : i64]) : i64
+  (let
+    [slot : i64
+      (match (spec_id_i64_map.get index name-id)
+        [(LookupFound first) first]
+        [(LookupMissing) -1])]
+    (while (and
+      (>= slot 0)
+      (not (= (spec-maybe-template-module (& (array-ref values slot))) module)))
+      (set! slot (array-ref next slot)))
+    slot))
+
+;; A module's first template of a name wins; a later one of the same module and
+;; name is not a template.
 (define (spec-template-index-build
   [templates : SpecTemplateList]
   [index : spec_id_i64_map.Map]
   [values : (&mut values (__tl_dyn-array SpecMaybeTemplate))]
+  [next : (&mut next (__tl_dyn-array i64))]
   [at : i64]
   [slot : i64]) : spec_id_i64_map.Map
   (if (>= at templates.len)
@@ -998,37 +1021,86 @@
     (let
       [template : SpecTemplate (spec-array-shared-view templates.slots at)]
       (match (spec-place-shared-view template)
-        [(Item name _ _ _)
-          (if (spec_id_i64_map.contains? (& index) name)
-            (spec-template-index-build templates index values (+ at 1) slot)
-            (begin
+        [(Item _ module name _ _ _)
+          (if (>= (spec-template-slot (& index) values next module name) 0)
+            (spec-template-index-build
+              templates
+              index
+              values
+              next
+              (+ at 1)
+              slot)
+            (let
+              [next-index : spec_id_i64_map.Map index]
               (set! (array-ref values slot) (SpecMaybeTemplate.Some template))
-              (let
-                [next-index : spec_id_i64_map.Map index]
-                (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
-                (spec-template-index-build
-                  templates
-                  next-index
-                  values
-                  (+ at 1)
-                  (+ slot 1)))))]))))
+              (set!
+                (array-ref next slot)
+                (match (spec_id_i64_map.get (& next-index) name)
+                  [(LookupFound first) first]
+                  [(LookupMissing) -1]))
+              (spec_id_i64_map.insert-ref! (&mut next-index) name slot)
+              (spec-template-index-build
+                templates
+                next-index
+                values
+                next
+                (+ at 1)
+                (+ slot 1))))]))))
 
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
     [count : i64 templates.len]
     [values : (__tl_dyn-array SpecMaybeTemplate)
       (__tl_make-array SpecMaybeTemplate count)]
+    [next : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (spec-template-values-fill-empty (&mut values) 0 count)
+    (let
+      [index : spec_id_i64_map.Map
+        (spec-template-index-build
+          templates
+          (spec_id_i64_map.with-capacity (+ (* count 2) 16))
+          (&mut values)
+          (&mut next)
+          0
+          0)]
+      (spec-template-env-new
+        index
+        values
+        next
+        (spec-template-shadow-state-new count)
+        -1
+        cbi.compiler-builtin-id-fix-empty))))
+
+;; `templates` resolving bare names in `module`, with its shadows.
+(define (spec-template-env-in-module
+  [templates : (& templates SpecTemplateEnv)]
+  [module : i64]) : SpecTemplateEnv
+  (let
+    [data : SpecTemplateEnvData
+      (spec-template-env-data (SpecTemplateEnv templates.address))]
     (spec-template-env-new
-      (spec-template-index-build
-        templates
-        (spec_id_i64_map.with-capacity (+ (* count 2) 16))
-        (&mut values)
-        0
-        0)
-      values
-      (spec-template-shadow-state-new count)
-      -1)))
+      data.index
+      data.values
+      data.next
+      data.shadow-state
+      data.shadow-head
+      module)))
+
+;; `templates` as a template body in `module` sees them: no binder of the call
+;; site shadows a template there.
+(define (spec-template-env-template-scope
+  [templates : (& templates SpecTemplateEnv)]
+  [module : i64]) : SpecTemplateEnv
+  (let
+    [data : SpecTemplateEnvData
+      (spec-template-env-data (SpecTemplateEnv templates.address))]
+    (spec-template-env-new
+      data.index
+      data.values
+      data.next
+      data.shadow-state
+      -1
+      module)))
 
 (define (spec-template-env-shared-view
   [templates : (& templates SpecTemplateEnv)]) : SpecTemplateEnv
@@ -1040,15 +1112,21 @@
   (let
     [data : SpecTemplateEnvData
       (spec-template-env-data (SpecTemplateEnv templates.address))]
-    (match (spec_id_i64_map.get (& data.index) name-id)
-      [(LookupFound slot)
-        (if (spec-template-shadow-state-slot-shadowed?
-          data.shadow-state
-          data.shadow-head
-          slot)
-          (None)
-          (spec-array-shared-view data.values slot))]
-      [(LookupMissing) (None)])))
+    [slot : i64
+      (spec-template-slot
+        (& data.index)
+        (& data.values)
+        (& data.next)
+        data.module
+        name-id)]
+    (if (or
+      (< slot 0)
+      (spec-template-shadow-state-slot-shadowed?
+        data.shadow-state
+        data.shadow-head
+        slot))
+      (None)
+      (spec-array-shared-view data.values slot))))
 
 (define (spec-template-env-shadow-name
   [templates : (& templates SpecTemplateEnv)]
@@ -1056,18 +1134,26 @@
   (let
     [data : SpecTemplateEnvData
       (spec-template-env-data (SpecTemplateEnv templates.address))]
-    (match (spec_id_i64_map.get (& data.index) name-id)
-      [(LookupFound slot)
-        (spec-template-env-new
-          data.index
-          data.values
-          data.shadow-state
-          (spec-template-shadow-state-append
-            data.shadow-state
-            data.shadow-head
-            slot))]
+    [slot : i64
+      (spec-template-slot
+        (& data.index)
+        (& data.values)
+        (& data.next)
+        data.module
+        name-id)]
+    (if (< slot 0)
       ;; Names that cannot select a template need no shadow record.
-      [(LookupMissing) (SpecTemplateEnv templates.address)])))
+      (SpecTemplateEnv templates.address)
+      (spec-template-env-new
+        data.index
+        data.values
+        data.next
+        data.shadow-state
+        (spec-template-shadow-state-append
+          data.shadow-state
+          data.shadow-head
+          slot)
+        data.module))))
 
 (define (spec-template-env-shadow-params
   [templates : (& templates SpecTemplateEnv)]
@@ -1119,45 +1205,16 @@
   [templates : (& templates SpecTemplateEnv)]
   [pattern : ast.AstPattern]) : SpecTemplateEnv
   (match pattern
-    [(Var name _) (spec-template-env-shadow-name templates name)]
-    [(Tuple patterns-box)
+    [(or (Var name _) (Binding name))
+      (spec-template-env-shadow-name templates name)]
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+         (Variant _ patterns-box))
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Slice patterns-box _)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Field _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Wildcard) (spec-template-env-shared-view templates)]
-    [(Binding name) (spec-template-env-shadow-name templates name)]
-    [(Variant _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Literal _) (spec-template-env-shared-view templates)]))
+    [(or (Wildcard) (Literal _)) (spec-template-env-shared-view templates)]))
 
 (define (spec-template-env-shadow-pattern-list
   [templates : (& templates SpecTemplateEnv)]
@@ -1180,42 +1237,56 @@
       patterns
       (+ index 1))))
 
+(define (spec-template-item
+  [pools : ast.AstNodePoolContext]
+  [order : i64]
+  [module : i64]
+  [decl : ast.AstDecl]) : SpecMaybeTemplate
+  (match decl
+    [(DefFn decl-meta name params ret body-box _)
+      (if (spec-param-list-has-comptime? params)
+        (Some
+          (Item
+            order
+            module
+            name
+            params
+            ret
+            (ast.ast-node-pool-context-expr-get pools body-box)))
+        (None))]
+    [(Unsafe inner-box)
+      (spec-template-item
+        pools
+        order
+        module
+        (ast.ast-decl-box-shared-view inner-box))]
+    [_ (None)]))
+
+;; Every function with comptime parameters, in program order, with the module
+;; its position after the program's module markers gives it. The rewrite drops
+;; exactly these declarations, in the same order.
 (define (spec-collect-templates-with-pools
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]) : SpecTemplateList
   (let
     [cursor : ast.AstDeclList decls]
     [out : SpecTemplateList (spec-template-list-new)]
+    [module : i64 cbi.compiler-builtin-id-fix-empty]
     [done : bool false]
     (while (not done)
       (match (ast.ast-decl-list-step cursor)
         [(Nil) (set! done true)]
         [(Cons decl rest)
-          (match decl
-            [(Unsafe inner-box)
-              (match (ast.ast-decl-box-shared-view inner-box)
-                [(DefFn decl-meta name params ret body-box _)
-                  (if (spec-param-list-has-comptime? params)
-                    (spec-template-list-push
-                      (&mut out)
-                      (Item
-                        name
-                        params
-                        ret
-                        (ast.ast-node-pool-context-expr-get pools body-box)))
-                    unit)]
-                [_ unit])]
-            [(DefFn decl-meta name params ret body-box _)
-              (if (spec-param-list-has-comptime? params)
-                (spec-template-list-push
-                  (&mut out)
-                  (Item
-                    name
-                    params
-                    ret
-                    (ast.ast-node-pool-context-expr-get pools body-box)))
-                unit)]
-            [_ unit])
+          (match (& decl)
+            [(Module next-module) (set! module next-module)]
+            [_
+              (match (spec-template-item
+                pools
+                out.len
+                module
+                (ast.ast-place-shared-view decl))
+                [(Some template) (spec-template-list-push (&mut out) template)]
+                [(None) unit])])
           (set! cursor rest)]))
     out))
 
@@ -1227,30 +1298,6 @@
       (ast.ast-decl-list-with-capacity (+ (ast.ast-decl-list-len (& decls)) 1))]
     (ast.ast-decl-list-append-from (&mut out) (& decls) 0)
     (ast.ast-decl-list-push (&mut out) decl)
-    out))
-
-(define (spec-decl-list-append
-  [front : ast.AstDeclList]
-  [back : (& back ast.AstDeclList)]) : ast.AstDeclList
-  (let
-    [out : ast.AstDeclList
-      (ast.ast-decl-list-with-capacity
-        (+ (ast.ast-decl-list-len (& front)) (ast.ast-decl-list-len back)))]
-    (ast.ast-decl-list-append-from (&mut out) (& front) 0)
-    (ast.ast-decl-list-append-from (&mut out) back 0)
-    out))
-
-(define (spec-decl-path-list-append
-  [front : ast.AstDeclPathList]
-  [back : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (let
-    [out : ast.AstDeclPathList
-      (ast.ast-decl-path-list-with-capacity
-        (+
-          (ast.ast-decl-path-list-len (& front))
-          (ast.ast-decl-path-list-len (& back))))]
-    (ast.ast-decl-path-list-append-from (&mut out) (& front) 0)
-    (ast.ast-decl-path-list-append-from (&mut out) (& back) 0)
     out))
 
 (define (gen-single-decl-list [decl : ast.AstDecl]) : ast.AstDeclList
@@ -1270,15 +1317,13 @@
   [n : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [index : i64 idx]
     [out : text_buf.TextBuf buf]
-    (while (< index n)
+    (for [index (iterator.range idx n)]
       (set!
         out
         (text_buf.append-int
           (text_buf.append out "_")
-          (cast (string.string-ref text index) : i64)))
-      (set! index (+ index 1)))
+          (cast (string.string-ref text index) : i64))))
     out))
 
 (define (spec-string-key [text : String]) : String
@@ -1489,18 +1534,13 @@
         "bool_1"
         "bool_0")]
     [(Char c) (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
-    [(String text _) (spec-string-key text)]
-    [(Name text _) (spec-string-key text)]
+    [(or (String text _) (Name text _)) (spec-string-key text)]
     [(Unit) "unit"]
     [(Type ty) (str_cat.str-cat "type_" (spec-type-key-with-owner owner ty))]
-    [(Expr _ _) "Expr"]
-    [(CapturedExpr _ _ _) "Expr"]
-    [(ExprList _) "expr-list"]
-    [(CapturedExprList _ _) "expr-list"]
-    [(ExprClause _) "expr-clause"]
-    [(CapturedExprClause _ _) "expr-clause"]
-    [(ExprClauseList _) "expr-clause-list"]
-    [(CapturedExprClauseList _ _) "expr-clause-list"]
+    [(or (Expr _ _) (CapturedExpr _ _ _)) "Expr"]
+    [(or (ExprList _) (CapturedExprList _ _)) "expr-list"]
+    [(or (ExprClause _) (CapturedExprClause _ _)) "expr-clause"]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _)) "expr-clause-list"]
     [(ExprBindingClause _) "expr-binding-clause"]
     [(ExprBindingClauseList _) "expr-binding-clause-list"]
     [(Pattern _) "pattern"]
@@ -1949,14 +1989,7 @@
           0)
         0)]
     [(Char c) (spec-structural-node-with-owner owner -204 (cast c : i64) 0)]
-    [(String text _)
-      (spec-structural-node-with-owner
-        owner
-        -205
-        (spec-structural-generated-text-atom-with-owner owner text)
-        0)]
-    [(Name text _)
-      ;; String and Name intentionally share the old content equivalence.
+    [(or (String text _) (Name text _))
       (spec-structural-node-with-owner
         owner
         -205
@@ -1972,14 +2005,13 @@
           -207
           (spec-structural-key-raw type-key)
           0))]
-    [(Expr _ _) (spec-structural-node-with-owner owner -208 0 0)]
-    [(CapturedExpr _ _ _) (spec-structural-node-with-owner owner -208 0 0)]
-    [(ExprList _) (spec-structural-node-with-owner owner -209 0 0)]
-    [(CapturedExprList _ _) (spec-structural-node-with-owner owner -209 0 0)]
-    [(ExprClause _) (spec-structural-node-with-owner owner -210 0 0)]
-    [(CapturedExprClause _ _) (spec-structural-node-with-owner owner -210 0 0)]
-    [(ExprClauseList _) (spec-structural-node-with-owner owner -211 0 0)]
-    [(CapturedExprClauseList _ _)
+    [(or (Expr _ _) (CapturedExpr _ _ _))
+      (spec-structural-node-with-owner owner -208 0 0)]
+    [(or (ExprList _) (CapturedExprList _ _))
+      (spec-structural-node-with-owner owner -209 0 0)]
+    [(or (ExprClause _) (CapturedExprClause _ _))
+      (spec-structural-node-with-owner owner -210 0 0)]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _))
       (spec-structural-node-with-owner owner -211 0 0)]
     [(ExprBindingClause _) (spec-structural-node-with-owner owner -212 0 0)]
     [(ExprBindingClauseList _) (spec-structural-node-with-owner owner -213 0 0)]
@@ -2042,6 +2074,7 @@
 
 (define (spec-specialization-structural-key-with-owner
   [owner : (& owner SpecOwnerContext)]
+  [module : i64]
   [template-name : String]
   [values : (& values SpecValueList)]) : SpecStructuralKey
   (let
@@ -2050,12 +2083,16 @@
     ;; also starts a fresh structural generation.
     [template-atom : i64
       (spec-structural-content-atom-with-owner owner template-name)]
+    ;; A template is its module's name: same-named templates of two modules
+    ;; are different templates (#8597).
+    [template-key : SpecStructuralKey
+      (spec-structural-node-with-owner owner -301 module template-atom)]
     [values-key : SpecStructuralKey
       (spec-values-structural-key-with-owner owner values)]
     (spec-structural-node-with-owner
       owner
       -300
-      template-atom
+      (spec-structural-key-raw template-key)
       (spec-structural-key-raw values-key))))
 
 (define (spec-render-specialized-name-with-owner
@@ -2096,7 +2133,8 @@
   [owner : (&mut owner SpecOwnerContext)]
   [key : SpecStructuralKey]
   [template-name : String]
-  [values : SpecValueList]) : i64
+  [values : SpecValueList]
+  [template-order : i64]) : i64
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
     [handle : i64
@@ -2107,7 +2145,8 @@
         (spec-structural-key-raw key)
         handle
         template-name
-        values))
+        values
+        template-order))
     handle))
 
 (define (spec-materialize-generated-symbol-records-with-owner!
@@ -2115,8 +2154,7 @@
   [records : (& records SpecGeneratedSymbolRecords)]) : unit
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
-    [index : i64 0]
-    (while (< index records.len)
+    (for [index (iterator.range 0 records.len)]
       (let
         [record : SpecGeneratedSymbolRecord
           (spec-array-shared-view records.slots index)]
@@ -2128,8 +2166,7 @@
               owner
               (SpecStructuralKey record.structural-key)
               record.template-name
-              record.values)))
-        (set! index (+ index 1))))))
+              record.values)))))))
 
 (define (spec-materialize-owner-generated-symbols!
   [owner : (&mut owner SpecOwnerContext)]) : unit
@@ -2249,15 +2286,11 @@
 
 (define (gen-decl-visible-name-id [decl : ast.AstDecl]) : SpecMaybeId
   (match decl
-    [(Def decl-meta name _ _) (Some name)]
-    [(DefFn decl-meta name _ _ _ _) (Some name)]
-    [(Extern decl-meta name _ _ _) (Some name)]
-    [(DefDispatch decl-meta name _) (Some name)]
-    [(DefEnum decl-meta name _ _) (Some name)]
-    [(DefEnumLifetimes decl-meta name _ _ _) (Some name)]
-    [(DefStruct decl-meta name _ _ _) (Some name)]
-    [(DefStructLifetimes decl-meta name _ _ _ _) (Some name)]
-    [(DefMacro decl-meta name _ _ _) (Some name)]
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (Extern _ name _ _ _)
+         (DefDispatch _ name _) (DefEnum _ name _ _)
+         (DefEnumLifetimes _ name _ _ _) (DefStruct _ name _ _ _)
+         (DefStructLifetimes _ name _ _ _ _) (DefMacro _ name _ _ _))
+      (Some name)]
     [(Unsafe inner-box)
       (gen-decl-visible-name-id (ast.ast-decl-box-shared-view inner-box))]
     [_ (None)]))
@@ -2275,11 +2308,13 @@
         [_ false])]
     [(Some a-ty)
       (match b
-        [(Some b-ty) (ctfe.ctfe-type-eq a-ty b-ty)]
+        [(Some b-ty) (ctfe.ctfe-type-eq (& a-ty) (& b-ty))]
         [_ false])]))
 
 (define (gen-expr-eq? [a : ast.AstExpr] [b : ast.AstExpr]) : bool
-  (ctfe.ctfe-expr-eq (ast.ast-expr-unspan (& a)) (ast.ast-expr-unspan (& b))))
+  (ctfe.ctfe-expr-eq
+    (& (ast.ast-expr-unspan (& a)))
+    (& (ast.ast-expr-unspan (& b)))))
 
 (define (gen-param-eq? [a : ast.AstParam] [b : ast.AstParam]) : bool
   (match a
@@ -2288,7 +2323,7 @@
         [(Param b-name b-ty b-comptime)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (= a-comptime b-comptime))])]))
 
 (define (gen-param-list-eq? [a : ast.AstParamList] [b : ast.AstParamList]) : bool
@@ -2296,20 +2331,20 @@
     [len : i64 (ast.ast-param-list-len (& a))]
     (and
       (= len (ast.ast-param-list-len (& b)))
-      (gen-param-list-eq-at? (& a) (& b) len 0))))
+      (gen-param-list-eq-at? (& a) (& b) len))))
 
 (define (gen-param-list-eq-at?
   [a : (& a ast.AstParamList)]
   [b : (& b ast.AstParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-param-eq?
         (ast.ast-param-list-get a index (ast.ast-param-fallback))
         (ast.ast-param-list-get b index (ast.ast-param-fallback)))
-      (gen-param-list-eq-at? a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-macro-param-eq? [a : ast.AstMacroParam] [b : ast.AstMacroParam]) : bool
   (match a
@@ -2318,7 +2353,7 @@
         [(Param b-name b-ty b-variadic b-type-kinds)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (= a-variadic b-variadic)
             (ast.ast-macro-type-kind-list-eq? (& a-type-kinds) (& b-type-kinds)))])]))
 
@@ -2329,20 +2364,20 @@
     [len : i64 (ast.ast-macro-param-list-len (& a))]
     (and
       (= len (ast.ast-macro-param-list-len (& b)))
-      (gen-macro-param-list-eq-at? (& a) (& b) len 0))))
+      (gen-macro-param-list-eq-at? (& a) (& b) len))))
 
 (define (gen-macro-param-list-eq-at?
   [a : (& a ast.AstMacroParamList)]
   [b : (& b ast.AstMacroParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-macro-param-eq?
         (ast.ast-macro-param-list-get a index (ast.ast-macro-param-fallback))
         (ast.ast-macro-param-list-get b index (ast.ast-macro-param-fallback)))
-      (gen-macro-param-list-eq-at? a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-field-cleanup-eq?
   [a : ast.AstFieldCleanup]
@@ -2368,25 +2403,25 @@
         [(Def b-name b-ty b-cleanup)
           (and
             (spec_ci.intern-syntax-id-eq? a-name b-name)
-            (ctfe.ctfe-type-eq a-ty b-ty)
+            (ctfe.ctfe-type-eq (& a-ty) (& b-ty))
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
 (define (gen-field-list-eq? [a : ast.AstFieldDefList] [b : ast.AstFieldDefList]) : bool
   (if (= a.len b.len)
-    (gen-field-list-eq-at (& a) (& b) 0)
+    (gen-field-list-eq-at (& a) (& b))
     false))
 
 (define (gen-field-list-eq-at
   [a : (& a ast.AstFieldDefList)]
-  [b : (& b ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstFieldDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-field-def-eq?
         (ast.ast-field-def-list-get a index (ast.ast-field-def-fallback))
         (ast.ast-field-def-list-get b index (ast.ast-field-def-fallback)))
-      (gen-field-list-eq-at a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-struct-repr-eq? [a : ast.AstStructRepr] [b : ast.AstStructRepr]) : bool
   (match a
@@ -2460,16 +2495,14 @@
   [a : ast.AstVariantPayloadCleanupList]
   [b : ast.AstVariantPayloadCleanupList]) : bool
   (if (= a.len b.len)
-    (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
+    (gen-variant-payload-cleanup-list-eq-at? (& a) (& b))
     false))
 
 (define (gen-variant-payload-cleanup-list-eq-at?
   [a : (& a ast.AstVariantPayloadCleanupList)]
-  [b : (& b ast.AstVariantPayloadCleanupList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantPayloadCleanupList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-payload-cleanup-eq?
         (ast.ast-variant-payload-cleanup-list-get
           a
@@ -2479,7 +2512,9 @@
           b
           index
           (ast.ast-variant-payload-cleanup-fallback)))
-      (gen-variant-payload-cleanup-list-eq-at? a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-variant-def-eq? [a : ast.AstVariantDef] [b : ast.AstVariantDef]) : bool
   (match a
@@ -2488,27 +2523,27 @@
         [(Def b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-list-eq a-payloads b-payloads)
+            (ctfe.ctfe-type-list-eq (& a-payloads) (& b-payloads))
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq?
   [a : ast.AstVariantDefList]
   [b : ast.AstVariantDefList]) : bool
   (if (= a.len b.len)
-    (gen-variant-list-eq-at? (& a) (& b) 0)
+    (gen-variant-list-eq-at? (& a) (& b))
     false))
 
 (define (gen-variant-list-eq-at?
   [a : (& a ast.AstVariantDefList)]
-  [b : (& b ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-def-eq?
         (ast.ast-variant-def-list-get a index (ast.ast-variant-def-fallback))
         (ast.ast-variant-def-list-get b index (ast.ast-variant-def-fallback)))
-      (gen-variant-list-eq-at? a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-spmd-param-class-eq?
   [a : ast.AstSpmdParamClass]
@@ -2542,18 +2577,19 @@
 
 (define (gen-spmd-param-class-list-eq-at?
   [a : (& a ast.AstSpmdParamClassList)]
-  [b : (& b ast.AstSpmdParamClassList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-spmd-param-class-list-len a))
-    (=
-      (ast.ast-spmd-param-class-list-len a)
-      (ast.ast-spmd-param-class-list-len b))
-    (and
-      (< index (ast.ast-spmd-param-class-list-len b))
-      (gen-spmd-param-class-eq?
-        (ast.ast-spmd-param-class-list-get a index Uniform)
-        (ast.ast-spmd-param-class-list-get b index Uniform))
-      (gen-spmd-param-class-list-eq-at? a b (+ index 1)))))
+  [b : (& b ast.AstSpmdParamClassList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-spmd-param-class-list-len a))]
+    (unless
+      (and
+        (< index (ast.ast-spmd-param-class-list-len b))
+        (gen-spmd-param-class-eq?
+          (ast.ast-spmd-param-class-list-get a index Uniform)
+          (ast.ast-spmd-param-class-list-get b index Uniform)))
+      (return false))
+    unit)
+  (=
+    (ast.ast-spmd-param-class-list-len a)
+    (ast.ast-spmd-param-class-list-len b)))
 
 (define (gen-spmd-specialization-fallback) : ast.AstSpmdSpecialization
   (ast.AstSpmdSpecialization
@@ -2569,31 +2605,31 @@
     (= a.lanes b.lanes)
     (gen-spmd-param-class-list-eq-at?
       (& (__tl-box-place a.args))
-      (& (__tl-box-place b.args))
-      0)
+      (& (__tl-box-place b.args)))
     (gen-spmd-result-class-eq? a.result b.result)
     (= a.index-param b.index-param)))
 
 (define (gen-spmd-specialization-list-eq-at?
   [a : (& a ast.AstSpmdSpecializationList)]
-  [b : (& b ast.AstSpmdSpecializationList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-spmd-specialization-list-len a))
-    (=
-      (ast.ast-spmd-specialization-list-len a)
-      (ast.ast-spmd-specialization-list-len b))
-    (and
-      (< index (ast.ast-spmd-specialization-list-len b))
-      (gen-spmd-specialization-eq?
-        (ast.ast-spmd-specialization-list-get
-          a
-          index
-          (gen-spmd-specialization-fallback))
-        (ast.ast-spmd-specialization-list-get
-          b
-          index
-          (gen-spmd-specialization-fallback)))
-      (gen-spmd-specialization-list-eq-at? a b (+ index 1)))))
+  [b : (& b ast.AstSpmdSpecializationList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-spmd-specialization-list-len a))]
+    (unless
+      (and
+        (< index (ast.ast-spmd-specialization-list-len b))
+        (gen-spmd-specialization-eq?
+          (ast.ast-spmd-specialization-list-get
+            a
+            index
+            (gen-spmd-specialization-fallback))
+          (ast.ast-spmd-specialization-list-get
+            b
+            index
+            (gen-spmd-specialization-fallback))))
+      (return false))
+    unit)
+  (=
+    (ast.ast-spmd-specialization-list-len a)
+    (ast.ast-spmd-specialization-list-len b)))
 
 (define (gen-fn-metadata-eq? [a : ast.AstFnMetadata] [b : ast.AstFnMetadata]) : bool
   (match a
@@ -2610,8 +2646,7 @@
         [(SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
             (& (__tl-box-place a-items))
-            (& (__tl-box-place b-items))
-            0)]
+            (& (__tl-box-place b-items)))]
         [_ false])]))
 
 (define (gen-import-kind-eq? [a : ast.AstImportKind] [b : ast.AstImportKind]) : bool
@@ -2732,7 +2767,7 @@
               (and
                 (= a-name b-name)
                 (gen-param-list-eq? a-params b-params)
-                (ctfe.ctfe-type-eq a-ret b-ret)
+                (ctfe.ctfe-type-eq (& a-ret) (& b-ret))
                 (gen-expr-eq? a-body b-body)
                 (gen-fn-metadata-eq? a-metadata b-metadata)))]
           [_ false]))]
@@ -2751,7 +2786,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
@@ -2777,7 +2812,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
@@ -2792,7 +2827,7 @@
               (and
                 (= a-name b-name)
                 (gen-macro-param-list-eq? a-params b-params)
-                (ctfe.ctfe-type-eq a-ret b-ret)
+                (ctfe.ctfe-type-eq (& a-ret) (& b-ret))
                 (gen-expr-eq? a-body b-body)))]
           [_ false]))]
     [(Import decl-meta a-spec)
@@ -2880,8 +2915,8 @@
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
     (ctfe.ctfe-expr-eq-in-env
       (ctfe.ctfe-env-shared-view env)
-      (ast.ast-expr-unspan-with-pools pools (& a))
-      (ast.ast-expr-unspan-with-pools pools (& b)))))
+      (& (ast.ast-expr-unspan-with-pools pools (& a)))
+      (& (ast.ast-expr-unspan-with-pools pools (& b))))))
 
 (define (gen-param-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -2902,17 +2937,17 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstParamList)]
   [b : (& b ast.AstParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-param-eq-with-owner
         owner
         env
         (ast.ast-param-list-get a index (ast.ast-param-fallback))
         (ast.ast-param-list-get b index (ast.ast-param-fallback)))
-      (gen-param-list-eq-at-with-owner owner env a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-param-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2923,7 +2958,7 @@
     [len : i64 (ast.ast-param-list-len (& a))]
     (and
       (= len (ast.ast-param-list-len (& b)))
-      (gen-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
+      (gen-param-list-eq-at-with-owner owner env (& a) (& b) len))))
 
 (define (gen-macro-param-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -2945,17 +2980,17 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstMacroParamList)]
   [b : (& b ast.AstMacroParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-macro-param-eq-with-owner
         owner
         env
         (ast.ast-macro-param-list-get a index (ast.ast-macro-param-fallback))
         (ast.ast-macro-param-list-get b index (ast.ast-macro-param-fallback)))
-      (gen-macro-param-list-eq-at-with-owner owner env a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-macro-param-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2966,7 +3001,7 @@
     [len : i64 (ast.ast-macro-param-list-len (& a))]
     (and
       (= len (ast.ast-macro-param-list-len (& b)))
-      (gen-macro-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
+      (gen-macro-param-list-eq-at-with-owner owner env (& a) (& b) len))))
 
 (define (gen-field-def-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -2986,26 +3021,24 @@
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstFieldDefList)]
-  [b : (& b ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstFieldDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-field-def-eq-with-owner
         owner
         env
         (ast.ast-field-def-list-get a index (ast.ast-field-def-fallback))
         (ast.ast-field-def-list-get b index (ast.ast-field-def-fallback)))
-      (gen-field-list-eq-at-with-owner owner env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-field-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : ast.AstFieldDefList]
   [b : ast.AstFieldDefList]) : bool
-  (and
-    (= a.len b.len)
-    (gen-field-list-eq-at-with-owner owner env (& a) (& b) 0)))
+  (and (= a.len b.len) (gen-field-list-eq-at-with-owner owner env (& a) (& b))))
 
 (define (gen-variant-def-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -3018,24 +3051,24 @@
         [(Def b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
-            (ctfe.ctfe-type-list-eq-in-env env a-payloads b-payloads)
+            (ctfe.ctfe-type-list-eq-in-env env (& a-payloads) (& b-payloads))
             (gen-variant-payload-cleanup-list-eq? a-cleanups b-cleanups))])]))
 
 (define (gen-variant-list-eq-at-with-owner
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstVariantDefList)]
-  [b : (& b ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-def-eq-with-owner
         owner
         env
         (ast.ast-variant-def-list-get a index (ast.ast-variant-def-fallback))
         (ast.ast-variant-def-list-get b index (ast.ast-variant-def-fallback)))
-      (gen-variant-list-eq-at-with-owner owner env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-variant-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3044,7 +3077,7 @@
   [b : ast.AstVariantDefList]) : bool
   (and
     (= a.len b.len)
-    (gen-variant-list-eq-at-with-owner owner env (& a) (& b) 0)))
+    (gen-variant-list-eq-at-with-owner owner env (& a) (& b))))
 
 (define (gen-fn-metadata-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -3065,8 +3098,7 @@
         [(SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
             (& (__tl-box-place a-items))
-            (& (__tl-box-place b-items))
-            0)]
+            (& (__tl-box-place b-items)))]
         [_ false])]))
 
 (define (gen-decl-list-eq-with-owner
@@ -3136,7 +3168,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
@@ -3162,7 +3194,7 @@
           (and
             (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
-            (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
+            (ctfe.ctfe-lifetime-list-eq (& a-lifetimes) (& b-lifetimes))
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq-with-owner owner env a-fields b-fields))]
@@ -3265,10 +3297,7 @@
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [head-expr : ast.AstExpr (spec-owner-expr-get owner head-id)]
-      (match (ctfe.compiler-ctfe-eval
-        (ast.ast-place-shared-view head-expr)
-        env
-        fuel)
+      (match (ctfe.compiler-ctfe-eval (& head-expr) env fuel)
         [(Ok value head-fuel)
           (match value
             [(String text _)
@@ -3560,30 +3589,6 @@
         rest)]
     [(Nil) (ast.ast-decl-path-list-new)]))
 
-(define (gen-path-list-for-decls
-  [decls : ast.AstDeclList]
-  [path : String]
-  [owner-id : i64]
-  [provenance-id : i64]
-  [rest-paths : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (let
-    [out : ast.AstDeclPathList
-      (ast.ast-decl-path-list-with-capacity
-        (+
-          (ast.ast-decl-list-len (& decls))
-          (ast.ast-decl-path-list-len (& rest-paths))))]
-    [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    (while (< index count)
-      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-        (&mut out)
-        (spec-place-shared-view path)
-        owner-id
-        provenance-id)
-      (set! index (+ index 1)))
-    (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
-    out))
-
 (define (gen-path-list-push-for-decls
   [out : (&mut out ast.AstDeclPathList)]
   [decls : ast.AstDeclList]
@@ -3660,7 +3665,7 @@
                   rewritten-count
                   (parser.compiler-parse-decl-list-storage-key (& rest))
                   (- rest.offset 1)
-                  decl
+                  (& decl)
                   (!= rewritten-count 1))
                 (ast.ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
                 (set! cur-registry decl-registry)
@@ -3746,7 +3751,7 @@
                     rewritten-count
                     (parser.compiler-parse-decl-list-storage-key (& rest))
                     (- rest.offset 1)
-                    decl
+                    (& decl)
                     (!= rewritten-count 1))
                   (ast.ast-decl-list-append-from
                     (&mut out)
@@ -3784,7 +3789,7 @@
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
-            (ctfe.ctfe-reflections-from-program program))]
+            (ctfe.ctfe-reflections-from-program (& program)))]
         (match (gen-rewrite-decls-with-owner
           owner
           decls
@@ -3806,7 +3811,7 @@
         [env : ctfe.CtfeEnv
           (spec-owner-ctfe-env
             owner
-            (ctfe.ctfe-reflections-from-program program))]
+            (ctfe.ctfe-reflections-from-program (& program)))]
         (match (gen-rewrite-decls-with-paths-and-owner
           owner
           decls
@@ -3882,30 +3887,18 @@
       [(F32 _) (ctfe.ctfe-type-eq-in-env env ty (F32))]
       [(Bool _) (ctfe.ctfe-type-eq-in-env env ty (Bool))]
       [(Char _) (ctfe.ctfe-type-eq-in-env env ty (Char))]
-      [(String _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
-      [(Name _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+      [(or (String _ _) (Name _ _)) (ctfe.ctfe-type-eq-in-env env ty (String))]
       [(Unit) (ctfe.ctfe-type-eq-in-env env ty (Unit))]
-      [(Type _) false]
-      [(Expr _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
-      [(CapturedExpr _ _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
-      [(ExprList _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
-      [(CapturedExprList _ _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
-      [(ExprClause _)
+      [(or (Expr _ _) (CapturedExpr _ _ _))
+        (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+      [(or (ExprList _) (CapturedExprList _ _))
+        (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+      [(or (ExprClause _) (CapturedExprClause _ _))
         (ctfe.ctfe-type-eq-in-env
           env
           ty
           (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(CapturedExprClause _ _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(ExprClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(CapturedExprClauseList _ _)
+      [(or (ExprClauseList _) (CapturedExprClauseList _ _))
         (ctfe.ctfe-type-eq-in-env
           env
           ty
@@ -3950,15 +3943,10 @@
           env
           ty
           (Var cbi.compiler-builtin-id-fix-LetBindingList))]
-      [(TypeInfo _) false]
-      [(TypeInfoBox _) false]
-      [(TypeInfoList _) false]
-      [(TypeField _ _) false]
-      [(TypeFieldList _) false]
-      [(TypeVariantPayload _) false]
-      [(TypeVariantPayloadList _) false]
-      [(TypeVariant _ _) false]
-      [(TypeVariantList _) false])))
+      [(or (Type _) (TypeInfo _) (TypeInfoBox _) (TypeInfoList _)
+           (TypeField _ _) (TypeFieldList _) (TypeVariantPayload _)
+           (TypeVariantPayloadList _) (TypeVariant _ _) (TypeVariantList _))
+        false])))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value
@@ -3967,18 +3955,13 @@
     [(F32 _) "f32"]
     [(Bool _) "bool"]
     [(Char _) "char"]
-    [(String _ _) "String"]
-    [(Name _ _) "String"]
+    [(or (String _ _) (Name _ _)) "String"]
     [(Unit) "unit"]
     [(Type _) "type"]
-    [(Expr _ _) "Expr"]
-    [(CapturedExpr _ _ _) "Expr"]
-    [(ExprList _) "expr-list"]
-    [(CapturedExprList _ _) "expr-list"]
-    [(ExprClause _) "ExprClause"]
-    [(CapturedExprClause _ _) "ExprClause"]
-    [(ExprClauseList _) "ExprClauseList"]
-    [(CapturedExprClauseList _ _) "ExprClauseList"]
+    [(or (Expr _ _) (CapturedExpr _ _ _)) "Expr"]
+    [(or (ExprList _) (CapturedExprList _ _)) "expr-list"]
+    [(or (ExprClause _) (CapturedExprClause _ _)) "ExprClause"]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _)) "ExprClauseList"]
     [(ExprBindingClause _) "ExprBindingClause"]
     [(ExprBindingClauseList _) "ExprBindingClauseList"]
     [(Pattern _) "Pattern"]
@@ -3999,47 +3982,35 @@
 
 ;; Head-first scan: slot 0 is the newest binding, so the first hit is the one
 ;; that shadows. Returns -1 when the name is unbound.
-(define (spec-type-subst-find
-  [subs : (& subs SpecTypeSubst)]
-  [name-id : i64]
-  [at : i64]) : i64
-  (if (>= at subs.len)
-    (- 0 1)
+(define (spec-type-subst-find [subs : (& subs SpecTypeSubst)] [name-id : i64]) : i64
+  (for [at (iterator.range 0 subs.len)]
     (match (spec-type-subst-at subs at)
-      [(Bind key-id _)
-        (if (= key-id name-id)
-          at
-          (spec-type-subst-find subs name-id (+ at 1)))])))
+      [(Bind key-id _) (when (= key-id name-id) (return at))]))
+  (- 0 1))
 
 (define (spec-type-subst-lookup [subs : (& subs SpecTypeSubst)] [name-id : i64]) : SpecMaybeId
-  (if (< (spec-type-subst-find subs name-id 0) 0)
+  (if (< (spec-type-subst-find subs name-id) 0)
     (None)
     (Some name-id)))
 
 (define (spec-type-subst-type [subs : (& subs SpecTypeSubst)] [name-id : i64]) : ast.AstType
   (let
-    [at : i64 (spec-type-subst-find subs name-id 0)]
+    [at : i64 (spec-type-subst-find subs name-id)]
     (if (< at 0)
       (Var name-id)
       (match (spec-type-subst-at subs at)
         [(Bind _ ty) ty]))))
 
-(define (spec-value-subst-find
-  [subs : (& subs SpecValueSubst)]
-  [name-id : i64]
-  [at : i64]) : i64
-  (if (>= at subs.len)
-    (- 0 1)
+(define (spec-value-subst-find [subs : (& subs SpecValueSubst)] [name-id : i64]) : i64
+  (for [at (iterator.range 0 subs.len)]
     (match (spec-value-subst-at subs at)
-      [(Bind key-id _)
-        (if (= key-id name-id)
-          at
-          (spec-value-subst-find subs name-id (+ at 1)))])))
+      [(Bind key-id _) (when (= key-id name-id) (return at))]))
+  (- 0 1))
 
 (define (spec-value-subst-lookup
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : SpecMaybeId
-  (if (< (spec-value-subst-find subs name-id 0) 0)
+  (if (< (spec-value-subst-find subs name-id) 0)
     (None)
     (Some name-id)))
 
@@ -4047,7 +4018,7 @@
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : ctfe.CompilerCtfeValue
   (let
-    [at : i64 (spec-value-subst-find subs name-id 0)]
+    [at : i64 (spec-value-subst-find subs name-id)]
     (if (< at 0)
       (Unit)
       (match (spec-value-subst-at subs at)
@@ -4058,41 +4029,37 @@
 (define (spec-value-subst-remove-name
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : SpecValueSubst
-  (if (< (spec-value-subst-find subs name-id 0) 0)
+  (if (< (spec-value-subst-find subs name-id) 0)
     (spec-value-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
         (__tl_make-array SpecValueBinding subs.len)]
-      [at : i64 0]
       [kept : i64 0]
-      (while (< at subs.len)
+      (for [at (iterator.range 0 subs.len)]
         (match (spec-value-subst-at subs at)
           [(Bind key-id _)
             (unless
               (= key-id name-id)
               (set! (array-ref slots kept) (spec-value-subst-at subs at))
-              (set! kept (+ kept 1)))])
-        (set! at (+ at 1)))
+              (+= kept 1))]))
       (spec-value-subst-from-slots slots kept))))
 
 (define (spec-type-subst-remove-name
   [subs : (& subs SpecTypeSubst)]
   [name-id : i64]) : SpecTypeSubst
-  (if (< (spec-type-subst-find subs name-id 0) 0)
+  (if (< (spec-type-subst-find subs name-id) 0)
     (spec-type-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
         (__tl_make-array SpecTypeBinding subs.len)]
-      [at : i64 0]
       [kept : i64 0]
-      (while (< at subs.len)
+      (for [at (iterator.range 0 subs.len)]
         (match (spec-type-subst-at subs at)
           [(Bind key-id _)
             (unless
               (= key-id name-id)
               (set! (array-ref slots kept) (spec-type-subst-at subs at))
-              (set! kept (+ kept 1)))])
-        (set! at (+ at 1)))
+              (+= kept 1))]))
       (spec-type-subst-from-slots slots kept))))
 
 (define (spec-subst-shared-view [subs : (& subs SpecSubst)]) : SpecSubst
@@ -4166,45 +4133,15 @@
   [subs : (& subs SpecSubst)]
   [pattern : ast.AstPattern]) : SpecSubst
   (match pattern
-    [(Var name _) (spec-subst-remove-name subs name)]
-    [(Tuple patterns-box)
+    [(or (Var name _) (Binding name)) (spec-subst-remove-name subs name)]
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+         (Variant _ patterns-box))
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-subst-remove-pattern-list subs patterns))]
-    [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Slice patterns-box _)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Field _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Wildcard) (spec-subst-shared-view subs)]
-    [(Binding name) (spec-subst-remove-name subs name)]
-    [(Variant _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Literal _) (spec-subst-shared-view subs)]))
+    [(or (Wildcard) (Literal _)) (spec-subst-shared-view subs)]))
 
 (define (spec-subst-remove-pattern-list
   [subs : (& subs SpecSubst)]
@@ -4462,13 +4399,7 @@
           (& (F32))))]
     [(Bool b) (Ok (spec-owner-expr-push owner (Literal (Bool b))))]
     [(Char c) (Ok (spec-owner-expr-push owner (Literal (Char c))))]
-    [(String _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time String value into runtime expression")))]
-    [(Name _ _)
+    [(or (String _ _) (Name _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
@@ -4484,49 +4415,25 @@
               "cannot substitute compile-time type value "
               (spec-type-key-with-owner owner ty)
               " into runtime expression"))))]
-    [(Expr _ _)
+    [(or (Expr _ _) (CapturedExpr _ _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Expr value into runtime expression")))]
-    [(CapturedExpr _ _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time Expr value into runtime expression")))]
-    [(ExprList _)
+    [(or (ExprList _) (CapturedExprList _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(CapturedExprList _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(ExprClause _)
+    [(or (ExprClause _) (CapturedExprClause _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClause value into runtime expression")))]
-    [(CapturedExprClause _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprClause value into runtime expression")))]
-    [(ExprClauseList _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprClauseList value into runtime expression")))]
-    [(CapturedExprClauseList _ _)
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
@@ -4760,7 +4667,7 @@
   [state : SpecState]
   [origin : ast.AstExpr]) : ResultSpecExpr
   (match (spec-place-shared-view template)
-    [(Item name-id params _ _)
+    [(Item _ _ name-id params _ _)
       (let
         [name : String
           (spec_ci.intern-compat-state-str (spec-state-intern state) name-id)]
@@ -4981,7 +4888,7 @@
   [state : SpecState]
   [_origin : ast.AstExpr]) : ResultSpecEnsure
   (match template
-    [(Item name-id params ret body)
+    [(Item order module name-id params ret body)
       (match (spec-place-shared-view state)
         [(State generated cache ctfe-env pools)
           (let
@@ -4992,6 +4899,7 @@
             [structural-key : SpecStructuralKey
               (spec-specialization-structural-key-with-owner
                 (spec-state-owner state)
+                module
                 (spec-place-shared-view name)
                 values)]
             [cache-key-id : i64 (spec-structural-key-raw structural-key)]
@@ -5004,7 +4912,8 @@
                       (&mut pools)
                       structural-key
                       name
-                      (spec-place-shared-view values))]
+                      (spec-place-shared-view values)
+                      order)]
                   (match (spec-build-specialization params values)
                     [(Ok runtime-params value-subs type-subs)
                       (let
@@ -5026,9 +4935,14 @@
                         (let
                           [cached-state : SpecState
                             (State generated next-cache ctfe-env pools)]
+                          ;; The body resolves names in its own module, and no
+                          ;; binder of the call site shadows a template there.
                           [body-templates : SpecTemplateEnv
                             (spec-template-env-shadow-params
-                              templates
+                              (&
+                                (spec-template-env-template-scope
+                                  templates
+                                  module))
                               runtime-params)]
                           (match (spec-rewrite-expr
                             (spec-state-expr-get state valued-body)
@@ -5554,15 +5468,10 @@
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
     (match (ast.ast-expr-unspan-with-pools pools (& place))
       [(Var name) (spec-value-subst-lookup subs name)]
-      [(StructGet receiver-box _)
+      [(or (StructGet receiver-box _) (ArrayRef receiver-box _))
         (spec-ptr-addr-of-place-value-conflict-with-owner
           owner
           (spec-owner-expr-get owner receiver-box)
-          subs)]
-      [(ArrayRef array-box _)
-        (spec-ptr-addr-of-place-value-conflict-with-owner
-          owner
-          (spec-owner-expr-get owner array-box)
           subs)]
       [_ (None)])))
 
@@ -5577,8 +5486,7 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecTemplateEnv (spec-template-env-shared-view templates)]
-    [index : i64 0]
-    (while (< index bindings.len)
+    (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         (& bindings)
         index
@@ -5605,7 +5513,7 @@
                       move-aware?))
                   (set! state cleanup-state)
                   (set! scope (spec-template-env-shadow-name scope name))
-                  (set! index (+ index 1))])])]))
+                  unit])])]))
     (match (spec-rewrite-expr-list body (& scope) state)
       [(Err diag) (Err diag)]
       [(Ok next-body body-state)
@@ -5654,8 +5562,7 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecSubst (spec-subst-shared-view subs)]
-    [index : i64 0]
-    (while (< index bindings.len)
+    (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         (& bindings)
         index
@@ -5683,8 +5590,7 @@
                 next-init
                 next-cleanup
                 move-aware?))
-            (set! scope (spec-subst-remove-name (& scope) name))
-            (set! index (+ index 1)))]))
+            (set! scope (spec-subst-remove-name (& scope) name)))]))
     (let
       [next-body : ast.AstExprList
         (try (spec-substitute-walk-list-with-owner owner body (& scope) held))]
@@ -6315,7 +6221,6 @@
         (spec-substitute-walk-list-at-with-owner
           owner
           (& exprs)
-          0
           subs
           held
           (&mut out)))]
@@ -6324,25 +6229,18 @@
 (define (spec-substitute-walk-list-at-with-owner
   [owner : (& owner SpecOwnerContext)]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [out : (&mut out ast.AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index exprs.len)
-    (Ok)
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [head : ast.AstExpr
         (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0))]
       [rewritten-head
         (try (spec-substitute-walk-with-owner owner head subs held))]
       (ast.ast-expr-list-push out rewritten-head)
-      (spec-substitute-walk-list-at-with-owner
-        owner
-        exprs
-        (+ index 1)
-        subs
-        held
-        out))))
+      unit))
+  (Ok))
 
 (define (spec-substitute-walk-let-bindings-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -6409,7 +6307,6 @@
         (spec-substitute-walk-match-arms-at-with-owner
           owner
           (& arms)
-          0
           subs
           held
           (&mut out)))]
@@ -6418,12 +6315,10 @@
 (define (spec-substitute-walk-match-arms-at-with-owner
   [owner : (& owner SpecOwnerContext)]
   [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [out : (&mut out ast.AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index arms.len)
-    (Ok)
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (let
@@ -6435,13 +6330,8 @@
           (ast.ast-match-arm-list-push
             out
             (ast.ast-match-arm pattern rewritten-body))
-          (spec-substitute-walk-match-arms-at-with-owner
-            owner
-            arms
-            (+ index 1)
-            subs
-            held
-            out))])))
+          unit)]))
+  (Ok))
 
 (define (spec-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -6501,60 +6391,18 @@
   [decls : ast.AstDeclList]
   [templates : (& templates SpecTemplateEnv)]
   [state : SpecState]) : ResultSpecDecls
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [cursor : ast.AstDeclList decls]
-    [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-    [out-origins : parser.CompilerParseDeclOriginAliasVec
-      (parser.compiler-parse-decl-origin-alias-vec-with-capacity count)]
-    [cur-state : SpecState state]
-    [result : ResultSpecDecls
-      (Err
-        (box
-          (cdiag.compiler-diagnostic-simple
-            "<internal>"
-            1
-            1
-            "specialization rewrite did not finish")))]
-    [done : bool false]
-    (while (not done)
-      (match (ast.ast-decl-list-step cursor)
-        [(Nil)
-          (parser.compiler-parse-decl-origin-alias-vec-register!
-            (& out)
-            (& out-origins))
-          (set!
-            result
-            (Ok
-              (ast.ast-place-shared-view out)
-              (spec-place-shared-view cur-state)))
-          (set! done true)]
-        [(Cons decl rest)
-          (match (spec-rewrite-decl-with-owner
-            owner
-            (ast.ast-place-shared-view decl)
-            templates
-            (spec-place-shared-view cur-state))
-            [(Ok maybe-decl decl-state)
-              (set! cur-state decl-state)
-              (match maybe-decl
-                [(None) unit]
-                [(Some rewritten-decl)
-                  (ast.ast-decl-list-push (&mut out) rewritten-decl)
-                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                    (&mut out-origins)
-                    (- (ast.ast-decl-list-len (& out)) 1)
-                    1
-                    (parser.compiler-parse-decl-list-storage-key (& rest))
-                    (- rest.offset 1)
-                    decl
-                    false)])
-              (set! cursor rest)]
-            [(Err diag)
-              (set! result (Err diag))
-              (set! done true)])]))
-    result))
+  (match (spec-rewrite-decls-with-paths-with-owner
+    owner
+    decls
+    (ast.ast-decl-path-list-new)
+    ""
+    templates
+    state)
+    [(Ok rewritten _ rewritten-state) (Ok rewritten rewritten-state)]
+    [(Err diag) (Err diag)]))
 
+;; Rewrites every declaration in its module, drops the templates, and splices
+;; each generated instance into its template's place with its template's path.
 (define (spec-rewrite-decls-with-paths-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decls : ast.AstDeclList]
@@ -6565,12 +6413,21 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-cursor : ast.AstDeclList decls]
-    [path-cursor : ast.AstDeclPathList paths]
+    [path-cursor : ast.AstDeclPathList (spec-place-shared-view paths)]
     [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
     [out-paths : ast.AstDeclPathList
       (ast.ast-decl-path-list-with-capacity count)]
-    [out-origins : parser.CompilerParseDeclOriginAliasVec
-      (parser.compiler-parse-decl-origin-alias-vec-with-capacity count)]
+    ;; Per kept declaration: the declaration it came from, for its origin.
+    [sources : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
+    [source-keys : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [source-slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    ;; Per dropped template, by order: the kept count before it and its input
+    ;; index.
+    [drop-positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [drop-sources : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [drops : i64 0]
+    [input-index : i64 0]
+    [module : i64 cbi.compiler-builtin-id-fix-empty]
     [cur-state : SpecState state]
     [result : ResultSpecDeclsWithPaths
       (Err
@@ -6584,15 +6441,33 @@
     (while (not done)
       (match (ast.ast-decl-list-step decl-cursor)
         [(Nil)
-          (parser.compiler-parse-decl-origin-alias-vec-register!
-            (& out)
-            (& out-origins))
-          (set!
-            result
-            (Ok
-              (ast.ast-place-shared-view out)
-              (spec-place-shared-view out-paths)
-              (spec-place-shared-view cur-state)))
+          (match (spec-place-shared-view cur-state)
+            [(State generated _ _ _)
+              (let
+                [placement : SpecInstancePlacement
+                  (spec-instance-placement
+                    owner
+                    (ast.ast-decl-list-len (& out))
+                    (& drop-positions)
+                    drops
+                    (& generated))]
+                (set!
+                  result
+                  (Ok
+                    (spec-splice-instances
+                      (& out)
+                      (& sources)
+                      (& source-keys)
+                      (& source-slots)
+                      (& generated)
+                      (& placement))
+                    (spec-splice-instance-paths
+                      (& out-paths)
+                      (& paths)
+                      (spec-place-shared-view fallback-path)
+                      (& drop-sources)
+                      (& placement))
+                    (spec-place-shared-view cur-state))))])
           (set! done true)]
         [(Cons decl rest)
           (let
@@ -6610,30 +6485,41 @@
                 (& path-cursor)
                 0
                 cbi.compiler-builtin-id-fix-empty)]
+            (match (& decl)
+              [(Module next-module) (set! module next-module)]
+              [_ unit])
             (match (spec-rewrite-decl-with-owner
               owner
               (ast.ast-place-shared-view decl)
-              templates
+              (& (spec-template-env-in-module templates module))
               (spec-place-shared-view cur-state))
               [(Ok maybe-decl decl-state)
                 (set! cur-state decl-state)
                 (match maybe-decl
-                  [(None) unit]
+                  ;; Only a template is dropped.
+                  [(None)
+                    (set!
+                      (array-ref drop-positions drops)
+                      (ast.ast-decl-list-len (& out)))
+                    (set! (array-ref drop-sources drops) input-index)
+                    (+= drops 1)]
                   [(Some rewritten-decl)
-                    (ast.ast-decl-list-push (&mut out) rewritten-decl)
-                    (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                      (&mut out-origins)
-                      (- (ast.ast-decl-list-len (& out)) 1)
-                      1
-                      (parser.compiler-parse-decl-list-storage-key (& rest))
-                      (- rest.offset 1)
-                      decl
-                      false)
-                    (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-                      (&mut out-paths)
-                      decl-path
-                      owner-id
-                      provenance-id)])
+                    (let
+                      [kept : i64 (ast.ast-decl-list-len (& out))]
+                      (set!
+                        (array-ref source-keys kept)
+                        (parser.compiler-parse-decl-list-storage-key (& rest)))
+                      (set! (array-ref source-slots kept) (- rest.offset 1))
+                      (ast.ast-decl-list-push
+                        (&mut sources)
+                        (ast.ast-place-shared-view decl))
+                      (ast.ast-decl-list-push (&mut out) rewritten-decl)
+                      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                        (&mut out-paths)
+                        decl-path
+                        owner-id
+                        provenance-id))])
+                (+= input-index 1)
                 (set! decl-cursor rest)
                 (set! path-cursor (gen-path-list-tail path-cursor))]
               [(Err diag)
@@ -6641,17 +6527,172 @@
                 (set! done true)]))]))
     result))
 
-(define (spec-generated-paths
-  [decls : ast.AstDeclList]
-  [fallback-path : String]) : ast.AstDeclPathList
-  (if (string.eq fallback-path "")
-    (ast.ast-decl-path-list-new)
-    (gen-path-list-for-decls
-      decls
-      fallback-path
-      cbi.compiler-builtin-id-fix-empty
-      cbi.compiler-builtin-id-fix-empty
-      (ast.ast-decl-path-list-new))))
+(defstruct SpecInstancePlacement
+  ;; Per instance: its template's order.
+  (orders (__tl_dyn-array i64))
+  ;; Per kept position, 0 through the kept count: the first instance placed
+  ;; before that position, or -1.
+  (heads (__tl_dyn-array i64))
+  (tails (__tl_dyn-array i64))
+  ;; Per instance: the next instance at its position, or -1.
+  (nexts (__tl_dyn-array i64)))
+
+(define (spec-fill-i64!
+  [items : (&mut items (__tl_dyn-array i64))]
+  [value : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length items))
+      (set! (array-ref items index) value)
+      (+= index 1))))
+
+;; Each generated symbol's template order, by symbol.
+(define (spec-generated-template-orders
+  [records : (& records SpecGeneratedSymbolRecords)]) : spec_id_i64_map.Map
+  (let
+    [orders : spec_id_i64_map.Map
+      (spec_id_i64_map.with-capacity (+ (* records.len 2) 16))]
+    (for [index (iterator.range 0 records.len)]
+      (let
+        [record : SpecGeneratedSymbolRecord
+          (spec-array-shared-view records.slots index)]
+        (spec_id_i64_map.insert-ref!
+          (&mut orders)
+          record.handle
+          record.template-order)))
+    orders))
+
+;; Each instance goes where its template stood, before the declaration kept
+;; after it, in generation order. `drop-positions` holds, per template order,
+;; how many declarations were kept before it.
+(define (spec-instance-placement
+  [owner : (& owner SpecOwnerContext)]
+  [kept-count : i64]
+  [drop-positions : (& drop-positions (__tl_dyn-array i64))]
+  [drops : i64]
+  [generated : (& generated ast.AstDeclList)]) : SpecInstancePlacement
+  (let
+    [by-symbol : spec_id_i64_map.Map
+      (spec-generated-template-orders
+        (& (array-ref owner.generated-symbol-records 0)))]
+    [count : i64 (ast.ast-decl-list-len generated)]
+    [orders : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [heads : (__tl_dyn-array i64) (__tl_make-array i64 (+ kept-count 1))]
+    [tails : (__tl_dyn-array i64) (__tl_make-array i64 (+ kept-count 1))]
+    [nexts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    (spec-fill-i64! (&mut heads) -1)
+    (spec-fill-i64! (&mut nexts) -1)
+    (for [index (iterator.range 0 count)]
+      (let
+        [order : i64
+          (match (ast.ast-decl-list-ref-borrowed generated index)
+            [(DefFn _ name _ _ _ _)
+              (spec_id_i64_map.get-value-or (& by-symbol) name -1)]
+            [_ -1])]
+        [position : i64
+          (if (and (>= order 0) (< order drops))
+            (array-ref drop-positions order)
+            kept-count)]
+        (set! (array-ref orders index) order)
+        (if (< (array-ref heads position) 0)
+          (set! (array-ref heads position) index)
+          (set! (array-ref nexts (array-ref tails position)) index))
+        (set! (array-ref tails position) index)))
+    (SpecInstancePlacement orders heads tails nexts)))
+
+;; The kept declarations with the instances spliced in, and the kept
+;; declarations' origin aliases registered at their final positions.
+(define (spec-splice-instances
+  [kept : (& kept ast.AstDeclList)]
+  [sources : (& sources ast.AstDeclList)]
+  [source-keys : (& source-keys (__tl_dyn-array i64))]
+  [source-slots : (& source-slots (__tl_dyn-array i64))]
+  [generated : (& generated ast.AstDeclList)]
+  [placement : (& placement SpecInstancePlacement)]) : ast.AstDeclList
+  (let
+    [kept-count : i64 (ast.ast-decl-list-len kept)]
+    [out : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity
+        (+ kept-count (ast.ast-decl-list-len generated)))]
+    [origins : parser.CompilerParseDeclOriginAliasVec
+      (parser.compiler-parse-decl-origin-alias-vec-with-capacity kept-count)]
+    (for [position (iterator.range 0 (+ kept-count 1))]
+      (let
+        [instance : i64 (array-ref placement.heads position)]
+        (while (>= instance 0)
+          (ast.ast-decl-list-push
+            (&mut out)
+            (ast.ast-decl-list-get generated instance (ast.ast-decl-fallback)))
+          (set! instance (array-ref placement.nexts instance))))
+      (when
+        (< position kept-count)
+        (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+          (&mut origins)
+          (ast.ast-decl-list-len (& out))
+          1
+          (array-ref source-keys position)
+          (array-ref source-slots position)
+          (& (ast.ast-decl-list-get sources position (ast.ast-decl-fallback)))
+          false)
+        (ast.ast-decl-list-push
+          (&mut out)
+          (ast.ast-decl-list-get kept position (ast.ast-decl-fallback)))))
+    (parser.compiler-parse-decl-origin-alias-vec-register! (& out) (& origins))
+    out))
+
+;; The paths of `spec-splice-instances`' result: an instance takes its
+;; template's path, owner and provenance. `drop-sources` holds, per template
+;; order, the template's index in the input paths.
+(define (spec-splice-instance-paths
+  [kept-paths : (& kept-paths ast.AstDeclPathList)]
+  [input-paths : (& input-paths ast.AstDeclPathList)]
+  [fallback-path : String]
+  [drop-sources : (& drop-sources (__tl_dyn-array i64))]
+  [placement : (& placement SpecInstancePlacement)]) : ast.AstDeclPathList
+  (let
+    [kept-count : i64 (ast.ast-decl-path-list-len kept-paths)]
+    [out : ast.AstDeclPathList
+      (ast.ast-decl-path-list-with-capacity
+        (+ kept-count (array-length placement.orders)))]
+    (for [position (iterator.range 0 (+ kept-count 1))]
+      (let
+        [instance : i64 (array-ref placement.heads position)]
+        (while (>= instance 0)
+          (let
+            [order : i64 (array-ref placement.orders instance)]
+            [source : i64
+              (if (>= order 0)
+                (array-ref drop-sources order)
+                -1)]
+            (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+              (&mut out)
+              (ast.ast-decl-path-list-get
+                input-paths
+                source
+                (string.copy (& fallback-path)))
+              (ast.ast-decl-path-list-owner-id
+                input-paths
+                source
+                cbi.compiler-builtin-id-fix-empty)
+              (ast.ast-decl-path-list-provenance-id
+                input-paths
+                source
+                cbi.compiler-builtin-id-fix-empty)))
+          (set! instance (array-ref placement.nexts instance))))
+      (when
+        (< position kept-count)
+        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+          (&mut out)
+          (ast.ast-decl-path-list-get kept-paths position "")
+          (ast.ast-decl-path-list-owner-id
+            kept-paths
+            position
+            cbi.compiler-builtin-id-fix-empty)
+          (ast.ast-decl-path-list-provenance-id
+            kept-paths
+            position
+            cbi.compiler-builtin-id-fix-empty))))
+    out))
 
 ;; Explicit production entrypoints.  The owner is assembled once and is
 ;; threaded through normalization, template collection, and the rewrite
@@ -6678,8 +6719,7 @@
           [ctfe-env : ctfe.CtfeEnv
             (spec-owner-ctfe-env
               owner
-              (ctfe.ctfe-reflections-from-program
-                (ast.ast-place-shared-view normalized)))]
+              (ctfe.ctfe-reflections-from-program (& normalized)))]
           (if (= templates.len 0)
             (Ok normalized)
             (match (spec-rewrite-decls-with-owner
@@ -6691,13 +6731,9 @@
                 (spec_id_i64_map.with-capacity 64)
                 ctfe-env
                 (spec-place-shared-view owner)))
-              [(Ok rewritten state)
-                (match state
-                  [(State generated _ _ _)
-                    (spec-materialize-owner-generated-symbols! (&mut owner))
-                    (Ok
-                      (ast.ast-program
-                        (spec-decl-list-append rewritten generated)))])]
+              [(Ok rewritten _)
+                (spec-materialize-owner-generated-symbols! (&mut owner))
+                (Ok (ast.ast-program rewritten))]
               [(Err diag) (Err diag)])))])))
 
 (define (compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
@@ -6733,8 +6769,7 @@
               [ctfe-env : ctfe.CtfeEnv
                 (spec-owner-ctfe-env
                   owner
-                  (ctfe.ctfe-reflections-from-program
-                    (ast.ast-place-shared-view normalized)))]
+                  (ctfe.ctfe-reflections-from-program (& normalized)))]
               (if (= templates.len 0)
                 (Ok normalized normalized-paths)
                 (match (spec-rewrite-decls-with-paths-with-owner
@@ -6748,16 +6783,9 @@
                     (spec_id_i64_map.with-capacity 64)
                     ctfe-env
                     (spec-place-shared-view owner)))
-                  [(Ok rewritten rewritten-paths state)
-                    (match state
-                      [(State generated _ _ _)
-                        (spec-materialize-owner-generated-symbols! (&mut owner))
-                        (Ok
-                          (ast.ast-program
-                            (spec-decl-list-append rewritten generated))
-                          (spec-decl-path-list-append
-                            rewritten-paths
-                            (spec-generated-paths generated fallback-path)))])]
+                  [(Ok rewritten rewritten-paths _)
+                    (spec-materialize-owner-generated-symbols! (&mut owner))
+                    (Ok (ast.ast-program rewritten) rewritten-paths)]
                   [(Err diag) (Err diag)])))])]
       [(Err diag) (Err diag)])))
 

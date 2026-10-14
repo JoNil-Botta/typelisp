@@ -29,6 +29,7 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
+free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_binding_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
 rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
@@ -169,6 +170,7 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typ
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
 stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_alias_vector_field_reject|check-fail|tests/safety/stdlib_eq_alias_vector_field_reject.tl|-|eq: unsupported type dynarray_String
 stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
 stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
@@ -214,6 +216,58 @@ mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_referen
 global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
+
+# Calls cannot write an ordinary global while a caller loan is live (#7904).
+global_call_address_effect_reject|check-fail|tests/safety/global_call_address_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_auto_reject|check-fail|tests/safety/global_call_auto_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_buffer_write_reject|check-fail|tests/safety/global_call_buffer_write_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_byvalue_ok|run-exit|tests/safety/global_call_byvalue_ok.tl|1|-
+global_call_cleanup_reject|check-fail|tests/safety/global_call_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> cleanup -> rebind!)
+global_call_cleanup_in_match_reject|check-fail|tests/safety/global_call_cleanup_in_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_closure_reject|check-fail|tests/safety/global_call_closure_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_different_ok|run-exit|tests/safety/global_call_different_ok.tl|10|-
+global_call_ended_ok|run-exit|tests/safety/global_call_ended_ok.tl|1|-
+global_call_explicit_mut_ok|run-exit|tests/safety/global_call_explicit_mut_ok.tl|42|-
+global_call_imported_reject|check-fail|tests/safety/global_call_imported_reject.tl|-|while global `dep.g` is borrowed: it may assign `dep.g` (via read-after -> rebind!)
+global_call_indirect_reject|check-fail|tests/safety/global_call_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_inplace_reject|check-fail|tests/safety/global_call_inplace_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_later_arg_reject|check-fail|tests/safety/global_call_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_macro_reject|check-fail|tests/safety/global_call_macro_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_match_reject|check-fail|tests/safety/global_call_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_shadow_reject|check-fail|tests/safety/global_call_match_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_loop_shadow_reject|check-fail|tests/safety/global_call_match_loop_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_local_shadow_ok|run-exit|tests/safety/global_call_match_local_shadow_ok.tl|42|-
+global_call_argument_let_shadow_reject|check-fail|tests/safety/global_call_argument_let_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_argument_for_shadow_reject|check-fail|tests/safety/global_call_argument_for_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_argument_local_mutation_ok|run-exit|tests/safety/global_call_argument_local_mutation_ok.tl|42|-
+global_call_mut_effect_reject|check-fail|tests/safety/global_call_mut_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> borrow-write!)
+global_call_mutable_loan_reject|check-fail|tests/safety/global_call_mutable_loan_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_nominal_cleanup_reject|check-fail|tests/safety/global_call_nominal_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
+global_call_nominal_owned_reject|check-fail|tests/safety/global_call_nominal_owned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-holder -> close-handle -> drop-word)
+global_call_pure_constructor_ok|run-exit|tests/safety/global_call_pure_constructor_ok.tl|1|-
+global_call_enum_pattern_global_write_reject|check-fail|tests/safety/global_call_enum_pattern_global_write_reject.tl|-|may assign `g`
+global_call_enum_parameter_global_write_reject|check-fail|tests/safety/global_call_enum_parameter_global_write_reject.tl|-|may assign `g`
+global_call_reassign_copy_ok|run-exit|tests/safety/global_call_reassign_copy_ok.tl|1|-
+global_call_rebind_reject|check-fail|tests/safety/global_call_rebind_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_recursion_reject|check-fail|tests/safety/global_call_recursion_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> b! -> a! -> rebind!)
+global_call_three_deep_reject|check-fail|tests/safety/global_call_three_deep_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> first! -> second! -> third! -> rebind!)
+global_call_local_shadow_ok|run-exit|tests/safety/global_call_local_shadow_ok.tl|1|-
+global_call_cleanup_ended_ok|run-exit|tests/safety/global_call_cleanup_ended_ok.tl|1|-
+global_call_generated_global_reject|check-fail|tests/safety/global_call_generated_global_reject.tl|-|while global `generated.g` is borrowed: it may assign `generated.g` (via observe -> reset!)
+global_call_nominal_enum_reject|check-fail|tests/safety/global_call_nominal_enum_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
+global_call_for_owned_shadow_ok|run-exit|tests/safety/global_call_for_owned_shadow_ok.tl|1|-
+global_call_foreach_shadow_ok|run-exit|tests/safety/global_call_foreach_shadow_ok.tl|1|-
+global_call_c_extern_ok|check-ok|tests/safety/global_call_c_extern_ok.tl|-|-
+inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|-|while global `held` is borrowed: it may assign `held` (via observe -> install!)
+global_call_temporary_cleanup_later_arg_reject|check-fail|tests/safety/global_call_temporary_cleanup_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_forward_reject|check-fail|tests/safety/global_call_temporary_cleanup_forward_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> drop-temporary -> close-handle -> drop-word)
+global_call_temporary_cleanup_returned_reject|check-fail|tests/safety/global_call_temporary_cleanup_returned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_indirect_reject|check-fail|tests/safety/global_call_temporary_cleanup_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> <indirect call/lambda> -> close-handle -> drop-word)
+global_call_qualified_callee_reject|check-fail|tests/safety/global_call_qualified_callee_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read -> reset!)
+global_call_qualified_global_reject|check-fail|tests/safety/global_call_qualified_global_reject.tl|-|while global `effects.deep.g` is borrowed: it may assign `effects.deep.g` (via read -> reset!)
+global_call_qualified_pure_helper_ok|run-exit|tests/safety/global_call_qualified_pure_helper_ok.tl|132|-
+global_call_temporary_cleanup_ended_ok|run-exit|tests/safety/global_call_temporary_cleanup_ended_ok.tl|1|-
+global_call_temporary_cleanup_same_call_ok|run-exit|tests/safety/global_call_temporary_cleanup_same_call_ok.tl|1|-
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-
@@ -496,6 +550,13 @@ float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_rej
 float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
+# A with-escape or with-scratch body allocation cannot outlive the form (#8776).
+scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_with_scratch_store_reject|check-fail|tests/safety/scratch_body_with_scratch_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_global_store_reject|check-fail|tests/safety/scratch_body_global_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_return_reject|check-fail|tests/safety/scratch_body_return_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through return
+scratch_body_try_error_exit_reject|check-fail|tests/safety/scratch_body_try_error_exit_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through try's error exit
+scratch_body_owner_region_reject|check-fail|tests/safety/scratch_body_owner_region_reject.tl|-|assignment type mismatch
 in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
 in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
 in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
@@ -679,6 +740,13 @@ tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pat
 # leaves the box usable.
 borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
 borrowed_pattern_copy_deferred_ok|run-exit|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-
+match_copy_loan_ends_ok|run-exit|tests/safety/match_copy_loan_ends_ok.tl|42|-
+match_copy_prior_argument_loan_reject|check-fail|tests/safety/match_copy_prior_argument_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_copy_scrutinee_store_loan_reject|check-fail|tests/safety/match_copy_scrutinee_store_loan_reject.tl|-|cannot assign to borrowed place `pair.right`
+match_copy_loop_carried_loan_reject|check-fail|tests/safety/match_copy_loop_carried_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_reference_result_loan_reject|check-fail|tests/safety/match_reference_result_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_copy_shadowed_owner_loan_reject|check-fail|tests/safety/match_copy_shadowed_owner_loan_reject.tl|-|cannot assign to borrowed place `tok`
+match_reference_shadowed_result_loan_reject|check-fail|tests/safety/match_reference_shadowed_result_loan_reject.tl|-|cannot assign to borrowed place `label`
 borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
 box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
 box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path
@@ -1429,3 +1497,6 @@ compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
 compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
 compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
 compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type
+
+global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
+global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed

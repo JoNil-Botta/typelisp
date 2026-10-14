@@ -39,7 +39,7 @@
 
 (define (build-compiler-symbols-from-source [src : String]) : csym.ResultCompilerSymbols
   (let
-    [program (try (parser.parse-ast-source src))]
+    [program (try (parser.parse-ast-source (& src)))]
     (csym.build-compiler-symbols program)))
 
 ;; Registry handles encode the flattened declaration owner index. A generated
@@ -125,7 +125,7 @@
 
 (define (build-compiler-registries-from-source [src : String]) : csym.ResultCompilerRegistries
   (let
-    [program (try (parser.parse-ast-source src))]
+    [program (try (parser.parse-ast-source (& src)))]
     (csym.build-compiler-registries program)))
 
 (define (compiler-symbols-owner-module-id-at-index
@@ -145,11 +145,7 @@
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
     [(Ok decl)
       (match decl
-        [(DefEnum decl-meta _ _ variants)
-          (compiler-symbols-option-or
-            (csym.compiler-variant-name-id-at-index variants variant-index 0)
-            -1)]
-        [(DefEnumLifetimes decl-meta _ _ _ variants)
+        [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
           (compiler-symbols-option-or
             (csym.compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
@@ -174,9 +170,7 @@
   (match (csym.compiler-symbols-decl-at-index symbols owner-index)
     [(Ok decl)
       (match decl
-        [(DefStruct decl-meta _ _ _ fields)
-          (compiler-field-name-id-at-index fields field-index)]
-        [(DefStructLifetimes decl-meta _ _ _ _ fields)
+        [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
           (compiler-field-name-id-at-index fields field-index)]
         [_ -1])]
     [(Err _) -1]))
@@ -194,8 +188,7 @@
   (match (csym.compiler-symbols-decl-at-index symbols target)
     [(Ok (Def decl-meta _ _ value))
       (compiler-symbols-expr-source-id (ast.ast-node-get value))]
-    [(Ok _) -1]
-    [(Err _) -1]))
+    [(or (Ok _) (Err _)) -1]))
 
 (define (compiler-symbol-lookup-score
   [found : option_i64.Option]
@@ -454,7 +447,7 @@
 
 (define (compiler-symbols-module-duplicate-with-paths-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-symbols-module-duplicate-value-source))
+    (& (compiler-symbols-module-duplicate-value-source)))
     [(Ok program)
       (let
         [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
@@ -507,7 +500,7 @@
     [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
         [(Ok base-symbols)
-          (match (parser.parse-ast-source root-src)
+          (match (parser.parse-ast-source (& root-src))
             [(Ok (Program root-box))
               (match (csym.compiler-symbols-insert-decls
                 base-symbols
@@ -870,8 +863,7 @@
           symbols
           handle)
           [(Ok (I64)) true]
-          [(Ok _) false]
-          [(Err _) false]))]
+          [(or (Ok _) (Err _)) false]))]
     [(None) false]))
 
 (define (compiler-registries-lifetime-field-indexed-ok?) : bool
@@ -954,7 +946,8 @@
 ;; A generated nominal splice at the start of a nested module must leave later
 ;; enum-variant and struct-field handles pointing at their shifted owners.
 (define (compiler-registries-incremental-splice-ok?) : bool
-  (match (parser.parse-ast-source (compiler-registries-incremental-base-source))
+  (match (parser.parse-ast-source
+    (& (compiler-registries-incremental-base-source)))
     [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
         [(Ok base-symbols)
@@ -1055,7 +1048,8 @@
 ;; Append-only symbol and registry growth keeps old handles stable while the
 ;; new nominal owners share the symbol table's logical end.
 (define (compiler-symbols-append-splice-ok?) : bool
-  (match (parser.parse-ast-source (compiler-registries-incremental-base-source))
+  (match (parser.parse-ast-source
+    (& (compiler-registries-incremental-base-source)))
     [(Ok base-program)
       (match (csym.build-compiler-symbols base-program)
         [(Ok base-symbols)
@@ -1378,7 +1372,7 @@
 (defstruct Point (x i64))")
 
 (define (compiler-symbols-module-scope-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-module-scope-source))
+  (match (parser.parse-ast-source (& (compiler-symbols-module-scope-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1516,14 +1510,14 @@
     (and
       (compiler-symbols-span-is?
         (parser.compiler-parse-decl-body-span
-          (ast.ast-decl-def-id name No outer))
+          (& (ast.ast-decl-def-id name No outer)))
         outer-span)
       (compiler-symbols-span-is?
         (parser.compiler-parse-decl-body-span
-          (ast.ast-decl-def-id name No negated))
+          (& (ast.ast-decl-def-id name No negated)))
         inner-span)
       (match (parser.compiler-parse-decl-body-span
-        (ast.ast-decl-def-id name No bare))
+        (& (ast.ast-decl-def-id name No bare)))
         [(Some _) false]
         [(None) true])
       (match (ast.ast-expr-canonical-span outer)
@@ -1531,7 +1525,7 @@
         [(No) false]))))
 
 (define (compiler-symbols-structural-id-api-ok?) : bool
-  (match (parser.parse-ast-source (compiler-symbols-module-scope-source))
+  (match (parser.parse-ast-source (& (compiler-symbols-module-scope-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)

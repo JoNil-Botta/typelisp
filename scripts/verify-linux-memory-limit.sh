@@ -106,6 +106,236 @@ exercise_backend() {
     echo "[linux-memory-limit] $_memory_backend pass/fail fixtures passed"
 }
 
+# Pin the observation order: the workload cannot allocate until the second
+# RSS collection, and that collection waits for its kernel OOM before returning.
+# A separate RSS-only case keeps the fallback termination path mandatory.
+exercise_sampled_observation_races() (
+    TYPELISP_MEMORY_RACE_PS=$(command -v ps)
+    TYPELISP_MEMORY_RACE_AWK=$(command -v awk)
+    export TYPELISP_MEMORY_RACE_PS TYPELISP_MEMORY_RACE_AWK
+    mkdir -p "$WORKDIR/rss-race-bin"
+    cat > "$WORKDIR/rss-race-bin/ps" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$*" = '-e -o pid= -o pgid= -o rss=' ] || exec "$TYPELISP_MEMORY_RACE_PS" "$@"
+while read -r line; do
+    case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}" ;; esac
+done < /proc/self/cgroup
+case $cgroup in */sampler) workload="$cgroup/../workload" ;; *) exit 1 ;; esac
+if mkdir "$TYPELISP_MEMORY_RACE_DIR/first-sample" 2>/dev/null; then
+    # Process-group publication can precede the gated child's cgroup move.
+    placement=0
+    while ! read -r pid < "$workload/cgroup.procs"; do
+        [ "$placement" -lt 100 ] || exit 1
+        placement=$((placement + 1))
+        sleep 0.01
+    done
+    "$TYPELISP_MEMORY_RACE_PS" -o pgid= -p "$pid" | awk 'NR == 1 { print $1 }' \
+        > "$TYPELISP_MEMORY_RACE_DIR/pgid"
+    exec "$TYPELISP_MEMORY_RACE_PS" "$@"
+fi
+: > "$TYPELISP_MEMORY_RACE_DIR/start"
+attempt=0
+while :; do
+    kills=0
+    while read -r key value; do
+        [ "$key" != oom_kill ] || kills=$value
+    done < "$workload/memory.events"
+    if [ "$TYPELISP_MEMORY_RACE_MODE" != kernel ] || [ "$kills" -gt 0 ]; then break; fi
+    [ "$attempt" -lt 200 ] || exit 1
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+cat "$workload/memory.events" > "$TYPELISP_MEMORY_RACE_DIR/events"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = sampling-error ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    : > "$TYPELISP_MEMORY_RACE_DIR/fail-sample"
+fi
+read -r pgid < "$TYPELISP_MEMORY_RACE_DIR/pgid"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = transient ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    printf '%s %s 0\n' "$pgid" "$pgid"
+else
+    : > "$TYPELISP_MEMORY_RACE_DIR/excess-sampled"
+    printf '%s %s 65536\n' "$pgid" "$pgid"
+fi
+EOF
+    cat > "$WORKDIR/rss-race-bin/awk" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in
+    '-v group='*)
+        cat > "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        [ ! -e "$TYPELISP_MEMORY_RACE_DIR/fail-sample" ] || exit 1
+        exec "$TYPELISP_MEMORY_RACE_AWK" "$@" < "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        ;;
+    *) exec "$TYPELISP_MEMORY_RACE_AWK" "$@" ;;
+esac
+EOF
+    cat > "$WORKDIR/rss-race-workload.sh" <<'EOF'
+#!/bin/sh
+set -eu
+while [ ! -e "$TYPELISP_MEMORY_RACE_DIR/start" ]; do sleep 0.01; done
+case $TYPELISP_MEMORY_RACE_MODE in
+    kernel) exec awk 'BEGIN { s = "x"; while (1) s = s s }' ;;
+    rss | transient | sampling-error) exec sleep 30 ;;
+esac
+EOF
+    chmod +x "$WORKDIR/rss-race-bin/ps" "$WORKDIR/rss-race-bin/awk"
+    PATH="$WORKDIR/rss-race-bin:$PATH"
+    export PATH
+    for TYPELISP_MEMORY_RACE_MODE in kernel rss transient sampling-error; do
+        TYPELISP_MEMORY_RACE_DIR="$WORKDIR/rss-race-$TYPELISP_MEMORY_RACE_MODE"
+        export TYPELISP_MEMORY_RACE_MODE TYPELISP_MEMORY_RACE_DIR
+        mkdir "$TYPELISP_MEMORY_RACE_DIR"
+        status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 --timeout-seconds 5 \
+            --report "$TYPELISP_MEMORY_RACE_DIR/report" -- \
+            sh "$WORKDIR/rss-race-workload.sh" \
+            > "$TYPELISP_MEMORY_RACE_DIR/stdout" 2> "$TYPELISP_MEMORY_RACE_DIR/stderr" || status=$?
+        [ "$status" -eq 137 ] || {
+            cat "$TYPELISP_MEMORY_RACE_DIR/stderr" >&2
+            fail "RSS observation fixture $TYPELISP_MEMORY_RACE_MODE returned $status"
+        }
+        if [ "$TYPELISP_MEMORY_RACE_MODE" = kernel ]; then
+            peak=$(sed -n 's/.*systemd summary [0-9]*, sampler \([0-9]*\);.*/\1/p' \
+                "$TYPELISP_MEMORY_RACE_DIR/stderr")
+            kills=$(sed -n 's/.*(oom_kill \([0-9]*\)).*/\1/p' "$TYPELISP_MEMORY_RACE_DIR/stderr")
+            [ "${peak:-0}" -ge 33554432 ] && [ "${kills:-0}" -ge 1 ] ||
+                fail "RSS observation race lost the kernel OOM or sampler peak"
+            if grep -Fq 'memory limit exceeded: aggregate RSS' "$TYPELISP_MEMORY_RACE_DIR/stderr"; then
+                fail "RSS observation race terminated from stale pre-sample OOM state"
+            fi
+        else
+            grep -Fxq 'oom_kill 0' "$TYPELISP_MEMORY_RACE_DIR/events" &&
+                grep -Fq 'memory limit exceeded: aggregate RSS' "$TYPELISP_MEMORY_RACE_DIR/stderr" ||
+                fail "RSS-only excess lost fallback termination without a kernel OOM"
+        fi
+    done
+    echo '[linux-memory-limit] kernel/RSS observation race and RSS-only termination passed'
+)
+
+exercise_sampled_backend() {
+    _sampled_prefix="$WORKDIR/sampled"
+    "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.containment" -- sh -c '
+            while read -r line; do
+                case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}" ;; esac
+            done < /proc/self/cgroup
+            case $cgroup in */workload) ;; *) exit 1 ;; esac
+            read -r cap < "$cgroup/memory.max"
+            read -r swap < "$cgroup/memory.swap.max"
+            [ "$cap" = 33554432 ] && [ "$swap" = 0 ]
+        ' > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || {
+            cat "$_sampled_prefix.stderr" >&2 || true
+            fail "sampled workload did not enter its exact capped child cgroup"
+        }
+    _sampled_run=1
+    while [ "$_sampled_run" -le 20 ]; do
+        _sampled_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+            --report "$_sampled_prefix-$_sampled_run.memory" -- \
+            awk 'BEGIN { s = "x"; while (1) s = s s }' \
+            > "$_sampled_prefix.stdout" 2> "$_sampled_prefix-$_sampled_run.stderr" || \
+            _sampled_status=$?
+        _sampled_peak=$(sed -n 's/.*systemd summary [0-9]*, sampler \([0-9]*\);.*/\1/p' \
+            "$_sampled_prefix-$_sampled_run.stderr")
+        _sampled_kills=$(sed -n 's/.*(oom_kill \([0-9]*\)).*/\1/p' \
+            "$_sampled_prefix-$_sampled_run.stderr")
+        if [ "$_sampled_status" -ne 137 ] ||
+            [ "${_sampled_peak:-0}" -lt 33554432 ] ||
+            [ "${_sampled_kills:-0}" -lt 1 ]; then
+            cat "$_sampled_prefix-$_sampled_run.stderr" >&2 || true
+            fail "fast OOM $_sampled_run lost the sampler's own peak or OOM evidence"
+        fi
+        _sampled_run=$((_sampled_run + 1))
+    done
+    _sampled_pid="$WORKDIR/sampled-detached.pid"
+    _sampled_status=0
+    "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.detached" -- sh -c '
+            setsid sleep 30 &
+            printf "%s\n" "$!" > "$1"
+            awk '\''BEGIN { s = "x"; while (1) s = s s }'\''
+        ' sh "$_sampled_pid" > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 137 ] || fail "detached descendant OOM did not report 137"
+    read -r _sampled_child < "$_sampled_pid"
+    sleep 0.1
+    if kill -0 "$_sampled_child" 2>/dev/null; then
+        fail "sampled OOM left detached descendant $_sampled_child alive"
+    fi
+    for _sampled_exit in 23 124; do
+        _sampled_timeout=0
+        _sampled_delay=0.1
+        if [ "$_sampled_exit" -eq 124 ]; then
+            _sampled_timeout=1
+            _sampled_delay=30
+        fi
+        _sampled_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+            --timeout-seconds "$_sampled_timeout" \
+            --report "$_sampled_prefix.detached-$_sampled_exit" -- sh -c '
+                setsid sleep 30 &
+                printf "%s\n" "$!" > "$1"
+                sleep "$2"
+                exit 23
+            ' sh "$_sampled_pid" "$_sampled_delay" \
+            > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+            _sampled_status=$?
+        [ "$_sampled_status" -eq "$_sampled_exit" ] || \
+            fail "sampled descendant cleanup changed exit $_sampled_exit to $_sampled_status"
+        read -r _sampled_child < "$_sampled_pid"
+        sleep 0.1
+        if kill -0 "$_sampled_child" 2>/dev/null; then
+            fail "sampled exit $_sampled_exit left detached descendant $_sampled_child alive"
+        fi
+    done
+
+    _sampled_status=0
+    linux_memory_limit_run_sampled 9223372036854775807 sh -c 'echo must-not-run' \
+        > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 2 ] || fail "sampler headroom overflow did not fail closed"
+    [ ! -s "$_sampled_prefix.stdout" ] || fail "sampler headroom overflow ran the workload"
+    grep -Fq 'cannot reserve sampler headroom' "$_sampled_prefix.stderr" || \
+        fail "sampler headroom overflow lost its actionable diagnostic"
+
+    # Simulate an unavailable delegation property while preserving systemd's
+    # actual hard parent cap. No requested workload may start on this path.
+    _sampled_systemd=$(command -v systemd-run)
+    mkdir "$WORKDIR/no-delegation"
+    cat > "$WORKDIR/no-delegation/systemd-run" <<'EOF'
+#!/bin/sh
+remaining=$#
+while [ "$remaining" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+        --property=DelegateSubgroup=sampler) ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+    remaining=$((remaining - 1))
+done
+exec "$TYPELISP_MEMORY_TEST_SYSTEMD_RUN" "$@"
+EOF
+    chmod +x "$WORKDIR/no-delegation/systemd-run"
+    _sampled_status=0
+    PATH="$WORKDIR/no-delegation:$PATH" \
+        TYPELISP_MEMORY_TEST_SYSTEMD_RUN=$_sampled_systemd \
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.no-delegation" -- sh -c 'echo must-not-run' \
+        > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 2 ] || fail "missing delegation did not fail closed"
+    [ ! -s "$_sampled_prefix.stdout" ] || fail "missing delegation ran the workload"
+    grep -Fq 'requires systemd DelegateSubgroup=sampler' "$_sampled_prefix.stderr" || \
+        fail "missing delegation lost its actionable diagnostic"
+    grep -Fxq 'reason=wrapper-failure' "$_sampled_prefix.no-delegation" || \
+        fail "missing delegation lost wrapper-failure classification"
+    echo "[linux-memory-limit] sampled containment, 20 fast OOMs and missing delegation passed"
+}
+
 exercise_nested_backend() {
     _nested_backend=$1
     assert_no_nested_scratch() {
@@ -250,6 +480,8 @@ linux_memory_limit_select_backend
 [ "$LINUX_MEMORY_LIMIT_BACKEND" = systemd-user-cgroup ] ||
     fail "Linux memory limiting selected $LINUX_MEMORY_LIMIT_BACKEND, expected systemd-user-cgroup"
 exercise_backend systemd-user-cgroup
+exercise_sampled_observation_races
+exercise_sampled_backend
 exercise_nested_backend systemd-user-cgroup
 
 echo "Linux memory-limit helper self-tests passed"

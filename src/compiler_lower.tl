@@ -2,6 +2,7 @@
 ;;
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -87,11 +88,8 @@
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
   [src : (& src (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (lower-name-store-add-segment! [store : (&mut store LowerNameStore)]) : unit
   (let
@@ -774,11 +772,9 @@
 (define (lower-comptime-error-id-cache-fingerprint
   [cache : (__tl_dyn-array i64)]) : i64
   (let
-    [index : i64 0]
     [out : i64 0]
-    (while (< index lower-comptime-cache-size)
-      (set! out (hash.combine out (hash.i64 (array-ref cache index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 lower-comptime-cache-size)]
+      (set! out (hash.combine out (hash.i64 (array-ref cache index)))))
     out))
 
 (define (compiler-lower-checked-pools-state-fingerprint
@@ -849,7 +845,7 @@
         (=
           (array-ref left.fingerprints index)
           (array-ref right.fingerprints index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 ;; IR vars allocated before an enclosing loop survive its backedge. Track the
@@ -949,27 +945,27 @@
 
 (define (lower-mode-abi [mode : CompilerLowerMode]) : LowerModeAbi
   (match mode
-    [(CompilerLowerMode.Scalar) (None)]
-    [(CompilerLowerMode.Avx2) (None)]
-    [(CompilerLowerMode.Avx512) (None)]
-    [(CompilerLowerMode.LinuxScalar) (Linux)]
-    [(CompilerLowerMode.LinuxAvx2) (Linux)]
-    [(CompilerLowerMode.LinuxAvx512) (Linux)]
-    [(CompilerLowerMode.WindowsScalar) (Windows)]
-    [(CompilerLowerMode.WindowsAvx2) (Windows)]
-    [(CompilerLowerMode.WindowsAvx512) (Windows)]))
+    [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.Avx2)
+         (CompilerLowerMode.Avx512))
+      (None)]
+    [(or (CompilerLowerMode.LinuxScalar) (CompilerLowerMode.LinuxAvx2)
+         (CompilerLowerMode.LinuxAvx512))
+      (Linux)]
+    [(or (CompilerLowerMode.WindowsScalar) (CompilerLowerMode.WindowsAvx2)
+         (CompilerLowerMode.WindowsAvx512))
+      (Windows)]))
 
 (define (lower-mode-simd [mode : CompilerLowerMode]) : LowerModeSimd
   (match mode
-    [(CompilerLowerMode.Scalar) (Scalar)]
-    [(CompilerLowerMode.LinuxScalar) (Scalar)]
-    [(CompilerLowerMode.WindowsScalar) (Scalar)]
-    [(CompilerLowerMode.Avx2) (Avx2)]
-    [(CompilerLowerMode.LinuxAvx2) (Avx2)]
-    [(CompilerLowerMode.WindowsAvx2) (Avx2)]
-    [(CompilerLowerMode.Avx512) (Avx512)]
-    [(CompilerLowerMode.LinuxAvx512) (Avx512)]
-    [(CompilerLowerMode.WindowsAvx512) (Avx512)]))
+    [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.LinuxScalar)
+         (CompilerLowerMode.WindowsScalar))
+      (Scalar)]
+    [(or (CompilerLowerMode.Avx2) (CompilerLowerMode.LinuxAvx2)
+         (CompilerLowerMode.WindowsAvx2))
+      (Avx2)]
+    [(or (CompilerLowerMode.Avx512) (CompilerLowerMode.LinuxAvx512)
+         (CompilerLowerMode.WindowsAvx512))
+      (Avx512)]))
 
 (define (lower-mode-of [abi : LowerModeAbi] [simd : LowerModeSimd]) : CompilerLowerMode
   (match abi
@@ -1774,8 +1770,7 @@
       (let
         [count : i64 (ast.ast-decl-path-list-len (& paths))]
         [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [path : String (ast.ast-decl-path-list-get (& paths) index "")]
             [owned-path : String (string.copy (& path))]
@@ -1789,8 +1784,7 @@
               (ast.ast-decl-path-list-provenance-id
                 (& paths)
                 index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1))))
+                cbi.compiler-builtin-id-fix-empty))))
         out))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
@@ -2504,9 +2498,7 @@
   [expr : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
   (match (lower-global-shared-view expr)
     [(Spanned _ span) (Some span)]
-    [(MacroExpansion _ _ _) (No)]
-    [(ForOwnedState _) (No)]
-    [(ForOwnedStep _) (No)]
+    [(or (MacroExpansion _ _ _) (ForOwnedState _) (ForOwnedStep _)) (No)]
     [_
       (ast.ast-expr-list-fold
         (ast.ast-expr-child-ids expr)
@@ -2694,7 +2686,7 @@
                 binding.symbol-id
                 (- write 1)))
             (set! cursor binding.parent)
-            (set! write (- write 1)))))]))
+            (-= write 1))))]))
 
 (define (lower-name-env-materialize-two
   [left : LowerNameEnv]
@@ -2747,7 +2739,7 @@
           (set!
             (array-ref bindings index)
             (LowerNameFlatBinding source-id logical-id symbol-id))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! cur rest)]))
     (set! index (- count 1))
     (while (>= index 0)
@@ -2760,7 +2752,7 @@
             binding.logical-id
             binding.symbol-id
             out))
-        (set! index (- index 1))))
+        (-= index 1)))
     out))
 
 (define (lower-name-env-append [left : LowerNameEnv] [right : LowerNameEnv]) : LowerNameEnv
@@ -3046,7 +3038,7 @@
               (lower-name-binding-logical-alias?
                 binding.source-id
                 binding.logical-id)
-              (set! count (+ count 1)))
+              (+= count 1))
             (set! cursor binding.parent)))
         count)]))
 
@@ -3171,7 +3163,7 @@
                   (when
                     (< child 0)
                     (set! child next-node)
-                    (set! next-node (+ next-node 1))
+                    (+= next-node 1)
                     (lower_i64_i64_map.insert-ref! (&mut edges) edge-key child))
                   (set! node child)
                   (set!
@@ -3465,11 +3457,8 @@
   [source : (__tl_dyn-array LowerNameCache)]
   [destination : (&mut destination (__tl_dyn-array LowerNameCache))]
   [len : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref destination index) (array-ref source index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 len)]
+    (set! (array-ref destination index) (array-ref source index))))
 
 (define (lower-module-name-cache-store-grow [store : LowerModuleNameCacheStore]) : LowerModuleNameCacheStore
   (let
@@ -4504,10 +4493,8 @@
         (if (< count 1)
           1
           count))]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) -1)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) -1))
     (compiler-lower-state-set-alias-symbol-memo! lower-state slots)))
 
 (define (lower-alias-symbol-memo-release! [lower-state : CompilerLowerState]) : unit
@@ -5238,13 +5225,11 @@
 (define (lower-dirname [path : String]) : String
   (let
     [n : i64 (string.string-length path)]
-    [i : i64 0]
     [last : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (lower-path-separator? (string.string-ref path i))
         (set! last i)
-        (set! last last))
-      (set! i (+ i 1)))
+        (set! last last)))
     (if (< last 0)
       ""
       (string.substring path 0 (+ last 1)))))
@@ -5260,14 +5245,12 @@
       (let
         [buf : text_buf.TextBuf
           (text_buf.append (text_buf.empty) (svec.get (& segments) 0 ""))]
-        [i : i64 1]
-        (while (< i count)
+        (for [i (iterator.range 1 count)]
           (set!
             buf
             (text_buf.append
               (text_buf.append buf "/")
-              (svec.get (& segments) i "")))
-          (set! i (+ i 1)))
+              (svec.get (& segments) i ""))))
         (text_buf.render buf)))))
 
 (define (lower-path-normalize-segment
@@ -5288,8 +5271,7 @@
         (if (string.eq top "..")
           (svec.push-ref! segments segment)
           (match (svec.pop-ref! segments)
-            [(Ok _) unit]
-            [Empty unit])))]))
+            [(or (Ok _) Empty) unit])))]))
 
 (define (lower-path-canonical? [path : (& path str)]) : bool
   (let
@@ -5321,7 +5303,7 @@
                 unit)
               (set! segment-start (+ i 1)))]
           [else unit])
-        (set! i (+ i 1))))
+        (+= i 1)))
     (if (not ok)
       false
       (let
@@ -5448,7 +5430,7 @@
               rooted)
             (set! segment-start (+ i 1)))
           (set! segment-start segment-start))
-        (set! i (+ i 1)))
+        (+= i 1))
       (lower-path-normalize-segment
         (string.substring path segment-start (- n segment-start))
         (&mut segments)
@@ -5488,7 +5470,7 @@
               (if (=
                 (cast (string.string-ref text (+ start i)) : i64)
                 (cast (string.string-ref prefix i) : i64))
-                (set! i (+ i 1))
+                (+= i 1)
                 (set! ok false))
               (set! ok false)))
           (= i prefix-len))))))
@@ -5673,8 +5655,8 @@
 
 (define (lower-entry-main-decl? [decl : ast.AstDecl]) : bool
   (match decl
-    [(Def decl-meta name _ _) (= name cbi.compiler-builtin-id-fix-main)]
-    [(DefFn decl-meta name _ _ _ _) (= name cbi.compiler-builtin-id-fix-main)]
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _))
+      (= name cbi.compiler-builtin-id-fix-main)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
@@ -5901,31 +5883,7 @@
   [module-id : i64]
   [decl : ast.AstDecl]) : LowerNameEnv
   (match decl
-    [(Def decl-meta name _ _)
-      (let
-        [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-decl-module-binding-id
-          lower-state
-          names
-          entry-path
-          decl-path
-          module
-          module-id
-          name-str
-          name))]
-    [(DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-decl-module-binding-id
-          lower-state
-          names
-          entry-path
-          decl-path
-          module
-          module-id
-          name-str
-          name))]
-    [(DefDispatch decl-meta name _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefDispatch _ name _))
       (let
         [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-module-binding-id
@@ -5950,7 +5908,7 @@
           name-str
           name
           (deref metadata)))]
-    [(DefEnum decl-meta _ cleanup _)
+    [(or (DefEnum _ _ cleanup _) (DefEnumLifetimes _ _ _ cleanup _))
       (lower-name-env-add-enum-cleanup-in-module
         lower-state
         names
@@ -5959,25 +5917,7 @@
         module
         module-id
         cleanup)]
-    [(DefEnumLifetimes decl-meta _ _ cleanup _)
-      (lower-name-env-add-enum-cleanup-in-module
-        lower-state
-        names
-        entry-path
-        decl-path
-        module
-        module-id
-        cleanup)]
-    [(DefStruct decl-meta _ _ cleanup _)
-      (lower-name-env-add-struct-cleanup-in-module
-        lower-state
-        names
-        entry-path
-        decl-path
-        module
-        module-id
-        cleanup)]
-    [(DefStructLifetimes decl-meta _ _ _ cleanup _)
+    [(or (DefStruct _ _ _ cleanup _) (DefStructLifetimes _ _ _ _ cleanup _))
       (lower-name-env-add-struct-cleanup-in-module
         lower-state
         names
@@ -6001,23 +5941,14 @@
 
 (define (lower-decl-lexical-binding-id [decl : ast.AstDecl]) : LowerNameCacheMaybeId
   (match decl
-    [(Def decl-meta name _ _) (Some name)]
-    [(DefFn decl-meta name _ _ _ _) (Some name)]
-    [(DefDispatch decl-meta name _) (Some name)]
-    [(Extern decl-meta name _ _ _) (Some name)]
-    [(DefEnum decl-meta _ cleanup _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefDispatch _ name _)
+         (Extern _ name _ _ _))
+      (Some name)]
+    [(or (DefEnum _ _ cleanup _) (DefEnumLifetimes _ _ _ cleanup _))
       (match cleanup
         [(Fn name) (Some (ci.intern-syntax-id-value name))]
         [(No) (No)])]
-    [(DefEnumLifetimes decl-meta _ _ cleanup _)
-      (match cleanup
-        [(Fn name) (Some (ci.intern-syntax-id-value name))]
-        [(No) (No)])]
-    [(DefStruct decl-meta _ _ cleanup _)
-      (match cleanup
-        [(Fn name) (Some (ci.intern-syntax-id-value name))]
-        [(No) (No)])]
-    [(DefStructLifetimes decl-meta _ _ _ cleanup _)
+    [(or (DefStruct _ _ _ cleanup _) (DefStructLifetimes _ _ _ _ cleanup _))
       (match cleanup
         [(Fn name) (Some (ci.intern-syntax-id-value name))]
         [(No) (No)])]
@@ -6082,10 +6013,9 @@
   [module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 module-id]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -6132,8 +6062,7 @@
                     lower-state
                     owner-names
                     decl)
-                  owner-names)))])
-        (set! index (+ index 1))))
+                  owner-names)))])))
     cur-names))
 
 (define (lower-name-env-add-clone-decl-in-module-inner
@@ -6276,7 +6205,6 @@
   [initial-module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
     ;; Match the backing slot rather than binding the row to a local first: the
@@ -6284,7 +6212,7 @@
     ;; and hands the slot straight on (aggregate arguments pass by reference).
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
         (match (lower-global-array-element-shared-view
@@ -6305,8 +6233,7 @@
                 cur-module-id
                 (lower-global-array-element-shared-view
                   decl-slots
-                  (+ decl-offset index))))])
-        (set! index (+ index 1))))
+                  (+ decl-offset index))))])))
     cur-names))
 
 (define (lower-name-env-add-clone-decls
@@ -6379,39 +6306,7 @@
   [decl : ast.AstDecl]
   [path-aware : bool]) : LowerNameEnv
   (match decl
-    [(Def decl-meta name _ _)
-      (let
-        [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-decl-import-alias-binding-base-id
-          lower-state
-          names
-          position
-          entry-path
-          decl-path
-          alias
-          alias-id
-          module
-          module-id
-          name-str
-          name
-          path-aware))]
-    [(DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-decl-import-alias-binding-base-id
-          lower-state
-          names
-          position
-          entry-path
-          decl-path
-          alias
-          alias-id
-          module
-          module-id
-          name-str
-          name
-          path-aware))]
-    [(DefDispatch decl-meta name _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefDispatch _ name _))
       (let
         [name-str : String (lower-name-id-text lower-state name)]
         (lower-name-env-add-decl-import-alias-binding-base-id
@@ -6446,7 +6341,7 @@
             name-str
             name
             (deref metadata))))]
-    [(DefEnum decl-meta _ cleanup _)
+    [(or (DefEnum _ _ cleanup _) (DefEnumLifetimes _ _ _ cleanup _))
       (match cleanup
         [(No) names]
         [(Fn cleanup-name)
@@ -6467,49 +6362,7 @@
               cleanup-str
               cleanup-name-id
               path-aware))])]
-    [(DefEnumLifetimes decl-meta _ _ cleanup _)
-      (match cleanup
-        [(No) names]
-        [(Fn cleanup-name)
-          (let
-            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
-            [cleanup-str : String
-              (lower-name-id-text lower-state cleanup-name-id)]
-            (lower-name-env-add-decl-import-alias-binding-base-id
-              lower-state
-              names
-              position
-              entry-path
-              decl-path
-              alias
-              alias-id
-              module
-              module-id
-              cleanup-str
-              cleanup-name-id
-              path-aware))])]
-    [(DefStruct decl-meta _ _ cleanup _)
-      (match cleanup
-        [(No) names]
-        [(Fn cleanup-name)
-          (let
-            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
-            [cleanup-str : String
-              (lower-name-id-text lower-state cleanup-name-id)]
-            (lower-name-env-add-decl-import-alias-binding-base-id
-              lower-state
-              names
-              position
-              entry-path
-              decl-path
-              alias
-              alias-id
-              module
-              module-id
-              cleanup-str
-              cleanup-name-id
-              path-aware))])]
-    [(DefStructLifetimes decl-meta _ _ _ cleanup _)
+    [(or (DefStruct _ _ _ cleanup _) (DefStructLifetimes _ _ _ _ cleanup _))
       (match cleanup
         [(No) names]
         [(Fn cleanup-name)
@@ -6557,43 +6410,7 @@
   [module-id : i64]
   [decl : ast.AstDecl]) : LowerNameEnv
   (match decl
-    [(Def decl-meta name _ _)
-      (let
-        [name-str : String
-          (lower-name-id-text
-            (compiler-lower-state-from-name-cache base-cache)
-            name)]
-        (lower-name-env-add-import-alias-binding-base-cache-id
-          names
-          base-cache
-          dedup-base
-          alias
-          alias-id
-          (lower-global-shared-view name-str)
-          name
-          (lower-module-name-key-id-by-id module-id name)
-          module
-          name-str
-          name))]
-    [(DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String
-          (lower-name-id-text
-            (compiler-lower-state-from-name-cache base-cache)
-            name)]
-        (lower-name-env-add-import-alias-binding-base-cache-id
-          names
-          base-cache
-          dedup-base
-          alias
-          alias-id
-          (lower-global-shared-view name-str)
-          name
-          (lower-module-name-key-id-by-id module-id name)
-          module
-          name-str
-          name))]
-    [(DefDispatch decl-meta name _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefDispatch _ name _))
       (let
         [name-str : String
           (lower-name-id-text
@@ -6634,7 +6451,7 @@
             name-str
             name
             (deref metadata))))]
-    [(DefEnum decl-meta _ cleanup _)
+    [(or (DefEnum _ _ cleanup _) (DefEnumLifetimes _ _ _ cleanup _))
       (match cleanup
         [(No) names]
         [(Fn cleanup-name)
@@ -6656,51 +6473,7 @@
               module
               cleanup-str
               cleanup-name-id))])]
-    [(DefEnumLifetimes decl-meta _ _ cleanup _)
-      (match cleanup
-        [(No) names]
-        [(Fn cleanup-name)
-          (let
-            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
-            [cleanup-str : String
-              (lower-name-id-text
-                (compiler-lower-state-from-name-cache base-cache)
-                cleanup-name-id)]
-            (lower-name-env-add-import-alias-binding-base-cache-id
-              names
-              base-cache
-              dedup-base
-              alias
-              alias-id
-              (lower-global-shared-view cleanup-str)
-              cleanup-name-id
-              (lower-module-name-key-id-by-id module-id cleanup-name-id)
-              module
-              cleanup-str
-              cleanup-name-id))])]
-    [(DefStruct decl-meta _ _ cleanup _)
-      (match cleanup
-        [(No) names]
-        [(Fn cleanup-name)
-          (let
-            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
-            [cleanup-str : String
-              (lower-name-id-text
-                (compiler-lower-state-from-name-cache base-cache)
-                cleanup-name-id)]
-            (lower-name-env-add-import-alias-binding-base-cache-id
-              names
-              base-cache
-              dedup-base
-              alias
-              alias-id
-              (lower-global-shared-view cleanup-str)
-              cleanup-name-id
-              (lower-module-name-key-id-by-id module-id cleanup-name-id)
-              module
-              cleanup-str
-              cleanup-name-id))])]
-    [(DefStructLifetimes decl-meta _ _ _ cleanup _)
+    [(or (DefStruct _ _ _ cleanup _) (DefStructLifetimes _ _ _ _ cleanup _))
       (match cleanup
         [(No) names]
         [(Fn cleanup-name)
@@ -6761,11 +6534,13 @@
     (if (< slot 0)
       cur-names
       (let
-        [index : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [decl-offset : i64 decls.offset]
         [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-        (while (< index end)
+        (for [index
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [position : i64
               (lower-global-array-element-shared-view positions index)]
@@ -6779,13 +6554,10 @@
                 position
                 (lower-global-shared-view entry-path))]
             (match (lower-global-shared-view decl)
-              [(Module _) unit]
-              [(Import decl-meta _) unit]
-              [(IncludeStr _ _) unit]
-              [(IncludeStrComptime _ _) unit]
-              [(IncludeStrLzss _ _) unit]
-              [(IncludeBin _ _) unit]
-              [(Test _ _ _ _) unit]
+              [(or (Module _) (Import _ _) (IncludeStr _ _)
+                   (IncludeStrComptime _ _) (IncludeStrLzss _ _)
+                   (IncludeBin _ _) (Test _ _ _ _))
+                unit]
               [_
                 (set!
                   cur-names
@@ -6800,8 +6572,7 @@
                     (lower-global-shared-view target-module)
                     target-module-id
                     decl
-                    path-aware))])
-            (set! index (+ index 1))))
+                    path-aware))])))
         cur-names))))
 
 ;; --- per-program module -> decl-position index ------------------
@@ -6885,10 +6656,9 @@
           [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
           [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
           [cur-module-id : i64 empty-module-id]
-          [i : i64 0]
           [running : i64 0]
           ;; Pass 1: assign a dense slot per module id and count its decls.
-          (while (< i count)
+          (for [i (iterator.range 0 count)]
             (match (array-ref decl-slots (+ decl-offset i))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
@@ -6903,21 +6673,17 @@
                             (&mut modules)
                             cur-module-id
                             new-slot)
-                          (set! module-count (+ module-count 1))
+                          (+= module-count 1)
                           new-slot)])]
-                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))])
-            (set! i (+ i 1)))
+                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))]))
           ;; Prefix sums: starts fixed, ends double as fill cursors below.
-          (set! i 0)
-          (while (< i module-count)
+          (for [i (iterator.range 0 module-count)]
             (set! (array-ref starts i) running)
             (set! (array-ref ends i) running)
-            (set! running (+ running (array-ref counts i)))
-            (set! i (+ i 1)))
+            (+= running (array-ref counts i)))
           ;; Pass 2: fill program-order positions per module slot.
           (set! cur-module-id empty-module-id)
-          (set! i 0)
-          (while (< i count)
+          (for [i (iterator.range 0 count)]
             (match (array-ref decl-slots (+ decl-offset i))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
@@ -6927,8 +6693,7 @@
                       [cursor : i64 (array-ref ends slot)]
                       (set! (array-ref positions cursor) i)
                       (set! (array-ref ends slot) (+ cursor 1)))]
-                  [(LookupMissing) unit])])
-            (set! i (+ i 1)))
+                  [(LookupMissing) unit])]))
           (compiler-lower-state-set-module-decl-index-modules!
             lower-state
             modules)
@@ -6979,12 +6744,14 @@
     (if (< slot 0)
       cur-names
       (let
-        [j : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [target-module : String
           (lower-name-id-text lower-state target-module-id)]
         [alias : String (lower-name-id-text lower-state alias-id)]
-        (while (< j end)
+        (for [j
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [decl : ast.AstDecl
               (lower-global-array-element-shared-view
@@ -6993,13 +6760,10 @@
                   decls.offset
                   (lower-global-array-element-shared-view positions j)))]
             (match (lower-global-shared-view decl)
-              [(Module _) unit]
-              [(Import decl-meta _) unit]
-              [(IncludeStr _ _) unit]
-              [(IncludeStrComptime _ _) unit]
-              [(IncludeStrLzss _ _) unit]
-              [(IncludeBin _ _) unit]
-              [(Test _ _ _ _) unit]
+              [(or (Module _) (Import _ _) (IncludeStr _ _)
+                   (IncludeStrComptime _ _) (IncludeStrLzss _ _)
+                   (IncludeBin _ _) (Test _ _ _ _))
+                unit]
               [_
                 (set!
                   cur-names
@@ -7011,8 +6775,7 @@
                     alias-id
                     (lower-global-shared-view target-module)
                     target-module-id
-                    decl))])
-            (set! j (+ j 1))))
+                    decl))])))
         cur-names))))
 
 (define (lower-name-env-add-selected-item-alias
@@ -7092,7 +6855,6 @@
   [path-aware : bool]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
     ;; Seed the overlay membership set from the base env so the per-alias
@@ -7107,7 +6869,7 @@
     (lower-alias-symbol-memo-reset!
       lower-state
       (ast.ast-decl-list-len (& all-decls)))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -7142,8 +6904,7 @@
           [_ unit])
         (match decl
           [(Module next-module) (set! cur-module-id next-module)]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (lower-alias-symbol-memo-release! lower-state)
     cur-names))
 
@@ -7192,9 +6953,11 @@
     (if (< slot 0)
       cur-names
       (let
-        [j : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
-        (while (< j end)
+        (for [j
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [decl : ast.AstDecl
               (lower-global-array-element-shared-view
@@ -7226,8 +6989,7 @@
                     target-module
                     alias
                     cbi.compiler-builtin-id-fix-empty))]
-              [_ unit])
-            (set! j (+ j 1))))
+              [_ unit])))
         cur-names))))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
@@ -7347,35 +7109,16 @@
   [module : i64]
   [decl : ast.AstDecl]) : ResultLowerModuleTypeEnvs
   (match decl
-    [(Def decl-meta name _ _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefDispatch _ name _)
+         (Extern _ name _ _ _))
       (lower-module-local-type-envs-bind-qualified
         top-env
         env
         local-env
         module
         name)]
-    [(DefFn decl-meta name _ _ _ _)
-      (lower-module-local-type-envs-bind-qualified
-        top-env
-        env
-        local-env
-        module
-        name)]
-    [(DefDispatch decl-meta name _)
-      (lower-module-local-type-envs-bind-qualified
-        top-env
-        env
-        local-env
-        module
-        name)]
-    [(Extern decl-meta name _ _ _)
-      (lower-module-local-type-envs-bind-qualified
-        top-env
-        env
-        local-env
-        module
-        name)]
-    [(DefEnum decl-meta _ cleanup variants)
+    [(or (DefEnum _ _ cleanup variants)
+         (DefEnumLifetimes _ _ _ cleanup variants))
       (match (lower-module-local-type-envs-add-variants
         top-env
         env
@@ -7393,43 +7136,8 @@
                 module
                 (ci.intern-syntax-id-value cleanup-name))])]
         [(Err message) (Err message)])]
-    [(DefEnumLifetimes decl-meta _ _ cleanup variants)
-      (match (lower-module-local-type-envs-add-variants
-        top-env
-        env
-        local-env
-        module
-        variants)
-        [(Ok next-env next-local-env)
-          (match cleanup
-            [(No) (Ok next-env next-local-env)]
-            [(Fn cleanup-name)
-              (lower-module-local-type-envs-bind-qualified
-                top-env
-                next-env
-                next-local-env
-                module
-                (ci.intern-syntax-id-value cleanup-name))])]
-        [(Err message) (Err message)])]
-    [(DefStruct decl-meta name _ cleanup _)
-      (match (lower-module-local-type-envs-bind-qualified
-        top-env
-        env
-        local-env
-        module
-        name)
-        [(Ok next-env next-local-env)
-          (match cleanup
-            [(No) (Ok next-env next-local-env)]
-            [(Fn cleanup-name)
-              (lower-module-local-type-envs-bind-qualified
-                top-env
-                next-env
-                next-local-env
-                module
-                (ci.intern-syntax-id-value cleanup-name))])]
-        [(Err message) (Err message)])]
-    [(DefStructLifetimes decl-meta name _ _ cleanup _)
+    [(or (DefStruct _ name _ cleanup _)
+         (DefStructLifetimes _ name _ _ cleanup _))
       (match (lower-module-local-type-envs-bind-qualified
         top-env
         env
@@ -7516,7 +7224,7 @@
               [(Err message)
                 (set! result (Err message))
                 (set! done true)])])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if done
       result
       (Ok
@@ -7566,11 +7274,8 @@
   [source : (__tl_dyn-array LowerModuleLocalView)]
   [destination : (&mut destination (__tl_dyn-array LowerModuleLocalView))]
   [len : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref destination index) (array-ref source index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 len)]
+    (set! (array-ref destination index) (array-ref source index))))
 
 (define (lower-module-local-view-store-grow [store : LowerModuleLocalViewStore]) : LowerModuleLocalViewStore
   (let
@@ -7722,7 +7427,7 @@
                 (&mut last-markers)
                 module-id
                 count)
-              (set! count (+ count 1))]
+              (+= count 1)]
             [_ unit])
           (set! cursor rest)]))
     (LowerModuleViewEpochs
@@ -7796,7 +7501,7 @@
           (lower-global-shared-view view))
         (__tl_array-push! epochs.modules module-id)
         (__tl_array-push! epochs.module-epochs epoch)
-        (set! epochs.built (+ epochs.built 1))
+        (+= epochs.built 1)
         (Ok view))]))
 
 ;; Release every epoch the loop has passed at marker index MARKER: each one
@@ -7819,8 +7524,7 @@
       [store : LowerModuleLocalViewStore
         (compiler-lower-state-active-module-local-views lower-state)]
       [modules : lower_i64_i64_map.Map store.modules]
-      [index : i64 0]
-      (while (< index epochs.built)
+      (for [index (iterator.range 0 epochs.built)]
         (if (= (array-ref epochs.module-epochs index) epoch)
           (begin
             (lower_i64_i64_map.remove-ref!
@@ -7834,8 +7538,7 @@
                 1)
               unit)
             unit)
-          unit)
-        (set! index (+ index 1)))
+          unit))
       (compiler-lower-state-set-active-module-local-views!
         lower-state
         (LowerModuleLocalViewStore modules store.values store.len))
@@ -7854,7 +7557,7 @@
     [index : i64 items.len]
     [found : bool false]
     (while (and (not found) (> index 0))
-      (set! index (- index 1))
+      (-= index 1)
       (if (= (array-ref items.slots index) name)
         (set! found true)
         unit))
@@ -7866,10 +7569,8 @@
     (let
       [len : i64 items.len]
       [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
-      [index : i64 0]
-      (while (< index len)
-        (set! (array-ref slots index) (array-ref items.slots index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 len)]
+        (set! (array-ref slots index) (array-ref items.slots index)))
       (set! (array-ref slots len) name)
       (LowerIdSet slots (+ len 1)))))
 
@@ -7980,14 +7681,10 @@
             (__tl_make-array
               LowerVariantArmResolution
               lower-variant-arm-memo-cap)]
-          [index : i64 0]
-          (while (< index tc-rtf-cap)
-            (set! (array-ref rtf-generations index) 0)
-            (set! index (+ index 1)))
-          (set! index 0)
-          (while (< index lower-variant-arm-memo-cap)
-            (set! (array-ref variant-stamps index) 0)
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 tc-rtf-cap)]
+            (set! (array-ref rtf-generations index) 0))
+          (for [index (iterator.range 0 lower-variant-arm-memo-cap)]
+            (set! (array-ref variant-stamps index) 0))
           (set! storage.rtf-generations rtf-generations)
           (set! storage.rtf-ids rtf-ids)
           (set! storage.rtf-types rtf-types)
@@ -8198,7 +7895,7 @@
     [index : i64 subs.len]
     [found : i64 -1]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (when
         (= (array-ref subs.names index) name)
         (set! found index)
@@ -8214,15 +7911,13 @@
     [len : i64 subs.len]
     [names : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [values : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr len)]
-    [index : i64 0]
     [kept : i64 0]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (unless
         (= (array-ref subs.names index) name)
         (set! (array-ref names kept) (array-ref subs.names index))
         (set! (array-ref values kept) (array-ref subs.values index))
-        (set! kept (+ kept 1)))
-      (set! index (+ index 1)))
+        (+= kept 1)))
     (LowerSpmdInlineSubst names values kept)))
 
 (define (lower-spmd-inline-subst-cons
@@ -8234,11 +7929,9 @@
     [names : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
     [values : (__tl_dyn-array ast.AstExpr)
       (__tl_make-array ast.AstExpr (+ len 1))]
-    [index : i64 0]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (set! (array-ref names index) (array-ref rest.names index))
-      (set! (array-ref values index) (array-ref rest.values index))
-      (set! index (+ index 1)))
+      (set! (array-ref values index) (array-ref rest.values index)))
     (set! (array-ref names len) name)
     (set! (array-ref values len) value)
     (LowerSpmdInlineSubst names values (+ len 1))))
@@ -8388,18 +8081,14 @@
   [ctx : tc_core.TcContext]
   [arg : ast.AstExpr]) : bool
   (match arg
-    [(Spanned inner-box _)
-      (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
     [(Borrow _ _ place-box)
       (match (ast.ast-expr-unspan (& (lower-context-expr-get ctx place-box)))
         [(Var _) true]
         [_ false])]
     [(Var _) false]
-    [(Literal _) true]
-    [(SpmdProgramIndex) true]
-    [(SpmdProgramCount) true]
+    [(or (Literal _) (SpmdProgramIndex) (SpmdProgramCount)) true]
     [_ false]))
 
 ;; The declared type of a staged argument: a scalar lane parameter keeps its
@@ -8408,17 +8097,8 @@
 ;; names the helper's own region, takes the argument's already checked type.
 (define (lower-spmd-inline-staged-type [param-ty : ast.AstType]) : ast.AstMaybeType
   (match (tc_core.tc-type-without-regions (lower-global-shared-view param-ty))
-    [(I8) (Some param-ty)]
-    [(U8) (Some param-ty)]
-    [(I16) (Some param-ty)]
-    [(U16) (Some param-ty)]
-    [(I32) (Some param-ty)]
-    [(U32) (Some param-ty)]
-    [(I64) (Some param-ty)]
-    [(U64) (Some param-ty)]
-    [(F32) (Some param-ty)]
-    [(F64) (Some param-ty)]
-    [(Bool) (Some param-ty)]
+    [(or (I8) (U8) (I16) (U16) (I32) (U32) (I64) (U64) (F32) (F64) (Bool))
+      (Some param-ty)]
     [_ (No)]))
 
 ;; Call-by-value for an inlined helper (#7541). Every argument that cannot be
@@ -8492,7 +8172,6 @@
           env
           type-env
           (& exprs)
-          0
           subst
           shadowed
           (&mut out)))]
@@ -8504,12 +8183,10 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerIdSet]
   [out : (&mut out ast.AstExprList)]) : ResultLowerAstExprList
-  (if (>= index exprs.len)
-    (Ok (ast.ast-expr-list-new))
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [head : ast.AstExpr (lower-context-expr-get ctx head-id)]
@@ -8524,16 +8201,8 @@
             subst
             shadowed))]
       (ast.ast-expr-list-push out (lower-context-expr-push ctx rewritten-head))
-      (lower-spmd-inline-expr-list-into
-        ctx
-        function-state
-        env
-        type-env
-        exprs
-        (+ index 1)
-        subst
-        shadowed
-        out))))
+      unit))
+  (Ok (ast.ast-expr-list-new)))
 
 (define (lower-spmd-inline-let-bindings
   [ctx : tc_core.TcContext]
@@ -8728,17 +8397,13 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
-      (lower-spmd-inline-expr-cost ctx (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-spmd-inline-expr-cost ctx (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (lower-spmd-inline-expr-cost ctx (lower-context-expr-get ctx inner-box))]
     [(Unary _ inner-box)
       (+
         1
         (lower-spmd-inline-expr-cost ctx (lower-context-expr-get ctx inner-box)))]
-    [(Binary _ left-box right-box)
+    [(or (Binary _ left-box right-box) (ArrayRef left-box right-box))
       (+
         1
         (+
@@ -8756,7 +8421,7 @@
             ctx
             (lower-context-expr-get ctx func-box))
           (lower-spmd-inline-expr-list-cost ctx args)))]
-    [(If cond-box then-box else-box)
+    [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box))
       (+
         1
         (+
@@ -8781,30 +8446,6 @@
                 ctx
                 (lower-context-expr-get ctx body-box))))])]
     [(Begin exprs) (+ 1 (lower-spmd-inline-expr-list-cost ctx exprs))]
-    [(ArrayRef array-box index-box)
-      (+
-        1
-        (+
-          (lower-spmd-inline-expr-cost
-            ctx
-            (lower-context-expr-get ctx array-box))
-          (lower-spmd-inline-expr-cost
-            ctx
-            (lower-context-expr-get ctx index-box))))]
-    [(ArraySet array-box index-box value-box)
-      (+
-        1
-        (+
-          (lower-spmd-inline-expr-cost
-            ctx
-            (lower-context-expr-get ctx array-box))
-          (+
-            (lower-spmd-inline-expr-cost
-              ctx
-              (lower-context-expr-get ctx index-box))
-            (lower-spmd-inline-expr-cost
-              ctx
-              (lower-context-expr-get ctx value-box)))))]
     [_ 1]))
 
 (define (lower-spmd-helper-out-of-line?
@@ -9571,10 +9212,9 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 module-id]
     [cur-out : lower_i64_i64_map.Map out]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -9619,8 +9259,7 @@
                       (&mut cur-out)
                       logical-id
                       slot)))]
-              [(No) unit])])
-        (set! index (+ index 1))))
+              [(No) unit])])))
     cur-out))
 
 (define (lower-function-set-from-decls
@@ -9942,16 +9581,7 @@
       (match lit
         [(Float _) true]
         [_ false])]
-    [(Ann inner-box _)
-      (match (ast.ast-expr-unspan-with-pools
-        pools
-        (& (ast.ast-node-pool-context-expr-get pools inner-box)))
-        [(Literal lit)
-          (match lit
-            [(Float _) true]
-            [_ false])]
-        [_ false])]
-    [(Cast inner-box _)
+    [(or (Ann inner-box _) (Cast inner-box _))
       (match (ast.ast-expr-unspan-with-pools
         pools
         (& (ast.ast-node-pool-context-expr-get pools inner-box)))
@@ -10112,39 +9742,17 @@
   [lower-state : CompilerLowerState]
   [pattern : ast.AstPattern]) : unit
   (match pattern
-    [(Var _ _) unit]
-    [(Tuple patterns-box)
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box))
       (lower-reach-used-types-add-pattern-list-roots!
         lower-state
         (deref patterns-box))]
-    [(Array patterns-box)
-      (lower-reach-used-types-add-pattern-list-roots!
-        lower-state
-        (deref patterns-box))]
-    [(Slice patterns-box _)
-      (lower-reach-used-types-add-pattern-list-roots!
-        lower-state
-        (deref patterns-box))]
-    [(Or patterns-box)
-      (lower-reach-used-types-add-pattern-list-roots!
-        lower-state
-        (deref patterns-box))]
-    [(Fields patterns-box)
-      (lower-reach-used-types-add-pattern-list-roots!
-        lower-state
-        (deref patterns-box))]
-    [(Field _ patterns-box)
-      (lower-reach-used-types-add-pattern-list-roots!
-        lower-state
-        (deref patterns-box))]
-    [(Wildcard) unit]
-    [(Binding _) unit]
     [(Variant name patterns-box)
       (lower-reach-used-type-name-add-source! lower-state name)
       (lower-reach-used-types-add-pattern-list-roots!
         lower-state
         (deref patterns-box))]
-    [(Literal _) unit]))
+    [(or (Var _ _) (Wildcard) (Binding _) (Literal _)) unit]))
 
 (define (lower-reach-used-types-add-pattern-list-roots!
   [lower-state : CompilerLowerState]
@@ -10337,7 +9945,7 @@
                       pools
                       (tc_core.tc-resolve-type ctx (Var root-key-id)))))
                 (& out)))))
-        (set! index (- index 1))))
+        (-= index 1)))
     out))
 
 (define (lower-clone-handoff-request-decl
@@ -10545,7 +10153,7 @@
             (compiler-lower-state-intern-str lower-state helper-name-id)))
           (set! found root-key-id)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (lower-clone-handoff-source-conflict-in-module
@@ -10596,7 +10204,7 @@
           (array-ref next root)
           (lower_i64_i64_map.get-value-or (& heads) root-module-id -1))
         (lower_i64_i64_map.insert-ref! (&mut heads) root-module-id root)
-        (set! root (- root 1))))
+        (-= root 1)))
     (while (and (< found 0) (< index count))
       (match (ast.ast-decl-unwrapped
         (& (array-ref decl-slots (+ decl-offset index))))
@@ -10615,7 +10223,7 @@
                     (set! found (array-ref keys candidate)))
                   (set! candidate (array-ref next candidate))))))]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (lower-clone-handoff-source-conflict
@@ -10658,7 +10266,7 @@
             1))
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok))
 
 (define (lower-clone-handoff-generated-summary-at
@@ -10911,19 +10519,19 @@
   [state : LowerReachState]
   [expr : ast.AstExpr]) : LowerReachState
   (match expr
-    [(Spanned inner-box _)
+    [(or (Spanned inner-box _) (Unary _ inner-box) (Ann inner-box _)
+         (Cast inner-box _) (Borrow _ _ inner-box) (Box inner-box)
+         (BoxGet inner-box) (BoxTake inner-box) (Comptime inner-box)
+         (Unquote inner-box) (UnquoteSplicing inner-box) (Try inner-box)
+         (Return inner-box) (StringData inner-box) (ArrayData inner-box))
       (let
         [inner : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools inner-box)]
         (lower-reach-expr pools all-functions names state inner))]
-    [(MacroExpansion inner-box _ _)
-      (lower-reach-expr
-        pools
-        all-functions
-        names
-        state
-        (ast.ast-node-pool-context-expr-get pools inner-box))]
-    [(Literal _) state]
+    [(or (Literal _) (TypeLiteral _) (Init _) (Quote _) (Quasiquote _) (Break)
+         (Continue) (PtrNull _) (BinaryData _) (SpmdProgramIndex)
+         (SpmdProgramCount) (ProgramArgc) (ProgramArgv) (ProgramEnvp))
+      state]
     [(Var name) (lower-reach-add-source-id all-functions names state name)]
     [(Binary _ lhs-box rhs-box)
       (let
@@ -10935,11 +10543,6 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state lhs)
           rhs))]
-    [(Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
     [(Call callee-box args)
       (let
         [callee : ast.AstExpr
@@ -11033,22 +10636,17 @@
                 names
                 state)
               body))])]
-    [(Tuple values)
+    [(or (Tuple values) (Array values) (DynArray values) (Begin values)
+         (Unsafe values) (WithRegion _ values) (BracketClause values)
+         (Syscall values))
       (lower-reach-expr-list pools all-functions names state values)]
-    [(TupleRef value-box _)
+    [(or (TupleRef value-box _) (Set _ value-box) (StructGet value-box _)
+         (PtrNullCheck value-box) (IntToPtr value-box _))
       (let
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr pools all-functions names state value))]
-    [(Array values)
-      (lower-reach-expr-list pools all-functions names state values)]
-    [(DynArray values)
-      (lower-reach-expr-list pools all-functions names state values)]
-    [(FixedMakeArray _ len-box)
-      (let
-        [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
-        (lower-reach-expr pools all-functions names state len))]
-    [(MakeArray _ len-box)
+    [(or (FixedMakeArray _ len-box) (MakeArray _ len-box))
       (let
         [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
         (lower-reach-expr pools all-functions names state len))]
@@ -11179,30 +10777,6 @@
           (ast.ast-node-pool-context-expr-get
             pools
             (ast.ast-for-owned-step-body (& payload)))))]
-    [(Begin exprs)
-      (lower-reach-expr-list pools all-functions names state exprs)]
-    [(Unsafe exprs)
-      (lower-reach-expr-list pools all-functions names state exprs)]
-    [(Set _ value-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(Cast inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(Borrow _ _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match value-box arms)
@@ -11364,7 +10938,7 @@
                   init)
                 keep)
               body))])]
-    [(SpmdBroadcast value-box lane-box)
+    [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
       (let
         [value : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools value-box)]
@@ -11375,22 +10949,6 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state value)
           lane))]
-    [(SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        [lane : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lane-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state value)
-          lane))]
-    [(StructGet value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
     [(StructSet receiver-box _ value-box)
       (let
         [receiver : ast.AstExpr
@@ -11403,8 +10961,6 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state receiver)
           value))]
-    [(WithRegion _ exprs)
-      (lower-reach-expr-list pools all-functions names state exprs)]
     [(WithEscape scratch-box exprs)
       (let
         [scratch : ast.AstExpr
@@ -11451,21 +11007,6 @@
               state
               bindings)
             body)])]
-    [(Box inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
     [(BoxSet inner-box value-box)
       (let
         [inner : ast.AstExpr
@@ -11478,51 +11019,12 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state inner)
           value))]
-    [(TypeLiteral _) state]
-    [(Init _) state]
-    [(Comptime inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(Quote _) state]
-    [(Quasiquote _) state]
-    [(Unquote inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(UnquoteSplicing inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(BracketClause items)
-      (lower-reach-expr-list pools all-functions names state items)]
-    [(Try inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(Return inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(Break) state]
-    [(Continue) state]
-    [(PtrNull _) state]
-    [(PtrNullCheck value-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
     [(PtrAddrOf place-box)
       (let
         [place : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools place-box)]
         (lower-reach-expr pools all-functions names state place))]
-    [(PtrRead ptr-box)
+    [(or (PtrRead ptr-box) (PtrCast ptr-box _) (PtrToInt ptr-box))
       (let
         [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
         (lower-reach-expr pools all-functions names state ptr))]
@@ -11548,24 +11050,6 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state ptr)
           offset))]
-    [(PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        (lower-reach-expr pools all-functions names state ptr))]
-    [(PtrToInt ptr-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        (lower-reach-expr pools all-functions names state ptr))]
-    [(IntToPtr value-box _)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
-    [(StringData inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
     [(StringFromBytes ptr-box len-box)
       (let
         [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
@@ -11576,51 +11060,8 @@
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state ptr)
           len))]
-    [(ArrayData inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(BinaryData _) state]
-    [(SpmdProgramIndex) state]
-    [(SpmdProgramCount) state]
-    [(ProgramArgc) state]
-    [(ProgramArgv) state]
-    [(ProgramEnvp) state]
-    [(CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-pool-context-expr-get pools leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools subleaf-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state leaf)
-          subleaf))]
-    [(CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-pool-context-expr-get pools leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools subleaf-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state leaf)
-          subleaf))]
-    [(CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-pool-context-expr-get pools leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools subleaf-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state leaf)
-          subleaf))]
-    [(CpuIdEdx leaf-box subleaf-box)
+    [(or (CpuIdEax leaf-box subleaf-box) (CpuIdEbx leaf-box subleaf-box)
+         (CpuIdEcx leaf-box subleaf-box) (CpuIdEdx leaf-box subleaf-box))
       (let
         [leaf : ast.AstExpr (ast.ast-node-pool-context-expr-get pools leaf-box)]
         [subleaf : ast.AstExpr
@@ -11636,16 +11077,8 @@
         [index : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr pools all-functions names state index))]
-    [(Syscall args)
-      (lower-reach-expr-list pools all-functions names state args)]
-    [(ForeachActive _ body-box)
-      (lower-reach-expr
-        pools
-        all-functions
-        names
-        state
-        (ast.ast-node-pool-context-expr-get pools body-box))]
-    [(LaneValue value-box)
+    [(or (MacroExpansion value-box _ _) (ForeachActive _ value-box)
+         (LaneValue value-box))
       (lower-reach-expr
         pools
         all-functions
@@ -11964,7 +11397,8 @@
             logical-module-id)]
         [next : LowerReachState
           (match (lower-global-shared-view decl)
-            [(DefStruct decl-meta _ _ cleanup fields)
+            [(or (DefStruct _ _ _ cleanup fields)
+                 (DefStructLifetimes _ _ _ _ cleanup fields))
               (if (ast.ast-struct-cleanup? cleanup)
                 (lower-reach-struct-field-cleanup-roots
                   all-functions
@@ -11976,31 +11410,8 @@
                   state
                   fields)
                 state)]
-            [(DefStructLifetimes decl-meta _ _ _ cleanup fields)
-              (if (ast.ast-struct-cleanup? cleanup)
-                (lower-reach-struct-field-cleanup-roots
-                  all-functions
-                  entry-path
-                  decl-path
-                  logical-module
-                  logical-module-id
-                  names
-                  state
-                  fields)
-                state)]
-            [(DefEnum decl-meta _ cleanup variants)
-              (if (ast.ast-enum-cleanup? cleanup)
-                (lower-reach-enum-payload-cleanup-roots
-                  all-functions
-                  entry-path
-                  decl-path
-                  logical-module
-                  logical-module-id
-                  names
-                  state
-                  variants)
-                state)]
-            [(DefEnumLifetimes decl-meta _ _ cleanup variants)
+            [(or (DefEnum _ _ cleanup variants)
+                 (DefEnumLifetimes _ _ _ cleanup variants))
               (if (ast.ast-enum-cleanup? cleanup)
                 (lower-reach-enum-payload-cleanup-roots
                   all-functions
@@ -12089,18 +11500,14 @@
 (define (lower-function-decl-count [decls : ast.AstDeclList]) : i64
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [out : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         out
-        (+
-          out
-          (lower-function-decl-count-one
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index)))))
-      (set! index (+ index 1)))
+        (lower-function-decl-count-one
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index)))))
     out))
 
 (define (lower-function-body-index-add
@@ -12409,10 +11816,9 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [cur-out : lower_i64_i64_map.Map out]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -12440,8 +11846,7 @@
                 decl
                 logical-module-id
                 names
-                cur-out))])
-        (set! index (+ index 1))))
+                cur-out))])))
     cur-out))
 
 (define (lower-dispatch-variant-set-from-decls
@@ -12758,29 +12163,13 @@
         ret)]
     [(Tuple elems)
       (lower-used-types-add-type-list session pools used module (deref elems))]
-    [(Array elem _)
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Region _ elem)
+         (Invalidate _ elem) (Ref _ elem) (MutRef _ elem) (Ptr elem)
+         (MutPtr elem))
       (lower-used-types-add-type-id session pools used module elem)]
-    [(DynArray elem)
-      (lower-used-types-add-type-id session pools used module elem)]
-    [(Slice elem) (lower-used-types-add-type-id session pools used module elem)]
-    [(Box elem) (lower-used-types-add-type-id session pools used module elem)]
-    [(Region _ inner)
-      (lower-used-types-add-type-id session pools used module inner)]
-    [(Invalidate _ inner)
-      (lower-used-types-add-type-id session pools used module inner)]
-    [(Ref _ inner)
-      (lower-used-types-add-type-id session pools used module inner)]
-    [(MutRef _ inner)
-      (lower-used-types-add-type-id session pools used module inner)]
-    [(Enum name) (lower-used-type-name-add session used module name)]
-    [(EnumArgs name _) (lower-used-type-name-add session used module name)]
-    [(Struct name) (lower-used-type-name-add session used module name)]
-    [(StructArgs name _) (lower-used-type-name-add session used module name)]
-    [(Var name) (lower-used-type-name-add session used module name)]
-    [(VarArgs name _) (lower-used-type-name-add session used module name)]
-    [(Ptr inner) (lower-used-types-add-type-id session pools used module inner)]
-    [(MutPtr inner)
-      (lower-used-types-add-type-id session pools used module inner)]
+    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
+         (Var name) (VarArgs name _))
+      (lower-used-type-name-add session used module name)]
     [_ used]))
 
 (define (lower-used-types-add-maybe-type
@@ -12974,15 +12363,8 @@
             used)
           module
           (ast.ast-for-owned-step-body (& payload))))]
-    [(Ann inner-box ty-id)
-      (lower-used-types-add-type-then-expr
-        session
-        pools
-        used
-        module
-        ty-id
-        inner-box)]
-    [(Cast inner-box ty-id)
+    [(or (Ann inner-box ty-id) (Cast inner-box ty-id) (PtrCast inner-box ty-id)
+         (IntToPtr inner-box ty-id))
       (lower-used-types-add-type-then-expr
         session
         pools
@@ -13087,24 +12469,7 @@
               keep-box)
             module
             body-box)])]
-    [(Quote _) used]
-    [(Quasiquote _) used]
-    [(PtrCast ptr-box ty-id)
-      (lower-used-types-add-type-then-expr
-        session
-        pools
-        used
-        module
-        ty-id
-        ptr-box)]
-    [(IntToPtr value-box ty-id)
-      (lower-used-types-add-type-then-expr
-        session
-        pools
-        used
-        module
-        ty-id
-        value-box)]
+    [(or (Quote _) (Quasiquote _)) used]
     [_
       (let
         [children : ast.AstExprChildList
@@ -13127,50 +12492,14 @@
   (match pattern
     [(Var _ maybe-ty)
       (lower-used-types-add-maybe-type session pools used module maybe-ty)]
-    [(Tuple patterns-box)
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box))
       (lower-used-types-add-pattern-list
         session
         pools
         used
         module
         (deref patterns-box))]
-    [(Array patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(Slice patterns-box _)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(Or patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(Fields patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(Field _ patterns-box)
-      (lower-used-types-add-pattern-list
-        session
-        pools
-        used
-        module
-        (deref patterns-box))]
-    [(Wildcard) used]
-    [(Binding _) used]
     [(Variant name patterns-box)
       (let
         ;; `name` is already the interned id; read the id-keyed metadata slots
@@ -13191,7 +12520,7 @@
           with-head
           module
           (deref patterns-box)))]
-    [(Literal _) used]))
+    [(or (Wildcard) (Binding _) (Literal _)) used]))
 
 (define (lower-used-types-add-pattern-list
   [session : cis.InternStructuralSessionHandle]
@@ -13307,10 +12636,9 @@
 
 (define (lower-type-decl? [decl : ast.AstDecl]) : bool
   (match decl
-    [(DefEnum decl-meta _ _ _) true]
-    [(DefEnumLifetimes decl-meta _ _ _ _) true]
-    [(DefStruct decl-meta _ _ _ _) true]
-    [(DefStructLifetimes decl-meta _ _ _ _ _) true]
+    [(or (DefEnum _ _ _ _) (DefEnumLifetimes _ _ _ _ _) (DefStruct _ _ _ _ _)
+         (DefStructLifetimes _ _ _ _ _ _))
+      true]
     [(Unsafe inner-box) (lower-type-decl? (deref inner-box))]
     [_ false]))
 
@@ -13324,13 +12652,8 @@
   (if (= (lower_i64_i64_map.len (& used-types)) 0)
     true
     (match decl
-      [(DefEnum decl-meta name _ variants)
-        (lower-used-type-name-contains? session used-types module name)]
-      [(DefEnumLifetimes decl-meta name _ _ variants)
-        (lower-used-type-name-contains? session used-types module name)]
-      [(DefStruct decl-meta name _ _ _)
-        (lower-used-type-name-contains? session used-types module name)]
-      [(DefStructLifetimes decl-meta name _ _ _ _)
+      [(or (DefEnum _ name _ _) (DefEnumLifetimes _ name _ _ _)
+           (DefStruct _ name _ _ _) (DefStructLifetimes _ name _ _ _ _))
         (lower-used-type-name-contains? session used-types module name)]
       [(Unsafe inner-box)
         (lower-type-decl-used? session module used-types (deref inner-box))]
@@ -13371,10 +12694,9 @@
         ret)]
     [(Extern decl-meta _ _ _ ty)
       (lower-used-types-add-type session pools used module ty)]
-    [(DefEnum decl-meta _ _ _) used]
-    [(DefEnumLifetimes decl-meta _ _ _ _) used]
-    [(DefStruct decl-meta _ _ _ _) used]
-    [(DefStructLifetimes decl-meta _ _ _ _ _) used]
+    [(or (DefEnum _ _ _ _) (DefEnumLifetimes _ _ _ _ _) (DefStruct _ _ _ _ _)
+         (DefStructLifetimes _ _ _ _ _ _))
+      used]
     [(Test _ body-box _ _)
       (lower-used-types-add-expr-id session pools used module body-box)]
     [(Unsafe inner-box)
@@ -13442,13 +12764,8 @@
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
   (match decl
-    [(DefEnum decl-meta name _ _)
-      (lower-used-type-name-add session used module name)]
-    [(DefEnumLifetimes decl-meta name _ _ _)
-      (lower-used-type-name-add session used module name)]
-    [(DefStruct decl-meta name _ _ _)
-      (lower-used-type-name-add session used module name)]
-    [(DefStructLifetimes decl-meta name _ _ _ _)
+    [(or (DefEnum _ name _ _) (DefEnumLifetimes _ name _ _ _)
+         (DefStruct _ name _ _ _) (DefStructLifetimes _ name _ _ _ _))
       (lower-used-type-name-add session used module name)]
     [(Unsafe inner-box)
       (lower-used-types-add-type-decl-name
@@ -13616,9 +12933,7 @@
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
   (match decl
-    [(DefEnum decl-meta _ _ variants)
-      (lower-used-types-add-variant-list session pools used module variants)]
-    [(DefEnumLifetimes decl-meta _ _ _ variants)
+    [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
       (lower-used-types-add-variant-list session pools used module variants)]
     [(DefStruct decl-meta name _ _ fields)
       (lower-used-types-add-field-list
@@ -13657,10 +12972,9 @@
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    [index : i64 0]
     [current-module : String module]
     [current-used : lower_i64_i64_map.Map used]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (lower-global-array-element-shared-view
         decl-slots
         (+ decl-offset index))
@@ -13693,8 +13007,7 @@
                 (lower-global-array-element-shared-view
                   decl-slots
                   (+ decl-offset index))))
-            unit)])
-      (set! index (+ index 1)))
+            unit)]))
     current-used))
 
 (define (lower-used-types-expand-fixed
@@ -13717,7 +13030,7 @@
             ""
             (lower-global-shared-view current))]
         (set! current next)
-        (set! iterations (+ iterations 1))
+        (+= iterations 1)
         (if (or
           (= before (lower_i64_i64_map.len (& current)))
           (>= iterations 8))
@@ -13732,10 +13045,8 @@
   (let
     [cache : (__tl_dyn-array i64)
       (compiler-lower-state-comptime-error-cache lower-state)]
-    [index : i64 0]
-    (while (< index lower-comptime-cache-size)
-      (set! (array-ref cache index) 0)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 lower-comptime-cache-size)]
+      (set! (array-ref cache index) 0))
     (set! (array-ref cache lower-comptime-cache-generation-index) -1)
     (set! (array-ref cache lower-comptime-cache-table-id-index) -1)))
 
@@ -13894,8 +13205,7 @@
       (ast.ast-decl-path-list-with-capacity count)]
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [source-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -13944,17 +13254,14 @@
               cbi.compiler-builtin-id-fix-empty)))
         (match decl
           [(Module next-module) (set! source-module-id next-module)]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (Filtered out out-paths (LowerDeclKeepPlan keep count))))
 
 (define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
   (let
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref keep index) 1)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref keep index) 1))
     (LowerDeclKeepPlan keep count)))
 
 (define (lower-decl-required-by-clone-roots?
@@ -13962,9 +13269,7 @@
   [module-id : i64]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(DefEnum decl-meta name _ _)
-      (clone_support.clone-name-set-contains-canonical-id? roots module-id name)]
-    [(DefStruct decl-meta name _ _ _)
+    [(or (DefEnum _ name _ _) (DefStruct _ name _ _ _))
       (clone_support.clone-name-set-contains-canonical-id? roots module-id name)]
     [(Unsafe inner-box)
       (lower-decl-required-by-clone-roots? roots module-id (deref inner-box))]
@@ -14003,7 +13308,7 @@
             (match decl
               [(Module next-module) (set! module-id next-module)]
               [_ unit])
-            (set! index (+ index 1))))
+            (+= index 1)))
         (LowerDeclKeepPlan keep source-count))]))
 
 (define (lower-decl-keep-plan-copy-into-pools
@@ -14018,10 +13323,8 @@
         [source : (__tl_dyn-array i64) plan.keep]
         [count : i64 plan.source-count]
         [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [index : i64 0]
-        (while (< index count)
-          (set! (array-ref keep index) (array-ref source index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref keep index) (array-ref source index)))
         (LowerDeclKeepPlan keep count)))))
 
 (define (lower-decl-keep-plan-apply
@@ -14038,14 +13341,12 @@
         [source-count : i64 plan.source-count]
         [keep : (__tl_dyn-array i64) plan.keep]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (if (or (>= index source-count) (not (= (array-ref keep index) 0)))
             (ast.ast-decl-list-push
               (&mut out)
               (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
-            unit)
-          (set! index (+ index 1)))
+            unit))
         (ast.ast-program out))]))
 
 (define (lower-decl-keep-plan-apply-paths
@@ -14060,8 +13361,7 @@
         source-count
         count)]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity limit)]
-    [index : i64 0]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (when
         (not (= (array-ref keep index) 0))
         (ast.ast-decl-path-list-push-with-owner-and-provenance-id
@@ -14074,8 +13374,7 @@
           (ast.ast-decl-path-list-provenance-id
             (& paths)
             index
-            cbi.compiler-builtin-id-fix-empty)))
-      (set! index (+ index 1)))
+            cbi.compiler-builtin-id-fix-empty))))
     out))
 
 (defenum LowerReachStateCell
@@ -14088,9 +13387,8 @@
   [state : LowerReachState]) : LowerReachState
   (let
     [cell : LowerReachStateCell (Occupied state)]
-    [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match cell
         [(Occupied current)
           (set!
@@ -14103,8 +13401,7 @@
                 (clone_support.clone-root-entries-helper-id-at-or
                   roots
                   index
-                  -1))))])
-      (set! index (+ index 1)))
+                  -1))))]))
     (match cell
       [(Occupied result) result])))
 
@@ -14540,9 +13837,8 @@
         [uniform-types : (__tl_dyn-array ast.AstType) cache-data.uniform-types]
         [uniform-vectors : (__tl_dyn-array ir.CompilerIrValue)
           cache-data.uniform-vectors]
-        [index : i64 0]
         [count : i64 cache-data.uniform-count]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (when
             (and
               (lower-vector-map-ir-value-eq?
@@ -14553,8 +13849,7 @@
                 (lower-global-array-element-shared-view uniform-types index)))
             (return
               (Some
-                (lower-global-array-element-shared-view uniform-vectors index))))
-          (set! index (+ index 1)))
+                (lower-global-array-element-shared-view uniform-vectors index)))))
         (No))]))
 
 (define (lower-masked-preheader-uniform-add!
@@ -14596,14 +13891,12 @@
         [cache-data : LowerMaskedPreheaderCacheData (deref cache)]
         [array-vars : (__tl_dyn-array i64) cache-data.array-vars]
         [array-data : (__tl_dyn-array ir.CompilerIrValue) cache-data.array-data]
-        [index : i64 0]
         [count : i64 cache-data.array-count]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (when
             (= array-var (array-ref array-vars index))
             (return
-              (Some (lower-global-array-element-shared-view array-data index))))
-          (set! index (+ index 1)))
+              (Some (lower-global-array-element-shared-view array-data index)))))
         (No))]))
 
 (define (lower-masked-preheader-array-data-add!
@@ -15283,44 +14576,16 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-resolve-type ctx (lower-global-shared-view ty))
-      [(I64) 8]
-      [(U64) 8]
-      [(F64) 8]
-      [(I32) 4]
-      [(U32) 4]
-      [(F32) 4]
-      [(I16) 2]
-      [(U16) 2]
-      [(I8) 1]
-      [(U8) 1]
-      [(Bool) 1]
-      [(Char) 1]
-      [(Unit) 0]
-      [(Never) 0]
-      [(Expr) 0]
-      [(ExprList) 0]
-      [(CFunc _ _) 8]
-      [(Func _ _) 8]
-      [(Tuple _) (lower-inline-layout-size-or ctx ty 8)]
-      [(Array _ _) (lower-inline-layout-size-or ctx ty 8)]
-      [(DynArray _) 8]
-      [(Slice _) 0]
-      [(Box _) 8]
-      [(Ptr _) 8]
-      [(MutPtr _) 8]
-      [(Ref _ inner)
+      [(or (I32) (U32) (F32)) 4]
+      [(or (I16) (U16)) 2]
+      [(or (I8) (U8) (Bool) (Char)) 1]
+      [(or (Unit) (Never) (Expr) (ExprList) (Slice _)) 0]
+      [(or (Tuple _) (Array _ _)) (lower-inline-layout-size-or ctx ty 8)]
+      [(or (Ref _ inner) (MutRef _ inner))
         (if (lower-fat-reference? ctx inner)
           16
           8)]
-      [(MutRef _ inner)
-        (if (lower-fat-reference? ctx inner)
-          16
-          8)]
-      [(Region _ inner)
-        (let
-          [ty (tc_core.tc-context-type-get ctx inner)]
-          (lower-type-size ctx ty))]
-      [(Invalidate _ inner)
+      [(or (Region _ inner) (Invalidate _ inner))
         (let
           [ty (tc_core.tc-context-type-get ctx inner)]
           (lower-type-size ctx ty))]
@@ -15330,11 +14595,9 @@
       [(Struct name) (lower-inline-layout-size-or ctx (Struct name) 8)]
       [(StructArgs name lifetimes)
         (lower-inline-layout-size-or ctx (StructArgs name lifetimes) 8)]
-      [(String) 8]
-      [(Str) 8]
-      [(Bytes) 8]
-      [(Var _) 8]
-      [(VarArgs _ _) 8])))
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (DynArray _) (Box _) (Ptr _)
+           (MutPtr _) (String) (Str) (Bytes) (Var _) (VarArgs _ _))
+        8])))
 
 ;; Snapshot the completed, resolved layouts before the driver retires their
 ;; typecheck owner as per-nominal type-stable word masks for the optimizer
@@ -15345,14 +14608,11 @@
 ;; aggregates prove nothing. Lifetime arguments do not change layout.
 (define (lower-representation-nominal-name [ty : ast.AstType]) : i64
   (match ty
-    [(Struct name) name]
-    [(StructArgs name _) name]
-    [(Enum name) name]
-    [(EnumArgs name _) name]
     ;; An enum payload names its type unresolved. A cached layout under the
     ;; name makes it nominal; a type parameter has none and stays unstable.
-    [(Var name) name]
-    [(VarArgs name _) name]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _)
+         (Var name) (VarArgs name _))
+      name]
     [_ -1]))
 
 (define (lower-representation-stable-type-mask
@@ -15375,42 +14635,23 @@
           fuel)]
       [else
         (match (lower-global-shared-view ty)
-          [(Region _ inner)
+          [(or (Region _ inner) (Invalidate _ inner))
             (lower-representation-stable-type-mask
               type-segment-bases
               state
               index
               (ast.ast-type-segment-bases-get type-segment-bases inner)
               (- fuel 1))]
-          [(Invalidate _ inner)
-            (lower-representation-stable-type-mask
-              type-segment-bases
-              state
-              index
-              (ast.ast-type-segment-bases-get type-segment-bases inner)
-              (- fuel 1))]
-          [(Ref _ inner)
+          [(or (Ref _ inner) (MutRef _ inner))
             (if (ast.ast-type-segment-bases-fat-referent?
               type-segment-bases
               inner)
               3
               1)]
-          [(MutRef _ inner)
-            (if (ast.ast-type-segment-bases-fat-referent?
-              type-segment-bases
-              inner)
-              3
-              1)]
-          [(Unit) 0]
-          [(Never) 0]
-          [(DynArray _) 1]
-          [(String) 1]
-          [(Str) 1]
-          [(Box _) 1]
-          [(Ptr _) 1]
-          [(MutPtr _) 1]
-          [(Func _ _) 1]
-          [(CFunc _ _) 1]
+          [(or (Unit) (Never)) 0]
+          [(or (DynArray _) (String) (Str) (Box _) (Ptr _) (MutPtr _) (Func _ _)
+               (CFunc _ _))
+            1]
           [_
             (if (lower-clone-scalar-type? ty)
               1
@@ -15451,8 +14692,10 @@
       [(Struct _ _ fields)
         (let
           [mask : i64 0]
-          [at : i64 0]
-          (while (< at (tc_core.tc-inline-field-layout-list-count (& fields)))
+          (for [at
+            (iterator.range
+              0
+              (tc_core.tc-inline-field-layout-list-count (& fields)))]
             (match (tc_core.tc-inline-field-layout-list-ref (& fields) at)
               [(Field _ ty offset)
                 (set!
@@ -15465,8 +14708,7 @@
                       index
                       ty
                       offset
-                      (- fuel 1))))])
-            (set! at (+ at 1)))
+                      (- fuel 1))))]))
           mask)]
       [(Enum _ _ variants)
         (let
@@ -15475,27 +14717,25 @@
             (= (tc_core.tc-inline-variant-layout-list-count (& variants)) 1)
             (match (tc_core.tc-inline-variant-layout-list-ref (& variants) 0)
               [(Variant _ _ _ payloads)
-                (let
-                  [at : i64 0]
-                  (while (<
-                    at
-                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                    (match (tc_core.tc-inline-payload-layout-list-ref
-                      (& payloads)
-                      at)
-                      [(Payload _ ty offset)
-                        (set!
+                (for [at
+                  (iterator.range
+                    0
+                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+                  (match (tc_core.tc-inline-payload-layout-list-ref
+                    (& payloads)
+                    at)
+                    [(Payload _ ty offset)
+                      (set!
+                        mask
+                        (bit-or
                           mask
-                          (bit-or
-                            mask
-                            (lower-representation-stable-field-mask
-                              type-segment-bases
-                              state
-                              index
-                              ty
-                              offset
-                              (- fuel 1))))])
-                    (set! at (+ at 1))))]))
+                          (lower-representation-stable-field-mask
+                            type-segment-bases
+                            state
+                            index
+                            ty
+                            offset
+                            (- fuel 1))))]))]))
           mask)])))
 
 (define (lower-representation-stable-nominal-mask
@@ -15549,8 +14789,7 @@
           (tc_core.TcAggLayoutCacheState address)]
         [slots : (__tl_dyn-array tc_core.TcAggLayoutCacheSlot)
           (tc_core.tc-agg-layout-cache-slots state)]
-        [at : i64 0]
-        (while (< at (array-length slots))
+        (for [at (iterator.range 0 (array-length slots))]
           (match (owned_view.compiler-owned-array-element-shared-view slots at)
             [(Full name _)
               (lower-representation-stable-nominal-mask
@@ -15560,46 +14799,19 @@
                 name
                 64)
               unit]
-            [(Empty) unit])
-          (set! at (+ at 1)))))
+            [(Empty) unit]))))
     index))
 
 (define (lower-type-align [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-resolve-type ctx (lower-global-shared-view ty))
-      [(I64) 8]
-      [(U64) 8]
-      [(F64) 8]
-      [(I32) 4]
-      [(U32) 4]
-      [(F32) 4]
-      [(I16) 2]
-      [(U16) 2]
-      [(I8) 1]
-      [(U8) 1]
-      [(Bool) 1]
-      [(Char) 1]
-      [(Unit) 1]
-      [(Never) 1]
-      [(Expr) 1]
-      [(ExprList) 1]
-      [(CFunc _ _) 8]
-      [(Func _ _) 8]
-      [(Tuple _) (lower-inline-layout-align-or ctx ty 8)]
-      [(Array _ _) (lower-inline-layout-align-or ctx ty 8)]
-      [(DynArray _) 8]
+      [(or (I32) (U32) (F32)) 4]
+      [(or (I16) (U16)) 2]
+      [(or (I8) (U8) (Bool) (Char) (Unit) (Never) (Expr) (ExprList)) 1]
+      [(or (Tuple _) (Array _ _)) (lower-inline-layout-align-or ctx ty 8)]
       [(Slice _) 0]
-      [(Box _) 8]
-      [(Ptr _) 8]
-      [(MutPtr _) 8]
-      [(Ref _ _) 8]
-      [(MutRef _ _) 8]
-      [(Region _ inner)
-        (let
-          [ty (tc_core.tc-context-type-get ctx inner)]
-          (lower-type-align ctx ty))]
-      [(Invalidate _ inner)
+      [(or (Region _ inner) (Invalidate _ inner))
         (let
           [ty (tc_core.tc-context-type-get ctx inner)]
           (lower-type-align ctx ty))]
@@ -15609,25 +14821,22 @@
       [(Struct name) (lower-inline-layout-align-or ctx (Struct name) 8)]
       [(StructArgs name lifetimes)
         (lower-inline-layout-align-or ctx (StructArgs name lifetimes) 8)]
-      [(String) 8]
-      [(Str) 8]
-      [(Bytes) 8]
-      [(Var _) 8]
-      [(VarArgs _ _) 8])))
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (DynArray _) (Box _) (Ptr _)
+           (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Bytes) (Var _)
+           (VarArgs _ _))
+        8])))
 
 (define (lower-type-list-extent
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [cursor : i64]) : i64
-  (lower-type-list-extent-at ctx (& types) cursor 0))
+  (lower-type-list-extent-at ctx (& types) cursor))
 
 (define (lower-type-list-extent-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [cursor : i64]
-  [index : i64]) : i64
-  (if (>= index (ast.ast-type-list-len types))
-    cursor
+  [cursor : i64]) : i64
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -15635,11 +14844,8 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-      (lower-type-list-extent-at
-        ctx
-        types
-        (+ offset (lower-type-size ctx resolved))
-        (+ index 1)))))
+      (set! cursor (+ offset (lower-type-size ctx resolved)))))
+  cursor)
 
 (define (lower-type-list-storage-size
   [ctx : tc_core.TcContext]
@@ -15716,15 +14922,13 @@
   [ctx : tc_core.TcContext]
   [variants : ast.AstVariantDefList]
   [max-size : i64]) : i64
-  (lower-enum-variants-storage-size-at ctx (& variants) max-size 0))
+  (lower-enum-variants-storage-size-at ctx (& variants) max-size))
 
 (define (lower-enum-variants-storage-size-at
   [ctx : tc_core.TcContext]
   [variants : (& variants ast.AstVariantDefList)]
-  [max-size : i64]
-  [index : i64]) : i64
-  (if (>= index variants.len)
-    max-size
+  [max-size : i64]) : i64
+  (for [index (iterator.range 0 variants.len)]
     (let
       [size : i64
         (lower-variant-storage-size
@@ -15733,13 +14937,12 @@
             variants
             index
             (ast.ast-variant-def-fallback)))]
-      (lower-enum-variants-storage-size-at
-        ctx
-        variants
+      (set!
+        max-size
         (if (> size max-size)
           size
-          max-size)
-        (+ index 1)))))
+          max-size))))
+  max-size)
 
 (define (lower-enum-storage-size
   [ctx : tc_core.TcContext]
@@ -15765,8 +14968,8 @@
             (tc_core.tc-context-symbols ctx)
             (csym.compiler-symbol-handle-index handle)))]
       (match decl
-        [(DefStruct decl-meta _ _ _ fields) (Ok fields)]
-        [(DefStructLifetimes decl-meta _ _ _ _ fields) (Ok fields)]
+        [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
+          (Ok fields)]
         [_ (Err "lower: struct symbol owner is not a struct")]))
     (Err (str_cat.str-cat "lower: unknown struct " struct-name))))
 
@@ -15799,8 +15002,7 @@
         (csym.compiler-symbol-handle-index handle))
         [(Ok decl)
           (match decl
-            [(DefStruct decl-meta _ repr _ _) (ast.ast-struct-repr-c? repr)]
-            [(DefStructLifetimes decl-meta _ _ repr _ _)
+            [(or (DefStruct _ _ repr _ _) (DefStructLifetimes _ _ _ repr _ _))
               (ast.ast-struct-repr-c? repr)]
             [_ false])]
         [(Err _) false])
@@ -16065,22 +15267,16 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-      [(Struct _) true]
-      [(StructArgs _ _) true]
-      [(Enum _) true]
-      [(EnumArgs _ _) true]
-      [(Tuple _) true]
-      [(Array _ _) true]
+      [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
+           (Array _ _))
+        true]
       [_ false])))
 
 (define (lower-type-inline-struct-or-enum?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _)) true]
     [_ false]))
 
 ;; A register-resident aggregate is an inline struct/enum that fits in a
@@ -16095,13 +15291,8 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Ref _ inner) (lower-fat-reference? ctx inner)]
-    [(MutRef _ inner) (lower-fat-reference? ctx inner)]
-    [(Struct name) (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
-    [(StructArgs name _)
-      (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
-    [(Enum name) (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
-    [(EnumArgs name _)
+    [(or (Ref _ inner) (MutRef _ inner)) (lower-fat-reference? ctx inner)]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
       (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
     [_ false]))
 
@@ -16126,18 +15317,12 @@
 ;; into a second chunk whose rewind leaks into later lowering.
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Ref _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (if (lower-fat-reference? ctx inner)
         2
         0)]
-    [(MutRef _ inner)
-      (if (lower-fat-reference? ctx inner)
-        2
-        0)]
-    [(Struct name) (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
-    [(StructArgs name _) (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
-    [(Enum name) (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
-    [(EnumArgs name _) (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (tc_core.tc-inline-aggregate-regwords-cached ctx name)]
     [_ 0]))
 
 (define (lower-f64-register-word-field?
@@ -16250,13 +15435,7 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-      [(Ref _ inner)
-        (if (lower-fat-reference? ctx inner)
-          (if (= word-index 0)
-            (U64)
-            (I64))
-          (I64))]
-      [(MutRef _ inner)
+      [(or (Ref _ inner) (MutRef _ inner))
         (if (lower-fat-reference? ctx inner)
           (if (= word-index 0)
             (U64)
@@ -16319,10 +15498,7 @@
 
 (define (lower-type-signed? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
+    [(or (I64) (I32) (I16) (I8)) true]
     [_ false]))
 
 ;; Low `size` bytes set to 1 (e.g. size 4 -> 0xffffffff). Used to mask a field
@@ -16574,8 +15750,7 @@
 ;; equal tags but different payloads compared equal.
 (define (lower-binop-group-eq? [op : ast.AstBinOp]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
+    [(or (Eq) (Ne)) true]
     [_ false]))
 
 (define (lower-group-equality
@@ -17392,8 +16567,7 @@
 
 (define (lower-raw-pointer-ir-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
-    [(Ptr _) (U64)]
-    [(MutPtr _) (U64)]
+    [(or (Ptr _) (MutPtr _)) (U64)]
     [_ ty]))
 
 (define (lower-cast-value
@@ -17514,12 +16688,7 @@
 
 (define (lower-bytes-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Ref _ inner)
-      (match (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
-        [(Bytes) true]
-        [_ false])]
-    [(MutRef _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
         [(Bytes) true]
@@ -17917,25 +17086,12 @@
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-canonicalize-inferred-type ctx (tc_core.tc-resolve-type ctx ty)))
-    [(I64) true]
-    [(U64) true]
-    [(F64) true]
-    [(I32) true]
-    [(U32) true]
-    [(F32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
-    [(Bool) true]
-    [(Char) true]
     ;; Borrowing a raw-pointer value borrows the one-word pointer slot; it does
     ;; not dereference the raw pointer's target. Pointer formatting relies on
     ;; this shape before its separately unsafe ptr->int conversion.
-    [(Ptr _) true]
-    [(MutPtr _) true]
-    [(Str) true]
-    [(Bytes) true]
+    [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
+         (Ptr _) (MutPtr _) (Str) (Bytes))
+      true]
     [(Tuple elems)
       (lower-supported-reference-type-list-with-stack?
         ctx
@@ -17945,7 +17101,14 @@
     ;; one element is a lowerable value: reference-bearing elements (shared
     ;; `str`/scalar views, lifetime-parameterized records) keep the layout they
     ;; have as struct fields (#8111). A dynamic array stays reference-free.
-    [(Array elem-ty _)
+    ;; Borrowing a Box value takes the address of its one-word owning handle.
+    ;; The pointee remains behind the Box and is lowered separately when the
+    ;; resulting reference is dereferenced.
+    ;; A Slice is supported only when it is the immediate referent of a
+    ;; borrowed reference; bare Slice remains unsized and has no by-value
+    ;; borrow layout.  Its elements follow the fixed-array rule above: a Slice
+    ;; views an array's inline elements.
+    [(or (Array elem-ty _) (Box elem-ty) (Slice elem-ty))
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-context-type-get ctx elem-ty)
@@ -17954,23 +17117,6 @@
       (not
         (tc_core.tc-type-contains-reference?
           (tc_core.tc-context-type-get ctx elem-ty)))]
-    ;; Borrowing a Box value takes the address of its one-word owning handle.
-    ;; The pointee remains behind the Box and is lowered separately when the
-    ;; resulting reference is dereferenced.
-    [(Box elem-ty)
-      (lower-supported-reference-type-with-stack?
-        ctx
-        (tc_core.tc-context-type-get ctx elem-ty)
-        (lower-id-set-empty))]
-    ;; A Slice is supported only when it is the immediate referent of a
-    ;; borrowed reference; bare Slice remains unsized and has no by-value
-    ;; borrow layout.  Its elements follow the fixed-array rule above: a Slice
-    ;; views an array's inline elements.
-    [(Slice elem-ty)
-      (lower-supported-reference-type-with-stack?
-        ctx
-        (tc_core.tc-context-type-get ctx elem-ty)
-        (lower-id-set-empty))]
     [(Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -18006,13 +17152,9 @@
     (if (lower-type-register-resident? ctx (lower-global-shared-view resolved))
       false
       (match resolved
-        [(Tuple _) true]
-        [(Array _ _) true]
-        [(DynArray _) true]
-        [(Struct _) true]
-        [(StructArgs _ _) true]
-        [(Enum _) true]
-        [(EnumArgs _ _) true]
+        [(or (Tuple _) (Array _ _) (DynArray _) (Struct _) (StructArgs _ _)
+             (Enum _) (EnumArgs _ _))
+          true]
         [_ false]))))
 
 ;; A memory-class local/global value already denotes its aggregate payload, so
@@ -18028,39 +17170,32 @@
     (if (lower-type-register-resident? ctx (lower-global-shared-view resolved))
       false
       (match resolved
-        [(Tuple _) true]
-        [(Array _ _) true]
-        [(Struct _) true]
-        [(StructArgs _ _) true]
-        [(Enum _) true]
-        [(EnumArgs _ _) true]
+        [(or (Tuple _) (Array _ _) (Struct _) (StructArgs _ _) (Enum _)
+             (EnumArgs _ _))
+          true]
         [_ false]))))
 
 (define (lower-supported-reference-type-list-with-stack?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [stack : LowerIdSet]) : bool
-  (lower-supported-reference-type-list-with-stack-at? ctx (& types) stack 0))
+  (lower-supported-reference-type-list-with-stack-at? ctx (& types) stack))
 
 (define (lower-supported-reference-type-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
-    (and
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (unless
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         (lower-global-shared-view stack))
-      (lower-supported-reference-type-list-with-stack-at?
-        ctx
-        types
-        stack
-        (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-supported-reference-type-list-subst-with-stack?
   [ctx : tc_core.TcContext]
@@ -18071,18 +17206,15 @@
     ctx
     subst
     (& types)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-type-list-subst-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [types : (& types ast.AstTypeList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
-    (and
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (unless
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-lifetime-subst-type
@@ -18091,12 +17223,9 @@
             ctx
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
         (lower-global-shared-view stack))
-      (lower-supported-reference-type-list-subst-with-stack-at?
-        ctx
-        subst
-        types
-        stack
-        (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-supported-reference-field-list-with-stack?
   [ctx : tc_core.TcContext]
@@ -18107,33 +17236,27 @@
     ctx
     subst
     (& fields)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-field-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [fields : (& fields ast.AstFieldDefList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index fields.len)
-    true
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 fields.len)]
     (match (ast.ast-field-def-list-get
       fields
       index
       (ast.ast-field-def-fallback))
       [(Def _ ty _)
-        (and
+        (unless
           (lower-supported-reference-type-with-stack?
             ctx
             (tc_core.tc-lifetime-subst-type subst ty)
             (lower-global-shared-view stack))
-          (lower-supported-reference-field-list-with-stack-at?
-            ctx
-            subst
-            fields
-            stack
-            (+ index 1)))])))
+          (return false))
+        unit]))
+  true)
 
 (define (lower-supported-reference-variant-list-with-stack?
   [ctx : tc_core.TcContext]
@@ -18144,34 +17267,28 @@
     ctx
     subst
     (& variants)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-variant-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [variants : (& variants ast.AstVariantDefList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index variants.len)
-    true
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 variants.len)]
     (match (ast.ast-variant-def-list-get
       variants
       index
       (ast.ast-variant-def-fallback))
       [(Def _ fields _)
-        (and
+        (unless
           (lower-supported-reference-type-list-subst-with-stack?
             ctx
             subst
             fields
             (lower-global-shared-view stack))
-          (lower-supported-reference-variant-list-with-stack-at?
-            ctx
-            subst
-            variants
-            stack
-            (+ index 1)))])))
+          (return false))
+        unit]))
+  true)
 
 (define (lower-supported-reference-struct-args-with-stack?
   [ctx : tc_core.TcContext]
@@ -18236,11 +17353,7 @@
             (lower-global-shared-view resolved)))
           true
           (match resolved
-            [(Ref _ inner)
-              (lower-supported-reference-referent-type?
-                ctx
-                (tc_core.tc-context-type-get ctx inner))]
-            [(MutRef _ inner)
+            [(or (Ref _ inner) (MutRef _ inner))
               (lower-supported-reference-referent-type?
                 ctx
                 (tc_core.tc-context-type-get ctx inner))]
@@ -18249,17 +17362,7 @@
                 ctx
                 (deref elems)
                 stack)]
-            [(Array elem _)
-              (lower-supported-reference-type-with-stack?
-                ctx
-                (tc_core.tc-context-type-get ctx elem)
-                stack)]
-            [(DynArray elem)
-              (lower-supported-reference-type-with-stack?
-                ctx
-                (tc_core.tc-context-type-get ctx elem)
-                stack)]
-            [(Box elem)
+            [(or (Array elem _) (DynArray elem) (Box elem) (Region _ elem))
               (lower-supported-reference-type-with-stack?
                 ctx
                 (tc_core.tc-context-type-get ctx elem)
@@ -18297,11 +17400,6 @@
                 ctx
                 name
                 (deref lifetimes)
-                stack)]
-            [(Region _ inner)
-              (lower-supported-reference-type-with-stack?
-                ctx
-                (tc_core.tc-context-type-get ctx inner)
                 stack)]
             [_ false]))])))
 
@@ -18504,9 +17602,7 @@
     [(Ok place-ty)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))
-        [(Ref _ _)
-          (lower-borrow-reference-var-address state env name result-ty)]
-        [(MutRef _ _)
+        [(or (Ref _ _) (MutRef _ _))
           (lower-borrow-reference-var-address state env name result-ty)]
         [_
           (if (and
@@ -18625,7 +17721,7 @@
       [(Expr receiver-state receiver-value receiver-ty)
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx receiver-ty))
-          [(Struct struct-name)
+          [(or (Struct struct-name) (StructArgs struct-name _))
             (lower-borrow-struct-field-address-named
               ctx
               receiver-state
@@ -18635,64 +17731,12 @@
               field
               origin
               result-ty)]
-          [(StructArgs struct-name _)
-            (lower-borrow-struct-field-address-named
-              ctx
-              receiver-state
-              receiver-value
-              struct-name
-              (tc_core.tc-nominal-name-id-display struct-name)
-              field
-              origin
-              result-ty)]
-          [(Ref _ referent-ty)
+          [(or (Ref _ referent-ty) (MutRef _ referent-ty))
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Struct struct-name)
-                (lower-borrow-struct-field-address-from-memory
-                  ctx
-                  receiver-state
-                  receiver-value
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field
-                  origin
-                  result-ty)]
-              [(StructArgs struct-name _)
-                (lower-borrow-struct-field-address-from-memory
-                  ctx
-                  receiver-state
-                  receiver-value
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field
-                  origin
-                  result-ty)]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      origin
-                      "lower: field projection borrow requires struct place")))])]
-          [(MutRef _ referent-ty)
-            (match (tc_core.tc-type-strip-region
-              (tc_core.tc-resolve-type
-                ctx
-                (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Struct struct-name)
-                (lower-borrow-struct-field-address-from-memory
-                  ctx
-                  receiver-state
-                  receiver-value
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field
-                  origin
-                  result-ty)]
-              [(StructArgs struct-name _)
+              [(or (Struct struct-name) (StructArgs struct-name _))
                 (lower-borrow-struct-field-address-from-memory
                   ctx
                   receiver-state
@@ -18735,7 +17779,7 @@
           [(Tuple elem-tys)
             (let
               [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
               (match info
                 [(Info offset field-ty)
                   (match (lower-gep-byte tuple-state tuple-value offset)
@@ -18748,7 +17792,7 @@
                           (lower-global-shared-view field-ty)
                           result-ty
                           (lower-owned-handle-type? ctx field-ty)))])]))]
-          [(Ref _ referent-ty)
+          [(or (Ref _ referent-ty) (MutRef _ referent-ty))
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type
                 ctx
@@ -18756,35 +17800,7 @@
               [(Tuple elem-tys)
                 (let
                   [info : LowerFieldInfo
-                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
-                  (match info
-                    [(Info offset field-ty)
-                      (match (lower-gep-byte tuple-state tuple-value offset)
-                        [(Expr ptr-state ptr _)
-                          (Ok
-                            (lower-borrow-place-slot-reference
-                              ctx
-                              ptr-state
-                              ptr
-                              (lower-global-shared-view field-ty)
-                              result-ty
-                              (lower-owned-handle-type? ctx field-ty)))])]))]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      origin
-                      "lower: tuple-ref borrow requires tuple place")))])]
-          [(MutRef _ referent-ty)
-            (match (tc_core.tc-type-strip-region
-              (tc_core.tc-resolve-type
-                ctx
-                (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Tuple elem-tys)
-                (let
-                  [info : LowerFieldInfo
-                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
                   (match info
                     [(Info offset field-ty)
                       (match (lower-gep-byte tuple-state tuple-value offset)
@@ -18837,8 +17853,7 @@
         [container-ty : ast.AstType
           (match (tc_core.tc-type-strip-region
             (tc_core.tc-resolve-type ctx (lower-global-shared-view arr-ty)))
-            [(Ref _ referent-ty) (tc_core.tc-context-type-get ctx referent-ty)]
-            [(MutRef _ referent-ty)
+            [(or (Ref _ referent-ty) (MutRef _ referent-ty))
               (tc_core.tc-context-type-get ctx referent-ty)]
             [_ (owned_view.compiler-owned-shared-view arr-ty)])]
         (match (tc_core.tc-type-strip-region
@@ -19116,25 +18131,7 @@
     (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
     (match (tc_core.tc-type-strip-region
       (tc_core.tc-resolve-type ctx (lower-global-shared-view expr-ty)))
-      [(Ref _ referent-ty)
-        (if (lower-supported-reference-referent-type?
-          ctx
-          (tc_core.tc-context-type-get ctx referent-ty))
-          (lower-borrow-place-address
-            ctx
-            state
-            env
-            type-env
-            inner
-            origin
-            expr-ty)
-          (Err
-            (box
-              (lower-diagnostic-at-expr
-                ctx
-                origin
-                (lower-reference-support-message)))))]
-      [(MutRef _ referent-ty)
+      [(or (Ref _ referent-ty) (MutRef _ referent-ty))
         (if (lower-supported-reference-referent-type?
           ctx
           (tc_core.tc-context-type-get ctx referent-ty))
@@ -19318,37 +18315,30 @@
 
 (define (lower-literal-payload-supported? [lit : ast.AstLiteral]) : bool
   (match lit
-    [(Int _ _) true]
-    [(Bool _) true]
-    [(Char _) true]
-    [(String _) true]
+    [(or (Int _ _) (Bool _) (Char _) (String _)) true]
     [_ false]))
 
 (define (lower-enum-type-name-or-empty [ty : ast.AstType]) : String
   (match (tc_core.tc-type-strip-region ty)
-    [(Enum enum-name) (tc_core.tc-nominal-name-id-display enum-name)]
-    [(EnumArgs enum-name _) (tc_core.tc-nominal-name-id-display enum-name)]
-    [(Var enum-name) (tc_core.tc-nominal-name-id-display enum-name)]
-    [(VarArgs enum-name _) (tc_core.tc-nominal-name-id-display enum-name)]
+    [(or (Enum enum-name) (EnumArgs enum-name _) (Var enum-name)
+         (VarArgs enum-name _))
+      (tc_core.tc-nominal-name-id-display enum-name)]
     [_ ""]))
 
 (define (lower-enum-type-name-id-or [ty : (& ty ast.AstType)] [fallback : i64]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region ty)
-      [(Enum enum-name) enum-name]
-      [(EnumArgs enum-name _) enum-name]
-      [(Var enum-name) enum-name]
-      [(VarArgs enum-name _) enum-name]
+      [(or (Enum enum-name) (EnumArgs enum-name _) (Var enum-name)
+           (VarArgs enum-name _))
+        enum-name]
       [_ fallback])))
 
 (define (lower-struct-type-name-or-empty [ty : ast.AstType]) : String
   (match (tc_core.tc-type-strip-region ty)
-    [(Struct struct-name) (tc_core.tc-nominal-name-id-display struct-name)]
-    [(StructArgs struct-name _)
+    [(or (Struct struct-name) (StructArgs struct-name _) (Var struct-name)
+         (VarArgs struct-name _))
       (tc_core.tc-nominal-name-id-display struct-name)]
-    [(Var struct-name) (tc_core.tc-nominal-name-id-display struct-name)]
-    [(VarArgs struct-name _) (tc_core.tc-nominal-name-id-display struct-name)]
     [_ ""]))
 
 (define (lower-struct-type-name-id-or
@@ -19357,10 +18347,9 @@
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region ty)
-      [(Struct struct-name) struct-name]
-      [(StructArgs struct-name _) struct-name]
-      [(Var struct-name) struct-name]
-      [(VarArgs struct-name _) struct-name]
+      [(or (Struct struct-name) (StructArgs struct-name _) (Var struct-name)
+           (VarArgs struct-name _))
+        struct-name]
       [_ fallback])))
 
 (define (lower-struct-type-handle-or
@@ -19437,25 +18426,8 @@
   [variant-name-id : i64]
   [fallback : i64]) : i64
   (match (tc_core.tc-type-strip-region scrut-ty)
-    [(Enum enum-name-id)
-      (tc_core.tc-source-variant-handle-for-enum-id-or
-        ctx
-        enum-name-id
-        variant-name-id
-        fallback)]
-    [(EnumArgs enum-name-id _)
-      (tc_core.tc-source-variant-handle-for-enum-id-or
-        ctx
-        enum-name-id
-        variant-name-id
-        fallback)]
-    [(Var enum-name-id)
-      (tc_core.tc-source-variant-handle-for-enum-id-or
-        ctx
-        enum-name-id
-        variant-name-id
-        fallback)]
-    [(VarArgs enum-name-id _)
+    [(or (Enum enum-name-id) (EnumArgs enum-name-id _) (Var enum-name-id)
+         (VarArgs enum-name-id _))
       (tc_core.tc-source-variant-handle-for-enum-id-or
         ctx
         enum-name-id
@@ -19532,14 +18504,12 @@
       (if (tc_core.tc-name-qualified? name)
         (tc_core.tc-qualified-name-base name)
         name)]
-    [i : i64 0]
     [last-dot : i64 -1]
     [n : i64 (string.string-length source)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (string.char-eq (string.string-ref source i) '.')
         (set! last-dot i)
-        unit)
-      (set! i (+ i 1)))
+        unit))
     (if (and (>= last-dot 0) (< last-dot (- n 1)))
       (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
       source)))
@@ -19975,16 +18945,10 @@
 ;; A scalar that a deferred Copy binding may read from its address at each use.
 (define (lower-deferred-copy-type? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.I64) true]
-    [(ast.AstType.I32) true]
-    [(ast.AstType.I16) true]
-    [(ast.AstType.I8) true]
-    [(ast.AstType.U64) true]
-    [(ast.AstType.U32) true]
-    [(ast.AstType.U16) true]
-    [(ast.AstType.U8) true]
-    [(ast.AstType.Bool) true]
-    [(ast.AstType.Char) true]
+    [(or (ast.AstType.I64) (ast.AstType.I32) (ast.AstType.I16) (ast.AstType.I8)
+         (ast.AstType.U64) (ast.AstType.U32) (ast.AstType.U16) (ast.AstType.U8)
+         (ast.AstType.Bool) (ast.AstType.Char))
+      true]
     [_ false]))
 
 ;; What `lower-deferred-copy-scan` finds in a subtree, as bits: it reads the
@@ -20010,35 +18974,18 @@
     [expr : ast.AstExpr (lower-context-expr-get ctx id)]
     (match (lower-global-shared-view expr)
       [(ast.AstExpr.Var var) (cond [(not (= var name)) 0] [written 4] [else 1])]
-      [(ast.AstExpr.Literal _) 0]
-      [(ast.AstExpr.Break) 0]
-      [(ast.AstExpr.Continue) 0]
-      [(ast.AstExpr.Spanned inner _)
+      [(or (ast.AstExpr.Literal _) (ast.AstExpr.Break) (ast.AstExpr.Continue))
+        0]
+      [(or (ast.AstExpr.Spanned inner _) (ast.AstExpr.MacroExpansion inner _ _)
+           (ast.AstExpr.Ann inner _) (ast.AstExpr.Cast inner _)
+           (ast.AstExpr.Unary _ inner) (ast.AstExpr.TupleRef inner _)
+           (ast.AstExpr.StructGet inner _) (ast.AstExpr.Return inner)
+           (ast.AstExpr.Try inner))
         (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.MacroExpansion inner _ _)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Ann inner _)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Cast inner _)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Unary _ inner)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.TupleRef inner _)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.StructGet inner _)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Return inner)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Try inner)
-        (lower-deferred-copy-scan ctx inner name written)]
-      [(ast.AstExpr.Binary _ left right)
+      [(or (ast.AstExpr.Binary _ left right) (ast.AstExpr.ArrayRef left right))
         (lower-deferred-copy-operand-pair
           (lower-deferred-copy-scan ctx left name written)
           (lower-deferred-copy-scan ctx right name written))]
-      [(ast.AstExpr.ArrayRef array index)
-        (lower-deferred-copy-operand-pair
-          (lower-deferred-copy-scan ctx array name written)
-          (lower-deferred-copy-scan ctx index name written))]
       ;; Arguments are read before the call, which may then write.
       [(ast.AstExpr.Call func args)
         (bit-or
@@ -20055,9 +19002,7 @@
             (bit-or
               (lower-deferred-copy-scan ctx then-branch name after)
               (lower-deferred-copy-scan ctx else-branch name after))))]
-      [(ast.AstExpr.Begin items)
-        (lower-deferred-copy-scan-sequence ctx (& items) 0 name written 0)]
-      [(ast.AstExpr.Unsafe items)
+      [(or (ast.AstExpr.Begin items) (ast.AstExpr.Unsafe items))
         (lower-deferred-copy-scan-sequence ctx (& items) 0 name written 0)]
       ;; Leaving a `let` or `match` scope can run a binding's cleanup.
       [(ast.AstExpr.Let let-box)
@@ -20229,7 +19174,7 @@
                 (ast.ast-expr-list-get (& children) index -1))
               name)
             (set! found true))
-          (set! index (+ index 1)))
+          (+= index 1))
         found)]))
 
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
@@ -20343,44 +19288,7 @@
                   next-cursor
                   fail-label
                   scrut-reg-group?)]
-              [(Binding name)
-                (match (lower-bind-payload-name
-                  ctx
-                  state
-                  bind-mode
-                  (lower-global-shared-view base)
-                  enum-id
-                  offset
-                  resolved
-                  scrut-reg-group?
-                  name)
-                  [(Expr bound-state bound-value bound-ty)
-                    (match bound-value
-                      [(Var field-var)
-                        (lower-bind-variant-payloads
-                          ctx
-                          bound-state
-                          (sym_i64_env.sym-i64-bind-id env name field-var)
-                          (tc_core.tc-bind-id type-env name bound-ty)
-                          bind-mode
-                          base
-                          rest-patterns
-                          rest-types
-                          mode
-                          enum-id
-                          enum-name
-                          variant-name
-                          variant-name-id
-                          next-index
-                          next-cursor
-                          fail-label
-                          scrut-reg-group?)]
-                      [_
-                        (Err
-                          (box
-                            (lower-diagnostic
-                              (lower-bind-payload-name-failure bind-mode))))])])]
-              [(Var name _)
+              [(or (Binding name) (Var name _))
                 (match (lower-bind-payload-name
                   ctx
                   state
@@ -20844,12 +19752,10 @@
   [count : i64]) : ast.AstPatternList
   (let
     [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-pattern-list-push
         (&mut out)
-        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
-      (set! index (+ index 1)))
+        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))))
     out))
 
 ;; Binds a name to the address of element `index`, typed `ref-ty`.
@@ -20891,8 +19797,7 @@
     (let
       [name : i64
         (match (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))
-          [(Binding name) name]
-          [(Var name _) name]
+          [(or (Binding name) (Var name _)) name]
           [(Wildcard) -1]
           [_ -2])]
       (cond
@@ -20958,8 +19863,7 @@
   (let
     [name : i64
       (match rest
-        [(Binding name) name]
-        [(Var name _) name]
+        [(or (Binding name) (Var name _)) name]
         [_ -1])]
     [offset : i64 (* count (lower-type-size ctx elem-ty))]
     (if (< name 0)
@@ -21048,10 +19952,8 @@
             (tc_core.tc-context-pools ctx)
             (lower-global-shared-view elem-ty))]
         [types : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
-          (ast.ast-type-list-push (&mut types) elem-id)
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 count)]
+          (ast.ast-type-list-push (&mut types) elem-id))
         (lower-bind-variant-payloads
           ctx
           state
@@ -21354,8 +20256,7 @@
 ;; var, wildcard, tuple and `(fields ...)` patterns always match.
 (define (lower-pattern-refutable? [pattern : ast.AstPattern]) : bool
   (match pattern
-    [(Literal _) true]
-    [(Or _) true]
+    [(or (Literal _) (Or _)) true]
     [(Variant name args-box)
       (if (lower-box-pattern-name? name)
         (lower-pattern-list-refutable? (deref args-box))
@@ -21370,31 +20271,26 @@
     [_ false]))
 
 (define (lower-pattern-list-refutable? [patterns : ast.AstPatternList]) : bool
-  (lower-pattern-list-refutable-at? (& patterns) 0))
+  (lower-pattern-list-refutable-at? (& patterns)))
 
 (define (lower-pattern-list-refutable-at?
-  [patterns : (& patterns ast.AstPatternList)]
-  [index : i64]) : bool
-  (if (>= index patterns.len)
-    false
-    (if (lower-pattern-refutable?
-      (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
-      true
-      (lower-pattern-list-refutable-at? patterns (+ index 1)))))
+  [patterns : (& patterns ast.AstPatternList)]) : bool
+  (for [index (iterator.range 0 patterns.len)]
+    (when
+      (lower-pattern-refutable?
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
+      (return true)))
+  false)
 
 (define (lower-pattern-refutable-for-type?
   [ctx : tc_core.TcContext]
   [pattern : ast.AstPattern]
   [ty : ast.AstType]) : bool
   (match pattern
-    [(Wildcard) false]
-    [(Var _ _) false]
-    [(Binding _) false]
-    [(Tuple _) false]
-    [(Array _) false]
-    [(Fields _) false]
-    [(Field _ _) false]
-    [(Literal _) true]
+    [(or (Wildcard) (Var _ _) (Binding _) (Tuple _) (Array _) (Fields _)
+         (Field _ _))
+      false]
+    [(or (Literal _) (Or _)) true]
     [(Slice items-box has-rest)
       (not
         (tc_core.tc-slice-pattern-irrefutable?
@@ -21402,7 +20298,6 @@
           (deref items-box)
           has-rest
           ty))]
-    [(Or _) true]
     [(Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
@@ -21410,17 +20305,7 @@
           (lower-pattern-list-refutable? args)
           (match (tc_core.tc-type-strip-region
             (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
-            [(Struct struct-name)
-              (not
-                (tc_core.tc-struct-pattern-irrefutable?
-                  ctx
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  struct-name
-                  ty
-                  (tc_core.tc-env-key-name-text name)
-                  name
-                  args))]
-            [(StructArgs struct-name _)
+            [(or (Struct struct-name) (StructArgs struct-name _))
               (not
                 (tc_core.tc-struct-pattern-irrefutable?
                   ctx
@@ -21466,36 +20351,31 @@
   [ctx : tc_core.TcContext]
   [struct-id : i64]
   [fields : (& fields ast.AstFieldDefList)]
-  [field-name : String]
-  [index : i64]) : ResultLowerFieldInfo
-  (if (>= index fields.len)
-    (Err
-      (box
-        (lower-diagnostic
-          (str_cat.str-cat "lower: unknown struct field " field-name))))
+  [field-name : String]) : ResultLowerFieldInfo
+  (for [index (iterator.range 0 fields.len)]
     (match (ast.ast-field-def-list-get
       fields
       index
       (ast.ast-field-def-fallback))
       [(Def name ty _)
-        (if (string.eq
-          (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
-          field-name)
-          (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
-            [(Ok layout)
-              (Ok
-                (Info
-                  (tc_core.tc-inline-aggregate-layout-field-offset-id
-                    layout
-                    (ci.intern-syntax-id-value name))
-                  (tc_core.tc-resolve-type ctx ty)))]
-            [(Err message) (Err (box (lower-diagnostic message)))])
-          (lower-field-info-from-list-at
-            ctx
-            struct-id
-            fields
-            field-name
-            (+ index 1)))])))
+        (when
+          (string.eq
+            (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
+            field-name)
+          (return
+            (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
+              [(Ok layout)
+                (Ok
+                  (Info
+                    (tc_core.tc-inline-aggregate-layout-field-offset-id
+                      layout
+                      (ci.intern-syntax-id-value name))
+                    (tc_core.tc-resolve-type ctx ty)))]
+              [(Err message) (Err (box (lower-diagnostic message)))])))]))
+  (Err
+    (box
+      (lower-diagnostic
+        (str_cat.str-cat "lower: unknown struct field " field-name)))))
 
 ;; A struct field's offset, from the one inline aggregate layout that also
 ;; answers `offset-of` (default and `(:repr c)` structs alike, including
@@ -21515,8 +20395,7 @@
           field-ctx
           struct-id
           (& fields)
-          field-name
-          0)]
+          field-name)]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
 (define (lower-var-id
@@ -21625,8 +20504,7 @@
 
 (define (lower-function-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(CFunc _ _) true]
-    [(Func _ _) true]
+    [(or (CFunc _ _) (Func _ _)) true]
     [_ false]))
 
 (define (lower-atomic-public-symbol? [symbol : (& symbol str)]) : bool
@@ -21937,7 +20815,7 @@
         [(Capture capture-name-id _ _ _)
           (if (= capture-name-id name-id)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (lower-capture-list-empty) : LowerCaptureList
@@ -21959,40 +20837,18 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : String
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Ref _ _) (lower-reference-support-message)]
-    [(MutRef _ _) (lower-reference-support-message)]
+    [(or (Ref _ _) (MutRef _ _)) (lower-reference-support-message)]
     [_ (lower-unsupported-capture-message)]))
 
 (define (lower-supported-capture-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(I64) true]
-    [(U64) true]
-    [(F64) true]
-    [(I32) true]
-    [(U32) true]
-    [(F32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
-    [(Bool) true]
-    [(Char) true]
-    [(Ptr _) true]
-    [(MutPtr _) true]
-    [(Ref _ _) true]
-    [(MutRef _ _) true]
-    [(CFunc _ _) true]
-    [(Func _ _) true]
-    [(Tuple _) true]
-    [(Array _ _) true]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(String) true]
-    [(DynArray _) true]
+    [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
+         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (CFunc _ _) (Func _ _)
+         (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
+         (StructArgs _ _) (String) (DynArray _))
+      true]
     [_ false]))
 
 (define (lower-capture-env-size [cursor : i64]) : i64
@@ -22004,15 +20860,9 @@
 
 (define (lower-capture-slot-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
-    [(Func _ _) (U64)]
-    [(Tuple _) (U64)]
-    [(Array _ _) (U64)]
-    [(Enum _) (U64)]
-    [(EnumArgs _ _) (U64)]
-    [(Struct _) (U64)]
-    [(StructArgs _ _) (U64)]
-    [(String) (U64)]
-    [(DynArray _) (U64)]
+    [(or (Func _ _) (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
+         (StructArgs _ _) (String) (DynArray _))
+      (U64)]
     [_ ty]))
 
 (define (lower-fixed-array-storage-size
@@ -24649,16 +23499,7 @@
         ctx
         (lower-context-expr-get ctx inner-box)
         to-ty)]
-    [(Ann inner-box from-ty-id)
-      (lower-float-bitcast-inner-literal-value
-        ctx
-        (lower-context-expr-get ctx inner-box)
-        (tc_core.tc-type-without-regions
-          (tc_core.tc-resolve-type
-            ctx
-            (tc_core.tc-context-type-get ctx from-ty-id)))
-        to-ty)]
-    [(Cast inner-box from-ty-id)
+    [(or (Ann inner-box from-ty-id) (Cast inner-box from-ty-id))
       (lower-float-bitcast-inner-literal-value
         ctx
         (lower-context-expr-get ctx inner-box)
@@ -24810,20 +23651,9 @@
 
 (define (lower-clone-scalar-type? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
-    [(F64) true]
-    [(F32) true]
-    [(Bool) true]
-    [(Char) true]
-    [(Unit) true]
-    [(Never) true]
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
+         (Unit) (Never))
+      true]
     [_ false]))
 
 (define (lower-clone-bulk-copy-type?
@@ -24833,10 +23663,8 @@
     [clone-ty : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view clone-ty)
-      [(Struct _) (lower-type-register-resident? ctx clone-ty)]
-      [(StructArgs _ _) (lower-type-register-resident? ctx clone-ty)]
-      [(Enum _) (lower-type-register-resident? ctx clone-ty)]
-      [(EnumArgs _ _) (lower-type-register-resident? ctx clone-ty)]
+      [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
+        (lower-type-register-resident? ctx clone-ty)]
       [_ (lower-clone-scalar-type? clone-ty)])))
 
 (define (lower-clone-dynarray-advance
@@ -25217,18 +24045,7 @@
       ;; A register-resident aggregate is word-class POD held in a
       ;; register, so cloning it is a value copy -- no deep-clone helper, no
       ;; memory traversal.
-      [(Enum name)
-        (cond
-          [(lower-type-register-resident?
-              ctx
-              (lower-global-shared-view clone-ty))
-            (Ok (Expr state value clone-ty))]
-          [(lower-clone-whole-buffer-copy?
-              ctx
-              (lower-global-shared-view clone-ty))
-            (lower-copy-inline-aggregate-to-inline ctx state value clone-ty)]
-          [else (lower-clone-named ctx state env name value clone-ty)])]
-      [(Struct name)
+      [(or (Enum name) (Struct name))
         (cond
           [(lower-type-register-resident?
               ctx
@@ -25292,14 +24109,7 @@
         (tc_core.tc-resolve-type ctx (lower-global-shared-view actual)))]
     [array-len : i64
       (match actual-resolved
-        [(Ref _ inner)
-          (match (tc_core.tc-type-strip-region
-            (tc_core.tc-resolve-type
-              ctx
-              (tc_core.tc-context-type-get ctx inner)))
-            [(Array _ count) count]
-            [_ -1])]
-        [(MutRef _ inner)
+        [(or (Ref _ inner) (MutRef _ inner))
           (match (tc_core.tc-type-strip-region
             (tc_core.tc-resolve-type
               ctx
@@ -25521,7 +24331,7 @@
         (ast.ast-expr-list-get args index 0))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; The symbol of a cleanup-owning type's declared cleanup function.
@@ -25678,8 +24488,7 @@
   ;; Only a reference formal takes a borrowed temporary.
   (if (and
     (match (lower-global-shared-view arg-ty)
-      [(ast.AstType.Ref _ _) true]
-      [(ast.AstType.MutRef _ _) true]
+      [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)) true]
       [_ false])
     (tc_core.tc-call-temporary-borrow-arg?
       (tc_core.tc-context-expr-bases ctx)
@@ -25811,11 +24620,9 @@
         [any? : bool (< root 0)]
         [found : bool
           (match (lower-global-shared-view expr)
-            [(StructSet _ _ _) any?]
-            [(ArraySet _ _ _) any?]
-            [(BoxSet _ _) any?]
-            [(Replace _ _) any?]
-            [(PtrWrite _ _) any?]
+            [(or (StructSet _ _ _) (ArraySet _ _ _) (BoxSet _ _) (Replace _ _)
+                 (PtrWrite _ _))
+              any?]
             [(Set name _)
               (and any? (tc_core.tc-dotted-local-field-name-id? type-env name))]
             [(Borrow mutable _ place-box)
@@ -25936,10 +24743,7 @@
 ;; call argument before anything is looked up.
 (define (lower-call-arg-aggregate-type? [arg-ty : ast.AstType]) : bool
   (match arg-ty
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _)) true]
     [(Invalidate _ inner)
       (lower-call-arg-aggregate-type? (ast.ty-node-get inner))]
     [_ false]))
@@ -26148,9 +24952,8 @@
     [(Some items)
       (let
         [count : i64 (lower_arg_writeback_vec.len (& items))]
-        [index : i64 0]
         [out : LowerState state]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (set!
             out
             (lower-apply-arg-writeback
@@ -26159,8 +24962,7 @@
               (lower_arg_writeback_vec.get
                 (& items)
                 index
-                (lower-global-shared-view lower-arg-writeback-fallback))))
-          (set! index (+ index 1)))
+                (lower-global-shared-view lower-arg-writeback-fallback)))))
         out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
@@ -26191,27 +24993,12 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (StructGet inner-box _) (TupleRef inner-box _))
       (lower-call-arg-place-root-name
         ctx
         (lower-context-expr-get ctx inner-box))]
     [(Var name) name]
-    [(Ann inner-box _)
-      (lower-call-arg-place-root-name
-        ctx
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
-      (lower-call-arg-place-root-name
-        ctx
-        (lower-context-expr-get ctx inner-box))]
-    [(StructGet receiver-box _)
-      (lower-call-arg-place-root-name
-        ctx
-        (lower-context-expr-get ctx receiver-box))]
-    [(TupleRef tuple-box _)
-      (lower-call-arg-place-root-name
-        ctx
-        (lower-context-expr-get ctx tuple-box))]
     [_ -1]))
 
 ;; 2 when writing `target-name`'s place writes the variable `name`, or any
@@ -26243,31 +25030,21 @@
     (match (lower-global-shared-view expr)
       [(Spanned inner-box _)
         (lower-call-arg-expr-write-code ctx name inner-box)]
-      [(Literal _) 0]
-      [(Var _) 0]
-      [(Lambda _) 0]
+      [(or (Literal _) (Var _) (Lambda _)) 0]
       [_
         (let
           [own : i64
             (match (lower-global-shared-view expr)
               [(Set target-name _)
                 (lower-call-arg-name-write-code name target-name)]
-              [(Replace place-box _)
+              [(or (Replace place-box _) (StructSet place-box _ _)
+                   (ArraySet place-box _ _) (ArrayPush place-box _)
+                   (ArrayTake place-box _ _) (PtrAddrOf place-box))
                 (lower-call-arg-place-write-code ctx name place-box)]
-              [(StructSet receiver-box _ _)
-                (lower-call-arg-place-write-code ctx name receiver-box)]
-              [(ArraySet array-box _ _)
-                (lower-call-arg-place-write-code ctx name array-box)]
-              [(ArrayPush array-box _)
-                (lower-call-arg-place-write-code ctx name array-box)]
-              [(ArrayTake array-box _ _)
-                (lower-call-arg-place-write-code ctx name array-box)]
               [(Borrow mutable _ place-box)
                 (if mutable
                   (lower-call-arg-place-write-code ctx name place-box)
                   0)]
-              [(PtrAddrOf place-box)
-                (lower-call-arg-place-write-code ctx name place-box)]
               [_ 0])]
           (if (= own 2)
             2
@@ -26299,7 +25076,7 @@
             name
             (ast.ast-expr-list-get exprs at 0))]
         (when (> next code) (set! code next)))
-      (set! at (+ at 1)))
+      (+= at 1))
     code))
 
 ;; Whether evaluating the expression at `expr-box` only reads: no call, store
@@ -26308,19 +25085,14 @@
   [ctx : tc_core.TcContext]
   [expr-box : i64]) : bool
   (match (lower-context-expr-get ctx expr-box)
-    [(Spanned inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
-    [(Literal _) true]
-    [(Var _) true]
-    [(Ann inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
-    [(Cast inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
-    [(Unary _ inner-box) (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box) (StructGet inner-box _) (TupleRef inner-box _))
+      (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(or (Literal _) (Var _)) true]
     [(Binary _ left-box right-box)
       (and
         (lower-call-arg-expr-reads-only? ctx left-box)
         (lower-call-arg-expr-reads-only? ctx right-box))]
-    [(StructGet receiver-box _)
-      (lower-call-arg-expr-reads-only? ctx receiver-box)]
-    [(TupleRef tuple-box _) (lower-call-arg-expr-reads-only? ctx tuple-box)]
     [_ false]))
 
 ;; Whether every argument of `args` from `index` on only reads.
@@ -26335,7 +25107,7 @@
       (set!
         read-only
         (lower-call-arg-expr-reads-only? ctx (ast.ast-expr-list-get args at 0)))
-      (set! at (+ at 1)))
+      (+= at 1))
     read-only))
 
 ;; Scalars, raw pointers and register-resident aggregates, which are carried
@@ -26344,12 +25116,8 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (lower-global-shared-view ty)
-    [(Unit) false]
-    [(Never) false]
-    [(Ptr _) true]
-    [(MutPtr _) true]
-    [(Ref _ _) false]
-    [(MutRef _ _) false]
+    [(or (Unit) (Never) (Ref _ _) (MutRef _ _)) false]
+    [(or (Ptr _) (MutPtr _)) true]
     [_
       (or
         (lower-clone-scalar-type? (lower-global-shared-view ty))
@@ -26573,10 +25341,9 @@
             [(tc_core.tc-call-slice-ref-formal? ctx head) true]
             [(and
                 (match (lower-global-shared-view stripped)
-                  [(ast.AstType.Ref _ _) true]
-                  [(ast.AstType.Var _) true]
-                  [(ast.AstType.VarArgs _ _) true]
-                  [(ast.AstType.Invalidate _ _) true]
+                  [(or (ast.AstType.Ref _ _) (ast.AstType.Var _)
+                       (ast.AstType.VarArgs _ _) (ast.AstType.Invalidate _ _))
+                    true]
                   [_ false])
                 (< index args.len)
                 (tc_core.tc-call-temporary-borrow-arg-id?
@@ -26875,14 +25642,7 @@
   [enum-ty : ast.AstType]
   [fields : ast.AstTypeList]) : ast.AstTypeList
   (match enum-ty
-    [(EnumArgs enum-id lifetimes)
-      (match (tc_core.tc-lifetime-subst-from-nominal-args-id
-        ctx
-        enum-id
-        (deref lifetimes))
-        [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst fields)]
-        [(Err _) fields])]
-    [(VarArgs enum-id lifetimes)
+    [(or (EnumArgs enum-id lifetimes) (VarArgs enum-id lifetimes))
       (match (tc_core.tc-lifetime-subst-from-nominal-args-id
         ctx
         enum-id
@@ -26966,18 +25726,7 @@
     [enum-ty : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result-ty))]
     (match (lower-global-shared-view enum-ty)
-      [(Enum enum-name)
-        (lower-construct-enum-with-name
-          ctx
-          state
-          env
-          type-env
-          variant-name
-          handle
-          args
-          (tc_core.tc-nominal-name-id-display enum-name)
-          enum-ty)]
-      [(EnumArgs enum-name _)
+      [(or (Enum enum-name) (EnumArgs enum-name _))
         (lower-construct-enum-with-name
           ctx
           state
@@ -27061,19 +25810,7 @@
     [enum-ty : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result-ty))]
     (match (lower-global-shared-view enum-ty)
-      [(Enum enum-name)
-        (lower-construct-enum-with-name-into
-          ctx
-          state
-          env
-          type-env
-          dst
-          variant-name
-          handle
-          args
-          (tc_core.tc-nominal-name-id-display enum-name)
-          enum-ty)]
-      [(EnumArgs enum-name _)
+      [(or (Enum enum-name) (EnumArgs enum-name _))
         (lower-construct-enum-with-name-into
           ctx
           state
@@ -27100,14 +25837,7 @@
   (let
     [field-types : ast.AstTypeList (tc_core.tc-field-type-list ctx fields)]
     (match struct-ty
-      [(StructArgs struct-id lifetimes)
-        (match (tc_core.tc-lifetime-subst-from-nominal-args-id
-          ctx
-          struct-id
-          (deref lifetimes))
-          [(Ok subst) (tc_core.tc-lifetime-subst-type-list subst field-types)]
-          [(Err _) field-types])]
-      [(VarArgs struct-id lifetimes)
+      [(or (StructArgs struct-id lifetimes) (VarArgs struct-id lifetimes))
         (match (tc_core.tc-lifetime-subst-from-nominal-args-id
           ctx
           struct-id
@@ -27542,7 +26272,7 @@
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
-      [(Struct name)
+      [(or (Struct name) (StructArgs name _))
         (lower-init-struct-into
           ctx
           state
@@ -27551,25 +26281,7 @@
           dst
           (tc_core.tc-nominal-name-id-display name)
           resolved)]
-      [(StructArgs name _)
-        (lower-init-struct-into
-          ctx
-          state
-          env
-          type-env
-          dst
-          (tc_core.tc-nominal-name-id-display name)
-          resolved)]
-      [(Enum name)
-        (lower-init-enum-into
-          ctx
-          state
-          env
-          type-env
-          dst
-          (tc_core.tc-nominal-name-id-display name)
-          resolved)]
-      [(EnumArgs name _)
+      [(or (Enum name) (EnumArgs name _))
         (lower-init-enum-into
           ctx
           state
@@ -27620,13 +26332,7 @@
         [(Char) (lower-init-scalar ctx state (Char '\0') expr-ty origin)]
         [(Unit) (Ok (Expr state Unit expr-ty))]
         [(String) (lower-init-scalar ctx state (String "") expr-ty origin)]
-        [(Ptr _)
-          (let
-            [lowered : LowerExpr (try (lower-materialize state (I64 0) (U64)))]
-            (match lowered
-              [(Expr null-state null-value _)
-                (Ok (Expr null-state null-value expr-ty))]))]
-        [(MutPtr _)
+        [(or (Ptr _) (MutPtr _))
           (let
             [lowered : LowerExpr (try (lower-materialize state (I64 0) (U64)))]
             (match lowered
@@ -27676,7 +26382,7 @@
                 count)
               expr-ty
               origin))]
-        [(Struct name)
+        [(or (Struct name) (StructArgs name _))
           (lower-init-struct
             ctx
             state
@@ -27684,23 +26390,7 @@
             type-env
             (tc_core.tc-nominal-name-id-display name)
             resolved)]
-        [(StructArgs name _)
-          (lower-init-struct
-            ctx
-            state
-            env
-            type-env
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [(Enum name)
-          (lower-init-enum
-            ctx
-            state
-            env
-            type-env
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [(EnumArgs name _)
+        [(or (Enum name) (EnumArgs name _))
           (lower-init-enum
             ctx
             state
@@ -27720,8 +26410,7 @@
 
 (define (lower-nullary-variant-result-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
+    [(or (Enum _) (EnumArgs _ _)) true]
     [_ false]))
 
 (define (lower-nullary-variant-or-function-value
@@ -28140,32 +26829,12 @@
   [env : sym_i64_env.SymI64Env]
   [pattern : ast.AstPattern]) : sym_i64_env.SymI64Env
   (match pattern
-    [(Var name _) (sym_i64_env.sym-i64-bind-id env name 0)]
-    [(Tuple patterns-box)
+    [(or (Var name _) (Binding name)) (sym_i64_env.sym-i64-bind-id env name 0)]
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box))
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
-    [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (lower-pattern-list-bind-local-names env patterns))]
-    [(Slice patterns-box _)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (lower-pattern-list-bind-local-names env patterns))]
-    [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (lower-pattern-list-bind-local-names env patterns))]
-    [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (lower-pattern-list-bind-local-names env patterns))]
-    [(Field _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList (deref patterns-box)]
-        (lower-pattern-list-bind-local-names env patterns))]
-    [(Binding name) (sym_i64_env.sym-i64-bind-id env name 0)]
     [(Variant _ args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
@@ -28189,8 +26858,7 @@
           (let
             [alternatives : ast.AstPatternList (deref alternatives-box)]
             [out : sym_i64_env.SymI64Env env]
-            [index : i64 0]
-            (while (< index alternatives.len)
+            (for [index (iterator.range 0 alternatives.len)]
               (set!
                 out
                 (lower-match-pattern-bind-local-names
@@ -28200,8 +26868,7 @@
                   (ast.ast-pattern-list-get
                     (& alternatives)
                     index
-                    (ast.ast-pattern-fallback))))
-              (set! index (+ index 1)))
+                    (ast.ast-pattern-fallback)))))
             out)]
         [_ env])]
     [_ (lower-pattern-bind-local-names env pattern)]))
@@ -28713,8 +27380,7 @@
         (lower-context-expr-get ctx inner-box))]
     [(Literal lit) (Ok (tc_core.tc-literal-type lit))]
     [(BinaryData _) (Ok (ast.ast-ty-dyn-array (& (U8))))]
-    [(SpmdProgramIndex) (Ok (I64))]
-    [(SpmdProgramCount) (Ok (I64))]
+    [(or (SpmdProgramIndex) (SpmdProgramCount)) (Ok (I64))]
     [(Var name)
       (let
         [expr-ty (try (lower-lookup-type-id ctx type-cache env type-env name))]
@@ -28727,11 +27393,7 @@
           (Ok
             (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))]
         [(No) (Err "lower: contextual init requires an expected type")])]
-    [(Ann _ ty-id)
-      (Ok
-        (tc_core.tc-type-without-regions
-          (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
-    [(Cast _ ty-id)
+    [(or (Ann _ ty-id) (Cast _ ty-id))
       (Ok
         (tc_core.tc-type-without-regions
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
@@ -28870,17 +27532,7 @@
           function-state
           receiver
           field))]
-    [(BoxGet box-expr-box)
-      (let
-        [box-expr : ast.AstExpr (lower-context-expr-get ctx box-expr-box)]
-        (lower-box-get-result-type-fast
-          ctx
-          env
-          type-env
-          type-cache
-          function-state
-          box-expr))]
-    [(BoxTake box-expr-box)
+    [(or (BoxGet box-expr-box) (BoxTake box-expr-box))
       (let
         [box-expr : ast.AstExpr (lower-context-expr-get ctx box-expr-box)]
         (lower-box-get-result-type-fast
@@ -28895,9 +27547,7 @@
         ctx
         type-env
         (lower-context-expr-get ctx place-box))]
-    [(Set _ _) (Ok (Unit))]
-    [(StructSet _ _ _) (Ok (Unit))]
-    [(BoxSet _ _) (Ok (Unit))]
+    [(or (Set _ _) (StructSet _ _ _) (BoxSet _ _)) (Ok (Unit))]
     [_ (Err "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-result-type-or-check
@@ -29254,11 +27904,7 @@
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-origin ctx state env type-env inner origin))]
-    [(MacroExpansion inner-box _ _)
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-origin ctx state env type-env inner origin))]
@@ -29310,17 +27956,7 @@
               (tc_core.tc-type-without-regions expr-ty))]
           [(Err message)
             (Err (box (lower-diagnostic-at-expr ctx origin message)))]))]
-    [(Ann _ ty-id)
-      (lower-expr-with-type
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (tc_core.tc-type-without-regions
-          (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
-    [(Cast _ ty-id)
+    [(or (Ann _ ty-id) (Cast _ ty-id))
       (lower-expr-with-type
         ctx
         state
@@ -29675,11 +28311,7 @@
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
-    [(MacroExpansion inner-box _ _)
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
@@ -30182,11 +28814,7 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box ctx state env type-env inner expr-ty))]
-    [(BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-box-get ctx state env type-env inner expr-ty))]
-    [(BoxTake inner-box)
+    [(or (BoxGet inner-box) (BoxTake inner-box))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expr-ty))]
@@ -30216,7 +28844,10 @@
           (tc_core.tc-ctfe-env-for-comptime
             ctx
             (lower-global-shared-view inner))]
-        (match (ctfe.compiler-ctfe-eval inner ctfe-env (ctfe.ctfe-fuel-limit))
+        (match (ctfe.compiler-ctfe-eval
+          (& inner)
+          ctfe-env
+          (ctfe.ctfe-fuel-limit))
           [(Ok value _)
             (match (lower-global-shared-view value)
               [(Type ty)
@@ -30230,14 +28861,7 @@
                         (tc_core.tc-type-render
                           (tc_core.tc-resolve-type ctx ty))
                         " is compile-time only"))))]
-              [(String _ _)
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      origin
-                      "String value is compile-time only")))]
-              [(Name _ _)
+              [(or (String _ _) (Name _ _))
                 (Err
                   (box
                     (lower-diagnostic-at-expr
@@ -30396,20 +29020,11 @@
                   state
                   (lower-literal-value-with-type
                     (tc_core.tc-context-source-names ctx)
-                    (ctfe.ctfe-value-to-literal-for-type
-                      value
-                      (lower-global-shared-view expr-ty))
+                    (ctfe.ctfe-value-to-literal-for-type (& value) (& expr-ty))
                     (lower-global-shared-view expr-ty))
                   expr-ty)])]
           [(Err diag) (Err diag)]))]
-    [(Quote _)
-      (Err
-        (box
-          (lower-diagnostic-at-expr
-            ctx
-            origin
-            "Expr value is compile-time only")))]
-    [(Quasiquote _)
+    [(or (Quote _) (Quasiquote _))
       (Err
         (box
           (lower-diagnostic-at-expr
@@ -30594,16 +29209,7 @@
                 [(Expr offset-state offset-value _)
                   (match (tc_core.tc-type-strip-region
                     (tc_core.tc-resolve-type ctx ptr-ty))
-                    [(Ptr elem-ty)
-                      (match (lower-emit-elem-addr-gep
-                        ctx
-                        offset-state
-                        ptr-value
-                        offset-value
-                        (tc_core.tc-context-type-get ctx elem-ty))
-                        [(Expr gep-state gep-value _)
-                          (Ok (Expr gep-state gep-value expr-ty))])]
-                    [(MutPtr elem-ty)
+                    [(or (Ptr elem-ty) (MutPtr elem-ty))
                       (match (lower-emit-elem-addr-gep
                         ctx
                         offset-state
@@ -30619,14 +29225,7 @@
                             ctx
                             origin
                             "lower: ptr-offset requires raw pointer")))])]))]))]
-    [(PtrCast ptr-box _)
-      (let
-        [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
-        [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
-        (match lowered
-          [(Expr ptr-state ptr-value ptr-ty)
-            (Ok (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))]))]
-    [(PtrToInt ptr-box)
+    [(or (PtrCast ptr-box _) (PtrToInt ptr-box))
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
         [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
@@ -30762,11 +29361,7 @@
   [expected-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-expected ctx state env type-env inner expected-ty origin))]
-    [(MacroExpansion inner-box _ _)
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-expected ctx state env type-env inner expected-ty origin))]
@@ -30780,77 +29375,8 @@
           (lower-global-shared-view expected-ty))
         expected-ty
         origin)]
-    [(Unary _ _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Binary _ _ _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Let _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Begin _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Unsafe _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Array _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(DynArray _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
-    [(Tuple _)
+    [(or (Unary _ _) (Binary _ _ _) (Let _) (Begin _) (Unsafe _) (Array _)
+         (DynArray _) (Tuple _) (Borrow _ _ _))
       (lower-expr-with-type-and-coerce
         ctx
         state
@@ -30884,24 +29410,10 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box ctx state env type-env inner expected-ty))]
-    [(BoxGet inner-box)
+    [(or (BoxGet inner-box) (BoxTake inner-box))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expected-ty))]
-    [(BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-box-get ctx state env type-env inner expected-ty))]
-    [(Borrow _ _ _)
-      (lower-expr-with-type-and-coerce
-        ctx
-        state
-        env
-        type-env
-        expr
-        origin
-        (lower-global-shared-view expected-ty)
-        expected-ty)]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
         (tc_core.tc-context-pools ctx)
@@ -30925,8 +29437,7 @@
             (tc_core.tc-resolve-type ctx (lower-global-shared-view expected-ty)))]
         (if (match (tc_core.tc-type-strip-region
           (lower-global-shared-view expected-resolved))
-          [(Enum _) true]
-          [(EnumArgs _ _) true]
+          [(or (Enum _) (EnumArgs _ _)) true]
           [_ false])
           (lower-expr-with-type-and-coerce
             ctx
@@ -30995,8 +29506,7 @@
 
 (define (lower-owned-handle-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(DynArray _) true]
-    [(String) true]
+    [(or (DynArray _) (String)) true]
     [_ false]))
 
 (define (lower-struct-get-named
@@ -31137,15 +29647,7 @@
         [(Expr place-state base receiver-ty)
           (match (tc_core.tc-type-strip-region
             (tc_core.tc-resolve-type ctx receiver-ty))
-            [(Struct struct-id)
-              (lower-raw-deref-field-load
-                ctx
-                place-state
-                base
-                struct-id
-                (tc_core.tc-env-key-name-text field)
-                result-ty)]
-            [(StructArgs struct-id _)
+            [(or (Struct struct-id) (StructArgs struct-id _))
               (lower-raw-deref-field-load
                 ctx
                 place-state
@@ -31169,20 +29671,13 @@
   [type-env : tc_core.TcTypeEnv]
   [place : ast.AstExpr]) : bool
   (match place
-    [(Spanned inner-box _)
+    [(or (Spanned inner-box _) (StructGet inner-box _))
       (lower-raw-deref-place?
         ctx
         state
         env
         type-env
         (lower-context-expr-get ctx inner-box))]
-    [(StructGet receiver-box _)
-      (lower-raw-deref-place?
-        ctx
-        state
-        env
-        type-env
-        (lower-context-expr-get ctx receiver-box))]
     [(BoxTake pointer-box)
       (let
         [pointer : ast.AstExpr (lower-context-expr-get ctx pointer-box)]
@@ -31196,8 +29691,7 @@
           [(Ok pointer-ty)
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type ctx pointer-ty))
-              [(Ptr _) true]
-              [(MutPtr _) true]
+              [(or (Ptr _) (MutPtr _)) true]
               [_ false])]
           [(Err _) false]))]
     [_ false]))
@@ -31326,7 +29820,7 @@
       [(Expr receiver-state receiver-value receiver-ty)
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx receiver-ty))
-          [(Struct struct-name)
+          [(or (Struct struct-name) (StructArgs struct-name _))
             (lower-struct-get-named
               ctx
               receiver-state
@@ -31335,63 +29829,12 @@
               (tc_core.tc-nominal-name-id-display struct-name)
               field-name
               result-ty)]
-          [(StructArgs struct-name _)
-            (lower-struct-get-named
-              ctx
-              receiver-state
-              receiver-value
-              struct-name
-              (tc_core.tc-nominal-name-id-display struct-name)
-              field-name
-              result-ty)]
-          [(Ref _ referent-ty)
+          [(or (Ref _ referent-ty) (MutRef _ referent-ty))
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type
                 ctx
                 (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Struct struct-name)
-                (lower-struct-get-through-reference
-                  ctx
-                  receiver-state
-                  receiver-value
-                  (tc_core.tc-context-type-get ctx referent-ty)
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field-name
-                  result-ty)]
-              [(StructArgs struct-name _)
-                (lower-struct-get-through-reference
-                  ctx
-                  receiver-state
-                  receiver-value
-                  (tc_core.tc-context-type-get ctx referent-ty)
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field-name
-                  result-ty)]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
-                      ctx
-                      receiver
-                      "lower: field projection requires struct")))])]
-          [(MutRef _ referent-ty)
-            (match (tc_core.tc-type-strip-region
-              (tc_core.tc-resolve-type
-                ctx
-                (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Struct struct-name)
-                (lower-struct-get-through-reference
-                  ctx
-                  receiver-state
-                  receiver-value
-                  (tc_core.tc-context-type-get ctx referent-ty)
-                  struct-name
-                  (tc_core.tc-nominal-name-id-display struct-name)
-                  field-name
-                  result-ty)]
-              [(StructArgs struct-name _)
+              [(or (Struct struct-name) (StructArgs struct-name _))
                 (lower-struct-get-through-reference
                   ctx
                   receiver-state
@@ -31552,16 +29995,7 @@
             inner
             (ast.ast-ty-box (& result-ty))
             result-ty)]
-        [(Ref _ _)
-          (lower-deref-from-expected-receiver
-            ctx
-            state
-            env
-            type-env
-            inner
-            receiver-ty
-            result-ty)]
-        [(MutRef _ _)
+        [(or (Ref _ _) (MutRef _ _))
           (lower-deref-from-expected-receiver
             ctx
             state
@@ -31604,15 +30038,8 @@
             (match lowered
               [(Expr box-state box-value _)
                 (Ok (Expr box-state box-value result-ty))]))]
-        [(MutRef _ _)
-          (let
-            [lowered : LowerExpr
-              (try (lower-expr ctx state env type-env box-expr))]
-            (match lowered
-              [(Expr receiver-state receiver-value _)
-                (Ok (Expr receiver-state receiver-value result-ty))]))]
         ;; The raw pointer is the address of its pointee.
-        [(MutPtr _)
+        [(or (MutRef _ _) (MutPtr _))
           (let
             [lowered : LowerExpr
               (try (lower-expr ctx state env type-env box-expr))]
@@ -31650,10 +30077,8 @@
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [target : i64]
-  [index : i64]
   [cursor : i64]) : ResultLowerFieldInfo
-  (if (>= index (ast.ast-type-list-len (& types)))
-    (Err (box (lower-diagnostic "lower: tuple-ref index out of range")))
+  (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -31662,13 +30087,9 @@
       [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
       (if (= index target)
-        (Ok (Info offset resolved))
-        (lower-tuple-elem-info
-          ctx
-          types
-          target
-          (+ index 1)
-          (+ offset (lower-type-size ctx resolved)))))))
+        (return (Ok (Info offset resolved)))
+        (set! cursor (+ offset (lower-type-size ctx resolved))))))
+  (Err (box (lower-diagnostic "lower: tuple-ref index out of range"))))
 
 ;; Evaluate each tuple element (preserving side effects even for zero-sized
 ;; elements) and store the sized ones into the aggregate at their field offset,
@@ -32163,7 +30584,7 @@
           [(Tuple elem-tys)
             (let
               [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
               (match info
                 [(Info offset elem-ty)
                   (if (> (lower-type-size ctx elem-ty) 0)
@@ -32403,18 +30824,7 @@
                 source-state
                 source-value
                 (tc_core.tc-context-type-get ctx elem))]
-            [(Ref _ inner)
-              (lower-slice-view-referent-fields
-                ctx
-                source-state
-                source-value
-                source-ty
-                (tc_core.tc-type-strip-region
-                  (tc_core.tc-resolve-type
-                    ctx
-                    (tc_core.tc-context-type-get ctx inner)))
-                source)]
-            [(MutRef _ inner)
+            [(or (Ref _ inner) (MutRef _ inner))
               (lower-slice-view-referent-fields
                 ctx
                 source-state
@@ -33141,38 +31551,29 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(I64) true]
-    [(U64) true]
-    [(I32) true]
-    [(U32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
-    [(Bool) true]
-    [(Char) true]
-    [(CFunc _ _) true]
-    [(Ptr _) true]
-    [(MutPtr _) true]
+    [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8) (Bool) (Char) (CFunc _ _)
+         (Ptr _) (MutPtr _))
+      true]
     [_ false]))
 
 (define (lower-c-abi-inline-fields-integer-only?
   [ctx : tc_core.TcContext]
   [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
-  (lower-c-abi-inline-fields-integer-only-at? ctx fields 0))
+  (lower-c-abi-inline-fields-integer-only-at? ctx fields))
 
 (define (lower-c-abi-inline-fields-integer-only-at?
   [ctx : tc_core.TcContext]
-  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
-  [index : i64]) : bool
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    true
-    (and
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-field-layout-list-count fields))]
+    (unless
       (lower-c-abi-integer-field-type?
         ctx
         (tc_core.tc-inline-field-layout-type
           (tc_core.tc-inline-field-layout-list-ref fields index)))
-      (lower-c-abi-inline-fields-integer-only-at? ctx fields (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-c-abi-win64-register-struct-id?
   [ctx : tc_core.TcContext]
@@ -33190,29 +31591,29 @@
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
-    [(Struct name) (lower-c-abi-win64-register-struct-id? ctx name)]
-    [(StructArgs name _) (lower-c-abi-win64-register-struct-id? ctx name)]
-    [(F32) true]
-    [(F64) true]
+    [(or (Struct name) (StructArgs name _))
+      (lower-c-abi-win64-register-struct-id? ctx name)]
+    [(or (F32) (F64)) true]
     [_ (lower-c-abi-integer-field-type? ctx ty)]))
 
 (define (lower-c-abi-inline-fields-win64-register?
   [ctx : tc_core.TcContext]
   [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
-  (lower-c-abi-inline-fields-win64-register-at? ctx fields 0))
+  (lower-c-abi-inline-fields-win64-register-at? ctx fields))
 
 (define (lower-c-abi-inline-fields-win64-register-at?
   [ctx : tc_core.TcContext]
-  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
-  [index : i64]) : bool
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    true
-    (and
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-field-layout-list-count fields))]
+    (unless
       (lower-c-abi-win64-register-field-type?
         ctx
         (tc_core.tc-inline-field-layout-type
           (tc_core.tc-inline-field-layout-list-ref fields index)))
-      (lower-c-abi-inline-fields-win64-register-at? ctx fields (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-c-abi-register-aggregate-fields-ok?
   [ctx : tc_core.TcContext]
@@ -33477,12 +31878,7 @@
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
-      [(Struct name)
-        (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
-      [(StructArgs name _)
-        (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
-      [(Enum name) (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
-      [(EnumArgs name _)
+      [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
         (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
@@ -33726,31 +32122,7 @@
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
-      [(Struct name)
-        (lower-c-abi-aggregate-class-for-nominal
-          ctx
-          mode
-          name
-          resolved
-          allow-sret?
-          allow-byref?)]
-      [(StructArgs name _)
-        (lower-c-abi-aggregate-class-for-nominal
-          ctx
-          mode
-          name
-          resolved
-          allow-sret?
-          allow-byref?)]
-      [(Enum name)
-        (lower-c-abi-aggregate-class-for-nominal
-          ctx
-          mode
-          name
-          resolved
-          allow-sret?
-          allow-byref?)]
-      [(EnumArgs name _)
+      [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
         (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
@@ -33863,13 +32235,7 @@
             count
             offset
             slots))]
-      [(Struct name)
-        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
-      [(StructArgs name _)
-        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
-      [(Enum name)
-        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
-      [(EnumArgs name _)
+      [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
         (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
@@ -34063,21 +32429,7 @@
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
-      [(Tuple _)
-        (match (tc_core.tc-inline-aggregate-type-layout
-          ctx
-          (lower-global-shared-view resolved))
-          [(Ok info)
-            (lower-internal-aggregate-class-from-size
-              ctx
-              mode
-              resolved
-              (tc_core.tc-layout-info-size info)
-              allow-return?
-              allow-byref?)]
-          [(Err _)
-            (Unsupported (lower-internal-abi-unsupported-message mode resolved))])]
-      [(Array _ _)
+      [(or (Tuple _) (Array _ _))
         (match (tc_core.tc-inline-aggregate-type-layout
           ctx
           (lower-global-shared-view resolved))
@@ -34134,8 +32486,7 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Tuple _) true]
-    [(Array _ _) true]
+    [(or (Tuple _) (Array _ _)) true]
     [_ false]))
 
 ;; Call sites pass a type list resolved by the type checker already. Keep this
@@ -34143,49 +32494,44 @@
 ;; fast path; regions are transparent for the ABI gate.
 (define (lower-internal-structural-resolved-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(Tuple _) true]
-    [(Array _ _) true]
+    [(or (Tuple _) (Array _ _)) true]
     [_ false]))
 
 (define (lower-internal-structural-resolved-type-list?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]) : bool
-  (lower-internal-structural-resolved-type-list-at? ctx (& types) 0))
+  (lower-internal-structural-resolved-type-list-at? ctx (& types)))
 
 (define (lower-internal-structural-resolved-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (or
-        (lower-internal-structural-resolved-type? ty)
-        (lower-internal-structural-resolved-type-list-at? ctx types (+ index 1))))))
+      (when (lower-internal-structural-resolved-type? ty) (return true))
+      unit))
+  false)
 
 (define (lower-internal-structural-type-list?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
-  (lower-internal-structural-type-list-at? ctx (& types) 0))
+  (lower-internal-structural-type-list-at? ctx (& types)))
 
 (define (lower-internal-structural-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (or
-        (lower-internal-structural-type? ctx ty)
-        (lower-internal-structural-type-list-at? ctx types (+ index 1))))))
+      (when (lower-internal-structural-type? ctx ty) (return true))
+      unit))
+  false)
 
 (define (lower-internal-aggregate-key
   [ctx : tc_core.TcContext]
@@ -34195,7 +32541,7 @@
     (ctfe.ctfe-type-key-with-reflections-and-pools
       (tc_core.tc-context-pools ctx)
       empty-infos
-      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
+      (& (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))))
 
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count slots) 2)
@@ -34251,8 +32597,7 @@
             "__"
             key)]
         (Struct (lower-derived-symbol-id encoded)))]
-    [(ByRef _) (U64)]
-    [(Sret _) (U64)]
+    [(or (ByRef _) (Sret _)) (U64)]
     [_ (lower-one-word-register-storage-type ctx resolved)]))
 
 (define (lower-internal-param-class
@@ -34587,23 +32932,21 @@
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
   [out : (&mut out (__tl_dyn-array ir.CompilerIrCAbiReturnSlot))]
-  [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (for [index (iterator.range 0 count)]
     (match (lower-c-abi-slot-list-ref slots index)
       [(Slot scalar-ty offset)
         (set!
           (array-ref out index)
           (ir.CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
-        (lower-c-abi-ir-return-slots-from slots out (+ index 1) count)])))
+        unit])))
 
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
-    (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
+    (lower-c-abi-ir-return-slots-from slots (&mut out) count)
     (ir.CompilerIrCAbiReturnSlotSeq out count)))
 
 (define (lower-c-abi-materialize-stored-register-result
@@ -34689,14 +33032,7 @@
                   ctx
                   origin
                   (lower-c-abi-two-register-return-message result-ty))))]))]
-    [(ByRef _)
-      (Err
-        (box
-          (lower-diagnostic-at-expr
-            ctx
-            origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
-    [(Memory _)
+    [(or (ByRef _) (Memory _))
       (Err
         (box
           (lower-diagnostic-at-expr
@@ -34898,14 +33234,7 @@
                     result-ty)
                     [(Expr out-state out-value out-ty)
                       (Ok (Expr out-state out-value out-ty))]))])]))]
-    [(ByRef _)
-      (Err
-        (box
-          (lower-diagnostic-at-expr
-            ctx
-            origin
-            (lower-c-abi-unsupported-message (lower-state-mode state) result-ty))))]
-    [(Memory _)
+    [(or (ByRef _) (Memory _))
       (Err
         (box
           (lower-diagnostic-at-expr
@@ -36609,23 +34938,7 @@
         name-id
         name-id)]
     (match (tc_core.tc-type-strip-region result-ty)
-      [(Enum enum-name)
-        (let
-          [enum-name-str : String
-            (tc_core.tc-nominal-name-id-display enum-name)]
-          (if (or
-            (tc_core.tc-name-qualified? name)
-            (string.eq
-              (tc_core.tc-qualified-name-module
-                (lower-global-shared-view enum-name-str))
-              (tc_core.tc-context-module ctx)))
-            (tc_core.tc-source-variant-name-for-enum-id
-              ctx
-              enum-name-str
-              name
-              source-id)
-            (lower-module-lookup-name ctx name)))]
-      [(EnumArgs enum-name _)
+      [(or (Enum enum-name) (EnumArgs enum-name _))
         (let
           [enum-name-str : String
             (tc_core.tc-nominal-name-id-display enum-name)]
@@ -36669,8 +34982,7 @@
         fallback)]
     [enum-name-id : i64
       (match (tc_core.tc-type-strip-region result-ty)
-        [(Enum name) name]
-        [(EnumArgs name _) name]
+        [(or (Enum name) (EnumArgs name _)) name]
         [_ -1])]
     [variant-name-id : i64
       (if (and
@@ -36878,16 +35190,7 @@
         [struct-name : String
           (match (tc_core.tc-type-strip-region
             (lower-global-shared-view result-ty))
-            [(Struct resolved-struct)
-              (if (lower-call-name-matches-nominal?
-                ctx
-                source-name
-                (tc_core.tc-nominal-name-id-display resolved-struct))
-                (tc_core.tc-nominal-name-id-display resolved-struct)
-                (lower-module-lookup-name
-                  ctx
-                  (lower-global-shared-view source-name)))]
-            [(StructArgs resolved-struct _)
+            [(or (Struct resolved-struct) (StructArgs resolved-struct _))
               (if (lower-call-name-matches-nominal?
                 ctx
                 source-name
@@ -37006,16 +35309,7 @@
       [struct-name : String
         (match (tc_core.tc-type-strip-region
           (lower-global-shared-view result-ty))
-          [(Struct resolved-struct)
-            (if (lower-call-name-matches-nominal?
-              ctx
-              source-name
-              (tc_core.tc-nominal-name-id-display resolved-struct))
-              (tc_core.tc-nominal-name-id-display resolved-struct)
-              (lower-module-lookup-name
-                ctx
-                (lower-global-shared-view source-name)))]
-          [(StructArgs resolved-struct _)
+          [(or (Struct resolved-struct) (StructArgs resolved-struct _))
             (if (lower-call-name-matches-nominal?
               ctx
               source-name
@@ -37167,19 +35461,7 @@
   [origin : ast.AstExpr]) : LowerMaybeDirectStore
   (if (lower-direct-store-target? ctx (lower-global-shared-view result-ty))
     (match value
-      [(Spanned inner-box _)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-direct-store-rhs-into
-            ctx
-            state
-            env
-            type-env
-            dst
-            inner
-            result-ty
-            origin))]
-      [(Ann inner-box _)
+      [(or (Spanned inner-box _) (Ann inner-box _))
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-direct-store-rhs-into
@@ -38380,11 +36662,7 @@
   [fallback : i64]) : i64
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
     [(Array _ count) count]
-    [(Ref _ inner)
-      (let
-        [inner-ty : ast.AstType (tc_core.tc-context-type-get ctx inner)]
-        (lower-fixed-array-length-or ctx inner-ty fallback))]
-    [(MutRef _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (let
         [inner-ty : ast.AstType (tc_core.tc-context-type-get ctx inner)]
         (lower-fixed-array-length-or ctx inner-ty fallback))]
@@ -38412,17 +36690,7 @@
           (if (>= fixed-count 0)
             (Ok (Expr arr-state (I64 fixed-count) (I64)))
             (match resolved
-              [(Ref _ inner)
-                (if (lower-fat-reference? ctx inner)
-                  (match (lower-emit-word
-                    arr-state
-                    arr-value
-                    1
-                    (lower-register-word-type ctx arr-ty 1))
-                    [(Expr length-state length-value _)
-                      (Ok (Expr length-state length-value (I64)))])
-                  (lower-array-length-load-descriptor arr-state arr-value))]
-              [(MutRef _ inner)
+              [(or (Ref _ inner) (MutRef _ inner))
                 (if (lower-fat-reference? ctx inner)
                   (match (lower-emit-word
                     arr-state
@@ -38887,8 +37155,7 @@
 ;; Narrower operands keep their cast: those extensions are real work.
 (define (lower-bounds-operand-width-64? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
+    [(or (I64) (U64)) true]
     [_ false]))
 
 (define (lower-emit-bounds-operand
@@ -39084,11 +37351,7 @@
   [name : (& name str)]
   [elem-ty : ast.AstType]) : String
   (match (tc_core.tc-type-strip-region elem-ty)
-    [(I32)
-      (if (lower-atomic-pointer-volatile-name? name)
-        "tl_volatile_i32_"
-        "tl_atomic_i32_")]
-    [(U32)
+    [(or (I32) (U32))
       (if (lower-atomic-pointer-volatile-name? name)
         "tl_volatile_i32_"
         "tl_atomic_i32_")]
@@ -39503,17 +37766,7 @@
                 (tc_core.tc-resolve-type
                   ctx
                   (lower-global-shared-view referent)))
-                [(Struct struct-name)
-                  (lower-struct-get-through-reference
-                    ctx
-                    storage-state
-                    storage-value
-                    referent
-                    struct-name
-                    (tc_core.tc-nominal-name-id-display struct-name)
-                    "slots"
-                    array-ty)]
-                [(StructArgs struct-name _)
+                [(or (Struct struct-name) (StructArgs struct-name _))
                   (lower-struct-get-through-reference
                     ctx
                     storage-state
@@ -39779,22 +38032,19 @@
 (define (lower-init-default-share-safe-type-list?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
-  (lower-init-default-share-safe-type-list-at? ctx (& types) 0))
+  (lower-init-default-share-safe-type-list-at? ctx (& types)))
 
 (define (lower-init-default-share-safe-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [head : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (if (lower-init-default-share-safe? ctx head)
-        (lower-init-default-share-safe-type-list-at? ctx types (+ index 1))
-        false))))
+      (unless (lower-init-default-share-safe? ctx head) (return false))))
+  true)
 
 (define (lower-init-default-share-safe-struct?
   [ctx : tc_core.TcContext]
@@ -39861,33 +38111,16 @@
     (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
       true
       (match (lower-global-shared-view resolved)
-        [(F64) true]
-        [(F32) true]
-        [(Bool) true]
-        [(Char) true]
-        [(Unit) true]
-        [(String) true]
-        [(Ptr _) true]
-        [(MutPtr _) true]
+        [(or (F64) (F32) (Bool) (Char) (Unit) (String) (Ptr _) (MutPtr _)) true]
         [(CFunc _ mode) (ast.ast-c-function-mode-nullable? mode)]
         [(Tuple elems)
           (lower-init-default-share-safe-type-list? ctx (deref elems))]
-        [(Struct name)
+        [(or (Struct name) (StructArgs name _))
           (lower-init-default-share-safe-struct?
             ctx
             (tc_core.tc-nominal-name-id-display name)
             resolved)]
-        [(StructArgs name _)
-          (lower-init-default-share-safe-struct?
-            ctx
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [(Enum name)
-          (lower-init-default-share-safe-enum?
-            ctx
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [(EnumArgs name _)
+        [(or (Enum name) (EnumArgs name _))
           (lower-init-default-share-safe-enum?
             ctx
             (tc_core.tc-nominal-name-id-display name)
@@ -40164,21 +38397,13 @@
     (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
       true
       (match (lower-global-shared-view resolved)
-        [(F64) true]
-        [(F32) true]
-        [(Bool) true]
-        [(Char) true]
-        [(Unit) true]
-        [(Ptr _) true]
-        [(MutPtr _) true]
-        [(Struct _) (lower-make-array-zero-fill-struct-supported? ctx resolved)]
-        [(StructArgs _ _)
+        [(or (F64) (F32) (Bool) (Char) (Unit) (Ptr _) (MutPtr _)) true]
+        [(or (Struct _) (StructArgs _ _))
           (lower-make-array-zero-fill-struct-supported? ctx resolved)]
-        [(Enum _) (lower-make-array-zero-fill-enum-supported? ctx resolved)]
-        [(EnumArgs _ _)
+        [(or (Enum _) (EnumArgs _ _))
           (lower-make-array-zero-fill-enum-supported? ctx resolved)]
         [(Tuple elems)
-          (lower-make-array-zero-fill-type-list-supported? ctx (deref elems) 0)]
+          (lower-make-array-zero-fill-type-list-supported? ctx (deref elems))]
         [(Array elem _)
           (lower-make-array-zero-fill-supported?
             ctx
@@ -40190,17 +38415,16 @@
 ;; store instead of running the per-element default-init loop.
 (define (lower-make-array-zero-fill-type-list-supported?
   [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len (& types)))
-    true
-    (if (lower-make-array-zero-fill-supported?
-      ctx
-      (tc_core.tc-context-type-get
+  [types : ast.AstTypeList]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
+    (unless
+      (lower-make-array-zero-fill-supported?
         ctx
-        (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
-      (lower-make-array-zero-fill-type-list-supported? ctx types (+ index 1))
-      false)))
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
+      (return false)))
+  true)
 
 ;; A struct can be zero-filled when every field's default is all-zero bytes
 ;; (default-layout only, mirroring lower-init-struct).
@@ -40229,8 +38453,7 @@
               (lower-struct-constructor-field-types-for-result
                 field-ctx
                 struct-ty
-                fields))
-            0)]
+                fields)))]
         [(Err _) false]))))
 
 ;; An enum can be zero-filled when its default value is all-zero bytes. That
@@ -40269,8 +38492,7 @@
                         (lower-enum-constructor-fields-for-result
                           field-ctx
                           enum-ty
-                          fields))
-                      0))]))])]
+                          fields))))]))])]
       [(Err _) false])))
 
 (define (lower-make-array-zero-fill
@@ -40994,32 +39216,7 @@
                                           index)
                                         elem-ptr
                                         elem-ir-ty)])]
-                                [(Ref _ inner)
-                                  (if (lower-fat-reference? ctx inner)
-                                    (match (lower-slice-element-addr
-                                      ctx
-                                      idx-state
-                                      arr-value
-                                      container-ty
-                                      idx-value
-                                      idx-value-ty
-                                      (lower-global-shared-view elem-ir-ty))
-                                      [(Expr addr-state elem-ptr _)
-                                        (lower-array-elem-ref-result
-                                          ctx
-                                          (lower-state-record-latest-bounds-check-at-expr
-                                            ctx
-                                            addr-state
-                                            index)
-                                          elem-ptr
-                                          elem-ir-ty)])
-                                    (Err
-                                      (box
-                                        (lower-diagnostic-at-expr
-                                          ctx
-                                          arr
-                                          "lower: array-ref requires array type"))))]
-                                [(MutRef _ inner)
+                                [(or (Ref _ inner) (MutRef _ inner))
                                   (if (lower-fat-reference? ctx inner)
                                     (match (lower-slice-element-addr
                                       ctx
@@ -41430,25 +39627,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))
-    [(Struct struct-name)
-      (let
-        [info : LowerFieldInfo
-          (try
-            (lower-struct-field-info
-              ctx
-              struct-name
-              (tc_core.tc-nominal-name-id-display struct-name)
-              field))]
-        (match info
-          [(Info offset field-ty)
-            (match (lower-gep-byte state base offset)
-              [(Expr ptr-state ptr _)
-                (Ok
-                  (Expr
-                    ptr-state
-                    ptr
-                    (tc_core.tc-type-without-regions field-ty)))])]))]
-    [(StructArgs struct-name _)
+    [(or (Struct struct-name) (StructArgs struct-name _))
       (let
         [info : LowerFieldInfo
           (try
@@ -41503,7 +39682,7 @@
     [(Tuple elem-tys)
       (let
         [info : LowerFieldInfo
-          (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+          (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
         (match info
           [(Info offset elem-ty)
             (match (lower-gep-byte state base offset)
@@ -44021,24 +42200,27 @@
   [name : i64]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Borrow _ _ inner-box) (Unary _ inner-box) (FixedMakeArray _ inner-box)
+         (MakeArray _ inner-box) (StructGet inner-box _) (Box inner-box)
+         (BoxGet inner-box) (BoxTake inner-box))
       (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(Ann inner-box _) (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(Cast inner-box _) (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(Borrow _ _ inner-box)
-      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(Unary _ inner-box) (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
-    [(Binary _ left-box right-box)
+    [(or (Binary _ left-box right-box) (TupleRef left-box right-box)
+         (ArrayRef left-box right-box) (ArrayPush left-box right-box)
+         (StringRef left-box right-box) (StructSet left-box _ right-box)
+         (BoxSet left-box right-box))
       (or
         (lower-spmd-reduce-node-writes-id? ctx name left-box)
         (lower-spmd-reduce-node-writes-id? ctx name right-box))]
-    [(Call func-box args)
+    [(or (Call func-box args) (While func-box args))
       (or
         (lower-spmd-reduce-node-writes-id? ctx name func-box)
         (lower-spmd-reduce-expr-list-writes-id? ctx name args))]
-    [(BracketClause items)
+    [(or (BracketClause items) (Tuple items) (Array items) (DynArray items)
+         (Begin items) (Unsafe items))
       (lower-spmd-reduce-expr-list-writes-id? ctx name items)]
-    [(If cond-box then-box else-box)
+    [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box)
+         (ArrayTake cond-box then-box else-box))
       (or
         (lower-spmd-reduce-node-writes-id? ctx name cond-box)
         (lower-spmd-reduce-node-writes-id? ctx name then-box)
@@ -44053,64 +42235,12 @@
       (match (__tl-box-place lambda-box)
         [(Lambda _ _ body-box)
           (lower-spmd-reduce-node-writes-id? ctx name body-box)])]
-    [(Tuple exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
-    [(Array exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
-    [(DynArray exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
-    [(TupleRef tuple-box index-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name tuple-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
-    [(FixedMakeArray _ len-box)
-      (lower-spmd-reduce-node-writes-id? ctx name len-box)]
-    [(MakeArray _ len-box) (lower-spmd-reduce-node-writes-id? ctx name len-box)]
-    [(ArrayRef array-box index-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name array-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
-    [(ArraySet array-box index-box value-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name array-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box)
-        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
-    [(ArrayTake array-box live-box index-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name array-box)
-        (lower-spmd-reduce-node-writes-id? ctx name live-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
     [(Replace _ _) true]
-    [(ArrayPush array-box value-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name array-box)
-        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
-    [(StringRef string-box index-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name string-box)
-        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
-    [(While cond-box body-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name cond-box)
-        (lower-spmd-reduce-expr-list-writes-id? ctx name body-box))]
-    [(Begin exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
-    [(Unsafe exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
     [(Set set-name value-box)
       (or
         (= set-name name)
         (lower-spmd-reduce-node-writes-id? ctx name value-box))]
-    [(StructGet target-box _)
-      (lower-spmd-reduce-node-writes-id? ctx name target-box)]
-    [(StructSet target-box _ value-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name target-box)
-        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
-    [(Box value-box) (lower-spmd-reduce-node-writes-id? ctx name value-box)]
-    [(BoxGet value-box) (lower-spmd-reduce-node-writes-id? ctx name value-box)]
-    [(BoxTake value-box) (lower-spmd-reduce-node-writes-id? ctx name value-box)]
-    [(BoxSet target-box value-box)
-      (or
-        (lower-spmd-reduce-node-writes-id? ctx name target-box)
-        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
-    [(Literal _) false]
-    [(Var _) false]
+    [(or (Literal _) (Var _)) false]
     [_ true]))
 
 (define (lower-spmd-reduce-node-writes-id?
@@ -44123,25 +42253,21 @@
   [ctx : tc_core.TcContext]
   [name : i64]
   [exprs : ast.AstExprList]) : bool
-  (lower-spmd-reduce-expr-list-writes-id-at? ctx name (& exprs) 0))
+  (lower-spmd-reduce-expr-list-writes-id-at? ctx name (& exprs)))
 
 (define (lower-spmd-reduce-expr-list-writes-id-at?
   [ctx : tc_core.TcContext]
   [name : i64]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-reduce-node-writes-id?
         ctx
         name
         (ast.ast-expr-list-get exprs expr-index 0))
-      (lower-spmd-reduce-expr-list-writes-id-at?
-        ctx
-        name
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 ;; A `let` binding list blocks the split when it rebinds `name` (a `Var name`
 ;; read inside would no longer mean the outer variable) or when any binding
@@ -44150,16 +42276,15 @@
   [ctx : tc_core.TcContext]
   [name : i64]
   [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-reduce-let-bindings-write-id-at? ctx name (& bindings) 0))
+  (lower-spmd-reduce-let-bindings-write-id-at? ctx name (& bindings)))
 
 (define (lower-spmd-reduce-let-bindings-write-id-at?
   [ctx : tc_core.TcContext]
   [name : i64]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+    (when
       (match (ast.ast-let-binding-list-get
         bindings
         binding-index
@@ -44168,11 +42293,9 @@
           (or
             (= bind-name name)
             (lower-spmd-reduce-node-writes-id? ctx name init-box))])
-      (lower-spmd-reduce-let-bindings-write-id-at?
-        ctx
-        name
-        bindings
-        (+ binding-index 1)))))
+      (return true))
+    unit)
+  false)
 
 ;; Strip `Spanned`/`Ann` wrappers to see the syntactic head of an expression
 ;; (mirrors the unwrapping in `lower-simple-vector-reduce`).
@@ -44180,11 +42303,7 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : ast.AstExpr
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (lower-spmd-reduce-split-unwrap
-        ctx
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-spmd-reduce-split-unwrap
         ctx
         (lower-context-expr-get ctx inner-box))]
@@ -44227,14 +42346,7 @@
   (match op
     [(Sum)
       (match (lower-global-shared-view acc-ty)
-        [(I64)
-          (lower-spmd-reduce-split-addend-typed
-            ctx
-            acc-ty
-            index-id
-            index-ty
-            value)]
-        [(U64)
+        [(or (I64) (U64))
           (lower-spmd-reduce-split-addend-typed
             ctx
             acc-ty
@@ -44529,19 +42641,7 @@
                 (lower-global-shared-view acc-ty)
                 (lower-global-shared-view value))]
             (match (lower-global-shared-view plan)
-              [(Array _ _ _ _)
-                (lower-avx2-spmd-reduce-lowered
-                  ctx
-                  state
-                  env
-                  type-env
-                  index-ty
-                  start
-                  end
-                  init
-                  op
-                  plan)]
-              [(Value _ _ _ _)
+              [(or (Array _ _ _ _) (Value _ _ _ _))
                 (lower-avx2-spmd-reduce-lowered
                   ctx
                   state
@@ -45095,7 +43195,6 @@
     [bound-vars : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [check-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
     [check-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
-    [index : i64 0]
     [s : LowerState state]
     [inner-check-label : i64 (ir.compiler-ir-label-none)]
     [checks-label : i64 (ir.compiler-ir-label-none)]
@@ -45108,7 +43207,7 @@
     (set! (array-ref bound-vars 2) x0)
     (set! (array-ref bound-vars 3) x1)
     ;; The span and product checks read the bounds through private names.
-    (while (< index 4)
+    (for [index (iterator.range 0 4)]
       (let
         [id : i64
           (cis.intern-lower-private-identity-raw
@@ -45120,8 +43219,7 @@
             check-env
             id
             (array-ref bound-vars index)))
-        (set! check-type-env (tc_core.tc-bind-id check-type-env id (I64))))
-      (set! index (+ index 1)))
+        (set! check-type-env (tc_core.tc-bind-id check-type-env id (I64)))))
     (match (lower-state-fresh-label s "foreach2_inner_check")
       [(Label next-s label)
         (set! s next-s)
@@ -45435,16 +43533,10 @@
   (let
     [elem-bytes : i64
       (match (tc_core.tc-type-without-regions ty)
-        [(I64) 8]
-        [(U64) 8]
-        [(F64) 8]
-        [(F32) 4]
-        [(I32) 4]
-        [(U32) 4]
-        [(I16) 2]
-        [(U16) 2]
-        [(I8) 1]
-        [(U8) 1]
+        [(or (I64) (U64) (F64)) 8]
+        [(or (F32) (I32) (U32)) 4]
+        [(or (I16) (U16)) 2]
+        [(or (I8) (U8)) 1]
         [_ 0])]
     (if (= elem-bytes 0)
       0
@@ -45466,9 +43558,7 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
     [(SpmdProgramIndex) true]
     [_ false]))
@@ -45497,11 +43587,7 @@
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : LowerMaybeArrayVar
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-contiguous-sequence-var ctx env type-env inner))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-contiguous-sequence-var ctx env type-env inner))]
@@ -45521,7 +43607,7 @@
                     var-id
                     (tc_core.tc-type-without-regions
                       (tc_core.tc-context-type-get ctx elem-ty)))]
-                [(Ref _ referent-ty)
+                [(or (Ref _ referent-ty) (MutRef _ referent-ty))
                   (match (tc_core.tc-type-strip-region
                     (tc_core.tc-context-type-get ctx referent-ty))
                     [(DynArray elem-ty)
@@ -45532,20 +43618,6 @@
                     ;; Slice references are tagged here so emitters extract the
                     ;; two words from the register group instead of loading a
                     ;; dynamic-array descriptor through the data pointer.
-                    [(Slice elem-ty)
-                      (Some
-                        (lower-sequence-var-slice var-id)
-                        (tc_core.tc-type-without-regions
-                          (tc_core.tc-context-type-get ctx elem-ty)))]
-                    [_ (No)])]
-                [(MutRef _ referent-ty)
-                  (match (tc_core.tc-type-strip-region
-                    (tc_core.tc-context-type-get ctx referent-ty))
-                    [(DynArray elem-ty)
-                      (Some
-                        var-id
-                        (tc_core.tc-type-without-regions
-                          (tc_core.tc-context-type-get ctx elem-ty)))]
                     [(Slice elem-ty)
                       (Some
                         (lower-sequence-var-slice var-id)
@@ -45604,15 +43676,7 @@
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : LowerMaybeIrValue
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-simple-spmd-broadcast-lane ctx env type-env inner))]
@@ -45657,7 +43721,7 @@
             (set! (array-ref offsets index) offset)
             unit)
           (set! found true))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if found
       (LowerArrayVarSet vars offsets count)
       (begin
@@ -45672,46 +43736,34 @@
     [vars : (__tl_dyn-array i64) right.vars]
     [offsets : (__tl_dyn-array i64) right.offsets]
     [count : i64 right.count]
-    [index : i64 0]
     [out : LowerArrayVarSet left]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (lower-array-var-set-add
           out
           (array-ref vars index)
-          (array-ref offsets index)))
-      (set! index (+ index 1)))
+          (array-ref offsets index))))
     out))
 
 (define (lower-array-var-set-max-offset [set : (& set LowerArrayVarSet)]) : i64
   (let
     [offsets : (__tl_dyn-array i64) set.offsets]
     [count : i64 set.count]
-    [index : i64 0]
     [max-offset : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [offset : i64 (array-ref offsets index)]
         (if (> offset max-offset)
           (set! max-offset offset)
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     max-offset))
 
 (define (lower-masked-vector-index-literal-offset
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-literal-offset ctx inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-literal-offset ctx inner))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-index-literal-offset ctx inner))]
@@ -45727,15 +43779,7 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-positive-power-two-literal ctx inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-positive-power-two-literal ctx inner))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-positive-power-two-literal ctx inner))]
@@ -45754,15 +43798,7 @@
   [index : (& index str)]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-offset ctx index inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-index-offset ctx index inner))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-index-offset ctx index inner))]
@@ -45809,8 +43845,7 @@
   [op : ast.AstBinOp]) : bool
   (match op
     ;; These are bool operations rather than numeric rows.
-    [(And) true]
-    [(Or) true]
+    [(or (And) (Or)) true]
     [_
       ;; Type checking has already excluded float bitwise/remainder rows.
       ;; Numeric admission is otherwise width-independent at lane census time.
@@ -45859,13 +43894,7 @@
       ;; this outer type environment. Recover the checked lane type from common
       ;; SPMD value forms without mutating or rendering policy state.
       (match expr
-        [(Spanned inner-box _)
-          (lower-masked-spmd-numeric-expr-type
-            ctx
-            env
-            type-env
-            (lower-context-expr-get ctx inner-box))]
-        [(Ann inner-box _)
+        [(or (Spanned inner-box _) (Ann inner-box _) (Binary _ inner-box _))
           (lower-masked-spmd-numeric-expr-type
             ctx
             env
@@ -45880,12 +43909,6 @@
             [(Some _ elem-ty) (Ok elem-ty)]
             [(No) (Err "lower: cannot recover SPMD numeric array element type")])]
         [(Var name) (tc_core.tc-lookup-id type-env name)]
-        [(Binary _ left-box _)
-          (lower-masked-spmd-numeric-expr-type
-            ctx
-            env
-            type-env
-            (lower-context-expr-get ctx left-box))]
         [(Cast _ target-ty-id)
           (Ok (tc_core.tc-context-type-get ctx target-ty-id))]
         [(Literal literal) (Ok (tc_core.tc-literal-type literal))]
@@ -45951,7 +43974,7 @@
     [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
     [index : i64 items.len]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (lower_i64_i64_map.insert-ref!
         (&mut out)
         (array-ref items.slots index)
@@ -46195,47 +44218,14 @@
   [lane-locals : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (if (> scrut-lanes 0)
     (match pattern
-      [(Var name _)
+      [(or (Var name _) (Binding name))
         (lower-masked-vector-lane-locals-bind-if-varying
           lane-locals
           name
           scrut-lanes)]
-      [(Tuple patterns-box)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Array patterns-box)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Slice patterns-box _)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Or patterns-box)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Fields patterns-box)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Field _ patterns-box)
-        (lower-masked-vector-pattern-list-locals
-          (deref patterns-box)
-          scrut-lanes
-          lane-locals)]
-      [(Binding name)
-        (lower-masked-vector-lane-locals-bind-if-varying
-          lane-locals
-          name
-          scrut-lanes)]
-      [(Variant _ patterns-box)
+      [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+           (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+           (Variant _ patterns-box))
         (lower-masked-vector-pattern-list-locals
           (deref patterns-box)
           scrut-lanes
@@ -46690,19 +44680,7 @@
     [lane-locals : lower_i64_i64_map.Map
       (owned_view.compiler-owned-reference-shared-view lane-locals)]
     (match expr
-      [(Spanned inner-box _)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            inner))]
-      [(Ann inner-box _)
+      [(or (Spanned inner-box _) (Ann inner-box _))
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-masked-vector-expr-lanes-with-locals
@@ -47076,7 +45054,8 @@
     [lane-locals : lower_i64_i64_map.Map
       (owned_view.compiler-owned-reference-shared-view lane-locals)]
     (match expr
-      [(Spanned inner-box _)
+      [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+           (Unary _ inner-box))
         (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
@@ -47087,40 +45066,8 @@
           index
           lane-locals
           (lower-context-expr-get ctx inner-box))]
-      [(Ann inner-box _)
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          index
-          lane-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Cast inner-box _)
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          index
-          lane-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Unary _ inner-box)
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          index
-          lane-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Binary _ left-box right-box)
+      [(or (Binary _ left-box right-box) (ArrayRef left-box right-box)
+           (StructSet left-box _ right-box))
         (or
           (lower-masked-vector-body-has-varying-with-locals?
             ctx
@@ -47254,8 +45201,7 @@
                       index
                       lane-locals
                       scrut-lanes
-                      (& arms)
-                      0)))])]
+                      (& arms))))])]
           [_ false])]
       [(Let let-box)
         ;; The body's lane locals extend views of `lane-locals` in place, so the
@@ -47343,30 +45289,7 @@
           form
           index
           lane-locals
-          (& exprs)
-          0)]
-      [(ArrayRef arr-box idx-box)
-        (or
-          (lower-masked-vector-body-has-varying-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            (lower-global-shared-view index)
-            lane-locals
-            (lower-context-expr-get ctx arr-box))
-          (lower-masked-vector-body-has-varying-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            index
-            lane-locals
-            (lower-context-expr-get ctx idx-box)))]
+          (& exprs))]
       [(ArraySet arr-box idx-box value-box)
         (or
           (lower-masked-vector-body-has-varying-with-locals?
@@ -47399,28 +45322,6 @@
             index
             lane-locals
             (lower-context-expr-get ctx value-box)))]
-      [(StructSet receiver-box _ value-box)
-        (or
-          (lower-masked-vector-body-has-varying-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            (lower-global-shared-view index)
-            lane-locals
-            (lower-context-expr-get ctx receiver-box))
-          (lower-masked-vector-body-has-varying-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            index
-            lane-locals
-            (lower-context-expr-get ctx value-box)))]
       [_ false])))
 
 (define (lower-masked-vector-expr-list-has-varying-with-locals-at?
@@ -47432,11 +45333,9 @@
   [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
@@ -47447,17 +45346,9 @@
         (lower-global-shared-view index)
         lane-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-with-locals-at?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-varying-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -47529,16 +45420,14 @@
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
-  [arms : (& arms ast.AstMatchArmList)]
-  [arm-index : i64]) : bool
-  (if (>= arm-index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [arm-index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get
       arms
       arm-index
       (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
-        (or
+        (when
           (let
             [index-arg (lower-global-shared-view index)]
             [lane-locals-arg
@@ -47556,18 +45445,9 @@
               index-arg
               lane-locals-arg
               (lower-context-expr-get ctx body-box)))
-          (lower-masked-vector-match-arms-have-varying-with-locals-at?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            index
-            lane-locals
-            scrut-lanes
-            arms
-            (+ arm-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-masked-vector-body-has-varying?
   [ctx : tc_core.TcContext]
@@ -47593,8 +45473,7 @@
 
 (define (lower-spmd-enum-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
+    [(or (Enum _) (EnumArgs _ _)) true]
     [_ false]))
 
 (define (lower-masked-vector-array-ref-varying-enum?
@@ -47618,23 +45497,7 @@
   [enum-locals : (& enum-locals LowerIdSet)]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (lower-masked-vector-expr-varying-enum-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-masked-vector-expr-varying-enum-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (lower-masked-vector-expr-varying-enum-with-locals?
         ctx
         env
@@ -47716,7 +45579,8 @@
     [enum-locals : LowerIdSet
       (owned_view.compiler-owned-reference-shared-view enum-locals)]
     (match expr
-      [(Spanned inner-box _)
+      [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+           (Unary _ inner-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
           ctx
           env
@@ -47724,31 +45588,8 @@
           index
           enum-locals
           (lower-context-expr-get ctx inner-box))]
-      [(Ann inner-box _)
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Cast inner-box _)
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Unary _ inner-box)
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (lower-context-expr-get ctx inner-box))]
-      [(Binary _ left-box right-box)
+      [(or (Binary _ left-box right-box) (ArrayRef left-box right-box)
+           (StructSet left-box _ right-box))
         (or
           (lower-masked-vector-body-has-varying-enum-match-with-locals?
             ctx
@@ -47791,7 +45632,8 @@
                   index
                   enum-locals-arg
                   (lower-context-expr-get ctx body-box))))])]
-      [(If cond-box then-box else-box)
+      [(or (If cond-box then-box else-box)
+           (ArraySet cond-box then-box else-box))
         (or
           (lower-masked-vector-body-has-varying-enum-match-with-locals?
             ctx
@@ -47850,61 +45692,6 @@
           index
           enum-locals
           exprs)]
-      [(ArrayRef arr-box idx-box)
-        (or
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx arr-box))
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx idx-box)))]
-      [(ArraySet arr-box idx-box value-box)
-        (or
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx arr-box))
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx idx-box))
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx value-box)))]
-      [(StructSet receiver-box _ value-box)
-        (or
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx receiver-box))
-          (lower-masked-vector-body-has-varying-enum-match-with-locals?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            (lower-context-expr-get ctx value-box)))]
       [_ false])))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
@@ -47920,8 +45707,7 @@
     type-env
     index
     enum-locals
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -47929,11 +45715,9 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [enum-locals : LowerIdSet]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
         ctx
         env
@@ -47941,14 +45725,9 @@
         index
         enum-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
   [ctx : tc_core.TcContext]
@@ -48023,8 +45802,7 @@
     type-env
     index
     enum-locals
-    (& arms)
-    0))
+    (& arms)))
 
 (define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -48032,16 +45810,14 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [enum-locals : LowerIdSet]
-  [arms : (& arms ast.AstMatchArmList)]
-  [arm-index : i64]) : bool
-  (if (>= arm-index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [arm-index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get
       arms
       arm-index
       (ast.ast-match-arm-fallback))
       [(Arm _ body-box)
-        (or
+        (when
           (lower-masked-vector-body-has-varying-enum-match-with-locals?
             ctx
             env
@@ -48049,14 +45825,9 @@
             index
             enum-locals
             (lower-context-expr-get ctx body-box))
-          (lower-masked-vector-match-arms-have-varying-enum-match-with-locals-at?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            arms
-            (+ arm-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-masked-vector-body-has-varying-enum-match?
   [ctx : tc_core.TcContext]
@@ -48094,34 +45865,8 @@
   [index : (& index str)]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
-    [(Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane?
-          ctx
-          env
-          type-env
-          index
-          inner))]
-    [(Unary _ inner-box)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-body-has-bool-array-lane?
@@ -48258,32 +46003,25 @@
     env
     type-env
     index
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-masked-vector-expr-list-has-bool-array-lane-at?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-bool-array-lane?
         ctx
         env
         type-env
         index
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-bool-array-lane-at?
-        ctx
-        env
-        type-env
-        index
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane?
   [ctx : tc_core.TcContext]
@@ -48296,18 +46034,16 @@
     env
     type-env
     index
-    (& bindings)
-    0))
+    (& bindings)))
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane-at?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
@@ -48315,20 +46051,16 @@
       [(Binding _ _ init-box)
         (let
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (or
+          (when
             (lower-masked-vector-body-has-bool-array-lane?
               ctx
               env
               type-env
               index
               init)
-            (lower-masked-vector-let-bindings-have-bool-array-lane-at?
-              ctx
-              env
-              type-env
-              index
-              bindings
-              (+ binding-index 1))))])))
+            (return true))
+          unit)]))
+  false)
 
 ;; The calls an SPMD body's strategy depends on: a call to an SPMD helper that
 ;; stays out of line (an imported callable, or a helper whose body needs its
@@ -48349,7 +46081,8 @@
   [probe : LowerSpmdCallProbe]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box))
       (lower-spmd-expr-has-call?
         ctx
         function-state
@@ -48357,31 +46090,7 @@
         type-env
         probe
         (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-spmd-expr-has-call?
-        ctx
-        function-state
-        env
-        type-env
-        probe
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
-      (lower-spmd-expr-has-call?
-        ctx
-        function-state
-        env
-        type-env
-        probe
-        (lower-context-expr-get ctx inner-box))]
-    [(Unary _ inner-box)
-      (lower-spmd-expr-has-call?
-        ctx
-        function-state
-        env
-        type-env
-        probe
-        (lower-context-expr-get ctx inner-box))]
-    [(Binary _ left-box right-box)
+    [(or (Binary _ left-box right-box) (ArrayRef left-box right-box))
       (or
         (lower-spmd-expr-has-call?
           ctx
@@ -48449,8 +46158,7 @@
             env
             type-env
             probe
-            (& args)
-            0)))]
+            (& args))))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
@@ -48461,8 +46169,7 @@
               env
               type-env
               probe
-              (& bindings)
-              0)
+              (& bindings))
             (lower-spmd-expr-has-call?
               ctx
               function-state
@@ -48470,7 +46177,7 @@
               type-env
               probe
               (lower-context-expr-get ctx body-box)))])]
-    [(If cond-box then-box else-box)
+    [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box))
       (or
         (lower-spmd-expr-has-call?
           ctx
@@ -48500,47 +46207,7 @@
         env
         type-env
         probe
-        (& exprs)
-        0)]
-    [(ArrayRef array-box index-box)
-      (or
-        (lower-spmd-expr-has-call?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (lower-context-expr-get ctx array-box))
-        (lower-spmd-expr-has-call?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (lower-context-expr-get ctx index-box)))]
-    [(ArraySet array-box index-box value-box)
-      (or
-        (lower-spmd-expr-has-call?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (lower-context-expr-get ctx array-box))
-        (lower-spmd-expr-has-call?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (lower-context-expr-get ctx index-box))
-        (lower-spmd-expr-has-call?
-          ctx
-          function-state
-          env
-          type-env
-          probe
-          (lower-context-expr-get ctx value-box)))]
+        (& exprs))]
     [(StructSet receiver-box _ value-box)
       (match probe
         [(Atomic)
@@ -48568,11 +46235,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-expr-has-call?
         ctx
         function-state
@@ -48580,14 +46245,9 @@
         type-env
         probe
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-call-at?
-        ctx
-        function-state
-        env
-        type-env
-        probe
-        exprs
-        (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-spmd-let-bindings-have-call-at?
   [ctx : tc_core.TcContext]
@@ -48595,16 +46255,15 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
       (ast.ast-let-binding-fallback))
       [(Binding _ _ init-box)
-        (or
+        (when
           (lower-spmd-expr-has-call?
             ctx
             function-state
@@ -48612,14 +46271,9 @@
             type-env
             probe
             (lower-context-expr-get ctx init-box))
-          (lower-spmd-let-bindings-have-call-at?
-            ctx
-            function-state
-            env
-            type-env
-            probe
-            bindings
-            (+ binding-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 ;; What a foreach body holds that only the masked SPMD strategy lowers, computed
 ;; once per body: the masked strategy is chosen on these facts, and when it
@@ -48739,19 +46393,8 @@
   [index : (& index str)]
   [expr : ast.AstExpr]) : LowerArrayVarSet
   (match expr
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
-    [(Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
-    [(Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-array-vars ctx env type-env index inner))]
-    [(Unary _ inner-box)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-masked-vector-array-vars ctx env type-env index inner))]
@@ -49014,13 +46657,8 @@
   [probe : LowerVectorBodyProbe]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
-      (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
-    [(Unary _ inner-box)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
+         (Unary _ inner-box))
       (lower-vector-body-has? ctx probe (lower-context-expr-get ctx inner-box))]
     [(ArrayRef arr-box idx-box)
       (match probe
@@ -49052,14 +46690,14 @@
               probe
               (lower-context-expr-get ctx lane-box)))]
         [(ArrayRead) false])]
-    [(Binary _ left-box right-box)
+    [(or (Binary _ left-box right-box) (StructSet left-box _ right-box))
       (or
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx left-box))
         (lower-vector-body-has?
           ctx
           probe
           (lower-context-expr-get ctx right-box)))]
-    [(If cond-box then-box else-box)
+    [(or (If cond-box then-box else-box) (ArraySet cond-box then-box else-box))
       (or
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx cond-box))
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx then-box))
@@ -49074,94 +46712,73 @@
                   ctx
                   probe
                   (lower-context-expr-get ctx scrutinee-box))
-                (lower-vector-match-arms-have-at? ctx probe (& arms) 0))])]
+                (lower-vector-match-arms-have-at? ctx probe (& arms)))])]
         [(Shuffle) false])]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
           (or
-            (lower-vector-let-bindings-have-at? ctx probe (& bindings) 0)
+            (lower-vector-let-bindings-have-at? ctx probe (& bindings))
             (lower-vector-body-has?
               ctx
               probe
               (lower-context-expr-get ctx body-box)))])]
-    [(Begin exprs) (lower-vector-expr-list-has-at? ctx probe (& exprs) 0)]
+    [(Begin exprs) (lower-vector-expr-list-has-at? ctx probe (& exprs))]
     [(Call func-box args)
       (or
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx func-box))
-        (lower-vector-expr-list-has-at? ctx probe (& args) 0))]
-    [(ArraySet arr-box idx-box value-box)
-      (or
-        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx arr-box))
-        (lower-vector-body-has? ctx probe (lower-context-expr-get ctx idx-box))
-        (lower-vector-body-has?
-          ctx
-          probe
-          (lower-context-expr-get ctx value-box)))]
-    [(StructSet receiver-box _ value-box)
-      (or
-        (lower-vector-body-has?
-          ctx
-          probe
-          (lower-context-expr-get ctx receiver-box))
-        (lower-vector-body-has?
-          ctx
-          probe
-          (lower-context-expr-get ctx value-box)))]
+        (lower-vector-expr-list-has-at? ctx probe (& args)))]
     [_ false]))
 
 (define (lower-vector-match-arms-have-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm _ body-box)
-        (or
+        (when
           (lower-vector-body-has?
             ctx
             probe
             (lower-context-expr-get ctx body-box))
-          (lower-vector-match-arms-have-at? ctx probe arms (+ index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-vector-expr-list-has-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-vector-body-has?
         ctx
         probe
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-vector-expr-list-has-at? ctx probe exprs (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-vector-let-bindings-have-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
       (ast.ast-let-binding-fallback))
       [(Binding _ _ init-box)
-        (or
+        (when
           (lower-vector-body-has?
             ctx
             probe
             (lower-context-expr-get ctx init-box))
-          (lower-vector-let-bindings-have-at?
-            ctx
-            probe
-            bindings
-            (+ binding-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-vector-call-target-has-atomic?
   [ctx : tc_core.TcContext]
@@ -49205,8 +46822,7 @@
                 function-state
                 previous)
               result))]
-        [(Imported _ _ _ _ _) false]
-        [(No) false])]
+        [(or (Imported _ _ _ _ _) (No)) false])]
     [(Err _) false]))
 
 (defenum LowerMaybeSpmdNumericFailure
@@ -49220,10 +46836,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : LowerMaybeSpmdNumericFailure
-  (if (>= index exprs.len)
-    (No)
+  [exprs : (& exprs ast.AstExprList)]) : LowerMaybeSpmdNumericFailure
+  (for [index (iterator.range 0 exprs.len)]
     (match (lower-spmd-numeric-failure
       ctx
       function-state
@@ -49232,17 +46846,9 @@
       type-env
       numeric-context
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      [(Some origin decision) (Some origin decision)]
-      [(No)
-        (lower-spmd-numeric-failure-in-expr-list-at
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          numeric-context
-          exprs
-          (+ index 1))])))
+      [(Some origin decision) (return (Some origin decision))]
+      [(No) unit]))
+  (No))
 
 (define (lower-spmd-numeric-failure-in-expr-list
   [ctx : tc_core.TcContext]
@@ -49259,8 +46865,7 @@
     env
     type-env
     numeric-context
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-spmd-numeric-failure-in-let-bindings-at
   [ctx : tc_core.TcContext]
@@ -49463,7 +47068,7 @@
                     numeric-context
                     inner)))]
             [(Err _) (No)])))]
-    [(Ann inner-box _)
+    [(or (Ann inner-box _) (Unary _ inner-box) (Set _ inner-box))
       (lower-spmd-numeric-failure
         ctx
         function-state
@@ -49472,16 +47077,8 @@
         type-env
         numeric-context
         (lower-context-expr-get ctx inner-box))]
-    [(Unary _ inner-box)
-      (lower-spmd-numeric-failure
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        (lower-context-expr-get ctx inner-box))]
-    [(ArrayRef array-box index-box)
+    [(or (ArrayRef array-box index-box) (StructSet array-box _ index-box)
+         (SpmdBroadcast array-box index-box) (SpmdShuffle array-box index-box))
       (lower-spmd-numeric-failure-first
         ctx
         function-state
@@ -49543,16 +47140,7 @@
         (MaskedControl)
         (lower-context-expr-get ctx condition-box)
         (Begin body-box))]
-    [(Begin exprs)
-      (lower-spmd-numeric-failure-in-expr-list
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        exprs)]
-    [(Unsafe exprs)
+    [(or (Begin exprs) (Unsafe exprs))
       (lower-spmd-numeric-failure-in-expr-list
         ctx
         function-state
@@ -49648,16 +47236,7 @@
                           type-env
                           numeric-context
                           args)])))]
-              [(Imported _ _ _ _ _)
-                (lower-spmd-numeric-failure-in-expr-list
-                  ctx
-                  function-state
-                  mode
-                  env
-                  type-env
-                  numeric-context
-                  args)]
-              [(No)
+              [(or (Imported _ _ _ _ _) (No))
                 (lower-spmd-numeric-failure-in-expr-list
                   ctx
                   function-state
@@ -49675,45 +47254,6 @@
               type-env
               numeric-context
               args)]))]
-    [(Set _ value-box)
-      (lower-spmd-numeric-failure
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        (lower-context-expr-get ctx value-box))]
-    [(StructSet receiver-box _ value-box)
-      (lower-spmd-numeric-failure-first
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        (lower-context-expr-get ctx receiver-box)
-        (lower-context-expr-get ctx value-box))]
-    [(SpmdBroadcast value-box lane-box)
-      (lower-spmd-numeric-failure-first
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        (lower-context-expr-get ctx value-box)
-        (lower-context-expr-get ctx lane-box))]
-    [(SpmdShuffle value-box lane-box)
-      (lower-spmd-numeric-failure-first
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        numeric-context
-        (lower-context-expr-get ctx value-box)
-        (lower-context-expr-get ctx lane-box))]
     [_ (No)]))
 
 (define (lower-spmd-numeric-failure
@@ -49787,26 +47327,15 @@
 
 (define (lower-spmd-shift-lane-supported? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
-    [(I8) true]
-    [(U8) true]
-    [(I16) true]
-    [(U16) true]
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
+    [(or (I8) (U8) (I16) (U16) (I32) (U32) (I64) (U64)) true]
     [_ false]))
 
 (define (lower-spmd-shift-width [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-without-regions ty)
-    [(I8) 8]
-    [(U8) 8]
-    [(I16) 16]
-    [(U16) 16]
-    [(I32) 32]
-    [(U32) 32]
-    [(I64) 64]
-    [(U64) 64]
+    [(or (I8) (U8)) 8]
+    [(or (I16) (U16)) 16]
+    [(or (I32) (U32)) 32]
+    [(or (I64) (U64)) 64]
     [_ 0]))
 
 (define (lower-spmd-map-shift-diagnostic
@@ -49829,17 +47358,7 @@
   [want-left : bool]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (lower-spmd-expr-has-shift?
-        ctx
-        want-left
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-spmd-expr-has-shift?
-        ctx
-        want-left
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (lower-spmd-expr-has-shift?
         ctx
         want-left
@@ -49861,7 +47380,8 @@
             ctx
             want-left
             (lower-context-expr-get ctx rhs-box))))]
-    [(ArraySet arr-box index-box value-box)
+    [(or (ArraySet arr-box index-box value-box)
+         (If arr-box index-box value-box))
       (or
         (lower-spmd-expr-has-shift?
           ctx
@@ -49885,56 +47405,41 @@
               ctx
               want-left
               (lower-context-expr-get ctx body-box)))])]
-    [(If cond-box then-box else-box)
-      (or
-        (lower-spmd-expr-has-shift?
-          ctx
-          want-left
-          (lower-context-expr-get ctx cond-box))
-        (lower-spmd-expr-has-shift?
-          ctx
-          want-left
-          (lower-context-expr-get ctx then-box))
-        (lower-spmd-expr-has-shift?
-          ctx
-          want-left
-          (lower-context-expr-get ctx else-box)))]
     [_ false]))
 
 (define (lower-spmd-expr-list-has-shift?
   [ctx : tc_core.TcContext]
   [want-left : bool]
   [exprs : ast.AstExprList]) : bool
-  (lower-spmd-expr-list-has-shift-at? ctx want-left (& exprs) 0))
+  (lower-spmd-expr-list-has-shift-at? ctx want-left (& exprs)))
 
 (define (lower-spmd-expr-list-has-shift-at?
   [ctx : tc_core.TcContext]
   [want-left : bool]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-expr-has-shift?
         ctx
         want-left
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-shift-at? ctx want-left exprs (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-spmd-let-bindings-have-shift?
   [ctx : tc_core.TcContext]
   [want-left : bool]
   [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-let-bindings-have-shift-at? ctx want-left (& bindings) 0))
+  (lower-spmd-let-bindings-have-shift-at? ctx want-left (& bindings)))
 
 (define (lower-spmd-let-bindings-have-shift-at?
   [ctx : tc_core.TcContext]
   [want-left : bool]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+    (when
       (match (ast.ast-let-binding-list-get
         bindings
         binding-index
@@ -49944,11 +47449,9 @@
             ctx
             want-left
             (lower-context-expr-get ctx init-box))])
-      (lower-spmd-let-bindings-have-shift-at?
-        ctx
-        want-left
-        bindings
-        (+ binding-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-simple-vector-map-unsupported-shift-lane
   [ctx : tc_core.TcContext]
@@ -49959,16 +47462,7 @@
   [want-left : bool]
   [body : ast.AstExpr]) : LowerMaybeAstType
   (match body
-    [(Spanned inner-box _)
-      (lower-simple-vector-map-unsupported-shift-lane
-        ctx
-        mode
-        env
-        type-env
-        index
-        want-left
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-simple-vector-map-unsupported-shift-lane
         ctx
         mode
@@ -49985,8 +47479,7 @@
         type-env
         index
         want-left
-        (& exprs)
-        0)]
+        (& exprs))]
     [(ArraySet arr-box set-index-box value-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
@@ -50018,10 +47511,8 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [want-left : bool]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : LowerMaybeAstType
-  (if (>= expr-index exprs.len)
-    (No)
+  [exprs : (& exprs ast.AstExprList)]) : LowerMaybeAstType
+  (for [expr-index (iterator.range 0 exprs.len)]
     (match (lower-simple-vector-map-unsupported-shift-lane
       ctx
       mode
@@ -50030,17 +47521,9 @@
       index
       want-left
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      [(Some lane-ty) (Some lane-ty)]
-      [(No)
-        (lower-simple-vector-map-expr-list-unsupported-shift-lane-at
-          ctx
-          mode
-          env
-          type-env
-          index
-          want-left
-          exprs
-          (+ expr-index 1))])))
+      [(Some lane-ty) (return (Some lane-ty))]
+      [(No) unit]))
+  (No))
 
 (define (lower-simple-vector-map-casted-literal
   [ctx : tc_core.TcContext]
@@ -50049,16 +47532,7 @@
   [dst-elem : ast.AstType]
   [value : ast.AstExpr]) : LowerMaybeVectorMapValue
   (match value
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-casted-literal
-          ctx
-          mode
-          target-ty
-          dst-elem
-          inner))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-simple-vector-map-casted-literal
@@ -50102,14 +47576,7 @@
   [index : (& index str)]
   [value : ast.AstExpr]) : LowerMaybeArrayVar
   (match value
-    [(Spanned inner-box _)
-      (lower-simple-vector-map-gather-lane-offset-var
-        ctx
-        env
-        type-env
-        index
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-simple-vector-map-gather-lane-offset-var
         ctx
         env
@@ -50172,12 +47639,7 @@
 
 (define (lower-vector-shuffle-value-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
-    [(F32) true]
-    [(F64) true]
+    [(or (I32) (U32) (I64) (U64) (F32) (F64)) true]
     [_ false]))
 
 ;; Keep shuffle operand evaluation to plans whose inactive lanes can be
@@ -50186,31 +47648,20 @@
 ;; focused diagnostic instead of silently changing to one-lane semantics.
 (define (lower-vector-shuffle-operand-plan? [plan : LowerVectorMapValue]) : bool
   (match plan
-    [(Array _) true]
-    [(Uniform _) true]
-    [(LaneIndex) true]
-    [(LaneCount) true]
-    [(Stage staged value)
+    [(or (Array _) (Uniform _) (LaneIndex) (LaneCount)) true]
+    [(or (Stage staged value) (BinOp _ staged value))
       (and
         (lower-vector-shuffle-operand-plan? (deref staged))
         (lower-vector-shuffle-operand-plan? (deref value)))]
-    [(BinOp _ lhs rhs)
-      (and
-        (lower-vector-shuffle-operand-plan? (deref lhs))
-        (lower-vector-shuffle-operand-plan? (deref rhs)))]
     [_ false]))
 
 (define (lower-vector-map-value-has-shuffle? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(Shuffle _ _) true]
-    [(Stage staged value)
+    [(or (Stage staged value) (BinOp _ staged value))
       (or
         (lower-vector-map-value-has-shuffle? (deref staged))
         (lower-vector-map-value-has-shuffle? (deref value)))]
-    [(BinOp _ lhs rhs)
-      (or
-        (lower-vector-map-value-has-shuffle? (deref lhs))
-        (lower-vector-map-value-has-shuffle? (deref rhs)))]
     [_ false]))
 
 ;; The plan a `let` bound NAME to, or `No` outside every binding.
@@ -50314,20 +47765,7 @@
   [value : ast.AstExpr]
   [locals : LowerVectorMapLocals]) : LowerMaybeVectorMapValue
   (match (lower-global-shared-view value)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-value
-          ctx
-          mode
-          numeric-context
-          env
-          type-env
-          index
-          dst-elem
-          inner
-          (lower-global-shared-view locals)))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-simple-vector-map-value
@@ -50613,28 +48051,12 @@
 
 (define (lower-vector-map-value-array-vars [plan : LowerVectorMapValue]) : LowerArrayVarSet
   (match plan
-    [(Array array-var)
+    [(or (Array array-var) (Gather _ array-var) (BroadcastArray array-var _))
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
-    [(Gather _ indexes-var)
-      ;; Only the contiguous index stream participates in the vector loop's
-      ;; range proof. Gathered source indexes are checked individually below.
-      (lower-array-var-set-add (lower-array-var-set-empty) indexes-var 0)]
-    [(GatherLaneOffset _ _) (lower-array-var-set-empty)]
-    [(LaneArray _) (lower-array-var-set-empty)]
-    [(Uniform _) (lower-array-var-set-empty)]
-    [(BroadcastArray array-var _)
-      (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
-    [(LaneIndex) (lower-array-var-set-empty)]
-    [(LaneCount) (lower-array-var-set-empty)]
-    [(Shuffle source selector)
-      (lower-array-var-set-merge
-        (lower-vector-map-value-array-vars (deref source))
-        (lower-vector-map-value-array-vars (deref selector)))]
-    [(Stage staged value)
-      (lower-array-var-set-merge
-        (lower-vector-map-value-array-vars (deref staged))
-        (lower-vector-map-value-array-vars (deref value)))]
-    [(BinOp _ lhs rhs)
+    [(or (GatherLaneOffset _ _) (LaneArray _) (Uniform _) (LaneIndex)
+         (LaneCount))
+      (lower-array-var-set-empty)]
+    [(or (Shuffle lhs rhs) (Stage lhs rhs) (BinOp _ lhs rhs))
       (lower-array-var-set-merge
         (lower-vector-map-value-array-vars (deref lhs))
         (lower-vector-map-value-array-vars (deref rhs)))]))
@@ -50643,24 +48065,15 @@
   [plan : LowerVectorMapValue]
   [array-var : i64]) : bool
   (match plan
-    [(Array found) (= found array-var)]
-    [(Gather source indexes) (or (= source array-var) (= indexes array-var))]
-    [(GatherLaneOffset source offsets)
-      (or (= source array-var) (= offsets array-var))]
-    [(LaneArray found) (= found array-var)]
-    [(BroadcastArray found _) (= found array-var)]
-    [(Shuffle source selector)
+    [(or (Array found) (LaneArray found) (BroadcastArray found _))
+      (= found array-var)]
+    [(or (Gather source indexes) (GatherLaneOffset source indexes))
+      (or (= source array-var) (= indexes array-var))]
+    [(or (Shuffle source selector) (Stage source selector)
+         (BinOp _ source selector))
       (or
         (lower-vector-map-value-uses-array? (deref source) array-var)
         (lower-vector-map-value-uses-array? (deref selector) array-var))]
-    [(Stage staged value)
-      (or
-        (lower-vector-map-value-uses-array? (deref staged) array-var)
-        (lower-vector-map-value-uses-array? (deref value) array-var))]
-    [(BinOp _ lhs rhs)
-      (or
-        (lower-vector-map-value-uses-array? (deref lhs) array-var)
-        (lower-vector-map-value-uses-array? (deref rhs) array-var))]
     [_ false]))
 
 (define (lower-vector-map-store-list-empty) : LowerVectorMapStoreList
@@ -50695,7 +48108,7 @@
         [(LowerVectorMapStore array-var-found _)
           (if (= array-var-found array-var)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (lower-vector-map-store-list-input-uses-destination?
@@ -50716,17 +48129,16 @@
                     (lower-global-shared-view value-plan)
                     dst-array)
                     (set! found true)
-                    (set! dst-index (+ dst-index 1)))]))
-            (set! index (+ index 1)))]))
+                    (+= dst-index 1))]))
+            (+= index 1))]))
     found))
 
 (define (lower-vector-map-store-list-array-vars
   [stores : LowerVectorMapStoreList]) : LowerArrayVarSet
   (let
     [count : i64 stores.count]
-    [index : i64 0]
     [arrays : LowerArrayVarSet (lower-array-var-set-empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (lower-vector-map-store-list-ref stores index)
         [(LowerVectorMapStore dst-array value-plan)
           (set!
@@ -50735,7 +48147,7 @@
               arrays
               (lower-vector-map-value-array-vars value-plan)))
           (set! arrays (lower-array-var-set-add arrays dst-array 0))
-          (set! index (+ index 1))]))
+          unit]))
     arrays))
 
 (define (lower-simple-vector-map-store
@@ -50898,26 +48310,13 @@
   (match op
     [(Sum)
       (match elem
-        [(I64) true]
-        [(I32) true]
-        [(F32) true]
-        [(F64) true]
+        [(or (I64) (I32) (F32) (F64)) true]
         [_ false])]
-    [(Min)
+    [(or (Min) (Max))
       (match elem
-        [(I32) true]
-        [(I64) true]
+        [(or (I32) (I64)) true]
         [_ false])]
-    [(Max)
-      (match elem
-        [(I32) true]
-        [(I64) true]
-        [_ false])]
-    [(All)
-      (match elem
-        [(Bool) true]
-        [_ false])]
-    [(Any)
+    [(or (All) (Any))
       (match elem
         [(Bool) true]
         [_ false])]))
@@ -50926,26 +48325,11 @@
   [op : ast.AstReduceOp]
   [elem : ast.AstType]) : bool
   (match op
-    [(Sum)
+    [(or (Sum) (Min) (Max))
       (match elem
-        [(I32) true]
-        [(I64) true]
+        [(or (I32) (I64)) true]
         [_ false])]
-    [(Min)
-      (match elem
-        [(I32) true]
-        [(I64) true]
-        [_ false])]
-    [(Max)
-      (match elem
-        [(I32) true]
-        [(I64) true]
-        [_ false])]
-    [(All)
-      (match elem
-        [(Bool) true]
-        [_ false])]
-    [(Any)
+    [(or (All) (Any))
       (match elem
         [(Bool) true]
         [_ false])]))
@@ -50966,15 +48350,7 @@
   [prefix : (& prefix str)]
   [body : ast.AstExpr]) : LowerMaybeArrayVar
   (match body
-    [(Spanned inner-box _)
-      (lower-simple-vector-scan-output
-        ctx
-        env
-        type-env
-        index
-        prefix
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-simple-vector-scan-output
         ctx
         env
@@ -51063,19 +48439,7 @@
   [value : ast.AstExpr]) : LowerMaybeVectorReduce
   (if (lower-mode-simd? mode)
     (match (lower-global-shared-view value)
-      [(Spanned inner-box _)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-simple-vector-reduce
-            ctx
-            mode
-            env
-            type-env
-            op
-            index
-            value-ty
-            inner))]
-      [(Ann inner-box _)
+      [(or (Spanned inner-box _) (Ann inner-box _))
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-simple-vector-reduce
@@ -51538,8 +48902,7 @@
 
 (define (lower-vector-map-binop-shift? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Shl _) true]
-    [(Shr _) true]
+    [(or (Shl _) (Shr _)) true]
     [_ false]))
 
 (define (lower-emit-checked-vector-shift
@@ -51826,7 +49189,6 @@
         [s : LowerState
           (lower-state-emit alloc-state (Mov end-var end-value (I64)))]
         [limit : ir.CompilerIrValue Unit]
-        [index : i64 0]
         [count : i64 arrays.count]
         ;; Materialize the end bound before comparing it: direct literal
         ;; endpoints do not retain their width through scalar min selection.
@@ -51841,7 +49203,7 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! limit value)])
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (match (lower-vector-loop-array-limit
             s
             (array-ref arrays.vars index)
@@ -51853,8 +49215,7 @@
                 array-limit)
                 [(Expr next-s value _)
                   (set! s next-s)
-                  (set! limit value)])])
-          (set! index (+ index 1)))
+                  (set! limit value)])]))
         (Expr s limit (I64)))]))
 
 (define (lower-vector-loop-next-ok
@@ -51953,8 +49314,7 @@
 
 (define (lower-spmd-reduce-vector-accumulator? [elem-ty : ast.AstType]) : bool
   (match elem-ty
-    [(I32) true]
-    [(I64) true]
+    [(or (I32) (I64)) true]
     [_ false]))
 
 (define (lower-spmd-reduce-vector-accumulator-init
@@ -53605,7 +50965,7 @@
         (set!
           found
           (Some (lower-global-array-element-shared-view cache.values index)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (lower-vector-map-value-cache-add
@@ -53703,8 +51063,7 @@
   (let
     [s : LowerState state]
     [next-cache : LowerVectorMapValueCache cache]
-    [index : i64 0]
-    (while (< index arrays.count)
+    (for [index (iterator.range 0 arrays.count)]
       (let
         [array-var : i64 (array-ref arrays.vars index)]
         (match (lower-sequence-data-pointer-value s array-var)
@@ -53715,8 +51074,7 @@
               (lower-vector-map-value-cache-add
                 next-cache
                 (ArrayData array-var)
-                data-ptr))])
-        (set! index (+ index 1))))
+                data-ptr))])))
     (Emit s Unit next-cache)))
 
 (define (lower-vector-map-preheader-cache-plan
@@ -53751,8 +51109,7 @@
       (let
         [s : LowerState data-state]
         [cache : LowerVectorMapValueCache data-cache]
-        [index : i64 0]
-        (while (< index stores.count)
+        (for [index (iterator.range 0 stores.count)]
           (match (lower-vector-map-store-list-ref stores index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-vector-map-preheader-cache-leaves
@@ -53763,8 +51120,7 @@
                 (lower-global-shared-view cache))
                 [(Emit next-s _ next-cache)
                   (set! s next-s)
-                  (set! cache next-cache)])])
-          (set! index (+ index 1)))
+                  (set! cache next-cache)])]))
         (Emit s Unit cache))]))
 
 (define (lower-emit-shuffle-selector-plan
@@ -54496,8 +51852,7 @@
         lanes
         elem-ty)]
     ;; Gather maps use the scalar tail path so only active lanes are checked.
-    [(Gather _ _) (Expr state Unit elem-ty)]
-    [(GatherLaneOffset _ _) (Expr state Unit elem-ty)]
+    [(or (Gather _ _) (GatherLaneOffset _ _)) (Expr state Unit elem-ty)]
     [(LaneArray array-var)
       (match (lower-emit-binop state Sub end-value (Var index-var) (I64))
         [(Expr count-state active-lanes _)
@@ -54589,35 +51944,22 @@
 
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
-    [(Gather _ _) true]
-    [(GatherLaneOffset _ _) true]
-    [(BroadcastArray _ _) true]
-    [(LaneArray _) true]
-    [(LaneIndex) true]
-    [(LaneCount) true]
-    [(Shuffle _ _) true]
-    [(Stage staged value)
+    [(or (Gather _ _) (GatherLaneOffset _ _) (BroadcastArray _ _) (LaneArray _)
+         (LaneIndex) (LaneCount) (Shuffle _ _))
+      true]
+    [(or (Stage staged value) (BinOp _ staged value))
       (or
         (lower-vector-map-value-needs-scalar-tail? (deref staged))
         (lower-vector-map-value-needs-scalar-tail? (deref value)))]
-    [(BinOp _ lhs rhs)
-      (or
-        (lower-vector-map-value-needs-scalar-tail? (deref lhs))
-        (lower-vector-map-value-needs-scalar-tail? (deref rhs)))]
     [_ false]))
 
 (define (lower-vector-map-value-has-gather? [plan : LowerVectorMapValue]) : bool
   (match plan
-    [(Gather _ _) true]
-    [(GatherLaneOffset _ _) true]
-    [(Stage staged value)
+    [(or (Gather _ _) (GatherLaneOffset _ _)) true]
+    [(or (Stage staged value) (BinOp _ staged value))
       (or
         (lower-vector-map-value-has-gather? (deref staged))
         (lower-vector-map-value-has-gather? (deref value)))]
-    [(BinOp _ lhs rhs)
-      (or
-        (lower-vector-map-value-has-gather? (deref lhs))
-        (lower-vector-map-value-has-gather? (deref rhs)))]
     [_ false]))
 
 (define (lower-vector-map-store-list-needs-scalar-tail?
@@ -54631,7 +51973,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-needs-scalar-tail? value-plan)
             (set! needs-tail true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     needs-tail))
 
 (define (lower-vector-map-store-list-has-gather?
@@ -54645,7 +51987,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-has-gather? value-plan)
             (set! has-gather true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     has-gather))
 
 (define (lower-vector-map-store-list-has-shuffle?
@@ -54659,7 +52001,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-has-shuffle? value-plan)
             (set! has-shuffle true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     has-shuffle))
 
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
@@ -54920,7 +52262,6 @@
         [tail-cond : ir.CompilerIrValue Unit]
         [scalar-value : ir.CompilerIrValue Unit]
         [elem-ptr : ir.CompilerIrValue Unit]
-        [store-index : i64 0]
         (match (lower-state-alloc-var s)
           [(Alloc next-s var)
             (set! s next-s)
@@ -54957,7 +52298,7 @@
           (lower-state-finish-block
             (lower-state-emit s (Branch tail-cond body-label exit-label))
             body-label))
-        (while (< store-index stores.count)
+        (for [store-index (iterator.range 0 stores.count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array value-plan)
               (match (lower-emit-scalar-vector-map-value
@@ -54991,7 +52332,7 @@
                   (lower-global-shared-view elem-ptr)
                   (lower-global-shared-view scalar-value)
                   (lower-global-shared-view elem-ty)))
-              (set! store-index (+ store-index 1))]))
+              unit]))
         (match (lower-state-alloc-var s)
           [(Alloc inc-alloc inc-var)
             (match (lower-state-alloc-var inc-alloc)
@@ -55033,12 +52374,11 @@
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue count)]
-        [store-index : i64 0]
         [cache : LowerVectorMapValueCache preheader-cache]
         [result-vec : ir.CompilerIrValue Unit]
         ;; Evaluate all values before the first store so common loads and
         ;; products stay in one side-effect-free region for normal CSE.
-        (while (< store-index count)
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-emit-vector-map-value-cached
@@ -55055,9 +52395,8 @@
                   (set! result-vec value)
                   (set! cache next-cache)])
               (set! (array-ref results store-index) result-vec)
-              (set! store-index (+ store-index 1))]))
-        (set! store-index 0)
-        (while (< store-index count)
+              unit]))
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array _)
               (match (lower-vector-map-value-cache-lookup
@@ -55087,7 +52426,7 @@
                         store-index)
                       lanes
                       (lower-global-shared-view elem-ty)))])
-              (set! store-index (+ store-index 1))]))
+              unit]))
         (lower-state-emit s (Mov index-var next-index (I64))))]
     [(No) state]))
 
@@ -55107,9 +52446,8 @@
   (let
     [s : LowerState state]
     [next-ok : ir.CompilerIrValue ok]
-    [index : i64 0]
     [count : i64 arrays.count]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [array-var : i64 (array-ref arrays.vars index)]
         [offset : i64 (array-ref arrays.offsets index)]
@@ -55134,8 +52472,7 @@
                       (Bool))
                       [(Expr next-state value _)
                         (set! s next-state)
-                        (set! next-ok value)])])])])
-        (set! index (+ index 1))))
+                        (set! next-ok value)])])])])))
     (Expr s next-ok (Bool))))
 
 (define (lower-predicated-tail-limit [offset : i64]) : i64
@@ -55582,27 +52919,7 @@
   [index-var : i64]
   [expr : ast.AstExpr]) : ResultLowerMaskedEnumSource
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (lower-avx2-masked-enum-source
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
-      (lower-avx2-masked-enum-source
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _))
       (lower-avx2-masked-enum-source
         ctx
         state
@@ -56141,7 +53458,6 @@
     [s : LowerState state]
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-emit-lane-id s lanes (I64))
       [(Expr next-state value _)
         (set! s next-state)
@@ -56150,7 +53466,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! result value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-value : ir.CompilerIrValue Unit]
@@ -56191,8 +53507,7 @@
               (I64))
               [(Expr next-state value _)
                 (set! s next-state)
-                (set! result value)])])
-        (set! lane (+ lane 1))))
+                (set! result value)])])))
     (Ok (Expr s result (I64)))))
 
 (define (lower-avx512-masked-vector-binop
@@ -56584,22 +53899,7 @@
         (Sub)
         left
         right)]
-    [(Shl)
-      (lower-avx512-masked-shift
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        expr
-        op
-        left
-        right)]
-    [(Shr)
+    [(or (Shl) (Shr))
       (lower-avx512-masked-shift
         ctx
         state
@@ -56903,8 +54203,7 @@
 
 (define (lower-avx2-enum-zero-value [ty : ast.AstType]) : ir.CompilerIrValue
   (match (tc_core.tc-type-without-regions ty)
-    [(F64) (F64 (cast 0 : u64))]
-    [(F32) (F64 (cast 0 : u64))]
+    [(or (F64) (F32)) (F64 (cast 0 : u64))]
     [(Bool) (Bool false)]
     [_ (I64 0)]))
 
@@ -57072,7 +54371,6 @@
     [s : LowerState state]
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-emit-lane-id s lanes (lower-global-shared-view lane-ty))
       [(Expr next-state value _)
         (set! s next-state)
@@ -57091,7 +54389,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! result value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-active-mask : ir.CompilerIrValue Unit]
@@ -57160,8 +54458,7 @@
                 (lower-global-shared-view field-ty))
                 [(Expr next-state value _)
                   (set! s next-state)
-                  (set! result value)])]))
-        (set! lane (+ lane 1))))
+                  (set! result value)])]))))
     (Expr s result field-ty)))
 
 (define (lower-avx2-enum-tag-arm-masks
@@ -57176,7 +54473,6 @@
   (let
     [s : LowerState state]
     [arm-mask : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-avx2-enum-zero-mask
       s
       (lower-global-shared-view lane-id)
@@ -57185,7 +54481,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! arm-mask value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-active-mask : ir.CompilerIrValue Unit]
@@ -57242,8 +54538,7 @@
               lanes)
               [(Expr next-state value _)
                 (set! s next-state)
-                (set! arm-mask value)])])
-        (set! lane (+ lane 1))))
+                (set! arm-mask value)])])))
     (match (lower-emit-mask-binop
       s
       (And)
@@ -57443,42 +54738,7 @@
                 (+ pattern-index 1)
                 next-cursor
                 expr)]
-            [(Binding name)
-              (match (lower-avx2-enum-field-vector
-                state
-                (lower-global-shared-view base)
-                (lower-type-size ctx enum-ty)
-                field-offset
-                (lower-global-shared-view active-mask)
-                lanes
-                (lower-global-shared-view field-ty))
-                [(Expr next-state value _)
-                  (match value
-                    [(Var field-var)
-                      (lower-avx2-enum-bind-payloads
-                        ctx
-                        next-state
-                        (sym_i64_env.sym-i64-bind-id env name field-var)
-                        (tc_core.tc-bind-id type-env name field-ty)
-                        (lower-id-set-insert lane-locals name)
-                        base
-                        enum-ty
-                        variant-name-id
-                        patterns
-                        fields
-                        active-mask
-                        lanes
-                        (+ pattern-index 1)
-                        next-cursor
-                        expr)]
-                    [_
-                      (Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            expr
-                            "lower: varying enum payload did not produce an IR variable")))])])]
-            [(Var name _)
+            [(or (Binding name) (Var name _))
               (match (lower-avx2-enum-field-vector
                 state
                 (lower-global-shared-view base)
@@ -57534,7 +54794,7 @@
   [lanes : i64]
   [expr : ast.AstExpr]) : ResultLowerMaskedEnumEnv
   (match pattern
-    [(Binding _) (Ok state env type-env lane-locals)]
+    [(or (Binding _) (Wildcard)) (Ok state env type-env lane-locals)]
     [(Variant name patterns-box)
       (let
         [handle : i64
@@ -57581,7 +54841,6 @@
                 ctx
                 expr
                 "lower: varying enum pattern has no registered variant")))))]
-    [(Wildcard) (Ok state env type-env lane-locals)]
     [_
       (Err
         (box
@@ -58062,27 +55321,7 @@
         lanes
         body
         result-ty)]
-    [(Var name _)
-      (match scrut-value
-        [(Var scrut-var)
-          (lower-avx512-masked-expr-expected
-            ctx
-            state
-            (sym_i64_env.sym-i64-bind-id env name scrut-var)
-            (tc_core.tc-bind-id type-env name scrut-ty)
-            (lower-id-set-insert lane-locals name)
-            index
-            index-var
-            (Some active-mask)
-            lanes
-            body
-            result-ty)]
-        [_
-          (lower-avx512-masked-unsupported
-            ctx
-            expr
-            "non-variable match binding values in this AVX-512 slice")])]
-    [(Binding name)
+    [(or (Var name _) (Binding name))
       (match scrut-value
         [(Var scrut-var)
           (lower-avx512-masked-expr-expected
@@ -58421,10 +55660,8 @@
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [index : i64]
   [out : (&mut out ast.AstParamList)]) : unit
-  (if (>= index (ast.ast-type-list-len types))
-    unit
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -58433,7 +55670,7 @@
       (ast.ast-param-list-push
         out
         (ast.AstParam.Param cbi.compiler-builtin-id-fix-empty ty false))
-      (lower-imported-spmd-params-at ctx types (+ index 1) out))))
+      unit)))
 
 (define (lower-imported-spmd-params
   [ctx : tc_core.TcContext]
@@ -58441,7 +55678,7 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-type-list-len (& types)))]
-    (lower-imported-spmd-params-at ctx (& types) 0 (&mut out))
+    (lower-imported-spmd-params-at ctx (& types) (&mut out))
     out))
 
 (define (lower-imported-spmd-call-arg-code [arg : ir.CompilerIrSpmdCallArg]) : String
@@ -59217,8 +56454,7 @@
       [count : i64 (- (ast.ast-param-list-len params) index)]
       [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
         (__tl_make-array ir.CompilerIrSpmdCallArg count)]
-      [cursor : i64 index]
-      (while (< cursor (ast.ast-param-list-len params))
+      (for [cursor (iterator.range index (ast.ast-param-list-len params))]
         (match (ast.ast-param-list-get params cursor (ast.ast-param-fallback))
           [(Param _ ty _)
             (let
@@ -59237,8 +56473,7 @@
                       Varying)])]
               (set!
                 (array-ref slots (- cursor index))
-                (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))])
-        (set! cursor (+ cursor 1)))
+                (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))]))
       (ir.CompilerIrSpmdCallArgSeq slots count))))
 
 (define (lower-spmd-package-index-name
@@ -59263,28 +56498,17 @@
 
 (define (lower-spmd-package-abi-type-supported? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
-    [(I64) true]
-    [(U64) true]
-    [(F64) true]
-    [(F32) true]
-    [(I32) true]
-    [(U32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
-    [(Bool) true]
-    [(Unit) true]
+    [(or (I64) (U64) (F64) (F32) (I32) (U32) (I16) (U16) (I8) (U8) (Bool)
+         (Unit))
+      true]
     [_ false]))
 
 (define (lower-spmd-package-param-validation-error-at
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [classes : (& classes ast.AstSpmdParamClassList)]
-  [lanes : i64]
-  [index : i64]) : String
-  (if (>= index (ast.ast-param-list-len params))
-    ""
+  [lanes : i64]) : String
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
         (let
@@ -59296,7 +56520,8 @@
             [(not
                 (lower-spmd-package-abi-type-supported?
                   (lower-global-shared-view resolved)))
-              "lower: :spmd-callable parameter type is not supported by private ABI v1"]
+              (return
+                "lower: :spmd-callable parameter type is not supported by private ABI v1")]
             [(and
                 (match class
                   [(Varying) true]
@@ -59308,14 +56533,10 @@
                       (CompilerLowerMode.Avx512)
                       resolved)
                     lanes)))
-              "lower: :spmd-callable lane width does not match varying parameter type"]
-            [else
-              (lower-spmd-package-param-validation-error-at
-                ctx
-                params
-                classes
-                lanes
-                (+ index 1))]))])))
+              (return
+                "lower: :spmd-callable lane width does not match varying parameter type")]
+            [else unit]))]))
+  "")
 
 (define (lower-spmd-package-specialization-validation-error
   [ctx : tc_core.TcContext]
@@ -59340,8 +56561,7 @@
         ctx
         (& params)
         (& classes)
-        specialization.lanes
-        0)]
+        specialization.lanes)]
     [env : sym_i64_env.SymI64Env
       (lower-bind-params params 1 (sym_i64_env.sym-i64-empty))]
     [type-env : tc_core.TcTypeEnv
@@ -59513,7 +56733,6 @@
       (& params)
       args
       mode
-      0
       idx
       (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
@@ -59524,11 +56743,9 @@
   [params : (& params ast.AstParamList)]
   [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [mode : CompilerLowerMode]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (match (lower-spmd-call-arg-at args index)
@@ -59544,15 +56761,7 @@
                         (tc_core.tc-resolve-type ctx ty)))]
                   (lower-one-word-register-storage-type ctx ty-arg))
                 idx))
-            (lower-spmd-private-param-list-into!
-              lower-state
-              ctx
-              params
-              args
-              mode
-              (+ index 1)
-              (+ idx 1)
-              builder)])])))
+            (set! idx (+ idx 1))])])))
 
 (define (lower-spmd-private-helper-name
   [names : LowerNameCache]
@@ -59645,8 +56854,7 @@
       (match index
         [(Appended _) true]
         [_ false])]
-    [ordinal : i64 0]
-    (while (< ordinal physical-params.len)
+    (for [ordinal (iterator.range 0 physical-params.len)]
       (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
         [(Param _ ty _)
           (ir.compiler-ir-spmd-private-param-seq-push!
@@ -59661,8 +56869,7 @@
                   (match (lower-spmd-call-arg-at call-args (- ordinal 1))
                     [(Arg class _ source-ty)
                       (Source (- ordinal 1) class source-ty)])])
-              ty))])
-      (set! ordinal (+ ordinal 1)))
+              ty))]))
     (ir.CompilerIrSpmdPrivateAbi
       (V1)
       callee
@@ -59694,7 +56901,7 @@
             (begin
               (set! found (clone function-abi))
               (set! index -1))
-            (set! index (- index 1)))]))
+            (-= index 1))]))
     found))
 
 (define (lower-spmd-private-param-list-append-index
@@ -61408,7 +58615,6 @@
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue count)]
-        [store-index : i64 0]
         [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [mask : ir.CompilerIrValue Unit]
         [result-vec : ir.CompilerIrValue Unit]
@@ -61420,7 +58626,7 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! mask value)])
-        (while (< store-index count)
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-emit-vector-map-value-cached
@@ -61439,9 +58645,8 @@
                   (set! result-vec value)
                   (set! cache next-cache)])
               (set! (array-ref results store-index) result-vec)
-              (set! store-index (+ store-index 1))]))
-        (set! store-index 0)
-        (while (< store-index count)
+              unit]))
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array _)
               (set!
@@ -61454,7 +58659,7 @@
                   (lower-global-shared-view mask)
                   lanes
                   (lower-global-shared-view elem-ty)))
-              (set! store-index (+ store-index 1))]))
+              unit]))
         s)]
     [(No) state]))
 
@@ -61463,15 +58668,13 @@
   [arrays : (& arrays LowerArrayVarSet)]) : LowerState
   (let
     [s : LowerState state]
-    [array-index : i64 0]
-    (while (< array-index arrays.count)
+    (for [array-index (iterator.range 0 arrays.count)]
       (let
         [array-var : i64 (array-ref arrays.vars array-index)]
         (match (lower-sequence-data-pointer-value s array-var)
           [(Expr next-state data-ptr _)
             (set! s next-state)
-            (lower-masked-preheader-array-data-add! s array-var data-ptr)])
-        (set! array-index (+ array-index 1))))
+            (lower-masked-preheader-array-data-add! s array-var data-ptr)])))
     s))
 
 (define (lower-avx512-masked-map-body
@@ -62451,11 +59654,7 @@
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]) : i64
   (match expr
-    [(Spanned inner-box _)
-      (lower-spmd-array-view-base-name
-        ctx
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-spmd-array-view-base-name
         ctx
         (lower-context-expr-get ctx inner-box))]
@@ -62479,42 +59678,24 @@
   [flags : (&mut flags lower_i64_i64_map.Map)]
   [pattern : ast.AstPattern]) : unit
   (match pattern
-    [(Var name _)
+    [(or (Var name _) (Binding name))
       (lower-spmd-array-view-note!
         flags
         name
         (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound))]
-    [(Binding name)
-      (lower-spmd-array-view-note!
-        flags
-        name
-        (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound))]
-    [(Tuple patterns-box)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Array patterns-box)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Slice patterns-box _)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Or patterns-box)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Fields patterns-box)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Field _ patterns-box)
-      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
-    [(Variant _ patterns-box)
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+         (Variant _ patterns-box))
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [_ unit]))
 
 (define (lower-spmd-array-view-note-patterns!
   [flags : (&mut flags lower_i64_i64_map.Map)]
   [patterns : ast.AstPatternList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index patterns.len)
-      (lower-spmd-array-view-note-pattern!
-        flags
-        (ast.ast-pattern-list-get (& patterns) index (ast.ast-pattern-fallback)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 patterns.len)]
+    (lower-spmd-array-view-note-pattern!
+      flags
+      (ast.ast-pattern-list-get (& patterns) index (ast.ast-pattern-fallback)))))
 
 ;; Names a node carries as payload rather than as a `Var` child: binders and
 ;; the whole-variable `set!` target. Each counts as an "other" use that binds.
@@ -62525,27 +59706,22 @@
     [other : i64
       (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound)]
     (match expr
-      [(Set name _) (lower-spmd-array-view-note! flags name other)]
+      [(or (Set name _) (ForeachActive name _))
+        (lower-spmd-array-view-note! flags name other)]
       [(Let let-box)
         (match (__tl-box-place let-box)
           [(Let bindings _)
-            (let
-              [index : i64 0]
-              (while (< index bindings.len)
-                (match (array-ref bindings.slots index)
-                  [(Binding name _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (array-ref bindings.slots index)
+                [(Binding name _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [(Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(Lambda params _ _)
-            (let
-              [index : i64 0]
-              (while (< index params.len)
-                (match (array-ref params.slots index)
-                  [(Param name _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
+            (for [index (iterator.range 0 params.len)]
+              (match (array-ref params.slots index)
+                [(Param name _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [(Foreach foreach-box)
         (match (__tl-box-place foreach-box)
           [(Foreach name _ _ _ _)
@@ -62570,14 +59746,10 @@
       [(WithResource resource-box)
         (match (__tl-box-place resource-box)
           [(WithResource bindings _)
-            (let
-              [index : i64 0]
-              (while (< index bindings.len)
-                (match (array-ref bindings.slots index)
-                  [(Binding name _ _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
-      [(ForeachActive lane _) (lower-spmd-array-view-note! flags lane other)]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (array-ref bindings.slots index)
+                [(Binding name _ _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [_ unit])))
 
 (define (lower-spmd-array-view-scan!
@@ -62624,11 +59796,10 @@
       (let
         [children : ast.AstExprChildList
           (ast.ast-expr-children (lower-global-shared-view expr))]
-        [index : i64 0]
         (lower-spmd-array-view-note-payload-names!
           flags
           (lower-global-shared-view expr))
-        (while (< index children.len)
+        (for [index (iterator.range 0 children.len)]
           (match (ast.ast-expr-child-list-get
             (& children)
             index
@@ -62640,21 +59811,11 @@
                 (lower-context-expr-get ctx child-id))]
             [(Pattern pattern)
               (lower-spmd-array-view-note-pattern! flags pattern)]
-            [_ unit])
-          (set! index (+ index 1))))]))
+            [_ unit])))]))
 
 (define (lower-spmd-array-view-elem? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
-    [(I8) true]
-    [(U8) true]
-    [(I16) true]
-    [(U16) true]
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
-    [(F32) true]
-    [(F64) true]
+    [(or (I8) (U8) (I16) (U16) (I32) (U32) (I64) (U64) (F32) (F64)) true]
     [_ false]))
 
 ;; The fixed array a name's current binding reaches, and whether that binding
@@ -62851,15 +60012,7 @@
   [index-id : i64]
   [expr : ast.AstExpr]) : i64
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (lower-row-origin-coefficient
-        ctx
-        env
-        type-env
-        flags
-        index-id
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-row-origin-coefficient
         ctx
         env
@@ -62918,8 +60071,8 @@
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     (match (lower-context-expr-get ctx id)
-      [(Spanned inner-box _) (lower-row-origin-expr ctx index-id inner-box)]
-      [(Ann inner-box _) (lower-row-origin-expr ctx index-id inner-box)]
+      [(or (Spanned inner-box _) (Ann inner-box _))
+        (lower-row-origin-expr ctx index-id inner-box)]
       [(Var name)
         (if (= name index-id)
           (ast.ast-node-pool-context-expr-push
@@ -62936,9 +60089,7 @@
 
 (define (lower-row-origin-unwrap [ctx : tc_core.TcContext] [expr : ast.AstExpr]) : ast.AstExpr
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (lower-row-origin-unwrap ctx (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-row-origin-unwrap ctx (lower-context-expr-get ctx inner-box))]
     [_ expr]))
 
@@ -63003,7 +60154,7 @@
             (= item.name name)
             (lower-row-origin-same? ctx item.origin origin))
           (set! found index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (lower-row-origin-drop!
@@ -63059,7 +60210,7 @@
           (if (< found 0)
             (begin
               (__tl_array-push! plan.items (LowerRowOrigin name origin write))
-              (set! plan.count (+ plan.count 1)))
+              (+= plan.count 1))
             (when
               write
               (let
@@ -63127,8 +60278,7 @@
       (let
         [children : ast.AstExprList
           (ast.ast-expr-child-ids (lower-global-shared-view expr))]
-        [index : i64 0]
-        (while (< index (ast.ast-expr-list-len (& children)))
+        (for [index (iterator.range 0 (ast.ast-expr-list-len (& children)))]
           (lower-row-origin-collect!
             ctx
             env
@@ -63138,8 +60288,7 @@
             plan
             (lower-context-expr-get
               ctx
-              (ast.ast-expr-list-get (& children) index -1)))
-          (set! index (+ index 1))))]))
+              (ast.ast-expr-list-get (& children) index -1)))))]))
 
 ;; The element type id of NAME's binding when it is a sequence a view can read
 ;; in lanes, a dynamic array, fixed array or Slice of scalar lanes or a
@@ -63170,20 +60319,12 @@
     [elem : i64
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
-        [(DynArray elem) elem]
-        [(Array elem _) elem]
+        [(or (DynArray elem) (Array elem _)) elem]
         [(Slice elem)
           (if reference
             -1
             elem)]
-        [(Ref _ inner)
-          (if reference
-            (lower-row-origin-type-elem-id
-              ctx
-              (tc_core.tc-context-type-get ctx inner)
-              false)
-            -1)]
-        [(MutRef _ inner)
+        [(or (Ref _ inner) (MutRef _ inner))
           (if reference
             (lower-row-origin-type-elem-id
               ctx
@@ -63224,7 +60365,6 @@
     [kept : (__tl_dyn-array LowerRowOrigin) (__tl_make-array LowerRowOrigin 0)]
     [count : i64 0]
     [dynamic : bool false]
-    [index : i64 0]
     (lower-row-origin-collect!
       ctx
       env
@@ -63233,12 +60373,11 @@
       index-id
       (&mut plan)
       body)
-    (while (< index plan.count)
+    (for [index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items index)]
-        [other : i64 0]
         [shared : bool false]
-        (while (< other plan.count)
+        (for [other (iterator.range 0 plan.count)]
           (let
             [peer : LowerRowOrigin (array-ref plan.items other)]
             (when
@@ -63246,19 +60385,17 @@
                 (!= other index)
                 (= peer.name item.name)
                 (or item.write peer.write))
-              (set! shared true)))
-          (set! other (+ other 1)))
+              (set! shared true))))
         (unless
           (or
             shared
             (lower_i64_i64_map.contains? (& plan.dropped) item.name)
             (< (lower-row-origin-elem-id ctx env type-env item.name) 0))
           (__tl_array-push! kept item)
-          (set! count (+ count 1))
+          (+= count 1)
           (unless
             (lower-row-origin-literal? ctx item.origin)
-            (set! dynamic true))))
-      (set! index (+ index 1)))
+            (set! dynamic true)))))
     (if (and
       dynamic
       (=
@@ -63290,9 +60427,7 @@
     [expr : ast.AstExpr (lower-context-expr-get ctx id)]
     [item : i64
       (match (lower-global-shared-view expr)
-        [(ArrayRef array-box index-box)
-          (lower-row-origin-item ctx plan index-id array-box index-box)]
-        [(ArraySet array-box index-box _)
+        [(or (ArrayRef array-box index-box) (ArraySet array-box index-box _))
           (lower-row-origin-item ctx plan index-id array-box index-box)]
         [_ -1])]
     (cond
@@ -63338,8 +60473,8 @@
                 (ast.ast-expr-child-ids (lower-global-shared-view expr))]
               [rewritten : ast.AstExprList (ast.ast-expr-list-new)]
               [changed : bool false]
-              [index : i64 0]
-              (while (< index (ast.ast-expr-list-len (& children)))
+              (for [index
+                (iterator.range 0 (ast.ast-expr-list-len (& children)))]
                 (let
                   [child : i64 (ast.ast-expr-list-get (& children) index -1)]
                   [next : i64
@@ -63354,8 +60489,7 @@
                       row-start
                       child)]
                   (when (!= next child) (set! changed true))
-                  (ast.ast-expr-list-push (&mut rewritten) next))
-                (set! index (+ index 1)))
+                  (ast.ast-expr-list-push (&mut rewritten) next)))
               (if changed
                 (lower-context-expr-push
                   ctx
@@ -63384,7 +60518,7 @@
           (let
             [entry : LowerRowOrigin (array-ref plan.items item)]
             (when (= entry.name name) (set! found item)))
-          (set! item (+ item 1)))
+          (+= item 1))
         (if (< found 0)
           -1
           (lower-row-origin-find
@@ -63455,7 +60589,6 @@
         (lower-private-identity state SpmdRowStart))]
     [native-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
     [native-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
-    [item-index : i64 0]
     (match (lower-row-origin-hold s start-value (I64))
       [(Alloc next var)
         (set! s next)
@@ -63479,7 +60612,7 @@
           [(Alloc joined ok)
             (set! s joined)
             (set! ok-var ok)])])
-    (while (< item-index plan.count)
+    (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
         [origin
@@ -63554,8 +60687,7 @@
         (set!
           (array-ref view-ids item-index)
           (cis.intern-lower-private-identity-raw
-            (lower-private-identity s (SpmdRowView item-index)))))
-      (set! item-index (+ item-index 1)))
+            (lower-private-identity s (SpmdRowView item-index))))))
     (match (lower-state-fresh-label s "row_origin_native")
       [(Label next label)
         (set! s next)
@@ -63575,8 +60707,7 @@
         native-label))
     ;; The native row: one view per plan item, then the rewritten body over the
     ;; row index from 0.
-    (set! item-index 0)
-    (while (< item-index plan.count)
+    (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
         [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
@@ -63623,8 +60754,7 @@
                           (tc_core.tc-bind-id
                             native-type-env
                             (array-ref view-ids item-index)
-                            view-ty))])])])]))
-      (set! item-index (+ item-index 1)))
+                            view-ty))])])])])))
     (let
       [rewritten : i64
         (lower-row-origin-rewrite
@@ -63876,21 +61006,20 @@
     [_
       (let
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
-        (lower-find-foreach-active-at ctx (& children) 0 origin))]))
+        (lower-find-foreach-active-at ctx (& children) origin))]))
 
 (define (lower-find-foreach-active-at
   [ctx : tc_core.TcContext]
   [children : (& children ast.AstExprList)]
-  [index : i64]
   [origin : ast.AstExpr]) : LowerMaybeAstExpr
-  (if (>= index children.len)
-    No
+  (for [index (iterator.range 0 children.len)]
     (match (lower-find-foreach-active
       ctx
       (lower-context-expr-get ctx (ast.ast-expr-list-get children index 0))
       (lower-global-shared-view origin))
-      [(Some found) (Some found)]
-      [(No) (lower-find-foreach-active-at ctx children (+ index 1) origin)])))
+      [(Some found) (return (Some found))]
+      [(No) unit]))
+  No)
 
 ;; Scalar reference lowering: the scalar gang is one lane wide, so the body
 ;; runs once, for lane 0, the lane program-index reads. A masked-out index
@@ -64120,18 +61249,7 @@
                           ctx
                           (tc_core.tc-context-type-get ctx referent-box)))]
                     (match (lower-global-shared-view referent-ty)
-                      [(Enum _)
-                        (lower-match-borrowed-enum
-                          ctx
-                          state
-                          env
-                          type-env
-                          place
-                          borrow-lifetime
-                          referent-ty
-                          arms
-                          expr-ty)]
-                      [(EnumArgs _ _)
+                      [(or (Enum _) (EnumArgs _ _))
                         (lower-match-borrowed-enum
                           ctx
                           state
@@ -64181,13 +61299,7 @@
   (let
     [pattern-name : String (tc_core.tc-env-key-name-text name)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
-      [(Struct struct-name)
-        (tc_core.tc-struct-pattern-name-matches?
-          ctx
-          (tc_core.tc-nominal-name-id-display struct-name)
-          pattern-name
-          name)]
-      [(StructArgs struct-name _)
+      [(or (Struct struct-name) (StructArgs struct-name _))
         (tc_core.tc-struct-pattern-name-matches?
           ctx
           (tc_core.tc-nominal-name-id-display struct-name)
@@ -64208,32 +61320,7 @@
   [field-ty : ast.AstType]) : ResultLowerEnv
   (match pattern
     [(Wildcard) (Ok state env type-env)]
-    [(Var name _)
-      (let
-        [lowered
-          (try
-            (lower-struct-get-named
-              ctx
-              state
-              base
-              struct-id
-              struct-name
-              field-name
-              (lower-global-shared-view field-ty)))]
-        (match lowered
-          [(Expr field-state field-value _)
-            (match field-value
-              [(Var field-var)
-                (Ok
-                  field-state
-                  (sym_i64_env.sym-i64-bind-id env name field-var)
-                  (tc_core.tc-bind-id type-env name field-ty))]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic
-                      "lower: internal struct field pattern load failed")))])]))]
-    [(Binding name)
+    [(or (Var name _) (Binding name))
       (let
         [lowered
           (try
@@ -64541,17 +61628,7 @@
   [elem-ty : ast.AstType]) : ResultLowerEnv
   (match pattern
     [(Wildcard) (Ok state env type-env)]
-    [(Binding name)
-      (lower-bind-element-name
-        ctx
-        state
-        env
-        type-env
-        bind-mode
-        value
-        name
-        elem-ty)]
-    [(Var name _)
+    [(or (Binding name) (Var name _))
       (lower-bind-element-name
         ctx
         state
@@ -64696,8 +61773,7 @@
       (lower-load-inline-value-at-offset ctx state base offset elem-ty)]
     [(LowerBindMode.Borrowed _)
       (if (match pattern
-        [(ast.AstPattern.Binding _) true]
-        [(ast.AstPattern.Var _ _) true]
+        [(or (ast.AstPattern.Binding _) (ast.AstPattern.Var _ _)) true]
         [_ false])
         (lower-borrowed-binding-expr
           ctx
@@ -65050,13 +62126,8 @@
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : ResultLowerEnv
   (match pattern
-    [(Binding name)
-      (Ok
-        state
-        (sym_i64_env.sym-i64-bind-id env name scrut-var)
-        (tc_core.tc-bind-id type-env name scrut-ty))]
     ;; A typed binding; the typechecker already matched its annotation (#8581).
-    [(Var name _)
+    [(or (Binding name) (Var name _))
       (Ok
         state
         (sym_i64_env.sym-i64-bind-id env name scrut-var)
@@ -65289,8 +62360,7 @@
     -2
     (let
       [total : i64 0]
-      [index : i64 0]
-      (while (< index (ast.ast-match-arm-list-len rest))
+      (for [index (iterator.range 0 (ast.ast-match-arm-list-len rest))]
         (match (ast.ast-match-arm-list-get
           rest
           index
@@ -65301,8 +62371,7 @@
                 (lower-total-enum-pattern-compares
                   (lower-global-shared-view pat))]
               (when (< compares 0) (return -2))
-              (set! total (+ total compares)))])
-        (set! index (+ index 1)))
+              (+= total compares))]))
       (- total 1))))
 
 ;; The tag comparisons an arm pattern makes when it names enum variants only:
@@ -65317,24 +62386,19 @@
         alternatives.len
         -1))
     (match pattern
-      [(Binding _) 1]
-      [(Variant _ _) 1]
+      [(or (Binding _) (Variant _ _)) 1]
       [_ -1])))
 
 (define (lower-total-enum-alternatives-explicit?
   [alternatives : (& alternatives ast.AstPatternList)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index alternatives.len)
-      (match (ast.ast-pattern-list-get
-        alternatives
-        index
-        (ast.ast-pattern-fallback))
-        [(Binding _) unit]
-        [(Variant _ _) unit]
-        [_ (return false)])
-      (set! index (+ index 1)))
-    true))
+  (for [index (iterator.range 0 alternatives.len)]
+    (match (ast.ast-pattern-list-get
+      alternatives
+      index
+      (ast.ast-pattern-fallback))
+      [(or (Binding _) (Variant _ _)) unit]
+      [_ (return false)]))
+  true)
 
 (define (lower-enum-match-next-label-base
   [total-enum-switch? : bool]
@@ -65564,7 +62628,7 @@
               (lower-or-arm-split-keep? (& split))
               (set! first index)
               (set! first-split split)))])
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (< first 0)
       arms
       (let
@@ -65589,7 +62653,7 @@
                         (lower-global-shared-view scrut-ty)
                         (lower-global-shared-view pattern))])]
                 (lower-or-arm-split-into! (&mut out) pattern body split))])
-          (set! index (+ index 1)))
+          (+= index 1))
         out))))
 
 ;; How an or-pattern arm is lowered: kept whole, or split into one or-arm per
@@ -65621,8 +62685,7 @@
           (lower-pattern-or-alternatives pattern)]
         [total : i64 alternatives.len]
         [last-group : i64 (array-ref groups (- total 1))]
-        [step : i64 0]
-        (while (<= step total)
+        (for [step (iterator.range 0 (+ total 1))]
           (let
             [group : i64
               (if (< step total)
@@ -65634,8 +62697,7 @@
                 (or (= step total) (!= group last-group)))
               (let
                 [members : ast.AstPatternList (ast.ast-pattern-list-new)]
-                [member : i64 group]
-                (while (< member total)
+                (for [member (iterator.range group total)]
                   (when
                     (= (array-ref groups member) group)
                     (ast.ast-pattern-list-push
@@ -65643,8 +62705,7 @@
                       (ast.ast-pattern-list-get
                         (& alternatives)
                         member
-                        (ast.ast-pattern-fallback))))
-                  (set! member (+ member 1)))
+                        (ast.ast-pattern-fallback)))))
                 (ast.ast-match-arm-list-push
                   out
                   (ast.ast-match-arm
@@ -65654,8 +62715,7 @@
                         0
                         (ast.ast-pattern-fallback))
                       (ast.AstPattern.Or (box members)))
-                    body)))))
-          (set! step (+ step 1))))]))
+                    body)))))))]))
 
 (define (lower-match-or-arm-split
   [ctx : tc_core.TcContext]
@@ -65694,11 +62754,9 @@
     [count : i64 (tc_core.tc-name-id-list-len names)]
     [name-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [cursor : tc_core.TcNameIdList names]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! (array-ref name-ids index) (tc_core.tc-name-id-list-head cursor))
-      (set! cursor (tc_core.tc-name-id-list-rest cursor))
-      (set! index (+ index 1)))
+      (set! cursor (tc_core.tc-name-id-list-rest cursor)))
     (lower-or-arm-alternative-groups
       ctx
       state
@@ -65718,8 +62776,7 @@
   [groups : (& groups (__tl_dyn-array i64))]) : bool
   (let
     [total : i64 (array-length groups)]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (when (< (array-ref groups index) 0) (return false))
       (let
         [name : i64
@@ -65728,9 +62785,8 @@
               alternatives
               index
               (ast.ast-pattern-fallback)))]
-        [other : i64 0]
         (when (< name 0) (return false))
-        (while (< other index)
+        (for [other (iterator.range 0 index)]
           (when
             (=
               name
@@ -65739,15 +62795,12 @@
                   alternatives
                   other
                   (ast.ast-pattern-fallback))))
-            (return false))
-          (set! other (+ other 1))))
-      (set! index (+ index 1)))
+            (return false)))))
     true))
 
 (define (lower-or-alternative-variant-name [pattern : ast.AstPattern]) : i64
   (match pattern
-    [(ast.AstPattern.Binding name) name]
-    [(ast.AstPattern.Variant name _) name]
+    [(or (ast.AstPattern.Binding name) (ast.AstPattern.Variant name _)) name]
     [_ -1]))
 
 (define (lower-match-dispatch-arms
@@ -65761,19 +62814,7 @@
   [cont : LowerMatchCont]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
-    [(Enum _)
-      (lower-match-enum
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arms
-        cont
-        (No)
-        false)]
-    [(EnumArgs _ _)
+    [(or (Enum _) (EnumArgs _ _) (VarArgs _ _))
       (lower-match-enum
         ctx
         state
@@ -65793,19 +62834,7 @@
               ctx
               (tc_core.tc-context-type-get ctx referent-box)))]
         (match (lower-global-shared-view referent-ty)
-          [(Enum _)
-            (lower-match-enum
-              ctx
-              state
-              env
-              type-env
-              scrut-var
-              referent-ty
-              arms
-              cont
-              (Some borrow-lifetime)
-              true)]
-          [(EnumArgs _ _)
+          [(or (Enum _) (EnumArgs _ _))
             (lower-match-enum
               ctx
               state
@@ -65827,18 +62856,6 @@
               scrut-ty
               arms
               cont)]))]
-    [(VarArgs _ _)
-      (lower-match-enum
-        ctx
-        state
-        env
-        type-env
-        scrut-var
-        scrut-ty
-        arms
-        cont
-        (No)
-        false)]
     [_ (lower-match-arms ctx state env type-env scrut-var scrut-ty arms cont)]))
 
 (define (lower-match-arms
@@ -65883,17 +62900,7 @@
                     body
                     rest
                     cont)]
-                [(Binding _)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    cont)]
-                [(Wildcard)
+                [(or (Binding _) (Wildcard) (ast.AstPattern.Fields _))
                   (lower-match-catch-all
                     ctx
                     state
@@ -65918,33 +62925,9 @@
                     rest
                     cont
                     false)]
-                [(ast.AstPattern.Fields _)
-                  (lower-match-catch-all
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arm
-                    cont)]
                 ;; A tuple or array pattern before the last arm is a catch-all
                 ;; in value position; tail position does not accept one.
-                [(Tuple _)
-                  (if (lower-match-cont-tail? (lower-global-shared-view cont))
-                    (Err
-                      (box
-                        (lower-diagnostic "lower: unsupported match pattern")))
-                    (lower-match-catch-all
-                      ctx
-                      state
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arm
-                      cont))]
-                [(Array _)
+                [(or (Tuple _) (Array _))
                   (if (lower-match-cont-tail? (lower-global-shared-view cont))
                     (Err
                       (box
@@ -66249,22 +63232,17 @@
 (define (lower-pattern-needs-or-expansion? [pattern : ast.AstPattern]) : bool
   (match pattern
     [(ast.AstPattern.Or _) true]
-    [(ast.AstPattern.Variant _ args-box)
+    [(or (ast.AstPattern.Variant _ args-box) (ast.AstPattern.Slice args-box _))
       (lower-pattern-list-needs-or-expansion? (deref args-box))]
-    [(ast.AstPattern.Slice items-box _)
-      (lower-pattern-list-needs-or-expansion? (deref items-box))]
     [_ false]))
 
 (define (lower-pattern-list-needs-or-expansion? [args : ast.AstPatternList]) : bool
-  (let
-    [index : i64 0]
-    (while (< index args.len)
-      (when
-        (lower-pattern-needs-or-expansion?
-          (ast.ast-pattern-list-get (& args) index (ast.ast-pattern-fallback)))
-        (return true))
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 args.len)]
+    (when
+      (lower-pattern-needs-or-expansion?
+        (ast.ast-pattern-list-get (& args) index (ast.ast-pattern-fallback)))
+      (return true)))
+  false)
 
 ;; The or-free alternatives an arm pattern expands to, in the order they are
 ;; tried: an or-pattern's alternatives, and for a variant or slice pattern with
@@ -66284,53 +63262,44 @@
     [(ast.AstPattern.Or alternatives-box)
       (let
         [alternatives : ast.AstPatternList (deref alternatives-box)]
-        [index : i64 0]
-        (while (< index alternatives.len)
-          (begin
-            (lower-pattern-or-alternatives-into!
-              (ast.ast-pattern-list-get
-                (& alternatives)
-                index
-                (ast.ast-pattern-fallback))
-              out)
-            (set! index (+ index 1)))))]
+        (for [index (iterator.range 0 alternatives.len)]
+          (lower-pattern-or-alternatives-into!
+            (ast.ast-pattern-list-get
+              (& alternatives)
+              index
+              (ast.ast-pattern-fallback))
+            out)))]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
         (let
           [combos : ast.AstPatternList
             (lower-pattern-list-or-combinations (deref args-box))]
-          [index : i64 0]
-          (while (< index combos.len)
-            (begin
-              (ast.ast-pattern-list-push
-                out
-                (ast.ast-pat-variant-id
-                  name
-                  (lower-pattern-list-combination-items
-                    (ast.ast-pattern-list-get
-                      (& combos)
-                      index
-                      (ast.ast-pattern-fallback)))))
-              (set! index (+ index 1)))))
+          (for [index (iterator.range 0 combos.len)]
+            (ast.ast-pattern-list-push
+              out
+              (ast.ast-pat-variant-id
+                name
+                (lower-pattern-list-combination-items
+                  (ast.ast-pattern-list-get
+                    (& combos)
+                    index
+                    (ast.ast-pattern-fallback)))))))
         (ast.ast-pattern-list-push out pattern))]
     [(ast.AstPattern.Slice items-box has-rest)
       (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
         (let
           [combos : ast.AstPatternList
             (lower-pattern-list-or-combinations (deref items-box))]
-          [index : i64 0]
-          (while (< index combos.len)
-            (begin
-              (ast.ast-pattern-list-push
-                out
-                (ast.ast-pat-slice
-                  (lower-pattern-list-combination-items
-                    (ast.ast-pattern-list-get
-                      (& combos)
-                      index
-                      (ast.ast-pattern-fallback)))
-                  has-rest))
-              (set! index (+ index 1)))))
+          (for [index (iterator.range 0 combos.len)]
+            (ast.ast-pattern-list-push
+              out
+              (ast.ast-pat-slice
+                (lower-pattern-list-combination-items
+                  (ast.ast-pattern-list-get
+                    (& combos)
+                    index
+                    (ast.ast-pattern-fallback)))
+                has-rest))))
         (ast.ast-pattern-list-push out pattern))]
     [_ (ast.ast-pattern-list-push out pattern)]))
 
@@ -66339,11 +63308,10 @@
 (define (lower-pattern-list-or-combinations [args : ast.AstPatternList]) : ast.AstPatternList
   (let
     [combos : ast.AstPatternList (ast.ast-pattern-list-new)]
-    [arg-index : i64 0]
     (ast.ast-pattern-list-push
       (&mut combos)
       (ast.ast-pat-tuple (ast.ast-pattern-list-new)))
-    (while (< arg-index args.len)
+    (for [arg-index (iterator.range 0 args.len)]
       (let
         [choices : ast.AstPatternList
           (lower-pattern-or-alternatives
@@ -66352,8 +63320,7 @@
               arg-index
               (ast.ast-pattern-fallback)))]
         [next : ast.AstPatternList (ast.ast-pattern-list-new)]
-        [prefix-index : i64 0]
-        (while (< prefix-index combos.len)
+        (for [prefix-index (iterator.range 0 combos.len)]
           (let
             [prefix : ast.AstPatternList
               (lower-pattern-list-combination-items
@@ -66361,8 +63328,7 @@
                   (& combos)
                   prefix-index
                   (ast.ast-pattern-fallback)))]
-            [choice-index : i64 0]
-            (while (< choice-index choices.len)
+            (for [choice-index (iterator.range 0 choices.len)]
               (let
                 [extended : ast.AstPatternList
                   (ast.ast-pattern-list-with-capacity (+ prefix.len 1))]
@@ -66375,11 +63341,8 @@
                     (ast.ast-pattern-fallback)))
                 (ast.ast-pattern-list-push
                   (&mut next)
-                  (ast.ast-pat-tuple extended))
-                (set! choice-index (+ choice-index 1))))
-            (set! prefix-index (+ prefix-index 1))))
-        (set! combos next)
-        (set! arg-index (+ arg-index 1))))
+                  (ast.ast-pat-tuple extended))))))
+        (set! combos next)))
     combos))
 
 (define (lower-pattern-list-combination-items [combo : ast.AstPattern]) : ast.AstPatternList
@@ -66544,8 +63507,9 @@
         (let
           [variant-name : i64
             (match pattern
-              [(ast.AstPattern.Binding name) name]
-              [(ast.AstPattern.Variant name _) name]
+              [(or (ast.AstPattern.Binding name)
+                   (ast.AstPattern.Variant name _))
+                name]
               [_ -1])]
           (match (lower-variant-arm-resolution
             ctx
@@ -66776,14 +63740,12 @@
         [(LowerOrScrutinee.Enum _ _ _) true]
         [(LowerOrScrutinee.Scalar) false])]
     [cursor : tc_core.TcNameIdList names]
-    [name-index : i64 0]
     [index : i64 0]
-    (while (< name-index count)
+    (for [name-index (iterator.range 0 count)]
       (set!
         (array-ref name-ids name-index)
         (tc_core.tc-name-id-list-head cursor))
-      (set! cursor (tc_core.tc-name-id-list-rest cursor))
-      (set! name-index (+ name-index 1)))
+      (set! cursor (tc_core.tc-name-id-list-rest cursor)))
     (let
       [groups : (__tl_dyn-array i64)
         (lower-or-arm-alternative-groups
@@ -66830,7 +63792,7 @@
                     [(LowerLabel.Label label-state label)
                       (set! current label-state)
                       (set! (array-ref group-labels index) label)])))
-              (set! index (+ index 1)))
+              (+= index 1))
             (set! index 0)
             (while (< index alternatives.len)
               (let
@@ -66901,7 +63863,7 @@
                         (&mut labels)
                         (&mut types))
                         [(ResultLowerEnv.Ok bound-state _ _)
-                          (set! sources (+ sources 1))
+                          (+= sources 1)
                           (let
                             [jumped : LowerState
                               (lower-state-emit
@@ -66914,7 +63876,7 @@
                                 (lower-state-finish-block jumped fail-label))))]
                         [(ResultLowerEnv.Err message)
                           (return (ResultLowerEnv.Err message))]))
-                    (set! index (+ index 1))])))
+                    (+= index 1)])))
             (when
               (>= trap-label 0)
               (set!
@@ -66959,7 +63921,7 @@
                     (&mut labels)
                     (&mut types))
                     [(ResultLowerEnv.Ok bound-state _ _)
-                      (set! sources (+ sources 1))
+                      (+= sources 1)
                       (set!
                         current
                         (lower-state-emit
@@ -66967,7 +63929,7 @@
                           (ir.CompilerIrInstr.Jump body-label)))]
                     [(ResultLowerEnv.Err message)
                       (return (ResultLowerEnv.Err message))])))
-              (set! index (+ index 1)))
+              (+= index 1))
             (if single?
               (lower-or-alternative-bind
                 ctx
@@ -67033,8 +63995,7 @@
     [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
       (let
         [count : i64 (array-length name-ids)]
-        [name-index : i64 0]
-        (while (< name-index count)
+        (for [name-index (iterator.range 0 count)]
           (let
             [name : i64 (array-ref name-ids name-index)]
             [var : i64 (sym_i64_env.sym-i64-lookup-id-or bound-env name -1)]
@@ -67052,8 +64013,7 @@
                 [(tc_core.ResultTcType.Ok ty)
                   (set! (array-ref types name-index) ty)]
                 [(tc_core.ResultTcType.Err message)
-                  (return (ResultLowerEnv.Err (box (lower-diagnostic message))))]))
-            (set! name-index (+ name-index 1))))
+                  (return (ResultLowerEnv.Err (box (lower-diagnostic message))))]))))
         (set! (array-ref labels source) (lower-state-current-label bound-state))
         (ResultLowerEnv.Ok bound-state bound-env bound-type-env))]
     [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)]))
@@ -67082,8 +64042,7 @@
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (* total count))]
     [types : (__tl_dyn-array ast.AstType)
       (__tl_make-array ast.AstType (* total count))]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (set! (array-ref groups index) -1)
       (when
         (lower-or-alternative-binding-key!
@@ -67127,31 +64086,29 @@
                                 types
                                 (+ (* index count) slot))))
                           (set! same? false))
-                        (set! slot (+ slot 1)))
+                        (+= slot 1))
                       same?))))
               (set! (array-ref groups index) other))
-            (set! other (+ other 1)))
+            (+= other 1))
           (when
             (< (array-ref groups index) 0)
             (set! (array-ref groups index) index))
           (let
             [first : i64 (array-ref groups index)]
-            (set! (array-ref members first) (+ (array-ref members first) 1)))))
-      (set! index (+ index 1)))
+            (set! (array-ref members first) (+ (array-ref members first) 1))))))
     ;; A group of one binds on its own, unless `singletons?` asks for every
     ;; group.
-    (set!
-      index
-      (if singletons?
-        total
-        0))
-    (while (< index total)
+    (for [index
+      (iterator.range
+        (if singletons?
+          total
+          0)
+        total)]
       (let
         [first : i64 (array-ref groups index)]
         (when
           (and (>= first 0) (< (array-ref members first) 2))
-          (set! (array-ref groups index) -1)))
-      (set! index (+ index 1)))
+          (set! (array-ref groups index) -1))))
     groups))
 
 ;; Records how or-pattern alternative `pattern` binds the arm's names, as row
@@ -67206,14 +64163,13 @@
                         ctx
                         enum-id
                         handle-name-id))]
-                  [index : i64 0]
                   [payload-cursor : i64 8]
                   [found : i64 0]
                   (unless
                     (= args.len (ast.ast-type-list-len (& resolved-fields)))
                     (return false))
                   (set! (array-ref enum-ids row) enum-id)
-                  (while (< index args.len)
+                  (for [index (iterator.range 0 args.len)]
                     (let
                       [name : i64
                         (match (ast.ast-pattern-list-get
@@ -67221,8 +64177,9 @@
                           index
                           (ast.ast-pattern-fallback))
                           [(ast.AstPattern.Wildcard) -1]
-                          [(ast.AstPattern.Binding name) name]
-                          [(ast.AstPattern.Var name _) name]
+                          [(or (ast.AstPattern.Binding name)
+                               (ast.AstPattern.Var name _))
+                            name]
                           [_ (return false)])]
                       [resolved : ast.AstType
                         (tc_core.tc-resolve-type
@@ -67262,8 +64219,7 @@
                           (set!
                             (array-ref types (+ (* row count) slot))
                             resolved)
-                          (set! found (+ found 1))))
-                      (set! index (+ index 1))))
+                          (+= found 1)))))
                   (= found count))]
               [_ false])]
           [_ false])])))
@@ -67271,21 +64227,15 @@
 (define (lower-or-name-slot
   [name-ids : (& name-ids (__tl_dyn-array i64))]
   [name : i64]) : i64
-  (let
-    [slot : i64 0]
-    (while (< slot (array-length name-ids))
-      (when (= (array-ref name-ids slot) name) (return slot))
-      (set! slot (+ slot 1)))
-    -1))
+  (for [slot (iterator.range 0 (array-length name-ids))]
+    (when (= (array-ref name-ids slot) name) (return slot)))
+  -1)
 
 ;; Whether one group holds every alternative (`lower-or-arm-alternative-groups`).
 (define (lower-or-groups-single? [groups : (& groups (__tl_dyn-array i64))]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (array-length groups))
-      (unless (= (array-ref groups index) 0) (return false))
-      (set! index (+ index 1)))
-    true))
+  (for [index (iterator.range 0 (array-length groups))]
+    (unless (= (array-ref groups index) 0) (return false)))
+  true)
 
 ;; The first alternative of the group with the most alternatives, the later
 ;; on a tie, or -1 when no alternatives share a bind block.
@@ -67294,18 +64244,14 @@
     [total : i64 (array-length groups)]
     [best : i64 -1]
     [best-size : i64 0]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (when
         (= (array-ref groups index) index)
         (let
           [size : i64 0]
-          [member : i64 index]
-          (while (< member total)
-            (when (= (array-ref groups member) index) (set! size (+ size 1)))
-            (set! member (+ member 1)))
-          (when (>= size best-size) (set! best index) (set! best-size size))))
-      (set! index (+ index 1)))
+          (for [member (iterator.range index total)]
+            (when (= (array-ref groups member) index) (+= size 1)))
+          (when (>= size best-size) (set! best index) (set! best-size size)))))
     best))
 
 ;; Binds each or-pattern name in the shared body block to a phi of the vars
@@ -67325,8 +64271,7 @@
     [current : LowerState state]
     [body-env : sym_i64_env.SymI64Env env]
     [body-type-env : tc_core.TcTypeEnv type-env]
-    [name-index : i64 0]
-    (while (< name-index count)
+    (for [name-index (iterator.range 0 count)]
       (let
         [inputs : ir.CompilerIrPhiInputSeq (ir.compiler-ir-phi-input-seq-empty)]
         [source : i64 (- sources 1)]
@@ -67340,7 +64285,7 @@
                 (array-ref values (+ (* source count) name-index)))
               (array-ref labels source)
               inputs))
-          (set! source (- source 1)))
+          (-= source 1))
         (match (lower-state-alloc-var current)
           [(LowerAlloc.Alloc allocated var-id)
             (set!
@@ -67362,8 +64307,7 @@
               (tc_core.tc-bind-id
                 body-type-env
                 (array-ref name-ids name-index)
-                ty))])
-        (set! name-index (+ name-index 1))))
+                ty))])))
     (ResultLowerEnv.Ok current body-env body-type-env)))
 
 ;; Lowers an arm whose pattern needs or-expansion: the shared body block, then
@@ -67993,12 +64937,7 @@
   [type-env : tc_core.TcTypeEnv]
   [callee : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan (& callee))
-    [(Ann inner-box _)
-      (lower-tail-call-reference-capturing-lambda?
-        ctx
-        type-env
-        (lower-context-expr-get ctx inner-box))]
-    [(Cast inner-box _)
+    [(or (Ann inner-box _) (Cast inner-box _))
       (lower-tail-call-reference-capturing-lambda?
         ctx
         type-env
@@ -68266,23 +65205,15 @@
   ;; reads as a node; every other variant asks its expression children through
   ;; the AstExpr child list.
   (match (lower-context-expr-get ctx id)
-    [(Return _) true]
+    [(or (Return _) (ArrayTake _ _ _) (Replace _ _) (Break) (Continue)
+         (ForOwnedState _) (ForOwnedStep _) (MacroExpansion _ _ _))
+      true]
     [(TupleRef tuple-box index-box)
       (or
         (lower-rvo-node-has-early-return? ctx tuple-box)
         (lower-rvo-node-has-early-return? ctx index-box))]
-    [(Comptime _) false]
-    [(Quote _) false]
-    [(Quasiquote _) false]
-    [(Unquote _) false]
-    [(UnquoteSplicing _) false]
-    [(ArrayTake _ _ _) true]
-    [(Replace _ _) true]
-    [(Break) true]
-    [(Continue) true]
-    [(ForOwnedState _) true]
-    [(ForOwnedStep _) true]
-    [(MacroExpansion _ _ _) true]
+    [(or (Comptime _) (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _))
+      false]
     [_
       (ast.ast-expr-list-fold
         (ast.ast-expr-child-ids (lower-context-expr-get ctx id))
@@ -68327,21 +65258,21 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]) : bool
-  (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args) 0))
+  (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args)))
 
 (define (lower-rvo-args-cannot-alias-sret-at?
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index args.len)
-    true
-    (and
+  [args : (& args ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 args.len)]
+    (unless
       (lower-rvo-arg-cannot-alias-sret?
         ctx
         type-env
         (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
-      (lower-rvo-args-cannot-alias-sret-at? ctx type-env args (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-rvo-callee-has-early-return-id?
   [state : LowerState]
@@ -68544,16 +65475,7 @@
         (lower-global-shared-view ret-ty))]
     [struct-name : String
       (match (tc_core.tc-type-strip-region (lower-global-shared-view ret-ty))
-        [(Struct resolved-struct)
-          (if (lower-call-name-matches-nominal?
-            ctx
-            source-name
-            (tc_core.tc-nominal-name-id-display resolved-struct))
-            (tc_core.tc-nominal-name-id-display resolved-struct)
-            (lower-module-lookup-name
-              ctx
-              (lower-global-shared-view source-name)))]
-        [(StructArgs resolved-struct _)
+        [(or (Struct resolved-struct) (StructArgs resolved-struct _))
           (if (lower-call-name-matches-nominal?
             ctx
             source-name
@@ -68748,13 +65670,7 @@
   [env : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(Spanned inner-box _)
-      (lower-tail-call-safe-param-aggregate-arg?
-        ctx
-        state
-        env
-        (lower-context-expr-get ctx inner-box))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-tail-call-safe-param-aggregate-arg?
         ctx
         state
@@ -68812,24 +65728,21 @@
     state
     env
     type-env
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-expr-list-contains-unsafe-inline-aggregate-at?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [expr : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
       (match (tc_core.tc-expr ctx type-env (lower-global-shared-view expr))
         [(Ok ty)
-          (or
+          (when
             (and
               (lower-type-contains-inline-aggregate? ctx ty)
               (not
@@ -68845,21 +65758,10 @@
                     env
                     type-env
                     expr))))
-            (lower-expr-list-contains-unsafe-inline-aggregate-at?
-              ctx
-              state
-              env
-              type-env
-              exprs
-              (+ index 1)))]
-        [(Err _)
-          (lower-expr-list-contains-unsafe-inline-aggregate-at?
-            ctx
-            state
-            env
-            type-env
-            exprs
-            (+ index 1))]))))
+            (return true))
+          unit]
+        [(Err _) unit])))
+  false)
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : tc_core.TcContext]
@@ -69216,8 +66118,7 @@
                         ctx
                         (tc_core.tc-context-type-get ctx referent-box)))]
                   (match referent-ty
-                    [(Enum _) true]
-                    [(EnumArgs _ _) true]
+                    [(or (Enum _) (EnumArgs _ _)) true]
                     [_ false]))]
               [_ false])]
           [(Err _) false]))]
@@ -69288,11 +66189,7 @@
   [ret-ty : ast.AstType]
   [sret-var : i64]) : ResultLowerState
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
@@ -69386,22 +66283,17 @@
 (define (lower-internal-param-list-contains-structural?
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]) : bool
-  (lower-internal-param-list-contains-structural-at? ctx (& params) 0))
+  (lower-internal-param-list-contains-structural-at? ctx (& params)))
 
 (define (lower-internal-param-list-contains-structural-at?
   [ctx : tc_core.TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (or
-          (lower-internal-structural-type? ctx ty)
-          (lower-internal-param-list-contains-structural-at?
-            ctx
-            params
-            (+ index 1)))])))
+        (when (lower-internal-structural-type? ctx ty) (return true))
+        unit]))
+  false)
 
 (define (lower-bind-params
   [params : (& params ast.AstParamList)]
@@ -69432,7 +66324,7 @@
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (ast.ast-param-list-len (& params)))]
-    (lower-param-list-into! ctx (& params) 0 idx (&mut builder))
+    (lower-param-list-into! ctx (& params) idx (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
 
 ;; Internal functions keep one physical IR argument per source parameter. A
@@ -69455,7 +66347,6 @@
           ctx
           mode
           (& params)
-          0
           source-start
           (&mut builder))
         (ir.compiler-ir-param-builder-to-seq builder))]
@@ -69469,11 +66360,9 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [params : (& params ast.AstParamList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (ir.compiler-ir-param-builder-push!
@@ -69482,13 +66371,7 @@
             (tc_core.tc-env-key-name-text name)
             (lower-internal-param-physical-type ctx mode ty)
             idx))
-        (lower-internal-param-list-into!
-          ctx
-          mode
-          params
-          (+ index 1)
-          (+ idx 1)
-          builder)])))
+        (set! idx (+ idx 1))])))
 
 (define (lower-internal-param-storage-two
   [physical : ir.CompilerIrValue]
@@ -69567,9 +66450,7 @@
               slots
               storage
               storage-state))])]
-    [(No) (Ok (Expr state physical source-ty))]
-    [(Memory _) (Ok (Expr state physical source-ty))]
-    [(ByRef _) (Ok (Expr state physical source-ty))]
+    [(or (No) (Memory _) (ByRef _)) (Ok (Expr state physical source-ty))]
     [(Unsupported message)
       (Err (box (lower-diagnostic-at-expr ctx origin message)))]
     [(Sret _)
@@ -69761,8 +66642,7 @@
 
 (define (lower-pointer-proof-scalar-type? [ty : pointer_proof.PointerProofType]) : bool
   (match ty
-    [(Integer) true]
-    [(NonPointer) true]
+    [(or (Integer) (NonPointer)) true]
     [_ false]))
 
 ;; These cases give provenance semantics; all other child enumeration uses the
@@ -69796,8 +66676,7 @@
     [(TupleRef _ index) (TupleProjection index)]
     [(StructGet _ field) (StructProjection field)]
     [(ArrayRef _ _) ArrayProjection]
-    [(BoxGet _) BoxProjection]
-    [(BoxTake _) BoxProjection]
+    [(or (BoxGet _) (BoxTake _)) BoxProjection]
     [(Literal literal)
       (match literal
         [(String _) StaticStorage]
@@ -69806,9 +66685,7 @@
     [(Cast _ _) IntegerCast]
     [(Ann _ _) Identity]
     [(If _ _ _) Join]
-    [(Begin _) Sequence]
-    [(Unsafe _) Sequence]
-    [(Let _) Sequence]
+    [(or (Begin _) (Unsafe _) (Let _)) Sequence]
     [(While _ _) Loop]
     [(Return _) Return]
     [(Set name _)
@@ -69837,15 +66714,9 @@
     ;; Binder forms other than let and parameters are not modelled. A read of
     ;; one of their bindings would miss the capture's bindings and could
     ;; resolve to a same-named global, so they fail closed at any type.
-    [(Match _) Unsupported]
-    [(Lambda _) Unsupported]
-    [(Foreach _) Unsupported]
-    [(ForOwnedState _) Unsupported]
-    [(ForOwnedStep _) Unsupported]
-    [(SpmdReduce _) Unsupported]
-    [(SpmdScan _) Unsupported]
-    [(SpmdCompact _) Unsupported]
-    [(WithResource _) Unsupported]
+    [(or (Match _) (Lambda _) (Foreach _) (ForOwnedState _) (ForOwnedStep _)
+         (SpmdReduce _) (SpmdScan _) (SpmdCompact _) (WithResource _))
+      Unsupported]
     [_
       (if (lower-pointer-proof-scalar-type? ty)
         Scalar
@@ -69958,8 +66829,8 @@
                 (let
                   [local-bindings : sym_i64_env.SymI64Env bindings]
                   [local-types : tc_core.TcTypeEnv type-env]
-                  [index : i64 0]
-                  (while (< index (ast.ast-let-binding-list-len (& lets)))
+                  (for [index
+                    (iterator.range 0 (ast.ast-let-binding-list-len (& lets)))]
                     (match (ast.ast-let-binding-list-get
                       (& lets)
                       index
@@ -70022,8 +66893,7 @@
                             [(Err _)
                               (pointer_proof.pointer-proof-input-fail!
                                 input
-                                "pointer proof: missing binding type")])
-                          (set! index (+ index 1)))]))
+                                "pointer proof: missing binding type")]))]))
                   (pointer_proof.pointer-proof-input-push-operand!
                     input
                     (&mut operands)
@@ -70047,8 +66917,7 @@
                 (match (lower-global-shared-view expr)
                   [(Call _ _) 1]
                   [_ 0])]
-              [index : i64 start]
-              (while (< index children.len)
+              (for [index (iterator.range start children.len)]
                 (pointer_proof.pointer-proof-input-push-operand!
                   input
                   (&mut operands)
@@ -70059,8 +66928,7 @@
                     bindings
                     child-env
                     (ast.ast-expr-list-get (& children) index -1)
-                    span))
-                (set! index (+ index 1))))])
+                    span))))])
         (pointer_proof.pointer-proof-input-push!
           input
           function
@@ -70090,8 +66958,7 @@
         [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
         [span : ir.CompilerMaybeSourceSpan
           (lower-ast-expr-span (& pools) (lower-global-shared-view body))]
-        [index : i64 0]
-        (while (< index (ast.ast-param-list-len (& params)))
+        (for [index (iterator.range 0 (ast.ast-param-list-len (& params)))]
           (match (ast.ast-param-list-get
             (& params)
             index
@@ -70113,8 +66980,7 @@
                 (pointer_proof.pointer-proof-input-push-operand!
                   input
                   (&mut references)
-                  reference)
-                (set! index (+ index 1)))]))
+                  reference))]))
         (pointer_proof.pointer-proof-input-add-function!
           input
           (pointer_proof.PointerProofFunction
@@ -70133,11 +66999,9 @@
 (define (lower-param-list-into!
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (ir.compiler-ir-param-builder-push!
@@ -70151,7 +67015,7 @@
                     (tc_core.tc-resolve-type ctx ty)))]
               (lower-one-word-register-storage-type ctx ty-arg))
             idx))
-        (lower-param-list-into! ctx params (+ index 1) (+ idx 1) builder)])))
+        (set! idx (+ idx 1))])))
 
 ;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
@@ -70172,49 +67036,33 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
-    [(Tuple _) true]
-    [(Array _ _) true]
-    [(Region _ inner)
-      (lower-type-contains-inline-aggregate?
-        ctx
-        (tc_core.tc-context-type-get ctx inner))]
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
+         (Array _ _))
+      true]
     ;; A reference can point INTO the current frame (memory-aggregate
     ;; locals live in frame slots), so a ref arg whose referent is or
     ;; contains an inline aggregate makes a tail call unsafe -- the callee
     ;; would read through a pointer into the reused/abandoned frame.
-    [(Ref _ referent)
+    [(or (Region _ inner) (Ref _ inner) (MutRef _ inner))
       (lower-type-contains-inline-aggregate?
         ctx
-        (tc_core.tc-context-type-get ctx referent))]
-    [(MutRef _ referent)
-      (lower-type-contains-inline-aggregate?
-        ctx
-        (tc_core.tc-context-type-get ctx referent))]
+        (tc_core.tc-context-type-get ctx inner))]
     [_ false]))
 
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]) : bool
-  (lower-param-list-contains-unsupported-reference-at? ctx (& params) 0))
+  (lower-param-list-contains-unsupported-reference-at? ctx (& params)))
 
 (define (lower-param-list-contains-unsupported-reference-at?
   [ctx : tc_core.TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (or
-          (not (lower-supported-function-param-type? ctx ty))
-          (lower-param-list-contains-unsupported-reference-at?
-            ctx
-            params
-            (+ index 1)))])))
+        (when (not (lower-supported-function-param-type? ctx ty)) (return true))
+        unit]))
+  false)
 
 (define (lower-supported-function-return-type?
   [ctx : tc_core.TcContext]
@@ -70445,15 +67293,7 @@
   [expr : ast.AstExpr]
   [ty : ast.AstType]) : ResultLowerValue
   (match (lower-global-shared-view expr)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner ty))]
-    [(MacroExpansion inner-box _ _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-global-value ctx names inner ty))]
-    [(Ann inner-box _)
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-global-value ctx names inner ty))]
@@ -70564,15 +67404,13 @@
                 (lower-global-shared-view elem-ty))
                 (let
                   [bits : i64 (lower-static-array-element-bits value)]
-                  [byte : i64 0]
-                  (while (< byte elem-size)
+                  (for [byte (iterator.range 0 elem-size)]
                     (byte_buf_core.byte-buf-builder-push
                       bytes
-                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))
-                    (set! byte (+ byte 1))))
+                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))))
                 (set! ok false))]
             [(Err _) (set! ok false)])
-          (set! index (+ index 1)))
+          (+= index 1))
         ok)]
     [_ false]))
 
@@ -70585,8 +67423,7 @@
     [(I64 _) (tc_core.tc-integer-type? ty)]
     [(F64 _)
       (match ty
-        [(F64) true]
-        [(F32) true]
+        [(or (F64) (F32)) true]
         [_ false])]
     [(Bool _)
       (match ty
@@ -71031,11 +67868,10 @@
     [resolved : ast.AstType
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match (lower-global-shared-view resolved)
-      [(Struct name) (lower-struct-cleanup-id-for-struct lower-state ctx name)]
-      [(StructArgs name _)
+      [(or (Struct name) (StructArgs name _))
         (lower-struct-cleanup-id-for-struct lower-state ctx name)]
-      [(Enum name) (lower-enum-cleanup-id-for-enum lower-state ctx name)]
-      [(EnumArgs name _) (lower-enum-cleanup-id-for-enum lower-state ctx name)]
+      [(or (Enum name) (EnumArgs name _))
+        (lower-enum-cleanup-id-for-enum lower-state ctx name)]
       [_
         (Err
           (str_cat.str-cat
@@ -71782,8 +68618,7 @@
       (compiler-lower-state-interns lower-state)]
     [count : i64
       (ci.intern-compat-state-generated-role-record-count intern-state)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [handle : i64
           (ci.intern-compat-state-generated-role-record-handle-at
@@ -71819,8 +68654,7 @@
                   role
                   handle
                   (& rendered))
-                unit))))
-        (set! index (+ index 1))))))
+                unit))))))))
 
 (define (lower-dispatch-isa-role-tag [isa : ast.AstDispatchIsa]) : i64
   (match isa
@@ -71921,7 +68755,6 @@
       ctx
       mode
       (& types)
-      0
       source-start
       (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
@@ -71930,11 +68763,9 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [types : (& types ast.AstTypeList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-type-list-len types))
-    unit
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [source-ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -71946,13 +68777,7 @@
           (str_cat.str-cat "arg" (string.int->string index))
           (lower-internal-param-physical-type ctx mode source-ty)
           idx))
-      (lower-dispatch-physical-param-list-into!
-        ctx
-        mode
-        types
-        (+ index 1)
-        (+ idx 1)
-        builder))))
+      (set! idx (+ idx 1)))))
 
 (define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
   (let
@@ -71962,41 +68787,33 @@
         (- count idx))]
     [slots : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue len)]
-    [cursor : i64 0]
-    (while (< cursor len)
-      (set! (array-ref slots cursor) (ir.CompilerIrValue.Var (+ idx cursor)))
-      (set! cursor (+ cursor 1)))
+    (for [cursor (iterator.range 0 len)]
+      (set! (array-ref slots cursor) (ir.CompilerIrValue.Var (+ idx cursor))))
     (ir.CompilerIrValueSeq slots len)))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
-  [index : i64]
   [module-id : i64]
   [names : LowerNameCache]
   [dispatch-symbol : i64]
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
-  (if (>= index variants.len)
-    (No)
+  (for [index (iterator.range 0 variants.len)]
     (match (ast.ast-dispatch-variant-list-get
       variants
       index
       (ast.ast-dispatch-variant-fallback))
       [(Variant isa variant-name)
-        (if (tc_core.tc-dispatch-isa-eq? isa wanted)
-          (Some
-            (lower-dispatch-variant-role-symbol
-              names
-              dispatch-symbol
-              module-id
-              isa
-              variant-name))
-          (lower-dispatch-find-internal-name-from
-            variants
-            (+ index 1)
-            module-id
-            names
-            dispatch-symbol
-            wanted))])))
+        (when
+          (tc_core.tc-dispatch-isa-eq? isa wanted)
+          (return
+            (Some
+              (lower-dispatch-variant-role-symbol
+                names
+                dispatch-symbol
+                module-id
+                isa
+                variant-name))))]))
+  (No))
 
 (define (lower-dispatch-find-internal-name
   [variants : (& variants ast.AstDispatchVariantList)]
@@ -72006,7 +68823,6 @@
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
   (lower-dispatch-find-internal-name-from
     (& variants)
-    0
     module-id
     names
     dispatch-symbol
@@ -72701,7 +69517,6 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 module-id]
     [name-cache : LowerNameCache (lower-name-cache-from-env lower-state names)]
     [cur-out : lower_i64_i64_map.Map out]
@@ -72711,7 +69526,7 @@
     ;; projection costs nothing.
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ast.ast-decl-unwrapped
         (& (array-ref decl-slots (+ decl-offset index))))
         [(Module next-module) (set! cur-module-id next-module)]
@@ -72738,8 +69553,7 @@
                     key-id)
                   1))
               unit))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     cur-out))
 
 (define (lower-rvo-early-return-functions-from-decls
@@ -72975,7 +69789,6 @@
                   [(Some _ _ _ _) true]
                   [(No) false]))]
             (match (ast.ast-decl-unwrapped (& decl))
-              [(ModuleBody _ _) (set! cur-decls rest)]
               [(Def decl-meta name _ expr-box)
                 (let
                   [decl-ctx : tc_core.TcContext
@@ -73272,7 +70085,6 @@
                                 logical-name))
                             (set! result (Err message))
                             (set! done true))]))))]
-              [(DefMacro decl-meta _ _ _ _) (set! cur-decls rest)]
               [(DefDispatch decl-meta name variants)
                 (match (lower-dispatch-decl
                   ctx
@@ -73302,11 +70114,6 @@
                   [(Err message)
                     (set! result (Err message))
                     (set! done true)])]
-              [(Import decl-meta _) (set! cur-decls rest)]
-              [(IncludeStr _ _) (set! cur-decls rest)]
-              [(IncludeStrComptime _ _) (set! cur-decls rest)]
-              [(IncludeStrLzss _ _) (set! cur-decls rest)]
-              [(IncludeBin _ _) (set! cur-decls rest)]
               [(Module next-module)
                 (let
                   [next-module-str : String
@@ -73314,7 +70121,7 @@
                   [skip-runtime : bool
                     (lower-comptime-runtime-skip-module? next-module-str)]
                   [marker : i64 marker-index]
-                  [_next-marker : unit (set! marker-index (+ marker-index 1))]
+                  [_next-marker : unit (+= marker-index 1)]
                   (match (lower-module-local-view-cached
                     lower-state
                     ctx
@@ -73344,7 +70151,6 @@
                     [(Err message)
                       (set! result (Err (box (lower-diagnostic message))))
                       (set! done true)]))]
-              [(Test _ _ _ _) (set! cur-decls rest)]
               [(DefEnum decl-meta name cleanup variants)
                 (let
                   [decl-ctx : tc_core.TcContext
@@ -73596,7 +70402,11 @@
                     [(Err message)
                       (set! result (Err message))
                       (set! done true)]))]
-              [(Unsafe _) (set! cur-decls rest)]))]))
+              [(or (ModuleBody _ _) (DefMacro _ _ _ _ _) (Import _ _)
+                   (IncludeStr _ _) (IncludeStrComptime _ _)
+                   (IncludeStrLzss _ _) (IncludeBin _ _) (Test _ _ _ _)
+                   (Unsafe _))
+                (set! cur-decls rest)]))]))
     result))
 
 ;; --- debug type graph (#8237) ----------------------------------------------
@@ -73643,16 +70453,10 @@
   [ret : ast.AstType]) : unit
   (when
     (ir.compiler-debug-info-enabled?)
-    (let
-      [index : i64 0]
-      (while (< index (ast.ast-param-list-len (& params)))
-        (match (ast.ast-param-list-get
-          (& params)
-          index
-          (ast.ast-param-fallback))
-          [(ast.AstParam.Param _ ty _) (lower-debug-type-root! owner ctx ty)])
-        (set! index (+ index 1)))
-      (lower-debug-type-root! owner ctx ret))))
+    (for [index (iterator.range 0 (ast.ast-param-list-len (& params)))]
+      (match (ast.ast-param-list-get (& params) index (ast.ast-param-fallback))
+        [(ast.AstParam.Param _ ty _) (lower-debug-type-root! owner ctx ty)]))
+    (lower-debug-type-root! owner ctx ret)))
 
 (define (compiler-lower-state-debug-type-graph [owner : CompilerLowerState]) : ir.CompilerDebugTypeGraph
   (let
@@ -73690,7 +70494,7 @@
         [id : i64 (lower_i64_i64_map.get-value-or (& types.index) slot -1)]
         (if (or (< id 0) (string.eq (& (array-ref types.keys id)) key))
           (set! found true)
-          (set! slot (+ slot 1)))))
+          (+= slot 1))))
     slot))
 
 (define (lower-debug-type-find
@@ -73713,14 +70517,12 @@
       (let
         [keys : (__tl_dyn-array String)
           (__tl_make-array String (+ 16 (* 2 id)))]
-        [index : i64 0]
-        (while (< index id)
+        (for [index (iterator.range 0 id)]
           (set!
             (array-ref keys index)
             (owned_view.compiler-owned-array-element-shared-view
               types.keys
-              index))
-          (set! index (+ index 1)))
+              index)))
         (set! types.keys keys)))
     (lower_i64_i64_map.insert-ref!
       (&mut types.index)
@@ -73748,13 +70550,8 @@
   (let
     [ty : ast.AstType (lower-debug-type-resolve ctx raw)]
     (match (lower-global-shared-view ty)
-      [(ast.AstType.Struct name-id)
-        (lower-debug-nominal-id! ctx types name-id ty)]
-      [(ast.AstType.StructArgs name-id _)
-        (lower-debug-nominal-id! ctx types name-id ty)]
-      [(ast.AstType.Enum name-id)
-        (lower-debug-nominal-id! ctx types name-id ty)]
-      [(ast.AstType.EnumArgs name-id _)
+      [(or (ast.AstType.Struct name-id) (ast.AstType.StructArgs name-id _)
+           (ast.AstType.Enum name-id) (ast.AstType.EnumArgs name-id _))
         (lower-debug-nominal-id! ctx types name-id ty)]
       [_
         (let
@@ -73794,15 +70591,7 @@
   (let
     [name : String (tc_core.tc-type-render (lower-global-shared-view ty))]
     (match ty
-      [(ast.AstType.String)
-        (lower-debug-node
-          ir.compiler-debug-type-handle
-          name
-          8
-          8
-          (lower-debug-type-id! ctx types (ast.AstType.U8))
-          -1)]
-      [(ast.AstType.Str)
+      [(or (ast.AstType.String) (ast.AstType.Str))
         (lower-debug-node
           ir.compiler-debug-type-handle
           name
@@ -73834,28 +70623,15 @@
             types
             (tc_core.tc-context-type-get ctx elem))
           -1)]
-      [(ast.AstType.Box elem) (lower-debug-pointer-node ctx types name elem)]
-      [(ast.AstType.Ptr elem) (lower-debug-pointer-node ctx types name elem)]
-      [(ast.AstType.MutPtr elem) (lower-debug-pointer-node ctx types name elem)]
-      [(ast.AstType.Ref _ inner)
+      [(or (ast.AstType.Box elem) (ast.AstType.Ptr elem)
+           (ast.AstType.MutPtr elem))
+        (lower-debug-pointer-node ctx types name elem)]
+      [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner))
         (lower-debug-reference-node ctx types name inner)]
-      [(ast.AstType.MutRef _ inner)
-        (lower-debug-reference-node ctx types name inner)]
-      [(ast.AstType.Func _ _)
+      [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _))
         (lower-debug-node ir.compiler-debug-type-function name 8 8 -1 -1)]
-      [(ast.AstType.CFunc _ _)
-        (lower-debug-node ir.compiler-debug-type-function name 8 8 -1 -1)]
-      [(ast.AstType.Expr)
-        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
-      [(ast.AstType.ExprList)
-        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
-      [(ast.AstType.Var _)
-        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
-      [(ast.AstType.VarArgs _ _)
-        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
-      [(ast.AstType.Slice _)
-        (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
-      [(ast.AstType.Bytes)
+      [(or (ast.AstType.Expr) (ast.AstType.ExprList) (ast.AstType.Var _)
+           (ast.AstType.VarArgs _ _) (ast.AstType.Slice _) (ast.AstType.Bytes))
         (lower-debug-node ir.compiler-debug-type-opaque name size align -1 -1)]
       [_ (lower-debug-node ir.compiler-debug-type-scalar name size align -1 -1)])))
 
@@ -73944,10 +70720,9 @@
     [count : i64 (ast.ast-type-list-len (& elems))]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
     [cursor : i64 0]
     [checked : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [elem : ast.AstType
           (lower-debug-type-resolve
@@ -73966,20 +70741,17 @@
         (set! checked (+ expected (tc_core.tc-layout-info-size elem-layout)))
         (set! (array-ref offsets index) offset)
         (set! cursor (+ offset (lower-type-size ctx (& elem))))
-        (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))
-        (set! index (+ index 1))))
+        (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))))
     (let
       [first : i64 types.graph.member-count]
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (lower-debug-member!
           types
           -1
           (string.int->string index)
           index
           (array-ref ids index)
-          (array-ref offsets index))
-        (set! index (+ index 1)))
+          (array-ref offsets index)))
       (ir.CompilerDebugTypeNode
         ir.compiler-debug-type-tuple
         name
@@ -74068,18 +70840,15 @@
         (let
           [count : i64 (tc_core.tc-inline-field-layout-list-count (& fields))]
           [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-          [index : i64 0]
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
               [(tc_core.TcInlineFieldLayout.Field _ field-ty _)
                 (set!
                   (array-ref ids index)
-                  (lower-debug-type-id! ctx types field-ty))])
-            (set! index (+ index 1)))
+                  (lower-debug-type-id! ctx types field-ty))]))
           (let
             [first : i64 types.graph.member-count]
-            (set! index 0)
-            (while (< index count)
+            (for [index (iterator.range 0 count)]
               (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
                 [(tc_core.TcInlineFieldLayout.Field field-id _ offset)
                   (lower-debug-member!
@@ -74088,8 +70857,7 @@
                     (tc_core.tc-env-key-name-text field-id)
                     field-id
                     (array-ref ids index)
-                    offset)])
-              (set! index (+ index 1)))
+                    offset)]))
             (ir.CompilerDebugTypeNode
               ir.compiler-debug-type-struct
               name
@@ -74121,10 +70889,8 @@
     (while (< variant count)
       (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
         [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-          (set!
-            total
-            (+ total (tc_core.tc-inline-payload-layout-list-count (& payloads))))])
-      (set! variant (+ variant 1)))
+          (+= total (tc_core.tc-inline-payload-layout-list-count (& payloads)))])
+      (+= variant 1))
     (let
       [ids : (__tl_dyn-array i64) (__tl_make-array i64 total)]
       [slot : i64 0]
@@ -74132,21 +70898,19 @@
       (while (< variant count)
         (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
           [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-            (let
-              [index : i64 0]
-              (while (<
-                index
-                (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                (match (tc_core.tc-inline-payload-layout-list-ref
-                  (& payloads)
-                  index)
-                  [(tc_core.TcInlinePayloadLayout.Payload _ payload-ty _)
-                    (set!
-                      (array-ref ids slot)
-                      (lower-debug-type-id! ctx types payload-ty))])
-                (set! slot (+ slot 1))
-                (set! index (+ index 1))))])
-        (set! variant (+ variant 1)))
+            (for [index
+              (iterator.range
+                0
+                (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+              (match (tc_core.tc-inline-payload-layout-list-ref
+                (& payloads)
+                index)
+                [(tc_core.TcInlinePayloadLayout.Payload _ payload-ty _)
+                  (set!
+                    (array-ref ids slot)
+                    (lower-debug-type-id! ctx types payload-ty))])
+              (+= slot 1))])
+        (+= variant 1))
       (let
         [first : i64 types.graph.member-count]
         (set! variant 0)
@@ -74156,35 +70920,33 @@
             (& variants)
             variant)
             [(tc_core.TcInlineVariantLayout.Variant variant-id _ _ payloads)
-              (let
-                [index : i64 0]
-                (lower-debug-member!
-                  types
-                  variant
-                  (tc_core.tc-env-key-name-text variant-id)
-                  variant-id
-                  -1
-                  -1)
-                (while (<
-                  index
-                  (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                  (match (tc_core.tc-inline-payload-layout-list-ref
-                    (& payloads)
-                    index)
-                    [(tc_core.TcInlinePayloadLayout.Payload
-                        payload-index
-                        _
-                        offset)
-                      (lower-debug-member!
-                        types
-                        variant
-                        (string.int->string payload-index)
-                        payload-index
-                        (array-ref ids slot)
-                        offset)])
-                  (set! slot (+ slot 1))
-                  (set! index (+ index 1))))])
-          (set! variant (+ variant 1)))
+              (lower-debug-member!
+                types
+                variant
+                (tc_core.tc-env-key-name-text variant-id)
+                variant-id
+                -1
+                -1)
+              (for [index
+                (iterator.range
+                  0
+                  (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+                (match (tc_core.tc-inline-payload-layout-list-ref
+                  (& payloads)
+                  index)
+                  [(tc_core.TcInlinePayloadLayout.Payload
+                      payload-index
+                      _
+                      offset)
+                    (lower-debug-member!
+                      types
+                      variant
+                      (string.int->string payload-index)
+                      payload-index
+                      (array-ref ids slot)
+                      offset)])
+                (+= slot 1))])
+          (+= variant 1))
         (ir.CompilerDebugTypeNode
           ir.compiler-debug-type-enum
           name
@@ -74284,7 +71046,7 @@
                       (lower-global-shared-view aggregate)
                       variant-id
                       row.name-id))))
-              (set! member (+ member 1))))]
+              (+= member 1)))]
         [(tc_core.ResultTcInlineAggregateLayout.Err _) unit]))))
 
 (define (lower-compiler-program-checked-with-names-mode
@@ -75544,24 +72306,26 @@
     [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
     (match (load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (lower-global-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-cfg
           ""
-          src
+          (& src)
           prelude-seen
-          stdlib-roots
+          (& stdlib-roots)
           cfgs)
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
-              (load.compiler-load-decl-list-append prelude-decls entry-decls)
+              (load.compiler-load-decl-list-append
+                (& prelude-decls)
+                (& entry-decls))
               (load.compiler-load-decl-path-list-append
-                prelude-paths
-                entry-paths)
+                (& prelude-paths)
+                (& entry-paths))
               (load.compiler-load-decl-module-list-append
-                prelude-modules
-                entry-modules)
+                (& prelude-modules)
+                (& entry-modules))
               seen)]
           [(Err diagnostic) (Err diagnostic)])]
       [(Err diagnostic) (Err diagnostic)])))
@@ -75572,7 +72336,7 @@
   (match kind
     [(Module)
       (load.compiler-load-stdlib-import?
-        (load.compiler-load-dotted-module-path path))]
+        (load.compiler-load-dotted-module-path (& path)))]
     [_ false]))
 
 (define (lower-source-stdlib-import-needs-loader?
@@ -75625,12 +72389,9 @@
             (lower-source-node-has-import-call? pools init-box)
             (lower-source-node-has-import-call? pools value-box)
             (lower-source-node-has-import-call? pools body-box))])]
-    [(ArrayTake _ _ _) false]
-    [(Replace _ _) false]
-    [(PtrAddrOf _) false]
-    [(ForOwnedState _) false]
-    [(ForOwnedStep _) false]
-    [(MacroExpansion _ _ _) false]
+    [(or (ArrayTake _ _ _) (Replace _ _) (PtrAddrOf _) (ForOwnedState _)
+         (ForOwnedStep _) (MacroExpansion _ _ _))
+      false]
     [_
       (ast.ast-expr-list-fold
         (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools id))
@@ -75704,7 +72465,7 @@
   (ci.intern-reset!)
   (lower-reset-intern-owned-state!)
   (cbi.compiler-builtin-reset!)
-  (match (parser.parse-ast-source (lower-global-shared-view src))
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (if (lower-source-program-needs-loader?
         (lower-global-shared-view program))
@@ -75723,7 +72484,7 @@
                 cfgs
                 (load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
-                  stdlib-roots
+                  (& stdlib-roots)
                   cfgs))]
             [(Err diag) (Err diag)]))
         (lower-compiler-program-with-path-mode-and-state

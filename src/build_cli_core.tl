@@ -715,7 +715,7 @@
               (set!
                 resolved-deps
                 (load.compiler-pkg-dep-list-push
-                  resolved-deps
+                  (& resolved-deps)
                   (load.CompilerPkgDep
                     (cli_option.cli-args-value-at (& args) 1)
                     (cli_option.cli-args-value-at (& args) 2))))
@@ -760,7 +760,7 @@
   (if (io.file-exists? (owned_view.compiler-owned-shared-view manifest-path))
     (match (load.compiler-load-parse-manifest-diagnostic-infer-kind
       (owned_view.compiler-owned-shared-view manifest-path)
-      (byte_buf.to-string (io.read-file manifest-path)))
+      (& (byte_buf.to-string (io.read-file manifest-path))))
       [(Ok manifest) (Ok manifest)]
       [(Err diag) (Err (build-invalid-manifest-message (deref diag)))])
     (Err (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
@@ -965,7 +965,8 @@
   [manifest-dir : String]
   [declared : load.CompilerPkgDep]
   [resolved : load.CompilerPkgDep]) : BuildPackageSourceProvenance
-  (if (load.compiler-load-github-dependency-path? (string.copy declared.path))
+  (if (load.compiler-load-github-dependency-path?
+    (& (string.copy declared.path)))
     (Fetched declared.alias (build-package-dep-root manifest-dir resolved))
     (Local)))
 
@@ -1093,7 +1094,7 @@
       [(Ok snapshot)
         (if snapshot.existed
           (match (package_lock_core.package-lock-parse
-            (string.copy snapshot.source))
+            (& (string.copy snapshot.source)))
             [(Err message)
               (Err
                 (str_cat.str-cat
@@ -1773,7 +1774,7 @@
     [path : String dep.path]
     [alias : String dep.alias]
     [path-for-kind : String (string.copy (& path))]
-    (if (load.compiler-load-github-dependency-path? path-for-kind)
+    (if (load.compiler-load-github-dependency-path? (& path-for-kind))
       (let
         [parse-alias : String
           (string.substring alias 0 (string.string-length alias))]
@@ -1903,7 +1904,9 @@
             (owned_view.compiler-owned-shared-view resolved-dep.lock-entry)))]
       (Ok
         (BuildResolvedPkgDeps
-          (load.compiler-pkg-dep-list-cons resolved-dep.dep resolved-rest.deps)
+          (load.compiler-pkg-dep-list-cons
+            resolved-dep.dep
+            (& resolved-rest.deps))
           next-lock-entries
           (or
             resolved-rest.has-remote
@@ -2873,11 +2876,12 @@
   [manifest-dir : String]
   [dep : load.CompilerPkgDep]) : String
   (load.compiler-load-canonical-path
-    (if (load.compiler-load-absolute-path? dep.path)
-      dep.path
-      (load.compiler-load-join-root-path
-        manifest-dir
-        (owned_view.compiler-owned-shared-view dep.path)))))
+    (&
+      (if (load.compiler-load-absolute-path? dep.path)
+        dep.path
+        (load.compiler-load-join-root-path
+          manifest-dir
+          (owned_view.compiler-owned-shared-view dep.path))))))
 
 (define (build-package-catalog-deps-contain-root?
   [deps : (& deps load.CompilerPkgDepList)]
@@ -2913,7 +2917,7 @@
           (build-package-graph-node-vec-at nodes index)]
         [root : String
           (load.compiler-load-canonical-path
-            (load.compiler-load-dirname node.manifest-path))]
+            (& (load.compiler-load-dirname node.manifest-path)))]
         ;; Graph construction already canonicalizes and deduplicates node
         ;; roots. Only direct manifest requests need comparison here so
         ;; their aliases and duplicate request telemetry stay intact.
@@ -2926,7 +2930,7 @@
           (set!
             deps
             (load.compiler-pkg-dep-list-push
-              deps
+              (& deps)
               (load.CompilerPkgDep node.manifest.name root))))
         (set! index (+ index 1))))
     deps))
@@ -2974,7 +2978,7 @@
         [order : i64
           (tlci.tlci-spmd-specialization-compare
             item
-            (tlci.tlci-spmd-specializations-ref items scan))]
+            (& (tlci.tlci-spmd-specializations-ref items scan)))]
         (cond
           [(= order 0)
             (set! duplicate true)
@@ -2992,13 +2996,13 @@
         (while (< cursor position)
           (tlci.tlci-spmd-specializations-push!
             (&mut dst)
-            (tlci.tlci-spmd-specializations-ref items cursor))
+            (& (tlci.tlci-spmd-specializations-ref items cursor)))
           (set! cursor (+ cursor 1)))
-        (tlci.tlci-spmd-specializations-push! (&mut dst) item)
+        (tlci.tlci-spmd-specializations-push! (&mut dst) (& item))
         (while (< cursor count)
           (tlci.tlci-spmd-specializations-push!
             (&mut dst)
-            (tlci.tlci-spmd-specializations-ref items cursor))
+            (& (tlci.tlci-spmd-specializations-ref items cursor)))
           (set! cursor (+ cursor 1)))
         dst))))
 
@@ -3016,7 +3020,7 @@
       (if (<
         (tlci.tlci-spmd-callable-compare
           item
-          (tlci.tlci-spmd-callables-ref items scan))
+          (& (tlci.tlci-spmd-callables-ref items scan)))
         0)
         (begin
           (set! position scan)
@@ -3025,13 +3029,13 @@
     (while (< cursor position)
       (tlci.tlci-spmd-callables-push!
         (&mut dst)
-        (tlci.tlci-spmd-callables-ref items cursor))
+        (& (tlci.tlci-spmd-callables-ref items cursor)))
       (set! cursor (+ cursor 1)))
-    (tlci.tlci-spmd-callables-push! (&mut dst) item)
+    (tlci.tlci-spmd-callables-push! (&mut dst) (& item))
     (while (< cursor count)
       (tlci.tlci-spmd-callables-push!
         (&mut dst)
-        (tlci.tlci-spmd-callables-ref items cursor))
+        (& (tlci.tlci-spmd-callables-ref items cursor)))
       (set! cursor (+ cursor 1)))
     dst))
 
@@ -3573,7 +3577,7 @@
       (Err collector.error)
       (Ok
         (tlci.tlci-metadata-emit
-          (build-package-tlci-metadata manifest collector.items))
+          (& (build-package-tlci-metadata manifest collector.items)))
         (owned_view.compiler-owned-shared-view names)
         (if (= (array-length names) 0)
           ""
@@ -3599,7 +3603,7 @@
           [(Err message) (Err message)]
           [(Ok metadata-text names native-source)
             (if (= (array-length names) 0)
-              (match (tlci.tlci-metadata-parse metadata-text)
+              (match (tlci.tlci-metadata-parse (& metadata-text))
                 [(Err message)
                   (Err
                     (str_cat.str-cat
@@ -3607,7 +3611,11 @@
                       message))]
                 [(Ok metadata)
                   (match (tlci.tlci-emit-image
-                    (build-package-tlci-image metadata producer-identity rodata))
+                    (&
+                      (build-package-tlci-image
+                        metadata
+                        producer-identity
+                        rodata)))
                     [(Err message)
                       (Err
                         (str_cat.str-cat
@@ -5509,12 +5517,12 @@
             (let
               [owned-paths : ast.AstDeclPathList
                 (load.compiler-load-package-owned-paths-for-decls
-                  (owned_view.compiler-owned-shared-view manifest.name)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  stdlib-roots
-                  (owned_view.compiler-owned-shared-view entry-path)
-                  (owned_view.compiler-owned-shared-view decls)
-                  (owned_view.compiler-owned-shared-view paths))]
+                  (& manifest.name)
+                  (& manifest-dir)
+                  (& stdlib-roots)
+                  (& entry-path)
+                  (& decls)
+                  (& paths))]
               [metadata-link-inputs : build_run_core.SourceToolLinkInputs
                 (build_run_core.source-tool-link-inputs-from-decls
                   (owned_view.compiler-owned-shared-view decls)

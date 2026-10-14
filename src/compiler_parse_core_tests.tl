@@ -1,7 +1,9 @@
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
+(import stdlib.test)
 (import compiler_intern as ci)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -31,7 +33,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgram
-      (parser.parse-ast-program-with-cfg-and-pools toks cfgs pools)]
+      (parser.parse-ast-program-with-cfg-and-pools (& toks) cfgs pools)]
     (ast.ast-node-pool-context-install! pools)
     result))
 
@@ -41,7 +43,7 @@
 (define (parse-ast-source-recovery-diagnostic [path : String] [src : String]) : parser.ResultAstProgramRecovery
   (parser.parse-ast-source-recovery-diagnostic-with-cfg
     path
-    src
+    (& src)
     (parser.compiler-cfg-empty)))
 
 (define (ast-decl-list-tag-sum [decls : ast.AstDeclList]) : i64
@@ -524,6 +526,176 @@
 (define (ast-expr-inner-tag [expr : ast.AstExpr]) : i64
   (ast_tests.ast-expr-tag (ast.ast-expr-unspan (& expr))))
 
+(define (compiler-parse-default-dispatch-tests-ok?) : bool
+  (let
+    [dispatch : sym_i64_env.SymI64Env (parser.compiler-parse-dispatch-env)]
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        (reader.stable-symbol-id "+")
+        (reader.stable-symbol-id "if")
+        (reader.stable-symbol-id "define")
+        (reader.stable-symbol-id "defdispatch")
+        (reader.stable-symbol-id "dot")
+        (reader.stable-symbol-id "unknown-default-dispatch"))]
+    [tags : (__tl_dyn-array i64)
+      (__tl_make-array
+        (parser.compiler-parse-tag-bin-add)
+        (parser.compiler-parse-tag-expr-if)
+        (parser.compiler-parse-tag-decl-define)
+        (parser.compiler-parse-tag-decl-defdispatch)
+        (parser.compiler-parse-tag-unknown)
+        (parser.compiler-parse-tag-unknown))]
+    [control : i64
+      (parser.compiler-parse-state-control-addr
+        (& (parser.compiler-parse-default-state-shared-view)))]
+    [index : i64 0]
+    [ok : bool true]
+    (while (< index (array-length names))
+      (set!
+        ok
+        (and
+          ok
+          (=
+            (parser.compiler-parse-dispatch-tag-id
+              dispatch
+              (array-ref names index))
+            (array-ref tags index))
+          (=
+            (parser.compiler-parse-default-dispatch-tag-id
+              (array-ref names index))
+            (array-ref tags index))))
+      (set! index (+ index 1)))
+    (let
+      [base : sym_i64_env.SymI64Env
+        (parser.compiler-parse-dispatch-cache-ref control)]
+      [before : sym_i64_env.SymI64Store
+        (sym_i64_env.sym-i64-store-read base.store-address)]
+      (set! index 0)
+      (while (< index 4096)
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (parser.compiler-parse-default-dispatch-tag-id
+                (array-ref names (% index (array-length names))))
+              (array-ref tags (% index (array-length names))))))
+        (set! index (+ index 1)))
+      (let
+        [after : sym_i64_env.SymI64Store
+          (sym_i64_env.sym-i64-store-read base.store-address)]
+        (set! ok (and ok (= before.len after.len)))))
+    ;; A stale oracle environment falls back to its immutable bindings. The
+    ;; default lookup must refresh the canonical index before classifying.
+    (let
+      [fields : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      (set!
+        (array-ref fields 0)
+        parser.compiler-parse-state-control-cache-generation)
+      (set!
+        (array-ref fields 1)
+        parser.compiler-parse-state-control-cache-table-id)
+      (set! index 0)
+      (while (< index (array-length fields))
+        (parser.compiler-parse-raw-i64-set! control (array-ref fields index) -1)
+        (set!
+          ok
+          (and
+            ok
+            (= (parser.compiler-parse-dispatch-indexed-control dispatch) 0)
+            (=
+              (parser.compiler-parse-dispatch-tag-id
+                dispatch
+                (array-ref names 0))
+              (parser.compiler-parse-tag-bin-add))
+            (=
+              (parser.compiler-parse-default-dispatch-tag-id
+                (array-ref names 0))
+              (parser.compiler-parse-tag-bin-add))
+            (parser.compiler-parse-dispatch-index-current-control? control)))
+        (set! index (+ index 1))))
+    (and
+      ok
+      (=
+        (parser.compiler-parse-default-dispatch-tag-id -1)
+        (parser.compiler-parse-tag-unknown)))))
+
+(define (compiler-parse-default-dispatch-owner-tests-ok?) : bool
+  (let
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
+    [control : i64
+      (parser.compiler-parse-state-control-addr
+        (& (parser.compiler-parse-default-state-shared-view)))]
+    [ok : bool false]
+    (ci.intern-compat-state-install! owner)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (set!
+      ok
+      (and
+        (=
+          (parser.compiler-parse-default-dispatch-tag-id
+            (reader.stable-symbol-id "+"))
+          (parser.compiler-parse-tag-bin-add))
+        (=
+          (parser.compiler-parse-raw-i64-ref
+            control
+            parser.compiler-parse-state-control-cache-table-id)
+          (ci.intern-compat-state-table-id owner))))
+    (ci.intern-compat-state-capture-from-globals! (&mut owner))
+    (ci.intern-compat-state-reset! (&mut owner))
+    (ci.intern-compat-state-install! owner)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (set!
+      ok
+      (and
+        ok
+        (not (parser.compiler-parse-dispatch-index-current-control? control))
+        (=
+          (parser.compiler-parse-default-dispatch-tag-id
+            (reader.stable-symbol-id "if"))
+          (parser.compiler-parse-tag-expr-if))
+        (=
+          (parser.compiler-parse-raw-i64-ref
+            control
+            parser.compiler-parse-state-control-cache-generation)
+          (ci.intern-generation))))
+    (ci.intern-compat-state-install! home)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (set!
+      ok
+      (and
+        ok
+        (=
+          (parser.compiler-parse-default-dispatch-tag-id
+            (reader.stable-symbol-id "define"))
+          (parser.compiler-parse-tag-decl-define))
+        (=
+          (parser.compiler-parse-raw-i64-ref
+            control
+            parser.compiler-parse-state-control-cache-table-id)
+          (ci.intern-compat-state-table-id home))))
+    ok))
+
+(test
+  compiler-parse-default-dispatch-tags-and-storage
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (test.assert-true
+    (and
+      (compiler-parse-defdispatch-tests-ok?)
+      (compiler-parse-default-dispatch-tests-ok?))
+    "default dispatch tags preserve classification without appending bindings"))
+
+(test
+  compiler-parse-default-dispatch-owner-refresh
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (test.assert-true
+    (compiler-parse-default-dispatch-owner-tests-ok?)
+    "default dispatch refreshes after intern reset and owner changes"))
+
 (define (ast-main-body-tag [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
     [(Nil) 0]
@@ -588,8 +760,7 @@
   (let
     [src : String "(define)"]
     (and
-      (match (parser.parse-ast-source
-        (parser.compiler-parse-place-shared-view src))
+      (match (parser.parse-ast-source (& src))
         [(Err message) (string.eq message "parse: malformed define")]
         [_ false])
       (match (lexer.spanned-result (& src))
@@ -615,7 +786,7 @@
   [col : i64]) : bool
   (match (parser.parse-ast-source-diagnostic
     (parser.compiler-parse-place-shared-view path)
-    src)
+    (& src))
     [(Err diag)
       (and
         (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
@@ -727,8 +898,7 @@
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (+
-          (parser.ast-decl-list-count
-            (parser.compiler-parse-place-shared-view decls))
+          (parser.ast-decl-list-count (& decls))
           (+
             (ast-decl-list-tag-sum
               (parser.compiler-parse-place-shared-view decls))
@@ -743,7 +913,7 @@
 ;; counterpart to the success-path smoke: it pins the parser's rejection
 ;; messages so a regression that drops or relabels an error is caught.
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Err message) (string.eq message want)]
     [(Ok _) false]))
 
@@ -752,7 +922,7 @@
 (define (compiler-parse-diagnostic-code-is?
   [src : String]
   [want : (& want str)]) : bool
-  (match (parser.parse-ast-source-diagnostic "parse-code.tl" src)
+  (match (parser.parse-ast-source-diagnostic "parse-code.tl" (& src))
     [(Err diag)
       (let
         [error : cdiag.CompilerDiagnostic (deref diag)]
@@ -930,7 +1100,7 @@
 (define (compiler-parse-if-missing-else-diagnostic-notes-ok?) : bool
   (match (parser.parse-ast-source-diagnostic
     "missing-if-else.tl"
-    (compiler-parse-malformed-if-source))
+    (& (compiler-parse-malformed-if-source)))
     [(Err diag)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
@@ -1655,7 +1825,7 @@
   [name : String]
   [want-args : i64]
   [check-guard-args : bool]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -1953,16 +2123,12 @@
 (define (compiler-parse-first-struct-aligns [source : String] [field : i64]) : (Tuple
     i64
     i64)
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(DefStruct _ _ repr _ _)
-            (tuple
-              (ast.ast-struct-repr-declared-align repr)
-              (ast.ast-struct-repr-field-declared-align repr field))]
-          [(DefStructLifetimes _ _ _ repr _ _)
+          [(or (DefStruct _ _ repr _ _) (DefStructLifetimes _ _ _ repr _ _))
             (tuple
               (ast.ast-struct-repr-declared-align repr)
               (ast.ast-struct-repr-field-declared-align repr field))]
@@ -1980,7 +2146,7 @@
 
 ;; A struct's field alignment list ends at its last aligned field.
 (define (compiler-parse-field-aligns-len-is? [source : String] [want : i64]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2221,7 +2387,7 @@
       10)))
 
 (define (compiler-parse-first-decl-must-use? [source : String]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2289,7 +2455,7 @@
       "parse: unknown test metadata :must-use")))
 
 (define (compiler-parse-first-decl-markers [source : String]) : i64
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -2847,14 +3013,14 @@
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
 ;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
 (define (compiler-parse-ok? [src : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok _) true]
     [(Err _) false]))
 
 (define (compiler-parse-ok-with-cfg?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok _) true]
     [(Err _) false]))
 
@@ -2862,17 +3028,17 @@
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [want : i64]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        (= (parser.ast-decl-list-count decls) want))]
+        (= (parser.ast-decl-list-count (& decls)) want))]
     [(Err _) false]))
 
 (define (compiler-parse-cfg-error?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-with-cfg src cfgs)
+  (match (parser.parse-ast-source-with-cfg (& src) cfgs)
     [(Ok _) false]
     [(Err _) true]))
 
@@ -3607,7 +3773,7 @@
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
 ;; parser's `parse_repl_item` tests.
 (define (compiler-parse-repl-decl-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok item)
       (match item
         [(AstReplDecl _) true]
@@ -3615,7 +3781,7 @@
     [(Err _) false]))
 
 (define (compiler-parse-repl-expr-ok? [src : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok item)
       (match item
         [(AstReplExpr _) true]
@@ -3626,7 +3792,7 @@
   [src : String]
   [expected : String]
   [code : String]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -3637,7 +3803,7 @@
           (>= (cdiag.compiler-diagnostic-line error) 1)))]))
 
 (define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
-  (match (parser.parse-ast-repl-source src)
+  (match (parser.parse-ast-repl-source (& src))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -3689,7 +3855,7 @@
 ;; test_parse_comptime_function_param / _type_valued_comptime_param /
 ;; _comptime_lambda_param_rejected.
 (define (compiler-parse-first-fn-has-comptime-param? [src : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
@@ -3820,15 +3986,15 @@
     [else 0]))
 
 (define (compiler-parse-macro-type-kind-all-order-ok?
-  [kinds : (& kinds ast.AstMacroTypeKindList)]
-  [index : i64]) : bool
-  (if (>= index 30)
-    (= (ast.ast-macro-type-kind-list-len kinds) 30)
-    (and
+  [kinds : (& kinds ast.AstMacroTypeKindList)]) : bool
+  (for [index (iterator.range 0 30)]
+    (unless
       (=
         (ast.ast-macro-type-kind-list-get kinds index 0)
         (compiler-parse-macro-type-kind-expected-all-id index))
-      (compiler-parse-macro-type-kind-all-order-ok? kinds (+ index 1)))))
+      (return false))
+    unit)
+  (= (ast.ast-macro-type-kind-list-len kinds) 30))
 
 (define (compiler-parse-defmacro-type-kind-storage-case-ok?
   [source : String]
@@ -3836,7 +4002,7 @@
   [expected-first : String]
   [expected-last : String]
   [verify-all : bool]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons (DefMacro _ _ params _ _) rest)
@@ -3874,8 +4040,7 @@
                           expected-last)))
                     (if verify-all
                       (compiler-parse-macro-type-kind-all-order-ok?
-                        (& type-kinds)
-                        0)
+                        (& type-kinds))
                       true)))]
               [_ false]))]
         [_ false])]
@@ -3912,8 +4077,7 @@
   [text : String]
   [fixed-id : i64]) : bool
   (let
-    [source-id : i64
-      (reader.stable-symbol-id (parser.compiler-parse-place-shared-view text))]
+    [source-id : i64 (reader.stable-symbol-id (& text))]
     [generated-id : i64
       (ci.intern-generated-canonical-name
         (parser.compiler-parse-place-shared-view text))]
@@ -4165,6 +4329,243 @@
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
     ok))
 
+(define (compiler-parse-origin-lookup-alias-source-ok?
+  [domain : i64]
+  [key : i64]
+  [slot : i64]
+  [source-key : i64]
+  [source-slot : i64]) : bool
+  (let
+    [found : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup domain key slot)]
+    (and
+      (= found.kind 2)
+      (= found.source-key source-key)
+      (= found.source-slot source-slot))))
+
+;; Alias records stay runs (#8855): a lookup takes the latest of the slot's
+;; direct record and the newest run covering it, domain 1 skips repeat runs,
+;; and a chain longer than the walk limit answers through its segment index,
+;; also after runs are added to an indexed key.
+(define (compiler-parse-origin-lookup-alias-run-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 2 500 3 3 10 1 10 9)
+  (parser.compiler-parse-origin-alias-insert! 600 10 5 500 0 false)
+  (let
+    [plain : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 13 500 3)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 600 13 500 3))]
+    [_repeat : unit
+      (parser.compiler-parse-origin-alias-insert! 600 12 2 700 4 true)]
+    [repeat : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 13 700 4)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 600 13 500 3))]
+    [_direct-after : unit
+      (parser.compiler-parse-semantic-origin-lookup-insert!
+        2
+        600
+        14
+        3
+        20
+        1
+        20
+        5)]
+    [_direct-before : unit
+      (parser.compiler-parse-semantic-origin-lookup-insert! 2 800 1 3 1 1 1 2)]
+    [_alias-after : unit
+      (parser.compiler-parse-origin-alias-insert! 800 0 3 900 7 false)]
+    [latest : bool
+      (and
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 14).kind 3)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 14).run-start 20)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 600 12 700 4)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 800 1 900 8)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 15).kind 0)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 600 9).kind 0))]
+    [_long-chain : unit
+      (begin
+        (for [index (iterator.range 0 40)]
+          (parser.compiler-parse-origin-alias-insert!
+            1000
+            (* index 2)
+            2
+            (+ 2000 index)
+            0
+            false))
+        (parser.compiler-parse-origin-alias-insert! 1000 3 4 3000 0 false))]
+    [indexed : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 0 2000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 5 3000 2)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 7 2003 1)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 1000 80).kind 0))]
+    [_newer : unit
+      (parser.compiler-parse-origin-alias-insert! 1000 79 1 4000 0 true)]
+    [newer : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 79 4000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1))]
+    [_reindex : unit
+      (for [index (iterator.range 0 20)]
+        (parser.compiler-parse-origin-alias-insert!
+          1000
+          (+ 100 index)
+          1
+          (+ 5000 index)
+          0
+          false))]
+    [reindexed : bool
+      (and
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 110 5010 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 79 4000 0)
+        (compiler-parse-origin-lookup-alias-source-ok? 1 1000 79 2039 1)
+        (compiler-parse-origin-lookup-alias-source-ok? 2 1000 5 3000 2)
+        (= (parser.compiler-parse-semantic-origin-lookup 2 1000 99).kind 0))]
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    (and plain repeat latest indexed newer reindexed)))
+
+(define (compiler-parse-origin-reindex-storage-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [ok : bool true]
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (parser.compiler-parse-origin-alias-insert!
+          (+ 100 key)
+          index
+          1
+          (+ 200 index)
+          key
+          false)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-parse-origin-lookup-alias-source-ok?
+              2
+              (+ 100 key)
+              index
+              (+ 200 index)
+              key)))))
+    ;; Interleaved keys must keep each other's ranges while rebuilding into a
+    ;; temporary tail. Retained ranges grow geometrically, not per lookup.
+    (set! ok (and ok (< parser.compiler-parse-origin-segment-len 16000)))
+    (for [index (iterator.range 0 1000)]
+      (for [key (iterator.range 0 2)]
+        (for [domain (iterator.range 1 3)]
+          (set!
+            ok
+            (and
+              ok
+              (compiler-parse-origin-lookup-alias-source-ok?
+                domain
+                (+ 100 key)
+                index
+                (+ 200 index)
+                key))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    (set!
+      ok
+      (and ok (= (parser.compiler-parse-semantic-origin-lookup 2 100 0).kind 0)))
+    (parser.compiler-parse-origin-alias-insert! 100 0 1 9000 7 false)
+    (set!
+      ok
+      (and ok (compiler-parse-origin-lookup-alias-source-ok? 2 100 0 9000 7)))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
+(define (compiler-parse-origin-lookup-model-tests-ok?) : bool
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (let
+    [kinds : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [sources : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [positions : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [ok : bool true]
+    ;; The oracle expands each alias into slots. Production keeps ranges;
+    ;; compare their answers across overlaps, gaps, domains and rebuilds.
+    (for [step (iterator.range 0 512)]
+      (let
+        [key : i64 (% step 4)]
+        [start : i64 (% (* step 17) 32)]
+        [width : i64 (+ (% step 7) 1)]
+        [count : i64
+          (if (> (+ start width) 32)
+            (- 32 start)
+            width)]
+        [repeat : bool (= (% step 5) 0)]
+        (if (= (% step 3) 0)
+          (let
+            [domain : i64 (+ (% step 2) 1)]
+            [kind : i64
+              (if (= domain 1)
+                1
+                3)]
+            [index : i64 (+ (* (- domain 1) 128) (* key 32) start)]
+            (parser.compiler-parse-semantic-origin-lookup-insert!
+              domain
+              (+ 100 key)
+              start
+              kind
+              step
+              1
+              0
+              0)
+            (set! (array-ref kinds index) kind)
+            (set! (array-ref sources index) 0)
+            (set! (array-ref positions index) step))
+          (begin
+            (parser.compiler-parse-origin-alias-insert!
+              (+ 100 key)
+              start
+              count
+              (+ 9000 step)
+              (* step 2)
+              repeat)
+            (for [domain (iterator.range 1 3)]
+              (unless
+                (and (= domain 1) repeat)
+                (for [offset (iterator.range 0 count)]
+                  (let
+                    [index : i64
+                      (+ (* (- domain 1) 128) (* key 32) start offset)]
+                    (set! (array-ref kinds index) 2)
+                    (set! (array-ref sources index) (+ 9000 step))
+                    (set!
+                      (array-ref positions index)
+                      (+
+                        (* step 2)
+                        (if repeat
+                          0
+                          offset)))))))))
+        (when
+          (= (% step 8) 7)
+          (for [domain (iterator.range 1 3)]
+            (for [key (iterator.range 0 4)]
+              (for [slot (iterator.range 0 32)]
+                (let
+                  [index : i64 (+ (* (- domain 1) 128) (* key 32) slot)]
+                  [found : parser.CompilerParseSemanticOriginLookupSlot
+                    (parser.compiler-parse-semantic-origin-lookup
+                      domain
+                      (+ 100 key)
+                      slot)]
+                  (set!
+                    ok
+                    (and
+                      ok
+                      (= found.kind (array-ref kinds index))
+                      (= found.source-key (array-ref sources index))
+                      (=
+                        (if (= found.kind 2)
+                          found.source-slot
+                          found.run-start)
+                        (array-ref positions index)))))))))))
+    (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+    ok))
+
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source
     "(import stdlib.test)
@@ -4196,10 +4597,15 @@
         (compiler-parse-module-body-ok?)
         (compiler-parse-module-body-malformed-ok?)
         (compiler-parse-origin-lookup-cache-tests-ok?)
+        (compiler-parse-origin-lookup-alias-run-tests-ok?)
+        (compiler-parse-origin-reindex-storage-tests-ok?)
+        (compiler-parse-origin-lookup-model-tests-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)
         (compiler-parse-defdispatch-tests-ok?)
+        (compiler-parse-default-dispatch-tests-ok?)
+        (compiler-parse-default-dispatch-owner-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
         (compiler-parse-implicit-body-tail-ok?)
         (compiler-parse-inline-test-ok?)

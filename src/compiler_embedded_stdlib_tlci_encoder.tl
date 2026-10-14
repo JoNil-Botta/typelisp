@@ -576,7 +576,7 @@
 ;: Encode exact TLCI bytes through the proven LZSS matcher and canonical layer.
 (define (compiler-embedded-stdlib-tlci-encoder-encode [source : String]) : ResultCompilerEmbeddedStdlibTlciEncoderBytes
   (let
-    [lzss : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes source)]
+    [lzss : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes (& source))]
     [frequencies (try (compiler-embedded-stdlib-tlci-encoder-count (& lzss)))]
     [main-codes
       (try (compiler-embedded-stdlib-tlci-encoder-build-codes frequencies.main))]

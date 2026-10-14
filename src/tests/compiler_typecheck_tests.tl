@@ -1,4 +1,5 @@
 ;; compiler_typecheck_tests.tl - Self-tests for the compiler typechecker API.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -303,7 +304,7 @@
   [entry-path : String]) : bool
   (match (parser.parse-ast-source-diagnostic
     (tc_core.tc-global-shared-view entry-path)
-    src)
+    (& src))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -976,12 +977,12 @@
                     (set! name-id candidate)
                     unit)]
                 [_ unit])
-              (set! index (+ index 1))))
+              (+= index 1)))
           name-id)])))
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-typecheck-repr-c-layout-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-repr-c-layout-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1096,7 +1097,7 @@
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-typecheck-repr-c-f32-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-repr-c-f32-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1147,7 +1148,7 @@
   [name : String]
   [want : String]) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1302,7 +1303,7 @@
 (define (compiler-typecheck-repr-c-aligned-layout-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
   (match (parser.parse-ast-source
-    (compiler-typecheck-repr-c-aligned-layout-source))
+    (& (compiler-typecheck-repr-c-aligned-layout-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1461,7 +1462,7 @@
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : tc_core.ResultTcUnit
   (let
-    [program (try (parser.parse-ast-source src))]
+    [program (try (parser.parse-ast-source (& src)))]
     [symbols (try (csym.build-compiler-symbols program))]
     [registries (try (csym.build-compiler-registries program))]
     [ctx : tc_core.TcContext
@@ -1486,7 +1487,7 @@
   [src : String]
   [name : String]
   [want : i64]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -2749,6 +2750,186 @@
     [scratch : Arena (arena-make)]
     (with-escape scratch inc)))")
       "typecheck: with-escape result type is not clone-supported: (-> i64 i64)")))
+
+;; #8776: with-escape and with-scratch check their body under a region scoped
+;; to the form, so a body allocation cannot outlive it through a store, a
+;; global, a capture, `return` or a `try` error exit. Values passed by value to
+;; ordinary functions, outer-body values used by a nested form, scalar exits and
+;; lifetime-generic calls on tagged values still check.
+(define (compiler-typecheck-scratch-body-region-tests-ok?) : bool
+  (and
+    (compiler-typecheck-rendered-error-ok?
+      "(define (main) : i64
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (__tl_make-array i64 4)) 0)
+    (array-length items)))"
+      "error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+  --> :4:19
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> :4:19
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ target binding `items` lives longer than the assigned value
+  --> :4:31
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                               ^^^^^^^^^^^^^^^^^^^^^^ assigned value carries a shorter lifetime
+   = help: return an owned clone, keep the value inside the arena/scope, or use with-escape for supported clone-out
+")
+    (compiler-typecheck-rendered-error-ok?
+      "(define (leak) : (__tl_dyn-array i64)
+  (with-scratch (return (__tl_make-array i64 4)) 0)
+  (__tl_make-array i64 1))
+(define (main) : i64
+  (array-length (leak)))"
+      "error[E0205]: typecheck: scratch-allocated value cannot leave with-scratch or with-escape through return; the form reclaims it on exit
+  --> :2:17
+   |
+ 2 |   (with-scratch (return (__tl_make-array i64 4)) 0)
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> :2:25
+   |
+ 2 |   (with-scratch (return (__tl_make-array i64 4)) 0)
+   |                         ^^^^^^^^^^^^^^^^^^^^^^ returned value carries a lifetime or arena that cannot cross this boundary
+   = help: return an owned clone, keep the value inside the arena/scope, or use with-escape for supported clone-out
+")
+    (compiler-typecheck-rendered-error-ok?
+      "(defenum Outcome
+  (Ok i64)
+  (Err (__tl_dyn-array i64)))
+(define (attempt) : Outcome
+  (Outcome.Err (__tl_make-array i64 2)))
+(define (leak) : Outcome
+  (with-scratch (try (attempt)))
+  (Outcome.Ok 0))
+(define (main) : i64
+  0)"
+      "error[E0205]: typecheck: scratch-allocated value cannot leave with-scratch or with-escape through try's error exit; the form reclaims it on exit
+  --> :7:22
+   |
+ 7 |   (with-scratch (try (attempt)))
+   |                      ^^^^^^^^
+")
+    (compiler-typecheck-error-ok?
+      "(define g : (__tl_dyn-array i64) (__tl_make-array i64 1))
+(define (main) : i64
+  (with-scratch (set! g (__tl_make-array i64 4)) 0)
+  (array-length g))"
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [size : (-> i64) (lambda () : i64 (array-length items))]
+      (size))))"
+      "typecheck: lambda cannot capture region-tagged value; region value would escape")
+    ;; A nested form's allocation cannot outlive it inside the outer body.
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      (with-scratch (set! items (__tl_make-array i64 4)) 0)
+      (array-length items))))"
+      "typecheck: assignment type mismatch: expected (__tl_dyn-array i64), found (__tl_dyn-array i64)")
+    ;; A try's Ok payload keeps the operand's region.
+    (compiler-typecheck-error-ok?
+      "(defenum Outcome
+  (Ok (__tl_dyn-array i64))
+  (Err i64))
+(define (attempt) : Outcome
+  (Outcome.Ok (__tl_make-array i64 2)))
+(define (keep) : Outcome
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (try (attempt))) 0)
+    (Outcome.Ok items)))
+(define (main) : i64
+  0)"
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    ;; in-arena inside the body keeps the body region unless its arena names an
+    ;; owner region, as inside with-arena.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (main) : i64
+  (let
+    [home : Arena (arena-current)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (in-arena home (__tl_make-array i64 4))) 0)
+    (array-length items)))")
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    (compiler-typecheck-ok?
+      "(define (size [items : (__tl_dyn-array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (with-scratch (size (__tl_make-array i64 4))))")
+    ;; The body region, not the enclosing with-arena's, tags a scratch
+    ;; allocation, so it may still be passed to an ordinary function.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (size [items : (__tl_dyn-array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    (with-arena phase
+      (with-escape scratch (size (__tl_make-array i64 4))))))"))
+    (compiler-typecheck-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [outer : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      (with-scratch (set! items outer) 0)
+      (array-length items))))")
+    (compiler-typecheck-ok?
+      "(defenum Outcome
+  (Ok (__tl_dyn-array i64))
+  (Err i64))
+(define (attempt) : Outcome
+  (Outcome.Ok (__tl_make-array i64 2)))
+(define (count) : Outcome
+  (let
+    [n : i64 (with-scratch (array-length (try (attempt))))]
+    (Outcome.Err n)))
+(define (main) : i64
+  0)")
+    (compiler-typecheck-ok?
+      "(define (size) : i64
+  (with-scratch (return (array-length (__tl_make-array i64 4))) 0)
+  0)
+(define (main) : i64
+  (size))")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    (array-length
+      (with-escape scratch
+        (with-arena r (array-length (__tl_make-array i64 4)))
+        (__tl_make-array i64 2)))))"))
+    ;; A region tag does not block a lifetime-generic call's inference, in a
+    ;; scratch body or a with-arena body.
+    (compiler-typecheck-ok?
+      "(defenum Anchor
+  (:lifetimes text)
+  (Anchored (& text str) (__tl_dyn-array i64)))
+(define (anchored [text : (& text str)]) : (Anchor text)
+  (Anchored text (__tl_make-array i64 3)))
+(define (anchor-size [anchor : (Anchor text)]) : i64
+  (match anchor
+    [(Anchored _ items) (array-length items)]))
+(define (main) : i64
+  (let
+    [source : String \"abc\"]
+    (+
+      (with-scratch (anchor-size (anchored (& source))))
+      (with-arena r (anchor-size (anchored (& source)))))))")))
 
 (define (compiler-typecheck-in-arena-tests-ok?) : bool
   (and
@@ -4721,6 +4902,7 @@
     [(Some v) v]
     [None (io.panic \"none\")]))")
         "typecheck: returned reference lifetime must be tied to a parameter")]
+    ;; A reference use after the write keeps the scrutinee loan live.
     [returned-borrowed-lookup-assign-error-ok : bool
       (compiler-typecheck-error-ok?
         "(defenum Slot (Empty) (Occupied String))
@@ -4734,7 +4916,10 @@
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (set! bag (Bag (__tl_make-array Slot 1)))]
+    [(SlotFound value)
+      (begin
+        (set! bag (Bag (__tl_make-array Slot 1)))
+        (let [still : (& bag str) value] unit))]
     [SlotMissing unit]))"
         "typecheck: cannot assign to borrowed place `bag`")]
     [returned-borrowed-lookup-array-set-error-ok : bool
@@ -4750,7 +4935,10 @@
     [Empty (slot-missing bag)]))
 (define (bad [bag : Bag]) : unit
   (match (lookup (& bag))
-    [(SlotFound value) (set! (array-ref bag.slots 0) Empty)]
+    [(SlotFound value)
+      (begin
+        (set! (array-ref bag.slots 0) Empty)
+        (let [still : (& bag str) value] unit))]
     [SlotMissing unit]))"
         "typecheck: cannot assign to borrowed place `bag.slots[0]`")]
     [regular-call-lifetime-subst-ok : bool
@@ -7368,7 +7556,7 @@
               (if (=
                 (string.string-ref text (+ start index))
                 (string.string-ref prefix index))
-                (set! index (+ index 1))
+                (+= index 1)
                 (set! ok false))
               (set! ok false)))
           (= index prefix-len))))))
@@ -7392,7 +7580,7 @@
           (begin
             (set! found index)
             (set! done true))
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! done true)))
     found))
 
@@ -8973,9 +9161,8 @@
   [origin : ast.AstExpr]) : tc_core.TcMovedSet
   (let
     [out : tc_core.TcMovedSet set]
-    [index : i64 start]
     [end : i64 (+ start count)]
-    (while (< index end)
+    (for [index (iterator.range start end)]
       (set!
         out
         (tc_core.tc-moved-add-path-fact
@@ -8986,8 +9173,7 @@
               (tc_core.tc-move-path-segments-empty)
               index))
           (BorrowShared)
-          (ast.ast-node-push (ast.ast-global-shared-view origin))))
-      (set! index (+ index 1)))
+          (ast.ast-node-push (ast.ast-global-shared-view origin)))))
     out))
 
 (define (compiler-typecheck-moved-facts-same-dense-snapshot?
@@ -9028,6 +9214,215 @@
                   (__tl-project-field (__tl-box-place other-store) nodes)))))]
         [_ false])]
     [_ false]))
+
+(define (compiler-typecheck-global-loan-protection-result) : tc_core.ResultTcUnit
+  (let
+    [program (try (parser.parse-ast-source "(define g : i64 0)"))]
+    [symbols (try (csym.build-compiler-symbols program))]
+    [registries (try (csym.build-compiler-registries program))]
+    [root : i64 (ci.intern "g")]
+    [saved : i64 (ci.intern "saved")]
+    [store : ast.AstExpr (Set saved (ast.ast-node-push (Var root)))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-global-shared-view program)
+        symbols
+        registries
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    [path : tc_core.TcMovePath
+      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
+    [global-path : tc_core.TcMovePath
+      (tc_core.tc-borrow-check-capture-owner ctx (tc_core.tc-moved-empty) path)]
+    [shadowed-locals : tc_core.TcMovedSet
+      (tc_core.tc-moved-add (tc_core.tc-moved-empty) root)]
+    [scalar : ast.AstType (I64)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-bind-id (tc_core.tc-type-env-new) root (I64))
+        saved
+        (ast.ast-ty-ref root (& scalar)))]
+    [local : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1)]
+    [global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        global-path
+        (BorrowShared)
+        -1)]
+    [carried : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-loop-protect-carried-facts
+        ctx
+        env
+        (tc_core.tc-global-shared-view local)
+        (tc_core.tc-global-shared-view global)
+        (tc_core.tc-global-shared-view local))]
+    [stored : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-protect-stored-facts-loop
+        ctx
+        (tc_core.tc-context-expr-bases ctx)
+        env
+        store
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+        (tc_core.tc-global-shared-view local))]
+    [returned : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-propagate-return-borrows-at
+        ctx
+        env
+        (tc_core.tc-moved-empty)
+        (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+        (tc_core.tc-name-id-list-cons (Nil) root)
+        (Some path)
+        local)]
+    (if (and
+      (< global-path.root 0)
+      (=
+        (tc_core.tc-borrow-check-capture-owner
+          ctx
+          (tc_core.tc-global-shared-view shadowed-locals)
+          path).root
+        root)
+      (=
+        (tc_core.tc-borrow-check-capture-owner
+          ctx
+          (tc_core.tc-global-shared-view shadowed-locals)
+          global-path).root
+        global-path.root)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths carried)
+        global-path
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths stored)
+        global-path
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths returned)
+        global-path
+        (BorrowShared)))
+      (Ok)
+      (Err "global loan identity lost during protection"))))
+
+(define (compiler-typecheck-global-loan-provenance-ok?) : bool
+  (let
+    [root : i64 (ci.intern "global-loan-root")]
+    [path : tc_core.TcMovePath
+      (tc_core.TcMovePath root (tc_core.tc-move-path-segments-empty))]
+    [origin : ast.AstExpr (Var root)]
+    [local : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        path
+        (BorrowShared)
+        -1)]
+    [global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared)
+        -1)]
+    [global-first : tc_core.TcMovedSet
+      (tc_core.tc-moved-union (& global) (tc_core.tc-global-shared-view local))]
+    [local-first : tc_core.TcMovedSet
+      (tc_core.tc-moved-union (& local) (tc_core.tc-global-shared-view global))]
+    [global-ref : i64 (ci.intern "global-ref")]
+    [local-ref : i64 (ci.intern "local-ref")]
+    [global-marker : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowLending global-ref)
+        -1)]
+    [both-markers : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        global-marker
+        path
+        (BorrowLending local-ref)
+        -1)]
+    [used-global : tc_core.TcMovedSet
+      (tc_core.tc-moved-add-path-fact
+        (tc_core.tc-moved-empty)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowLendingUsed global-ref)
+        -1)]
+    [propagated : tc_core.TcMovedSet
+      (tc_core.tc-borrow-check-propagate-lending-uses used-global both-markers)]
+    [shadowed : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-root-state
+        (tc_core.tc-global-shared-view global-first)
+        root
+        true)]
+    [local-view : tc_core.TcMovedSet
+      (tc_core.tc-global-shared-view global-first)]
+    [without-global : tc_core.TcMovedSet
+      (tc_core.tc-moved-remove-path-kind
+        (tc_core.tc-global-shared-view global-first)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared))]
+    [restored : tc_core.TcMovedSet
+      (tc_core.tc-moved-restore-root-state
+        (tc_core.tc-global-shared-view local)
+        (tc_core.tc-moved-root-snapshot
+          (tc_core.tc-global-shared-view global)
+          (bit-xor root -1)))]
+    [grown : tc_core.TcMovedSet
+      (compiler-typecheck-moved-set-growth
+        (tc_core.tc-moved-clone (& global))
+        (ci.intern "other-root")
+        0
+        128
+        origin)]
+    (and
+      (match (compiler-typecheck-global-loan-protection-result)
+        [(Ok) true]
+        [(Err _) false])
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths propagated)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowLendingUsed global-ref))
+      (=
+        (tc_core.tc-moved-path-facts-len
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global-first)))
+        2)
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths shadowed)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths local-view)
+        path
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths without-global)
+        path
+        (BorrowShared))
+      (not
+        (tc_core.tc-moved-same-facts?
+          (& global)
+          (& local)
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view global))
+          (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local))))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths global-first)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths local-first)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths restored)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared))
+      (tc_core.tc-moved-path-facts-contains-exact-kind?
+        (tc_core.tc-moved-paths grown)
+        (tc_core.tc-move-path-capture-owner path 137)
+        (BorrowShared)))))
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
@@ -9169,7 +9564,7 @@
         (Move)
         (tc_core.tc-moved-no-origin-id))]
     [root-path-clear : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state root-path shadowed-id)]
+      (tc_core.tc-moved-remove-root-state root-path shadowed-id false)]
     [root-path-clears : bool
       (match (tc_core.tc-moved-path-exact-conflict
         root-path-clear
@@ -9322,14 +9717,15 @@
     [missing-filter : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-root-state
         (tc_core.tc-global-shared-view cross-store-union)
-        shadowed-id)]
+        shadowed-id
+        false)]
     [missing-filter-preserves-snapshot : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths
           (tc_core.tc-global-shared-view cross-store-union))
         (tc_core.tc-moved-paths missing-filter))]
     [filtered-growth : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove-root-state cross-store-union growth-id)]
+      (tc_core.tc-moved-remove-root-state cross-store-union growth-id false)]
     [changed-filter-reuses-tail : bool
       (compiler-typecheck-moved-facts-same-dense-snapshot?
         (tc_core.tc-moved-paths retained-parent)
@@ -9445,10 +9841,8 @@
 (define (compiler-typecheck-deep-owner-source [body : String]) : String
   (let
     [nested : String body]
-    [depth : i64 0]
-    (while (< depth 63)
-      (set! nested (str_cat.str-cat "(while true (begin " nested " (break)))"))
-      (set! depth (+ depth 1)))
+    (for [depth (iterator.range 0 63)]
+      (set! nested (str_cat.str-cat "(while true (begin " nested " (break)))")))
     (compiler-typecheck-let-obligation-source
       (str_cat.str-cat
         "(define (f) : unit (with ([root (open 1) cleanup-file-handle]) "
@@ -9541,6 +9935,7 @@
 
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-global-loan-provenance-ok?)
     (compiler-typecheck-moved-set-metrics-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-use-after-move-source)
@@ -10756,7 +11151,7 @@
       (ast.ast-decl-root-path-cons "src/main.tl" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
-  (match (parser.parse-ast-source (compiler-typecheck-dup-extern-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-dup-extern-source)))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -10777,7 +11172,7 @@
     [(Err _) false]))
 
 (define (compiler-typecheck-dup-function-paths-ok?) : bool
-  (match (parser.parse-ast-source (compiler-typecheck-dup-function-source))
+  (match (parser.parse-ast-source (& (compiler-typecheck-dup-function-source)))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -10797,7 +11192,7 @@
     [(Err _) false]))
 
 (define (compiler-typecheck-dup-type-path-ok? [source : String] [name : String]) : bool
-  (match (parser.parse-ast-source source)
+  (match (parser.parse-ast-source (& source))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -11087,6 +11482,9 @@
   (if (compiler-typecheck-with-escape-tests-ok?)
     unit
     (io.panic "typecheck: with-escape tests failed"))
+  (if (compiler-typecheck-scratch-body-region-tests-ok?)
+    unit
+    (io.panic "typecheck: scratch body region tests failed"))
   (if (compiler-typecheck-in-arena-tests-ok?)
     unit
     (io.panic "typecheck: in-arena tests failed"))

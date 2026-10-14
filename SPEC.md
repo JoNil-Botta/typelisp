@@ -905,6 +905,16 @@ declaration-emitting `defmacro` declarations (section 3.7.1): `: Module` for
 generated module families bound by `import`, and `: Decls` for declarations
 spliced into the current module.
 
+A function with a `[comptime name : T]` parameter is a template rather than a
+runtime function: each distinct combination of comptime arguments at its calls
+produces one concrete instance, and every call with the same arguments uses
+that instance. A template belongs to its module. Same-named templates of two
+modules are different templates; a bare call resolves the name in the calling
+module; and an instance is declared in its template's module in the template's
+place, so its body sees that module's private declarations, whichever module
+asked for the instance. Calling another module's template through its module
+name is not supported yet (#8596).
+
 #### 3.7.1 Typed expression macros
 
 Macros are compile-time expression transformers. They are declared with
@@ -2128,6 +2138,13 @@ range is inclusive. This is exactly the `stdlib.iterator` protocol's sequence,
 including an inclusive range that ends at the largest `i64`, but no iterator
 state is constructed and no protocol function is called per item. An annotated
 clause uses the protocol.
+
+When that source is a direct call of `stdlib.iterator.range` or
+`range-inclusive` itself, as `comptime.expr-binding-clause-init-callee` reports
+it, the loop counts from the call's two arguments and no range value is built.
+The start and then the end are each evaluated once, as `i64`. A call of any
+other function, including a local or user function named `range`, takes the
+path above.
 
 A single unannotated clause over a counted range or a borrowed array, `Slice`,
 `__tl_dyn-array`, or slots/len struct expands to one index-driven `while`
@@ -4439,6 +4456,26 @@ by-value read therefore never manufactures an untracked owning alias of
 mutable global storage. `extern` and raw static storage remain governed by
 their unsafe C boundary rather than this safe ordinary-global rule.
 
+While a reference derived from an ordinary global remains live, safe code
+cannot call a function that may assign, mutate, mutably borrow or take the
+address of that global. This includes transitive calls, recursion, later
+arguments, borrowed `match` scrutinees, automatic immutable borrows, and
+cleanup calls. A borrowed temporary is cleaned up after its call: ended
+call-argument loans permit cleanup, while returned references and live borrows
+in an enclosing call still exclude a conflicting disposer. E0222 names the
+global and a call chain to the writer and
+labels the original borrow. Writes only through an explicit `&mut` parameter
+retain the ordinary exclusivity rules; by-value Copy reads and calls that
+write a different global remain allowed.
+
+Direct callees use their transitive global write effects. A call through a
+function value or closure conservatively uses every function and lambda
+whose value is taken anywhere in the checked program. A package is checked
+against its own source globals. Dependency interfaces expose functions and
+types, not global places; a function with an unavailable package body also
+conservatively includes consumer callbacks. Raw `extern` calls remain the
+unsafe boundary. These rules do not change task-thread sharing (§6.5).
+
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
 
@@ -6439,6 +6476,22 @@ returns the cloned result. The result surface and source-region stripping match
 clone-out is explicit through `with-escape` for reusable first-class scratch
 arenas and `with-scratch` for one-shot scratch work.
 
+**Scratch body region:** the scratch arena is rewound (`with-escape`) or
+destroyed (`with-scratch`) when the form exits, so the checker checks the body
+under a fresh anonymous region scoped to the form, as it does a `with-arena`
+body. Body allocations carry that region, and the region checks reject (E0205)
+a body allocation that would outlive the form: stored into a binding, field or
+container declared outside the body or into a global, captured by a lambda,
+returned with `return`, or carried by a `try` error exit whose error payload is
+heap data. A `try` Ok value keeps its operand's region, as a `match` binding
+does. `in-arena` inside the body keeps the body region unless its arena names
+an owner region, as inside `with-arena`. The region is never a branded or
+owned scratch arena's own region, which outlives the rewind. Unlike a
+`with-arena` body, a body allocation may be passed by value to an ordinary
+function: the check covers the body's own stores and exits, not what a callee
+does with an argument. The form's result still leaves cloned, without region
+tags.
+
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
 typecheck as bare `arena.Arena` or branded `(arena.Arena r)` from
@@ -6638,6 +6691,12 @@ Primitive names and signatures are fixed as follows:
 non-type operands, and kind mismatches are compile-time diagnostics. The
 diagnostic names the primitive and the expected kind, for example
 `struct-field-type requires struct type`.
+
+`struct-field-type` and `enum-variant-payload-type` resolve the declared type
+in the declaring module's scope. A type written through that module's import
+alias, such as `svec.Vec` after `(import (vector.vector String) as svec)`,
+reflects as the canonical nominal type the alias names, so a macro that splices
+it into another module does not need the alias.
 
 `type-kind` returns one of these lowercase stable strings:
 
@@ -8742,7 +8801,8 @@ uses conservative loop-body summaries.
 written lifetime name. Its scratch arena is a first-class arena handle, and
 the only supported escape from it is the form's clone step: the result leaves
 the form cloned into the saved enclosing arena, without the scratch region
-tag.
+tag. Its body, like a `with-scratch` body, is checked under an anonymous region
+scoped to the form, so the other exits of a body allocation are rejected.
 
 Atomic arenas are shareable allocation owners, not synchronization primitives
 for the values allocated inside them. A value owned by an atomic arena may
@@ -9574,6 +9634,7 @@ Commands:
   typelisp clean          Remove build artifacts
   typelisp compile        Generate assembly or IR
   typelisp doc            Generate documentation or run doc tests
+  typelisp expand         Show the checked expansion of a macro invocation
   typelisp explain        Explain a diagnostic code
   typelisp fmt            Format source files or a package
   typelisp init           Scaffold a package in the current directory
@@ -9918,8 +9979,10 @@ loaded file's own path, line and column for `.load`.
   internal TypeLisp rule only and does not authorize borrowed Slice parameters
   in C `extern` declarations.
 - Callers reserve 32 bytes of shadow space before each call.
-- The CRT owns process startup; Windows output emits `main` and no Linux
-  `_tl_start` wrapper.
+- Windows executables define user `main` and use the compiler-owned freestanding
+  `_tl_start` image entry, linked with `/ENTRY:_tl_start` and `/NODEFAULTLIB`.
+  The runtime's platform import libraries are `kernel32.lib` and `ntdll.lib`.
+  Section 6.2 defines argv construction, the main fiber stack, and termination.
 
 ### 11.3 Data layout
 

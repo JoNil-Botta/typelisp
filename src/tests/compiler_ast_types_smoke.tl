@@ -7,6 +7,7 @@
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
 
@@ -671,6 +672,42 @@
     (ast.ast-node-pool-context-destroy-storage! a)
     (ast.ast-node-pool-context-destroy-storage! b)
     (and initial-ok rewrite-ok retired-ok reset-ok)))
+
+;; Mixed wrapper chains cross expression segment boundaries without consulting
+;; the installed compatibility pool.
+(define (compiler-ast-deep-wrapper-chain-smoke? [depth : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [leaf : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 73)))]
+    [root : i64 leaf]
+    (for [index (iterator.range 0 depth)]
+      (set!
+        root
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (if (= (bit-and index 1) 0)
+            (Spanned root (ast.ast-source-span 1 1 1 2))
+            (MacroExpansion root 101 201)))))
+    (let
+      [ok : bool
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            (ast.ast-node-pool-context-expr-segment-bases (& pools))
+            (& (ast.ast-node-pool-context-expr-get (& pools) root)))
+          73)]
+      (ast.ast-node-pool-context-destroy-storage! pools)
+      ok)))
+
+(test
+  compiler-ast-deep-wrapper-chain
+  (let
+    [depths : (Array i64 7) (array 0 1 2 65535 65536 65537 131073)]
+    (for [index (iterator.range 0 (array-length depths))]
+      (tl_test.assert-true
+        (compiler-ast-deep-wrapper-chain-smoke? (array-ref depths index))
+        "mixed wrappers preserve their leaf across segment growth"))))
 
 (define (compiler-ast-context-base-arenas-match?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
@@ -2600,6 +2637,157 @@
   (tl_test.assert-true
     (compiler-ast-canonical-reserve-smoke?)
     "compaction reserves canonical span records once and keeps growth checked"))
+
+;; Ownership-only copy-out keeps node ids and provenance unchanged, including
+;; distinct views of one semantic node and shared edges. The source payload
+;; arena dies before the second copy reads its result.
+(define (compiler-ast-persist-span-row? [count : i64]) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [prefix : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 99)))]
+    [prefix-view : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        prefix
+        (ast.ast-source-span 99 1 99 2))]
+    [base : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [source : arena.Arena (arena.make)]
+    [_enter : unit
+      (unsafe
+        (arena.set! source))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [views : ast.AstExprList (ast.ast-expr-list-new)]
+    [index : i64 0]
+    [_views : unit
+      (while (< index count)
+        (let
+          [view : i64
+            (ast.ast-expr-spanned-with-pools
+              pools
+              literal
+              (ast.ast-source-span (+ index 1) 1 (+ index 1) 2))]
+          (ast.ast-expr-list-push
+            (&mut views)
+            (if (= index 0)
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (MacroExpansion view 0 0))
+              view)))
+        (set! index (+ index 1)))]
+    [program : ast.AstProgram
+      (compiler-ast-reserve-program pools (& views) count)]
+    [end : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [canonical-count : i64
+      (ast.ast-node-pool-context-expr-canonical-span-count pools)]
+    [respan-count : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
+    [respan-capacity : i64
+      (array-length
+        (__tl-project-field
+          (ast.ast-expr-pool-cell-read pools.expr-pool)
+          respan-records))]
+    [_leave : unit
+      (unsafe
+        (arena.set! home))]
+    [expr-map : (__tl_dyn-array i32)
+      (ast.ast-compaction-id-map-create (- end base))]
+    [type-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 0)]
+    [copied : ast.AstProgramCompaction
+      (ast.ast-program-copy-append-above-with-maps
+        pools
+        pools
+        (& program)
+        base
+        (ast.ast-node-pool-context-type-len pools)
+        (ast.ast-i32-array-address expr-map)
+        (ast.ast-i32-array-address type-map)
+        true)]
+    [_retire : unit
+      (unsafe
+        (arena.destroy source))]
+    [ok : bool
+      (match copied
+        [(AstProgramCompaction out out-pools)
+          (let
+            [retained : ast.AstExprList
+              (compiler-ast-reserve-compacted-views
+                (& out-pools)
+                (owned_view.compiler-owned-shared-view out))]
+            [second-map : (__tl_dyn-array i32)
+              (ast.ast-compaction-id-map-create (- end base))]
+            [_second : ast.AstProgramCompaction
+              (ast.ast-program-copy-append-above-with-maps
+                out-pools
+                out-pools
+                (& out)
+                base
+                (ast.ast-node-pool-context-type-len out-pools)
+                (ast.ast-i32-array-address second-map)
+                (ast.ast-i32-array-address type-map)
+                true)]
+            [ids-ok : bool true]
+            [_ids : unit
+              (begin
+                (set! index 0)
+                (while (< index count)
+                  (unless
+                    (=
+                      (ast.ast-expr-list-get (& retained) index -1)
+                      (+ base (+ 2 index)))
+                    (set! ids-ok false))
+                  (set! index (+ index 1))))]
+            (and
+              ids-ok
+              (match (owned_view.compiler-owned-shared-view out)
+                [(Program decls)
+                  (match (ast.ast-decl-list-get
+                    (& (deref decls))
+                    0
+                    (ast.ast-decl-fallback))
+                    [(Def _ _ _ body) (= body (- end 1))]
+                    [_ false])])
+              (= (ast.ast-node-pool-context-expr-len out-pools) end)
+              (= (ast.ast-expr-list-len (& retained)) count)
+              (compiler-ast-reserve-views-render? (& out-pools) (& retained) 1)
+              (compiler-ast-maybe-span-start-line?
+                (ast.ast-node-pool-context-expr-view-span
+                  (& out-pools)
+                  prefix-view)
+                99)
+              (=
+                (ast.ast-node-pool-context-expr-canonical-span-count out-pools)
+                canonical-count)
+              (=
+                (ast.ast-node-pool-context-expr-respan-count out-pools)
+                respan-count)
+              (=
+                (array-length
+                  (__tl-project-field
+                    (ast.ast-expr-pool-cell-read out-pools.expr-pool)
+                    respan-records))
+                respan-capacity)
+              (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)))])]
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    ok))
+
+(test
+  compiler-ast-persist-span
+  (let
+    [counts : (Array i64 6) (array 0 1 64 65 66 200)]
+    [index : i64 0]
+    (while (< index (array-length counts))
+      (let
+        [count : i64 (array-ref counts index)]
+        (tl_test.assert-true
+          (compiler-ast-persist-span-row? count)
+          (str_cat.str-cat
+            "ownership-only copy-out preserves provenance for "
+            (string.int->string count)
+            " views")))
+      (set! index (+ index 1)))))
 
 (define (main) : i64
   (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))

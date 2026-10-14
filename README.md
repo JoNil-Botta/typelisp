@@ -83,6 +83,8 @@ typelisp fmt --check <file.tl>
 typelisp lint <file.tl>
 typelisp doc                    Build target/doc/index.html for the nearest package
 typelisp doc --test <file.tl>
+typelisp expand <file.tl> --at LINE:COL
+                                Show the checked expansion of a macro invocation
 typelisp explain <code>         Explain a diagnostic code
 typelisp explain --list         List diagnostic codes
 typelisp explain --search TERM  Search diagnostic explanations

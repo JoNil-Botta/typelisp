@@ -2,6 +2,7 @@
 ;;
 ;; Functions contain blocks, blocks contain typed instructions, and
 ;; instructions use explicit vars/values.
+(import stdlib.iterator)
 (import stdlib.string)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -98,14 +99,7 @@
 ;; the field as both operand and result type.
 (define (compiler-ir-binop-compare? [op : (& CompilerIrBinOp)]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
-    [(Lt) true]
-    [(Le) true]
-    [(Gt) true]
-    [(Ge) true]
-    [(BitTestEq) true]
-    [(BitTestNe) true]
+    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge) (BitTestEq) (BitTestNe)) true]
     [_ false]))
 
 (define (compiler-ir-binop-result-type
@@ -257,11 +251,10 @@
         [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
         [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
         [position : i64 0]
-        [id : i64 0]
         (while (< position (array-length index))
           (set! (array-ref index position) -1)
-          (set! position (+ position 1)))
-        (while (< id compiler-ir-label-count)
+          (+= position 1))
+        (for [id (iterator.range 0 compiler-ir-label-count)]
           (let
             [text : String
               (compiler-ir-array-shared-view compiler-ir-label-slots id)]
@@ -273,8 +266,7 @@
               (set!
                 position
                 (bit-and (+ position 1) (- (array-length index) 1))))
-            (set! (array-ref index position) id)
-            (set! id (+ id 1))))
+            (set! (array-ref index position) id)))
         (set! compiler-ir-label-slots slots)
         (set! compiler-ir-label-index index)))
     (set! compiler-ir-label-generation-arena-handle generation)
@@ -451,10 +443,8 @@
   (let
     [old-len : i64 (array-length compiler-ir-symbol-slots)]
     [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
-    [index : i64 0]
-    (while (< index old-len)
-      (set! (array-ref next index) (array-ref compiler-ir-symbol-slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 old-len)]
+      (set! (array-ref next index) (array-ref compiler-ir-symbol-slots index)))
     (set! compiler-ir-symbol-slots next)))
 
 ;; Same arena rationale as the label table above: a symbol id handed to the
@@ -764,17 +754,8 @@
       [(compiler_ir_types.CompilerIrCallArgs.Two a b)
         (,visitor ,@contexts a)
         (,visitor ,@contexts b)]
-      [(compiler_ir_types.CompilerIrCallArgs.Array values)
-        (let
-          [count : i64 (array-length values)]
-          [index : i64 0]
-          (while (< index count)
-            (,visitor
-              ,@contexts
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data values) index))))
-            (set! index (+ index 1))))]
-      [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      [(or (compiler_ir_types.CompilerIrCallArgs.Array values)
+           (compiler_ir_types.CompilerIrCallArgs.Sret values _))
         (let
           [count : i64 (array-length values)]
           [index : i64 0]
@@ -1579,21 +1560,25 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) dst]
-    [(CompilerIrInstr.Alloc dst _) dst]
-    [(CompilerIrInstr.AddrOf dst _) dst]
-    [(CompilerIrInstr.Gep dst _ _ _) dst]
-    [(CompilerIrInstr.Load dst _ _) dst]
-    [(CompilerIrInstr.StoreOwned _ _ _) -1]
-    [(CompilerIrInstr.StorePtr _ _ _) -1]
-    [(CompilerIrInstr.CopyBytes _ _ _) -1]
-    [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _) dst]
-    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(CompilerIrInstr.LaneId dst _ _) dst]
-    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(or (CompilerIrInstr.Mov dst _ _) (CompilerIrInstr.Alloc dst _)
+         (CompilerIrInstr.AddrOf dst _) (CompilerIrInstr.Gep dst _ _ _)
+         (CompilerIrInstr.Load dst _ _) (CompilerIrInstr.Cast dst _ _ _)
+         (CompilerIrInstr.Bitcast dst _ _ _) (CompilerIrInstr.BinOp dst _ _ _ _)
+         (CompilerIrInstr.UnOp dst _ _ _) (CompilerIrInstr.LaneId dst _ _)
+         (CompilerIrInstr.Splat dst _ _ _)
+         (CompilerIrInstr.VectorReduce dst _ _ _ _)
+         (CompilerIrInstr.MaskBinOp dst _ _ _ _)
+         (CompilerIrInstr.MaskNot dst _ _)
+         (CompilerIrInstr.MaskReduce dst _ _ _)
+         (CompilerIrInstr.VectorLoad dst _ _ _ _)
+         (CompilerIrInstr.TailMask dst _ _ _) (CompilerIrInstr.EntryArgc dst)
+         (CompilerIrInstr.EntryArgv dst) (CompilerIrInstr.EntryEnvp dst)
+         (CompilerIrInstr.CpuId dst _ _ _) (CompilerIrInstr.Xgetbv dst _)
+         (CompilerIrInstr.Syscall dst _) (CompilerIrInstr.Call dst _ _ _)
+         (CompilerIrInstr.CallIndirect dst _ _ _)
+         (CompilerIrInstr.CallIndirectC dst _ _ _) (CompilerIrInstr.Phi dst _ _)
+         (CompilerIrInstr.Pack dst _ _) (CompilerIrInstr.Word dst _ _ _))
+      dst]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
@@ -1604,23 +1589,16 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.MaskNot dst _ _) dst]
-    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
     [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(CompilerIrInstr.VectorStore _) -1]
-    [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload-box
@@ -1636,18 +1614,6 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(CompilerIrInstr.EntryArgc dst) dst]
-    [(CompilerIrInstr.EntryArgv dst) dst]
-    [(CompilerIrInstr.EntryEnvp dst) dst]
-    [(CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(CompilerIrInstr.Xgetbv dst _) dst]
-    [(CompilerIrInstr.Syscall dst _) dst]
-    [(CompilerIrInstr.Call dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(CompilerIrInstr.CallCAbiStoreResult _) -1]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (let
         [payload-box
@@ -1655,18 +1621,18 @@
         (compiler-ir-box-field-shared-view payload-box result))
         [(CompilerIrSpmdCallResult.Unit) -1]
         [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
-    [(CompilerIrInstr.TailCall _ _ _) -1]
-    [(CompilerIrInstr.Store _ _ _) -1]
-    [(CompilerIrInstr.Jump _) -1]
-    [(CompilerIrInstr.Branch _ _ _) -1]
-    [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
-    [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) dst]
-    [(CompilerIrInstr.Pack dst _ _) dst]
-    [(CompilerIrInstr.Word dst _ _ _) dst]
-    [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
-    [(CompilerIrInstr.Switch _ _ _ _) -1]
-    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
+    [(or (CompilerIrInstr.StoreOwned _ _ _) (CompilerIrInstr.StorePtr _ _ _)
+         (CompilerIrInstr.CopyBytes _ _ _) (CompilerIrInstr.BoundsCheck _ _ _)
+         (CompilerIrInstr.VectorStore _) (CompilerIrInstr.PredicatedStore _)
+         (CompilerIrInstr.CallCAbiStoreResult _)
+         (CompilerIrInstr.CallIndirectCAbiStoreResult _)
+         (CompilerIrInstr.TailCall _ _ _) (CompilerIrInstr.Store _ _ _)
+         (CompilerIrInstr.Jump _) (CompilerIrInstr.Branch _ _ _)
+         (CompilerIrInstr.TotalEnumBranch _ _ _) (CompilerIrInstr.Return _)
+         (CompilerIrInstr.TailCallIndirect _ _ _)
+         (CompilerIrInstr.Switch _ _ _ _)
+         (CompilerIrInstr.TotalEnumSwitch _ _ _ _ _))
+      -1]))
 
 ;: The value type the instruction states for its destination: the type field
 ;: of a scalar result (a Cast's target, a comparison's `bool`, an SPMD call's
@@ -1676,27 +1642,12 @@
 ;: Syscall).
 (define (compiler-ir-instr-dst-type [instr : CompilerIrInstr]) : ast.AstMaybeType
   (match instr
-    [(Mov _ _ ty) (Some ty)]
-    [(Alloc _ _) (No)]
-    [(AddrOf _ _) (No)]
-    [(Gep _ _ _ _) (No)]
-    [(Load _ _ ty) (Some ty)]
-    [(StoreOwned _ _ _) (No)]
-    [(StorePtr _ _ _) (No)]
-    [(CopyBytes _ _ _) (No)]
-    [(BoundsCheck _ _ _) (No)]
-    [(Cast _ _ _ to-ty) (Some to-ty)]
-    [(Bitcast _ _ _ to-ty) (Some to-ty)]
+    [(or (Mov _ _ ty) (Load _ _ ty) (Cast _ _ _ ty) (Bitcast _ _ _ ty)
+         (UnOp _ _ _ ty) (VectorReduce _ _ _ _ ty) (Call _ _ _ ty)
+         (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty) (Phi _ _ ty)
+         (Pack _ _ ty) (Word _ _ _ ty))
+      (Some ty)]
     [(BinOp _ op _ _ ty) (Some (compiler-ir-binop-result-type (& op) ty))]
-    [(UnOp _ _ _ ty) (Some ty)]
-    [(LaneId _ _ _) (No)]
-    [(Splat _ _ _ _) (No)]
-    [(VectorBinOp _) (No)]
-    [(VectorPrefix _) (No)]
-    [(VectorReduce _ _ _ _ ty) (Some ty)]
-    [(VectorCompare _) (No)]
-    [(MaskBinOp _ _ _ _ _) (No)]
-    [(MaskNot _ _ _) (No)]
     [(MaskReduce _ _ _ _) (Some (Bool))]
     [(Select payload-box)
       (let
@@ -1705,40 +1656,22 @@
         (if (= payload.lanes 0)
           (Some payload.ty)
           (No)))]
-    [(VectorLoad _ _ _ _ _) (No)]
-    [(VectorStore _) (No)]
-    [(PredicatedStore _) (No)]
-    [(PredicatedLoad _) (No)]
-    [(GatherLoad _) (No)]
-    [(VectorShuffle _) (No)]
-    [(TailMask _ _ _ _) (No)]
-    [(EntryArgc _) (No)]
-    [(EntryArgv _) (No)]
-    [(EntryEnvp _) (No)]
-    [(CpuId _ _ _ _) (No)]
-    [(Xgetbv _ _) (No)]
-    [(Syscall _ _) (No)]
-    [(Call _ _ _ ty) (Some ty)]
-    [(CallIndirect _ _ _ ty) (Some ty)]
-    [(CallIndirectC _ _ _ ty) (Some ty)]
-    [(CallCAbiStoreResult _) (No)]
-    [(CallIndirectCAbiStoreResult _) (No)]
     [(SpmdCall payload-box)
       (match (compiler-ir-box-field-shared-view payload-box result)
         [(Unit) (No)]
         [(Value _ _ ty) (Some ty)])]
-    [(TailCall _ _ _) (No)]
-    [(Store _ _ _) (No)]
-    [(Jump _) (No)]
-    [(Branch _ _ _) (No)]
-    [(TotalEnumBranch _ _ _) (No)]
-    [(Return _) (No)]
-    [(Phi _ _ ty) (Some ty)]
-    [(Pack _ _ ty) (Some ty)]
-    [(Word _ _ _ ty) (Some ty)]
-    [(TailCallIndirect _ _ _) (No)]
-    [(Switch _ _ _ _) (No)]
-    [(TotalEnumSwitch _ _ _ _ _) (No)]))
+    [(or (Alloc _ _) (AddrOf _ _) (Gep _ _ _ _) (StoreOwned _ _ _)
+         (StorePtr _ _ _) (CopyBytes _ _ _) (BoundsCheck _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _) (VectorCompare _)
+         (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (VectorLoad _ _ _ _ _)
+         (VectorStore _) (PredicatedStore _) (PredicatedLoad _) (GatherLoad _)
+         (VectorShuffle _) (TailMask _ _ _ _) (EntryArgc _) (EntryArgv _)
+         (EntryEnvp _) (CpuId _ _ _ _) (Xgetbv _ _) (Syscall _ _)
+         (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _)
+         (TailCall _ _ _) (Store _ _ _) (Jump _) (Branch _ _ _)
+         (TotalEnumBranch _ _ _) (Return _) (TailCallIndirect _ _ _)
+         (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+      (No)]))
 
 ;; Folds beside compiler-ir-value-seq-visit and compiler-ir-call-args-visit:
 ;; `(folder ctx... acc value)` returns the next accumulator.
@@ -3046,7 +2979,7 @@
           (match (compiler-ir-switch-case-seq-ref b index)
             [(Case b-tag b-label)
               (set! same (and (= a-tag b-tag) (= a-label b-label)))])])
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 ;; Pairwise use equality for compiler-ir-instr-zip-eq: `(value-eq ctx... a b)`
@@ -3907,12 +3840,10 @@
   [abi : (& CompilerIrSpmdPrivateAbi)]) : i64
   (let
     [count : i64 0]
-    [index : i64 0]
-    (while (< index abi.params.len)
+    (for [index (iterator.range 0 abi.params.len)]
       (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
-        [(Param _ (Source _ _ _) _) (set! count (+ count 1))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [(Param _ (Source _ _ _) _) (+= count 1)]
+        [_ unit]))
     count))
 
 ;; --- clone ---
@@ -3939,14 +3870,12 @@
   (let
     [params : CompilerIrSpmdPrivateParamSeq
       (compiler-ir-spmd-private-param-seq-with-capacity abi.params.len)]
-    [index : i64 0]
-    (while (< index abi.params.len)
+    (for [index (iterator.range 0 abi.params.len)]
       (compiler-ir-spmd-private-param-seq-push!
         (&mut params)
         (compiler-ir-clone-spmd-private-param
           pools
-          (& (compiler-ir-spmd-private-param-seq-ref abi.params index))))
-      (set! index (+ index 1)))
+          (& (compiler-ir-spmd-private-param-seq-ref abi.params index)))))
     (CompilerIrSpmdPrivateAbi
       (match abi.schema
         [(V1) (V1)])
@@ -4109,7 +4038,7 @@
             bases
             (& (compiler-ir-spmd-private-param-seq-ref left.params index))
             (& (compiler-ir-spmd-private-param-seq-ref right.params index))))
-        (set! index (+ index 1)))
+        (+= index 1))
       same)
     (compiler-ir-spmd-private-index-eq? left.index right.index)
     (compiler-ir-spmd-private-result-eq? bases (& left.result) (& right.result))))
@@ -4161,8 +4090,7 @@
           " lanes "
           (string.int->string abi.lanes)
           " ["))]
-    [index : i64 0]
-    (while (< index abi.params.len)
+    (for [index (iterator.range 0 abi.params.len)]
       (if (> index 0)
         (set! buf (text_buf.append buf ", "))
         unit)
@@ -4173,8 +4101,7 @@
           (compiler-ir-spmd-private-param-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-spmd-private-param-seq-ref abi.params index)))))
-      (set! index (+ index 1)))
+            (& (compiler-ir-spmd-private-param-seq-ref abi.params index))))))
     (text_buf.render
       (text_buf.append
         buf
@@ -4388,7 +4315,7 @@
           (set!
             param-error
             (compiler-ir-spmd-private-param-shape-error (& abi) index))
-          (set! index (+ index 1)))
+          (+= index 1))
         (if (> (string.string-length param-error) 0)
           param-error
           (let
@@ -4443,7 +4370,7 @@
                         "physical parameter "
                         (string.int->string index)
                         " type differs from the signature")))])])
-          (set! index (+ index 1)))
+          (+= index 1))
         (if (> (string.string-length problem) 0)
           unit
           (match abi.result
@@ -4543,8 +4470,7 @@
             (string.int->string abi.lanes)))]
       [(not
           (match payload.active-mask
-            [(Var _) true]
-            [(Bool _) true]
+            [(or (Var _) (Bool _)) true]
             [_ false]))
         (set! problem "active mask is not a bool value")]
       [(not (= payload.args.len (- abi.params.len 1)))
@@ -4566,7 +4492,7 @@
               (compiler-ir-global-shared-view abi)
               payload.args
               index))
-          (set! index (+ index 1)))
+          (+= index 1))
         (if (> (string.string-length problem) 0)
           unit
           (match payload.result
@@ -4611,7 +4537,7 @@
       (match (compiler-ir-array-shared-view functions.slots index)
         [(Function function-name _ _ _ _ _)
           (set! found (compiler-ir-symbol-eq? function-name name))])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-ir-spmd-private-call-callee-error
@@ -4689,7 +4615,7 @@
               caller
               (deref payload-box)))]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     problem))
 
 (define (compiler-ir-spmd-private-block-list-error
@@ -4712,7 +4638,7 @@
                   private-index
                   caller
                   (& instrs)))])
-          (set! index (+ index 1)))
+          (+= index 1))
         problem)]))
 
 ;; Whole-program private SPMD ABI admission. Every private helper's descriptor
@@ -4743,7 +4669,7 @@
                 (&mut private-index)
                 (compiler-ir-symbol-id name)
                 index)])])
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! index 0)
     (while (and (= (string.string-length problem) 0) (< index functions.len))
       (match (compiler-ir-array-shared-view functions.slots index)
@@ -4755,7 +4681,7 @@
               private-index
               name
               (& blocks)))])
-      (set! index (+ index 1)))
+      (+= index 1))
     problem))
 
 ;; Compare segments without assembling temporary strings on every optimizer
@@ -4777,17 +4703,15 @@
           (=
             (string.string-ref text (+ start index))
             (string.string-ref segment index)))
-          (set! index (+ index 1)))
+          (+= index 1))
         (= index length)))))
 
 (define (compiler-ir-spmd-call-signature-args-end
   [signature : (& signature str)]
   [args : (& args CompilerIrSpmdCallArgSeq)]
   [bases : i64]
-  [index : i64]
   [position : i64]) : i64
-  (if (>= index args.len)
-    position
+  (for [index (iterator.range 0 args.len)]
     (match (array-ref args.slots index)
       [(Arg _ _ ty)
         (let
@@ -4799,13 +4723,9 @@
               signature
               (+ position 1)
               (& type-name)))
-            (compiler-ir-spmd-call-signature-args-end
-              signature
-              args
-              bases
-              (+ index 1)
-              next)
-            -1))])))
+            (set! position next)
+            (return -1)))]))
+  position)
 
 (define (compiler-ir-spmd-call-signature-valid?
   [signature : (& signature str)]
@@ -4817,7 +4737,6 @@
         signature
         (& payload.args)
         bases
-        0
         3)]
     [result-type : String
       (match payload.result
@@ -4837,19 +4756,19 @@
 
 (define (compiler-ir-spmd-call-args-code-valid-from?
   [code : (& str)]
-  [args : (& args CompilerIrSpmdCallArgSeq)]
-  [index : i64]) : bool
-  (if (>= index args.len)
-    true
+  [args : (& args CompilerIrSpmdCallArgSeq)]) : bool
+  (for [index (iterator.range 0 args.len)]
     (match (array-ref args.slots index)
       [(Arg class _ _)
-        (and
+        (unless
           (=
             (string.string-ref code index)
             (match class
               [(Uniform) 'u']
               [_ 'v']))
-          (compiler-ir-spmd-call-args-code-valid-from? code args (+ index 1)))])))
+          (return false))
+        unit]))
+  true)
 
 ;; Return an empty error when the call payload agrees with the descriptor its
 ;; origin carries: a same-program call's private ABI, or an imported call's
@@ -4892,8 +4811,7 @@
           (= (string.string-length selected.args) payload.args.len)
           (compiler-ir-spmd-call-args-code-valid-from?
             (& selected.args)
-            (& payload.args)
-            0)
+            (& payload.args))
           (string.eq
             selected.result
             (match payload.result
@@ -5132,13 +5050,11 @@
     [count : i64 (+ rest.len 1)]
     [slots : (__tl_dyn-array CompilerIrPhiInput)
       (__tl_make-array CompilerIrPhiInput count)]
-    [index : i64 0]
     (set! (array-ref slots 0) (CompilerIrPhiInput value label))
-    (while (< index rest.len)
+    (for [index (iterator.range 0 rest.len)]
       (set!
         (array-ref slots (+ index 1))
-        (compiler-ir-phi-input-seq-ref rest index))
-      (set! index (+ index 1)))
+        (compiler-ir-phi-input-seq-ref rest index)))
     (CompilerIrPhiInputSeq slots 0 count)))
 
 (define (compiler-ir-phi-input-seq-count
@@ -5161,8 +5077,7 @@
     (let
       [slots : (__tl_dyn-array CompilerIrPhiInput)
         (__tl_make-array CompilerIrPhiInput inputs.len)]
-      [index : i64 0]
-      (while (< index inputs.len)
+      (for [index (iterator.range 0 inputs.len)]
         (let
           [input : CompilerIrPhiInput
             (compiler-ir-phi-input-seq-ref inputs index)]
@@ -5172,8 +5087,7 @@
               input.value
               (if (= input.label from-label)
                 to-label
-                input.label)))
-          (set! index (+ index 1))))
+                input.label)))))
       (CompilerIrPhiInputSeq slots 0 inputs.len))))
 
 (define (compiler-ir-switch-case-seq1 [a : CompilerIrSwitchCase]) : CompilerIrSwitchCaseSeq
@@ -5303,14 +5217,9 @@
   [instr : (& CompilerIrInstr)]
   [fallback : i64]) : i64
   (match instr
-    [(Mov dst _ _) dst]
-    [(Gep dst _ _ _) dst]
-    [(Load dst _ _) dst]
-    [(Cast dst _ _ _) dst]
-    [(Bitcast dst _ _ _) dst]
-    [(BinOp dst _ _ _ _) dst]
-    [(UnOp dst _ _ _) dst]
-    [(Phi dst _ _) dst]
+    [(or (Mov dst _ _) (Gep dst _ _ _) (Load dst _ _) (Cast dst _ _ _)
+         (Bitcast dst _ _ _) (BinOp dst _ _ _ _) (UnOp dst _ _ _) (Phi dst _ _))
+      dst]
     [_ fallback]))
 
 (define (compiler-ir-instr-array-loop-dst-or
@@ -5362,8 +5271,8 @@
   (match instr
     [(BinOp dst op lhs rhs ty) (BinOp dst op lhs rhs ty)]
     [(Jump target) (Jump target)]
-    [(Branch cond yes no) (Branch cond yes no)]
-    [(TotalEnumBranch cond yes no) (Branch cond yes no)]
+    [(or (Branch cond yes no) (TotalEnumBranch cond yes no))
+      (Branch cond yes no)]
     [(Phi dst inputs ty) (Phi dst inputs ty)]
     [_ (Other)]))
 
@@ -5409,11 +5318,9 @@
     [count : i64 (+ 1 rest.len)]
     [slots : (__tl_dyn-array CompilerIrParam)
       (__tl_make-array CompilerIrParam count)]
-    [index : i64 0]
     (set! (array-ref slots 0) param)
-    (while (< index rest.len)
-      (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 rest.len)]
+      (set! (array-ref slots (+ index 1)) (array-ref rest.slots index)))
     (CompilerIrParamSeq slots count)))
 
 (define (compiler-ir-param-seq-append-one
@@ -5423,10 +5330,8 @@
     [count : i64 (+ params.len 1)]
     [slots : (__tl_dyn-array CompilerIrParam)
       (__tl_make-array CompilerIrParam count)]
-    [index : i64 0]
-    (while (< index params.len)
-      (set! (array-ref slots index) (array-ref params.slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 params.len)]
+      (set! (array-ref slots index) (array-ref params.slots index)))
     (set! (array-ref slots params.len) param)
     (CompilerIrParamSeq slots count)))
 
@@ -5554,13 +5459,10 @@
 (define (compiler-ir-phi-input-builder-append-seq!
   [builder : (&mut builder CompilerIrPhiInputBuilder)]
   [inputs : (& CompilerIrPhiInputSeq)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index inputs.len)
-      (compiler-ir-phi-input-builder-push!
-        builder
-        (compiler-ir-phi-input-seq-ref inputs index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 inputs.len)]
+    (compiler-ir-phi-input-builder-push!
+      builder
+      (compiler-ir-phi-input-seq-ref inputs index))))
 
 (compiler-ir-dense-builder
   CompilerIrInstr
@@ -5582,13 +5484,10 @@
   [instrs : (& instrs CompilerIrInstrSeq)]
   [start : i64]
   [end : i64]) : unit
-  (let
-    [index : i64 start]
-    (while (< index end)
-      (compiler-ir-instr-builder-push!
-        builder
-        (compiler-ir-instr-seq-ref instrs index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range start end)]
+    (compiler-ir-instr-builder-push!
+      builder
+      (compiler-ir-instr-seq-ref instrs index))))
 
 (compiler-ir-dense-builder
   CompilerIrBlock
@@ -5611,14 +5510,12 @@
   (match blocks
     [(Array seq)
       (let
-        [index : i64 0]
         [count : i64 seq.len]
         [src : (__tl_dyn-array CompilerIrBlock) seq.slots]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (compiler-ir-block-builder-push!
             builder
-            (compiler-ir-array-shared-view src index))
-          (set! index (+ index 1))))]))
+            (compiler-ir-array-shared-view src index))))]))
 
 (define (compiler-ir-block-builder-append-slice!
   [builder : (&mut builder CompilerIrBlockBuilder)]
@@ -5935,7 +5832,7 @@
       (compiler-ir-phi-input-builder-push!
         (&mut builder)
         (compiler-ir-phi-input-seq-ref inputs index))
-      (set! index (- index 1)))
+      (-= index 1))
     (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
     (compiler-ir-phi-input-builder-to-seq builder)))
 
@@ -6119,18 +6016,15 @@
   [dst : (&mut dst (__tl_dyn-array CompilerIrInstr))]
   [index : i64]
   [count : i64]) : unit
-  (let
-    [cursor : i64 index]
-    (while (< cursor count)
-      (set!
-        (array-ref dst cursor)
-        (compiler-ir-clone-instr
-          pools
-          (compiler-ir-array-shared-view
-            (owned_view.compiler-owned-reference-shared-view src)
-            cursor)))
-      (set! cursor (+ cursor 1)))
-    unit))
+  (for [cursor (iterator.range index count)]
+    (set!
+      (array-ref dst cursor)
+      (compiler-ir-clone-instr
+        pools
+        (compiler-ir-array-shared-view
+          (owned_view.compiler-owned-reference-shared-view src)
+          cursor))))
+  unit)
 
 (define (compiler-ir-clone-instr-seq
   [pools : ast.AstNodePoolContext]
@@ -6159,14 +6053,12 @@
         [count : i64 (compiler-ir-block-seq-count seq)]
         [out : CompilerIrBlockBuilder
           (compiler-ir-block-builder-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (compiler-ir-block-builder-push!
             (&mut out)
             (compiler-ir-clone-block
               pools
-              (& (compiler-ir-block-seq-ref seq index))))
-          (set! index (+ index 1)))
+              (& (compiler-ir-block-seq-ref seq index)))))
         (compiler-ir-block-builder-to-list out))]))
 
 (define (compiler-ir-clone-param
@@ -6182,14 +6074,12 @@
   (let
     [builder : CompilerIrParamBuilder
       (compiler-ir-param-builder-with-capacity params.len)]
-    [index : i64 0]
-    (while (< index params.len)
+    (for [index (iterator.range 0 params.len)]
       (compiler-ir-param-builder-push!
         (&mut builder)
         (compiler-ir-clone-param
           pools
-          (& (compiler-ir-param-seq-ref params index))))
-      (set! index (+ index 1)))
+          (& (compiler-ir-param-seq-ref params index)))))
     (compiler-ir-param-builder-to-seq builder)))
 
 (define (compiler-ir-clone-function
@@ -6211,12 +6101,10 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction)
       (__tl_make-array CompilerIrFunction functions.len)]
-    [index : i64 0]
-    (while (< index functions.len)
+    (for [index (iterator.range 0 functions.len)]
       (set!
         (array-ref slots index)
-        (compiler-ir-clone-function pools (& (array-ref functions.slots index))))
-      (set! index (+ index 1)))
+        (compiler-ir-clone-function pools (& (array-ref functions.slots index)))))
     (CompilerIrFunctionSeq slots functions.len)))
 
 (define (compiler-ir-clone-global
@@ -6235,14 +6123,12 @@
   (let
     [slots : (__tl_dyn-array CompilerIrGlobal)
       (__tl_make-array CompilerIrGlobal globals.len)]
-    [index : i64 0]
-    (while (< index globals.len)
+    (for [index (iterator.range 0 globals.len)]
       (set!
         (array-ref slots index)
         (compiler-ir-clone-global
           pools
-          (& (compiler-ir-global-seq-ref globals index))))
-      (set! index (+ index 1)))
+          (& (compiler-ir-global-seq-ref globals index)))))
     (CompilerIrGlobalSeq slots globals.len)))
 
 (define (compiler-ir-clone-extern
@@ -6266,14 +6152,12 @@
   (let
     [slots : (__tl_dyn-array CompilerIrExtern)
       (__tl_make-array CompilerIrExtern externs.len)]
-    [index : i64 0]
-    (while (< index externs.len)
+    (for [index (iterator.range 0 externs.len)]
       (set!
         (array-ref slots index)
         (compiler-ir-clone-extern
           pools
-          (& (compiler-ir-extern-seq-ref externs index))))
-      (set! index (+ index 1)))
+          (& (compiler-ir-extern-seq-ref externs index)))))
     (CompilerIrExternSeq slots externs.len)))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
@@ -6285,10 +6169,8 @@
     [source : (__tl_dyn-array CompilerIrFunction) seq.slots]
     [dest : (__tl_dyn-array CompilerIrFunction)
       (__tl_make-array CompilerIrFunction count)]
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref dest i) (array-ref source i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref dest i) (array-ref source i)))
     (CompilerIrFunctionSeq dest count)))
 
 (define (compiler-ir-clone-program-shell
@@ -6517,14 +6399,8 @@
           type-segment-bases
           (& (ast.ast-type-segment-bases-get type-segment-bases inner)))
         ")")]
-    [(Enum name) (ast.ast-nominal-name-id-display name)]
-    [(EnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render
-        structural-session
-        (ast.ast-nominal-name-id-display name)
-        (& (deref lifetimes)))]
-    [(Struct name) (ast.ast-nominal-name-id-display name)]
-    [(StructArgs name lifetimes)
+    [(or (Enum name) (Struct name)) (ast.ast-nominal-name-id-display name)]
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (compiler-ir-nominal-lifetime-render
         structural-session
         (ast.ast-nominal-name-id-display name)
@@ -6690,8 +6566,7 @@
     [(Nil) 0]
     [(One _) 1]
     [(Two _ _) 2]
-    [(Array values) (array-length values)]
-    [(Sret values _) (array-length values)]))
+    [(or (Array values) (Sret values _)) (array-length values)]))
 
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend
@@ -7433,25 +7308,20 @@
             type-segment-bases
             (& slots))
           "]"))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [slots (compiler-ir-box-field-shared-view payload-box slots)]
-        (str_cat.str-cat
-          "  call_c_store* "
-          (compiler-ir-value-render callee)
-          "("
-          (compiler-ir-call-args-render (& args))
-          ") -> "
-          (compiler-ir-value-render base)
-          " ["
-          (compiler-ir-c-abi-return-slot-seq-render
-            structural-session
-            type-segment-bases
-            (& slots))
-          "]"))]
+    [(CallIndirectCAbiStoreResult (box (fields base callee args slots)))
+      (str_cat.str-cat
+        "  call_c_store* "
+        (compiler-ir-value-render callee)
+        "("
+        (compiler-ir-call-args-render (& args))
+        ") -> "
+        (compiler-ir-value-render base)
+        " ["
+        (compiler-ir-c-abi-return-slot-seq-render
+          structural-session
+          type-segment-bases
+          (& slots))
+        "]")]
     [(TailCall name args ty)
       (compiler-ir-tail-call-render
         structural-session
@@ -7497,15 +7367,7 @@
           (& value)
           (& ty)))]
     [(Jump label) (str_cat.str-cat "  jump " (compiler-ir-label-text label))]
-    [(Branch test on-true on-false)
-      (str_cat.str-cat
-        "  branch "
-        (compiler-ir-value-render test)
-        ", "
-        (compiler-ir-label-text on-true)
-        ", "
-        (compiler-ir-label-text on-false))]
-    [(TotalEnumBranch test on-true on-false)
+    [(or (Branch test on-true on-false) (TotalEnumBranch test on-true on-false))
       (str_cat.str-cat
         "  branch "
         (compiler-ir-value-render test)
@@ -7538,17 +7400,8 @@
         (string.int->string index)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(Switch index base cases default-label)
-      (str_cat.str-cat
-        "  switch "
-        (compiler-ir-value-render index)
-        " base "
-        (string.int->string base)
-        " ["
-        (compiler-ir-switch-case-seq-render cases)
-        "] default "
-        (compiler-ir-label-text default-label))]
-    [(TotalEnumSwitch index base cases default-label _)
+    [(or (Switch index base cases default-label)
+         (TotalEnumSwitch index base cases default-label _))
       (str_cat.str-cat
         "  switch "
         (compiler-ir-value-render index)
@@ -7788,9 +7641,8 @@
   [buf : text_buf.TextBuf]
   [globals : (& CompilerIrGlobalSeq)]) : text_buf.TextBuf
   (let
-    [index : i64 0]
     [out : text_buf.TextBuf buf]
-    (while (< index globals.len)
+    (for [index (iterator.range 0 globals.len)]
       (set!
         out
         (text_buf.append
@@ -7798,8 +7650,7 @@
           (compiler-ir-global-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-global-seq-ref globals index)))))
-      (set! index (+ index 1)))
+            (& (compiler-ir-global-seq-ref globals index))))))
     out))
 
 (define (compiler-ir-extern-abi-render
@@ -7844,9 +7695,8 @@
   [buf : text_buf.TextBuf]
   [externs : (& CompilerIrExternSeq)]) : text_buf.TextBuf
   (let
-    [index : i64 0]
     [out : text_buf.TextBuf buf]
-    (while (< index externs.len)
+    (for [index (iterator.range 0 externs.len)]
       (set!
         out
         (text_buf.append
@@ -7854,8 +7704,7 @@
           (compiler-ir-extern-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-extern-seq-ref externs index)))))
-      (set! index (+ index 1)))
+            (& (compiler-ir-extern-seq-ref externs index))))))
     out))
 
 (define (compiler-ir-program-render
@@ -7929,12 +7778,8 @@
 
 (define (compiler-ir-effect-has-side-effect? [effect : CompilerIrEffect]) : bool
   (match effect
-    [(Pure) false]
-    [(MemoryRead) false]
-    [(CpuProbe) true]
-    [(MemoryWrite) true]
-    [(ControlFlow) true]
-    [(Unknown) true]))
+    [(or (Pure) (MemoryRead)) false]
+    [(or (CpuProbe) (MemoryWrite) (ControlFlow) (Unknown)) true]))
 
 (define (compiler-ir-effect-invalidates-cse? [effect : CompilerIrEffect]) : bool
   (match effect
@@ -7986,63 +7831,32 @@
 
 (define (compiler-ir-instr-effect [instr : (& CompilerIrInstr)]) : CompilerIrEffect
   (match instr
-    [(Mov _ _ _) Pure]
-    [(AddrOf _ _) Pure]
-    [(Gep _ _ _ _) Pure]
-    [(Cast _ _ _ _) Pure]
-    [(Bitcast _ _ _ _) Pure]
-    [(BinOp _ _ _ _ _) Pure]
-    [(UnOp _ _ _ _) Pure]
-    [(Phi _ _ _) Pure]
-    [(LaneId _ _ _) Pure]
-    [(Splat _ _ _ _) Pure]
-    [(VectorBinOp _) Pure]
-    [(VectorPrefix _) Pure]
-    [(VectorReduce _ _ _ _ _) Pure]
-    [(VectorCompare _) Pure]
-    [(MaskBinOp _ _ _ _ _) Pure]
-    [(MaskNot _ _ _) Pure]
-    [(MaskReduce _ _ _ _) Pure]
-    [(Select _) Pure]
-    [(TailMask _ _ _ _) Pure]
-    [(Load _ _ _) MemoryRead]
-    [(StoreOwned _ _ _) MemoryWrite]
-    [(VectorLoad _ _ _ _ _) MemoryRead]
-    [(PredicatedLoad _) MemoryRead]
-    [(GatherLoad _) MemoryRead]
+    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _)
+         (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
+         (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _) (TailMask _ _ _ _)
+         (Pack _ _ _) (Word _ _ _ _))
+      Pure]
+    [(or (Load _ _ _) (VectorLoad _ _ _ _ _) (PredicatedLoad _) (GatherLoad _)
+         (EntryArgc _) (EntryArgv _) (EntryEnvp _))
+      MemoryRead]
+    [(or (StoreOwned _ _ _) (Alloc _ _) (StorePtr _ _ _) (CopyBytes _ _ _)
+         (Store _ _ _) (VectorStore _) (PredicatedStore _))
+      MemoryWrite]
     ;; Selector validation may call the standard nonreturning OOB abort path,
     ;; but the valid path falls through like an ordinary instruction. Unknown
     ;; keeps it effectful without classifying it as a CFG terminator.
-    [(VectorShuffle _) Unknown]
-    [(EntryArgc _) MemoryRead]
-    [(EntryArgv _) MemoryRead]
-    [(EntryEnvp _) MemoryRead]
-    [(CpuId _ _ _ _) CpuProbe]
-    [(Xgetbv _ _) CpuProbe]
-    [(Syscall _ _) Unknown]
-    [(Alloc _ _) MemoryWrite]
-    [(StorePtr _ _ _) MemoryWrite]
-    [(CopyBytes _ _ _) MemoryWrite]
-    [(Store _ _ _) MemoryWrite]
-    [(VectorStore _) MemoryWrite]
-    [(PredicatedStore _) MemoryWrite]
+    [(or (VectorShuffle _) (Syscall _ _) (CallIndirect _ _ _ _)
+         (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _))
+      Unknown]
+    [(or (CpuId _ _ _ _) (Xgetbv _ _)) CpuProbe]
     [(Call _ name _ _) (compiler-ir-direct-call-effect-id name)]
-    [(CallIndirect _ _ _ _) Unknown]
-    [(CallIndirectC _ _ _ _) Unknown]
-    [(CallCAbiStoreResult _) Unknown]
-    [(CallIndirectCAbiStoreResult payload-box) Unknown]
-    [(SpmdCall _) Unknown]
-    [(BoundsCheck _ _ _) ControlFlow]
-    [(TailCall _ _ _) ControlFlow]
-    [(Jump _) ControlFlow]
-    [(Branch _ _ _) ControlFlow]
-    [(TotalEnumBranch _ _ _) ControlFlow]
-    [(Return _) ControlFlow]
-    [(Pack _ _ _) Pure]
-    [(Word _ _ _ _) Pure]
-    [(TailCallIndirect _ _ _) ControlFlow]
-    [(Switch _ _ _ _) ControlFlow]
-    [(TotalEnumSwitch _ _ _ _ _) ControlFlow]))
+    [(or (BoundsCheck _ _ _) (TailCall _ _ _) (Jump _) (Branch _ _ _)
+         (TotalEnumBranch _ _ _) (Return _) (TailCallIndirect _ _ _)
+         (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+      ControlFlow]))
 
 ;; Safe-language faults an instruction can raise. A pass that deletes, skips,
 ;; duplicates, reorders or runs an instruction once has to preserve them. This
@@ -8063,29 +7877,12 @@
 
 (define (compiler-ir-binop-fault [op : (& CompilerIrBinOp)]) : CompilerIrFault
   (match op
-    [(Add) None]
-    [(Sub) None]
-    [(Mul) None]
-    [(Div) Operands]
-    [(Mod) Operands]
-    ;; Emitted only once the divisor is proven neither zero nor MIN / -1.
-    [(SafeDiv) None]
-    [(SafeMod) None]
-    [(Eq) None]
-    [(Ne) None]
-    [(Lt) None]
-    [(Le) None]
-    [(Gt) None]
-    [(Ge) None]
-    [(BitTestEq) None]
-    [(BitTestNe) None]
-    [(And) None]
-    [(Or) None]
-    [(BitAnd) None]
-    [(BitOr) None]
-    [(BitXor) None]
-    [(Shl _) Operands]
-    [(Shr _) Operands]))
+    ;; SafeDiv and SafeMod are emitted only once the divisor is proven neither
+    ;; zero nor MIN / -1.
+    [(or (Add) (Sub) (Mul) (SafeDiv) (SafeMod) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)
+         (BitTestEq) (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor))
+      None]
+    [(or (Div) (Mod) (Shl _) (Shr _)) Operands]))
 
 ;; Whether some operands make OP fault. This is the operator-level answer every
 ;; pass shares; a pass that proves the operands safe may still admit it.
@@ -8096,63 +7893,29 @@
 
 (define (compiler-ir-instr-fault [instr : (& CompilerIrInstr)]) : CompilerIrFault
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Mov _ _ _) None]
-    [(AddrOf _ _) None]
-    [(Gep _ _ _ _) None]
-    [(Cast _ _ _ _) None]
-    [(Bitcast _ _ _ _) None]
     [(BinOp _ op _ _ _) (compiler-ir-binop-fault (& op))]
-    [(UnOp _ _ _ _) None]
-    [(Phi _ _ _) None]
-    [(LaneId _ _ _) None]
-    [(Splat _ _ _ _) None]
     [(VectorBinOp payload-box)
       (compiler-ir-binop-fault (& (deref payload-box).op))]
-    [(VectorPrefix _) None]
-    [(VectorReduce _ _ _ _ _) None]
-    [(VectorCompare _) None]
-    [(MaskBinOp _ _ _ _ _) None]
-    [(MaskNot _ _ _) None]
-    [(MaskReduce _ _ _ _) None]
-    [(Select _) None]
-    [(TailMask _ _ _ _) None]
-    ;; Safe code reaches a memory access only through its explicit checks.
-    [(Load _ _ _) None]
-    [(StoreOwned _ _ _) None]
-    [(VectorLoad _ _ _ _ _) None]
-    [(PredicatedLoad _) None]
-    [(GatherLoad _) None]
     ;; Selector validation takes the out-of-bounds abort path.
-    [(VectorShuffle _) Check]
-    [(EntryArgc _) None]
-    [(EntryArgv _) None]
-    [(EntryEnvp _) None]
-    [(CpuId _ _ _ _) None]
-    [(Xgetbv _ _) None]
-    [(Syscall _ _) Call]
-    [(Alloc _ _) None]
-    [(StorePtr _ _ _) None]
-    [(CopyBytes _ _ _) None]
-    [(Store _ _ _) None]
-    [(VectorStore _) None]
-    [(PredicatedStore _) None]
-    [(Call _ _ _ _) Call]
-    [(CallIndirect _ _ _ _) Call]
-    [(CallIndirectC _ _ _ _) Call]
-    [(CallCAbiStoreResult _) Call]
-    [(CallIndirectCAbiStoreResult _) Call]
-    [(SpmdCall _) Call]
-    [(BoundsCheck _ _ _) Check]
-    [(TailCall _ _ _) Call]
-    [(Jump _) None]
-    [(Branch _ _ _) None]
-    [(TotalEnumBranch _ _ _) None]
-    [(Return _) None]
-    [(Pack _ _ _) None]
-    [(Word _ _ _ _) None]
-    [(TailCallIndirect _ _ _) Call]
-    [(Switch _ _ _ _) None]
-    [(TotalEnumSwitch _ _ _ _ _) None]))
+    [(or (VectorShuffle _) (BoundsCheck _ _ _)) Check]
+    [(or (Syscall _ _) (Call _ _ _ _) (CallIndirect _ _ _ _)
+         (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
+         (TailCallIndirect _ _ _))
+      Call]
+    ;; Safe code reaches a memory access only through its explicit checks.
+    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _) (Splat _ _ _ _)
+         (VectorPrefix _) (VectorReduce _ _ _ _ _) (VectorCompare _)
+         (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _)
+         (TailMask _ _ _ _) (Load _ _ _) (StoreOwned _ _ _)
+         (VectorLoad _ _ _ _ _) (PredicatedLoad _) (GatherLoad _) (EntryArgc _)
+         (EntryArgv _) (EntryEnvp _) (CpuId _ _ _ _) (Xgetbv _ _) (Alloc _ _)
+         (StorePtr _ _ _) (CopyBytes _ _ _) (Store _ _ _) (VectorStore _)
+         (PredicatedStore _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
+         (Return _) (Pack _ _ _) (Word _ _ _ _) (Switch _ _ _ _)
+         (TotalEnumSwitch _ _ _ _ _))
+      None]))
 
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged.
@@ -8199,7 +7962,7 @@
     [length : i64 (string.string-length spec)]
     [index : i64 0]
     (while (and (< index length) (not (= (string.string-ref spec index) '=')))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (or (= index 0) (>= index length))
       false
       (begin
@@ -8367,11 +8130,8 @@
   [src : (& src (__tl_dyn-array CompilerSourceSpansEntry))]
   [index : i64]
   [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (set! (array-ref dst i) (array-ref src i))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range index count)]
+    (set! (array-ref dst i) (array-ref src i))))
 
 (define (compiler-source-spans-entry-list-capacity-for [count : i64]) : i64
   (let
@@ -8413,11 +8173,8 @@
   [src : (& src (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [index : i64]
   [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (set! (array-ref dst i) (array-ref src i))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range index count)]
+    (set! (array-ref dst i) (array-ref src i))))
 
 (define (compiler-source-spans-instr-entry-list-append
   [entries : CompilerSourceSpansInstrEntryList]
@@ -8737,7 +8494,7 @@
     (while (and
       (> digits 0)
       (compiler-source-spans-label-digit-at? text (- digits 1)))
-      (set! digits (- digits 1)))
+      (-= digits 1))
     (if (or (= digits n) (< digits 4))
       0
       (if (string.is-string-prefix-at text (& marker) (- digits 3))
@@ -8857,15 +8614,14 @@
       (match (owned_view.compiler-owned-reference-shared-view complete)
         [(Spans complete-entries complete-instr-entries _)
           (let
-            [entry-index : i64 base-entries.len]
-            [instr-index : i64 base-instr-entries.len]
             [out : CompilerSourceSpans base]
             [complete-entry-slots : (__tl_dyn-array CompilerSourceSpansEntry)
               complete-entries.slots]
             [complete-instr-slots : (__tl_dyn-array
               CompilerSourceSpansInstrEntry)
               complete-instr-entries.slots]
-            (while (< entry-index complete-entries.len)
+            (for [entry-index
+              (iterator.range base-entries.len complete-entries.len)]
               (let
                 [span-entry : CompilerSourceSpansEntry
                   (array-ref complete-entry-slots entry-index)]
@@ -8876,9 +8632,9 @@
                   out
                   (if (> path-id 0)
                     (compiler-source-spans-insert-located out name path-id span)
-                    (compiler-source-spans-insert out name span)))
-                (set! entry-index (+ entry-index 1))))
-            (while (< instr-index complete-instr-entries.len)
+                    (compiler-source-spans-insert out name span)))))
+            (for [instr-index
+              (iterator.range base-instr-entries.len complete-instr-entries.len)]
               (let
                 [span-entry : CompilerSourceSpansInstrEntry
                   (array-ref complete-instr-slots instr-index)]
@@ -8894,8 +8650,7 @@
                       key
                       path-id
                       span)
-                    (compiler-source-spans-insert-instr-entry out key span)))
-                (set! instr-index (+ instr-index 1))))
+                    (compiler-source-spans-insert-instr-entry out key span)))))
             out)])]))
 
 (defenum CompilerIrSummary
@@ -8967,23 +8722,14 @@
 
 (define (compiler-ir-instr-call-arg-count [instr : (& CompilerIrInstr)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Call _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallIndirect _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallIndirectC _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-call-args-count (& args)))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-call-args-count (& args)))]
-    [(SpmdCall payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-spmd-call-arg-seq-count args))]
-    [(TailCall _ args _) (compiler-ir-call-args-count (& args))]
-    [(TailCallIndirect _ args _) (compiler-ir-call-args-count (& args))]
+    [(or (Call _ _ args _) (CallIndirect _ _ args _) (CallIndirectC _ _ args _)
+         (TailCall _ args _) (TailCallIndirect _ args _))
+      (compiler-ir-call-args-count (& args))]
+    [(CallCAbiStoreResult (box (fields args)))
+      (compiler-ir-call-args-count (& args))]
+    [(CallIndirectCAbiStoreResult (box (fields args)))
+      (compiler-ir-call-args-count (& args))]
+    [(SpmdCall (box (fields args))) (compiler-ir-spmd-call-arg-seq-count args)]
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : (& CompilerIrInstr)]) : i64
@@ -8993,36 +8739,30 @@
 
 (define (compiler-ir-instr-seq-call-arg-count-from
   [slots : (& (__tl_dyn-array CompilerIrInstr))]
-  [index : i64]
   [count : i64]
   [acc : i64]) : i64
-  (if (>= index count)
-    acc
-    (compiler-ir-instr-seq-call-arg-count-from
-      slots
-      (+ index 1)
-      count
-      (+ acc (compiler-ir-instr-call-arg-count (& (array-ref slots index)))))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      acc
+      (+ acc (compiler-ir-instr-call-arg-count (& (array-ref slots index))))))
+  acc)
 
 (define (compiler-ir-instr-seq-call-arg-count [instrs : (& CompilerIrInstrSeq)]) : i64
-  (compiler-ir-instr-seq-call-arg-count-from (& instrs.slots) 0 instrs.len 0))
+  (compiler-ir-instr-seq-call-arg-count-from (& instrs.slots) instrs.len 0))
 
 (define (compiler-ir-instr-seq-phi-input-count-from
   [slots : (& (__tl_dyn-array CompilerIrInstr))]
-  [index : i64]
   [count : i64]
   [acc : i64]) : i64
-  (if (>= index count)
-    acc
-    (compiler-ir-instr-seq-phi-input-count-from
-      slots
-      (+ index 1)
-      count
-      (+ acc (compiler-ir-instr-phi-input-count (& (array-ref slots index)))))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      acc
+      (+ acc (compiler-ir-instr-phi-input-count (& (array-ref slots index))))))
+  acc)
 
 (define (compiler-ir-instr-seq-phi-input-count
   [instrs : (& CompilerIrInstrSeq)]) : i64
-  (compiler-ir-instr-seq-phi-input-count-from (& instrs.slots) 0 instrs.len 0))
+  (compiler-ir-instr-seq-phi-input-count-from (& instrs.slots) instrs.len 0))
 
 (define (compiler-ir-block-list-count [blocks : (& blocks CompilerIrBlockList)]) : i64
   (match blocks
@@ -9081,12 +8821,9 @@
       (let
         [count : i64 (compiler-ir-block-seq-count seq)]
         [total : i64 0]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (match (compiler-ir-block-seq-ref seq index)
-            [(Block _ instrs)
-              (set! total (+ total (compiler-ir-instr-seq-count instrs)))])
-          (set! index (+ index 1)))
+            [(Block _ instrs) (+= total (compiler-ir-instr-seq-count instrs))]))
         total)]))
 
 (define (compiler-ir-function-block-count [func : (& CompilerIrFunction)]) : i64
@@ -9136,16 +8873,11 @@
   [functions : (& CompilerIrFunctionSeq)]) : i64
   (let
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (compiler-ir-function-block-count
-            (& (array-ref functions.slots index)))))
-      (set! index (+ index 1)))
+        (compiler-ir-function-block-count (& (array-ref functions.slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-instruction-count
@@ -9153,15 +8885,11 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (compiler-ir-function-instruction-count (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+        (compiler-ir-function-instruction-count (& (array-ref slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-empty-block-count
@@ -9169,15 +8897,11 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (compiler-ir-function-empty-block-count (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+        (compiler-ir-function-empty-block-count (& (array-ref slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-max-instruction-count
@@ -9185,16 +8909,14 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         acc
         (compiler-ir-max-i64
           acc
           (compiler-ir-function-max-instruction-count
-            (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+            (& (array-ref slots index))))))
     acc))
 
 (define (compiler-ir-function-seq-max-block-instruction-count
@@ -9202,16 +8924,14 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         acc
         (compiler-ir-max-i64
           acc
           (compiler-ir-function-max-block-instruction-count
-            (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+            (& (array-ref slots index))))))
     acc))
 
 (define (compiler-ir-function-seq-call-arg-count
@@ -9219,15 +8939,9 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
-        acc
-        (+
-          acc
-          (compiler-ir-function-call-arg-count (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (+= acc (compiler-ir-function-call-arg-count (& (array-ref slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-phi-input-count
@@ -9235,28 +8949,20 @@
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (compiler-ir-function-phi-input-count (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+        (compiler-ir-function-phi-input-count (& (array-ref slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-var-count [functions : CompilerIrFunctionSeq]) : i64
   (let
     [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
-        acc
-        (+ acc (compiler-ir-function-var-count (& (array-ref slots index)))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (+= acc (compiler-ir-function-var-count (& (array-ref slots index)))))
     acc))
 
 (define (compiler-ir-program-summary [program : (& CompilerIrProgram)]) : CompilerIrSummary
@@ -9418,14 +9124,8 @@
           type-segment-bases
           (& (ast.ast-type-segment-bases-get type-segment-bases inner)))
         ")")]
-    [(Enum name) (ast.ast-nominal-name-id-display name)]
-    [(EnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render
-        (cis.InternStructuralSessionHandle 0)
-        (ast.ast-nominal-name-id-display name)
-        (& (deref lifetimes)))]
-    [(Struct name) (ast.ast-nominal-name-id-display name)]
-    [(StructArgs name lifetimes)
+    [(or (Enum name) (Struct name)) (ast.ast-nominal-name-id-display name)]
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (compiler-ir-nominal-lifetime-render
         (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
@@ -9525,19 +9225,11 @@
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(Struct name)
+    [(or (Struct name) (StructArgs name _))
       (if (compiler-ir-symbol-owned? name)
         name
         -1)]
-    [(StructArgs name _)
-      (if (compiler-ir-symbol-owned? name)
-        name
-        -1)]
-    [(Region _ inner)
-      (compiler-ir-representation-owned-aggregate-name
-        type-segment-bases
-        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [(Invalidate _ inner)
+    [(or (Region _ inner) (Invalidate _ inner))
       (compiler-ir-representation-owned-aggregate-name
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
@@ -9631,22 +9323,16 @@
 (define (compiler-ir-representation-param-types!
   [params : (& CompilerIrParamSeq)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (compiler-ir-param-seq-ref params position)
-        [(Param _ ty var)
-          (compiler-ir-representation-var-type-set! types var ty)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (compiler-ir-param-seq-ref params position)
+      [(Param _ ty var) (compiler-ir-representation-var-type-set! types var ty)])))
 
 (define (compiler-ir-representation-instr-def-type!
   [instr : (& CompilerIrInstr)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
     ;; The index does not type indirect-call results or a scalar Select.
-    [(CallIndirect _ _ _ _) unit]
-    [(CallIndirectC _ _ _ _) unit]
-    [(Select _) unit]
+    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (Select _)) unit]
     [_
       (match (compiler-ir-instr-dst-type
         (owned_view.compiler-owned-reference-shared-view instr))
@@ -9660,26 +9346,20 @@
 (define (compiler-ir-representation-instr-types!
   [instrs : CompilerIrInstrSeq]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
-  (let
-    [i : i64 0]
-    (while (< i (compiler-ir-instr-seq-count instrs))
-      (compiler-ir-representation-instr-def-type!
-        (& (compiler-ir-instr-seq-ref instrs i))
-        types)
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 (compiler-ir-instr-seq-count instrs))]
+    (compiler-ir-representation-instr-def-type!
+      (& (compiler-ir-instr-seq-ref instrs i))
+      types)))
 
 (define (compiler-ir-representation-block-types!
   [blocks : (& CompilerIrBlockList)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view blocks)
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (compiler-ir-block-seq-count seq))
-          (match (compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-ir-representation-instr-types! instrs types)])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (compiler-ir-block-seq-count seq))]
+        (match (compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-ir-representation-instr-types! instrs types)]))]))
 
 (define (compiler-ir-representation-function-var-types
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationVarTypes
@@ -9696,8 +9376,7 @@
 
 (define (compiler-ir-representation-float-type? [ty : (& ast.AstType)]) : bool
   (match ty
-    [(F64) true]
-    [(F32) true]
+    [(or (F64) (F32)) true]
     [_ false]))
 
 (define (compiler-ir-representation-pack-word-sse?
@@ -9977,53 +9656,15 @@
           type-segment-bases
           (& with-nominal)
           (& (deref items)))]
-      [(Array elem _)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
-      [(DynArray elem)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
-      [(Box inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Ref _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(MutRef _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Ptr inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(MutPtr inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
       ;; Region was already transparently classified by the canonical-key
       ;; query; recurse only to discover nested container types.
-      [(Region _ inner)
+      [(or (Array elem _) (DynArray elem) (Box elem) (Ref _ elem)
+           (MutRef _ elem) (Ptr elem) (MutPtr elem) (Region _ elem)
+           (Invalidate _ elem))
         (compiler-ir-representation-collect-one-type
           type-segment-bases
           (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Invalidate _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
       [_ with-nominal])))
 
 (define (compiler-ir-representation-collect-one-param-seq-from
@@ -10059,37 +9700,17 @@
   [index : CompilerIrRepresentationIndex]
   [instr : (& CompilerIrInstr)]) : CompilerIrRepresentationIndex
   (match instr
-    [(Mov _ _ ty)
+    [(or (Mov _ _ ty) (Alloc _ ty) (Gep _ _ _ ty) (Load _ _ ty)
+         (StoreOwned _ _ ty) (StorePtr _ _ ty) (BinOp _ _ _ _ ty)
+         (UnOp _ _ _ ty) (Splat _ _ _ ty) (VectorReduce _ _ _ _ ty)
+         (VectorLoad _ _ _ _ ty) (Call _ _ _ ty) (CallIndirect _ _ _ ty)
+         (CallIndirectC _ _ _ ty) (TailCall _ _ ty) (Store _ _ ty) (Phi _ _ ty)
+         (Pack _ _ ty) (Word _ _ _ ty) (TailCallIndirect _ _ ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
         (& index)
         (& ty))]
-    [(Alloc _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Gep _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Load _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(StoreOwned _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(StorePtr _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Cast _ _ from-ty to-ty)
+    [(or (Cast _ _ from-ty to-ty) (Bitcast _ _ from-ty to-ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
         (&
@@ -10098,85 +9719,6 @@
             (& index)
             (& from-ty)))
         (& to-ty))]
-    [(Bitcast _ _ from-ty to-ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (&
-          (compiler-ir-representation-collect-one-type
-            type-segment-bases
-            (& index)
-            (& from-ty)))
-        (& to-ty))]
-    [(BinOp _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(UnOp _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Splat _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(VectorReduce _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(VectorLoad _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Call _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(CallIndirect _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(CallIndirectC _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(TailCall _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Store _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Phi _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Pack _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Word _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(TailCallIndirect _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
     [_ index]))
 
 (define (compiler-ir-representation-collect-one-instrs-from
@@ -10379,9 +9921,9 @@
     [spaces : i64 0]
     (while (and (< spaces 2) (< index length))
       (if (= (string.string-ref text index) ' ')
-        (set! spaces (+ spaces 1))
+        (+= spaces 1)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     (string.substring text index (- length index))))
 
 ;; Test support: the shapes of every private helper in `functions`, in function order,
@@ -10390,8 +9932,7 @@
   [functions : (& CompilerIrFunctionSeq)]) : String
   (let
     [out : String ""]
-    [index : i64 0]
-    (while (< index functions.len)
+    (for [index (iterator.range 0 functions.len)]
       (match (compiler-ir-function-seq-ref functions index)
         [(Function _ _ _ _ _ function-abi)
           (match function-abi
@@ -10408,8 +9949,7 @@
                     out
                     separator
                     (compiler-ir-test-spmd-private-abi-shape
-                      (& (deref private-box))))))])])
-      (set! index (+ index 1)))
+                      (& (deref private-box))))))])]))
     out))
 
 ;; Test support: the private SPMD ABI a helper called with exactly `args` and
@@ -10424,11 +9964,10 @@
   (let
     [params : CompilerIrSpmdPrivateParamSeq
       (compiler-ir-spmd-private-param-seq-with-capacity (+ args.len 1))]
-    [index : i64 0]
     (compiler-ir-spmd-private-param-seq-push!
       (&mut params)
       (CompilerIrSpmdPrivateParam.Param 0 (ActiveMask) (Bool)))
-    (while (< index args.len)
+    (for [index (iterator.range 0 args.len)]
       (match (array-ref args.slots index)
         [(Arg class _ ty)
           (compiler-ir-spmd-private-param-seq-push!
@@ -10439,8 +9978,7 @@
                 index
                 (compiler-ir-clone-spmd-value-class class)
                 (clone ty))
-              (clone ty)))])
-      (set! index (+ index 1)))
+              (clone ty)))]))
     (CompilerIrSpmdPrivateAbi
       (V1)
       callee
@@ -10571,14 +10109,12 @@
       (let
         [grown : (__tl_dyn-array CompilerDebugTypeNode)
           (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
-        [index : i64 0]
-        (while (< index id)
+        (for [index (iterator.range 0 id)]
           (set!
             (array-ref grown index)
             (owned_view.compiler-owned-array-element-shared-view
               graph.nodes
-              index))
-          (set! index (+ index 1)))
+              index)))
         (set! graph.nodes grown)))
     (set! (array-ref graph.nodes id) node)
     (set! graph.node-count (+ id 1))
@@ -10600,14 +10136,12 @@
       (let
         [grown : (__tl_dyn-array CompilerDebugTypeMember)
           (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
-        [copy : i64 0]
-        (while (< copy index)
+        (for [copy (iterator.range 0 index)]
           (set!
             (array-ref grown copy)
             (owned_view.compiler-owned-array-element-shared-view
               graph.members
-              copy))
-          (set! copy (+ copy 1)))
+              copy)))
         (set! graph.members grown)))
     (set! (array-ref graph.members index) member)
     (set! graph.member-count (+ index 1))))
@@ -10639,12 +10173,10 @@
           "debug-types v1 nodes="
           (string.int->string graph.node-count)
           "\n"))]
-    [id : i64 0]
-    (while (< id graph.node-count)
+    (for [id (iterator.range 0 graph.node-count)]
       (let
         [node : CompilerDebugTypeNode
           (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
-        [member : i64 node.first-member]
         (set!
           buf
           (text_buf.append
@@ -10672,7 +10204,10 @@
                   (string.int->string node.register-words))
                 "")
               "\n")))
-        (while (< member (+ node.first-member node.member-count))
+        (for [member
+          (iterator.range
+            node.first-member
+            (+ node.first-member node.member-count))]
           (let
             [row : CompilerDebugTypeMember
               (owned_view.compiler-owned-array-element-shared-view
@@ -10698,7 +10233,5 @@
                     (string.int->string row.type)
                     " @"
                     (string.int->string row.offset)
-                    "\n"))))
-            (set! member (+ member 1))))
-        (set! id (+ id 1))))
+                    "\n"))))))))
     (text_buf.render buf)))

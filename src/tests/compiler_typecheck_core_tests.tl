@@ -1,9 +1,12 @@
 ;; compiler_typecheck_core_tests.tl - White-box tests for the typechecker core:
 ;; state isolation between jobs, environment and cache smokes, and inline tests.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
+(cfg test (import compiler_global_effects as global_effects))
+(import (vector.vector i64 core) as effect_words)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -116,18 +119,15 @@
       [scratch : i64 (arena.tl_arena_make)]
       (in-arena
         (arena.Arena scratch)
-        (let
-          [index : i64 0]
-          (while (< index 257)
-            (tc_core.tc-checked-let-binding-fact-record!
-              c
-              (+ 100 index)
-              index
-              (+ 200 index)
-              (+ 300 index)
-              (I64)
-              ordinary)
-            (set! index (+ index 1)))))
+        (for [index (iterator.range 0 257)]
+          (tc_core.tc-checked-let-binding-fact-record!
+            c
+            (+ 100 index)
+            index
+            (+ 200 index)
+            (+ 300 index)
+            (I64)
+            ordinary)))
       (unsafe
         (arena.tl_arena_destroy scratch)))
     (let
@@ -257,7 +257,7 @@
     [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (when
       data.early-exit-facts-collecting
-      (set! data.early-exit-suppress-depth (+ data.early-exit-suppress-depth 1))
+      (+= data.early-exit-suppress-depth 1)
       (tc_core.tc-body-state-data-set! state data))))
 
 (define (tc-body-early-exit-suppress-pop! [state : tc_core.TcBodyState]) : unit
@@ -265,7 +265,7 @@
     [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (when
       data.early-exit-facts-collecting
-      (set! data.early-exit-suppress-depth (- data.early-exit-suppress-depth 1))
+      (-= data.early-exit-suppress-depth 1)
       (tc_core.tc-body-state-data-set! state data))))
 
 (define (tc-body-state-type-fact-i64-hit?
@@ -400,6 +400,94 @@
     ""
     cbi.compiler-builtin-id-fix-empty
     pools))
+
+(test
+  tc-poison-module-env-cache-identity-and-suffix
+  (let
+    [saved-poison-observed : bool tc_core.tc-poison-observed]
+    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [other : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    [names : tc_core.TcPoisonNameList
+      (tc_core.TcPoisonNameList (__tl_make-array i64 2) 0)]
+    [cached : tc_core.TcPoisonModuleEnvs (tc_core.tc-poison-module-envs-new)]
+    [first-name : i64 (ci.intern "poison-cache-first")]
+    [second-name : i64 (ci.intern "poison-cache-second")]
+    [visible-name : i64 (ci.intern "poison-cache-visible")]
+    (set! (array-ref names.slots 0) first-name)
+    (set! (array-ref names.slots 1) second-name)
+    (set! names.len 1)
+    (let
+      [first : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      [same : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      (unless
+        (and
+          (= first.global-env.head same.global-env.head)
+          (= first.local-env.head same.local-env.head))
+        (io.panic "typecheck: poison cache rebound an unchanged prefix")))
+    (set! names.len 2)
+    (let
+      [extended : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      [changed : tc_core.TcTypeEnv (tc_core.tc-bind-id env visible-name (Bool))]
+      [replaced : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          changed
+          changed
+          (& names))]
+      (for [name (iterator.range 0 2)]
+        (unless
+          (match (tc_core.tc-lookup-id
+            extended.local-env
+            (array-ref names.slots name))
+            [(Ok ty) (tc_core.tc-poison-type? ty)]
+            [_ false])
+          (io.panic "typecheck: poison cache lost an appended name")))
+      (unless
+        (match (tc_core.tc-lookup-id replaced.local-env visible-name)
+          [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
+          [_ false])
+        (io.panic "typecheck: poison cache reused a changed source head")))
+    (let
+      [different-store : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          other
+          other
+          (& names))]
+      [different-scope : tc_core.TcTypeEnv
+        (tc_core.TcTypeEnv other.store other.head env.abi-pad)]
+      [global-scope : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          different-scope
+          other
+          (& names))]
+      [local-scope : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          different-scope
+          different-scope
+          (& names))]
+      (unless
+        (and
+          (= different-store.global-env.store other.store)
+          (= different-store.local-env.store other.store)
+          (= global-scope.global-env.abi-pad env.abi-pad)
+          (= local-scope.local-env.abi-pad env.abi-pad))
+        (io.panic
+          "typecheck: poison cache reused a changed store or scoped state")))
+    (tc_core.tc-job-state-retire-owned-storage! job)
+    (if saved-poison-observed
+      (tc_core.tc-poison-observation-note! (tc_core.tc-poison-type))
+      (tc_core.tc-poison-observation-reset!))))
 
 ;; Preparing a transformer compares the owned pools with the installed pool's
 ;; lengths (#7937). An owned context that argument normalisation extended past
@@ -1236,7 +1324,7 @@
 ;; The body of `(define (probe) : i64 FORM)`, parsed into the active pools.
 (define (macro-output-probe-body [form : String]) : i64
   (match (parser.parse-ast-source
-    (str_cat.str-cat "(define (probe) : i64 " form ")"))
+    (& (str_cat.str-cat "(define (probe) : i64 " form ")")))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons (DefFn _ _ _ _ body-box _) _) body-box]
@@ -1247,7 +1335,7 @@
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
   (match (lexer.spanned-result (& form))
     [(Ok toks)
-      (match (reader.spanned-result toks)
+      (match (reader.spanned-result (& toks))
         [(Ok sexpr) sexpr]
         [(Err _)
           (reader.spanned-sexpr-list-from-builder
@@ -1314,13 +1402,15 @@
                         (macro-output-sexpr-eq? first second)
                         (string.eq
                           (ctfe_support.ctfe-describe-expr
-                            (ast.ast-expr-unspan-with-segment-bases
-                              bases
-                              (& first-expr)))
+                            (&
+                              (ast.ast-expr-unspan-with-segment-bases
+                                bases
+                                (& first-expr))))
                           (ctfe_support.ctfe-describe-expr
-                            (ast.ast-expr-unspan-with-segment-bases
-                              second-bases
-                              (& second-expr)))))]))])])))))
+                            (&
+                              (ast.ast-expr-unspan-with-segment-bases
+                                second-bases
+                                (& second-expr))))))]))])])))))
 
 ;; The probed forms, in order; the last wraps a converted form in a `let`.
 (define (macro-output-form [i : i64]) : String
@@ -1386,12 +1476,10 @@
   [session : cis.InternStructuralSessionHandle]) : String
   (let
     [failed : String ""]
-    [i : i64 0]
-    (while (< i 25)
+    (for [i (iterator.range 0 25)]
       (if (macro-output-form-round-trips? session i)
         unit
-        (set! failed (str_cat.str-cat failed " " (macro-output-form i))))
-      (set! i (+ i 1)))
+        (set! failed (str_cat.str-cat failed " " (macro-output-form i)))))
     failed))
 
 ;; A move-aware resource scope has no declaration spelling; converting one must
@@ -1416,10 +1504,10 @@
                 (let
                   [moved : ast.AstResourceBindingList
                     (ast.ast-resource-binding-list-new)]
-                  [index : i64 0]
-                  (while (<
-                    index
-                    (ast.ast-resource-binding-list-len (& bindings)))
+                  (for [index
+                    (iterator.range
+                      0
+                      (ast.ast-resource-binding-list-len (& bindings)))]
                     (match (ast.ast-resource-binding-list-get
                       (& bindings)
                       index
@@ -1431,8 +1519,7 @@
                             name
                             init
                             cleanup
-                            true))])
-                    (set! index (+ index 1)))
+                            true))]))
                   (let
                     [move-aware : ast.AstExpr
                       (WithResource
@@ -1554,17 +1641,15 @@
       [alias-id : i64 (ci.intern "membership-ab-alias")]
       [structural-base : i64 (* (ci.intern-capacity) (ci.intern-capacity))]
       [stress-count : i64 65537]
-      [index : i64 0]
       (tc_core.tc-topenv-membership-begin! state-a env-a 101 201)
       (tc_core.tc-topenv-membership-begin! state-b env-b 102 202)
       (tc_core.tc-topenv-membership-mark-bound! state-a renderable)
       ;; One more entry than the removed fixed overflow table proves structural
       ;; membership has no hidden 65,536-key ceiling.
-      (while (< index stress-count)
+      (for [index (iterator.range 0 stress-count)]
         (tc_core.tc-topenv-membership-mark-bound!
           state-a
-          (+ structural-base index))
-        (set! index (+ index 1)))
+          (+ structural-base index)))
       (let
         [isolated? : bool
           (and
@@ -1673,7 +1758,7 @@
     (tc-type-env-scoped-stack-reserve-marks! stack (+ index 1))
     (set! (array-ref stack.marks index) mark)
     (set! stack.mark-count (+ index 1))
-    (set! stack.scope-depth (+ stack.scope-depth 1))
+    (+= stack.scope-depth 1)
     mark))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
@@ -2067,12 +2152,10 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
     [params : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id (ci.intern "elided") (I64) false))
-      (set! index (+ index 1)))
+        (ast.ast-param-id (ci.intern "elided") (I64) false)))
     (match (tc_core.tc-elide-function-signature
       (ast.ast-node-pool-context-type-segment-bases pools)
       params
@@ -2142,22 +2225,18 @@
 (define (tc-type-list-needs-resolution-with-bases?
   [type-bases : i64]
   [types : ast.AstTypeList]) : bool
-  (tc-type-list-needs-resolution-at-with-bases? type-bases (& types) 0))
+  (tc-type-list-needs-resolution-at-with-bases? type-bases (& types)))
 
 (define (tc-type-list-needs-resolution-at-with-bases?
   [type-bases : i64]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (if (tc-type-needs-resolution-id-with-bases?
-      type-bases
-      (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      true
-      (tc-type-list-needs-resolution-at-with-bases?
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (when
+      (tc-type-needs-resolution-id-with-bases?
         type-bases
-        types
-        (+ index 1)))))
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+      (return true)))
+  false)
 
 (define (tc-type-needs-resolution-id-with-bases?
   [type-bases : i64]
@@ -2782,8 +2861,6 @@
       (tc_core.TcTypeEnv base.store base.head base.abi-pad)]
     [latest-cache : tc_core.TcTypeEnv
       (tc_core.TcTypeEnv first-cache.store first-cache.head first-cache.abi-pad)]
-    [index : i64 0]
-    [cache-index : i64 0]
     [binding-restored? : bool false]
     [latest-cache-valid? : bool false]
     (unsafe
@@ -2791,16 +2868,16 @@
     ;; Extend a store created in `owner` while an unrelated scratch arena is
     ;; current. Segment allocation must use the store owner and restore the
     ;; scratch arena before returning.
-    (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
-      (set! grown (tc_core.tc-bind-id grown filler-id (I64)))
-      (set! index (+ index 1)))
+    (for [index
+      (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
+      (set! grown (tc_core.tc-bind-id grown filler-id (I64))))
     (set! binding-restored? (= (arena.tl_arena_current) scratch))
     ;; Exercise cache-segment rollover through the same owner switch. The
     ;; newer cache payloads intentionally live only until scratch is
     ;; destroyed; `first-cache` was built in owner and must remain valid.
-    (while (< cache-index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
-      (set! latest-cache (tc_core.tc-env-with-cache grown))
-      (set! cache-index (+ cache-index 1)))
+    (for [cache-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
+      (set! latest-cache (tc_core.tc-env-with-cache grown)))
     (set!
       latest-cache-valid?
       (match (tc_core.tc-lookup-id latest-cache base-id)
@@ -2887,17 +2964,15 @@
       [plain-fork : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-type-env-fork-function-store plain))]
-      [index : i64 0]
       ;; Shadow a parent name, then cross two binding segments and several
       ;; cache segments.
       (set! fork (tc_core.tc-bind-id fork base-id (Bool)))
-      (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
-        (set! fork (tc_core.tc-bind-id fork local-id (I64)))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
-        (set! fork (tc_core.tc-env-with-cache fork))
-        (set! index (+ index 1)))
+      (for [index
+        (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
+        (set! fork (tc_core.tc-bind-id fork local-id (I64))))
+      (for [index
+        (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
+        (set! fork (tc_core.tc-env-with-cache fork)))
       (set!
         fork-ok
         (and
@@ -2977,7 +3052,6 @@
         segment-base.store
         segment-base.head
         segment-base.abi-pad)]
-    [segment-index : i64 0]
     [cache-segment-id : i64 (ci.intern "cache-segment-base")]
     [cache-segment-base : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) cache-segment-id (String))]
@@ -2988,7 +3062,6 @@
         cache-segment-first.store
         cache-segment-first.head
         cache-segment-first.abi-pad)]
-    [cache-segment-index : i64 0]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-id
@@ -3004,20 +3077,17 @@
     [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-cache env)]
     ;; Force more than one binding segment, then branch from the retained
     ;; first-segment snapshot after the store has advanced.
-    (while (<
-      segment-index
-      (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
+    (for [segment-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
       (set!
         segment-grown
         (tc_core.tc-bind-id
           segment-grown
           (ci.intern
             (str_cat.str-cat "segment-" (string.int->string segment-index)))
-          (I64)))
-      (set! segment-index (+ segment-index 1)))
-    (while (<
-      cache-segment-index
-      (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
+          (I64))))
+    (for [cache-segment-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
       (set!
         cache-segment-latest
         (tc_core.tc-env-with-cache
@@ -3027,8 +3097,7 @@
               (str_cat.str-cat
                 "cache-segment-"
                 (string.int->string cache-segment-index)))
-            (I64))))
-      (set! cache-segment-index (+ cache-segment-index 1)))
+            (I64)))))
     (let
       [segment-sibling : tc_core.TcTypeEnv
         (tc_core.tc-bind-id segment-base segment-id (Bool))]
@@ -3095,16 +3164,14 @@
 
 (define (tc-type-env-bind-many [env : tc_core.TcTypeEnv] [count : i64]) : tc_core.TcTypeEnv
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnv env]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         out
         (tc_core.tc-bind-id
           out
           (ci.intern (str_cat.str-cat "local" (string.int->string i)))
-          (I64)))
-      (set! i (+ i 1)))
+          (I64))))
     out))
 
 (defstruct TcTypeEnvBindManyEndpoints
@@ -3116,11 +3183,10 @@
   [env : tc_core.TcTypeEnv]
   [count : i64]) : TcTypeEnvBindManyEndpoints
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnv env]
     [first-id : i64 -1]
     [last-id : i64 -1]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [name-id : i64
           (ci.intern (str_cat.str-cat "local" (string.int->string i)))]
@@ -3128,8 +3194,7 @@
           (set! first-id name-id)
           unit)
         (set! last-id name-id)
-        (set! out (tc_core.tc-bind-id out name-id (I64)))
-        (set! i (+ i 1))))
+        (set! out (tc_core.tc-bind-id out name-id (I64)))))
     (TcTypeEnvBindManyEndpoints out first-id last-id)))
 
 (define (tc-type-env-local-cache-behavior-smoke?) : bool
@@ -4099,9 +4164,8 @@
   [carrier : tc_core.TcTypeEnvScopedCarrier]
   [count : i64]) : tc_core.TcTypeEnvScopedCarrier
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnvScopedCarrier carrier]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [name : String (str_cat.str-cat "carrier-local" (string.int->string i))]
         (set!
@@ -4109,8 +4173,7 @@
           (tc_core.tc-type-env-scoped-carrier-bind-id
             out
             (tc_core.tc-generated-name-id name)
-            (I64)))
-        (set! i (+ i 1))))
+            (I64)))))
     out))
 
 (define (tc-type-env-scoped-carrier-region-matches-env?
@@ -6293,7 +6356,7 @@
             (string.eq (tc_core.tc-env-key-name-text field-name) name)
             (set! found offset)
             (set! index (tc_core.tc-inline-field-layout-list-count (& fields))))])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (tc-inline-variant-layout-size
@@ -6304,50 +6367,44 @@
 (define (tc-inline-variant-layout-list-size-exact-id
   [variants : tc_core.TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (tc-inline-variant-layout-list-size-exact-id-at variants name-id 0))
+  (tc-inline-variant-layout-list-size-exact-id-at variants name-id))
 
 (define (tc-inline-variant-layout-list-size-exact-id-at
   [variants : tc_core.TcInlineVariantLayoutList]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    -1
+  [name-id : i64]) : i64
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-variant-layout-list-count variants))]
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (if (=
-        (tc_core.tc-inline-variant-layout-name-id
-          (tc_core.tc-global-shared-view variant))
-        name-id)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-exact-id-at
-          variants
-          name-id
-          (+ index 1))))))
+      (when
+        (=
+          (tc_core.tc-inline-variant-layout-name-id
+            (tc_core.tc-global-shared-view variant))
+          name-id)
+        (return (tc-inline-variant-layout-size variant)))))
+  -1)
 
 (define (tc-inline-variant-layout-list-size-fallback-id
   [variants : tc_core.TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (tc-inline-variant-layout-list-size-fallback-id-at variants name-id 0))
+  (tc-inline-variant-layout-list-size-fallback-id-at variants name-id))
 
 (define (tc-inline-variant-layout-list-size-fallback-id-at
   [variants : tc_core.TcInlineVariantLayoutList]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    -1
+  [name-id : i64]) : i64
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-variant-layout-list-count variants))]
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (if (tc_core.tc-inline-variant-layout-name-matches-id?
-        (tc_core.tc-inline-variant-layout-name-id
-          (tc_core.tc-global-shared-view variant))
-        name-id)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-fallback-id-at
-          variants
-          name-id
-          (+ index 1))))))
+      (when
+        (tc_core.tc-inline-variant-layout-name-matches-id?
+          (tc_core.tc-inline-variant-layout-name-id
+            (tc_core.tc-global-shared-view variant))
+          name-id)
+        (return (tc-inline-variant-layout-size variant)))))
+  -1)
 
 (define (tc-inline-aggregate-layout-variant-size-id
   [layout : (& layout tc_core.TcInlineAggregateLayout)]
@@ -6678,7 +6735,7 @@
             (tc-move-path-hash-combine seed node.value)
             out))
         (set! cursor node.parent)
-        (set! remaining (- remaining 1))))
+        (-= remaining 1)))
     out))
 
 (define (tc-moved-path-fact-path [fact : tc_core.TcMovedPathFact]) : tc_core.TcMovePath
@@ -6750,8 +6807,7 @@
               17))))]
     [deep : tc_core.TcMovePathSegments (tc_core.tc-move-path-segments-empty)]
     [deep-render : String ""]
-    [index : i64 0]
-    (while (< index 128)
+    (for [index (iterator.range 0 128)]
       (cond
         [(= (% index 3) 0)
           (set! deep (tc_core.tc-move-path-segments-append-field deep alpha-id))
@@ -6765,8 +6821,7 @@
           (set! deep (tc_core.tc-move-path-segments-append-array deep index))
           (set!
             deep-render
-            (str_cat.str-cat deep-render "[" (string.int->string index) "]"))])
-      (set! index (+ index 1)))
+            (str_cat.str-cat deep-render "[" (string.int->string index) "]"))]))
     (and
       (tc_core.tc-move-path-eq? mixed-path same-path)
       (not (tc_core.tc-move-path-eq? mixed-path sibling-path))
@@ -7196,7 +7251,7 @@
             [(Nil) (set! done true)]
             [(Cons decl rest)
               (set! (array-ref suffix.slots write-index) decl)
-              (set! write-index (- write-index 1))
+              (-= write-index 1)
               (set! cursor rest)]))
         (ast.AstDeclList
           suffix.slots
@@ -7240,7 +7295,7 @@
                   write-index
                   owner-id
                   provenance-id)
-                (set! write-index (- write-index 1))
+                (-= write-index 1)
                 (set! cursor rest)])))
         (ast.AstDeclPathList
           suffix.slots
@@ -7287,7 +7342,7 @@
                     (ast.ast-decl-list-ref decls (+ node-index remaining)))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           out)))))
@@ -7333,7 +7388,7 @@
                       (tc_core.tc-global-shared-view fallback)))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           (if found
@@ -7381,7 +7436,7 @@
                       fallback))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           out)))))
@@ -7611,7 +7666,7 @@
                   unit
                   (set! iter-ok false))))
             (tc_core.macro-segmented-program-iter-advance! (&mut iter))
-            (set! iter-index (+ iter-index 1)))
+            (+= iter-index 1))
           (tc_core.macro-segmented-program-end! state)
           (tc_core.macro-expand-scratch-release!
             (tc_core.tc-job-state-macro-state state))
@@ -7661,7 +7716,7 @@
         (macro-segmented-event-row
           (array-ref specs index)
           (array-ref specs (+ index 1))))
-      (set! index (+ index 2)))
+      (+= index 2))
     out))
 
 ;; The event index lists exactly the module/import rows of the program, in
@@ -7688,41 +7743,39 @@
       (when
         (tc_core.macro-decl-list-event-at? (& flat-decls) index)
         (set! (array-ref expected expected-count) index)
-        (set! expected-count (+ expected-count 1)))
-      (set! index (+ index 1)))
+        (+= expected-count 1))
+      (+= index 1))
     (set! index 0)
     (while (< index data.prefix-event-count)
       (set!
         (array-ref actual actual-count)
         (array-ref data.prefix-events index))
-      (set! actual-count (+ actual-count 1))
-      (set! index (+ index 1)))
+      (+= actual-count 1)
+      (+= index 1))
     (while (and ok (> node-address 0))
       (let
         [node : tc_core.MacroProgramSegmentNodeData
           (tc_core.macro-program-segment-node-data node-address)]
         [first : i64 (+ node.decls.offset start)]
         [end : i64 (+ node.decls.offset (ast.ast-decl-list-len (& node.decls)))]
-        [event : i64 0]
-        (while (< event (array-length node.events))
+        (for [event (iterator.range 0 (array-length node.events))]
           (let
             [slot : i64 (array-ref node.events event)]
             (if (and (>= slot first) (< slot end))
               (if (< actual-count count)
                 (begin
                   (set! (array-ref actual actual-count) (+ base (- slot first)))
-                  (set! actual-count (+ actual-count 1)))
+                  (+= actual-count 1))
                 (set! ok false))
-              unit)
-            (set! event (+ event 1))))
-        (set! base (+ base (- end first)))
+              unit)))
+        (+= base (- end first))
         (set! node-address node.next)
         (set! start 0)))
     (set! ok (and ok (= actual-count expected-count) (= base count)))
     (set! index 0)
     (while (and ok (< index expected-count))
       (set! ok (= (array-ref actual index) (array-ref expected index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; The alias index built from the events answers every (module, alias) pair of
@@ -7750,7 +7803,7 @@
           macro-state
           (array-ref pairs index)
           (array-ref pairs (+ index 1))))
-      (set! index (+ index 2)))
+      (+= index 2))
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
     (tc_core.macro-alias-cache-build! macro-state (& flat-decls))
@@ -7764,7 +7817,7 @@
           (array-ref pairs (+ index 1))))
         unit
         (set! ok false))
-      (set! index (+ index 2)))
+      (+= index 2))
     ok))
 
 ;; Moves `count` rows from the cursor into the emitted prefix, as the walk does.
@@ -7777,8 +7830,7 @@
         (tc_core.tc-job-state-macro-program-view-address state))]
     [out-rev : ast.AstDeclList data.prefix-rev]
     [out-paths-rev : ast.AstDeclPathList data.prefix-paths-rev]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out-rev
         (ast.ast-decl-list-prepend-builder
@@ -7790,8 +7842,7 @@
           (tc_core.macro-segmented-program-current-path state)
           (tc_core.macro-segmented-program-current-owner-id state)
           out-paths-rev))
-      (tc_core.macro-segmented-program-advance! state)
-      (set! index (+ index 1)))
+      (tc_core.macro-segmented-program-advance! state))
     (tc_core.macro-segmented-program-prefix-set! state out-rev out-paths-rev)))
 
 (define (macro-segmented-events-smoke?) : bool
@@ -7808,16 +7859,13 @@
     ;; Twenty prefix events outgrow the index's first allocation.
     [prefix-specs : (__tl_dyn-array i64) (__tl_make-array i64 44)]
     [_prefix-specs : unit
-      (let
-        [index : i64 0]
-        (while (< index 22)
-          (set!
-            (array-ref prefix-specs (* index 2))
-            (if (= (% index 7) 3)
-              3
-              1))
-          (set! (array-ref prefix-specs (+ (* index 2) 1)) (+ t1 index))
-          (set! index (+ index 1))))]
+      (for [index (iterator.range 0 22)]
+        (set!
+          (array-ref prefix-specs (* index 2))
+          (if (= (% index 7) 3)
+            3
+            1))
+        (set! (array-ref prefix-specs (+ (* index 2) 1)) (+ t1 index)))]
     [prefix : ast.AstDeclList (macro-segmented-event-rows (& prefix-specs))]
     [source-specs : (__tl_dyn-array i64) (__tl_make-array i64 18)]
     [_source-specs : unit
@@ -8090,10 +8138,8 @@
     "selected imports do not bind module aliases"))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
-  [state : tc_core.TcUnusedUnsafeState]
-  [index : i64]) : unit
-  (if (>= index 129)
-    unit
+  [state : tc_core.TcUnusedUnsafeState]) : unit
+  (for [index (iterator.range 0 129)]
     (let
       [line : i64 (+ 100 index)]
       [col : i64 (+ 200 index)]
@@ -8103,7 +8149,7 @@
         (tc_core.tc-unused-unsafe-mark-current-used! state)
         unit)
       (tc_core.tc-unused-unsafe-restore-block! state previous)
-      (tc-unused-unsafe-storage-lifetime-fill! state (+ index 1)))))
+      unit)))
 
 (define (tc-unused-unsafe-storage-lifetime-ok?) : bool
   (let
@@ -8127,7 +8173,7 @@
     (tc_core.tc-unused-unsafe-set-current-path!
       state
       (tc_core.tc-global-shared-view path))
-    (tc-unused-unsafe-storage-lifetime-fill! state 0)
+    (tc-unused-unsafe-storage-lifetime-fill! state)
     (let
       [first-span : ast.AstSourceSpan
         (tc_core.tc-unused-unsafe-block-span state 0)]
@@ -8178,7 +8224,7 @@
       state-a
       (tc_core.tc-global-shared-view path-a))
     (tc_core.tc-unused-unsafe-set-current-path! state-a path-a)
-    (tc-unused-unsafe-storage-lifetime-fill! state-a 0)
+    (tc-unused-unsafe-storage-lifetime-fill! state-a)
     (tc_core.tc-unused-unsafe-tracking-reset!
       state-b
       (tc_core.tc-global-shared-view path-b))
@@ -9560,7 +9606,7 @@
             (tc_core.tc-macro-ctfe-state state-a))]
         [failed : ctfe_support.ResultCtfe
           (ctfe_support.compiler-ctfe-eval
-            (Literal (Float "not-a-float"))
+            (& (Literal (Float "not-a-float")))
             failed-env
             8)]
         (set!
@@ -10024,8 +10070,7 @@
   (define (memo-test-decls [count : i64]) : ast.AstDeclList
     (let
       [out : ast.AstDeclList (ast.ast-decl-list-new)]
-      [index : i64 0]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (set!
           out
           (ast.ast-decl-cons
@@ -10035,8 +10080,7 @@
                 (ast.ast-param-list-new)
                 (Unit)
                 (ast.ast-node-push (Literal (Unit)))))
-            (& out)))
-        (set! index (+ index 1)))
+            (& out))))
       out)))
 
 (cfg
@@ -10069,7 +10113,7 @@
           state
           (tc_core.macro-generated-identity-id state (memo-test-identity index)))
         home)
-        (set! index (+ index 1)))
+        (+= index 1))
       index)))
 
 (cfg
@@ -10129,3 +10173,708 @@
         (memo-test-lookup state 0)
         4
         "the zeroed slot is reused"))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-spine-semantics
+    (let
+      [ids : (__tl_dyn-array i64) (__tl_make-array i64 33)]
+      [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+      [ok : bool true]
+      (for [index (iterator.range 0 33)]
+        (let
+          [name : String
+            (str_cat.str-cat "memo-lifetime-" (string.int->string index))]
+          [id : i64 (ci.intern name)]
+          (set! (array-ref ids index) id)
+          (set! env (tc_core.tc-bind-id env id (I64)))))
+      ;; More distinct non-reflexive pairs than slots force collisions. Repeat
+      ;; in the opposite order, against both the spine and a local cache layer.
+      (let
+        [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-local-cache env)]
+        [outer : i64 (array-ref ids 0)]
+        [inner : i64 (array-ref ids 32)]
+        [missing : i64 (ci.intern "memo-unbound-lifetime")]
+        [shadow : tc_core.TcTypeEnv (tc_core.tc-bind-id env outer (Bool))]
+        (for [round (iterator.range 0 2)]
+          (for [i (iterator.range 0 33)]
+            (for [j (iterator.range 0 33)]
+              (let
+                [value : i64
+                  (array-ref
+                    ids
+                    (if (= round 0)
+                      i
+                      (- 32 i)))]
+                [target : i64
+                  (array-ref
+                    ids
+                    (if (= round 0)
+                      j
+                      (- 32 j)))]
+                [expected : bool
+                  (if (= round 0)
+                    (<= i j)
+                    (>= i j))]
+                (unless
+                  (and
+                    (=
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                        env
+                        value
+                        target)
+                      expected)
+                    (=
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                        cached
+                        value
+                        target)
+                      (tc_core.tc-lifetime-outlives-lifetime-persistent-scan-id?
+                        cached
+                        value
+                        target)))
+                  (set! ok false))))))
+        (unless
+          (and
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                shadow
+                outer
+                inner))
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                missing
+                inner))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                outer
+                missing))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id? env -1 -1))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                -1
+                inner))
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                outer
+                -1)))
+          (set! ok false)))
+      (unless
+        ok
+        (io.panic
+          "typecheck: lifetime memo changed lexical ordering, shadowing or collision results")))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-job-and-scratch-isolation
+    (let
+      [caller : arena.Arena (arena.current)]
+      [owner-a : arena.Arena (arena.make)]
+      [owner-b : arena.Arena (arena.make)]
+      [outer : i64 (ci.intern "memo-job-outer")]
+      [inner : i64 (ci.intern "memo-job-inner")]
+      [_owner-a : unit
+        (unsafe
+          (arena.set! owner-a))]
+      [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state-a : tc_core.TcTypeResolutionCacheState
+        (tc_core.tc-job-state-type-resolution-cache job-a)]
+      [env-a : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job-a)
+            outer
+            (I64))
+          inner
+          (I64))]
+      [_owner-b : unit
+        (unsafe
+          (arena.set! owner-b))]
+      [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state-b : tc_core.TcTypeResolutionCacheState
+        (tc_core.tc-job-state-type-resolution-cache job-b)]
+      [env-b : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job-b)
+            inner
+            (I64))
+          outer
+          (I64))]
+      [_restore : unit
+        (unsafe
+          (arena.set! caller))]
+      [ok : bool
+        (and
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-a).outlives-slots)
+            0)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-b).outlives-slots)
+            0))]
+      [scratch : arena.Arena (arena.make)]
+      ;; First allocation happens under a decoy, but belongs to each job.
+      (in-arena
+        scratch
+        (unless
+          (and
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env-a
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env-b
+                outer
+                inner)))
+          (set! ok false)))
+      (unsafe
+        (arena.destroy scratch))
+      (let
+        [epoch-a : i64
+          (tc_core.tc-type-resolution-cache-state-data state-a).epoch]
+        [epoch-b : i64
+          (tc_core.tc-type-resolution-cache-state-data state-b).epoch]
+        (tc_core.tc-job-state-reset-derived-caches! job-b)
+        (unless
+          (and
+            (=
+              (tc_core.tc-type-resolution-cache-state-data state-a).epoch
+              epoch-a)
+            (>
+              (tc_core.tc-type-resolution-cache-state-data state-b).epoch
+              epoch-b)
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env-a
+              outer
+              inner)
+            (not
+              (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                env-b
+                outer
+                inner)))
+          (set! ok false)))
+      ;; Rewind and reuse one function-store arena with alternating order.
+      ;; Its raw addresses may repeat; the persistent-store epoch must reject
+      ;; every previous answer while the memo remains in job A's owner.
+      (let
+        [fork-arena : arena.Arena (arena.make)]
+        (unsafe
+          (arena.set! fork-arena))
+        (let
+          [mark : i64
+            (unsafe
+              (arena.tl_region_mark))]
+          (for [round (iterator.range 0 8)]
+            (let
+              [forward : bool (= (bit-and round 1) 0)]
+              [fork : tc_core.TcTypeEnv
+                (tc_core.tc-bind-id
+                  (tc_core.tc-bind-id
+                    (tc_core.tc-type-env-fork-function-store env-a)
+                    (if forward
+                      outer
+                      inner)
+                    (I64))
+                  (if forward
+                    inner
+                    outer)
+                  (I64))]
+              (unless
+                (=
+                  (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                    fork
+                    outer
+                    inner)
+                  forward)
+                (set! ok false)))
+            (unsafe
+              (arena.tl_region_reset mark))))
+        (unsafe
+          (arena.set! caller))
+        (unsafe
+          (arena.destroy fork-arena)))
+      (unless
+        (and
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env-a
+            outer
+            inner)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-a).outlives-slots)
+            tc_core.tc-outlives-memo-capacity)
+          (=
+            (array-length
+              (tc_core.tc-type-resolution-cache-state-data state-b).outlives-slots)
+            tc_core.tc-outlives-memo-capacity))
+        (set! ok false))
+      (unsafe
+        (arena.destroy owner-a))
+      (unless
+        (not
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env-b
+            outer
+            inner))
+        (set! ok false))
+      (unsafe
+        (arena.destroy owner-b))
+      (unless
+        ok
+        (io.panic
+          "typecheck: lifetime memo crossed job ownership or scratch retirement")))))
+
+(cfg
+  test
+  (test
+    lifetime-outlives-memo-structural-generation
+    (let
+      [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+      [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [owner : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-owner")]
+      [target : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-target")]
+      [token : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "memo-arena-token")]
+      [_bind : unit
+        (tc_core.tc-macro-state-bind-source-names!
+          (tc_core.tc-job-state-macro-state job)
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [base : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+      [env : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-ordinary-arena-owner base owner)
+          target
+          (I64))]
+      [region : i64 (tc_core.tc-arena-phase-region-id env owner token)]
+      [before : bool
+        (and
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env
+            region
+            target)
+          (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+            env
+            region
+            target))]
+      [active-generation : i64 (ci.intern-generation)]
+      ;; Reset this explicit session without moving the installed interner or
+      ;; rebuilding the environment: its arena-phase identity becomes stale.
+      (ci.intern-compat-state-reset! (&mut intern-state))
+      (unless
+        (and
+          before
+          (= active-generation (ci.intern-generation))
+          (not
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-scan-id?
+              env
+              region
+              target))
+          (not
+            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              region
+              target)))
+        (io.panic
+          "typecheck: lifetime memo reused an arena identity after its session reset")))))
+
+(cfg
+  test
+  (test
+    global-call-effects-job-and-scratch-isolation
+    (let
+      [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 8)]
+      [a : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          (tc_core.tc-job-state-new))]
+      [b : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          (tc_core.tc-job-state-new))]
+      [scratch : arena.Arena (arena.make)]
+      [state-a : (MutPtr tc_core.TcGlobalCallEffects)
+        (in-arena scratch (tc_core.tc-global-call-effects-ensure! a))]
+      [state-b : (MutPtr tc_core.TcGlobalCallEffects)
+        (in-arena scratch (tc_core.tc-global-call-effects-ensure! b))]
+      (for [rank (iterator.range 1 3)]
+        (let
+          [source : String
+            (if (= rank 1)
+              "(foreach ([i : i64 (let [outer : bool true] 0) 1]) unit)"
+              "(foreach ([i : i64 (let [outer : bool true] 0) 1] [j : i64 0 1]) unit)")]
+          [id : i64
+            (match (parser.parse-ast-expr-with-pools
+              (parser.compiler-parse-dispatch-env)
+              pools
+              (macro-output-source-sexpr source))
+              [(Ok value) value]
+              [_ (io.panic "effect scope fixture must parse")])]
+          [expr : ast.AstExpr
+            (ast.ast-expr-unspan-with-pools
+              (& pools)
+              (& (tc_core.tc-context-expr-get a id)))]
+          [children : ast.AstExprList
+            (ast.ast-expr-child-ids (tc_core.tc-global-shared-view expr))]
+          [body : i64 (ast.ast-expr-list-get (& children) (- children.len 1) 0)]
+          [collector : tc_core.TcGlobalEffectCollector
+            (tc_core.TcGlobalEffectCollector
+              (global_effects.new 0)
+              (tc_i64_i64_map.with-capacity 0)
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array i64 1)
+              (effect_words.new)
+              true
+              false
+              (ast.ast-let-binding-list-new)
+              -1
+              0)]
+          [outer : tc_core.TcNameIdList
+            (tc_core.tc-global-effect-bind!
+              (&mut collector)
+              tc_core.TcNameIdList.Nil
+              (ci.intern "outer")
+              (ast.AstMaybeType.Some (ast.AstType.Bool))
+              -1)]
+          [scope : tc_core.TcNameIdList outer]
+          (for [index (iterator.range 0 rank)]
+            (set!
+              scope
+              (tc_core.tc-global-effect-bind!
+                (&mut collector)
+                scope
+                (ci.intern
+                  (if (= index 0)
+                    "i"
+                    "j"))
+                (ast.AstMaybeType.Some (ast.AstType.I64))
+                -1)))
+          (tc_core.tc-global-effect-scan-scoped-children!
+            a
+            (&mut collector)
+            0
+            outer
+            expr
+            body
+            scope
+            rank)
+          (for [index (iterator.range 0 rank)]
+            (match (ast.ast-let-binding-list-get
+              (& collector.bindings)
+              (+ index 1)
+              (ast.ast-let-binding-fallback))
+              [(Binding name annotation _)
+                (test.assert-i64-eq
+                  name
+                  (ci.intern
+                    (if (= index 0)
+                      "i"
+                      "j"))
+                  "bound expressions cannot overwrite the body's binding names")
+                (test.assert-true
+                  (match annotation
+                    [(Some (ast.AstType.I64)) true]
+                    [_ false])
+                  "bound expressions cannot overwrite the body's binding types")]))))
+      (in-arena
+        (arena.Arena
+          (unsafe
+            (deref state-a).arena))
+        (let
+          [graph : global_effects.Graph
+            (unsafe
+              (deref state-a).graph)]
+          (global_effects.add-write! (&mut graph) 0 7)
+          (unsafe
+            (set! (deref state-a).graph graph))))
+      (in-arena scratch (tc_core.tc-global-effect-witness! state-a 0 7))
+      (unsafe
+        (arena.destroy scratch))
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-a 0 7)))
+        1
+        "query allocation survives the caller scratch")
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-b 0 7)))
+        0
+        "another job cannot inherit the writer")
+      (tc_core.tc-job-state-reset-derived-caches!
+        (tc_core.tc-context-job-state b))
+      (test.assert-i64-eq
+        (effect_words.len (& (tc_core.tc-global-effect-witness! state-a 0 7)))
+        1
+        "another job reset preserves the retained summary")
+      (let
+        [changed : tc_core.TcContext
+          (tc_core.tc-context-with-program
+            a
+            (ast.ast-program (ast.ast-decl-list-new)))]
+        [fresh : (MutPtr tc_core.TcGlobalCallEffects)
+          (tc_core.tc-global-call-effects-ensure! changed)]
+        (test.assert-i64-eq
+          (effect_words.len (& (tc_core.tc-global-effect-witness! fresh 0 7)))
+          0
+          "new program identity rejects the old positive summary"))
+      (tc_core.tc-job-state-retire-owned-storage!
+        (tc_core.tc-context-job-state a))
+      (tc_core.tc-job-state-retire-owned-storage!
+        (tc_core.tc-context-job-state b)))))
+
+(cfg
+  test
+  (test
+    global-effects-append-retires-collector-scratch
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [scratch : i64 (arena.tl_arena_make_small)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set scratch))]
+      [source : global_effects.Graph (global_effects.new 66)]
+      (global_effects.add-call! (&mut source) 0 65)
+      (global_effects.add-call! (&mut source) 65 64)
+      (global_effects.add-write! (&mut source) 64 7)
+      (global_effects.add-write! (&mut source) 63 8)
+      ;; Both positive and negative cached results belong to scratch.
+      (test.assert-i64-eq
+        (effect_words.len (& (global_effects.witness! (&mut source) 0 7)))
+        3
+        "source positive cache")
+      (test.assert-i64-eq
+        (effect_words.len (& (global_effects.witness! (&mut source) 0 8)))
+        0
+        "source negative cache")
+      (unsafe
+        (arena.tl_arena_set home))
+      (let
+        [kept : global_effects.Graph (global_effects.new 66)]
+        (global_effects.add-call! (&mut kept) 1 0)
+        (global_effects.append! (&mut kept) (& source))
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 0 7)))
+          3
+          "appended edges and writers survive retired scratch")
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 1 7)))
+          4
+          "appending preserves edges collected by an earlier query")
+        (let
+          [cloned : global_effects.Graph (global_effects.new 66)]
+          (global_effects.append! (&mut cloned) (& kept))
+          (test.assert-i64-eq
+            (effect_words.len (& (global_effects.witness! (&mut cloned) 1 7)))
+            4
+            "subsequent appends retain earlier and collected edges after scratch retirement"))
+        (global_effects.add-write! (&mut kept) 65 8)
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 0 8)))
+          2
+          "appended graph rebuilds query caches in its destination arena")))))
+
+(cfg
+  test
+  (test
+    global-borrow-prefix-metadata
+    (let
+      [local : i64 (ci.intern "metadata-local")]
+      [global : i64 (ci.intern "metadata-global")]
+      [facts : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
+      [saved : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
+      (for [index (iterator.range 0 64)]
+        (set!
+          facts
+          (tc_core.tc-moved-path-facts-cons
+            facts
+            (tc_core.TcMovedPathFact
+              (tc_core.tc-move-path-capture-owner
+                (tc_core.TcMovePath
+                  (if (= index 31)
+                    global
+                    local)
+                  (tc_core.tc-move-path-segments-empty))
+                (if (= index 31)
+                  0
+                  -1))
+              (tc_core.TcMovedPathKind.BorrowShared)
+              (tc_core.tc-moved-no-origin-id))))
+        (when (= index 30) (set! saved (tc_core.tc-global-shared-view facts)))
+        (test.assert-true
+          (=
+            (tc_core.tc-moved-path-facts-have-globals?
+              (tc_core.tc-global-shared-view facts))
+            (>= index 31))
+          "every prefix has exactly the globals introduced in that prefix"))
+      (test.assert-false
+        (tc_core.tc-moved-path-facts-have-globals? saved)
+        "growth and later global facts do not alter an earlier snapshot")
+      (let
+        [locals : tc_core.TcMovedPathFacts
+          (tc_core.tc-moved-path-facts-filter
+            facts
+            (tc_core.TcMovedPathFactsFilter.Root global false))]
+        (test.assert-false
+          (tc_core.tc-moved-path-facts-have-globals? locals)
+          "filtering the global rebuilds local-only prefixes")))))
+
+(cfg
+  test
+  (test
+    global-borrow-owner-key-full-width
+    (for [index (iterator.range 0 3)]
+      (let
+        [name : i64
+          (cond
+            [(= index 0) 0]
+            [(= index 1) 4294967296]
+            [else 9223372036854775807])]
+        [local : tc_core.TcMovePath
+          (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
+        [global : tc_core.TcMovePath
+          (tc_core.tc-move-path-capture-owner local 137)]
+        [fact : tc_core.TcMovedPathFact
+          (tc_core.TcMovedPathFact
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared)
+            9223372036854775807)]
+        [both : tc_core.TcMovedSet
+          (tc_core.tc-moved-add-path-fact
+            (tc_core.tc-moved-add-path-fact
+              (tc_core.tc-moved-empty)
+              local
+              (tc_core.TcMovedPathKind.BorrowShared)
+              -1)
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared)
+            9223372036854775807)]
+        [local-only : tc_core.TcMovedSet
+          (tc_core.tc-moved-remove-path-kind
+            both
+            (tc_core.tc-move-path-capture-owner global 137)
+            (tc_core.TcMovedPathKind.BorrowShared))]
+        (test.assert-i64-eq
+          (tc_core.tc-move-path-source-root-id global)
+          name
+          "global source ID roundtrips without narrowing")
+        (test.assert-i64-eq
+          fact.origin
+          9223372036854775807
+          "full origin is independent of ownership key")
+        (test.assert-i64-eq
+          fact.path.root
+          global.root
+          "capturing an existing global key is idempotent")
+        (test.assert-false
+          (tc_core.tc-move-path-conflicts? local global)
+          "same-name local and global remain distinct")
+        (test.assert-true
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
+            local
+            (tc_core.TcMovedPathKind.BorrowShared))
+          "ending the global loan preserves a same-name local")
+        (test.assert-false
+          (tc_core.tc-moved-path-facts-contains-exact-kind?
+            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
+            global
+            (tc_core.TcMovedPathKind.BorrowShared))
+          "global loan ends under its captured key")))))
+
+(cfg
+  test
+  (test
+    captured-global-reference-lifetime-survives-local-shadow
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [ctx : tc_core.TcContext
+        (macro-prepare-test-ctx (ast.ast-node-pool-context-capture-active))]
+      [name : i64 (ci.intern "captured-global-ref")]
+      [global-region : i64 (ci.intern "global-region")]
+      [local-region : i64 (ci.intern "local-region")]
+      [scalar : ast.AstType (ast.AstType.I64)]
+      (for [shape (iterator.range 0 3)]
+        (let
+          [global-type : ast.AstType
+            (cond
+              [(= shape 0) (ast.ast-ty-ref global-region (& scalar))]
+              [(= shape 1) (ast.ast-ty-mut-ref global-region (& scalar))]
+              [else (ast.ast-ty-region global-region (& scalar))])]
+          [globals : tc_core.TcTypeEnv
+            (tc_core.tc-bind-id (tc_core.tc-type-env-new) name global-type)]
+          [shadowed : tc_core.TcTypeEnv
+            (tc_core.tc-bind-id
+              (tc_core.tc-hygiene-global-env
+                (tc_core.tc-global-shared-view globals))
+              name
+              (ast.ast-ty-ref local-region (& scalar)))]
+          [local : tc_core.TcMovePath
+            (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
+          [saved : tc_core.TcTypeEnvScopedRuntimeSave
+            (tc_core.tc-type-env-scoped-runtime-enter-env!
+              (tc_core.tc-global-shared-view shadowed))]
+          (tc_core.tc-hygiene-reset-active-top-env!
+            (tc_core.tc-context-macro-state ctx)
+            globals)
+          (for [identity (iterator.range 0 3)]
+            (let
+              [global-name : i64
+                (if (= identity 0)
+                  name
+                  (tc_core.macro-hygiene-global-id
+                    (tc_core.tc-context-structural-session ctx)
+                    cbi.compiler-builtin-id-fix-empty
+                    name
+                    (= identity 1)))]
+              [global : tc_core.TcMovePath
+                (tc_core.tc-move-path-capture-owner
+                  (tc_core.TcMovePath
+                    global-name
+                    (tc_core.tc-move-path-segments-empty))
+                  137)]
+              (test.assert-i64-eq
+                (tc_core.tc-borrow-check-path-lifetime
+                  ctx
+                  (tc_core.tc-global-shared-view shadowed)
+                  global)
+                global-region
+                "captured globals preserve declared lifetimes across local shadowing")))
+          (test.assert-i64-eq
+            (tc_core.tc-borrow-check-path-lifetime ctx shadowed local)
+            local-region
+            "global lookup restores scoped locals and their lifetimes")
+          (tc_core.tc-type-env-scoped-runtime-restore! saved))))))

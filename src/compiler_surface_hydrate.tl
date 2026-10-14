@@ -5,7 +5,6 @@
 (import compiler_surface_facts as surface_facts)
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
-(import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
 
 (defstruct CompilerSurfaceHydration
@@ -30,24 +29,24 @@
 (define (compiler-surface-ast-bytes [rodata : (& rodata (__tl_dyn-array u8))]) : tlci.ResultTlciAuxLookup
   (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-ast))
 
-(define (compiler-surface-fact-bytes [rodata : (__tl_dyn-array u8)]) : tlci.ResultTlciAuxLookup
+(define (compiler-surface-fact-bytes [rodata : (& (__tl_dyn-array u8))]) : tlci.ResultTlciAuxLookup
   (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-facts))
 
-(define (compiler-surface-key [rodata : (__tl_dyn-array u8)]) : ResultCompilerSurfaceKey
+(define (compiler-surface-key [rodata : (& (__tl_dyn-array u8))]) : ResultCompilerSurfaceKey
   (match (compiler-surface-identity-bytes rodata)
     [(Missing) Missing]
     [(Err message) (Err message)]
     [(Ok schema bytes)
       (if (not (= schema surface_identity.surface-identity-schema-version))
         (Err "compiler surface: unsupported identity schema")
-        (match (surface_identity.surface-identity-decode bytes)
+        (match (surface_identity.surface-identity-decode (& bytes))
           [(Err message) (Err message)]
           [(Ok payload) (Ok payload.key)]))]))
 
 (define (compiler-surface-hydrate-payloads
-  [identity-bytes : (__tl_dyn-array u8)]
-  [ast-bytes : (__tl_dyn-array u8)]
-  [fact-bytes : (__tl_dyn-array u8)]
+  [identity-bytes : (& (__tl_dyn-array u8))]
+  [ast-bytes : (& (__tl_dyn-array u8))]
+  [fact-bytes : (& (__tl_dyn-array u8))]
   [expected-key : (& expected-key surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
@@ -58,20 +57,20 @@
       (match (surface_ast.surface-ast-decode
         ast-bytes
         structural-session
-        (owned_view.compiler-owned-place-shared-view identity.remap)
+        (& identity.remap)
         pools)
         [(Err message) (Err message)]
         [(Ok hydration)
           (match (surface_facts.surface-typecheck-facts-decode
             fact-bytes
             structural-session
-            identity.remap)
+            (& identity.remap))
             [(Err message) (Err message)]
             [(Ok facts) (Ok (CompilerSurfaceHydration hydration facts))])])]))
 
 (define (compiler-surface-hydrate
-  [rodata : (__tl_dyn-array u8)]
-  [expected-key : surface_identity.SurfaceIdentityKey]
+  [rodata : (& (__tl_dyn-array u8))]
+  [expected-key : (& surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
   (match (compiler-surface-identity-bytes rodata)
@@ -97,9 +96,9 @@
                       surface_facts.surface-typecheck-facts-schema-version))
                     (Err "compiler surface: unsupported fact schema")
                     (compiler-surface-hydrate-payloads
-                      identity-bytes
-                      ast-bytes
-                      fact-bytes
+                      (& identity-bytes)
+                      (& ast-bytes)
+                      (& fact-bytes)
                       expected-key
                       structural-session
                       pools))]))]))]))

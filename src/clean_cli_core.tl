@@ -261,8 +261,7 @@
 
 (define (clean-package-name-safe? [name : String]) : bool
   (and
-    (load.compiler-load-package-token-valid?
-      (owned_view.compiler-owned-shared-view name))
+    (load.compiler-load-package-token-valid? (& name))
     (not (string.contains name "/"))
     (not (string.contains name "\\"))))
 

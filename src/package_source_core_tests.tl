@@ -165,8 +165,7 @@
   test
   (define (package-source-binding-test-remove [path : (& path str)]) : unit
     (match (fs.try-remove-file path)
-      [(OkIoUnit) unit]
-      [(ErrIoUnit _) unit])))
+      [(or (OkIoUnit) (ErrIoUnit _)) unit])))
 
 (cfg
   test
@@ -238,7 +237,7 @@
           tlci.tlci-aux-kind-package-source-binding
           schema
           payload))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
         [(Ok packed) packed]
         [(Err message) (io.panic message)]))))
 

@@ -1,4 +1,5 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
+(import stdlib.iterator)
 (import compiler_lower as lower)
 (import compiler_optimize as optimize)
 (import stdlib.vector)
@@ -505,8 +506,7 @@
 
 (define (lower-test-product-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(BinOp _ (Mul) _ _ (I64)) true]
-    [(BinOp _ (Shl _) _ _ (I64)) true]
+    [(or (BinOp _ (Mul) _ _ (I64)) (BinOp _ (Shl _) _ _ (I64))) true]
     [_ false]))
 
 (define (lower-test-product-shape-blocks
@@ -520,16 +520,14 @@
         [(Block _ instrs)
           (let
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [index : i64 0]
             [product-block : i64 shape.product-block]
-            (while (< index count)
+            (for [index (iterator.range 0 count)]
               (if (and
                 (< product-block 0)
                 (lower-test-product-instr?
                   (ir.compiler-ir-instr-seq-ref instrs index)))
                 (set! product-block block-index)
-                unit)
-              (set! index (+ index 1)))
+                unit))
             (lower-test-product-shape-blocks
               rest
               (+ block-index 1)
@@ -542,7 +540,7 @@
   (match (lower.lower-compiler-source source)
     [(Ok program spans)
       (match (match (optimize.optimize-program-with-spans-and-level
-        program
+        (& program)
         spans
         2)
         [(Program optimized _) optimized])
@@ -853,7 +851,8 @@
             (load.compiler-load-session-state-shared-view (& previous-state))]
           (load.compiler-load-session-state-use! state))]
       (and
-        (load.compiler-load-session-state-standalone-reset-safe? previous-state)
+        (load.compiler-load-session-state-standalone-reset-safe?
+          (& previous-state))
         (= generation-before generation-after)
         (match result
           [(Err diag)
@@ -1222,7 +1221,7 @@
                 (string.eq (tc_core.tc-env-key-name-text candidate) name)
                 (set! name-id candidate))]
             [_ unit])
-          (set! index (+ index 1)))
+          (+= index 1))
         name-id)]))
 
 (define (lower-test-stable-mask
@@ -1249,7 +1248,7 @@
 
 (define (compiler-lower-stable-word-masks-ok?) : bool
   (tc_core.tc-agg-caches-reset!)
-  (match (parser.parse-ast-source (compiler-lower-stable-word-mask-source))
+  (match (parser.parse-ast-source (& (compiler-lower-stable-word-mask-source)))
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -1642,7 +1641,7 @@
 
 (define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-stdlib-string-wrapper-prune-source))
+    (& (compiler-lower-stdlib-string-wrapper-prune-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -3155,8 +3154,7 @@
 
 (define (lower-test-instr-branch-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(Branch _ _ _) 1]
-    [(TotalEnumBranch _ _ _) 1]
+    [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 1]
     [_ 0]))
 
 (define (lower-test-instr-total-enum-branch-count [instr : ir.CompilerIrInstr]) : i64
@@ -3254,11 +3252,7 @@
 
 (define (lower-test-instr-indirect-unit-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(CallIndirect _ _ _ ty)
-      (match ty
-        [(Unit) 1]
-        [_ 0])]
-    [(TailCallIndirect _ _ ty)
+    [(or (CallIndirect _ _ _ ty) (TailCallIndirect _ _ ty))
       (match ty
         [(Unit) 1]
         [_ 0])]
@@ -3284,8 +3278,8 @@
       (+
         (lower-test-value-function-count a name)
         (lower-test-value-function-count b name))]
-    [(Array values) (lower-test-call-args-array-function-count values name 0)]
-    [(Sret values _) (lower-test-call-args-array-function-count values name 0)]))
+    [(or (Array values) (Sret values _))
+      (lower-test-call-args-array-function-count values name 0)]))
 
 (define (lower-test-call-args-array-function-count
   [values : (__tl_dyn-array ir.CompilerIrValue)]
@@ -3313,9 +3307,7 @@
   [instr : ir.CompilerIrInstr]
   [function-name : (& function-name str)]) : i64
   (match instr
-    [(CallIndirect _ func _ _)
-      (lower-test-value-function-count func function-name)]
-    [(TailCallIndirect func _ _)
+    [(or (CallIndirect _ func _ _) (TailCallIndirect func _ _))
       (lower-test-value-function-count func function-name)]
     [_ 0]))
 
@@ -3374,12 +3366,10 @@
   [instr : ir.CompilerIrInstr]
   [want : ir.CompilerIrBinOp]) : i64
   (match instr
-    [(VectorBinOp payload-box)
-      (let
-        [op (ir.compiler-ir-box-field-shared-view payload-box op)]
-        (if (lower-test-binop-same? op want)
-          1
-          0))]
+    [(VectorBinOp (box (fields op)))
+      (if (lower-test-binop-same? op want)
+        1
+        0)]
     [_ 0]))
 
 (define (lower-test-instr-vector-reduce-count [instr : ir.CompilerIrInstr]) : i64
@@ -3421,16 +3411,12 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-spmd-call-count
-            (ir.compiler-ir-array-shared-view slots index))))
-      (set! index (+ index 1)))
+        (lower-test-instr-spmd-call-count
+          (ir.compiler-ir-array-shared-view slots index))))
     acc))
 
 (define (lower-test-blocks-spmd-call-count [blocks : ir.CompilerIrBlockList]) : i64
@@ -3441,13 +3427,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock) blocks.slots]
     [count : i64 blocks.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-array-shared-view slots index)
         [(Block _ instrs)
-          (set! acc (+ acc (lower-test-instr-seq-spmd-call-count instrs)))])
-      (set! index (+ index 1)))
+          (+= acc (lower-test-instr-seq-spmd-call-count instrs))]))
     acc))
 
 (define (lower-test-function-spmd-call-count
@@ -3469,7 +3453,7 @@
           (if (string.eq (ir.compiler-ir-symbol-text fname) name)
             (set! result (lower-test-blocks-spmd-call-count blocks))
             unit)])
-      (set! index (+ index 1)))
+      (+= index 1))
     result))
 
 (define (lower-test-vector-shape?
@@ -3484,57 +3468,33 @@
   [lanes : i64]
   [elem-ty : ast.AstType]) : i64
   (match instr
-    [(VectorLoad _ _ _ actual-lanes actual-ty)
+    [(or (VectorLoad _ _ _ actual-lanes actual-ty)
+         (VectorReduce _ _ _ actual-lanes actual-ty)
+         (Splat _ _ actual-lanes actual-ty))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(VectorBinOp payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(VectorReduce _ _ _ actual-lanes actual-ty)
+    [(VectorBinOp (box (fields [actual-lanes lanes] [actual-ty ty])))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(VectorStore payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(PredicatedLoad payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(GatherLoad payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(PredicatedStore payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(Select payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(Splat _ _ actual-lanes actual-ty)
+    [(VectorStore (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(PredicatedLoad (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(GatherLoad (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(PredicatedStore (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(Select (box (fields [actual-lanes lanes] [actual-ty ty])))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
@@ -3708,16 +3668,12 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-phi-count
-            (ir.compiler-ir-array-shared-view slots index))))
-      (set! index (+ index 1)))
+        (lower-test-instr-phi-count
+          (ir.compiler-ir-array-shared-view slots index))))
     acc))
 
 (define (lower-test-instr-seq-splat-shape-count
@@ -3727,18 +3683,14 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-splat-shape-count
-            (owned_view.compiler-owned-array-element-shared-view slots index)
-            lanes
-            (owned_view.compiler-owned-shared-view elem-ty))))
-      (set! index (+ index 1)))
+        (lower-test-instr-splat-shape-count
+          (owned_view.compiler-owned-array-element-shared-view slots index)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))))
     acc))
 
 ;; The instruction kinds the count checks look for; each counts through its
@@ -3820,17 +3772,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-count
-            (ir.compiler-ir-array-shared-view slots index)
-            kind)))
-      (set! index (+ index 1)))
+        (lower-test-instr-count
+          (ir.compiler-ir-array-shared-view slots index)
+          kind)))
     acc))
 
 (define (lower-test-blocks-count
@@ -3863,17 +3811,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-pack-shape-count
-            (ir.compiler-ir-array-shared-view slots index)
-            pools)))
-      (set! index (+ index 1)))
+        (lower-test-instr-pack-shape-count
+          (ir.compiler-ir-array-shared-view slots index)
+          pools)))
     acc))
 
 (define (lower-test-instr-seq-call-count
@@ -3882,17 +3826,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-call-count
-            (ir.compiler-ir-array-shared-view slots index)
-            (ir.compiler-ir-global-shared-view name))))
-      (set! index (+ index 1)))
+        (lower-test-instr-call-count
+          (ir.compiler-ir-array-shared-view slots index)
+          (ir.compiler-ir-global-shared-view name))))
     acc))
 
 (define (lower-test-instr-seq-call-before?
@@ -3919,7 +3859,7 @@
           (if (lower-test-instr-call-name? instr first)
             (set! seen-first true)
             unit))
-        (set! index (+ index 1))))
+        (+= index 1)))
     result))
 
 (define (lower-test-instr-seq-return-function-count
@@ -3928,17 +3868,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-return-function-count
-            (ir.compiler-ir-array-shared-view slots index)
-            function-name)))
-      (set! index (+ index 1)))
+        (lower-test-instr-return-function-count
+          (ir.compiler-ir-array-shared-view slots index)
+          function-name)))
     acc))
 
 (define (lower-test-instr-seq-indirect-callee-function-count
@@ -3947,17 +3883,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-indirect-callee-function-count
-            (ir.compiler-ir-array-shared-view slots index)
-            function-name)))
-      (set! index (+ index 1)))
+        (lower-test-instr-indirect-callee-function-count
+          (ir.compiler-ir-array-shared-view slots index)
+          function-name)))
     acc))
 
 (define (lower-test-instr-seq-call-arg-function-count
@@ -3967,18 +3899,14 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-call-arg-function-count
-            (ir.compiler-ir-array-shared-view slots index)
-            call-name
-            function-name)))
-      (set! index (+ index 1)))
+        (lower-test-instr-call-arg-function-count
+          (ir.compiler-ir-array-shared-view slots index)
+          call-name
+          function-name)))
     acc))
 
 (define (lower-test-instr-seq-tail-call-count
@@ -3987,17 +3915,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-tail-call-count
-            (ir.compiler-ir-array-shared-view slots index)
-            name)))
-      (set! index (+ index 1)))
+        (lower-test-instr-tail-call-count
+          (ir.compiler-ir-array-shared-view slots index)
+          name)))
     acc))
 
 (define (lower-test-instr-seq-vector-binop-op-count
@@ -4006,17 +3930,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-vector-binop-op-count
-            (ir.compiler-ir-array-shared-view slots index)
-            (owned_view.compiler-owned-shared-view want))))
-      (set! index (+ index 1)))
+        (lower-test-instr-vector-binop-op-count
+          (ir.compiler-ir-array-shared-view slots index)
+          (owned_view.compiler-owned-shared-view want))))
     acc))
 
 (define (lower-test-instr-seq-vector-shape-count
@@ -4026,18 +3946,14 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-vector-shape-count
-            (ir.compiler-ir-array-shared-view slots index)
-            lanes
-            (ast.ast-global-shared-view elem-ty))))
-      (set! index (+ index 1)))
+        (lower-test-instr-vector-shape-count
+          (ir.compiler-ir-array-shared-view slots index)
+          lanes
+          (ast.ast-global-shared-view elem-ty))))
     acc))
 
 (define (lower-test-instr-seq-binop-op-count
@@ -4046,17 +3962,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-binop-op-count
-            (ir.compiler-ir-array-shared-view slots index)
-            (ir.compiler-ir-global-shared-view op))))
-      (set! index (+ index 1)))
+        (lower-test-instr-binop-op-count
+          (ir.compiler-ir-array-shared-view slots index)
+          (ir.compiler-ir-global-shared-view op))))
     acc))
 
 (define (lower-test-instr-seq-i64-binop-op-count
@@ -4065,17 +3977,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-i64-binop-op-count
-            (ir.compiler-ir-array-shared-view slots index)
-            (ir.compiler-ir-global-shared-view op))))
-      (set! index (+ index 1)))
+        (lower-test-instr-i64-binop-op-count
+          (ir.compiler-ir-array-shared-view slots index)
+          (ir.compiler-ir-global-shared-view op))))
     acc))
 
 (define (lower-test-instr-seq-store-global-count
@@ -4084,17 +3992,13 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         acc
-        (+
-          acc
-          (lower-test-instr-store-global-count
-            (ir.compiler-ir-array-shared-view slots index)
-            name)))
-      (set! index (+ index 1)))
+        (lower-test-instr-store-global-count
+          (ir.compiler-ir-array-shared-view slots index)
+          name)))
     acc))
 
 (define (lower-test-blocks-phi-count
@@ -4312,23 +4216,22 @@
 
 (define (lower-test-function-seq-find-from
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [name : String]
-  [index : i64]) : LowerTestMaybeFunction
-  (if (>= index funcs.len)
-    (No)
+  [name : String]) : LowerTestMaybeFunction
+  (for [index (iterator.range 0 funcs.len)]
     (let
       [func : ir.CompilerIrFunction
         (ir.compiler-ir-array-shared-view funcs.slots index)]
       (match (ir.compiler-ir-global-shared-view func)
         [(Function fname _ _ _ _ _)
-          (if (string.eq (ir.compiler-ir-symbol-text fname) name)
-            (Some func)
-            (lower-test-function-seq-find-from funcs name (+ index 1)))]))))
+          (when
+            (string.eq (ir.compiler-ir-symbol-text fname) name)
+            (return (Some func)))])))
+  (No))
 
 (define (lower-test-function-seq-find
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]) : LowerTestMaybeFunction
-  (lower-test-function-seq-find-from funcs name 0))
+  (lower-test-function-seq-find-from funcs name))
 
 (define (lower-test-function-defined?
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
@@ -4419,74 +4322,58 @@
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-call-count
-                (ir.compiler-ir-block-list-view blocks)
-                (ir.compiler-ir-global-shared-view name))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-call-count
+              (ir.compiler-ir-block-list-view blocks)
+              (ir.compiler-ir-global-shared-view name)))]))
     count))
 
 (define (lower-test-functions-branch-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-count
-                (ir.compiler-ir-block-list-view blocks)
-                (Branch))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-count
+              (ir.compiler-ir-block-list-view blocks)
+              (Branch)))]))
     count))
 
 (define (lower-test-functions-return-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-count
-                (ir.compiler-ir-block-list-view blocks)
-                (Return))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-count
+              (ir.compiler-ir-block-list-view blocks)
+              (Return)))]))
     count))
 
 (define (lower-test-functions-tail-call-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : (& name str)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-tail-call-count
-                (ir.compiler-ir-block-list-view blocks)
-                name)))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-tail-call-count
+              (ir.compiler-ir-block-list-view blocks)
+              name))]))
     count))
 
 (define (lower-test-functions-direct-call-count
@@ -4501,37 +4388,29 @@
 (define (lower-test-functions-cpuid-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-count
-                (ir.compiler-ir-block-list-view blocks)
-                (Cpuid))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-count
+              (ir.compiler-ir-block-list-view blocks)
+              (Cpuid)))]))
     count))
 
 (define (lower-test-functions-xgetbv-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-count
-                (ir.compiler-ir-block-list-view blocks)
-                (Xgetbv))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-count
+              (ir.compiler-ir-block-list-view blocks)
+              (Xgetbv)))]))
     count))
 
 (define (lower-test-function-call-count
@@ -4652,8 +4531,8 @@
 (define (lower-test-call-args-distinct-vars [args : ir.CompilerIrCallArgs]) : i64
   (match args
     [(Two a b) (lower-test-values-distinct-vars a b)]
-    [(Array values) (lower-test-call-args-array-distinct-vars values)]
-    [(Sret values _) (lower-test-call-args-array-distinct-vars values)]
+    [(or (Array values) (Sret values _))
+      (lower-test-call-args-array-distinct-vars values)]
     [_ 0]))
 
 (define (lower-test-instr-seq-distinct-arg-call-count
@@ -4662,16 +4541,14 @@
   (let
     [count : i64 instrs.len]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [index : i64 0]
     [acc : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-array-shared-view slots index)
         [(Call _ found args _)
           (when
             (string.eq (ir.compiler-ir-symbol-text found) call-name)
-            (set! acc (+ acc (lower-test-call-args-distinct-vars args))))]
-        [_ unit])
-      (set! index (+ index 1)))
+            (+= acc (lower-test-call-args-distinct-vars args)))]
+        [_ unit]))
     acc))
 
 (define (lower-test-blocks-distinct-arg-call-count
@@ -4758,19 +4635,15 @@
 (define (lower-test-functions-bitcast-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index funcs.len)
+    (for [index (iterator.range 0 funcs.len)]
       (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function _ _ _ _ blocks _)
-          (set!
+          (+=
             count
-            (+
-              count
-              (lower-test-blocks-count
-                (ir.compiler-ir-block-list-view blocks)
-                (Bitcast))))])
-      (set! index (+ index 1)))
+            (lower-test-blocks-count
+              (ir.compiler-ir-block-list-view blocks)
+              (Bitcast)))]))
     count))
 
 (define (lower-test-function-store-global-count
@@ -4788,15 +4661,14 @@
 
 (define (lower-test-global-seq-has-name-at?
   [globals : ir.CompilerIrGlobalSeq]
-  [name : String]
-  [index : i64]) : bool
-  (if (>= index globals.len)
-    false
+  [name : String]) : bool
+  (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-ref globals index)
       [(Global global-name _ _)
-        (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
-          true
-          (lower-test-global-seq-has-name-at? globals name (+ index 1)))])))
+        (when
+          (string.eq (ir.compiler-ir-symbol-text global-name) name)
+          (return true))]))
+  false)
 
 (define (lower-test-global-list-has-name?
   [globals : (& globals ir.CompilerIrGlobalSeq)]
@@ -4804,59 +4676,51 @@
   (let
     [globals : ir.CompilerIrGlobalSeq
       (owned_view.compiler-owned-reference-shared-view globals)]
-    (lower-test-global-seq-has-name-at? globals name 0)))
+    (lower-test-global-seq-has-name-at? globals name)))
 
 (define (lower-test-global-function-initializer-at?
   [globals : ir.CompilerIrGlobalSeq]
   [global-name : String]
-  [function-name : String]
-  [index : i64]) : bool
-  (if (>= index globals.len)
-    false
+  [function-name : String]) : bool
+  (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-ref globals index)
       [(Global name _ initial)
-        (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
-          (match initial
-            [(Function found)
-              (string.eq (ir.compiler-ir-symbol-text found) function-name)]
-            [_ false])
-          (lower-test-global-function-initializer-at?
-            globals
-            global-name
-            function-name
-            (+ index 1)))])))
+        (when
+          (string.eq (ir.compiler-ir-symbol-text name) global-name)
+          (return
+            (match initial
+              [(Function found)
+                (string.eq (ir.compiler-ir-symbol-text found) function-name)]
+              [_ false])))]))
+  false)
 
 (define (lower-test-global-function-initializer?
   [globals : ir.CompilerIrGlobalSeq]
   [global-name : String]
   [function-name : String]) : bool
-  (lower-test-global-function-initializer-at?
-    globals
-    global-name
-    function-name
-    0))
+  (lower-test-global-function-initializer-at? globals global-name function-name))
 
 (define (lower-test-dispatch-cache-word-at?
   [globals : ir.CompilerIrGlobalSeq]
-  [name : (& name str)]
-  [index : i64]) : bool
-  (if (>= index globals.len)
-    false
+  [name : (& name str)]) : bool
+  (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-ref globals index)
       [(Global global-name ty initial)
-        (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
-          (match ty
-            [(I64)
-              (match initial
-                [(Unit) true]
-                [_ false])]
-            [_ false])
-          (lower-test-dispatch-cache-word-at? globals name (+ index 1)))])))
+        (when
+          (string.eq (ir.compiler-ir-symbol-text global-name) name)
+          (return
+            (match ty
+              [(I64)
+                (match initial
+                  [(Unit) true]
+                  [_ false])]
+              [_ false])))]))
+  false)
 
 (define (lower-test-dispatch-cache-word?
   [globals : ir.CompilerIrGlobalSeq]
   [name : (& name str)]) : bool
-  (lower-test-dispatch-cache-word-at? globals name 0))
+  (lower-test-dispatch-cache-word-at? globals name))
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (lower.lower-compiler-source (compiler-lower-defdispatch-source))
@@ -4994,7 +4858,7 @@
         (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new))))))
 
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-generated-path-source))
+  (match (parser.parse-ast-source (& (compiler-lower-generated-path-source)))
     [(Ok program)
       (match (owned_view.compiler-owned-shared-view program)
         [(Program decls-box)
@@ -5051,7 +4915,7 @@
       (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-lower-module-symbols-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-module-symbol-source))
+  (match (parser.parse-ast-source (& (compiler-lower-module-symbol-source)))
     [(Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
@@ -5085,7 +4949,8 @@
       (ast.ast-decl-root-path-cons "" (ast.ast-decl-path-list-new)))))
 
 (define (compiler-lower-package-owned-symbols-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-package-owned-symbol-source))
+  (match (parser.parse-ast-source
+    (& (compiler-lower-package-owned-symbol-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -5428,7 +5293,7 @@
     (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new))))
 
 (define (compiler-lower-module-specialize-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-module-specialize-source))
+  (match (parser.parse-ast-source (& (compiler-lower-module-specialize-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -6174,8 +6039,7 @@
 
 (define (lower-test-instr-binop-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(BinOp _ _ _ _ _) 1]
-    [(UnOp _ _ _ _) 1]
+    [(or (BinOp _ _ _ _ _) (UnOp _ _ _ _)) 1]
     [_ 0]))
 
 (define (lower-test-instr-gep-offset-count
@@ -6610,7 +6474,8 @@
     [_ false]))
 
 (define (compiler-lower-stdlib-hash-string-shape-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-stdlib-hash-string-source))
+  (match (parser.parse-ast-source
+    (& (compiler-lower-stdlib-hash-string-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -6757,27 +6622,24 @@
 ;; "global:<symbol>", "other" or "missing".
 (define (lower-test-global-initializer-kind-at
   [globals : ir.CompilerIrGlobalSeq]
-  [global-name : String]
-  [index : i64]) : String
-  (if (>= index globals.len)
-    "missing"
+  [global-name : String]) : String
+  (for [index (iterator.range 0 globals.len)]
     (match (ir.compiler-ir-global-seq-ref globals index)
       [(Global name _ initial)
-        (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
-          (match initial
-            [(I64 _) "i64"]
-            [(StaticArray bytes)
-              (str_cat.str-cat "static:" (lower-test-byte-list bytes 0))]
-            [(RuntimeGlobal _) "runtime"]
-            [(Function found)
-              (str_cat.str-cat "function:" (ir.compiler-ir-symbol-text found))]
-            [(Global found)
-              (str_cat.str-cat "global:" (ir.compiler-ir-symbol-text found))]
-            [_ "other"])
-          (lower-test-global-initializer-kind-at
-            globals
-            global-name
-            (+ index 1)))])))
+        (when
+          (string.eq (ir.compiler-ir-symbol-text name) global-name)
+          (return
+            (match initial
+              [(I64 _) "i64"]
+              [(StaticArray bytes)
+                (str_cat.str-cat "static:" (lower-test-byte-list bytes 0))]
+              [(RuntimeGlobal _) "runtime"]
+              [(Function found)
+                (str_cat.str-cat "function:" (ir.compiler-ir-symbol-text found))]
+              [(Global found)
+                (str_cat.str-cat "global:" (ir.compiler-ir-symbol-text found))]
+              [_ "other"])))]))
+  "missing")
 
 (define (lower-test-global-initializer-kind
   [globals : (& globals ir.CompilerIrGlobalSeq)]
@@ -6785,7 +6647,7 @@
   (let
     [globals : ir.CompilerIrGlobalSeq
       (owned_view.compiler-owned-reference-shared-view globals)]
-    (lower-test-global-initializer-kind-at globals global-name 0)))
+    (lower-test-global-initializer-kind-at globals global-name)))
 
 (define (compiler-lower-global-reference-initializer-mode-shape-ok?
   [mode : lower.CompilerLowerMode]) : bool
@@ -7423,7 +7285,7 @@
 
 (define (compiler-lower-runtime-substring-scratch-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-scratch-source))
+    (& (compiler-lower-runtime-substring-scratch-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7443,7 +7305,7 @@
 
 (define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-call-source))
+    (& (compiler-lower-runtime-substring-call-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7463,7 +7325,7 @@
 
 (define (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-substring-capturing-lambda-source))
+    (& (compiler-lower-runtime-substring-capturing-lambda-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -7483,7 +7345,7 @@
 
 (define (compiler-lower-runtime-atomic-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-runtime-atomic-reachable-source))
+    (& (compiler-lower-runtime-atomic-reachable-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -8151,13 +8013,11 @@
   [want : (Array i64 6)]) : bool
   (let
     [got : (Array i64 6) (compiler-lower-foreach2-row-counts src mode)]
-    [index : i64 0]
     [same : bool true]
-    (while (< index 6)
+    (for [index (iterator.range 0 6)]
       (when
         (not (= (array-ref got index) (array-ref want index)))
-        (set! same false))
-      (set! index (+ index 1)))
+        (set! same false)))
     same))
 
 (define (compiler-lower-foreach2-row-tests-ok?) : bool
@@ -9829,8 +9689,7 @@
   (let
     [found : bool false]
     [ordinary : bool false]
-    [index : i64 0]
-    (while (< index functions.len)
+    (for [index (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-array-shared-view functions.slots index)
         [(Function fname _ _ _ _ function-abi)
           (if (string.eq (ir.compiler-ir-symbol-text fname) name)
@@ -9839,8 +9698,7 @@
               (set!
                 ordinary
                 (ir.compiler-ir-function-abi-ordinary? (& function-abi))))
-            unit)])
-      (set! index (+ index 1)))
+            unit)]))
     (and found ordinary)))
 
 ;; Lower `src` in `mode`; the whole program must pass private ABI admission,
@@ -9876,7 +9734,7 @@
               (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
         [optimized : ir.CompilerIrProgram
           (match (optimize.optimize-program-with-spans-and-level
-            program
+            (& program)
             spans
             level)
             [(Program optimized _) optimized])]
@@ -10682,7 +10540,7 @@
     [_ false]))
 
 (define (compiler-lower-string-length-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-string-length-source))
+  (match (parser.parse-ast-source (& (compiler-lower-string-length-source)))
     [(Ok program)
       (match (lower-test-functions (lower-compiler-program program))
         [(Some functions)
@@ -10732,7 +10590,7 @@
 
 (define (compiler-lower-public-literal-float-to-bits-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-public-literal-float-to-bits-source))
+    (& (compiler-lower-public-literal-float-to-bits-source)))
     [(Ok program)
       (match (lower-test-functions
         (lower-compiler-program-with-decl-paths
@@ -10744,7 +10602,7 @@
     [(Err _) false]))
 
 (define (compiler-lower-string-runtime-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-string-runtime-source))
+  (match (parser.parse-ast-source (& (compiler-lower-string-runtime-source)))
     [(Ok program)
       (match (lower-compiler-program program)
         [(Ok _ _) true]
@@ -10752,7 +10610,7 @@
     [(Err _) false]))
 
 (define (compiler-lower-stdio-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-stdio-source))
+  (match (parser.parse-ast-source (& (compiler-lower-stdio-source)))
     [(Ok program)
       (match (lower-compiler-program program)
         [(Ok _ _) true]
@@ -10863,23 +10721,9 @@
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(DefFn decl-meta found _ _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefEnum decl-meta found _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefEnumLifetimes decl-meta found _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefStruct decl-meta found _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefStructLifetimes decl-meta found _ _ _ _)
+          [(or (DefFn _ found _ _ _ _) (DefEnum _ found _ _)
+               (DefEnumLifetimes _ found _ _ _) (DefStruct _ found _ _ _)
+               (DefStructLifetimes _ found _ _ _ _))
             (if (string.eq (tc_core.tc-env-key-name-text found) name)
               true
               (lower-test-decl-list-defines? rest name))]
@@ -11881,7 +11725,7 @@
     (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
-  (match (parser.parse-ast-source (compiler-lower-unsafe-ast-dce-source))
+  (match (parser.parse-ast-source (& (compiler-lower-unsafe-ast-dce-source)))
     [(Ok program)
       (match (owned_view.compiler-owned-shared-view program)
         [(Program decls-box)
@@ -11961,17 +11805,15 @@
         child-logical-id
         grown-symbol-id
         (lower.lower-global-shared-view child))]
-    [grow-index : i64 1]
     [_grow : unit
-      (while (< grow-index 16)
+      (for [grow-index (iterator.range 1 16)]
         (set!
           grown
           (lower.lower-name-env-bind-logical-symbol-id
             source-id
             child-logical-id
             grown-symbol-id
-            grown))
-        (set! grow-index (+ grow-index 1)))]
+            grown)))]
     [copied : lower.LowerNameEnv
       (lower.lower-name-env-copy-active (lower.lower-global-shared-view child))]
     [copy-branch : lower.LowerNameEnv
@@ -12100,14 +11942,12 @@
   (let
     [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [scratch : arena.Arena (arena.make)]
-    [index : i64 0]
     ;; Grow while entry scratch is active, then retire it. The state and
     ;; reused table must still be valid for the next batch entry.
     (in-arena
       scratch
-      (while (< index 128)
-        (lower.lower-alias-overlay-record! state index (+ index 1000))
-        (set! index (+ index 1))))
+      (for [index (iterator.range 0 128)]
+        (lower.lower-alias-overlay-record! state index (+ index 1000))))
     (unsafe
       (arena.tl_arena_destroy (arena.raw-handle scratch)))
     (let
@@ -12201,23 +12041,18 @@
     "negative source id degrades to exact scan while interned duplicate still resolves"))
 
 (define (compiler-lower-name-cache-capacity-ok?) : bool
-  (let
-    [count : i64 0]
-    (while (<= count 256)
-      (let
-        [ids : lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity
-            (lower.lower-name-cache-capacity count))]
-        [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
-        [key : i64 0]
-        (while (< key count)
-          (lower_i64_i64_map.insert-ref! (&mut ids) key key)
-          (set! key (+ key 1)))
-        (when
-          (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
-          (return false))
-        (set! count (+ count 1))))
-    true))
+  (for [count (iterator.range 0 (+ 256 1))]
+    (let
+      [ids : lower_i64_i64_map.Map
+        (lower_i64_i64_map.with-capacity
+          (lower.lower-name-cache-capacity count))]
+      [initial-capacity : i64 (lower_i64_i64_map.capacity (& ids))]
+      (for [key (iterator.range 0 count)]
+        (lower_i64_i64_map.insert-ref! (&mut ids) key key))
+      (when
+        (not (= (lower_i64_i64_map.capacity (& ids)) initial-capacity))
+        (return false))))
+  true)
 
 (test
   compiler-lower-name-cache-capacity
@@ -12396,9 +12231,8 @@
           (ci.intern-source-name-session-handle-from-state intern-state))]
       [definition : cis.InternMacroDefinitionIdentity
         (cis.intern-structural-session-macro-definition-identity session 1 2)]
-      [index : i64 0]
       [last : i64 -1]
-      (while (< index 600)
+      (for [index (iterator.range 0 600)]
         (set!
           last
           (cis.intern-macro-local-identity-raw
@@ -12406,8 +12240,7 @@
               session
               definition
               index
-              3)))
-        (set! index (+ index 1)))
+              3))))
       (set!
         last
         (cis.intern-macro-local-identity-raw
@@ -12519,17 +12352,11 @@
       (set!
         (array-ref identities 23)
         (compiler-lower-private-identity-raw session-a (SpmdRowView 2)))
-      (let
-        [left : i64 0]
-        (while (< left 24)
-          (let
-            [right : i64 (+ left 1)]
-            (while (< right 24)
-              (when
-                (= (array-ref identities left) (array-ref identities right))
-                (set! ok false))
-              (set! right (+ right 1)))
-            (set! left (+ left 1)))))
+      (for [left (iterator.range 0 24)]
+        (for [right (iterator.range (+ left 1) 24)]
+          (when
+            (= (array-ref identities left) (array-ref identities right))
+            (set! ok false))))
       (let
         [high-owner : i64 (+ (ci.intern-capacity) 100)]
         [high-owner-a : i64
@@ -12563,7 +12390,6 @@
           (cis.intern-structural-session-key session-a 255 0 0 0)]
         [unknown-kind-raw : i64
           (cis.intern-structural-key-raw unknown-kind-key)]
-        [index : i64 0]
         (unless (= high-owner-a high-owner-a-again) (set! ok false))
         (when (= high-owner-a high-owner-b) (set! ok false))
         (when (= collision-a collision-b) (set! ok false))
@@ -12631,13 +12457,11 @@
           (array-ref identities 23))
           [(Some (SpmdRowView ordinal)) (unless (= ordinal 2) (set! ok false))]
           [_ (set! ok false)])
-        (while (< index 700)
-          (begin
-            (compiler-lower-private-identity-raw
-              session-a
-              (CleanupHidden (+ 100000 index)))
-            unit)
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 700)]
+          (compiler-lower-private-identity-raw
+            session-a
+            (CleanupHidden (+ 100000 index)))
+          unit)
         (unless
           (=
             (compiler-lower-private-identity-raw
@@ -13625,25 +13449,12 @@
         ;; Its elements are two-word shared Slice views, like `(& str)`.
         (lower.lower-supported-reference-type? ctx nested-ref-dyn-array)
         (not (lower.lower-supported-reference-type? ctx borrowed-ref-dyn-array))
+        (= (ctfe.ctfe-type-size-with-pools pools (& layouts) (& ref)) 16)
+        (= (ctfe.ctfe-type-align-with-pools pools (& layouts) (& mut-ref)) 8)
         (=
-          (ctfe.ctfe-type-size-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            (owned_view.compiler-owned-shared-view ref))
-          16)
-        (=
-          (ctfe.ctfe-type-align-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            mut-ref)
+          (ctfe.ctfe-type-size-with-pools pools (& layouts) (& ordinary-ref))
           8)
-        (=
-          (ctfe.ctfe-type-size-with-pools
-            pools
-            (owned_view.compiler-owned-shared-view layouts)
-            ordinary-ref)
-          8)
-        (= (ctfe.ctfe-type-size-with-pools pools layouts bare-slice) -1)
+        (= (ctfe.ctfe-type-size-with-pools pools (& layouts) (& bare-slice)) -1)
         (match (tc_core.tc-inline-aggregate-type-layout ctx ref)
           [(Ok info)
             (and
@@ -14235,7 +14046,7 @@
   compiler-lower-package-alias-collision
   (test.assert-true
     (match (parser.parse-ast-source
-      (compiler-lower-package-alias-collision-source))
+      (& (compiler-lower-package-alias-collision-source)))
       [(Ok program)
         (match (lower-test-functions
           (lower-compiler-program-with-decl-paths
@@ -14271,24 +14082,24 @@
         (load.compiler-load-package-def-fn-extern
           "surface_left"
           "C:/surface_left/"
-          (svec.new)
+          (& (svec.new))
           "C:/surface_left/src/lib.tl"
           "left.src.lib"
           name
-          (ast.ast-param-list-new)
-          (I64)
-          Unavailable)]
+          (& (ast.ast-param-list-new))
+          (& (I64))
+          (& (Unavailable)))]
       [right : ast.AstDecl
         (load.compiler-load-package-def-fn-extern
           "surface_right"
           "C:/surface_right/"
-          (svec.new)
+          (& (svec.new))
           "C:/surface_right/src/lib.tl"
           "right.src.lib"
           name
-          (ast.ast-param-list-new)
-          (I64)
-          Unavailable)]
+          (& (ast.ast-param-list-new))
+          (& (I64))
+          (& (Unavailable)))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state
           (ci.intern-compat-state-capture-active))]
@@ -14494,7 +14305,7 @@
                 module-id
                 roots))]
           [_ unit])
-        (set! index (+ index 1)))
+        (+= index 1))
       found)))
 
 (cfg
@@ -14505,9 +14316,8 @@
     (let
       [out : ast.AstDeclList (ast.ast-decl-list-new)]
       [start : i64 0]
-      [index : i64 0]
       [len : i64 (string.string-length spec)]
-      (while (<= index len)
+      (for [index (iterator.range 0 (+ len 1))]
         (when
           (or (= index len) (= (string.string-ref spec index) ' '))
           (when
@@ -14530,8 +14340,7 @@
                     (ast.ast-param-list-new)
                     (ast.AstType.I64)
                     -1)))))
-          (set! start (+ index 1)))
-        (set! index (+ index 1)))
+          (set! start (+ index 1))))
       out)))
 
 (cfg
@@ -15061,12 +14870,11 @@
           (ci.intern-compat-state-new)
           right-profile)]
       [left-names : lower.LowerNameEnv Nil]
-      [bind-id : i64 0]
       (lower.compiler-lower-profile-name-reset left)
       (lower.compiler-lower-profile-name-reset right)
       ;; Equal IDs deliberately flow through two owners. A reset is allowed to
       ;; affect only the exact profile state passed to it.
-      (while (< bind-id 17)
+      (for [bind-id (iterator.range 0 17)]
         (set!
           left-names
           (lower.lower-name-env-bind-ids-profile
@@ -15074,8 +14882,7 @@
             bind-id
             bind-id
             bind-id
-            left-names))
-        (set! bind-id (+ bind-id 1)))
+            left-names)))
       (let
         [_left-env-hit : i64
           (lower.lower-name-env-lookup-symbol-id-profile
@@ -15149,13 +14956,14 @@
               1))]
         (lower.compiler-lower-profile-name-reset right)
         (let
-          [metric : i64 lower.compiler-lower-profile-name-env-binds-metric]
           [right-reset : bool true]
-          (while (< metric lower.compiler-lower-name-cache-profile-end)
+          (for [metric
+            (iterator.range
+              lower.compiler-lower-profile-name-env-binds-metric
+              lower.compiler-lower-name-cache-profile-end)]
             (when
               (not (= (lower.compiler-lower-profile-value right metric) 0))
-              (set! right-reset false))
-            (set! metric (+ metric 1)))
+              (set! right-reset false)))
           (and
             right-recorded
             right-reset
@@ -15298,9 +15106,8 @@
     [base-cache : lower.LowerNameCache
       (lower.lower-empty-global-name-cache state.address)]
     [empty-env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
-    [index : i64 0]
     [sparse-id : i64 9000001]
-    (while (< index 12)
+    (for [index (iterator.range 0 12)]
       (let
         [module-id : i64 (+ 1000 index)]
         [cache : lower.LowerNameCache
@@ -15313,8 +15120,7 @@
             (lower.lower-global-shared-view cache)
             (No))]
         (lower.lower-active-module-name-cache-insert! state module-id cache)
-        (lower.lower-active-module-local-view-insert! state module-id view))
-      (set! index (+ index 1)))
+        (lower.lower-active-module-local-view-insert! state module-id view)))
     (let
       [sparse-cache : lower.LowerNameCache
         (lower.lower-name-cache-with-module-id base-cache sparse-id)]

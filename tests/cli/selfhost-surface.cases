@@ -78,7 +78,7 @@ stdout empty
 stderr contains Usage:
 stderr contains Synopsis:
 sh CCV_commands=$(awk '/^Commands:/ { c = 1; next } c && /^[[:space:]]*$/ { c = 0; next } c && /^[^[:space:]]/ { c = 0 } c && /^[[:space:]]+typelisp / { print $2 }' "{{stderr}}" | sort -u | tr '\n' ' ')
-test "{{commands}}" = "build check clean compile doc explain fmt init inspect lint lsp new repl run test "
+test "{{commands}}" = "build check clean compile doc expand explain fmt init inspect lint lsp new repl run test "
 
 case selfhost-cli-surface-build
 run build "{{work}}/main.tl" -o "{{dir}}/build-surface{{exe}}"

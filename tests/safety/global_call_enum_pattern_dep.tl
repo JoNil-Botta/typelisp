@@ -1,0 +1,3 @@
+(defenum State
+  (g)
+  (Other))

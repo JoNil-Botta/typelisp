@@ -289,8 +289,8 @@
       [(Ok bytes)
         (match (tlci_loader.tlci-loader-load-from-bytes-with-host
           owner
-          bytes
-          (tlci_core_tests.tlci-test-host-callback-table))
+          (& bytes)
+          (& (tlci_core_tests.tlci-test-host-callback-table)))
           [(Err _) false]
           [(Ok loaded)
             (=

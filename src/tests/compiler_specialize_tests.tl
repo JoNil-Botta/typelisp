@@ -455,6 +455,8 @@
       (spec.spec-template-list-push
         (&mut items)
         (Item
+          0
+          cbi.compiler-builtin-id-fix-empty
           cbi.compiler-builtin-id-fix-x
           (ast.ast-param-list-new)
           (I64)
@@ -463,6 +465,8 @@
       (spec.spec-template-list-push
         (&mut items)
         (Item
+          1
+          cbi.compiler-builtin-id-fix-empty
           cbi.compiler-builtin-id-fix-second
           (ast.ast-param-list-new)
           (I64)
@@ -690,10 +694,11 @@
         (spec-type-key (ast.ast-ty-mut-ptr (& (ast.ast-ty-ptr (& (U8))))))
         "mutptr_ptr_u8")
       (ctfe.ctfe-type-eq
-        (spec-substitute-type
-          (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
-          subs)
-        (ast.ast-ty-mut-ptr (& (I64)))))))
+        (&
+          (spec-substitute-type
+            (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
+            subs))
+        (& (ast.ast-ty-mut-ptr (& (I64))))))))
 
 (define (compiler-specialize-owner-slice-type-ok?) : bool
   (let
@@ -802,6 +807,7 @@
     [key-a : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-a
+        cbi.compiler-builtin-id-fix-empty
         "alloc"
         values-a)]
     [count-after-first : i64
@@ -809,6 +815,7 @@
     [key-a-again : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-a
+        cbi.compiler-builtin-id-fix-empty
         "alloc"
         values-a-name)]
     [count-after-repeat : i64
@@ -822,11 +829,13 @@
     [different : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-a
+        cbi.compiler-builtin-id-fix-empty
         "alloc"
         different-values)]
     [key-b : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-b
+        cbi.compiler-builtin-id-fix-empty
         "alloc"
         values-b)]
     [render-before : String
@@ -838,7 +847,8 @@
         (&mut owner-a)
         key-a
         "alloc"
-        (spec.spec-place-shared-view values-a))]
+        (spec.spec-place-shared-view values-a)
+        0)]
     [symbol-before : String
       (spec_ci.intern-compat-state-str intern-a symbol-handle)]
     [_materialized : unit
@@ -888,6 +898,7 @@
               (spec.spec-structural-key-raw
                 (spec.spec-specialization-structural-key-with-owner
                   owner-a
+                  cbi.compiler-builtin-id-fix-empty
                   "alloc"
                   post-reset-values)))))))))
 
@@ -940,7 +951,7 @@
 ;: `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
 ;: `alloc` template is removed.
 (define (compiler-specialize-reuse-ok?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-reuse-source))
+  (match (parser.parse-ast-source (& (compiler-specialize-reuse-source)))
     [(Ok program)
       (match (spec.compiler-specialize-program program)
         [(Ok specialized)
@@ -957,6 +968,109 @@
                       decls
                       "__tl_specialized_alloc_type_i64_none")
                     1)))])]
+        [(Err _) false])]
+    [(Err _) false]))
+
+;: Two modules each define a template `pick` (#8597). Each module's calls
+;: specialize its own `pick`, so each module gets one instance, even though
+;: `main` calls its `pick` twice with the same type. Each instance sits where
+;: its template stood, with the template's path.
+(define (compiler-specialize-module-identity-other-source) : String
+  "(define (pick [comptime T : type] [x : T]) : T x)
+(define (other-uses) : i64 (pick (type i64) 1))")
+
+(define (compiler-specialize-module-identity-main-source) : String
+  "(define (pick [comptime T : type] [x : T]) : T (+ x 100))
+(define (main) : i64 (+ (pick (type i64) 5) (pick (type i64) 6)))")
+
+(define (compiler-specialize-program-decls [program : ast.AstProgram]) : ast.AstDeclList
+  (match program
+    [(Program decls-box) (ast.ast-decl-list-box-shared-view decls-box)]))
+
+;: `decls` behind a module marker, each with `path`.
+(define (compiler-specialize-push-module!
+  [out : (&mut out ast.AstDeclList)]
+  [paths : (&mut paths ast.AstDeclPathList)]
+  [module : i64]
+  [decls : ast.AstDeclList]
+  [path : String]) : unit
+  (ast.ast-decl-list-push out (ast.ast-decl-module-id module))
+  (ast.ast-decl-path-list-push-with-owner-id
+    paths
+    (string.copy (& path))
+    cbi.compiler-builtin-id-fix-empty)
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-decl-list-len (& decls)))
+      (ast.ast-decl-list-push
+        out
+        (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+      (ast.ast-decl-path-list-push-with-owner-id
+        paths
+        (string.copy (& path))
+        cbi.compiler-builtin-id-fix-empty)
+      (set! index (+ index 1)))))
+
+;: The declaration names of `decls`, one per line; a module marker is `@`.
+(define (compiler-specialize-decl-shape [decls : (& decls ast.AstDeclList)]) : String
+  (let
+    [text : String ""]
+    [index : i64 0]
+    (while (< index (ast.ast-decl-list-len decls))
+      (set!
+        text
+        (str_cat.str-cat
+          text
+          (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
+            [(Module _) "@"]
+            [(DefFn _ name _ _ _ _) (spec_ci.intern-str name)]
+            [_ "?"])
+          "\n"))
+      (set! index (+ index 1)))
+    text))
+
+(define (compiler-specialize-module-identity-ok?) : bool
+  (match (parser.parse-ast-source
+    (& (compiler-specialize-module-identity-other-source)))
+    [(Ok other)
+      (match (parser.parse-ast-source
+        (& (compiler-specialize-module-identity-main-source)))
+        [(Ok main)
+          (let
+            [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 8)]
+            [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+            (compiler-specialize-push-module!
+              (&mut decls)
+              (&mut paths)
+              (spec_ci.intern "other")
+              (compiler-specialize-program-decls other)
+              "other.tl")
+            (compiler-specialize-push-module!
+              (&mut decls)
+              (&mut paths)
+              cbi.compiler-builtin-id-fix-empty
+              (compiler-specialize-program-decls main)
+              "main.tl")
+            (match (compiler-specialize-program-with-paths
+              (ast.ast-program decls)
+              paths
+              "fallback.tl")
+              [(Ok specialized out-paths)
+                (let
+                  [out : ast.AstDeclList
+                    (compiler-specialize-program-decls specialized)]
+                  (and
+                    (string.eq
+                      (compiler-specialize-decl-shape (& out))
+                      "@\n__tl_specialized_pick_type_i64_none\nother-uses\n@\n__tl_specialized_pick_type_i64_none\nmain\n")
+                    (= (ast.ast-decl-path-list-len (& out-paths)) 6)
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& out-paths) 1 "")
+                      "other.tl")
+                    (string.eq
+                      (ast.ast-decl-path-list-get (& out-paths) 4 "")
+                      "main.tl")))]
+              [(Err _) false]))]
         [(Err _) false])]
     [(Err _) false]))
 
@@ -1071,6 +1185,8 @@
         (spec.spec-template-list-push
           (&mut out)
           (Item
+            0
+            cbi.compiler-builtin-id-fix-empty
             cbi.compiler-builtin-id-fix-x
             (ast.ast-param-list-new)
             (I64)
@@ -1078,6 +1194,8 @@
         (spec.spec-template-list-push
           (&mut out)
           (Item
+            1
+            cbi.compiler-builtin-id-fix-empty
             cbi.compiler-builtin-id-fix-second
             (ast.ast-param-list-new)
             (Bool)
@@ -1123,7 +1241,7 @@
         cbi.compiler-builtin-id-fix-second)
         [(Some template)
           (match template
-            [(Item name _ _ _) (= name cbi.compiler-builtin-id-fix-second)])]
+            [(Item _ _ name _ _ _) (= name cbi.compiler-builtin-id-fix-second)])]
         [(None) false])
       (match (spec-cache-lookup cache cbi.compiler-builtin-id-fix-second)
         [(Some name-id) (= name-id cbi.compiler-builtin-id-fix-second)]
@@ -1135,8 +1253,8 @@
         [(Bool flag) flag]
         [_ false])
       (ctfe.ctfe-type-eq
-        (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U)
-        (Bool)))))
+        (& (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U))
+        (& (Bool))))))
 
 (define (compiler-specialize-reflection-string-param-ok?) : bool
   (match (parser.parse-ast-source
@@ -1210,7 +1328,7 @@
   [second-index : i64]
   [second-arg : String]) : parser.ResultAstProgram
   (let
-    [program (try (parser.parse-ast-source source))]
+    [program (try (parser.parse-ast-source (& source)))]
     (compiler-generated-decl-mark!
       (ast.ast-place-shared-view program)
       first-index
@@ -1577,6 +1695,7 @@
         [key : spec.SpecStructuralKey
           (spec.spec-specialization-structural-key-with-owner
             owner
+            cbi.compiler-builtin-id-fix-empty
             "wide"
             values)]
         [handle : i64
@@ -1584,7 +1703,8 @@
             (&mut owner)
             key
             "wide"
-            values)]
+            values
+            0)]
         (set! (array-ref handles index) handle)
         (if (string.eq (spec_ci.intern-compat-state-str intern-state handle) "")
           unit
@@ -1614,10 +1734,11 @@
 ;; these source-local tests isolate the specialization traversal itself.
 (define (compiler-specialize-resource-error? [body : String]) : bool
   (match (parser.parse-ast-source
-    (str_cat.str-cat
-      "(define (bad [comptime T : type]) : i64 "
-      body
-      ") (define (main) : i64 (bad (type i64)))"))
+    (&
+      (str_cat.str-cat
+        "(define (bad [comptime T : type]) : i64 "
+        body
+        ") (define (main) : i64 (bad (type i64)))")))
     [(Ok program)
       (match (spec.compiler-specialize-program program)
         [(Err _) true]
@@ -1725,6 +1846,7 @@
   (unless (compiler-specialize-name-key-ok?) (return 0))
   (unless (compiler-specialize-structural-key-ok?) (return 0))
   (unless (compiler-specialize-reuse-ok?) (return 0))
+  (unless (compiler-specialize-module-identity-ok?) (return 0))
   (unless (compiler-specialize-subst-ok?) (return 0))
   (unless (compiler-specialize-value-subst-ok?) (return 0))
   (unless (compiler-specialize-resource-ok?) (return 0))

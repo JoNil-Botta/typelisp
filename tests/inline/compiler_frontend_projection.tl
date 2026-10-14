@@ -39,7 +39,7 @@
 (define (check-projection [source : String] [expected-kind : i64]) : unit
   (tc.compiler-typecheck-reset-file-state!)
   (tc.tc-prefix-snapshot-cache-clear!)
-  (match (parser.parse-ast-source (string.copy source))
+  (match (parser.parse-ast-source (& (string.copy source)))
     [(Ok program)
       (let
         [before : i64 api.compiler-typecheck-pipeline-runs]
@@ -65,7 +65,7 @@
           "fixture exercises the intended checked result")
         (tc.compiler-typecheck-reset-file-state!)
         (tc.tc-prefix-snapshot-cache-clear!)
-        (match (parser.parse-ast-source source)
+        (match (parser.parse-ast-source (& source))
           [(Ok reparsed)
             (let
               [before : i64 api.compiler-typecheck-pipeline-runs]

@@ -1,4 +1,5 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for the typechecker self-tests.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -201,7 +202,7 @@
               (set! found true)
               unit)]
           [CompilerDiagnosticNoString unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (compiler-typecheck-help-contains?
@@ -1957,7 +1958,7 @@
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (parser.parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
+  (match (parser.parse-ast-source-diagnostic-with-cfg entry-path (& src) cfgs)
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths-cache
         program
@@ -2113,9 +2114,9 @@
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (compiler-typecheck-smoke-prefix-cache-loaded-check
     (load.compiler-load-file-with-paths-and-roots-cfg
-      entry-path
+      (& entry-path)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
     stdlib-roots
     cfgs))
@@ -2177,15 +2178,15 @@
     (let
       [loaded-a : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-a
+          (& entry-a)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       [loaded-b : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-b
+          (& entry-b)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       (if (compiler-typecheck-smoke-prefix-cache-loaded-check
         loaded-a
@@ -2235,15 +2236,15 @@
     (let
       [loaded-a : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-a
+          (& entry-a)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       [loaded-b : load.ResultCompilerLoadWithPaths
         (load.compiler-load-file-with-paths-and-roots-cfg
-          entry-b
+          (& entry-b)
           (sym_i64_env.sym-i64-empty)
-          (tc_core.tc-global-shared-view roots)
+          (& roots)
           cfgs)]
       (if (compiler-typecheck-smoke-prefix-cache-loaded-check
         loaded-a
@@ -2339,7 +2340,7 @@
         (ctfe.ctfe-env-empty-with-pools
           (ast.ast-node-pool-context-shared-view (& source-pools)))
         name-id
-        (Type (I64)))]
+        (& (Type (I64))))]
     [installed-type-id : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& installed-pools))
@@ -2540,7 +2541,9 @@
 (define (compiler-typecheck-smoke-generated-import-decl
   [source : String]
   [key : String]) : ast.AstDecl
-  (match (parser.parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
+  (match (parser.parse-ast-source-diagnostic
+    "target/tc_state_entry.tl"
+    (& source))
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons decl _)
@@ -2629,9 +2632,9 @@
 (define (main) : i64 42)"))
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      (tc_core.tc-global-shared-view entry)
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view roots)
+      (& roots)
       cfgs)
       [(Ok decls paths _ _)
         (match (tc_api.typecheck-compiler-program-with-paths-cache
@@ -2925,10 +2928,10 @@
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         (tc_core.tc-global-shared-view state-a)
-        entry
-        source
+        (& entry)
+        (& source)
         (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
+        (& roots)
         No
         cfgs
         pools)
@@ -3043,8 +3046,8 @@
           (tc_core.tc-global-shared-view stdlib-root))
         items)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (load.compiler-load-test-mkdir base)
-    (load.compiler-load-test-mkdir stdlib-root)
+    (load.compiler-load-test-mkdir (& base))
+    (load.compiler-load-test-mkdir (& stdlib-root))
     (compiler-typecheck-smoke-write-text dep "(define value : i64 42)")
     (compiler-typecheck-smoke-write-text
       entry
@@ -3066,7 +3069,7 @@
         "entry.tl")]
     [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (load.compiler-load-test-mkdir dir)
+    (load.compiler-load-test-mkdir (& dir))
     (compiler-typecheck-smoke-write-text dep "(define imported : i64 true)")
     (compiler-typecheck-smoke-write-text
       entry
@@ -3074,9 +3077,9 @@
 (import dep)
 (define (main) : i64 0)")
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      (tc_core.tc-global-shared-view roots)
+      (& roots)
       cfgs)
       [(Ok decls paths _ _)
         (match (tc_api.typecheck-compiler-program-with-paths-cache
@@ -3116,7 +3119,7 @@
         (load.compiler-load-session-state-shared-view (& load-state))
         entry
         (sym_i64_env.sym-i64-empty)
-        (tc_core.tc-global-shared-view roots)
+        (& roots)
         cfgs
         (ast.ast-node-pool-context-shared-view (& pools)))
         [(Ok decls paths modules _)
@@ -3159,9 +3162,9 @@
 (define (main) : i64 (provider.bumped 41))")
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      roots
+      (& roots)
       cfgs)
       [(Err diag)
         (and
@@ -3236,9 +3239,9 @@
 (define (main) : i64 0)")
     (tc_api.compiler-typecheck-reset-load-session!)
     (match (load.compiler-load-file-with-paths-and-roots-cfg
-      entry
+      (& entry)
       (sym_i64_env.sym-i64-empty)
-      roots
+      (& roots)
       cfgs)
       [(Ok _ _ _ _)
         (tc_core.tc-macro-state-bind-source-names!
@@ -3377,17 +3380,17 @@
         (load.compiler-load-canonical-module-id-from-path path))]
     (match (parser.parse-ast-source-diagnostic
       (tc_core.tc-global-shared-view path)
-      source)
+      (& source))
       [(Ok program)
         (match (load.compiler-load-surface-summary-build
-          (tc_core.tc-global-shared-view path)
+          (& path)
           path-id
-          (load.compiler-load-dirname path)
-          program
+          (& (load.compiler-load-dirname path))
+          (& program)
           fallback-id
           false)
           [(Ok summary)
-            (load.compiler-load-record-surface-summary! summary)
+            (load.compiler-load-record-surface-summary! (& summary))
             true]
           [(Err _) false])]
       [(Err _) false])))
@@ -3409,7 +3412,7 @@
     (if (compiler-typecheck-smoke-record-surface-summary?
       provider-path
       provider-source)
-      (match (parser.parse-ast-source-diagnostic "" entry-source)
+      (match (parser.parse-ast-source-diagnostic "" (& entry-source))
         [(Ok entry-program)
           (match (tc_api.typecheck-compiler-program-with-paths-checked
             entry-program
@@ -3540,7 +3543,7 @@
         (compiler-typecheck-smoke-expr-parsed-id
           (ast.ast-expr-list-get exprs index 0)
           name))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-typecheck-smoke-expr-parsed-id
@@ -3641,7 +3644,7 @@
                     name-id
                     -1)]
                 [_ -1]))
-            (set! index (+ index 1))))
+            (+= index 1)))
         found)]))
 
 (define (compiler-typecheck-smoke-required-parsed-id
@@ -4433,7 +4436,7 @@
   [src : String]
   [path : String]
   [message : String]) : bool
-  (match (parser.parse-ast-source src)
+  (match (parser.parse-ast-source (& src))
     [(Ok program)
       (match (tc_api.typecheck-compiler-program-with-paths
         program
@@ -4819,7 +4822,7 @@
   [expected-change : bool]) : bool
   (let
     [ok : bool
-      (match (parser.parse-ast-source-diagnostic "" source)
+      (match (parser.parse-ast-source-diagnostic "" (& source))
         [(Ok program)
           (match (tc_core.macro-expand-program program)
             [(Ok _ _)
@@ -5174,39 +5177,36 @@
             (cis.intern-structural-key-raw a-pair))
             [(No) true]
             [_ false])))
-      (let
-        [index : i64 0]
-        (while (< index 700)
-          (let
-            [key : cis.InternStructuralKey
-              (cis.intern-structural-session-composite-triple-key
-                (cis.intern-structural-session-handle-from-source-names
-                  ctx-a-handle)
-                (+ 1000 index)
-                (+ 2000 index)
-                (+ 3000 index))]
-            [phase : cis.InternArenaPhaseIdentity
-              (cis.intern-structural-session-arena-phase-identity
-                session-a
-                (Region
-                  (+ (ci.intern-capacity) 4000 index)
-                  (+ (ci.intern-capacity) 5000 index)))]
-            (unless
-              (=
-                (cis_tests.intern-structural-session-key-middle session-a key)
-                (+ 2000 index))
-              (set! ok false))
-            (match (cis.intern-structural-session-arena-phase-record
+      (for [index (iterator.range 0 700)]
+        (let
+          [key : cis.InternStructuralKey
+            (cis.intern-structural-session-composite-triple-key
+              (cis.intern-structural-session-handle-from-source-names
+                ctx-a-handle)
+              (+ 1000 index)
+              (+ 2000 index)
+              (+ 3000 index))]
+          [phase : cis.InternArenaPhaseIdentity
+            (cis.intern-structural-session-arena-phase-identity
               session-a
-              phase)
-              [(Some (Region owner token))
-                (unless
-                  (and
-                    (= owner (+ (ci.intern-capacity) 4000 index))
-                    (= token (+ (ci.intern-capacity) 5000 index)))
-                  (set! ok false))]
-              [_ (set! ok false)])
-            (set! index (+ index 1)))))
+              (Region
+                (+ (ci.intern-capacity) 4000 index)
+                (+ (ci.intern-capacity) 5000 index)))]
+          (unless
+            (=
+              (cis_tests.intern-structural-session-key-middle session-a key)
+              (+ 2000 index))
+            (set! ok false))
+          (match (cis.intern-structural-session-arena-phase-record
+            session-a
+            phase)
+            [(Some (Region owner token))
+              (unless
+                (and
+                  (= owner (+ (ci.intern-capacity) 4000 index))
+                  (= token (+ (ci.intern-capacity) 5000 index)))
+                (set! ok false))]
+            [_ (set! ok false)])))
       (set!
         ok
         (and
@@ -5324,7 +5324,6 @@
       [macro-b : i64 (ci.intern-composite-pair-id module-b name-id)]
       [macro-state : tc_core.TcMacroState
         (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))]
-      [growth-cursor : i64 0]
       [ok : bool true]
       (tc_core.compiler-tc-macro-profile-reset)
       (tc_core.compiler-tc-macro-profile-record-entry!
@@ -5376,14 +5375,13 @@
             2
             1
             11)))
-      (while (< growth-cursor 32)
+      (for [growth-cursor (iterator.range 0 32)]
         (tc_core.compiler-tc-macro-profile-record-entry!
           macro-state
           macro-b
           "profile-dense-module-b/profile-dense-macro"
           (+ growth-cursor 100)
-          growth-cursor)
-        (set! growth-cursor (+ growth-cursor 1)))
+          growth-cursor))
       (set!
         ok
         (and

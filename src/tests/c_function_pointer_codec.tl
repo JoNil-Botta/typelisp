@@ -39,7 +39,7 @@
   (let
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new
-        (c-function-codec-bytes 17 (ast.ast-c-function-mode-key mode) true)
+        (& (c-function-codec-bytes 17 (ast.ast-c-function-mode-key mode) true))
         (c-function-codec-session)
         (__tl_make-array i64 0))]
     [decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
@@ -58,7 +58,7 @@
   (let
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new
-        (c-function-codec-bytes signature mode complete)
+        (& (c-function-codec-bytes signature mode complete))
         (c-function-codec-session)
         (__tl_make-array i64 0))]
     [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
@@ -103,7 +103,7 @@
       (ast.ast-node-pool-context-type-push pools (CFunc 1 NonNull))]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new
-        (c-function-codec-bytes signature 1 true)
+        (& (c-function-codec-bytes signature 1 true))
         (c-function-codec-session)
         (__tl_make-array i64 0))]
     [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]

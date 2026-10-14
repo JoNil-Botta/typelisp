@@ -4684,16 +4684,10 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : bool
   (match elem-ty
-    [(I64) (= lanes 4)]
-    [(U64) (= lanes 4)]
-    [(F64) (= lanes 4)]
-    [(F32) (= lanes 8)]
-    [(I32) (= lanes 8)]
-    [(U32) (= lanes 8)]
-    [(I16) (= lanes 16)]
-    [(U16) (= lanes 16)]
-    [(I8) (= lanes 32)]
-    [(U8) (= lanes 32)]
+    [(or (I64) (U64) (F64)) (= lanes 4)]
+    [(or (F32) (I32) (U32)) (= lanes 8)]
+    [(or (I16) (U16)) (= lanes 16)]
+    [(or (I8) (U8)) (= lanes 32)]
     [_ false]))
 
 (define (compiler-backend-avx2-shape-diagnostic
@@ -5063,15 +5057,14 @@
           (if (compiler-backend-vector-home-valid? home)
             (Ok home)
             (Err (compiler-backend-vector-home-unavailable role)))]
-        [(RegisterPair _ _)
-          (Err (compiler-backend-vector-home-unavailable role))]
         [(Spill _)
           (Err
             (str_cat.str-cat
               "backend: vector spills are not implemented for "
               role))]
         ;; A rematerialised value is an i64-class constant/address, never a vector.
-        [(Remat _) (Err (compiler-backend-vector-home-unavailable role))])]
+        [(or (RegisterPair _ _) (Remat _))
+          (Err (compiler-backend-vector-home-unavailable role))])]
     [(No) (Err (compiler-backend-vector-home-unavailable role))]))
 
 (define (compiler-backend-mask-home-unavailable [role : String]) : String
@@ -5113,14 +5106,14 @@
             home)
             (Ok (compiler_abi.compiler-abi-register-spelling home))
             (Err (compiler-backend-mask-home-unavailable role)))]
-        [(RegisterPair _ _) (Err (compiler-backend-mask-home-unavailable role))]
         [(Spill _)
           (Err
             (str_cat.str-cat
               "backend: mask spills are not implemented for "
               role))]
         ;; A rematerialised value is i64-class, never a mask register.
-        [(Remat _) (Err (compiler-backend-mask-home-unavailable role))])]
+        [(or (RegisterPair _ _) (Remat _))
+          (Err (compiler-backend-mask-home-unavailable role))])]
     [(No) (Err (compiler-backend-mask-home-unavailable role))]))
 
 (define (compiler-backend-mask-var-stack-operand
@@ -5277,11 +5270,9 @@
 (define (compiler-backend-avx2-masked-move-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I64) "vpmaskmovq"]
-    [(U64) "vpmaskmovq"]
+    [(or (I64) (U64)) "vpmaskmovq"]
     [(F64) "vmaskmovpd"]
-    [(I32) "vpmaskmovd"]
-    [(U32) "vpmaskmovd"]
+    [(or (I32) (U32)) "vpmaskmovd"]
     [(F32) "vmaskmovps"]
     [_ ""]))
 
@@ -5291,45 +5282,33 @@
   (match op
     [(Add)
       (match elem-ty
-        [(I64) "vpaddq"]
-        [(U64) "vpaddq"]
-        [(I32) "vpaddd"]
-        [(U32) "vpaddd"]
-        [(I16) "vpaddw"]
-        [(U16) "vpaddw"]
-        [(I8) "vpaddb"]
-        [(U8) "vpaddb"]
+        [(or (I64) (U64)) "vpaddq"]
+        [(or (I32) (U32)) "vpaddd"]
+        [(or (I16) (U16)) "vpaddw"]
+        [(or (I8) (U8)) "vpaddb"]
         [(F64) "vaddpd"]
         [(F32) "vaddps"]
         [_ ""])]
     [(Sub)
       (match elem-ty
-        [(I64) "vpsubq"]
-        [(U64) "vpsubq"]
-        [(I32) "vpsubd"]
-        [(U32) "vpsubd"]
-        [(I16) "vpsubw"]
-        [(U16) "vpsubw"]
-        [(I8) "vpsubb"]
-        [(U8) "vpsubb"]
+        [(or (I64) (U64)) "vpsubq"]
+        [(or (I32) (U32)) "vpsubd"]
+        [(or (I16) (U16)) "vpsubw"]
+        [(or (I8) (U8)) "vpsubb"]
         [(F64) "vsubpd"]
         [(F32) "vsubps"]
         [_ ""])]
     [(Mul)
       (match elem-ty
-        [(I32) "vpmulld"]
-        [(U32) "vpmulld"]
-        [(I16) "vpmullw"]
-        [(U16) "vpmullw"]
+        [(or (I32) (U32)) "vpmulld"]
+        [(or (I16) (U16)) "vpmullw"]
         [(F64) "vmulpd"]
         [(F32) "vmulps"]
         [_ ""])]
     [(Shl _)
       (match elem-ty
-        [(I64) "vpsllvq"]
-        [(U64) "vpsllvq"]
-        [(I32) "vpsllvd"]
-        [(U32) "vpsllvd"]
+        [(or (I64) (U64)) "vpsllvq"]
+        [(or (I32) (U32)) "vpsllvd"]
         [_ ""])]
     [(Shr _)
       (match elem-ty
@@ -5339,36 +5318,15 @@
         [_ ""])]
     [(BitAnd)
       (match elem-ty
-        [(I64) "vpand"]
-        [(U64) "vpand"]
-        [(I32) "vpand"]
-        [(U32) "vpand"]
-        [(I16) "vpand"]
-        [(U16) "vpand"]
-        [(I8) "vpand"]
-        [(U8) "vpand"]
+        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpand"]
         [_ ""])]
     [(BitOr)
       (match elem-ty
-        [(I64) "vpor"]
-        [(U64) "vpor"]
-        [(I32) "vpor"]
-        [(U32) "vpor"]
-        [(I16) "vpor"]
-        [(U16) "vpor"]
-        [(I8) "vpor"]
-        [(U8) "vpor"]
+        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpor"]
         [_ ""])]
     [(BitXor)
       (match elem-ty
-        [(I64) "vpxor"]
-        [(U64) "vpxor"]
-        [(I32) "vpxor"]
-        [(U32) "vpxor"]
-        [(I16) "vpxor"]
-        [(U16) "vpxor"]
-        [(I8) "vpxor"]
-        [(U8) "vpxor"]
+        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpxor"]
         [_ ""])]
     [_ ""]))
 
@@ -5378,8 +5336,7 @@
   (match op
     [(Mul)
       (match elem-ty
-        [(I64) true]
-        [(U64) true]
+        [(or (I64) (U64)) true]
         [_ false])]
     [_ false]))
 
@@ -5398,12 +5355,10 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : bool
   (and
     (match elem-ty
-      [(I8) true]
-      [(U8) true]
+      [(or (I8) (U8)) true]
       [_ false])
     (match op
-      [(Shl _) true]
-      [(Shr _) true]
+      [(or (Shl _) (Shr _)) true]
       [_ false])))
 
 (define (compiler-backend-byte-vector-mul?
@@ -5411,8 +5366,7 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : bool
   (and
     (match elem-ty
-      [(I8) true]
-      [(U8) true]
+      [(or (I8) (U8)) true]
       [_ false])
     (match op
       [(Mul) true]
@@ -5423,12 +5377,10 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : bool
   (and
     (match elem-ty
-      [(I16) true]
-      [(U16) true]
+      [(or (I16) (U16)) true]
       [_ false])
     (match op
-      [(Shl _) true]
-      [(Shr _) true]
+      [(or (Shl _) (Shr _)) true]
       [_ false])))
 
 (define (compiler-backend-word-vector-shift-mnemonic
@@ -6424,12 +6376,9 @@
   (match elem-ty
     [(F64) "vbroadcastsd"]
     [(F32) "vbroadcastss"]
-    [(I32) "vpbroadcastd"]
-    [(U32) "vpbroadcastd"]
-    [(I16) "vpbroadcastw"]
-    [(U16) "vpbroadcastw"]
-    [(I8) "vpbroadcastb"]
-    [(U8) "vpbroadcastb"]
+    [(or (I32) (U32)) "vpbroadcastd"]
+    [(or (I16) (U16)) "vpbroadcastw"]
+    [(or (I8) (U8)) "vpbroadcastb"]
     [_ "vpbroadcastq"]))
 
 (define (compiler-backend-splat-memory-load
@@ -6530,7 +6479,7 @@
                     (compiler-backend-global-shared-view xmm-reg)
                     backend-state))]
               (Ok (str_cat.str-cat asm "    vbroadcastss " xmm-reg ", ")))]
-          [(I32)
+          [(or (I32) (U32))
             (let
               [asm
                 (try
@@ -6547,24 +6496,7 @@
                   "vpbroadcastd"
                   gp32
                   xmm-reg)))]
-          [(U32)
-            (let
-              [asm
-                (try
-                  (compiler-backend-emit-load-value
-                    assignments
-                    value
-                    gp-reg
-                    backend-state))]
-              (Ok
-                (compiler-backend-simd-splat-gpr-asm
-                  mode
-                  asm
-                  "vmovd"
-                  "vpbroadcastd"
-                  gp32
-                  xmm-reg)))]
-          [(I16)
+          [(or (I16) (U16))
             (let
               [asm
                 (try
@@ -6583,45 +6515,7 @@
                   "\n    vpbroadcastw "
                   xmm-reg
                   ", ")))]
-          [(U16)
-            (let
-              [asm
-                (try
-                  (compiler-backend-emit-load-value
-                    assignments
-                    value
-                    gp-reg
-                    backend-state))]
-              (Ok
-                (str_cat.str-cat
-                  asm
-                  "    vmovd "
-                  gp32
-                  ", "
-                  xmm-reg
-                  "\n    vpbroadcastw "
-                  xmm-reg
-                  ", ")))]
-          [(I8)
-            (let
-              [asm
-                (try
-                  (compiler-backend-emit-load-value
-                    assignments
-                    value
-                    gp-reg
-                    backend-state))]
-              (Ok
-                (str_cat.str-cat
-                  asm
-                  "    vmovd "
-                  gp32
-                  ", "
-                  xmm-reg
-                  "\n    vpbroadcastb "
-                  xmm-reg
-                  ", ")))]
-          [(U8)
+          [(or (I8) (U8))
             (let
               [asm
                 (try
@@ -7150,16 +7044,10 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : bool
   (match elem-ty
-    [(I64) (= lanes 8)]
-    [(U64) (= lanes 8)]
-    [(F64) (= lanes 8)]
-    [(F32) (= lanes 16)]
-    [(I32) (= lanes 16)]
-    [(U32) (= lanes 16)]
-    [(I16) (= lanes 32)]
-    [(U16) (= lanes 32)]
-    [(I8) (= lanes 64)]
-    [(U8) (= lanes 64)]
+    [(or (I64) (U64) (F64)) (= lanes 8)]
+    [(or (F32) (I32) (U32)) (= lanes 16)]
+    [(or (I16) (U16)) (= lanes 32)]
+    [(or (I8) (U8)) (= lanes 64)]
     [_ false]))
 
 (define (compiler-backend-avx512-shape-diagnostic
@@ -7190,14 +7078,10 @@
   (match elem-ty
     [(F64) "vmovupd"]
     [(F32) "vmovups"]
-    [(I64) "vmovdqu64"]
-    [(U64) "vmovdqu64"]
-    [(I32) "vmovdqu32"]
-    [(U32) "vmovdqu32"]
-    [(I16) "vmovdqu16"]
-    [(U16) "vmovdqu16"]
-    [(I8) "vmovdqu8"]
-    [(U8) "vmovdqu8"]
+    [(or (I64) (U64)) "vmovdqu64"]
+    [(or (I32) (U32)) "vmovdqu32"]
+    [(or (I16) (U16)) "vmovdqu16"]
+    [(or (I8) (U8)) "vmovdqu8"]
     [_ ""]))
 
 ;; The shared SIMD emitters take the vector ISA as a CompilerBackendMode: Avx2
@@ -7489,33 +7373,26 @@
             remaining
             seen
             (+ index 1)))]
-      [(VectorBinOp payload-box)
-        (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
-          [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
-          (if (= dst var)
-            (Vector lanes elem-ty)
-            (compiler-backend-simd-copy-shape-seq
-              blocks
-              instrs
-              var
-              remaining
-              seen
-              (+ index 1))))]
-      [(VectorCompare payload-box)
-        (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
-          (if (= dst var)
-            (Mask lanes)
-            (compiler-backend-simd-copy-shape-seq
-              blocks
-              instrs
-              var
-              remaining
-              seen
-              (+ index 1))))]
+      [(VectorBinOp (box (fields dst lanes [elem-ty ty])))
+        (if (= dst var)
+          (Vector lanes elem-ty)
+          (compiler-backend-simd-copy-shape-seq
+            blocks
+            instrs
+            var
+            remaining
+            seen
+            (+ index 1)))]
+      [(VectorCompare (box (fields dst lanes)))
+        (if (= dst var)
+          (Mask lanes)
+          (compiler-backend-simd-copy-shape-seq
+            blocks
+            instrs
+            var
+            remaining
+            seen
+            (+ index 1)))]
       [(Mov dst src _)
         (match (if (= dst var)
           (match src
@@ -7734,49 +7611,35 @@
   (match op
     [(Add)
       (match elem-ty
-        [(I64) "vpaddq"]
-        [(U64) "vpaddq"]
-        [(I32) "vpaddd"]
-        [(U32) "vpaddd"]
-        [(I16) "vpaddw"]
-        [(U16) "vpaddw"]
-        [(I8) "vpaddb"]
-        [(U8) "vpaddb"]
+        [(or (I64) (U64)) "vpaddq"]
+        [(or (I32) (U32)) "vpaddd"]
+        [(or (I16) (U16)) "vpaddw"]
+        [(or (I8) (U8)) "vpaddb"]
         [(F64) "vaddpd"]
         [(F32) "vaddps"]
         [_ ""])]
     [(Sub)
       (match elem-ty
-        [(I64) "vpsubq"]
-        [(U64) "vpsubq"]
-        [(I32) "vpsubd"]
-        [(U32) "vpsubd"]
-        [(I16) "vpsubw"]
-        [(U16) "vpsubw"]
-        [(I8) "vpsubb"]
-        [(U8) "vpsubb"]
+        [(or (I64) (U64)) "vpsubq"]
+        [(or (I32) (U32)) "vpsubd"]
+        [(or (I16) (U16)) "vpsubw"]
+        [(or (I8) (U8)) "vpsubb"]
         [(F64) "vsubpd"]
         [(F32) "vsubps"]
         [_ ""])]
     [(Mul)
       (match elem-ty
-        [(I64) "vpmullq"]
-        [(U64) "vpmullq"]
-        [(I32) "vpmulld"]
-        [(U32) "vpmulld"]
-        [(I16) "vpmullw"]
-        [(U16) "vpmullw"]
+        [(or (I64) (U64)) "vpmullq"]
+        [(or (I32) (U32)) "vpmulld"]
+        [(or (I16) (U16)) "vpmullw"]
         [(F64) "vmulpd"]
         [(F32) "vmulps"]
         [_ ""])]
     [(Shl _)
       (match elem-ty
-        [(I64) "vpsllvq"]
-        [(U64) "vpsllvq"]
-        [(I32) "vpsllvd"]
-        [(U32) "vpsllvd"]
-        [(I16) "vpsllvw"]
-        [(U16) "vpsllvw"]
+        [(or (I64) (U64)) "vpsllvq"]
+        [(or (I32) (U32)) "vpsllvd"]
+        [(or (I16) (U16)) "vpsllvw"]
         [_ ""])]
     [(Shr _)
       (match elem-ty
@@ -7789,36 +7652,18 @@
         [_ ""])]
     [(BitAnd)
       (match elem-ty
-        [(I64) "vpandq"]
-        [(U64) "vpandq"]
-        [(I32) "vpandd"]
-        [(U32) "vpandd"]
-        [(I16) "vpandd"]
-        [(U16) "vpandd"]
-        [(I8) "vpandd"]
-        [(U8) "vpandd"]
+        [(or (I64) (U64)) "vpandq"]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpandd"]
         [_ ""])]
     [(BitOr)
       (match elem-ty
-        [(I64) "vporq"]
-        [(U64) "vporq"]
-        [(I32) "vpord"]
-        [(U32) "vpord"]
-        [(I16) "vpord"]
-        [(U16) "vpord"]
-        [(I8) "vpord"]
-        [(U8) "vpord"]
+        [(or (I64) (U64)) "vporq"]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpord"]
         [_ ""])]
     [(BitXor)
       (match elem-ty
-        [(I64) "vpxorq"]
-        [(U64) "vpxorq"]
-        [(I32) "vpxord"]
-        [(U32) "vpxord"]
-        [(I16) "vpxord"]
-        [(U16) "vpxord"]
-        [(I8) "vpxord"]
-        [(U8) "vpxord"]
+        [(or (I64) (U64)) "vpxorq"]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpxord"]
         [_ ""])]
     [_ ""]))
 
@@ -7946,16 +7791,14 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : bool
   (match elem-ty
-    [(I64) (= lanes 8)]
-    [(U64) (= lanes 8)]
+    [(or (I64) (U64)) (= lanes 8)]
     [_ false]))
 
 (define (compiler-backend-lane-id-avx2-i64-shape-ok?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [lanes : i64]) : bool
   (match elem-ty
-    [(I64) (= lanes 4)]
-    [(U64) (= lanes 4)]
+    [(or (I64) (U64)) (= lanes 4)]
     [_ false]))
 
 (define (compiler-backend-avx512-i64-lane-id-data) : String
@@ -8181,36 +8024,25 @@
 (define (compiler-backend-avx2-int-compare-eq-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I64) "vpcmpeqq"]
-    [(U64) "vpcmpeqq"]
-    [(I32) "vpcmpeqd"]
-    [(U32) "vpcmpeqd"]
-    [(I16) "vpcmpeqw"]
-    [(U16) "vpcmpeqw"]
-    [(I8) "vpcmpeqb"]
-    [(U8) "vpcmpeqb"]
+    [(or (I64) (U64)) "vpcmpeqq"]
+    [(or (I32) (U32)) "vpcmpeqd"]
+    [(or (I16) (U16)) "vpcmpeqw"]
+    [(or (I8) (U8)) "vpcmpeqb"]
     [_ ""]))
 
 (define (compiler-backend-avx2-int-compare-gt-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I64) "vpcmpgtq"]
-    [(U64) "vpcmpgtq"]
-    [(I32) "vpcmpgtd"]
-    [(U32) "vpcmpgtd"]
-    [(I16) "vpcmpgtw"]
-    [(U16) "vpcmpgtw"]
-    [(I8) "vpcmpgtb"]
-    [(U8) "vpcmpgtb"]
+    [(or (I64) (U64)) "vpcmpgtq"]
+    [(or (I32) (U32)) "vpcmpgtd"]
+    [(or (I16) (U16)) "vpcmpgtw"]
+    [(or (I8) (U8)) "vpcmpgtb"]
     [_ ""]))
 
 (define (compiler-backend-avx2-unsigned-compare?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : bool
   (match elem-ty
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
+    [(or (U64) (U32) (U16) (U8)) true]
     [_ false]))
 
 (define (compiler-backend-avx2-unsigned-sign-shift
@@ -8227,8 +8059,7 @@
   (match elem-ty
     [(U64) "vpsllq"]
     [(U32) "vpslld"]
-    [(U16) "vpsllw"]
-    [(U8) "vpsllw"]
+    [(or (U16) (U8)) "vpsllw"]
     [_ ""]))
 
 (define (compiler-backend-avx2-compare-invert-asm [reg : String] [tmp : String]) : String
@@ -8399,14 +8230,7 @@
   [dst-reg : String]
   [elem-ty : compiler_ast_types.AstType]) : String
   (match (compiler-backend-global-shared-view op)
-    [(Eq)
-      (compiler-backend-avx2-emit-signed-int-compare-asm
-        op
-        lhs-reg
-        rhs-reg
-        dst-reg
-        elem-ty)]
-    [(Ne)
+    [(or (Eq) (Ne))
       (compiler-backend-avx2-emit-signed-int-compare-asm
         op
         lhs-reg
@@ -8571,10 +8395,8 @@
 (define (compiler-backend-avx2-gather-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I32) "vpgatherqd"]
-    [(U32) "vpgatherqd"]
-    [(I64) "vpgatherqq"]
-    [(U64) "vpgatherqq"]
+    [(or (I32) (U32)) "vpgatherqd"]
+    [(or (I64) (U64)) "vpgatherqq"]
     [(F32) "vgatherqps"]
     [(F64) "vgatherqpd"]
     [_ ""]))
@@ -8586,9 +8408,7 @@
 (define (compiler-backend-gather-dword-element?
   [elem-ty : compiler_ast_types.AstType]) : bool
   (match elem-ty
-    [(I32) true]
-    [(U32) true]
-    [(F32) true]
+    [(or (I32) (U32) (F32)) true]
     [_ false]))
 
 (define (compiler-backend-avx2-gather-mask-reg [dst-reg : String]) : String
@@ -9334,9 +9154,7 @@
         4)]
     [dword : bool
       (match (& elem-ty)
-        [(I32) true]
-        [(U32) true]
-        [(F32) true]
+        [(or (I32) (U32) (F32)) true]
         [_ false])]
     [needs-high : bool (> lanes selector-lanes)]
     [active-reg : String "%r10"]
@@ -9691,7 +9509,7 @@
     (compiler_optimize.opt-type-eq
       type-segment-bases
       load-elem-ty
-      (compiler-backend-global-shared-view bin-elem-ty))
+      (& bin-elem-ty))
     (compiler-backend-vector-binop-memory-source-supported?
       op
       bin-lanes
@@ -9703,8 +9521,7 @@
 (define (compiler-backend-vector-prefix-bool-op?
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]) : bool
   (match op
-    [(All) true]
-    [(Any) true]
+    [(or (All) (Any)) true]
     [_ false]))
 
 (define (compiler-backend-avx2-vector-prefix-shape-ok?
@@ -13165,33 +12982,19 @@
 (define (compiler-backend-avx2-scalar-move-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I64) "movq"]
-    [(U64) "movq"]
-    [(F64) "movq"]
-    [(I32) "movl"]
-    [(U32) "movl"]
-    [(F32) "movl"]
-    [(I16) "movw"]
-    [(U16) "movw"]
-    [(I8) "movb"]
-    [(U8) "movb"]
-    [(Bool) "movb"]
+    [(or (I64) (U64) (F64)) "movq"]
+    [(or (I32) (U32) (F32)) "movl"]
+    [(or (I16) (U16)) "movw"]
+    [(or (I8) (U8) (Bool)) "movb"]
     [_ ""]))
 
 (define (compiler-backend-avx2-scalar-temp-reg
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
-    [(I64) "%r10"]
-    [(U64) "%r10"]
-    [(F64) "%r10"]
-    [(I32) "%r10d"]
-    [(U32) "%r10d"]
-    [(F32) "%r10d"]
-    [(I16) "%r10w"]
-    [(U16) "%r10w"]
-    [(I8) "%r10b"]
-    [(U8) "%r10b"]
-    [(Bool) "%r10b"]
+    [(or (I64) (U64) (F64)) "%r10"]
+    [(or (I32) (U32) (F32)) "%r10d"]
+    [(or (I16) (U16)) "%r10w"]
+    [(or (I8) (U8) (Bool)) "%r10b"]
     [_ ""]))
 
 (define (compiler-backend-avx2-lane-fill-mnemonic [lane-bytes : i64]) : String
@@ -15435,8 +15238,7 @@
       (match (compiler_regalloc.compiler-reg-assignment-lookup assignments var)
         [(Some location)
           (match location
-            [(Register _) true]
-            [(RegisterPair _ _) true]
+            [(or (Register _) (RegisterPair _ _)) true]
             [_ false])]
         [(No) false])]
     [_ true]))
@@ -15685,8 +15487,7 @@
 
 (define (compiler-backend-float-type? [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(F64) true]
-    [(F32) true]
+    [(or (F64) (F32)) true]
     [_ false]))
 
 (define (compiler-backend-float-move [ty : (& ty compiler_ast_types.AstType)]) : String
@@ -15770,13 +15571,11 @@
         var-id)
         [(Some location)
           (match location
-            [(Register home)
-              (compiler-backend-emit-register-home-into! out home reg)]
             ;; Loading a whole register-group var into one register is not a
             ;; scalar op; word extraction goes through CompilerIrInstr.Word.
             ;; Word0's home is the low register -- used only by the (unreached
             ;; here) group paths.
-            [(RegisterPair home _)
+            [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-register-home-into! out home reg)]
             [(Spill offset)
               (compiler-backend-asm-append5
@@ -15819,20 +15618,7 @@
     var-id)
     [(Some location)
       (match location
-        [(Register home)
-          (let
-            [home-name : String
-              (compiler_abi.compiler-abi-register-spelling home)]
-            (if (string.eq home-name reg)
-              unit
-              (compiler-backend-asm-append5
-                out
-                "    movq "
-                reg
-                ", "
-                home-name
-                "\n")))]
-        [(RegisterPair home _)
+        [(or (Register home) (RegisterPair home _))
           (let
             [home-name : String
               (compiler_abi.compiler-abi-register-spelling home)]
@@ -15905,8 +15691,6 @@
               (if (string.eq home-name reg)
                 ""
                 (str_cat.str-cat "    " mov " " home-name ", " reg "\n")))]
-          ;; A register-group var is never float-class; unreachable.
-          [(RegisterPair _ _) ""]
           [(Spill offset)
             (str_cat.str-cat
               "    "
@@ -15918,9 +15702,10 @@
               ", "
               reg
               "\n")]
+          ;; A register-group var is never float-class; unreachable.
           ;; A rematerialisable value is a constant/address (i64-class), never a
           ;; float; unreachable here.
-          [(Remat _) ""])]
+          [(or (RegisterPair _ _) (Remat _)) ""])]
       [(No)
         (str_cat.str-cat
           "    "
@@ -15952,8 +15737,6 @@
               (if (string.eq home-name reg)
                 ""
                 (str_cat.str-cat "    " mov " " reg ", " home-name "\n")))]
-          ;; A register-group var is never float-class; unreachable.
-          [(RegisterPair _ _) ""]
           [(Spill offset)
             (str_cat.str-cat
               "    "
@@ -15965,8 +15748,9 @@
                 backend-state
                 offset)
               "\n")]
+          ;; A register-group var is never float-class; unreachable.
           ;; A rematerialised value is never float-class; unreachable.
-          [(Remat _) ""])]
+          [(or (RegisterPair _ _) (Remat _)) ""])]
       [(No)
         (str_cat.str-cat
           "    "
@@ -18293,67 +18077,29 @@
     [ty : compiler_ast_types.AstType
       (owned_view.compiler-owned-reference-shared-view ty)]
     (match ty
-      [(I64) 8]
-      [(U64) 8]
-      [(F64) 8]
-      [(I32) 4]
-      [(U32) 4]
-      [(F32) 4]
-      [(I16) 2]
-      [(U16) 2]
-      [(I8) 1]
-      [(U8) 1]
-      [(Bool) 1]
-      [(Char) 1]
-      [(Unit) 0]
-      [(Never) 0]
-      [(Expr) 0]
-      [(ExprList) 0]
-      [(CFunc _ _) 8]
-      [(Func _ _) 8]
-      [(Tuple _) 8]
-      [(Array _ _) 8]
-      [(DynArray _) 8]
+      [(or (I32) (U32) (F32)) 4]
+      [(or (I16) (U16)) 2]
+      [(or (I8) (U8) (Bool) (Char)) 1]
       ;; A bare slice has no runtime value layout.
-      [(Slice _) 0]
-      [(Box _) 8]
-      [(Ptr _) 8]
-      [(MutPtr _) 8]
-      [(Ref _ inner)
+      [(or (Unit) (Never) (Expr) (ExprList) (Slice _)) 0]
+      [(or (Ref _ inner) (MutRef _ inner))
         (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
           type-segment-bases
           inner)
           16
           8)]
-      [(MutRef _ inner)
-        (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
-          type-segment-bases
-          inner)
-          16
-          8)]
-      [(Region _ inner)
+      [(or (Region _ inner) (Invalidate _ inner))
         (let
           [ty
             (compiler_ast_types.ast-type-segment-bases-get
               type-segment-bases
               inner)]
           (compiler-backend-type-size type-segment-bases ty))]
-      [(Invalidate _ inner)
-        (let
-          [ty
-            (compiler_ast_types.ast-type-segment-bases-get
-              type-segment-bases
-              inner)]
-          (compiler-backend-type-size type-segment-bases ty))]
-      [(Enum _) 8]
-      [(EnumArgs _ _) 8]
-      [(Struct _) 8]
-      [(StructArgs _ _) 8]
-      [(String) 8]
-      [(Str) 8]
-      [(Bytes) 8]
-      [(Var _) 8]
-      [(VarArgs _ _) 8])))
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Array _ _)
+           (DynArray _) (Box _) (Ptr _) (MutPtr _) (Enum _) (EnumArgs _ _)
+           (Struct _) (StructArgs _ _) (String) (Str) (Bytes) (Var _)
+           (VarArgs _ _))
+        8])))
 
 (define (compiler-backend-f64-type? [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
@@ -18362,25 +18108,13 @@
 
 (define (compiler-backend-type-signed? [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
+    [(or (I64) (I32) (I16) (I8)) true]
     [_ false]))
 
 (define (compiler-backend-intlike-scalar-type?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
-    [(I32) true]
-    [(U32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
-    [(Bool) true]
-    [(Char) true]
+    [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8) (Bool) (Char)) true]
     [_ false]))
 
 (define (compiler-backend-hex-digit [n : i64]) : String
@@ -19615,15 +19349,9 @@
         id)
         [(Some location)
           (match location
-            [(Register home)
-              (compiler-backend-emit-load-register-to-reg
-                type-segment-bases
-                (compiler_abi.compiler-abi-register-spelling home)
-                ty
-                reg)]
             ;; A whole register-group is loaded word-wise by the group
             ;; ABI paths; reaching the generic scalar load means word0's home.
-            [(RegisterPair home _)
+            [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-load-register-to-reg
                 type-segment-bases
                 (compiler_abi.compiler-abi-register-spelling home)
@@ -20041,13 +19769,8 @@
         var-id)
         [(Some location)
           (match location
-            [(Register home)
-              (compiler-backend-emit-load-immediate-to-reg
-                value
-                (compiler_abi.compiler-abi-register-spelling home)
-                backend-state)]
             ;; An immediate never targets a whole register-group; unreached.
-            [(RegisterPair home _)
+            [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-load-immediate-to-reg
                 value
                 (compiler_abi.compiler-abi-register-spelling home)
@@ -20080,14 +19803,7 @@
   [xmm-reg : String]
   [gp-reg : String]) : String
   (match elem-ty
-    [(I32)
-      (str_cat.str-cat
-        "    vmovd "
-        xmm-reg
-        ", "
-        (compiler-backend-reg-part gp-reg 4)
-        "\n")]
-    [(U32)
+    [(or (I32) (U32))
       (str_cat.str-cat
         "    vmovd "
         xmm-reg
@@ -20100,8 +19816,7 @@
 (define (compiler-backend-i64-u64-type?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
+    [(or (I64) (U64)) true]
     [_ false]))
 
 (define (compiler-backend-emit-vmovq-xmm-to-var
@@ -20115,14 +19830,7 @@
     var-id)
     [(Some location)
       (match location
-        [(Register home)
-          (str_cat.str-cat
-            "    vmovq "
-            xmm-reg
-            ", "
-            (compiler_abi.compiler-abi-register-spelling home)
-            "\n")]
-        [(RegisterPair home _)
+        [(or (Register home) (RegisterPair home _))
           (str_cat.str-cat
             "    vmovq "
             xmm-reg
@@ -20431,8 +20139,7 @@
               [(I64) true]
               [_ false])
             (match op
-              [(Min) true]
-              [(Max) true]
+              [(or (Min) (Max)) true]
               [_ false]))))
         (compiler-backend-instr-error
           instr-diag
@@ -20476,7 +20183,7 @@
                     (if (compiler_regalloc.compiler-reg-vector-reduce-mask-scratch?
                       op
                       lanes
-                      (compiler-backend-global-shared-view elem-ty))
+                      (& elem-ty))
                       (compiler-backend-scavenge-xmm-reg
                         dst
                         (compiler-backend-three-exclude
@@ -20588,13 +20295,7 @@
       acc-xmm
       scratch-xmm)
     (match elem-ty
-      [(I8)
-        (compiler-backend-vector-reduce-byte-shift-asm
-          mnemonic
-          1
-          acc-xmm
-          scratch-xmm)]
-      [(U8)
+      [(or (I8) (U8))
         (compiler-backend-vector-reduce-byte-shift-asm
           mnemonic
           1
@@ -20825,34 +20526,7 @@
           acc-xmm
           "\n"
           ""))]
-    [(I16)
-      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
-        mnemonic
-        zmm
-        ymm
-        elem-ty
-        acc-xmm
-        acc-ymm
-        scratch-xmm)]
-    [(U16)
-      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
-        mnemonic
-        zmm
-        ymm
-        elem-ty
-        acc-xmm
-        acc-ymm
-        scratch-xmm)]
-    [(I8)
-      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
-        mnemonic
-        zmm
-        ymm
-        elem-ty
-        acc-xmm
-        acc-ymm
-        scratch-xmm)]
-    [(U8)
+    [(or (I16) (U16) (I8) (U8))
       (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
         mnemonic
         zmm
@@ -22396,10 +22070,7 @@
 
 (define (compiler-backend-unsigned-rel-ty? [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
+    [(or (U64) (U32) (U16) (U8)) true]
     [_ false]))
 
 (define (compiler-backend-global-type-lookup
@@ -22467,24 +22138,19 @@
   (match value
     [(Var id) (compiler_regalloc.compiler-reg-var-types-lookup types id)]
     [(Global name) (compiler-backend-global-type-lookup global-types name)]
-    [(GlobalAddr _) (Some (U64))]
+    [(or (GlobalAddr _) (Function _)) (Some (U64))]
     [(I64 _) (Some (I64))]
     [(Bool _) (Some (Bool))]
     [(Char _) (Some (Char))]
     [(F64 _) (Some (F64))]
     [(String _) (Some (String))]
     [(Bytes _) (Some (compiler_ast_types.ast-ty-dyn-array (& (U8))))]
-    [(Function _) (Some (U64))]
     [_ (No)]))
 
 (define (compiler-backend-binop-bit-or-shift?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
-    [(Shl _) true]
-    [(Shr _) true]
+    [(or (BitAnd) (BitOr) (BitXor) (Shl _) (Shr _)) true]
     [_ false]))
 
 (define (compiler-backend-missing-compare-operand-ty
@@ -22523,8 +22189,7 @@
       ;; source cast, so recovering the type from the value would turn a U64
       ;; shift into a signed/arithmetic operation after propagation.
       (match op
-        [(Shl _) result-ty]
-        [(Shr _) result-ty]
+        [(or (Shl _) (Shr _)) result-ty]
         [_
           (match (compiler-backend-value-type types global-types lhs)
             [(Some ty) ty]
@@ -22649,8 +22314,7 @@
 (define (compiler-backend-bit-test-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(BitTestEq) true]
-    [(BitTestNe) true]
+    [(or (BitTestEq) (BitTestNe)) true]
     [_ false]))
 
 (define (compiler-backend-binop-compare-flags-reg-asm
@@ -22721,8 +22385,8 @@
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : compiler_ast_types.AstType]) : String
   (match op
-    [(Eq) "sete"]
-    [(Ne) "setne"]
+    [(or (Eq) (BitTestEq)) "sete"]
+    [(or (Ne) (BitTestNe)) "setne"]
     [(Lt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "setb"
@@ -22739,8 +22403,6 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "setae"
         "setge")]
-    [(BitTestEq) "sete"]
-    [(BitTestNe) "setne"]
     [_ ""]))
 
 (define (compiler-backend-binop-cmp-reg-asm
@@ -23377,12 +23039,13 @@
 (define (compiler-backend-magic-home-reg-name
   [hoist : CompilerBackendConstHoistHome]) : String
   (match hoist
-    [(CompilerBackendNoConstHoistHome) ""]
     [(CompilerBackendConstHoistHomeReg reg _ wide?)
       (if wide?
         ""
         (compiler_abi.compiler-abi-register-spelling reg))]
-    [(CompilerBackendConstHoistHomeFrame _ _) ""]))
+    [(or (CompilerBackendNoConstHoistHome)
+         (CompilerBackendConstHoistHomeFrame _ _))
+      ""]))
 
 ;; The current site's planned home when `value` is the exact wide literal the
 ;; planner recorded. Other value kinds and defensive value mismatches fall
@@ -23397,8 +23060,9 @@
           (if (and wide? (= expect n))
             (compiler_abi.compiler-abi-register-spelling reg)
             "")]
-        [(CompilerBackendConstHoistHomeFrame _ _) ""]
-        [(CompilerBackendNoConstHoistHome) ""])]
+        [(or (CompilerBackendConstHoistHomeFrame _ _)
+             (CompilerBackendNoConstHoistHome))
+          ""])]
     [_ ""]))
 
 ;; Site lookup keyed by the current emission point (the same drift-proof
@@ -23551,17 +23215,13 @@
     (compiler-backend-u64-high-bit? d))
     0
     (match (compiler-backend-unsigned-divisor-magic d)
-      [(RoundUp magic _) (cast magic : i64)]
-      [(RoundDown magic _) (cast magic : i64)]
+      [(or (RoundUp magic _) (RoundDown magic _)) (cast magic : i64)]
       [(No) 0])))
 
 (define (compiler-backend-const-hoist-divmod-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Div) true]
-    [(Mod) true]
-    [(SafeDiv) true]
-    [(SafeMod) true]
+    [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
     [_ false]))
 
 ;; Ordinary integer binops whose wide RHS literal is materialised in a
@@ -23570,14 +23230,7 @@
 (define (compiler-backend-const-hoist-wide-binop-op?
   [op : compiler_ir_types.CompilerIrBinOp]) : bool
   (match op
-    [(Add) true]
-    [(Sub) true]
-    [(Mul) true]
-    [(And) true]
-    [(Or) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (Sub) (Mul) (And) (Or) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 (define (compiler-backend-const-hoist-instr-wide?
@@ -24079,17 +23732,18 @@
           (let
             [ids : backend_label_i64_map.Map
               (compiler_regalloc.compiler-reg-loop-depth-block-ids
-                (compiler-backend-global-shared-view dense-blocks)
-                (backend_label_i64_map.with-capacity
-                  (compiler_regalloc.compiler-reg-bits-map-capacity count))
+                (& dense-blocks)
+                (&
+                  (backend_label_i64_map.with-capacity
+                    (compiler_regalloc.compiler-reg-bits-map-capacity count)))
                 0)]
             [nest : compiler_regalloc.CompilerRegLoopNest
-              (compiler_regalloc.compiler-reg-loop-nest-build dense-blocks)]
+              (compiler_regalloc.compiler-reg-loop-nest-build (& dense-blocks))]
             [points : (__tl_dyn-array i64)
               (compiler_regalloc.compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
-                intervals
+                (& intervals)
                 vars)]
             ;; At most one site can be published for each final IR
             ;; instruction. Use that function-derived bound for both site and
@@ -24137,9 +23791,7 @@
               (compiler_regalloc.compiler-reg-loop-nest-header-count nest))
               (let
                 [h : i64
-                  (compiler_regalloc.compiler-reg-loop-nest-header
-                    (compiler-backend-global-shared-view nest)
-                    hx)]
+                  (compiler_regalloc.compiler-reg-loop-nest-header (& nest) hx)]
                 [total : i64 0]
                 [rlo : i64 0]
                 [le : i64 0]
@@ -24579,7 +24231,7 @@
       (set!
         out
         (compiler_regalloc.compiler-reg-interval-seq-append
-          out
+          (& out)
           (compiler_regalloc.CompilerRegInterval
             (+ vars index)
             (array-ref lo index)
@@ -25470,8 +25122,7 @@
 (define (compiler-backend-binop-wants-remainder?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Mod) true]
-    [(SafeMod) true]
+    [(or (Mod) (SafeMod)) true]
     [_ false]))
 
 (define (compiler-backend-literal-divmod-shape?
@@ -25479,10 +25130,7 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : bool
   (and
     (match op
-      [(Div) true]
-      [(Mod) true]
-      [(SafeDiv) true]
-      [(SafeMod) true]
+      [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
       [_ false])
     (match (compiler-backend-value-as-i64 rhs)
       [(Some _) true]
@@ -26222,7 +25870,7 @@
             "setae"
             "setge")
           staging-reg)]
-      [(BitTestEq)
+      [(or (BitTestEq) (BitTestNe))
         (compiler-backend-binop-compare-set-reg-asm
           type-segment-bases
           op
@@ -26230,20 +25878,9 @@
           rhs
           lhs
           staging-reg)]
-      [(BitTestNe)
-        (compiler-backend-binop-compare-set-reg-asm
-          type-segment-bases
-          op
-          ty
-          rhs
-          lhs
-          staging-reg)]
-      [(And)
+      [(or (And) (BitAnd))
         (compiler-backend-binop-reg-asm type-segment-bases "and" ty rhs lhs)]
-      [(Or) (compiler-backend-binop-reg-asm type-segment-bases "or" ty rhs lhs)]
-      [(BitAnd)
-        (compiler-backend-binop-reg-asm type-segment-bases "and" ty rhs lhs)]
-      [(BitOr)
+      [(or (Or) (BitOr))
         (compiler-backend-binop-reg-asm type-segment-bases "or" ty rhs lhs)]
       [(BitXor)
         (compiler-backend-binop-reg-asm type-segment-bases "xor" ty rhs lhs)]
@@ -26434,7 +26071,7 @@
           "setne"
           dst-reg
           rhs-zero?))]
-    [(Lt)
+    [(or (Lt) (Le) (Gt) (Ge))
       (Some
         (compiler-backend-binop-immediate-cmp-reg-asm
           type-segment-bases
@@ -26443,46 +26080,7 @@
           (compiler-backend-compare-setcc op ty)
           dst-reg
           rhs-zero?))]
-    [(Le)
-      (Some
-        (compiler-backend-binop-immediate-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (compiler-backend-compare-setcc op ty)
-          dst-reg
-          rhs-zero?))]
-    [(Gt)
-      (Some
-        (compiler-backend-binop-immediate-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (compiler-backend-compare-setcc op ty)
-          dst-reg
-          rhs-zero?))]
-    [(Ge)
-      (Some
-        (compiler-backend-binop-immediate-cmp-reg-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (compiler-backend-compare-setcc op ty)
-          dst-reg
-          rhs-zero?))]
-    [(BitTestEq)
-      (Some
-        (compiler-backend-binop-compare-set-reg-asm
-          type-segment-bases
-          op
-          (compiler-backend-global-shared-view ty)
-          imm
-          (compiler-backend-sized-reg
-            type-segment-bases
-            (compiler-backend-global-shared-view dst-reg)
-            ty)
-          dst-reg))]
-    [(BitTestNe)
+    [(or (BitTestEq) (BitTestNe))
       (Some
         (compiler-backend-binop-compare-set-reg-asm
           type-segment-bases
@@ -26888,7 +26486,7 @@
           ty
           imm
           staging-reg))]
-    [(Or)
+    [(or (Or) (BitOr))
       (Some
         (compiler-backend-binop-immediate-reg-asm
           type-segment-bases
@@ -26934,14 +26532,6 @@
                 ty
                 imm
                 staging-reg)))))]
-    [(BitOr)
-      (Some
-        (compiler-backend-binop-immediate-reg-asm
-          type-segment-bases
-          "or"
-          ty
-          imm
-          staging-reg))]
     [(BitXor)
       (Some
         (compiler-backend-binop-immediate-reg-asm
@@ -26978,10 +26568,9 @@
     [(Not) (str_cat.str-cat "    xorq $1, " reg "\n")]
     [(BitNot) (str_cat.str-cat "    notq " reg "\n")]
     ;; Sqrt is admitted only for f32/f64 and takes the float path below.
-    [(Sqrt) ""]
     ;; BitLength needs the operand's signedness; see
     ;; compiler-backend-unop-typed-reg-asm.
-    [(BitLength) ""]))
+    [(or (Sqrt) (BitLength)) ""]))
 
 ;; BITLEN: the significant-bit count of a 64-bit register, in place and without
 ;; a scratch register. A value with no significant bits (<= 0 signed, 0
@@ -27026,11 +26615,7 @@
 (define (compiler-backend-float-arith-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Add) true]
-    [(Sub) true]
-    [(Mul) true]
-    [(Div) true]
-    [(SafeDiv) true]
+    [(or (Add) (Sub) (Mul) (Div) (SafeDiv)) true]
     [_ false]))
 
 (define (compiler-backend-float-arith-mnemonic
@@ -27039,8 +26624,7 @@
     [(Add) "add"]
     [(Sub) "sub"]
     [(Mul) "mul"]
-    [(Div) "div"]
-    [(SafeDiv) "div"]
+    [(or (Div) (SafeDiv)) "div"]
     [_ ""]))
 
 (define (compiler-backend-float-compare-setcc
@@ -27074,8 +26658,7 @@
     ;; upper half. Only the result register is written: no hidden
     ;; byte scratch, operand reload, or second operand evaluation is needed.
     (if (match (compiler-backend-global-shared-view op)
-      [(Gt) true]
-      [(Ge) true]
+      [(or (Gt) (Ge)) true]
       [_ false])
       (str_cat.str-cat
         "    "
@@ -27509,8 +27092,7 @@
     (and
       (compiler-backend-float-type? ty)
       (match op
-        [(Neg) true]
-        [(Sqrt) true]
+        [(or (Neg) (Sqrt)) true]
         [_ false]))))
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
@@ -27523,10 +27105,8 @@
     [(Add) "add"]
     [(Sub) "sub"]
     [(Mul) "imul"]
-    [(And) "and"]
-    [(Or) "or"]
-    [(BitAnd) "and"]
-    [(BitOr) "or"]
+    [(or (And) (BitAnd)) "and"]
+    [(or (Or) (BitOr)) "or"]
     [(BitXor) "xor"]
     [_ ""]))
 
@@ -27544,8 +27124,7 @@
 (define (compiler-backend-binop-shift-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Shl _) true]
-    [(Shr _) true]
+    [(or (Shl _) (Shr _)) true]
     [_ false]))
 
 (define (compiler-backend-binop-valid-immediate-shift?
@@ -27921,7 +27500,7 @@
             "setae"
             "setge")
           staging-reg))]
-    [(BitTestEq)
+    [(or (BitTestEq) (BitTestNe))
       (Some
         (compiler-backend-binop-compare-set-reg-asm
           type-segment-bases
@@ -27933,19 +27512,7 @@
             (compiler-backend-global-shared-view staging-reg)
             ty)
           staging-reg))]
-    [(BitTestNe)
-      (Some
-        (compiler-backend-binop-compare-set-reg-asm
-          type-segment-bases
-          op
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg
-            type-segment-bases
-            (compiler-backend-global-shared-view staging-reg)
-            ty)
-          staging-reg))]
-    [(And)
+    [(or (And) (BitAnd))
       (Some
         (compiler-backend-binop-reg-asm
           type-segment-bases
@@ -27953,23 +27520,7 @@
           (compiler-backend-global-shared-view ty)
           rhs
           (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
-    [(Or)
-      (Some
-        (compiler-backend-binop-reg-asm
-          type-segment-bases
-          "or"
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
-    [(BitAnd)
-      (Some
-        (compiler-backend-binop-reg-asm
-          type-segment-bases
-          "and"
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg type-segment-bases staging-reg ty)))]
-    [(BitOr)
+    [(or (Or) (BitOr))
       (Some
         (compiler-backend-binop-reg-asm
           type-segment-bases
@@ -28144,8 +27695,7 @@
               (if (and
                 (string.eq imm "$0")
                 (match (compiler-backend-global-shared-view op)
-                  [(Add) true]
-                  [(Sub) true]
+                  [(or (Add) (Sub)) true]
                   [_ false]))
                 ""
                 (match (compiler-backend-binop-immediate-direct-reg-asm
@@ -28205,8 +27755,7 @@
       (and
         (string.eq imm "$0")
         (match (& op)
-          [(Add) true]
-          [(Sub) true]
+          [(or (Add) (Sub)) true]
           [_ false]))]
     (match (if (and
       (not zero-addsub?)
@@ -28838,9 +28387,9 @@
       ;; lint-allow: nested-if-ladder
       (if (and
         (compiler_regalloc.compiler-reg-clobber-binop-shift?
-          (compiler-backend-global-shared-view op)
-          (compiler-backend-global-shared-view rhs)
-          (compiler-backend-global-shared-view operand-ty))
+          (& op)
+          (& rhs)
+          (& operand-ty))
         (not
           (compiler-backend-binop-rcx-shift?
             backend-state
@@ -29176,10 +28725,7 @@
             (let
               [staging : String
                 (match (& op)
-                  [(Div) "%rax"]
-                  [(Mod) "%rax"]
-                  [(SafeDiv) "%rax"]
-                  [(SafeMod) "%rax"]
+                  [(or (Div) (Mod) (SafeDiv) (SafeMod)) "%rax"]
                   [_
                     (compiler-backend-scavenge-reg
                       dst
@@ -29487,13 +29033,7 @@
 (define (compiler-backend-commutative-binop?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Add) true]
-    [(Mul) true]
-    [(And) true]
-    [(Or) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (Mul) (And) (Or) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 (define (compiler-backend-rax-forwardable-binop?
@@ -30828,31 +30368,21 @@
 (define (compiler-backend-compare-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
-    [(Lt) true]
-    [(Le) true]
-    [(Gt) true]
-    [(Ge) true]
-    [(BitTestEq) true]
-    [(BitTestNe) true]
+    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge) (BitTestEq) (BitTestNe)) true]
     [_ false]))
 
 (define (compiler-backend-divmod-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Div) true]
-    [(Mod) true]
-    [(SafeDiv) true]
-    [(SafeMod) true]
+    [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
     [_ false]))
 
 (define (compiler-backend-compare-true-jcc
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : compiler_ast_types.AstType]) : String
   (match op
-    [(Eq) "je"]
-    [(Ne) "jne"]
+    [(or (Eq) (BitTestEq)) "je"]
+    [(or (Ne) (BitTestNe)) "jne"]
     [(Lt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jb"
@@ -30869,16 +30399,14 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jae"
         "jge")]
-    [(BitTestEq) "je"]
-    [(BitTestNe) "jne"]
     [_ ""]))
 
 (define (compiler-backend-compare-false-jcc
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : compiler_ast_types.AstType]) : String
   (match op
-    [(Eq) "jne"]
-    [(Ne) "je"]
+    [(or (Eq) (BitTestEq)) "jne"]
+    [(or (Ne) (BitTestNe)) "je"]
     [(Lt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jae"
@@ -30895,8 +30423,6 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jb"
         "jl")]
-    [(BitTestEq) "jne"]
-    [(BitTestNe) "je"]
     [_ ""]))
 
 ;; SS-P5(b) / VG-P-B: the `cmov` mnemonic that reads a comparison's own flags.
@@ -32292,14 +31818,7 @@
           dst)
           [(Some location)
             (match location
-              [(Register home)
-                (str_cat.str-cat
-                  "    leaq "
-                  slot
-                  ", "
-                  (compiler_abi.compiler-abi-register-spelling home)
-                  "\n")]
-              [(RegisterPair home _)
+              [(or (Register home) (RegisterPair home _))
                 (str_cat.str-cat
                   "    leaq "
                   slot
@@ -33659,39 +33178,7 @@
   (if (>= index instrs.len)
     0
     (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
-      [(CopyBytes dst src _)
-        (+
-          (compiler-backend-copy-run-protect-value-count
-            backend-state
-            assignments
-            dst)
-          (+
-            (compiler-backend-copy-run-protect-value-count
-              backend-state
-              assignments
-              src)
-            (compiler-backend-copy-run-protect-count
-              backend-state
-              assignments
-              instrs
-              (+ index 1))))]
-      [(Gep _ base offset _)
-        (+
-          (compiler-backend-copy-run-protect-value-count
-            backend-state
-            assignments
-            base)
-          (+
-            (compiler-backend-copy-run-protect-value-count
-              backend-state
-              assignments
-              offset)
-            (compiler-backend-copy-run-protect-count
-              backend-state
-              assignments
-              instrs
-              (+ index 1))))]
-      [(StorePtr dst src _)
+      [(or (CopyBytes dst src _) (Gep _ dst src _) (StorePtr dst src _))
         (+
           (compiler-backend-copy-run-protect-value-count
             backend-state
@@ -33737,43 +33224,7 @@
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [rest : i64 (+ cursor 1)]
       (match instr
-        [(CopyBytes dst src _)
-          (compiler-backend-copy-run-protect-fill
-            backend-state
-            assignments
-            instrs
-            rest
-            out
-            (compiler-backend-copy-run-protect-fill-value
-              backend-state
-              assignments
-              src
-              out
-              (compiler-backend-copy-run-protect-fill-value
-                backend-state
-                assignments
-                dst
-                out
-                index)))]
-        [(Gep _ base offset _)
-          (compiler-backend-copy-run-protect-fill
-            backend-state
-            assignments
-            instrs
-            rest
-            out
-            (compiler-backend-copy-run-protect-fill-value
-              backend-state
-              assignments
-              offset
-              out
-              (compiler-backend-copy-run-protect-fill-value
-                backend-state
-                assignments
-                base
-                out
-                index)))]
-        [(StorePtr dst src _)
+        [(or (CopyBytes dst src _) (Gep _ dst src _) (StorePtr dst src _))
           (compiler-backend-copy-run-protect-fill
             backend-state
             assignments
@@ -35791,11 +35242,12 @@
     [src-reg : String
       (compiler-backend-value-scalar-register backend-state assignments src)]
     (if (and
-      (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (U64)))
+      (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (& (U64))))
       (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
       (not (string.eq src-reg "")))
       (Ok (compiler-backend-int-to-float-cast-reg-asm src-reg to-ty dst-home))
-      (if (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (U64)))
+      (if (not
+        (compiler_optimize.opt-type-eq type-segment-bases from-ty (& (U64))))
         (let
           [src-tmp : String
             (if (string.eq src-reg "")
@@ -35989,10 +35441,7 @@
   [program-index : CompilerBackendProgramIndex]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (and
-    (compiler_optimize.opt-type-eq
-      type-segment-bases
-      from-ty
-      (compiler-backend-global-shared-view to-ty))
+    (compiler_optimize.opt-type-eq type-segment-bases from-ty (& to-ty))
     (compiler-backend-value-same-home?
       backend-state
       assignments
@@ -36119,21 +35568,14 @@
 (define (compiler-backend-bitcast-width
   [ty : (& ty compiler_ast_types.AstType)]) : i64
   (match ty
-    [(F32) 4]
-    [(I32) 4]
-    [(U32) 4]
-    [(F64) 8]
-    [(I64) 8]
-    [(U64) 8]
+    [(or (F32) (I32) (U32)) 4]
+    [(or (F64) (I64) (U64)) 8]
     [_ 0]))
 
 (define (compiler-backend-bitcast-int-type?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
+    [(or (I32) (U32) (I64) (U64)) true]
     [_ false]))
 
 (define (compiler-backend-bitcast-type-debug-name
@@ -36446,8 +35888,7 @@
     [(Nil) 0]
     [(One _) 1]
     [(Two _ _) 2]
-    [(Array values) (array-length values)]
-    [(Sret values _) (array-length values)]))
+    [(or (Array values) (Sret values _)) (array-length values)]))
 
 (define (compiler-backend-call-arg-at
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
@@ -36467,8 +35908,7 @@
           (if (= index 1)
             b
             (Unit)))]
-      [(Array values) (array-ref values index)]
-      [(Sret values _) (array-ref values index)])))
+      [(or (Array values) (Sret values _)) (array-ref values index)])))
 
 (define (compiler-backend-fast-alloc-size
   [args : compiler_ir_types.CompilerIrCallArgs]) : i64
@@ -36833,16 +36273,12 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : CompilerBackendMaybeSignature
   (match ty
-    [(CFunc signature _)
+    [(or (CFunc signature _) (Region _ signature))
       (compiler-backend-program-index-extern-signature
         type-segment-bases
         (compiler_ast_types.ast-type-segment-bases-get
           type-segment-bases
           signature))]
-    [(Region _ inner)
-      (compiler-backend-program-index-extern-signature
-        type-segment-bases
-        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [(Func args ret-ty)
       (Some
         (deref args)
@@ -37029,10 +36465,8 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : String
   (match ty
-    [(Struct name) (compiler-backend-nominal-name-id-display name)]
-    [(StructArgs name _) (compiler-backend-nominal-name-id-display name)]
-    [(Enum name) (compiler-backend-nominal-name-id-display name)]
-    [(EnumArgs name _) (compiler-backend-nominal-name-id-display name)]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (compiler-backend-nominal-name-id-display name)]
     [(Region _ inner)
       (compiler-backend-aggregate-type-name
         type-segment-bases
@@ -37112,12 +36546,7 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : i64
   (match ty
-    [(Struct name)
-      (if (compiler_ir_types.compiler-ir-symbol-owned? name)
-        (compiler-backend-abi-memory-size-from-name
-          (compiler_ir_types.compiler-ir-symbol-text name))
-        0)]
-    [(StructArgs name _)
+    [(or (Struct name) (StructArgs name _))
       (if (compiler_ir_types.compiler-ir-symbol-owned? name)
         (compiler-backend-abi-memory-size-from-name
           (compiler_ir_types.compiler-ir-symbol-text name))
@@ -37349,13 +36778,7 @@
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
   (match (compiler-backend-global-shared-view ty)
-    [(Ref _ inner)
-      (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
-        type-segment-bases
-        inner)
-        2
-        1)]
-    [(MutRef _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
         type-segment-bases
         inner)
@@ -37629,8 +37052,7 @@
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
   (match (compiler-backend-global-shared-view ty)
-    [(Ref _ _) 0]
-    [(MutRef _ _) 0]
+    [(or (Ref _ _) (MutRef _ _)) 0]
     [_
       (let
         [tables : (& index CompilerBackendProgramTables)
@@ -39623,15 +39045,10 @@
 (define (compiler-backend-instr-needs-outgoing-space?
   [instr : (& instr compiler_ir_types.CompilerIrInstr)]) : bool
   (match instr
-    [(Call _ _ _ _) true]
-    [(CallIndirect _ _ _ _) true]
-    [(CallIndirectC _ _ _ _) true]
-    [(CallCAbiStoreResult _) true]
-    [(CallIndirectCAbiStoreResult _) true]
-    [(SpmdCall _) true]
-    [(TailCall _ _ _) true]
-    [(TailCallIndirect _ _ _) true]
-    [(BoundsCheck _ _ _) true]
+    [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
+         (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
+         (TailCall _ _ _) (TailCallIndirect _ _ _) (BoundsCheck _ _ _))
+      true]
     [_ false]))
 
 (define (compiler-backend-instr-outgoing-stack-space
@@ -39643,21 +39060,14 @@
   (match target
     [(CompilerBackendTarget.Windows)
       (match instr
-        [(Call _ name args _)
+        [(or (Call _ name args _) (TailCall name args _))
           (compiler-backend-windows-stack-arg-space
             type-segment-bases
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
-        [(CallIndirect _ _ args _)
-          (compiler-backend-windows-closure-stack-arg-space args)]
-        [(TailCall name args _)
-          (compiler-backend-windows-stack-arg-space
-            type-segment-bases
-            args
-            (compiler-backend-call-param-types-index name program-index)
-            program-index)]
-        [(CallIndirectC _ _ args _)
+        [(or (CallIndirect _ _ args _) (CallIndirectC _ _ args _)
+             (TailCallIndirect _ args _))
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(CallCAbiStoreResult payload-box)
           (let
@@ -39670,12 +39080,8 @@
                 (compiler-backend-call-param-types-index name program-index)
                 program-index)
               16))]
-        [(CallIndirectCAbiStoreResult payload-box)
-          (let
-            [args (compiler-backend-box-field-shared-view payload-box args)]
-            (+ (compiler-backend-windows-closure-stack-arg-space args) 16))]
-        [(TailCallIndirect _ args _)
-          (compiler-backend-windows-closure-stack-arg-space args)]
+        [(CallIndirectCAbiStoreResult (box (fields args)))
+          (+ (compiler-backend-windows-closure-stack-arg-space args) 16)]
         [(SpmdCall payload-box)
           (compiler-backend-spmd-outgoing-stack-space
             type-segment-bases
@@ -39689,25 +39095,18 @@
       ;; word counts; indirect C-ABI calls keep a conservative signature-free
       ;; bound below.
       (match instr
-        [(Call _ name args _)
+        [(or (Call _ name args _) (TailCall name args _))
           (compiler-backend-linux-stack-arg-space
             type-segment-bases
             target
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
-        [(CallIndirect _ _ args _)
+        [(or (CallIndirect _ _ args _) (TailCallIndirect _ args _))
           (compiler-backend-linux-closure-stack-arg-space-actual
             type-segment-bases
             args
             types
-            program-index)]
-        [(TailCall name args _)
-          (compiler-backend-linux-stack-arg-space
-            type-segment-bases
-            target
-            args
-            (compiler-backend-call-param-types-index name program-index)
             program-index)]
         [(CallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
@@ -39727,19 +39126,11 @@
                 true
                 program-index)
               16))]
-        [(CallIndirectCAbiStoreResult payload-box)
-          (let
-            [args (compiler-backend-box-field-shared-view payload-box args)]
-            (+
-              (compiler-backend-round-up-16
-                (* (compiler-backend-call-args-count args) 16))
-              16))]
-        [(TailCallIndirect _ args _)
-          (compiler-backend-linux-closure-stack-arg-space-actual
-            type-segment-bases
-            args
-            types
-            program-index)]
+        [(CallIndirectCAbiStoreResult (box (fields args)))
+          (+
+            (compiler-backend-round-up-16
+              (* (compiler-backend-call-args-count args) 16))
+            16)]
         [(SpmdCall payload-box)
           (compiler-backend-spmd-outgoing-stack-space
             type-segment-bases
@@ -41955,8 +41346,8 @@
           right)
           [(Some right-location)
             (compiler_regalloc.compiler-reg-location-eq?
-              left-location
-              right-location)]
+              (& left-location)
+              (& right-location))]
           [(No) false])]
       [(No) false])))
 
@@ -42010,9 +41401,8 @@
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(Some location)
       (match location
-        [(Register reg) (compiler-backend-parallel-reg-id-resource reg)]
-        [(RegisterPair first _)
-          (compiler-backend-parallel-reg-id-resource first)]
+        [(or (Register reg) (RegisterPair reg _))
+          (compiler-backend-parallel-reg-id-resource reg)]
         [(Spill offset) (compiler-backend-parallel-spill-resource offset)]
         [(Remat _) 0])]
     [(No) (+ 1000000 var)]))
@@ -42414,9 +41804,7 @@
       var-id)
       [(Some location)
         (match location
-          [(Register home)
-            (Ok (compiler_abi.compiler-abi-register-spelling home))]
-          [(RegisterPair home _)
+          [(or (Register home) (RegisterPair home _))
             (Ok (compiler_abi.compiler-abi-register-spelling home))]
           [(Spill offset)
             (Ok
@@ -43190,7 +42578,6 @@
                           ", "
                           (compiler_abi.compiler-abi-register-spelling dst-home)
                           "\n")))]
-                  [(RegisterPair _ _) (No)]
                   [(Spill src-offset)
                     (Some
                       (str_cat.str-cat
@@ -43203,7 +42590,7 @@
                         "\n"))]
                   ;; Remat src: no slot/register to copy from -> defer to the
                   ;; load-store fallback, which recomputes it.
-                  [(Remat _) (No)])]
+                  [(or (RegisterPair _ _) (Remat _)) (No)])]
               [(No)
                 (Some
                   (str_cat.str-cat
@@ -45703,8 +45090,8 @@
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(Some location)
       (match location
-        [(Register r) (compiler_abi.compiler-abi-register-spelling r)]
-        [(RegisterPair r _) (compiler_abi.compiler-abi-register-spelling r)]
+        [(or (Register r) (RegisterPair r _))
+          (compiler_abi.compiler-abi-register-spelling r)]
         [_ ""])]
     [_ ""]))
 
@@ -48451,19 +47838,8 @@
       (compiler-backend-global-shared-view instrs)
       (+ index 1)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
-        [(Switch _ _ cases default-label)
-          (text_buf.append
-            buf
-            (compiler-backend-emit-switch-table
-              function
-              current-label
-              (compiler-backend-global-shared-view cases)
-              (compiler-backend-switch-target-phi?
-                (compiler-backend-global-shared-view targets)
-                cases
-                default-label)
-              targets))]
-        [(TotalEnumSwitch _ _ cases default-label _)
+        [(or (Switch _ _ cases default-label)
+             (TotalEnumSwitch _ _ cases default-label _))
           (text_buf.append
             buf
             (compiler-backend-emit-switch-table
@@ -49144,9 +48520,8 @@
   [targets : BackendSymbolSeq]
   [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendSwitchValidation
   (match instr
-    [(Switch _ base cases default-label)
-      (compiler-backend-switch-validate-one targets base cases default-label)]
-    [(TotalEnumSwitch _ base cases default-label _)
+    [(or (Switch _ base cases default-label)
+         (TotalEnumSwitch _ base cases default-label _))
       (compiler-backend-switch-validate-one targets base cases default-label)]
     [_ (Ok)]))
 
@@ -49273,7 +48648,7 @@
             ctx.vars
             ctx.backend-state)
           instr-diag)]
-      [(Alloc _ _) (Ok "")]
+      [(or (Alloc _ _) (Phi _ _ _)) (Ok "")]
       [(AddrOf dst src)
         (compiler-backend-with-instr-diagnostic
           (compiler-backend-emit-addr-of
@@ -49308,18 +48683,7 @@
             ty
             ctx.backend-state)
           instr-diag)]
-      [(StorePtr dst src ty)
-        (compiler-backend-with-instr-diagnostic
-          (compiler-backend-emit-store-ptr
-            ctx.type-segment-bases
-            ctx.assignments
-            dst
-            src
-            ty
-            ctx.program-index
-            ctx.backend-state)
-          instr-diag)]
-      [(StoreOwned dst src ty)
+      [(or (StorePtr dst src ty) (StoreOwned dst src ty))
         (compiler-backend-with-instr-diagnostic
           (compiler-backend-emit-store-ptr
             ctx.type-segment-bases
@@ -49837,27 +49201,23 @@
             ctx.vars
             instr-diag
             ctx.backend-state))]
-      [(CallIndirectCAbiStoreResult payload-box)
-        (let
-          [base (compiler-backend-box-field-shared-view payload-box base)]
-          [func (compiler-backend-box-field-shared-view payload-box callee)]
-          [args (compiler-backend-box-field-shared-view payload-box args)]
-          [slots (compiler-backend-box-field-shared-view payload-box slots)]
-          (compiler-backend-emit-indirect-c-abi-store-result-call
-            ctx.type-segment-bases
-            ctx.target-policy.target
-            base
-            func
-            args
-            slots
-            ctx.assignments
-            ctx.types
-            ctx.functions
-            ctx.externs
-            ctx.program-index
-            ctx.vars
-            instr-diag
-            ctx.backend-state))]
+      [(CallIndirectCAbiStoreResult
+          (box (fields base [func callee] args slots)))
+        (compiler-backend-emit-indirect-c-abi-store-result-call
+          ctx.type-segment-bases
+          ctx.target-policy.target
+          base
+          func
+          args
+          slots
+          ctx.assignments
+          ctx.types
+          ctx.functions
+          ctx.externs
+          ctx.program-index
+          ctx.vars
+          instr-diag
+          ctx.backend-state)]
       [(TailCall name args ty)
         (compiler-backend-with-instr-diagnostic
           (compiler-backend-emit-tail-call
@@ -50083,7 +49443,6 @@
             ctx.ret-ty
             ctx.program-index)
           instr-diag)]
-      [(Phi _ _ _) (Ok "")]
       [(Pack dst words ty)
         (compiler-backend-emit-pack
           ctx.type-segment-bases
@@ -50352,11 +49711,7 @@
         (set!
           pending
           (match instr
-            [(Gep dst _ _ _)
-              (if (and (>= dst 0) (< dst (array-length adjacent)))
-                dst
-                (- 0 1))]
-            [(Load dst _ _)
+            [(or (Gep dst _ _ _) (Load dst _ _))
               (if (and (>= dst 0) (< dst (array-length adjacent)))
                 dst
                 (- 0 1))]
@@ -50942,9 +50297,7 @@
       program-index
       rax-ty)
     (match instr
-      [(Call _ _ args _)
-        (compiler-backend-call-leading-arg-uses-var? args rax-var)]
-      [(CallIndirect _ _ args _)
+      [(or (Call _ _ args _) (CallIndirect _ _ args _))
         (compiler-backend-call-leading-arg-uses-var? args rax-var)]
       [_ false])))
 
@@ -50981,25 +50334,7 @@
       unit))
   (compiler-backend-emergency-append out head ctx.backend-state)
   (match instr
-    [(Call dst _ _ ty)
-      (compiler-backend-emit-instrs-with-call-rax
-        ctx
-        fallthrough
-        dst
-        ty
-        instrs
-        index
-        out)]
-    [(CallIndirect dst _ _ ty)
-      (compiler-backend-emit-instrs-with-call-rax
-        ctx
-        fallthrough
-        dst
-        ty
-        instrs
-        index
-        out)]
-    [(CallIndirectC dst _ _ ty)
+    [(or (Call dst _ _ ty) (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty))
       (compiler-backend-emit-instrs-with-call-rax
         ctx
         fallthrough
@@ -52028,9 +51363,7 @@
             [(Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
                 (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-                (compiler_optimize.opt-value-eq
-                  base2
-                  (compiler-backend-global-shared-view base)))
+                (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(Some _) (No)]
                   [(None)
@@ -53278,10 +52611,7 @@
 (define (compiler-backend-compare-operands-commute?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
-    [(BitTestEq) true]
-    [(BitTestNe) true]
+    [(or (Eq) (Ne) (BitTestEq) (BitTestNe)) true]
     [_ false]))
 
 ;; M6-B/M6-C: compare asm, true jcc, false jcc, true label, false label,
@@ -54359,8 +53689,8 @@
       [(Gep gep-dst2 base2 offset2 elem-ty2)
         (if (and
           (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-          (compiler_optimize.opt-value-eq base2 base)
-          (compiler_optimize.opt-value-eq offset2 offset)
+          (compiler_optimize.opt-value-eq (& base2) (& base))
+          (compiler_optimize.opt-value-eq (& offset2) (& offset))
           (=
             (compiler-backend-type-size ctx.type-segment-bases elem-ty2)
             (compiler-backend-type-size ctx.type-segment-bases elem-ty)))
@@ -54885,9 +54215,7 @@
             [(Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
                 (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-                (compiler_optimize.opt-value-eq
-                  base2
-                  (compiler-backend-global-shared-view base)))
+                (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(Some _)
                     (if (< after-gep instrs.len)
@@ -55440,8 +54768,7 @@
       (compiler-backend-top-level-structural-source-type?
         type-segment-bases
         (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
-    [(Tuple _) true]
-    [(Array _ _) true]
+    [(or (Tuple _) (Array _ _)) true]
     [_ false]))
 
 (define (compiler-backend-type-list-has-top-level-structural-source-at?
@@ -56262,9 +55589,7 @@
 (define (compiler-backend-divmod-producer-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Add) true]
-    [(Mul) true]
-    [(BitXor) true]
+    [(or (Add) (Mul) (BitXor)) true]
     [_ false]))
 
 (define (compiler-backend-divmod-fixed-home? [home : String]) : bool
@@ -57697,9 +57022,7 @@
       (match maybe-gep
         [(Gep gep-dst base offset elem-ty)
           (if (and
-            (compiler_optimize.opt-value-eq
-              base
-              (compiler-backend-global-shared-view ptr))
+            (compiler_optimize.opt-value-eq (& base) (& ptr))
             (compiler-backend-var-single-use? ctx.use-counts gep-dst))
             (match (compiler-backend-value-as-i64 offset)
               [(Some n)
@@ -57823,71 +57146,70 @@
         (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [after-binop : i64 (+ cursor 1)]
       (match (compiler-backend-global-shared-view next)
-        [(VectorBinOp payload-box)
-          (let
-            [bin-dst (compiler-backend-box-field-shared-view payload-box dst)]
-            [op (compiler-backend-box-field-shared-view payload-box op)]
-            [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-            [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-            [bin-lanes
-              (compiler-backend-box-field-shared-view payload-box lanes)]
-            [bin-elem-ty
-              (compiler-backend-box-field-shared-view payload-box ty)]
-            (if (compiler-backend-vector-load-binop-foldable?
-              ctx.type-segment-bases
-              ctx.use-counts
-              load-dst
-              lanes
-              elem-ty
-              op
-              (compiler-backend-global-shared-view lhs)
-              (compiler-backend-global-shared-view rhs)
-              bin-lanes
-              (compiler-backend-global-shared-view bin-elem-ty))
-              (match (compiler-backend-vector-load-binop-fold-value
-                load-dst
+        [(VectorBinOp
+            (box
+              (fields
+                [bin-dst dst]
                 op
                 lhs
-                rhs)
-                [(Some reg-value)
-                  (compiler-backend-emit-fused-result-rest
-                    (compiler-backend-global-shared-view ctx)
-                    fallthrough
-                    (compiler-backend-emit-vector-binop-memory-source
-                      (compiler-backend-vector-mode bin-elem-ty bin-lanes)
-                      ctx.type-segment-bases
-                      ctx.assignments
-                      bin-dst
-                      op
-                      reg-value
-                      base
-                      index
-                      bin-lanes
-                      bin-elem-ty
-                      (compiler-backend-instr-diagnostic
-                        ctx.spans
-                        ctx.source-function
-                        next
-                        ctx.func-diag)
-                      ctx.backend-state)
-                    instrs
-                    after-binop
-                    out)]
-                [(No)
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    instrs
-                    cursor
-                    out)])
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                instrs
-                cursor
-                out)))]
+                rhs
+                [bin-lanes lanes]
+                [bin-elem-ty ty])))
+          (if (compiler-backend-vector-load-binop-foldable?
+            ctx.type-segment-bases
+            ctx.use-counts
+            load-dst
+            lanes
+            elem-ty
+            op
+            (compiler-backend-global-shared-view lhs)
+            (compiler-backend-global-shared-view rhs)
+            bin-lanes
+            (compiler-backend-global-shared-view bin-elem-ty))
+            (match (compiler-backend-vector-load-binop-fold-value
+              load-dst
+              op
+              lhs
+              rhs)
+              [(Some reg-value)
+                (compiler-backend-emit-fused-result-rest
+                  (compiler-backend-global-shared-view ctx)
+                  fallthrough
+                  (compiler-backend-emit-vector-binop-memory-source
+                    (compiler-backend-vector-mode bin-elem-ty bin-lanes)
+                    ctx.type-segment-bases
+                    ctx.assignments
+                    bin-dst
+                    op
+                    reg-value
+                    base
+                    index
+                    bin-lanes
+                    bin-elem-ty
+                    (compiler-backend-instr-diagnostic
+                      ctx.spans
+                      ctx.source-function
+                      next
+                      ctx.func-diag)
+                    ctx.backend-state)
+                  instrs
+                  after-binop
+                  out)]
+              [(No)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  instrs
+                  cursor
+                  out)])
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              cursor
+              out))]
         [_
           (compiler-backend-emit-instrs-normal
             ctx
@@ -58062,11 +57384,7 @@
 (define (compiler-backend-mov-skip-source?
   [src : (& src compiler_ir_types.CompilerIrValue)]) : bool
   (match src
-    [(Var _) true]
-    [(I64 _) true]
-    [(Bool _) true]
-    [(Char _) true]
-    [(Unit) true]
+    [(or (Var _) (I64 _) (Bool _) (Char _) (Unit)) true]
     [_ false]))
 
 (define (compiler-backend-emit-mov-step
@@ -58369,7 +57687,7 @@
                   (compiler_optimize.opt-type-eq
                     ctx.type-segment-bases
                     ty
-                    (compiler-backend-global-shared-view ctx.ret-ty)))
+                    (& ctx.ret-ty)))
                   (compiler-backend-emit-terminator-into
                     (compiler-backend-emit-call-return
                       ctx.type-segment-bases
@@ -59244,17 +58562,15 @@
             ;; var can have -- register, spill slot, remat, plain slot -- is
             ;; loadable by the same scalar loader the general lowering would have
             ;; used on it (compiler-backend-bit-test-load-mask).
+            ;; A successor with phis takes its copies on an edge block behind
+            ;; the jcc (compiler-backend-gep-load-cmp-branch-emit), as a fused
+            ;; compare's do.
             (not
               (string.eq
                 (compiler-backend-bit-test-count-reg
                   (compiler-backend-global-shared-view ctx)
                   count)
-                ""))
-            (not
-              (compiler-backend-branch-needs-phi-copies?
-                ctx.function-state
-                true-label
-                false-label)))
+                "")))
             (Some mask count true-label false-label (+ index 2) dst guard?)
             (No))]
         [_ (No)])]
@@ -59388,7 +58704,7 @@
         mask
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view mask-reg))]
-    [head : String
+    [test-asm : String
       (str_cat.str-cat
         (if guard?
           (compiler-backend-shift-guard-asm
@@ -59399,15 +58715,17 @@
             ctx.backend-state)
           "")
         load-mask
-        (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n")
-        (compiler-backend-emit-compare-branch-jumps
-          (compiler-backend-global-shared-view ctx.function)
-          true-label
-          false-label
-          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+        (str_cat.str-cat "    btq " count-reg ", " mask-reg "\n"))]
+    [head : String
+      (try
+        (compiler-backend-gep-load-cmp-branch-emit
+          (compiler-backend-global-shared-view ctx)
+          test-asm
           "jb"
           "jae"
-          ctx.backend-state))]
+          true-label
+          false-label
+          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)))]
     (compiler-backend-asm-append
       out
       (compiler-backend-emergency-wrap head ctx.backend-state))
@@ -59937,29 +59255,8 @@
                       instrs
                       index
                       out)]))]
-            [(Branch cond true-label false-label)
-              (if (compiler-backend-branch-uses-var? cond dst)
-                (compiler-backend-emit-fused-compare-branch-rest
-                  ctx
-                  fallthrough
-                  dst
-                  op
-                  lhs
-                  rhs
-                  ty
-                  true-label
-                  false-label
-                  instrs
-                  after-branch
-                  out)
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  instrs
-                  index
-                  out))]
-            [(TotalEnumBranch cond true-label false-label)
+            [(or (Branch cond true-label false-label)
+                 (TotalEnumBranch cond true-label false-label))
               (if (compiler-backend-branch-uses-var? cond dst)
                 (compiler-backend-emit-fused-compare-branch-rest
                   ctx
@@ -59988,58 +59285,53 @@
             ;; emitter declines by
             ;; returning `No` whenever the operand shapes cannot guarantee the
             ;; compare's operands survive the two staging loads.
-            [(Select payload-box)
-              (let
-                [select-dst
-                  (compiler-backend-box-field-shared-view payload-box dst)]
-                [select-mask
-                  (compiler-backend-box-field-shared-view payload-box mask)]
-                [select-true
-                  (compiler-backend-box-field-shared-view payload-box on-true)]
-                [select-false
-                  (compiler-backend-box-field-shared-view payload-box on-false)]
-                [select-lanes
-                  (compiler-backend-box-field-shared-view payload-box lanes)]
-                [select-ty
-                  (compiler-backend-box-field-shared-view payload-box ty)]
-                (match (if (and
-                  (= select-lanes 0)
-                  (compiler-backend-branch-uses-var? select-mask dst))
-                  (compiler-backend-emit-select-on-flags
-                    ctx.type-segment-bases
-                    ctx.assignments
-                    select-dst
-                    select-true
-                    select-false
-                    select-ty
-                    (compiler-backend-global-shared-view op)
-                    (compiler-backend-global-shared-view lhs)
-                    (compiler-backend-global-shared-view rhs)
-                    (compiler-backend-binop-operand-ty
-                      ctx.types
-                      (compiler-backend-global-shared-view ctx.global-types)
-                      op
-                      lhs
-                      rhs
-                      ty)
-                    ctx.backend-state)
-                  (CompilerBackendMaybeAsm.No))
-                  [(Some head)
-                    (compiler-backend-emit-fused-result-rest
-                      ctx
-                      fallthrough
-                      (Ok head)
-                      instrs
-                      after-branch
-                      out)]
-                  [(No)
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      instrs
-                      index
-                      out)]))]
+            [(Select
+                (box
+                  (fields
+                    [select-dst dst]
+                    [select-mask mask]
+                    [select-true on-true]
+                    [select-false on-false]
+                    [select-lanes lanes]
+                    [select-ty ty])))
+              (match (if (and
+                (= select-lanes 0)
+                (compiler-backend-branch-uses-var? select-mask dst))
+                (compiler-backend-emit-select-on-flags
+                  ctx.type-segment-bases
+                  ctx.assignments
+                  select-dst
+                  select-true
+                  select-false
+                  select-ty
+                  (compiler-backend-global-shared-view op)
+                  (compiler-backend-global-shared-view lhs)
+                  (compiler-backend-global-shared-view rhs)
+                  (compiler-backend-binop-operand-ty
+                    ctx.types
+                    (compiler-backend-global-shared-view ctx.global-types)
+                    op
+                    lhs
+                    rhs
+                    ty)
+                  ctx.backend-state)
+                (CompilerBackendMaybeAsm.No))
+                [(Some head)
+                  (compiler-backend-emit-fused-result-rest
+                    ctx
+                    fallthrough
+                    (Ok head)
+                    instrs
+                    after-branch
+                    out)]
+                [(No)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    instrs
+                    index
+                    out)])]
             [(UnOp not-dst (Not) not-src (Bool))
               ;; A single-use `not` between a comparison and its branch
               ;; only reverses the two successors. Keep the compare
@@ -62652,8 +61944,7 @@
       (if (= (array-ref present var) 0)
         unit
         (match (array-ref items var)
-          [(Register _) (set! found true)]
-          [(RegisterPair _ _) (set! found true)]
+          [(or (Register _) (RegisterPair _ _)) (set! found true)]
           [_ unit]))
       (set! var (+ var 1)))
     found))
@@ -62842,7 +62133,7 @@
           (let
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
-                intervals
+                (& intervals)
                 slot-vars)]
             [starts : (__tl_dyn-array i64) interval-index.starts]
             [ends : (__tl_dyn-array i64) interval-index.ends]
@@ -62894,21 +62185,12 @@
       (owned_view.compiler-owned-reference-shared-view op)]
     [rax-extra : String
       (match (& op)
-        [(Div) "%rax"]
-        [(Mod) "%rax"]
-        [(SafeDiv) "%rax"]
-        [(SafeMod) "%rax"]
-        [(Mul) "%rax"]
+        [(or (Div) (Mod) (SafeDiv) (SafeMod) (Mul)) "%rax"]
         [_ ""])]
     [extra : String
       (match op
-        [(Div) "%rdx"]
-        [(Mod) "%rdx"]
-        [(SafeDiv) "%rdx"]
-        [(SafeMod) "%rdx"]
-        [(Shl _) "%rcx"]
-        [(Shr _) "%rcx"]
-        [(Mul) "%rdx"]
+        [(or (Div) (Mod) (SafeDiv) (SafeMod) (Mul)) "%rdx"]
+        [(or (Shl _) (Shr _)) "%rcx"]
         [_ ""])]
     (__tl_make-array rax-extra extra "" "" "")))
 
@@ -63109,12 +62391,9 @@
 (define (compiler-backend-instr-staging-narrow-ok?
   [instr : (& instr compiler_ir_types.CompilerIrInstr)]) : bool
   (match instr
-    [(BinOp _ _ _ _ _) true]
-    [(UnOp _ _ _ _) true]
-    [(Cast _ _ _ _) true]
-    [(Bitcast _ _ _ _) true]
-    [(Select _) true]
-    [(Mov _ _ _) true]
+    [(or (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (Select _) (Mov _ _ _))
+      true]
     [_ false]))
 
 ;; Sound-scavenger reserved mask (LLVM RegScavenger model): the pooled-register
@@ -63754,7 +63033,7 @@
       (compiler-backend-peephole-predcount-bump
         counts
         (compiler_optimize.opt-cfg-block-successors-with-next
-          (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+          (& (compiler_ir_types.compiler-ir-block-seq-ref blocks index))
           (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
@@ -63779,22 +63058,14 @@
         (if (= n 0)
           false
           (match (array-ref instrs.slots (- n 1))
-            [(Branch _ true-label false-label)
+            [(or (Branch _ true-label false-label)
+                 (TotalEnumBranch _ true-label false-label))
               (compiler-backend-branch-needs-phi-copies?
                 function-state
                 true-label
                 false-label)]
-            [(TotalEnumBranch _ true-label false-label)
-              (compiler-backend-branch-needs-phi-copies?
-                function-state
-                true-label
-                false-label)]
-            [(Switch _ _ cases default-label)
-              (compiler-backend-switch-target-phi?
-                (compiler-backend-function-state-phi-targets function-state)
-                cases
-                default-label)]
-            [(TotalEnumSwitch _ _ cases default-label _)
+            [(or (Switch _ _ cases default-label)
+                 (TotalEnumSwitch _ _ cases default-label _))
               (compiler-backend-switch-target-phi?
                 (compiler-backend-function-state-phi-targets function-state)
                 cases
@@ -63844,7 +63115,7 @@
             (= 1 (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
             (compiler_optimize.opt-label-contains
               (compiler_optimize.opt-cfg-block-successors-with-next
-                prev
+                (& prev)
                 cur-label)
               cur-label))
             (compiler-backend-peephole-carry-safe-insert!
@@ -65070,7 +64341,7 @@
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(Block _ instrs)
           (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
-            instrs)
+            (& instrs))
             true
             (compiler-backend-blocks-have-returning-call? rest))])]))
 
@@ -67365,8 +66636,7 @@
 (define (compiler-backend-gep-fold-64bit-int?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
+    [(or (I64) (U64)) true]
     [_ false]))
 
 ;; The (var j, imm k) split of a candidate add's operands, or No.
@@ -68071,13 +67341,9 @@
       0
       (match (array-ref instrs.slots (- n 1))
         [(Jump _) 1]
-        [(Branch _ _ _) 2]
-        [(TotalEnumBranch _ _ _) 2]
-        [(Switch _ _ _ _) 3]
-        [(TotalEnumSwitch _ _ _ _ _) 3]
-        [(Return _) 4]
-        [(TailCall _ _ _) 4]
-        [(TailCallIndirect _ _ _) 4]
+        [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 2]
+        [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _)) 3]
+        [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _)) 4]
         [_ 0]))))
 
 (define (compiler-backend-placement-index-of
@@ -68111,8 +67377,8 @@
             unit
             (match (array-ref instrs.slots (- instrs.len 1))
               [(Jump _) (set! total (+ total 1))]
-              [(Branch _ _ _) (set! total (+ total 2))]
-              [(TotalEnumBranch _ _ _) (set! total (+ total 2))]
+              [(or (Branch _ _ _) (TotalEnumBranch _ _ _))
+                (set! total (+ total 2))]
               [(Switch _ _ cases _) (set! total (+ total (+ cases.len 2)))]
               [(TotalEnumSwitch _ _ cases _ _)
                 (set! total (+ total (+ cases.len 3)))]
@@ -68187,20 +67453,8 @@
                       succ-buf
                       write
                       (compiler-backend-placement-index-of ids target)))]
-                [(Branch _ true-label false-label)
-                  (set!
-                    write
-                    (compiler-backend-placement-push-succ!
-                      succ-buf
-                      write
-                      (compiler-backend-placement-index-of ids true-label)))
-                  (set!
-                    write
-                    (compiler-backend-placement-push-succ!
-                      succ-buf
-                      write
-                      (compiler-backend-placement-index-of ids false-label)))]
-                [(TotalEnumBranch _ true-label false-label)
+                [(or (Branch _ true-label false-label)
+                     (TotalEnumBranch _ true-label false-label))
                   (set!
                     write
                     (compiler-backend-placement-push-succ!
@@ -68307,10 +67561,7 @@
     [i : i64 0]
     (while (< i header-count)
       (let
-        [h : i64
-          (compiler_regalloc.compiler-reg-loop-nest-header
-            (compiler-backend-global-shared-view nest)
-            i)]
+        [h : i64 (compiler_regalloc.compiler-reg-loop-nest-header (& nest) i)]
         (set! (array-ref sorted i) h)
         (set! generation (+ generation 1))
         (set!
@@ -68403,21 +67654,12 @@
   (match (compiler-backend-global-shared-view instr)
     ;; A TailCall's callee and a Store's global are symbol ids; this pass reads
     ;; them as destinations.
-    [(TailCall name _ _) name]
-    [(Store name _ _) name]
-    [(StoreOwned _ _ _) (- 0 2)]
-    [(VectorBinOp _) (- 0 2)]
-    [(VectorPrefix _) (- 0 2)]
-    [(VectorCompare _) (- 0 2)]
-    [(Select _) (- 0 2)]
-    [(VectorStore _) (- 0 2)]
-    [(PredicatedStore _) (- 0 2)]
-    [(PredicatedLoad _) (- 0 2)]
-    [(GatherLoad _) (- 0 2)]
-    [(VectorShuffle _) (- 0 2)]
-    [(CallCAbiStoreResult _) (- 0 2)]
-    [(CallIndirectCAbiStoreResult _) (- 0 2)]
-    [(SpmdCall _) (- 0 2)]
+    [(or (TailCall name _ _) (Store name _ _)) name]
+    [(or (StoreOwned _ _ _) (VectorBinOp _) (VectorPrefix _) (VectorCompare _)
+         (Select _) (VectorStore _) (PredicatedStore _) (PredicatedLoad _)
+         (GatherLoad _) (VectorShuffle _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _))
+      (- 0 2)]
     [_ (compiler_ir_types.compiler-ir-instr-dst instr)]))
 
 ;; Assign every destination this pass can name a function-local dense slot.
@@ -68531,8 +67773,7 @@
 (define (compiler-backend-placement-affine-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(Add) true]
-    [(Sub) true]
+    [(or (Add) (Sub)) true]
     [_ false]))
 
 (define (compiler-backend-placement-commutes?
@@ -71101,7 +70342,7 @@
             (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
               early-exit-func
-              (compiler-backend-program-index-representations program-index))
+              (& (compiler-backend-program-index-representations program-index)))
             (Rewrite early-exit-func (- 0 1)))]
         [cold-call-func : compiler_ir_types.CompilerIrFunction
           (compiler_regalloc.compiler-reg-cold-call-rewrite-function-value
@@ -71114,7 +70355,7 @@
             [(Function _ _ _ out-vars _ _) out-vars])]
         [cold-call-temp-start : i64
           (compiler_regalloc.compiler-reg-cold-call-rewrite-temp-start
-            cold-call-rewrite)]
+            (& cold-call-rewrite))]
         [walk-func : compiler_ir_types.CompilerIrFunction
           (Function
             name
@@ -71156,25 +70397,26 @@
         [walk-types : compiler_regalloc.CompilerRegVarTypes
           (if scalar-plan?
             (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
-              (compiler-backend-global-shared-view walk-func)
-              (compiler-backend-program-index-representations program-index)
+              (& walk-func)
+              (& (compiler-backend-program-index-representations program-index))
               (compiler-backend-state-metrics program-index.backend-state))
             (compiler_regalloc.compiler-reg-var-types-empty-with-representations
-              (compiler-backend-program-index-representations program-index)))]
+              (& (compiler-backend-program-index-representations program-index))))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
               (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
+                (& walk-func)
                 cold-call-temp-start
                 walk-types
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))
               (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state)))
@@ -71182,16 +70424,18 @@
               (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))
               (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))))]
@@ -71215,9 +70459,9 @@
             (compiler_regalloc.compiler-reg-call-hole-split-rewrite-function
               type-segment-bases
               fn-abi
-              walk-func
+              (& walk-func)
               walk-types
-              reg-plan
+              (& reg-plan)
               cold-call-temp-start)
             (compiler_regalloc.compiler-reg-call-hole-split-none
               walk-func
@@ -71233,10 +70477,10 @@
             (compiler-backend-global-shared-view call-hole-split))]
         [hole-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view call-hole-split))]
+            (& call-hole-split))]
         [hole-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view call-hole-split))]
+            (& call-hole-split))]
         [hole-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
             (compiler-backend-global-shared-view call-hole-split))]
@@ -71246,7 +70490,7 @@
         ;; [hole-vars, split-vars), contiguously.
         [hole-temp-start : i64
           (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            call-hole-split)]
+            (& call-hole-split))]
         ;; P3c: the greedy homes a value for its WHOLE interval, so a value that
         ;; is live ACROSS a hot inner loop but never referenced in it keeps its
         ;; register through that loop while the loop's own residents spill or
@@ -71265,9 +70509,9 @@
             (compiler_regalloc.compiler-reg-loop-park-rewrite-function
               type-segment-bases
               fn-abi
-              hole-func
+              (& hole-func)
               hole-types
-              hole-reg-plan
+              (& hole-reg-plan)
               hole-temp-start
               cold-call-split?)
             (compiler_regalloc.compiler-reg-call-hole-split-none
@@ -71281,13 +70525,13 @@
         ;; round declines, these are the pre-split values unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
             (compiler-backend-global-shared-view loop-park-split))]
@@ -71303,7 +70547,7 @@
               split-blocks
               split-vars
               split-types
-              (compiler-backend-global-shared-view split-reg-plan))
+              (& split-reg-plan))
             (Rewrite
               split-blocks
               split-vars
@@ -71315,7 +70559,7 @@
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
               (compiler-backend-global-shared-view split-reg-plan)
-              (compiler-backend-global-shared-view call-save-rewrite))
+              (& call-save-rewrite))
             split-reg-plan)]
         [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view call-save-rewrite)
@@ -71327,24 +70571,24 @@
         ;; coloring stays on the ordinary plan.
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
-            (compiler-backend-global-shared-view rewritten-reg-plan)
+            (& rewritten-reg-plan)
             rewritten-vars)]
         [plan-types : compiler_regalloc.CompilerRegVarTypes
-          (compiler_regalloc.compiler-reg-plan-types
-            (compiler-backend-global-shared-view rewritten-reg-plan))]
+          (compiler_regalloc.compiler-reg-plan-types (& rewritten-reg-plan))]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
         [fn-group-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-function-group-vars
             type-segment-bases
-            (Function
-              name
-              (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view ret-ty)
-              scratch-vars
-              (compiler-backend-global-shared-view rewritten-blocks)
-              (compiler-backend-global-shared-view function-abi))
+            (&
+              (Function
+                name
+                (compiler-backend-global-shared-view params)
+                (compiler-backend-global-shared-view ret-ty)
+                scratch-vars
+                (compiler-backend-global-shared-view rewritten-blocks)
+                (compiler-backend-global-shared-view function-abi)))
             plan-types)]
         [has-group-vars : bool
           (> (compiler_liveness.compiler-live-set-count fn-group-vars) 0)]
@@ -71356,7 +70600,7 @@
             scratch-vars
             (compiler-backend-global-shared-view rewritten-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
-              (compiler-backend-global-shared-view rewritten-reg-plan))
+              (& rewritten-reg-plan))
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
@@ -71394,13 +70638,13 @@
             None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
-              (compiler-backend-global-shared-view rewritten-reg-plan)
-              (compiler-backend-global-shared-view fn-group-vars)
-              (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view rewritten-blocks)
+              (& rewritten-reg-plan)
+              (& fn-group-vars)
+              (& params)
+              (& rewritten-blocks)
               scratch-vars
               rewritten-vars
-              coloring-pinned-vars
+              (& coloring-pinned-vars)
               (and
                 (compiler-backend-mode-scalar? mode)
                 (not scalar-registers-enabled))))]
@@ -71434,13 +70678,13 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                (compiler-backend-global-shared-view rewritten-reg-plan))]
+                (& rewritten-reg-plan))]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                remap
+                (& remap)
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (compiler-backend-global-shared-view rewritten-reg-plan)))])]
+                  (& rewritten-reg-plan)))])]
         ;; Install the final authoritative table for direct operand-home lookup
         ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
@@ -71487,20 +70731,20 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                rewritten-reg-plan)]
+                (& rewritten-reg-plan))]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                remap
+                (& remap)
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  rewritten-reg-plan))])]
+                  (& rewritten-reg-plan)))])]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-remap-blocks
-                remap
-                rewritten-blocks)])]
+                (& remap)
+                (& rewritten-blocks))])]
         ;; #block-placement: the last word on layout. Every view below --
         ;; scavenge intervals, const-hoist, #jump-forward, phi targets, the
         ;; emission walk itself -- is derived from THIS list, so choosing the
@@ -71512,7 +70756,7 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None) params]
             [(Remap remap _)
-              (compiler_regalloc.compiler-reg-remap-params remap params)])]
+              (compiler_regalloc.compiler-reg-remap-params (& remap) (& params))])]
         ;; RG-1: the registers the FINAL body can name (see
         ;; compiler-backend-plan-body-reg-mask). Computed on the emitted IR and
         ;; the emitted parameter list, in the same var-id domain as
@@ -71556,14 +70800,15 @@
                     (compiler-backend-global-shared-view emit-blocks-list)
                     function-abi)]
                 (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                  (compiler-backend-global-shared-view scavenge-func)
-                  (compiler_liveness.compiler-live-analyze-function
-                    (& scavenge-func))
+                  (& scavenge-func)
+                  (&
+                    (compiler_liveness.compiler-live-analyze-function
+                      (& scavenge-func)))
                   false))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
                 (compiler_regalloc.compiler-reg-interval-index-build
-                  (compiler_regalloc.compiler-reg-interval-seq-empty)
+                  (& (compiler_regalloc.compiler-reg-interval-seq-empty))
                   0))))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (match (compiler-backend-global-shared-view scavenge-selection)
@@ -71577,7 +70822,7 @@
             [(None) plan-types]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-types
-                remap
+                (& remap)
                 emit-vars
                 plan-types)])]
         [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
@@ -71587,12 +70832,13 @@
               (compiler-backend-remap-group-vars fn-group-vars remap)])]
         [emit-group-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-group-vars-fixpoint
-            (compiler-backend-late-group-vars-blocks
-              type-segment-bases
-              program-index
-              emit-group-vars-base
-              (compiler-backend-global-shared-view emit-blocks-list))
-            (compiler-backend-global-shared-view emit-blocks-list))]
+            (&
+              (compiler-backend-late-group-vars-blocks
+                type-segment-bases
+                program-index
+                emit-group-vars-base
+                (compiler-backend-global-shared-view emit-blocks-list)))
+            (& emit-blocks-list))]
         [addressable-group-vars : compiler_liveness.CompilerLiveI64Set
           (if (> (compiler_liveness.compiler-live-set-count emit-group-vars) 0)
             (compiler-backend-addressable-group-vars-blocks
@@ -73983,12 +73229,7 @@
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections a)
         b)]
-    [(Array values)
-      (compiler-backend-collect-call-args-array-collections
-        collections
-        values
-        0)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-backend-collect-call-args-array-collections
         collections
         values
@@ -74033,8 +73274,10 @@
   [collections : CompilerBackendProgramCollections]
   [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendProgramCollections
   (match instr
-    [(Mov _ src _) (compiler-backend-collect-value-collections collections src)]
-    [(BinOp _ _ lhs rhs _)
+    [(or (BinOp _ _ lhs rhs _) (Gep _ lhs rhs _) (StorePtr lhs rhs _)
+         (StoreOwned lhs rhs _) (CopyBytes lhs rhs _) (BoundsCheck lhs rhs _)
+         (MaskBinOp _ _ lhs rhs _) (VectorLoad _ lhs rhs _ _)
+         (CpuId _ lhs rhs _))
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
         rhs)]
@@ -74050,20 +73293,16 @@
                 (compiler-backend-program-collections-mark-f32-neg with-src)
                 with-src))]
           [_ with-src]))]
-    [(Call _ name args _)
+    [(or (Call _ name args _) (TailCall name args _))
       ;; IAG-1: one direct call-graph edge.
       (compiler-backend-iag-note-callee!
         (compiler-backend-global-shared-view collections.iag)
         name)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(CallIndirect _ func args _)
+    [(or (CallIndirect _ func args _) (CallIndirectC _ func args _)
+         (TailCallIndirect func args _))
       ;; IAG-1: a call through a value; this function's callee set is not
       ;; enumerable, so it can reach any rebind.
-      (compiler-backend-iag-note-indirect! collections.iag)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections func)
-        args)]
-    [(CallIndirectC _ func args _)
       (compiler-backend-iag-note-indirect! collections.iag)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
@@ -74079,17 +73318,13 @@
         (compiler-backend-collect-call-args-collections
           (compiler-backend-collect-value-collections collections base)
           args))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [func (compiler-backend-box-field-shared-view payload-box callee)]
-        [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-iag-note-indirect! collections.iag)
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            func)
-          args))]
+    [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
+      (compiler-backend-iag-note-indirect! collections.iag)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
+          func)
+        args)]
     [(SpmdCall payload-box)
       (let
         [active-mask
@@ -74102,11 +73337,6 @@
         (compiler-backend-collect-spmd-call-args-collections
           (compiler-backend-collect-value-collections collections active-mask)
           args))]
-    [(TailCall name args _)
-      (compiler-backend-iag-note-callee!
-        (compiler-backend-global-shared-view collections.iag)
-        name)
-      (compiler-backend-collect-call-args-collections collections args)]
     [(Store name value _)
       ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
       ;; IAG-1 keys its R(g) on the same instruction.
@@ -74114,36 +73344,10 @@
         (compiler_ir_types.compiler-ir-symbol-id name))
       (compiler-backend-iag-note-write! collections.iag name)
       (compiler-backend-collect-value-collections collections value)]
-    [(Branch cond _ _)
-      (compiler-backend-collect-value-collections collections cond)]
-    [(TotalEnumBranch cond _ _)
-      (compiler-backend-collect-value-collections collections cond)]
     [(Return maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(Phi _ inputs _)
       (compiler-backend-collect-phi-collections collections inputs)]
-    [(Gep _ base offset _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections base)
-        offset)]
-    [(Load _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(StorePtr dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(StoreOwned dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(CopyBytes dst src _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections dst)
-        src)]
-    [(BoundsCheck index length _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections index)
-        length)]
     [(Cast _ src from-ty to-ty)
       (let
         [with-source : CompilerBackendProgramCollections
@@ -74157,88 +73361,44 @@
                 (compiler-backend-float-to-u64-threshold-bits from-ty))
               with-source)]
           [_ with-source]))]
-    [(Bitcast _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(Splat _ value _ _)
-      (compiler-backend-collect-value-collections collections value)]
-    [(VectorBinOp payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections lhs)
-          rhs))]
-    [(VectorPrefix payload-box)
-      (let
-        [src (compiler-backend-box-field-shared-view payload-box src)]
-        [carry (compiler-backend-box-field-shared-view payload-box carry)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections src)
-          carry))]
-    [(VectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(VectorCompare payload-box)
-      (let
-        [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections lhs)
-          rhs))]
-    [(MaskBinOp _ _ lhs rhs _)
+    [(VectorBinOp (box (fields lhs rhs)))
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
         rhs)]
-    [(MaskNot _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(MaskReduce _ _ src _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(Select payload-box)
-      (let
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        [on-true (compiler-backend-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-backend-box-field-shared-view payload-box on-false)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections mask)
-            on-true)
-          on-false))]
-    [(VectorLoad _ base index _ _)
+    [(VectorPrefix (box (fields src carry)))
       (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections base)
-        index)]
-    [(VectorStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
+        (compiler-backend-collect-value-collections collections src)
+        carry)]
+    [(VectorCompare (box (fields lhs rhs)))
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
+        rhs)]
+    [(Select (box (fields mask on-true on-false)))
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections mask)
+          on-true)
+        on-false)]
+    [(VectorStore (box (fields base index value)))
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
+          index)
+        value)]
+    [(PredicatedStore (box (fields base index value mask)))
+      (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections base)
             index)
-          value))]
-    [(PredicatedStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
+          value)
+        mask)]
+    [(PredicatedLoad (box (fields base index mask)))
+      (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections base)
-              index)
-            value)
-          mask))]
-    [(PredicatedLoad payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            index)
-          mask))]
+          (compiler-backend-collect-value-collections collections base)
+          index)
+        mask)]
     [(GatherLoad payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
@@ -74260,22 +73420,15 @@
             lanes
             elem-ty)
           values))]
-    [(VectorShuffle payload-box)
-      (let
-        [source (compiler-backend-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-backend-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-backend-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-backend-box-field-shared-view payload-box active-lanes)]
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-maybe-value-collections
-            (compiler-backend-collect-value-collections
-              (compiler-backend-collect-value-collections collections source)
-              selector-low)
-            selector-high)
-          active-lanes))]
+    [(VectorShuffle
+        (box (fields source selector-low selector-high active-lanes)))
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-maybe-value-collections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections source)
+            selector-low)
+          selector-high)
+        active-lanes)]
     [(TailMask _ index length lanes)
       (let
         [values : CompilerBackendProgramCollections
@@ -74285,34 +73438,20 @@
         (if (= lanes 4)
           (compiler-backend-program-collections-mark-avx2-i64-lane-id values)
           values))]
-    [(CpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections leaf)
-        subleaf)]
-    [(Xgetbv _ index)
-      (compiler-backend-collect-value-collections collections index)]
     [(Syscall _ args)
       (compiler-backend-collect-call-args-collections collections args)]
     [(Pack _ words _)
       (compiler-backend-collect-value-seq-collections collections words)]
-    [(Word _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
-    [(TailCallIndirect func args _)
-      (compiler-backend-iag-note-indirect! collections.iag)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections func)
-        args)]
-    [(Alloc _ _) collections]
-    [(AddrOf _ _) collections]
+    [(or (Alloc _ _) (AddrOf _ _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
+         (Jump _))
+      collections]
     [(LaneId _ lanes elem-ty)
       (compiler-backend-collect-lane-id-collections collections lanes elem-ty)]
-    [(EntryArgc _) collections]
-    [(EntryArgv _) collections]
-    [(EntryEnvp _) collections]
-    [(Jump _) collections]
-    [(Switch index _ _ _)
-      (compiler-backend-collect-value-collections collections index)]
-    [(TotalEnumSwitch index _ _ _ _)
+    [(or (Mov _ index _) (Branch index _ _) (TotalEnumBranch index _ _)
+         (Load _ index _) (Bitcast _ index _ _) (Splat _ index _ _)
+         (VectorReduce _ _ index _ _) (MaskNot _ index _)
+         (MaskReduce _ _ index _) (Xgetbv _ index) (Word _ index _ _)
+         (Switch index _ _ _) (TotalEnumSwitch index _ _ _ _))
       (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
@@ -74888,11 +74027,7 @@
 (define (compiler-backend-iag-nominal-aggregate-type?
   [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
-    [(Tuple _) true]
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)) true]
     [_ false]))
 
 ;; A global takes the 8-byte boxed pointer cell today exactly when it is
@@ -75642,15 +74777,7 @@
               bytes
               (text_buf.append (text_buf.empty) "    .quad .+8\n"))
             "    .balign 8\n")))]
-    [(Global name)
-      (Ok
-        (str_cat.str-cat
-          "    .quad "
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)
-          "\n"))]
-    [(GlobalAddr name)
+    [(or (Global name) (GlobalAddr name))
       (Ok
         (str_cat.str-cat
           "    .quad "
@@ -76023,14 +75150,12 @@
   [index : CompilerBackendRuntimeIndex]
   [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendRuntimeIndex
   (match instr
-    [(Call _ call-name _ _)
+    [(or (Call _ call-name _ _) (TailCall call-name _ _))
       (compiler-backend-runtime-index-add-call index call-name)]
     [(CallCAbiStoreResult payload-box)
       (let
         [call-name (deref payload-box).name]
         (compiler-backend-runtime-index-add-call index call-name))]
-    [(TailCall call-name _ _)
-      (compiler-backend-runtime-index-add-call index call-name)]
     [_ index]))
 
 (define (compiler-backend-runtime-index-instr-seq
@@ -76853,14 +75978,14 @@
   (compiler_abi.compiler-abi-outgoing-shadow-space
     (compiler-backend-target-abi target)))
 
-;; Program entry section and global symbol. Freestanding Linux links the
-;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
-;; Windows links `main` through the CRT.
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
   (match target
     [(CompilerBackendTarget.Linux) true]
     [(CompilerBackendTarget.Windows) false]))
 
+;; Linux inline entry text selects backend `_tl_start` or CRT `main`.
+;; Windows declares user `main` here; its selected runtime bundle supplies
+;; the freestanding `_tl_start` image entry.
 (define (compiler-backend-target-entry-text-with-crt
   [target : CompilerBackendTarget]
   [emit-entry : bool]
@@ -78856,8 +77981,7 @@ tl_shared_object_init:
         (compiler-backend-object-push-u8! (&mut out) 0x48)
         (compiler-backend-object-push-u8! (&mut out) 0xf7)
         (compiler-backend-object-push-u8! (&mut out) 0xd0)]
-      [(Sqrt) unit]
-      [(BitLength) unit])
+      [(or (Sqrt) (BitLength)) unit])
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-backend-object-call-r11-bytes) : String
@@ -78980,27 +78104,7 @@ tl_shared_object_init:
         (compiler-backend-char-code c)
         reg)]
     [(Unit) (compiler-backend-object-add-mov-imm32 parts 0 reg)]
-    [(Global _)
-      (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
-        reg)]
-    [(GlobalAddr _)
-      (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
-        reg)]
-    [(String _)
-      (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
-        reg)]
-    [(Bytes _)
-      (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
-        reg)]
-    [(Function _)
-      (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
-        reg)]
-    [(F64 _)
+    [(or (Global _) (GlobalAddr _) (String _) (Bytes _) (Function _) (F64 _))
       (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
         reg)]
@@ -79499,10 +78603,10 @@ tl_shared_object_init:
     [(BitTestNe)
       (object_target.compiler-backend-object-bytes-from-hex
         "4c85c00f95c0480fb6c0")]
-    [(And) (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(Or) (object_target.compiler-backend-object-bytes-from-hex "4c09c0")]
-    [(BitAnd) (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(BitOr) (object_target.compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(or (And) (BitAnd))
+      (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(or (Or) (BitOr))
+      (object_target.compiler-backend-object-bytes-from-hex "4c09c0")]
     [(BitXor) (object_target.compiler-backend-object-bytes-from-hex "4c31c0")]
     [_ ""]))
 
@@ -80055,14 +79159,12 @@ tl_shared_object_init:
 (define (compiler-backend-object-compare-cc
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (match op
-    [(Eq) 0x4]
-    [(Ne) 0x5]
+    [(or (Eq) (BitTestEq)) 0x4]
+    [(or (Ne) (BitTestNe)) 0x5]
     [(Lt) 0xc]
     [(Le) 0xe]
     [(Gt) 0xf]
     [(Ge) 0xd]
-    [(BitTestEq) 0x4]
-    [(BitTestNe) 0x5]
     [_ -1]))
 
 ;; An integer compare stores its `set<cc>` result with plain moves, which keep
@@ -80588,7 +79690,7 @@ tl_shared_object_init:
         src
         ty
         program-index)]
-    [(StorePtr dst src ty)
+    [(or (StorePtr dst src ty) (StoreOwned dst src ty))
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref
           parts
@@ -80599,18 +79701,7 @@ tl_shared_object_init:
         src
         ty
         program-index)]
-    [(StoreOwned dst src ty)
-      (compiler-backend-object-value-ref-with-type
-        (compiler-backend-object-value-ref
-          parts
-          (compiler-backend-global-shared-view function)
-          dst
-          program-index)
-        (compiler-backend-global-shared-view function)
-        src
-        ty
-        program-index)]
-    [(Cast dst src from-ty _)
+    [(or (Cast dst src from-ty _) (Bitcast dst src from-ty _))
       (compiler-backend-object-move-value-to-var
         parts
         function
@@ -80618,15 +79709,7 @@ tl_shared_object_init:
         src
         from-ty
         program-index)]
-    [(Bitcast dst src from-ty _)
-      (compiler-backend-object-move-value-to-var
-        parts
-        function
-        dst
-        src
-        from-ty
-        program-index)]
-    [(Splat _ _ _ elem-ty)
+    [(or (Splat _ _ _ elem-ty) (VectorReduce _ _ _ _ elem-ty))
       (compiler-backend-object-uses-ref
         parts
         function
@@ -80646,13 +79729,6 @@ tl_shared_object_init:
         function
         instr
         (Some (compiler-backend-box-field-shared-view payload-box ty))
-        program-index)]
-    [(VectorReduce _ _ _ _ elem-ty)
-      (compiler-backend-object-uses-ref
-        parts
-        function
-        instr
-        (Some elem-ty)
         program-index)]
     [(VectorCompare payload-box)
       (compiler-backend-object-uses-ref
@@ -80693,12 +79769,23 @@ tl_shared_object_init:
             on-false
             ty
             program-index)))]
-    [(VectorStore payload-box)
-      (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+    [(VectorStore (box (fields base index value [elem-ty ty])))
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref
+          (compiler-backend-object-value-ref
+            parts
+            (compiler-backend-global-shared-view function)
+            base
+            program-index)
+          (compiler-backend-global-shared-view function)
+          index
+          program-index)
+        (compiler-backend-global-shared-view function)
+        value
+        elem-ty
+        program-index)]
+    [(PredicatedStore (box (fields base index value mask [elem-ty ty])))
+      (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref-with-type
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
@@ -80712,42 +79799,14 @@ tl_shared_object_init:
           (compiler-backend-global-shared-view function)
           value
           elem-ty
-          program-index))]
-    [(PredicatedStore payload-box)
+          program-index)
+        (compiler-backend-global-shared-view function)
+        mask
+        program-index)]
+    [(VectorShuffle
+        (box
+          (fields source selector-low selector-high active-lanes [elem-ty ty])))
       (let
-        [base (compiler-backend-box-field-shared-view payload-box base)]
-        [index (compiler-backend-box-field-shared-view payload-box index)]
-        [value (compiler-backend-box-field-shared-view payload-box value)]
-        [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref-with-type
-            (compiler-backend-object-value-ref
-              (compiler-backend-object-value-ref
-                parts
-                (compiler-backend-global-shared-view function)
-                base
-                program-index)
-              (compiler-backend-global-shared-view function)
-              index
-              program-index)
-            (compiler-backend-global-shared-view function)
-            value
-            elem-ty
-            program-index)
-          (compiler-backend-global-shared-view function)
-          mask
-          program-index))]
-    [(VectorShuffle payload-box)
-      (let
-        [source (compiler-backend-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-backend-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-backend-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-backend-box-field-shared-view payload-box active-lanes)]
-        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [with-low : object_target.CompilerBackendObjectTargetParts
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref-with-type
@@ -80970,24 +80029,26 @@ tl_shared_object_init:
             (compiler-backend-function-label-scope program-index name)]
           [types : compiler_regalloc.CompilerRegVarTypes
             (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-              (Function
-                name
-                (compiler-backend-global-shared-view params)
-                (compiler-backend-global-shared-view ret-ty)
-                vars
-                (compiler-backend-global-shared-view blocks)
-                (compiler-backend-global-shared-view function-abi))
+              (&
+                (Function
+                  name
+                  (compiler-backend-global-shared-view params)
+                  (compiler-backend-global-shared-view ret-ty)
+                  vars
+                  (compiler-backend-global-shared-view blocks)
+                  (compiler-backend-global-shared-view function-abi)))
               (compiler-backend-state-metrics program-index.backend-state))]
           [groups : compiler_liveness.CompilerLiveI64Set
             (compiler_regalloc.compiler-reg-function-group-vars
               type-segment-bases
-              (Function
-                name
-                (compiler-backend-global-shared-view params)
-                ret-ty
-                vars
-                (compiler-backend-global-shared-view blocks)
-                function-abi)
+              (&
+                (Function
+                  name
+                  (compiler-backend-global-shared-view params)
+                  ret-ty
+                  vars
+                  (compiler-backend-global-shared-view blocks)
+                  function-abi))
               types)]
           [_group-enable : unit
             (begin
@@ -81082,20 +80143,7 @@ tl_shared_object_init:
             (Abs64)
             (compiler-backend-global-shared-view symbol))
           (SymbolAddress symbol)))]
-    [(Global name)
-      (let
-        [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
-        (object_target.compiler-backend-object-add-data
-          (object_target.compiler-backend-object-add-data-relocation
-            parts
-            site
-            (Abs64)
-            (compiler-backend-global-shared-view symbol))
-          (SymbolAddress symbol)))]
-    [(GlobalAddr name)
+    [(or (Global name) (GlobalAddr name))
       (let
         [symbol : String
           (compiler-backend-state-user-symbol-id
@@ -81723,22 +80771,9 @@ tl_shared_object_init:
   (and
     (not (compiler-backend-float-type? ty))
     (match op
-      [(Add) true]
-      [(Sub) true]
-      [(Mul) true]
-      [(Eq) true]
-      [(Ne) true]
-      [(Lt) true]
-      [(Le) true]
-      [(Gt) true]
-      [(Ge) true]
-      [(BitTestEq) true]
-      [(BitTestNe) true]
-      [(And) true]
-      [(Or) true]
-      [(BitAnd) true]
-      [(BitOr) true]
-      [(BitXor) true]
+      [(or (Add) (Sub) (Mul) (Eq) (Ne) (Lt) (Le) (Gt) (Ge) (BitTestEq)
+           (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor))
+        true]
       [_ false])))
 
 (define (compiler-backend-object-semantic-value-supported?
@@ -81749,10 +80784,9 @@ tl_shared_object_init:
     ;; lowering is shared with the object backend.
     [(I64 value) (and (>= value -2147483648) (<= value 2147483647))]
     ;; This placeholder only records the initializer reference today.
-    [(RuntimeGlobal _) false]
     ;; The object encoder has no static-array record yet (#8369): a program with
     ;; one keeps the assembly path.
-    [(StaticArray _) false]
+    [(or (RuntimeGlobal _) (StaticArray _)) false]
     [_ true]))
 
 (define (compiler-backend-object-semantic-call-args-array-supported?
@@ -81778,9 +80812,7 @@ tl_shared_object_init:
       (and
         (compiler-backend-object-semantic-value-supported? lhs)
         (compiler-backend-object-semantic-value-supported? rhs))]
-    [(Array values)
-      (compiler-backend-object-semantic-call-args-array-supported? values)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-backend-object-semantic-call-args-array-supported? values)]))
 
 (define (compiler-backend-object-semantic-call-supported?
@@ -81804,7 +80836,8 @@ tl_shared_object_init:
   [backend-state : CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
-    [(Mov _ src _) (compiler-backend-object-semantic-value-supported? src)]
+    [(or (Mov _ src _) (Store _ src _) (Load _ src _))
+      (compiler-backend-object-semantic-value-supported? src)]
     [(BinOp _ op lhs rhs ty)
       (and
         (compiler-backend-object-semantic-binop-supported? op ty)
@@ -81820,8 +80853,7 @@ tl_shared_object_init:
         (not (compiler-backend-float-type? ty))
         (compiler-backend-object-semantic-value-supported? src)
         (match op
-          [(Sqrt) false]
-          [(BitLength) false]
+          [(or (Sqrt) (BitLength)) false]
           [_ true]))]
     [(Call _ name args _)
       (and
@@ -81831,8 +80863,6 @@ tl_shared_object_init:
       (and
         (compiler-backend-object-semantic-value-supported? callee)
         (compiler-backend-object-semantic-call-args-supported? args))]
-    [(Store _ value _)
-      (compiler-backend-object-semantic-value-supported? value)]
     [(Jump _) true]
     [(Return maybe)
       (match maybe
@@ -81842,7 +80872,6 @@ tl_shared_object_init:
       (and
         (compiler-backend-object-semantic-value-supported? base)
         (compiler-backend-object-semantic-value-supported? offset))]
-    [(Load _ src _) (compiler-backend-object-semantic-value-supported? src)]
     [_ false]))
 
 (define (compiler-backend-object-instrs-semantically-supported?
@@ -81958,8 +80987,8 @@ tl_shared_object_init:
     [(ObjectEncoding) "unsupported-object-encoding"]
     [(UnsupportedCoffImage) "unsupported-coff-image"]
     [(ObjectFixup) "unsupported-object-fixup"]
-    [(ObjectRelocation) "unsupported-external-relocation"]
-    [(UndeclaredExternal _ _ _ _) "unsupported-external-relocation"]
+    [(or (ObjectRelocation) (UndeclaredExternal _ _ _ _))
+      "unsupported-external-relocation"]
     [(MissingEntrySymbol) "missing-entry-symbol"]
     [(MissingRuntimeEntry) "missing-runtime-entry"]
     [(EmptyTextSection) "empty-text-section"]
@@ -82029,14 +81058,7 @@ tl_shared_object_init:
 (define (compiler-backend-object-abi-integer-type?
   [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
-    [(I32) true]
-    [(U32) true]
-    [(I16) true]
-    [(U16) true]
-    [(I8) true]
-    [(U8) true]
+    [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) true]
     [_ false]))
 
 (define (compiler-backend-object-abi-types-supported?
@@ -82089,7 +81111,7 @@ tl_shared_object_init:
                       (compiler_optimize.opt-type-eq
                         type-segment-bases
                         ty
-                        indexed-ty)))
+                        (& indexed-ty))))
                   (return false)))])
           (set! index (+ index 1)))
         true))))
@@ -82115,7 +81137,7 @@ tl_shared_object_init:
     [_
       (match (compiler-backend-value-type types global-types value)
         [(Some actual)
-          (compiler_optimize.opt-type-eq type-segment-bases actual expected)]
+          (compiler_optimize.opt-type-eq type-segment-bases actual (& expected))]
         [(No) false])]))
 
 (define (compiler-backend-object-call-abi-args-match?
@@ -82181,7 +81203,7 @@ tl_shared_object_init:
               (compiler_optimize.opt-type-eq
                 type-segment-bases
                 dst-ty
-                (compiler-backend-global-shared-view ret-ty))]
+                (& ret-ty))]
             [(No) false])]
         (cond
           [(> count (compiler-backend-object-abi-capacity target))
@@ -82202,7 +81224,7 @@ tl_shared_object_init:
               (compiler_optimize.opt-type-eq
                 type-segment-bases
                 expected-ret
-                ret-ty))
+                (& ret-ty)))
             (Unsupported
               (compiler-backend-object-unsupported-abi-category target Call))]
           [(not dst-matches)
@@ -82367,7 +81389,7 @@ tl_shared_object_init:
                   (compiler_optimize.opt-type-eq
                     type-segment-bases
                     ret-ty
-                    indexed-ret))
+                    (& indexed-ret)))
                 (Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
@@ -82376,9 +81398,10 @@ tl_shared_object_init:
                 (let
                   [types : compiler_regalloc.CompilerRegVarTypes
                     (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
-                      func
-                      (compiler-backend-program-index-representations
-                        program-index)
+                      (& func)
+                      (&
+                        (compiler-backend-program-index-representations
+                          program-index))
                       (compiler-backend-state-metrics
                         program-index.backend-state))]
                   (compiler-backend-object-blocks-abi-eligibility
@@ -88045,23 +87068,16 @@ tl_shared_object_init:
 
 ;; The single render of the group, with COLD-1's out-of-line abort stubs. A
 ;; group without an abort call renders in record order; otherwise the plan and its
-;; synthesized lines are scratch and only the rendered string lands in the
-;; caller's arena.
+;; synthesized lines are scratch and only the rendered string is cloned out into
+;; the caller's arena.
 (define (compiler-backend-peephole-records-render
   [v : CompilerBackendPeepholeLineVec]) : String
   (if (= v.abort-cand-len 0)
     (compiler-backend-peephole-records-render-plain v)
-    (let
-      [output-arena : arena.Arena (arena.current)]
-      [rendered : String ""]
-      (with-scratch
-        (let
-          [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
-          (set!
-            rendered
-            (in-arena output-arena (compiler-backend-cold-render v plan)))
-          unit))
-      rendered)))
+    (with-scratch
+      (let
+        [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
+        (compiler-backend-cold-render v plan)))))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
@@ -92607,7 +91623,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"
@@ -92626,7 +91642,7 @@ tl_shared_object_init:
       (try
         (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
           "<source>"
-          src
+          (& src)
           (compiler-backend-target-cfgs target)))]
     (compiler_lower.lower-compiler-program-with-path-mode
       "<source>"
@@ -92984,15 +92000,7 @@ tl_shared_object_init:
           (and
             (compiler-backend-pic-target-symbol-internal? image.symbols target)
             (match section
-              [(Data)
-                (let
-                  [offset : i64
-                    (compiler-backend-pic-section-label-offset
-                      (compiler-backend-global-shared-view image)
-                      section
-                      site)]
-                  (and (>= offset 0) (= (% offset 8) 0)))]
-              [(Rodata)
+              [(or (Data) (Rodata))
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset

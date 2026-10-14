@@ -23106,7 +23106,7 @@
       (match (csym.compiler-symbols-decl-at-index
         symbols
         (csym.compiler-symbol-handle-index right))
-        [(Ok right-decl) (spec.gen-decl-eq? left-decl right-decl)]
+        [(Ok right-decl) (spec.gen-decl-eq? (& left-decl) (& right-decl))]
         [(Err _) false])]
     [(Err _) false]))
 
@@ -90370,8 +90370,8 @@
         (tc-macro-walk-field state macro-live-symbols-value)]
       [append-index : i64 (csym.compiler-symbols-decl-count current-symbols)]
       (match (csym.compiler-symbols-insert-decls
-        current-symbols
-        decls
+        (& current-symbols)
+        (& decls)
         module-id)
         [(Ok symbols)
           (tc-macro-walk-set! state macro-live-symbols-value symbols)
@@ -90392,9 +90392,9 @@
     (tc-macro-walk-field state macro-live-registries-ready)
     (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (match (csym.compiler-registries-append-decls
-      (macro-live-registries-shared-view state)
-      decls
-      paths
+      (& (macro-live-registries-shared-view state))
+      (& decls)
+      (& paths)
       (tc-macro-walk-field state macro-live-symbols-last-insert-index)
       module-id)
       [(Ok registries)
@@ -90433,7 +90433,10 @@
           1))
       (let
         [registries : csym.CompilerRegistries
-          (try (csym.build-compiler-registries-with-symbols program symbols))]
+          (try
+            (csym.build-compiler-registries-with-symbols
+              (& program)
+              (& symbols)))]
         (set!
           (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
           registries)
@@ -90462,8 +90465,8 @@
       compile-profile
       (compiler-tc-macro-profile-metric-add! state tc-profile-live-rebuilds 1))
     (match (csym.build-compiler-symbols-diagnostic-with-paths-and-capacity
-      (tc-global-shared-view program)
-      paths
+      (& program)
+      (& paths)
       (macro-live-symbols-reserved-capacity (tc-global-shared-view program)))
       [(Ok symbols)
         (let
@@ -93454,8 +93457,8 @@
   (match (ctfe_support.compiler-ctfe-eval (& expr) env fuel)
     [(Ok value next-fuel)
       (match value
-        [(String text _) (Ok (spec.spec-string-key text) next-fuel)]
-        [(Name text _) (Ok (spec.spec-string-key text) next-fuel)]
+        [(String text _) (Ok (spec.spec-string-key (& text)) next-fuel)]
+        [(Name text _) (Ok (spec.spec-string-key (& text)) next-fuel)]
         [(I64 n) (Ok (str_cat.str-cat "i64:" (string.int->string n)) next-fuel)]
         [_
           (Err
@@ -93503,15 +93506,18 @@
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match (reader.spanned-sexpr-view sexpr)
     [(Int _ text _)
-      (text_buf.append (text_buf.append buf "int:") (spec.spec-string-key text))]
+      (text_buf.append
+        (text_buf.append buf "int:")
+        (spec.spec-string-key (& text)))]
     [(Sym name _)
       (text_buf.append
         (text_buf.append buf "sym:")
         (spec.spec-string-key
-          (macro-output-symbol-text-id
-            session
-            (ci.intern-syntax-id-value name)
-            "identity-key")))]
+          (&
+            (macro-output-symbol-text-id
+              session
+              (ci.intern-syntax-id-value name)
+              "identity-key"))))]
     [(List list-items _)
       (match list-items
         [(slice) (text_buf.append buf "nil")]
@@ -93532,13 +93538,13 @@
     [(Str string-id _)
       (text_buf.append
         (text_buf.append buf "str:")
-        (spec.spec-string-key (ci.intern-id-str string-id)))]
+        (spec.spec-string-key (& (ci.intern-id-str string-id))))]
     [(Char c _)
       (text_buf.append-int (text_buf.append buf "char:") (cast c : i64))]
     [(Float text _)
       (text_buf.append
         (text_buf.append buf "float:")
-        (spec.spec-string-key text))]
+        (spec.spec-string-key (& text)))]
     [(BracketList _ _)
       (let
         [items (reader.spanned-sexpr-drop sexpr 0)]
@@ -93724,7 +93730,9 @@
         fallback-module-id
         head-expr)
         [(Ok module _)
-          (Ok (str_cat.str-cat "module_" (spec.spec-string-key module)) fuel)]
+          (Ok
+            (str_cat.str-cat "module_" (spec.spec-string-key (& module)))
+            fuel)]
         [(Err diag) (Err diag)])]
     [else
       (macro-identity-key-param-expr
@@ -94060,7 +94068,7 @@
           (macro-generated-meta generator "import" key)
           framed)]
       [_
-        (match (spec.gen-decl-visible-name (tc-global-shared-view framed))
+        (match (spec.gen-decl-visible-name (& framed))
           [(Some item)
             (ast.ast-decl-comptime-decl-with-meta
               (macro-generated-meta generator item key)
@@ -94206,7 +94214,7 @@
     [(Nil) false]
     [(Cons decl rest)
       (or
-        (spec.gen-decl-eq? decl (tc-global-shared-view want))
+        (spec.gen-decl-eq? (& decl) (& want))
         (macro-decl-list-contains-structural? rest want))]))
 
 (define (macro-decls-missing-generated-imports
@@ -95047,8 +95055,8 @@
                 (set! done true)]
               [(Cons decl-b rest-b)
                 (if (spec.gen-decl-eq?
-                  (macro-generated-decls-splice-template decl-a)
-                  (macro-generated-decls-splice-template decl-b))
+                  (& (macro-generated-decls-splice-template decl-a))
+                  (& (macro-generated-decls-splice-template decl-b)))
                   (begin
                     (set! cursor-a rest-a)
                     (set! cursor-b rest-b))
@@ -95062,7 +95070,7 @@
     [(Nil) ""]
     [(Cons decl _)
       (match (spec.gen-decl-visible-name
-        (macro-generated-decls-splice-template decl))
+        (& (macro-generated-decls-splice-template decl)))
         [(Some item) item]
         [(None) ""])]))
 
@@ -95116,7 +95124,7 @@
   (if (and
     (macro-decl-generated? (tc-global-shared-view decl))
     (not (macro-decl-import? (tc-global-shared-view decl))))
-    (spec.gen-decl-visible-name decl)
+    (spec.gen-decl-visible-name (& decl))
     (None)))
 
 (define (macro-find-generated-visible-decl
@@ -95165,7 +95173,7 @@
                 (macro-generated-target-replay-scan-step
                   state
                   true
-                  (spec.gen-decl-eq? existing-decl decl)))]
+                  (spec.gen-decl-eq? (& existing-decl) (& decl))))]
             [(No)
               (macro-generated-target-replay-scan-in
                 existing-body
@@ -113467,8 +113475,8 @@
                                     [symbols-inserted : bool
                                       (and
                                         (csym.compiler-symbols-insert-aliases-self-contained?
-                                          (tc-global-shared-view expanded)
-                                          (tc-global-shared-view expanded))
+                                          (& expanded)
+                                          (& expanded))
                                         (macro-live-symbols-insert-decls!
                                           (tc-context-macro-state cur-ctx)
                                           (tc-global-shared-view expanded)
@@ -113702,8 +113710,8 @@
                                     (macro-decls-imports-only?
                                       (tc-global-shared-view materialized-decls))
                                     (csym.compiler-symbols-insert-aliases-self-contained?
-                                      (tc-global-shared-view materialized-decls)
-                                      (tc-global-shared-view materialized-decls))
+                                      (& materialized-decls)
+                                      (& materialized-decls))
                                     (macro-live-symbols-insert-decls!
                                       (tc-context-macro-state cur-ctx)
                                       (tc-global-shared-view materialized-decls)
@@ -115027,7 +115035,7 @@
                       "macro.lower-handoff")
                     unit)]
                 (if (spec.compiler-specialize-needed-with-pools
-                  (tc-global-shared-view expanded)
+                  (& expanded)
                   pools)
                   (begin
                     (macro-expand-program-structural-change-note!
@@ -115038,9 +115046,11 @@
                         (spec.spec-owner-context-new pools intern-state)]
                       [normalized-result : spec.ResultGenProgramWithPaths
                         (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                          expanded
-                          (tc-global-shared-view expanded-paths)
-                          (tc-decl-path-list-last expanded-paths "")
+                          (& expanded)
+                          (& expanded-paths)
+                          (tc-decl-path-list-last
+                            (tc-global-shared-view expanded-paths)
+                            "")
                           owner)]
                       ;; Explicit normalization mutates owner cells directly;
                       ;; publish them before matching either result.
@@ -117278,8 +117288,7 @@
       (match (tc-context-program ctx)
         [(Program decls-box)
           (__tl-project-field
-            (csym.compiler-symbols-module-sets
-              (ast.ast-decl-list-box-shared-view decls-box))
+            (csym.compiler-symbols-module-sets (& (deref decls-box)))
             dotted-modules)])]
     [cur-decls : ast.AstDeclList decls]
     [cur-paths : ast.AstDeclPathList paths]
@@ -117605,13 +117614,13 @@
   (tc-nominal-owner-cache-reset-for-job! body-state.job-state)
   (tc-install-pools! pools)
   (match (csym.build-compiler-symbols-diagnostic-with-paths
-    (tc-global-shared-view program)
-    (tc-global-shared-view paths))
+    (& program)
+    (& paths))
     [(Ok symbols)
       (match (csym.build-compiler-registries-diagnostic-with-symbols-and-paths
-        (tc-global-shared-view program)
-        (csym.compiler-symbols-shared-view (& symbols))
-        (tc-global-shared-view paths))
+        (& program)
+        (& (csym.compiler-symbols-shared-view (& symbols)))
+        (& paths))
         [(Ok registries)
           (let
             [ctx : TcContext

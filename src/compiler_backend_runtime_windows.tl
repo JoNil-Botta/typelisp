@@ -20,10 +20,10 @@
   [next-reg : String]
   [profile : bool]) : String
   (runtime_common.compiler-backend-runtime-fast-alloc-functions
-    (compiler-backend-current-arena-load "%r8")
-    (compiler-backend-runtime-usable-end-offset)
-    size-reg
-    next-reg
+    (& (compiler-backend-current-arena-load "%r8"))
+    (& (compiler-backend-runtime-usable-end-offset))
+    (& size-reg)
+    (& next-reg)
     profile))
 
 (define (compiler-backend-runtime-region-mark-functions) : String

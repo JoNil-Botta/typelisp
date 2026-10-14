@@ -42,8 +42,9 @@
     [with-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-symbol
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view entry)))]
+        (&
+          (cobj.CompilerObjectX64Instr.Label
+            (owned_view.compiler-owned-shared-view entry))))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-label
@@ -73,12 +74,9 @@
         (compiler-backend-object-add-entry with-tlci)
         with-tlci)]
     [final-parts : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-bss with-entry (Zero 0))]
+      (object_target.compiler-backend-object-add-bss with-entry (& (Zero 0)))]
     (cobj.CompilerObjectImage
       (cobj.compiler-object-section-builder-finish
-        (object_target.compiler-backend-object-base-sections
-          (owned_view.compiler-owned-shared-view final-parts)
-          4))
-      (object_target.compiler-backend-object-base-symbols
-        (owned_view.compiler-owned-shared-view final-parts))
-      (object_target.compiler-backend-object-base-relocations final-parts))))
+        (object_target.compiler-backend-object-base-sections (& final-parts) 4))
+      (object_target.compiler-backend-object-base-symbols (& final-parts))
+      (object_target.compiler-backend-object-base-relocations (& final-parts)))))

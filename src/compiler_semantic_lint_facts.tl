@@ -562,8 +562,7 @@
         [data : CompilerSemanticFactRecorderData
           (compiler-semantic-fact-recorder-data recorder)]
         [name : i64
-          (match (csym.compiler-symbol-owner-decl-name-id
-            (owned_view.compiler-owned-shared-view decl))
+          (match (csym.compiler-symbol-owner-decl-name-id (& decl))
             [(option_i64.Some id) id]
             [(option_i64.None) -1])]
         [nominal : bool

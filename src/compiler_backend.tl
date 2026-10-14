@@ -40773,6 +40773,26 @@
       (set! index (+ index 1)))
     ok))
 
+(define (compiler-backend-call-args-any-register-sourced?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]) : bool
+  (let
+    [count : i64 (compiler-backend-call-args-len args)]
+    [found : bool false]
+    [index : i64 0]
+    (while (and (not found) (< index count))
+      (if (=
+        (compiler-backend-arg-value-source-reg
+          backend-state
+          assignments
+          (compiler-backend-call-arg-at args index))
+        compiler_abi.compiler-reg-id-invalid)
+        unit
+        (set! found true))
+      (set! index (+ index 1)))
+    found))
+
 (define (compiler-backend-call-args-any-float?
   [type-segment-bases : i64]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
@@ -40812,6 +40832,11 @@
     (or
       (> stack-count 0)
       (compiler-backend-call-args-any-float? type-segment-bases args types))
+    ;; Without a register source nothing can be overwritten before it is read.
+    (compiler-backend-call-args-any-register-sourced?
+      backend-state
+      assignments
+      args)
     (compiler-backend-call-args-all-scalar?
       type-segment-bases
       target

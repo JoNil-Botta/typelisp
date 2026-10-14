@@ -7067,10 +7067,9 @@
     (Ok (ExprList (ast.ast-expr-list-new)) fuel)
     (Err (box (ctfe-diagnostic-at-expr expr "expr-list-empty expects no args")))))
 
-;; Captured children determine the result's domain even when an unrelated
-;; binding is the environment's most recently retained syntax value. Refresh
-;; only compatible state cells before appending, then publish the new cursor
-;; to both input contexts and the retained/active contexts in that domain.
+;; Publish `pools`' cursor to `peer` and to the owning, retained and active
+;; contexts that share its storage, so no later append through any of them can
+;; reuse a slot that a builder's result refers to.
 (define (ctfe-list-builder-publish-pools!
   [env : (& env CtfeEnv)]
   [pools : ast.AstNodePoolContext]
@@ -7083,6 +7082,10 @@
       (ast.ast-node-pool-context-active-live)
       pools)))
 
+;; Captured children determine the result's domain even when an unrelated
+;; binding is the environment's most recently retained syntax value. Advance
+;; the tail's context to the newest cursor among the head, owning, retained and
+;; active contexts; only state cells that share its storage change.
 (define (ctfe-list-builder-pools
   [env : (& env CtfeEnv)]
   [head : ast.AstNodePoolContext]
@@ -7097,7 +7100,6 @@
     (ast.ast-node-pool-context-adopt-newer!
       tail
       (ast.ast-node-pool-context-active-live)))
-  (ctfe-list-builder-publish-pools! env tail head)
   tail)
 
 (define (ctfe-eval-expr-list-cons-call
@@ -7127,15 +7129,25 @@
                         (ExprList (ast.ast-expr-cons head-node (& tail)))
                         tail-fuel)]
                     [(CapturedExprList tail pools)
-                      ;; Numeric child ids can be joined only within one syntax
-                      ;; domain. Adopt its newer cursor before returning a list
-                      ;; that a subsequent builder may extend.
+                      ;; Child ids index one pool's storage. Expansion keeps
+                      ;; operands and generated syntax in one storage, so the
+                      ;; rejection guards internal callers rather than a
+                      ;; macro-visible rule.
                       (if (ctfe-node-pools-share-storage? head-pools pools)
-                        (Ok
-                          (CapturedExprList
-                            (ast.ast-expr-cons head-node (& tail))
-                            (ctfe-list-builder-pools (& env) head-pools pools))
-                          tail-fuel)
+                        (let
+                          [owner : ast.AstNodePoolContext
+                            (ctfe-list-builder-pools (& env) head-pools pools)]
+                          ;; Nothing is appended, but the result keeps the
+                          ;; tail's children live under the newest cursor.
+                          (ctfe-list-builder-publish-pools!
+                            (& env)
+                            owner
+                            head-pools)
+                          (Ok
+                            (CapturedExprList
+                              (ast.ast-expr-cons head-node (& tail))
+                              owner)
+                            tail-fuel))
                         (Err
                           (box
                             (ctfe-diagnostic-at-expr
@@ -7194,6 +7206,9 @@
                           (ctfe-untyped-expr-type))
                         args-fuel)]
                     [(CapturedExprList call-args pools)
+                      ;; The storage guard matches `expr-list-cons`. The call
+                      ;; is appended through the tail's refreshed context, and
+                      ;; its cursor then reaches the callee's context too.
                       (if (ctfe-node-pools-share-storage? callee-pools pools)
                         (let
                           [owner : ast.AstNodePoolContext

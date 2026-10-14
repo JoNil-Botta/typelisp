@@ -40575,14 +40575,6 @@
     [(IncomingStackArgArea)
       (compiler-backend-tail-final-stack-slot target stack-idx backend-state)]))
 
-(define (compiler-backend-call-args-len
-  [args : (& args compiler_ir_types.CompilerIrCallArgs)]) : i64
-  (match args
-    [(Nil) 0]
-    [(One _) 1]
-    [(Two _ _) 2]
-    [(or (Array values) (Sret values _)) (array-length values)]))
-
 ;; Argument classes in a scalar argument plan.
 (define compiler-backend-scalar-arg-gp : i64
   0)
@@ -40617,7 +40609,7 @@
   [stack-idx : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendScalarArgPlan
   (let
-    [count : i64 (compiler-backend-call-args-len args)]
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
     [dests : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [stack-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [classes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -40739,7 +40731,7 @@
   [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
-    [count : i64 (compiler-backend-call-args-len args)]
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
     [ok : bool true]
     [index : i64 0]
     (while (and ok (< index count))
@@ -40778,7 +40770,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]) : bool
   (let
-    [count : i64 (compiler-backend-call-args-len args)]
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
     [found : bool false]
     [index : i64 0]
     (while (and (not found) (< index count))
@@ -40798,7 +40790,7 @@
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]) : bool
   (let
-    [count : i64 (compiler-backend-call-args-len args)]
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
     [found : bool false]
     [index : i64 0]
     (while (and (not found) (< index count))
@@ -40825,7 +40817,7 @@
   [stack-count : i64]
   [backend-state : CompilerBackendState]) : bool
   (and
-    (> (compiler-backend-call-args-len args) 0)
+    (> (compiler_ir_types.compiler-ir-call-args-count args) 0)
     ;; A register-only all-GP call already gets the parallel move from
     ;; compiler-backend-emit-call-args; checking it here would only repeat
     ;; that work on the most common tail call.

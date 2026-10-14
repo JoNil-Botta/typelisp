@@ -23749,7 +23749,7 @@
                  (Phi dst _ _))
               dst]
             [_ (- 0 1)])]
-        (match (& instr)
+        (match (compiler-opt-global-shared-view instr)
           [(Alloc var _)
             (if (and (> run-count 0) (= var (+ run-last 1)))
               (begin
@@ -24838,7 +24838,7 @@
       (match (& resolved)
         [(Var var) (opt-licm-deref-def facts.defs facts.sources var)]
         [_ (No)])]
-    (match (& step)
+    (match (compiler-opt-global-shared-view step)
       [(Some (Gep _ base index scale) _)
         (match index
           [(I64 k)
@@ -104785,7 +104785,7 @@
     (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (match (& instr)
+        (match (compiler-opt-global-shared-view instr)
           [(Mov _ (Function _) _) (set! alias? true)]
           [_ unit])
         (ir.compiler-ir-instr-seq-set!
@@ -118047,7 +118047,7 @@
 (define (opt-cl-rewrite-instr
   [geps : (& geps opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (& instr)
+  (match (compiler-opt-global-shared-view instr)
     [(Load dst src (I64))
       (match src
         [(Var v)

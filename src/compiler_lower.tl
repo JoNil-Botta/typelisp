@@ -6913,7 +6913,7 @@
           (lower-global-array-element-shared-view
             decls.slots
             (+ decls.offset index))]
-        (match (& decl)
+        (match (lower-global-shared-view decl)
           [(Import
               decl-meta
               (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
@@ -63325,7 +63325,7 @@
   [flags : (& flags lower_i64_i64_map.Map)]
   [index-id : i64]
   [expr : ast.AstExpr]) : i64
-  (match (& expr)
+  (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-row-origin-coefficient
         ctx

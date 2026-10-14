@@ -31839,9 +31839,14 @@
             (Ok (tc-contextual-result-type expected matched))]
           [(Mismatch _) (Ok actual)])])))
 
+;; An unlocated error from checking the expanded node EXPANDED takes that
+;; node's span, or the frame SPAN when it has none. A bare caller-origin operand
+;; (BARE-OPERAND?) is located at SPAN, the span of the Spanned view it is
+;; checked through (`tc-caller-origin-operand-view`).
 (define (tc-macro-expansion-result-with-frame
   [ctx : TcContext]
-  [inner : ast.AstExpr]
+  [expanded : i64]
+  [bare-operand? : bool]
   [path-id : i64]
   [origin-path-id : i64]
   [macro-name-id : i64]
@@ -31852,11 +31857,15 @@
     [(Err message)
       (let
         [located : String
-          (if (tc-encoded-error? message)
-            message
-            (match (tc-expr-maybe-span (tc-context-expr-bases ctx) inner)
-              [(Some primary) (tc-located-error primary message)]
-              [(No) (tc-located-error span message)]))]
+          (cond
+            [(tc-encoded-error? message) message]
+            [bare-operand? (tc-located-error span message)]
+            [else
+              (match (tc-expr-id-maybe-span
+                (tc-context-expr-bases ctx)
+                expanded)
+                [(Some primary) (tc-located-error primary message)]
+                [(No) (tc-located-error span message)])])]
         (Err
           (tc-macro-framed-error
             path-id
@@ -31881,13 +31890,10 @@
               [expanded-expr : ast.AstExpr (tc-context-expr-get ctx expanded)]
               [bare-operand? : bool
                 (tc-caller-origin-bare-operand? (& expanded-expr) macro-name-id)]
-              [operand-view : ast.AstExpr
-                (if bare-operand?
-                  (Spanned expanded span)
-                  expanded-expr)]
               (tc-macro-expansion-result-with-frame
                 ctx
-                (tc-global-shared-view operand-view)
+                expanded
+                bare-operand?
                 (macro-expansion-invocation-path-id provenance-id)
                 (macro-expansion-origin-path-id provenance-id)
                 macro-name-id
@@ -31902,7 +31908,7 @@
                     (tc-expr-with-expected-or-actual-core
                       ctx
                       env
-                      operand-view
+                      (Spanned expanded span)
                       expected
                       allow-mut-by-value-borrow)
                     (tc-expr-with-expected-or-actual-core-id
@@ -60472,13 +60478,10 @@
               [expanded-expr : ast.AstExpr (tc-context-expr-get ctx expanded)]
               [bare-operand? : bool
                 (tc-caller-origin-bare-operand? (& expanded-expr) macro-name-id)]
-              [operand-view : ast.AstExpr
-                (if bare-operand?
-                  (Spanned expanded span)
-                  expanded-expr)]
               (tc-macro-expansion-result-with-frame
                 ctx
-                (tc-global-shared-view operand-view)
+                expanded
+                bare-operand?
                 (macro-expansion-invocation-path-id provenance-id)
                 (macro-expansion-origin-path-id provenance-id)
                 macro-name-id
@@ -60490,7 +60493,7 @@
                   macro-name-id
                   span
                   (if bare-operand?
-                    (tc-expr ctx env operand-view)
+                    (tc-expr ctx env (Spanned expanded span))
                     (tc-expr-id ctx env expanded)))))]
           [_
             (let

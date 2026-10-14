@@ -707,28 +707,31 @@
         (layout.compiler-object-layout-section-raw-size image kind)]
       (cond
         [(or (< virtual-size 0) (> virtual-size compiler-object-coff-max-u32))
-          (CompilerObjectCoffLayoutAccumulator
-            acc.offset
+          (set!
+            acc.error
             (compiler-object-coff-layout-section-size-error
               kind
               virtual-size
-              "is not representable in the COFF section header"))]
+              "is not representable in the COFF section header"))
+          acc]
         [(or (< raw-size 0) (> raw-size compiler-object-coff-max-u32))
-          (CompilerObjectCoffLayoutAccumulator
-            acc.offset
+          (set!
+            acc.error
             (compiler-object-coff-layout-section-size-error
               kind
               raw-size
-              "raw data is not representable in the COFF section header"))]
+              "raw data is not representable in the COFF section header"))
+          acc]
         [(or
-            (> acc.offset max-output-size)
-            (> raw-size (- max-output-size acc.offset)))
-          (CompilerObjectCoffLayoutAccumulator
-            acc.offset
+          (> acc.offset max-output-size)
+          (> raw-size (- max-output-size acc.offset)))
+          (set!
+            acc.error
             (compiler-object-coff-layout-section-size-error
               kind
               raw-size
-              "raw data exceeds the configured object-size limit"))]
+              "raw data exceeds the configured object-size limit"))
+          acc]
         [else (CompilerObjectCoffLayoutAccumulator (+ acc.offset raw-size) "")]))))
 
 ;; This helper is intentionally count-based so boundary and malformed states
@@ -806,12 +809,14 @@
         (> count (/ max-output-size 18))
         (> acc.offset max-output-size)
         (> (* count 18) (- max-output-size acc.offset)))
-        (CompilerObjectCoffLayoutAccumulator
-          acc.offset
-          (str_cat.str-cat
-            "coff: windows-x86_64 symbol count "
-            (string.int->string count)
-            " exceeds the COFF or configured object-size limit"))
+        (begin
+          (set!
+            acc.error
+            (str_cat.str-cat
+              "coff: windows-x86_64 symbol count "
+              (string.int->string count)
+              " exceeds the COFF or configured object-size limit"))
+          acc)
         (CompilerObjectCoffLayoutAccumulator (+ acc.offset (* count 18)) "")))))
 
 (define (compiler-object-coff-check-string-table-layout
@@ -849,16 +854,20 @@
               unit)])
         (set! index (+ index 1)))
       (if (> (layout.compiler-object-layout-string-length error) 0)
-        (CompilerObjectCoffLayoutAccumulator acc.offset error)
+        (begin
+          (set! acc.error error)
+          acc)
         (if (or
           (> acc.offset max-output-size)
           (> table-size (- max-output-size acc.offset)))
-          (CompilerObjectCoffLayoutAccumulator
-            acc.offset
-            (str_cat.str-cat
-              "coff: windows-x86_64 string table size "
-              (string.int->string table-size)
-              " exceeds the configured object-size limit"))
+          (begin
+            (set!
+              acc.error
+              (str_cat.str-cat
+                "coff: windows-x86_64 string table size "
+                (string.int->string table-size)
+                " exceeds the configured object-size limit"))
+            acc)
           (CompilerObjectCoffLayoutAccumulator (+ acc.offset table-size) ""))))))
 
 (define (compiler-object-coff-layout-with-limit

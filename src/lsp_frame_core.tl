@@ -7541,17 +7541,9 @@
     module-name))
 
 (define (lsp-decl-entry-copy [entry : lsp_vector_families.LspDeclEntry]) : lsp_vector_families.LspDeclEntry
-  (lsp_vector_families.LspDeclEntry
-    (string.copy (& entry.kind))
-    (string.copy (& entry.name))
-    entry.name-line
-    entry.name-col
-    entry.name-len
-    entry.form-start-line
-    entry.form-start-col
-    entry.form-end-line
-    entry.form-end-col
-    entry.symbol-kind))
+  (set! entry.kind (string.copy (& entry.kind)))
+  (set! entry.name (string.copy (& entry.name)))
+  entry)
 
 (define (lsp-decls-copy [decls : lsp_decl_vec.Vec]) : lsp_decl_vec.Vec
   (let

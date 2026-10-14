@@ -1204,12 +1204,8 @@
 (define (lint-finding-with-fix
   [finding : lint_core.LintFinding]
   [fix : cdiag.CompilerDiagnosticFix]) : lint_core.LintFinding
-  (lint_core.LintFinding
-    finding.message
-    finding.rule-id
-    finding.depth
-    finding.span
-    (LintFixAvailable fix)))
+  (set! finding.fix (LintFixAvailable fix))
+  finding)
 
 (define (lint-level-eq?
   [left : (& left lint_core.LintLevel)]

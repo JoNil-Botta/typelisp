@@ -222,8 +222,8 @@
           (let
             [serial-result : spec.ResultSpecProgramWithPaths
               (spec.compiler-specialize-program-with-paths-and-pools
-                serial-program
-                (owned_view.compiler-owned-shared-view paths)
+                (& serial-program)
+                (& paths)
                 "specialize-smoke.tl"
                 serial-pools)]
             (ast.ast-node-pool-context-install! owned-pools)
@@ -284,11 +284,11 @@
                       (driver-state-specialize-result-diagnostic serial-result)]
                     [owned-result : spec.ResultSpecProgramWithPaths
                       (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-                        owned-program
-                        paths
+                        (& owned-program)
+                        (& paths)
                         "specialize-smoke.tl"
                         owned-pools
-                        state-a)]
+                        (& state-a))]
                     [after-expr-len : i64
                       (ast.ast-node-pool-context-expr-len decoy-pools)]
                     [after-type-len : i64

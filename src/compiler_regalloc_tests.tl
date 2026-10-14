@@ -8681,25 +8681,26 @@
       [div-points (live.compiler-live-set-empty)]
       [shift-points (live.compiler-live-set-empty)]
       (reg.compiler-reg-greedy-state-with-scratch-exclusions
-        intervals
+        (& intervals)
         regs
         assignments
-        index
+        (& index)
         group-vars
         param-roots
         param-entry-forbidden
-        weights
+        (& weights)
         hints
-        (reg.compiler-reg-global-shared-view hints)
-        call-points
+        (& hints)
+        (& call-points)
         div-points
         shift-points
-        (reg.compiler-reg-id-seq-prepend
-          cabi.compiler-reg-id-r12
-          (reg.compiler-reg-id-seq-empty))
+        (&
+          (reg.compiler-reg-id-seq-prepend
+            cabi.compiler-reg-id-r12
+            (reg.compiler-reg-id-seq-empty)))
         1
         1
-        excluded))
+        (& excluded)))
       [(State _ out)
         (and
           (compiler-reg-location-spill-offset?
@@ -9151,9 +9152,7 @@
           (& straight)
           false
           (& clobber-eligible)
-          (&
-            (reg.compiler-reg-function-alu-prefer-rhs
-              (ir.compiler-ir-global-shared-view straight)))))]
+          (& (reg.compiler-reg-function-alu-prefer-rhs (& straight)))))]
     [noncomm : ir.CompilerIrFunction
       (compiler-reg-destructive-noncommutative-function)]
     [noncomm-moves : reg.CompilerRegMoveSeq
@@ -14952,9 +14951,7 @@
           (& func)
           strict-pairs
           (& eligible)
-          (&
-            (reg.compiler-reg-function-alu-prefer-rhs
-              (reg.compiler-reg-global-shared-view func)))))]))
+          (& (reg.compiler-reg-function-alu-prefer-rhs (& func)))))]))
 
 (define (compiler-reg-function-phi-touched-safe
   [func : ir.CompilerIrFunction]

@@ -25,6 +25,7 @@ compiler-state-schema-boundary	all	compiler state schema boundary	-	-	256	-	scri
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	256	-	scripts/check-zero-cons.sh --self-test
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	512	-	scripts/check-zero-cons.sh --fixtures
+shared-view-count-ratchet	all	shared-view count ratchet	-	-	256	-	scripts/check-shared-view-count.sh --self-test && scripts/check-shared-view-count.sh
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test

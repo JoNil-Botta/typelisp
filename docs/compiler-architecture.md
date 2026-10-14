@@ -1095,6 +1095,26 @@ Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
 
+Level 2 can rematerialize a single-definition, unescaped global capture within
+its block while the global still has the captured value. A direct store,
+possibly writing call, indirect store or unknown effect ends forwarding;
+later uses retain the saved value. Only single-use captures or captures used
+entirely for address projections qualify. The emitted and checked inline
+pipelines defer forwarding until a preserved call or store boundary, so
+normalization does not alter inline admission by exposing earlier global reads.
+Normalization builds private function slots and applies existing dead-code
+elimination only to bodies containing capture candidates. Borrowed input slots
+must never acquire replacement bodies from a shorter-lived arena.
+
+Constant-length summary construction uses a private normalized view inside its
+existing scratch arena. That analysis may forward immediately to distinguish a
+descriptor projection from an escape. Only the resulting length maps are
+cloned out; optimizer-input bodies and the checked inline price remain intact.
+The constant-length rewrite follows a direct capture of a proven immutable
+global descriptor using the same definition and address-taken guards as literal
+captures. Global initializers receive no global length facts, because a captured
+global may not yet have its final descriptor.
+
 The constant-length rewrite also recognizes literal String descriptors. Their
 read-only length word contains the byte length, including for empty and UTF-8
 text. It folds only i64 loads from that slot. Both a literal-backed variable

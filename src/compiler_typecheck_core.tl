@@ -120551,9 +120551,9 @@
   [body : ast.AstExpr]
   [reason : String]) : String
   (let
+    ;; E0200, the code main gives a construct it does not implement: this is
+    ;; a limit of the checker, not a resource-ownership (E0211) finding.
     [message : String
-      ;; E0200, the code main gives a construct it does not implement: this
-      ;; is a limit of the checker, not a resource-ownership (E0211) finding.
       (tc-kind-message
         (cdiag.CompilerTypecheckKind.Unclassified)
         "typecheck: the ownership checker does not support a construct in this function body")]

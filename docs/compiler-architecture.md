@@ -666,6 +666,12 @@ a few parsed nodes in place:
 - macro hygiene renames;
 - an expected bare variant is retargeted.
 
+Hygiene commits a uniquely owned produced span wrapper directly into its
+original node after rewriting its children. Registering provenance on a
+temporary wrapper and then rolling that wrapper back can invalidate the
+committed node's source owner. Captured and shared wrappers remain copied;
+the produced-node ownership check guards every direct commit.
+
 The rewritten nodes' new children lie above the session's AST floor, which the
 next reset discards. So the AST pools journal every in-place write to a node
 below the floor (`ast-node-protected-note!`). A cached session's pool reset

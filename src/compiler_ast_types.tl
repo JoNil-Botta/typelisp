@@ -3918,32 +3918,16 @@
     ty-node-pool-storage-arena
     ty-node-pool-segment-count))
 
-;; Capturing through an owned aggregate return can materialize the nested
-;; `dedup-slots` descriptor in the caller's transient arena. These raw cell
-;; writers preserve the already-owned descriptor address and copy only scalar
-;; state, so retained contexts never acquire an intermediate aggregate owner.
+;; Expression state contains only scalar addresses and cursors. Its typed
+;; snapshot preserves the existing pool owners without creating descriptors.
 (define (ast-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
-  (let
-    [cell : (MutPtr i64)
-      (unsafe
-        (int->ptr cell-address : (MutPtr i64)))]
-    (unsafe
-      (ptr-write! cell ast-node-pool-segment-bases)
-      (ptr-write! (ptr-offset cell 1) ast-node-pool-count)
-      (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
-      (ptr-write! (ptr-offset cell 3) ast-node-pool-storage-arena)
-      (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count)
-      (ptr-write! (ptr-offset cell 5) ast-node-span-slot-segment-bases)
-      (ptr-write! (ptr-offset cell 6) ast-node-canonical-span-records)
-      (ptr-write! (ptr-offset cell 7) ast-node-canonical-span-count)
-      (ptr-write! (ptr-offset cell 8) ast-node-respan-records)
-      (ptr-write! (ptr-offset cell 9) ast-node-respan-count)
-      (ptr-write!
-        (ptr-offset cell 10)
-        (if ast-node-span-records-monotonic?
-          1
-          0)))))
+  (unsafe
+    (ptr-write!
+      (int->ptr cell-address : (MutPtr AstExprNodePoolState))
+      (ast-node-pool-state-capture))))
 
+;; The type state retains a nested `dedup-slots` descriptor. Publish its
+;; already-owned address rather than materializing it in caller scratch.
 (define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
   (let
     [cell : (MutPtr i64)

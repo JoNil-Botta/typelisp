@@ -15959,8 +15959,15 @@
         dst
         (opt-global-copy-subst-phi-inputs (& facts) (& doms) uses inputs)
         ty)]
+    ;; The group is read through its copies first. A group reaches its readers
+    ;; through a copy as often as not -- `(slice-view ...)` binds its `pack`
+    ;; to a `let` var, so the loop preheader reads `word %v, 1` of `%v = mov
+    ;; %p`, never of `%p` itself -- and the pack fact is keyed by the pack's
+    ;; own dst. Without the copy step the slice length stays an opaque
+    ;; `word`, and an element check `bounds_check i, (word %v, 1)` never meets
+    ;; the loop guard `i < len` that already proves it.
     [(Word dst src index ty)
-      (match src
+      (match (opt-global-copy-resolve facts doms block-id pos src)
         [(Var group)
           (match (opt-global-fact-lookup
             0
@@ -15970,7 +15977,7 @@
             block-id
             pos)
             [(Some value) (Mov dst value ty)]
-            [(No) instr])]
+            [(No) (Word dst (Var group) index ty)])]
         [_ instr])]
     [_
       (opt-rewrite-operands (& (GlobalCopy facts doms block-id pos)) (& instr))]))

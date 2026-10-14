@@ -193,9 +193,8 @@
   [walk : (&mut walk CompilerExpandWalk)]
   [decl : ast.AstDecl]) : unit
   (match decl
-    [(Def _ _ _ body) (compiler-expand-walk! walk body)]
-    [(DefFn _ _ _ _ body _) (compiler-expand-walk! walk body)]
-    [(Test _ body _ _) (compiler-expand-walk! walk body)]
+    [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (Test _ body _ _))
+      (compiler-expand-walk! walk body)]
     [(Unsafe inner) (compiler-expand-walk-decl! walk (deref inner))]
     [(ModuleBody _ inner)
       (compiler-expand-walk-decls!

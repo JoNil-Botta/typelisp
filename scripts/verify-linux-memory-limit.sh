@@ -111,7 +111,8 @@ exercise_backend() {
 # A separate RSS-only case keeps the fallback termination path mandatory.
 exercise_sampled_observation_races() (
     TYPELISP_MEMORY_RACE_PS=$(command -v ps)
-    export TYPELISP_MEMORY_RACE_PS
+    TYPELISP_MEMORY_RACE_AWK=$(command -v awk)
+    export TYPELISP_MEMORY_RACE_PS TYPELISP_MEMORY_RACE_AWK
     mkdir -p "$WORKDIR/rss-race-bin"
     cat > "$WORKDIR/rss-race-bin/ps" <<'EOF'
 #!/bin/sh
@@ -146,6 +147,10 @@ while :; do
     sleep 0.01
 done
 cat "$workload/memory.events" > "$TYPELISP_MEMORY_RACE_DIR/events"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = sampling-error ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    : > "$TYPELISP_MEMORY_RACE_DIR/fail-sample"
+fi
 read -r pgid < "$TYPELISP_MEMORY_RACE_DIR/pgid"
 if [ "$TYPELISP_MEMORY_RACE_MODE" = transient ] &&
     [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
@@ -155,19 +160,31 @@ else
     printf '%s %s 65536\n' "$pgid" "$pgid"
 fi
 EOF
+    cat > "$WORKDIR/rss-race-bin/awk" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in
+    '-v group='*)
+        cat > "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        [ ! -e "$TYPELISP_MEMORY_RACE_DIR/fail-sample" ] || exit 1
+        exec "$TYPELISP_MEMORY_RACE_AWK" "$@" < "$TYPELISP_MEMORY_RACE_DIR/sample-input"
+        ;;
+    *) exec "$TYPELISP_MEMORY_RACE_AWK" "$@" ;;
+esac
+EOF
     cat > "$WORKDIR/rss-race-workload.sh" <<'EOF'
 #!/bin/sh
 set -eu
 while [ ! -e "$TYPELISP_MEMORY_RACE_DIR/start" ]; do sleep 0.01; done
 case $TYPELISP_MEMORY_RACE_MODE in
     kernel) exec awk 'BEGIN { s = "x"; while (1) s = s s }' ;;
-    rss | transient) exec sleep 30 ;;
+    rss | transient | sampling-error) exec sleep 30 ;;
 esac
 EOF
-    chmod +x "$WORKDIR/rss-race-bin/ps"
+    chmod +x "$WORKDIR/rss-race-bin/ps" "$WORKDIR/rss-race-bin/awk"
     PATH="$WORKDIR/rss-race-bin:$PATH"
     export PATH
-    for TYPELISP_MEMORY_RACE_MODE in kernel rss transient; do
+    for TYPELISP_MEMORY_RACE_MODE in kernel rss transient sampling-error; do
         TYPELISP_MEMORY_RACE_DIR="$WORKDIR/rss-race-$TYPELISP_MEMORY_RACE_MODE"
         export TYPELISP_MEMORY_RACE_MODE TYPELISP_MEMORY_RACE_DIR
         mkdir "$TYPELISP_MEMORY_RACE_DIR"

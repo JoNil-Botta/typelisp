@@ -444,32 +444,7 @@ linux_memory_limit_sample_process_group() {
             linux_memory_limit_record_oom_peak "$_linux_memory_limit_cgroup"
             return 137
         fi
-        _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
-            "$_linux_memory_limit_pid") || {
-                kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
-                wait "$_linux_memory_limit_pid" 2>/dev/null || true
-                rm -f "$_linux_memory_limit_gate"
-                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
-                echo "process-group sampler failed to read process memory" >&2
-                return 1
-            }
-        if [ "$_linux_memory_limit_rss" -eq 0 ] &&
-            [ "$_linux_memory_limit_rss_excess_pending" -eq 0 ]; then
-            break
-        fi
-        if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_peak_rss" ]; then
-            _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
-        fi
-        if [ "$_linux_memory_limit_rss_excess_pending" -gt 0 ] ||
-            [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
-            # The exact workload cgroup cap remains active during one bounded
-            # OOM recheck. Latch the RSS excess so a later drop or normal exit
-            # cannot turn an already failed memory bound into success.
-            if [ "$_linux_memory_limit_rss_excess_pending" -eq 0 ]; then
-                _linux_memory_limit_rss_excess_pending=$_linux_memory_limit_rss
-                sleep 0.05
-                continue
-            fi
+        if [ "$_linux_memory_limit_rss_excess_pending" -gt 0 ]; then
             echo "memory limit exceeded: aggregate RSS $_linux_memory_limit_rss_excess_pending KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
@@ -482,6 +457,28 @@ linux_memory_limit_sample_process_group() {
                     > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
             fi
             return 137
+        fi
+        _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
+            "$_linux_memory_limit_pid") || {
+                kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
+                wait "$_linux_memory_limit_pid" 2>/dev/null || true
+                rm -f "$_linux_memory_limit_gate"
+                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+                echo "process-group sampler failed to read process memory" >&2
+                return 1
+            }
+        if [ "$_linux_memory_limit_rss" -eq 0 ]; then
+            break
+        fi
+        if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_peak_rss" ]; then
+            _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
+        fi
+        if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
+            # The exact workload cap remains active during one bounded OOM
+            # recheck. A known RSS breach needs no further memory samples.
+            _linux_memory_limit_rss_excess_pending=$_linux_memory_limit_rss
+            sleep 0.05
+            continue
         fi
         sleep "$_linux_memory_limit_poll"
     done

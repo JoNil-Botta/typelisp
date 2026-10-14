@@ -29,6 +29,14 @@
 
 (defstruct CompilerCtfeMacroStateData
   (result-hygiene-free-node i64)
+  ;; The operand node of the last `expr-type` that failed on an operand the
+  ;; macro walk could not typecheck, or -1 (#8871), and the pools the
+  ;; evaluation read it from. Only `ctfe-expr-type-value` sets them, and only
+  ;; for a value the walk's own capture marked failed, so the node is a real
+  ;; operand of the call being expanded. The native route evaluates in its
+  ;; host session's pools, which the caller adopts only when the call succeeds.
+  (failed-operand-node i64)
+  (failed-operand-pools ast.AstNodePoolContext)
   (result-may-contain-macro bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
@@ -50,6 +58,8 @@
       (array-ref cell 0)
       (CompilerCtfeMacroStateData
         -1
+        -1
+        (ast.AstNodePoolContext 0 0 0)
         false
         (ctfe_key_map.with-capacity 1)
         (ctfe_key_map.with-capacity 1)
@@ -144,6 +154,38 @@
   [state : CompilerCtfeMacroState]) : i64
   (unsafe
     (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
+
+;; `expr-type`'s failed-operand channel (#8871). The noted operand belongs to the
+;; failing transformer evaluation: the macro walk takes it on that call's error
+;; path, which clears it.
+(define (ctfe-failed-operand-note-for-state!
+  [state : CompilerCtfeMacroState]
+  [node : i64]
+  [pools : ast.AstNodePoolContext]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-node
+      node)
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-pools
+      pools)))
+
+;: The pools of the noted failed operand; read before taking it.
+(define (ctfe-failed-operand-pools-for-state [state : CompilerCtfeMacroState]) : ast.AstNodePoolContext
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).failed-operand-pools))
+
+;: The noted failed operand, or -1; the channel is cleared either way.
+(define (ctfe-failed-operand-take-for-state! [state : CompilerCtfeMacroState]) : i64
+  (let
+    [node : i64
+      (unsafe
+        (deref (compiler-ctfe-macro-state-view state)).failed-operand-node)]
+    (ctfe-failed-operand-note-for-state!
+      state
+      -1
+      (ast.AstNodePoolContext 0 0 0))
+    node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -930,10 +972,30 @@
 (define (ctfe-untyped-expr-type) : ast.AstType
   (Var (ctfe-untyped-expr-type-id)))
 
+;; An operand the macro walk tried to typecheck and could not. It is untyped
+;; everywhere, except that `expr-type` on it notes the operand node in the job's
+;; macro state, so the walk can report the operand's own error instead (#8871).
+(define (ctfe-failed-expr-type-id) : i64
+  -6)
+
+(define (ctfe-failed-expr-type) : ast.AstType
+  (Var (ctfe-failed-expr-type-id)))
+
+(define (ctfe-failed-expr-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Var name) (= name (ctfe-failed-expr-type-id))]
+    [_ false]))
+
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name)
+      (or
+        (= name (ctfe-untyped-expr-type-id))
+        (= name (ctfe-failed-expr-type-id)))]
     [_ false]))
+
+(define (ctfe-expr-type-untyped-message) : String
+  "expr-type requires a typechecked Expr")
 
 (define (ctfe-captured-expr-type-id) : i64
   -4)
@@ -7460,12 +7522,18 @@
 (define (ctfe-expr-type-value
   [pools : ast.AstNodePoolContext]
   [reflections : (& reflections CtfeReflectInfoList)]
+  [state : CompilerCtfeMacroState]
+  [node : i64]
   [ty : (& ast.AstType)]) : CtfeBuilt
   (let
     [actual-ty : ast.AstType
       (ctfe-captured-expr-type-inner-with-pools pools ty)]
     (if (ctfe-untyped-expr-type? actual-ty)
-      (Err "expr-type requires a typechecked Expr")
+      (begin
+        (when
+          (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
+          (ctfe-failed-operand-note-for-state! state node pools))
+        (Err (ctfe-expr-type-untyped-message)))
       (Ok
         (Type
           (ctfe-reflect-resolve-type-with-pools pools reflections actual-ty))))))
@@ -7483,14 +7551,26 @@
           (let
             [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
             (match value
-              [(Expr _ ty)
+              [(Expr node ty)
                 (ctfe-built-result
-                  (ctfe-expr-type-value (ctfe-env-pools env) reflections (& ty))
+                  (ctfe-expr-type-value
+                    (ctfe-env-pools env)
+                    reflections
+                    (ctfe-env-macro-state env)
+                    node
+                    (& ty))
                   expr
                   arg-fuel)]
+              ;; A captured list element's node names another pool, so its
+              ;; diagnostic stays generic.
               [(CapturedExpr _ ty pools)
                 (ctfe-built-result
-                  (ctfe-expr-type-value pools reflections (& ty))
+                  (ctfe-expr-type-value
+                    pools
+                    reflections
+                    (ctfe-env-macro-state env)
+                    -1
+                    (& ty))
                   expr
                   arg-fuel)]
               [_

@@ -91661,6 +91661,51 @@
         (tc-context-expr-get ctx func-box))]
     [_ (tc-expr-maybe-span (tc-context-expr-bases ctx) call-expr)]))
 
+;; Report the error of the operand a macro asked `expr-type` about, at the
+;; operand, in place of the generic `expr-type` message (#8871). The transformer
+;; evaluation notes that operand, with the pools it read it from, in the job's
+;; CTFE macro state rather than in the message, so a macro's own error text can
+;; never name a node. Every failing transformer call reaches this on its error
+;; path, which takes the note whether it is used or not.
+;;
+;; The native route evaluates in its host session's pools, which hold the
+;; operand's caller-origin marker but which the call adopts only on success, so
+;; the error path adopts them the same way first. The diagnostic is replaced
+;; only when it is that `expr-type` failure and the operand, checked again in
+;; the environment of the macro call (the one its capture used), still fails.
+;; The pool-range test is a guard, not a filter: after the adoption every noted
+;; node is in range.
+(define (macro-failed-operand-diagnostic
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  (let
+    [state : ctfe_support.CompilerCtfeMacroState
+      (tc-context-ctfe-macro-state ctx)]
+    [noted-pools : ast.AstNodePoolContext
+      (ctfe_support.ctfe-failed-operand-pools-for-state state)]
+    [node : i64 (ctfe_support.ctfe-failed-operand-take-for-state! state)]
+    (if (and
+      (>= node 0)
+      (string.eq
+        (cdiag.compiler-diagnostic-message (& diag))
+        (ctfe_support.ctfe-expr-type-untyped-message)))
+      (begin
+        (ast.ast-node-pool-context-adopt-newer!
+          (tc-context-pools-live ctx)
+          noted-pools)
+        (tc-context-install-pools! ctx)
+        (if (< node (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+          (match (tc-expr ctx type-env (tc-context-expr-get ctx node))
+            [(Err message)
+              (tc-expr-diag
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx node)
+                message)]
+            [(Ok _) diag])
+          diag))
+      diag)))
+
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
   [path : String]
@@ -91765,6 +91810,7 @@
 
 (define (macro-decl-expansion-with-frame
   [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
@@ -91779,7 +91825,10 @@
             path
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-output-syntax-id-at
   [session : cis.InternStructuralSessionHandle]
@@ -104743,7 +104792,7 @@
                   (& (tc-resolve-type ctx actual)))]
               (tc-context-install-pools! ctx)
               captured)]
-          [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+          [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 
@@ -104770,7 +104819,7 @@
             (tc-resolve-type ctx actual))]
         (tc-context-install-pools! ctx)
         captured)]
-    [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+    [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
 
 ;; The declaration a call head names, as the `module/name` key the
 ;; typechecker resolves it to, when that declaration is a `define`d function of
@@ -108519,7 +108568,10 @@
             (macro-active-decl-path ctx)
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -110808,6 +110860,7 @@
                             [(Ok identity _)
                               (macro-decl-expansion-with-frame
                                 call-ctx
+                                global-env
                                 (tc-global-shared-view decl-path)
                                 (tc-global-shared-view call-expr)
                                 (macro-decl-name-display
@@ -111078,6 +111131,7 @@
                                   [(Empty)
                                     (macro-decl-expansion-with-frame
                                       call-ctx
+                                      global-env
                                       (tc-global-shared-view decl-path)
                                       (tc-global-shared-view call-expr)
                                       (macro-decl-name-display

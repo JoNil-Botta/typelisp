@@ -14637,6 +14637,76 @@ f:
             (ci.intern-compat-state-capture-active))))
       (has "    movq %rsi, %rdx\n    movq %rdi, %rsi\n"))))
 
+(define (compiler-backend-var-call-args [count : i64]) : ir.CompilerIrCallArgs
+  (let
+    [seq : ir.CompilerIrValueSeq (ir.compiler-ir-value-seq-empty)]
+    [i : i64 count]
+    (while (> i 0)
+      (set! i (- i 1))
+      (set! seq (ir.compiler-ir-value-seq-prepend (& (Var i)) (& seq))))
+    (ir.compiler-ir-call-args-from-seq (& seq))))
+
+;; One type per letter: `f` is f64, anything else i64.
+(define (compiler-backend-type-list-of [classes : (& classes str)]) : ast.AstTypeList
+  (let
+    [count : i64 (string.string-length classes)]
+    [out : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
+    [i : i64 0]
+    (while (< i count)
+      (ast.ast-type-list-push
+        (&mut out)
+        (ast.ast-node-pool-reader-type-push
+          (&
+            (if (= (string.index-of-byte classes i (cast 'f' : u8)) i)
+              (F64)
+              (I64)))))
+      (set! i (+ i 1)))
+    out))
+
+;; A tail call whose arguments of both classes sit in each other's argument
+;; registers: an XMM swap (%xmm0 <-> %xmm1) and a GP swap (%rdi <-> %rsi). The
+;; parallel marshalling breaks the XMM cycle through the cycle-temp slot.
+(define (compiler-backend-tail-parallel-two-class-cycle-ok?) : bool
+  (asm-ok?
+    (backend.compiler-backend-emit-direct-tail-call-args-parallel
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (backend.CompilerBackendTarget.Linux)
+      (reg-homes "%0=%xmm1 %1=%xmm0 %2=%rsi %3=%rdi")
+      (& (compiler-backend-var-call-args 4))
+      (& (compiler-backend-type-list-of "ffii"))
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    movsd %xmm"
+      ", -512(%rbp)\n"
+      "    movsd -512(%rbp), %xmm"
+      ", %xmm0\n"
+      ", %xmm1\n"
+      ", %rdi\n"
+      ", %rsi\n")
+    (lacks "%rsp" "movq %xmm")))
+
+;; A Win64 tail call whose fifth argument (a stack slot) is read out of %xmm0,
+;; which the first argument overwrites: the stack store comes first.
+(define (compiler-backend-tail-parallel-xmm-stack-store-first-ok?) : bool
+  (match (backend.compiler-backend-emit-direct-tail-call-args-parallel
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (backend.CompilerBackendTarget.Windows)
+    (reg-homes "%4=%xmm0")
+    (& (compiler-backend-var-call-args 5))
+    (& (compiler-backend-type-list-of "ffiif"))
+    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
+    [(Ok asm)
+      (let
+        [first : String "    movsd %xmm0, 48(%rbp)\n"]
+        (and
+          (>= (string.string-length asm) (string.string-length first))
+          (string.eq
+            (string.substring-copy-checked asm 0 (string.string-length first))
+            first)
+          (backend.compiler-backend-string-contains? asm ", %xmm0\n")))]
+    [(Err _) false]))
+
 (define (compiler-backend-c-abi-arg-cycle-ok?) : bool
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
@@ -37363,6 +37433,8 @@ b_keep:
         (compiler-backend-base1-arg-cycle-ok?)
         (compiler-backend-base1-arg-env-source-ok?)
         (compiler-backend-c-abi-arg-cycle-ok?)
+        (compiler-backend-tail-parallel-two-class-cycle-ok?)
+        (compiler-backend-tail-parallel-xmm-stack-store-first-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?)
         (compiler-backend-phi-immediate-stack-copy-ok?)
         (compiler-backend-phi-direct-scalar-copy-ok?)

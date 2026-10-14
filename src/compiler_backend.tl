@@ -39318,6 +39318,10 @@
 ;; (self-moves / memory sources) falls through to the byte-identical naive path.
 (defenum CompilerBackendArgMoveSource
   (BackendArgMoveValue compiler_ir_types.CompilerIrValue)
+  ;; A float argument's value, bound for an XMM argument register; the flag
+  ;; marks an f32. GP and XMM moves never share a register, so one move list
+  ;; carries both classes and their moves stay independent.
+  (BackendArgMoveFloatValue compiler_ir_types.CompilerIrValue bool)
   (BackendArgMoveReg i64)
   ;; The register-free cycle break: the move's source value was saved in the
   ;; reserved cycle-temp frame slot and is loaded into `dest` here. Behaves like
@@ -39378,20 +39382,30 @@
     [(BackendArgMoveReg r) r]
     [(BackendArgMoveStackPop) compiler_abi.compiler-reg-id-invalid]
     [(BackendArgMoveValue value)
-      (match value
-        [(Var id)
-          (if (>= (compiler-backend-forwarded-addr-of-src backend-state id) 0)
-            compiler_abi.compiler-reg-id-invalid
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
-              assignments
-              id)
-              [(Some loc)
-                (match loc
-                  [(Register home) home]
-                  [_ compiler_abi.compiler-reg-id-invalid])]
-              [(No) compiler_abi.compiler-reg-id-invalid]))]
-        [_ compiler_abi.compiler-reg-id-invalid])]))
+      (compiler-backend-arg-value-source-reg backend-state assignments value)]
+    [(BackendArgMoveFloatValue value _)
+      (compiler-backend-arg-value-source-reg backend-state assignments value)]))
+
+;; The register an argument value is read from (GP or XMM), or invalid for an
+;; immediate, a memory home or a forwarded address.
+(define (compiler-backend-arg-value-source-reg
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]) : i64
+  (match value
+    [(Var id)
+      (if (>= (compiler-backend-forwarded-addr-of-src backend-state id) 0)
+        compiler_abi.compiler-reg-id-invalid
+        (match (compiler-backend-emit-assignment-lookup
+          backend-state
+          assignments
+          id)
+          [(Some loc)
+            (match loc
+              [(Register home) home]
+              [_ compiler_abi.compiler-reg-id-invalid])]
+          [(No) compiler_abi.compiler-reg-id-invalid]))]
+    [_ compiler_abi.compiler-reg-id-invalid]))
 
 (define (compiler-backend-parallel-reg-id-resource [reg : i64]) : i64
   (if (= reg compiler_abi.compiler-reg-id-invalid)
@@ -39585,7 +39599,7 @@
             (Ok "")
             (Ok
               (str_cat.str-cat
-                "    movq "
+                (compiler-backend-arg-move-mnemonic dest)
                 (compiler_abi.compiler-abi-register-spelling r)
                 ", "
                 (compiler_abi.compiler-abi-register-spelling dest)
@@ -39593,7 +39607,7 @@
         [(BackendArgMoveStackPop)
           (Ok
             (str_cat.str-cat
-              "    movq "
+              (compiler-backend-arg-move-mnemonic dest)
               (compiler-backend-cycle-temp-slot-with-backend-state
                 backend-state
                 0)
@@ -39605,13 +39619,31 @@
             assignments
             value
             (compiler_abi.compiler-abi-register-spelling dest)
+            backend-state)]
+        [(BackendArgMoveFloatValue value f32?)
+          (compiler-backend-emit-load-float-value
+            assignments
+            value
+            (&
+              (if f32?
+                (F32)
+                (F64)))
+            (compiler_abi.compiler-abi-register-spelling dest)
             backend-state)])]))
+
+;; A whole-register move of an argument register or of the cycle-break value:
+;; `movq` for GP, `movsd` (the low 64 bits, which hold any f64 or f32 argument)
+;; for XMM.
+(define (compiler-backend-arg-move-mnemonic [reg : i64]) : String
+  (if (compiler_abi.compiler-abi-xmm-register-id? reg)
+    "    movsd "
+    "    movq "))
 
 (define (compiler-backend-emit-arg-cycle-temp-save
   [srcreg : i64]
   [backend-state : CompilerBackendState]) : String
   (str_cat.str-cat
-    "    movq "
+    (compiler-backend-arg-move-mnemonic srcreg)
     (compiler_abi.compiler-abi-register-spelling srcreg)
     ", "
     (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)
@@ -39779,12 +39811,16 @@
                           backend-state))]
                     (Ok (str_cat.str-cat head tail)))
                   (let
+                    ;; An XMM cycle always breaks through the frame temp: the
+                    ;; scratch pool is GP-only.
                     [picked : i64
-                      (compiler-backend-arg-temp-pick-reg
-                        backend-state
-                        assignments
-                        (compiler-backend-global-shared-view moves)
-                        (compiler-backend-global-shared-view all))]
+                      (if (compiler_abi.compiler-abi-xmm-register-id? srcreg)
+                        compiler_abi.compiler-reg-id-invalid
+                        (compiler-backend-arg-temp-pick-reg
+                          backend-state
+                          assignments
+                          (compiler-backend-global-shared-view moves)
+                          (compiler-backend-global-shared-view all)))]
                     (if (= picked compiler_abi.compiler-reg-id-invalid)
                       ;; No free scratch register at saturation: break the cycle
                       ;; through the reserved frame temp. This saves `srcreg`
@@ -40517,179 +40553,526 @@
           prefix
           count)))))
 
-;; The source register of every OVERFLOW argument, resolved once. Step 1 stores
-;; exactly the arguments this array names a register for and step 3 stores the
-;; rest, so the two steps are a partition by construction. Asking the assignment
-;; view twice -- once on each side of the register prefix -- is asking a view the
-;; marshalling itself sits inside, and a single disagreement silently drops an
-;; argument.
-(define (compiler-backend-stack-arg-sources
-  [backend-state : CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [prefix : i64]
-  [count : i64]) : (__tl_dyn-array i64)
-  (let
-    [out : (__tl_dyn-array i64) (__tl_make-array i64 (- count prefix))]
-    [index : i64 prefix]
-    (while (< index count)
-      (set!
-        (array-ref out (- index prefix))
-        (compiler-backend-arg-move-source-reg
-          backend-state
-          assignments
-          (BackendArgMoveValue (compiler-backend-call-arg-at args index))))
-      (set! index (+ index 1)))
-    out))
+;; --- Parallel argument marshalling for all-scalar calls ---------------------
+;; Where a call's stack arguments go: the outgoing area of an ordinary call, or
+;; the caller's own incoming area for a direct tail call, whose callee reads the
+;; same slots the caller received.
+(defenum CompilerBackendStackArgArea
+  (OutgoingStackArgArea)
+  (IncomingStackArgArea))
 
-;; Step 1: the register-sourced stack stores. Nothing has been written yet, so
-;; every home still holds its argument, and a register source is stored with one
-;; `movq` and no staging scratch.
-(define (compiler-backend-emit-register-sourced-stack-args-into
-  [out : (&mut out CompilerBackendAsmBuf)]
+(define (compiler-backend-stack-arg-area-slot
+  [area : CompilerBackendStackArgArea]
   [target : CompilerBackendTarget]
-  [sources : (& sources (__tl_dyn-array i64))]
-  [stack-idx : i64]) : unit
-  (let
-    [total : i64 (array-length sources)]
-    [index : i64 0]
-    (while (< index total)
-      (let
-        [source : i64 (array-ref sources index)]
-        (if (= source compiler_abi.compiler-reg-id-invalid)
-          unit
-          (compiler-backend-asm-append5
-            out
-            "    movq "
-            (compiler_abi.compiler-abi-register-spelling source)
-            ", "
-            (string.int->string
-              (compiler-backend-outgoing-stack-arg-offset
-                target
-                (+ stack-idx index)))
-            "(%rsp)\n")))
-      (set! index (+ index 1)))))
+  [stack-idx : i64]
+  [backend-state : CompilerBackendState]) : String
+  (match area
+    [(OutgoingStackArgArea)
+      (str_cat.str-cat
+        (string.int->string
+          (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+        "(%rsp)")]
+    [(IncomingStackArgArea)
+      (compiler-backend-tail-final-stack-slot target stack-idx backend-state)]))
 
-;; Step 3: the stack stores whose source is an immediate or memory, emitted
-;; through the same scalar stack-arg emitter the naive path uses. The register
-;; prefix is already placed, so the staging scratch only has to avoid the
-;; argument registers (all of which the c-abi stage mask excludes) and whatever
-;; the occupancy mask reports live -- exactly the naive path's own conditions.
-(define (compiler-backend-emit-memory-sourced-stack-args-into
-  [out : (&mut out CompilerBackendAsmBuf)]
+;; Argument classes in a scalar argument plan.
+(define compiler-backend-scalar-arg-gp : i64
+  0)
+(define compiler-backend-scalar-arg-f64 : i64
+  1)
+(define compiler-backend-scalar-arg-f32 : i64
+  2)
+
+;; Where each argument of an all-scalar call goes and where it is read from,
+;; resolved once so every step below partitions the same arguments:
+;; - `dests`: the argument register (GP or XMM id), or invalid when the
+;;   argument is stack-passed;
+;; - `stack-slots`: the stack index of a stack-passed argument, -1 otherwise;
+;; - `classes`: GP, f64 or f32;
+;; - `sources`: the register the value is read from, or invalid for an
+;;   immediate or a memory home.
+(defstruct CompilerBackendScalarArgPlan
+  (dests (__tl_dyn-array i64))
+  (stack-slots (__tl_dyn-array i64))
+  (classes (__tl_dyn-array i64))
+  (sources (__tl_dyn-array i64)))
+
+(define (compiler-backend-scalar-arg-plan
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [types : compiler_ast_types.AstTypeList]
-  [sources : (__tl_dyn-array i64)]
-  [index : i64]
-  [prefix : i64]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
   [stack-idx : i64]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>= index (array-length sources))
-    (Ok "")
-    (if (not (= (array-ref sources index) compiler_abi.compiler-reg-id-invalid))
-      (compiler-backend-emit-memory-sourced-stack-args-into
-        out
-        type-segment-bases
-        target
-        assignments
-        args
-        types
-        sources
-        (+ index 1)
-        prefix
-        stack-idx
-        backend-state)
+  [backend-state : CompilerBackendState]) : CompilerBackendScalarArgPlan
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [dests : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [stack-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [classes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [sources : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [ints : i64 int-idx]
+    [floats : i64 float-idx]
+    [pos : i64 position]
+    [stack : i64 stack-idx]
+    [index : i64 0]
+    (while (< index count)
       (let
-        [_
-          (try
-            (compiler-backend-emit-scalar-stack-call-arg-into
-              out
-              type-segment-bases
-              target
-              assignments
-              (compiler-backend-call-arg-at args (+ prefix index))
-              (compiler-backend-call-arg-type-at
+        [ty : compiler_ast_types.AstType
+          (compiler-backend-call-arg-type-at type-segment-bases types index)]
+        [is-float : bool (compiler-backend-float-type? (& ty))]
+        (set!
+          (array-ref classes index)
+          (match ty
+            [(F32) compiler-backend-scalar-arg-f32]
+            [(F64) compiler-backend-scalar-arg-f64]
+            [_ compiler-backend-scalar-arg-gp]))
+        (set!
+          (array-ref sources index)
+          (compiler-backend-arg-value-source-reg
+            backend-state
+            assignments
+            (compiler-backend-call-arg-at args index)))
+        (if (compiler-backend-stack-call-arg-for-banks?
+          target
+          is-float
+          ints
+          floats
+          pos)
+          (begin
+            (set! (array-ref dests index) compiler_abi.compiler-reg-id-invalid)
+            (set! (array-ref stack-slots index) stack)
+            (set! stack (+ stack 1)))
+          (begin
+            (set!
+              (array-ref dests index)
+              (if is-float
+                (compiler_abi.compiler-abi-float-arg-register-id
+                  (compiler-backend-target-abi target)
+                  (compiler-backend-call-bank-index target floats pos))
+                (compiler_abi.compiler-abi-gp-arg-register-id
+                  (compiler-backend-target-abi target)
+                  (compiler-backend-call-bank-index target ints pos))))
+            (set! (array-ref stack-slots index) -1)))
+        (if is-float
+          (set! floats (+ floats 1))
+          (set! ints (+ ints 1)))
+        (set! pos (+ pos 1)))
+      (set! index (+ index 1)))
+    (CompilerBackendScalarArgPlan dests stack-slots classes sources)))
+
+;; The register moves of a plan, GP and XMM alike, in argument order.
+(define (compiler-backend-scalar-arg-plan-moves
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [plan : (& plan CompilerBackendScalarArgPlan)]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity 0)]
+    [index : i64 0]
+    (while (< index (array-length plan.dests))
+      (let
+        [dest : i64 (array-ref plan.dests index)]
+        [class : i64 (array-ref plan.classes index)]
+        (if (= dest compiler_abi.compiler-reg-id-invalid)
+          unit
+          (compiler-backend-arg-move-push!
+            (&mut out)
+            (BackendArgMove
+              dest
+              (if (= class compiler-backend-scalar-arg-gp)
+                (BackendArgMoveValue (compiler-backend-call-arg-at args index))
+                (BackendArgMoveFloatValue
+                  (compiler-backend-call-arg-at args index)
+                  (= class compiler-backend-scalar-arg-f32)))))))
+      (set! index (+ index 1)))
+    out))
+
+;; Does the sequential marshalling risk reading a source it already
+;; overwrote? Either an argument register is another argument's source, or a
+;; stack argument is read out of a register, which the sequential path stores
+;; only after it has written the registers before it.
+(define (compiler-backend-scalar-arg-plan-hazard?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [plan : (& plan CompilerBackendScalarArgPlan)]) : bool
+  (let
+    [register-sourced-stack? : bool false]
+    [index : i64 0]
+    (while (< index (array-length plan.dests))
+      (if (and
+        (>= (array-ref plan.stack-slots index) 0)
+        (not
+          (=
+            (array-ref plan.sources index)
+            compiler_abi.compiler-reg-id-invalid)))
+        (set! register-sourced-stack? true)
+        unit)
+      (set! index (+ index 1)))
+    (or
+      register-sourced-stack?
+      (compiler-backend-arg-moves-conflict?
+        backend-state
+        assignments
+        (compiler-backend-scalar-arg-plan-moves args plan)
+        (compiler-backend-scalar-arg-plan-moves args plan)))))
+
+;; Is every argument one scalar: a float, or a GP-class value that is neither
+;; a register group nor passed in memory? The parallel marshalling handles
+;; exactly these calls.
+(define (compiler-backend-call-args-all-scalar?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [ok : bool true]
+    [index : i64 0]
+    (while (and ok (< index count))
+      (let
+        [ty : compiler_ast_types.AstType
+          (compiler-backend-call-arg-type-at type-segment-bases types index)]
+        (if (or
+          (compiler-backend-float-type? (& ty))
+          (and
+            (not
+              (compiler-backend-group-type?
                 type-segment-bases
-                types
-                (+ prefix index))
-              false
-              (+ stack-idx index)
-              backend-state))]
-        (compiler-backend-emit-memory-sourced-stack-args-into
-          out
+                program-index
+                (& ty)))
+            (=
+              (compiler-backend-abi-memory-size
+                type-segment-bases
+                (compiler-backend-call-arg-type-at
+                  type-segment-bases
+                  types
+                  index))
+              0)
+            (not
+              (compiler-backend-c-memory-aggregate-type?
+                type-segment-bases
+                target
+                c-abi?
+                ty))))
+          unit
+          (set! ok false)))
+      (set! index (+ index 1)))
+    ok))
+
+(define (compiler-backend-call-args-any-register-sourced?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]) : bool
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [found : bool false]
+    [index : i64 0]
+    (while (and (not found) (< index count))
+      (if (=
+        (compiler-backend-arg-value-source-reg
+          backend-state
+          assignments
+          (compiler-backend-call-arg-at args index))
+        compiler_abi.compiler-reg-id-invalid)
+        unit
+        (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+(define (compiler-backend-call-args-any-float?
+  [type-segment-bases : i64]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]) : bool
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-call-args-count args)]
+    [found : bool false]
+    [index : i64 0]
+    (while (and (not found) (< index count))
+      (if (compiler-backend-float-type?
+        (& (compiler-backend-call-arg-type-at type-segment-bases types index)))
+        (set! found true)
+        unit)
+      (set! index (+ index 1)))
+    found))
+
+;; A direct tail call whose arguments are all scalars and whose sequential
+;; marshalling would read an overwritten source. Regalloc keeps a parameter in
+;; its incoming argument register across a tail call (control never returns
+;; past one), so a permuted forward of the caller's parameters -- of either
+;; register class, with or without stack arguments -- needs the parallel move.
+(define (compiler-backend-tail-call-args-parallel?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]
+  [stack-count : i64]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (> (compiler_ir_types.compiler-ir-call-args-count args) 0)
+    ;; A register-only all-GP call already gets the parallel move from
+    ;; compiler-backend-emit-call-args; checking it here would only repeat
+    ;; that work on the most common tail call.
+    (or
+      (> stack-count 0)
+      (compiler-backend-call-args-any-float? type-segment-bases args types))
+    ;; Without a register source nothing can be overwritten before it is read.
+    (compiler-backend-call-args-any-register-sourced?
+      backend-state
+      assignments
+      args)
+    (compiler-backend-call-args-all-scalar?
+      type-segment-bases
+      target
+      args
+      types
+      c-abi?
+      program-index)
+    (compiler-backend-scalar-arg-plan-hazard?
+      backend-state
+      assignments
+      args
+      (&
+        (compiler-backend-scalar-arg-plan
           type-segment-bases
           target
           assignments
           args
           types
-          sources
-          (+ index 1)
-          prefix
-          stack-idx
+          0
+          0
+          0
+          0
           backend-state)))))
 
-(define (compiler-backend-emit-call-args-stack-first-into
+;; One stack argument whose source is an immediate or memory, through the
+;; emitter of its area.
+(define (compiler-backend-emit-stack-arg-to-area-into
   [out : (&mut out CompilerBackendAsmBuf)]
+  [area : CompilerBackendStackArgArea]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [types : compiler_ast_types.AstTypeList]
-  [int-idx : i64]
-  [position : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [arg-ty : compiler_ast_types.AstType]
+  [is-float : bool]
   [stack-idx : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [count : i64
-      (compiler-backend-call-args-count
-        (compiler-backend-global-shared-view args))]
-    [prefix : i64
-      (compiler-backend-call-args-gp-register-prefix
+  (match area
+    [(OutgoingStackArgArea)
+      (compiler-backend-emit-scalar-stack-call-arg-into
+        out
+        type-segment-bases
         target
-        count
-        int-idx
-        position)]
-    [sources : (__tl_dyn-array i64)
-      (compiler-backend-stack-arg-sources
-        backend-state
         assignments
-        (compiler-backend-global-shared-view args)
-        prefix
-        count)]
-    (compiler-backend-emit-register-sourced-stack-args-into
-      out
-      target
-      sources
-      stack-idx)
-    (let
-      [moves
-        (try
-          (compiler-backend-emit-arg-move-list
-            assignments
-            (compiler-backend-arg-moves-build-from
+        value
+        arg-ty
+        is-float
+        stack-idx
+        backend-state)]
+    [(IncomingStackArgArea)
+      (let
+        [store
+          (try
+            (compiler-backend-emit-direct-tail-stack-call-arg
+              type-segment-bases
               target
-              (compiler-backend-global-shared-view args)
-              0
-              prefix
-              int-idx
-              position)
-            backend-state))]
-      (compiler-backend-asm-append out moves)
+              assignments
+              value
+              arg-ty
+              is-float
+              stack-idx
+              backend-state))]
+        (compiler-backend-asm-append out store)
+        (Ok ""))]))
+
+;; Step 3: the stack arguments whose source is an immediate or memory, in
+;; argument order. The registers are already placed, so the staging scratch
+;; only has to avoid the argument registers and whatever the occupancy mask
+;; reports live -- the sequential path's own conditions.
+(define (compiler-backend-emit-memory-sourced-stack-args-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [area : CompilerBackendStackArgArea]
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [plan : (& plan CompilerBackendScalarArgPlan)]
+  [index : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (cond
+    [(>= index (array-length plan.dests)) (Ok "")]
+    [(or
+        (< (array-ref plan.stack-slots index) 0)
+        (not
+          (=
+            (array-ref plan.sources index)
+            compiler_abi.compiler-reg-id-invalid)))
       (compiler-backend-emit-memory-sourced-stack-args-into
         out
+        area
         type-segment-bases
         target
         assignments
         args
         types
-        sources
-        0
-        prefix
+        plan
+        (+ index 1)
+        backend-state)]
+    [else
+      (let
+        [_
+          (try
+            (compiler-backend-emit-stack-arg-to-area-into
+              out
+              area
+              type-segment-bases
+              target
+              assignments
+              (compiler-backend-call-arg-at args index)
+              (compiler-backend-call-arg-type-at type-segment-bases types index)
+              (not
+                (=
+                  (array-ref plan.classes index)
+                  compiler-backend-scalar-arg-gp))
+              (array-ref plan.stack-slots index)
+              backend-state))]
+        (compiler-backend-emit-memory-sourced-stack-args-into
+          out
+          area
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          plan
+          (+ index 1)
+          backend-state))]))
+
+;; Argument marshalling as one parallel move, for a call whose arguments are
+;; all scalars. An argument register can hold another argument's source (a
+;; parameter kept in its incoming register, or a value regalloc left in an
+;; argument register), so no register is written while a pending argument
+;; still reads it:
+;;   1. the stack arguments read out of a register are stored first, before
+;;      any register is written: `movq` from a GP source, `movsd`/`movss` from
+;;      an XMM one;
+;;   2. every argument register, GP and XMM, is filled by one parallel move
+;;      (compiler-backend-emit-arg-move-list). The two classes share no
+;;      register, so their moves never block each other. A GP cycle breaks
+;;      through a scavenged scratch register, an XMM cycle through the
+;;      reserved cycle-temp slot;
+;;   3. the stack arguments whose source is an immediate or memory are stored
+;;      last.
+;; `area` names where the stack arguments go. For a direct tail call that is
+;; the caller's incoming area: the caller copied its own stack parameters into
+;; their homes at entry, so no source lives in the area these stores overwrite.
+(define (compiler-backend-emit-call-args-parallel-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [area : CompilerBackendStackArgArea]
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [plan : CompilerBackendScalarArgPlan
+      (compiler-backend-scalar-arg-plan
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        int-idx
+        float-idx
+        position
         stack-idx
+        backend-state)]
+    [index : i64 0]
+    (while (< index (array-length plan.dests))
+      (let
+        [slot : i64 (array-ref plan.stack-slots index)]
+        [source : i64 (array-ref plan.sources index)]
+        [class : i64 (array-ref plan.classes index)]
+        (if (or (< slot 0) (= source compiler_abi.compiler-reg-id-invalid))
+          unit
+          (compiler-backend-asm-append5
+            out
+            (cond
+              [(= class compiler-backend-scalar-arg-f32) "    movss "]
+              [(= class compiler-backend-scalar-arg-f64) "    movsd "]
+              [else "    movq "])
+            (compiler_abi.compiler-abi-register-spelling source)
+            ", "
+            (compiler-backend-stack-arg-area-slot
+              area
+              target
+              slot
+              backend-state)
+            "\n")))
+      (set! index (+ index 1)))
+    (let
+      [moves
+        (try
+          (compiler-backend-emit-arg-move-list
+            assignments
+            (compiler-backend-scalar-arg-plan-moves args (& plan))
+            backend-state))]
+      (compiler-backend-asm-append out moves)
+      (compiler-backend-emit-memory-sourced-stack-args-into
+        out
+        area
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        (& plan)
+        0
         backend-state))))
+
+;; String-returning shim for the direct tail call, whose arguments are emitted
+;; as text.
+(define (compiler-backend-emit-direct-tail-call-args-parallel
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [types : (& types compiler_ast_types.AstTypeList)]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [out : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [_
+      (try
+        (compiler-backend-emit-call-args-parallel-into
+          (&mut out)
+          (IncomingStackArgArea)
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          0
+          0
+          0
+          0
+          backend-state))]
+    (Ok (compiler-backend-asm-buf-finish (& out)))))
 
 (define (compiler-backend-emit-call-args-into
   [out : (&mut out CompilerBackendAsmBuf)]
@@ -40753,7 +41136,7 @@
     ;; The same interception one arity up: an all-GP call that OVERFLOWS its
     ;; argument registers and whose stack args or register prefix read a
     ;; register. Its overflow is stored before any argument register is written
-    ;; (compiler-backend-emit-call-args-stack-first-into).
+    ;; (compiler-backend-emit-call-args-parallel-into).
     (if (and
       (= arg-index 0)
       (compiler-backend-call-args-gp-stack-first?
@@ -40767,14 +41150,16 @@
         int-idx
         position
         backend-state))
-      (compiler-backend-emit-call-args-stack-first-into
+      (compiler-backend-emit-call-args-parallel-into
         out
+        (OutgoingStackArgArea)
         type-segment-bases
         target
         assignments
-        args
-        types
+        (& args)
+        (& types)
         int-idx
+        float-idx
         position
         stack-idx
         backend-state)
@@ -44581,11 +44966,29 @@
       (let
         [args-asm
           (try
-            (if (compiler-backend-function-state-bool?
-              (compiler-backend-state-function-state backend-state)
-              compiler-backend-function-bool-identity-tail-forwarder-active)
-              (ResultCompilerBackend.Ok "")
-              (if (= tail-stack-count 0)
+            (cond
+              [(compiler-backend-function-state-bool?
+                  (compiler-backend-state-function-state backend-state)
+                  compiler-backend-function-bool-identity-tail-forwarder-active)
+                (ResultCompilerBackend.Ok "")]
+              [(compiler-backend-tail-call-args-parallel?
+                  type-segment-bases
+                  target
+                  assignments
+                  (& args)
+                  (& param-types)
+                  c-abi?
+                  program-index
+                  tail-stack-count
+                  backend-state)
+                (compiler-backend-emit-direct-tail-call-args-parallel
+                  type-segment-bases
+                  target
+                  assignments
+                  (& args)
+                  (& param-types)
+                  backend-state)]
+              [(= tail-stack-count 0)
                 (compiler-backend-emit-call-args
                   type-segment-bases
                   target
@@ -44601,7 +45004,8 @@
                   instr-diag
                   program-index
                   vars
-                  backend-state)
+                  backend-state)]
+              [else
                 (compiler-backend-emit-direct-tail-call-args
                   type-segment-bases
                   target
@@ -44609,7 +45013,7 @@
                   args
                   param-types
                   instr-diag
-                  backend-state))))]
+                  backend-state)]))]
         (Ok
           (str_cat.str-cat
             args-asm

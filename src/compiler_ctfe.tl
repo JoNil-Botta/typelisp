@@ -29,6 +29,11 @@
 
 (defstruct CompilerCtfeMacroStateData
   (result-hygiene-free-node i64)
+  ;; The operand node of the last `expr-type` that failed on an operand the
+  ;; macro walk could not typecheck, or -1 (#8871). Only `ctfe-expr-type-value`
+  ;; sets it, and only for a value the walk's own capture marked failed, so the
+  ;; node is a real operand of the call being expanded.
+  (failed-operand-node i64)
   (result-may-contain-macro bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
@@ -49,6 +54,7 @@
     (set!
       (array-ref cell 0)
       (CompilerCtfeMacroStateData
+        -1
         -1
         false
         (ctfe_key_map.with-capacity 1)
@@ -144,6 +150,28 @@
   [state : CompilerCtfeMacroState]) : i64
   (unsafe
     (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
+
+;; `expr-type`'s failed-operand channel (#8871): the macro walk clears it before
+;; it evaluates a transformer and takes it when the evaluation fails.
+(define (ctfe-failed-operand-note-for-state!
+  [state : CompilerCtfeMacroState]
+  [node : i64]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-node
+      node)))
+
+(define (ctfe-failed-operand-reset-for-state! [state : CompilerCtfeMacroState]) : unit
+  (ctfe-failed-operand-note-for-state! state -1))
+
+;: The noted failed operand, or -1; the channel is cleared either way.
+(define (ctfe-failed-operand-take-for-state! [state : CompilerCtfeMacroState]) : i64
+  (let
+    [node : i64
+      (unsafe
+        (deref (compiler-ctfe-macro-state-view state)).failed-operand-node)]
+    (ctfe-failed-operand-reset-for-state! state)
+    node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -931,8 +959,8 @@
   (Var (ctfe-untyped-expr-type-id)))
 
 ;; An operand the macro walk tried to typecheck and could not. It is untyped
-;; everywhere, except that `expr-type` on it names the operand node in its
-;; diagnostic, so the walk can report the operand's own error instead (#8871).
+;; everywhere, except that `expr-type` on it notes the operand node in the job's
+;; macro state, so the walk can report the operand's own error instead (#8871).
 (define (ctfe-failed-expr-type-id) : i64
   -6)
 
@@ -954,12 +982,6 @@
 
 (define (ctfe-expr-type-untyped-message) : String
   "expr-type requires a typechecked Expr")
-
-;; Prefix of the `expr-type` diagnostic for an operand the walk failed to
-;; typecheck, followed by the operand node id, `|`, and the generic message.
-;; The macro walk replaces the diagnostic with the operand's own error.
-(define (ctfe-expr-type-failed-operand-prefix) : String
-  "__tl_ctfe_failed_operand|")
 
 (define (ctfe-captured-expr-type-id) : i64
   -4)
@@ -7370,20 +7392,18 @@
 (define (ctfe-expr-type-value
   [pools : ast.AstNodePoolContext]
   [reflections : (& reflections CtfeReflectInfoList)]
+  [state : CompilerCtfeMacroState]
   [node : i64]
   [ty : (& ast.AstType)]) : CtfeBuilt
   (let
     [actual-ty : ast.AstType
       (ctfe-captured-expr-type-inner-with-pools pools ty)]
     (if (ctfe-untyped-expr-type? actual-ty)
-      (Err
-        (if (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
-          (str_cat.str-cat
-            (ctfe-expr-type-failed-operand-prefix)
-            (string.int->string node)
-            "|"
-            (ctfe-expr-type-untyped-message))
-          (ctfe-expr-type-untyped-message)))
+      (begin
+        (when
+          (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
+          (ctfe-failed-operand-note-for-state! state node))
+        (Err (ctfe-expr-type-untyped-message)))
       (Ok
         (Type
           (ctfe-reflect-resolve-type-with-pools pools reflections actual-ty))))))
@@ -7406,6 +7426,7 @@
                   (ctfe-expr-type-value
                     (ctfe-env-pools env)
                     reflections
+                    (ctfe-env-macro-state env)
                     node
                     (& ty))
                   expr
@@ -7414,7 +7435,12 @@
               ;; diagnostic stays generic.
               [(CapturedExpr _ ty pools)
                 (ctfe-built-result
-                  (ctfe-expr-type-value pools reflections -1 (& ty))
+                  (ctfe-expr-type-value
+                    pools
+                    reflections
+                    (ctfe-env-macro-state env)
+                    -1
+                    (& ty))
                   expr
                   arg-fuel)]
               [_

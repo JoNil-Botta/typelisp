@@ -1952,6 +1952,7 @@
               (ctfe_support.ctfe-expr-type-value
                 (compiler-comptime-host-session-pools)
                 reflections
+                (array-ref compiler-comptime-host-session-macro-state 0)
                 node
                 (& ty))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))

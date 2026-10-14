@@ -91651,51 +91651,37 @@
         (tc-context-expr-get ctx func-box))]
     [_ (tc-expr-maybe-span (tc-context-expr-bases ctx) call-expr)]))
 
-;; `expr-type` on an operand the walk failed to typecheck names that operand
-;; after `ctfe-expr-type-failed-operand-prefix` (#8871). The operand node id, or
-;; -1 for any other diagnostic.
-(define (macro-failed-operand-node [diag : (& diag cdiag.CompilerDiagnostic)]) : i64
-  (let
-    [message : String (cdiag.compiler-diagnostic-message diag)]
-    [start : i64
-      (string.string-length (ctfe_support.ctfe-expr-type-failed-operand-prefix))]
-    (if (tc-diag-string-prefix?
-      (& message)
-      (ctfe_support.ctfe-expr-type-failed-operand-prefix))
-      (let
-        [end : i64 (string.index-of-byte (& message) start 124)]
-        (if (> end start)
-          (string.>int (& (string.substring message start (- end start))))
-          -1))
-      -1)))
-
-;; The diagnostic without the failed-operand prefix: the generic `expr-type`
-;; message at its original location.
-(define (macro-failed-operand-generic-diagnostic
-  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
-  (if (< (macro-failed-operand-node (& diag)) 0)
-    diag
-    (cdiag.compiler-diagnostic-with-message
-      (& diag)
-      (ctfe_support.ctfe-expr-type-untyped-message))))
-
 ;; Report the error of the operand a macro asked `expr-type` about, at the
-;; operand, in place of the generic `expr-type` message. The operand is checked
-;; again in the environment of the macro call, the one its capture used.
+;; operand, in place of the generic `expr-type` message (#8871). The transformer
+;; evaluation notes that operand in the job's CTFE macro state rather than in
+;; the message, so a macro's own error text can never name a node. The note is
+;; taken here whether it is used or not. It replaces the diagnostic only when
+;; the diagnostic is that `expr-type` failure, the node is in this context's
+;; pool, and the operand, checked again in the environment of the macro call
+;; (the one its capture used), still fails.
 (define (macro-failed-operand-diagnostic
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (let
-    [node : i64 (macro-failed-operand-node (& diag))]
-    (if (< node 0)
-      diag
-      (let
-        [operand : ast.AstExpr (tc-context-expr-get ctx node)]
-        (match (tc-expr ctx type-env (tc-global-shared-view operand))
-          [(Err message)
-            (tc-expr-diag (tc-context-expr-bases ctx) operand message)]
-          [(Ok _) (macro-failed-operand-generic-diagnostic diag)])))))
+    [node : i64
+      (ctfe_support.ctfe-failed-operand-take-for-state!
+        (tc-context-ctfe-macro-state ctx))]
+    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+    (if (and
+      (>= node 0)
+      (< node (ast.ast-node-pool-context-expr-len pools))
+      (string.eq
+        (cdiag.compiler-diagnostic-message (& diag))
+        (ctfe_support.ctfe-expr-type-untyped-message)))
+      (match (tc-expr ctx type-env (tc-context-expr-get ctx node))
+        [(Err message)
+          (tc-expr-diag
+            (tc-context-expr-bases ctx)
+            (tc-context-expr-get ctx node)
+            message)]
+        [(Ok _) diag])
+      diag)))
 
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
@@ -91801,6 +91787,7 @@
 
 (define (macro-decl-expansion-with-frame
   [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
@@ -91815,7 +91802,9 @@
             path
             call-expr
             macro-name
-            (macro-failed-operand-generic-diagnostic
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
               (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-output-syntax-id-at
@@ -108464,6 +108453,8 @@
   [args : ast.AstExprList]
   [depth : i64]
   [call-expr : ast.AstExpr]) : ResultMacroExpr
+  (ctfe_support.ctfe-failed-operand-reset-for-state!
+    (tc-context-ctfe-macro-state ctx))
   (match (macro-expand-call-unframed
     ctx
     type-env
@@ -110730,6 +110721,8 @@
   [context : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
+  (ctfe_support.ctfe-failed-operand-reset-for-state!
+    (tc-context-ctfe-macro-state ctx))
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
@@ -110795,6 +110788,7 @@
                             [(Ok identity _)
                               (macro-decl-expansion-with-frame
                                 call-ctx
+                                global-env
                                 (tc-global-shared-view decl-path)
                                 (tc-global-shared-view call-expr)
                                 (macro-decl-name-display
@@ -111065,6 +111059,7 @@
                                   [(Empty)
                                     (macro-decl-expansion-with-frame
                                       call-ctx
+                                      global-env
                                       (tc-global-shared-view decl-path)
                                       (tc-global-shared-view call-expr)
                                       (macro-decl-name-display

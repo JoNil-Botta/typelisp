@@ -1500,3 +1500,7 @@ compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_stat
 
 global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
 global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed
+
+# A macro operand that fails to typecheck reports its own error when the macro
+# asks for its type (#8871).
+macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_type_reject.tl|-|typecheck: array elements must have same type: expected i32, found i64

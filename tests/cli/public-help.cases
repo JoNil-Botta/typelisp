@@ -90,11 +90,19 @@ step explain-lowercase
 run explain e0207
 stderr empty
 stdout contains E0207: borrow violation
+step explain-global-call-borrow
+run explain E0222
+stderr empty
+stdout contains E0222: call may write a borrowed global
+stdout contains secondary label identifies the live borrow
+stdout contains consumer
+stdout contains explicit through an &mut parameter
 step explain-list
 run explain --list
 stderr empty
 stdout contains E0100: parse error
 stdout contains E0212: arena ownership violation
+stdout contains E0222: call may write a borrowed global
 stdout contains E0101: unbalanced delimiter
 stdout contains E0102: malformed token
 stdout contains E0104: invalid pattern syntax

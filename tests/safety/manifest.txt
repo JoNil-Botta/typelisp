@@ -237,6 +237,7 @@ global_call_buffer_write_reject|check-fail|tests/safety/global_call_buffer_write
 global_call_byvalue_ok|run-exit|tests/safety/global_call_byvalue_ok.tl|1|-
 global_call_cleanup_reject|check-fail|tests/safety/global_call_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> cleanup -> rebind!)
 global_call_cleanup_in_match_reject|check-fail|tests/safety/global_call_cleanup_in_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_cleanup_in_match_dead_ok|run-exit|tests/safety/global_call_cleanup_in_match_dead_ok.tl|4|-
 global_call_closure_reject|check-fail|tests/safety/global_call_closure_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
 global_call_different_ok|run-exit|tests/safety/global_call_different_ok.tl|10|-
 global_call_ended_ok|run-exit|tests/safety/global_call_ended_ok.tl|1|-
@@ -271,7 +272,7 @@ global_call_nominal_enum_reject|check-fail|tests/safety/global_call_nominal_enum
 global_call_for_owned_shadow_ok|run-exit|tests/safety/global_call_for_owned_shadow_ok.tl|1|-
 global_call_foreach_shadow_ok|run-exit|tests/safety/global_call_foreach_shadow_ok.tl|1|-
 global_call_c_extern_ok|check-ok|tests/safety/global_call_c_extern_ok.tl|-|-
-inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|-|while global `held` is borrowed: it may assign `held` (via observe -> install!)
+inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|stdlib/format.tl|while global `held` is borrowed: it may assign `held` (via observe -> install!)
 global_call_temporary_cleanup_later_arg_reject|check-fail|tests/safety/global_call_temporary_cleanup_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
 global_call_temporary_cleanup_forward_reject|check-fail|tests/safety/global_call_temporary_cleanup_forward_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> drop-temporary -> close-handle -> drop-word)
 global_call_temporary_cleanup_returned_reject|check-fail|tests/safety/global_call_temporary_cleanup_returned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
@@ -1842,3 +1843,17 @@ region_type_depth_bound_reject|check-fail|tests/safety/region_type_depth_bound_r
 mir_field_store_uses_holder_reject|check-fail|tests/safety/mir_field_store_uses_holder_reject.tl|tests/safety/mir_field_store_uses_holder_reject.tl:26:15|cannot mutably borrow borrowed place `rb`
 region_covariant_holder_overwrite_ok|run-exit|tests/safety/region_covariant_holder_overwrite_ok.tl|42|-
 region_borrow_after_overwrite_ok|run-exit|tests/safety/region_borrow_after_overwrite_ok.tl|42|-
+global_call_explicit_cleanup_reject|check-fail|tests/safety/global_call_explicit_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_dispatch_reject|check-fail|tests/safety/global_call_dispatch_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind -> rebind-scalar)
+global_call_with_local_cleanup_reject|check-fail|tests/safety/global_call_with_local_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via <indirect call/lambda> -> rebind!)
+global_call_macro_callee_reject|check-fail|tests/safety/global_call_macro_callee_reject.tl|-|cannot call `second!` while global `g` is borrowed
+global_call_with_cleanup_argument_reject|check-fail|tests/safety/global_call_with_cleanup_argument_reject.tl|-|cannot call `reset-then-read` while global `g` is borrowed
+for_owned_array_cleanup_item_reject|check-fail|tests/safety/for_owned_array_cleanup_item_reject.tl|stdlib/core_macros.tl|cleanup obligation of `token` is not discharged
+for_owned_array_cleanup_item_ok|run-exit|tests/safety/for_owned_array_cleanup_item_ok.tl|11|-
+global_call_spawn_reject|check-fail|tests/safety/global_call_spawn_reject.tl|-|cannot call `spawn` while global `g` is borrowed
+global_call_spawn_ok|run-exit|tests/safety/global_call_spawn_ok.tl|8|-
+global_call_returned_referent_ok|run-exit|tests/safety/global_call_returned_referent_ok.tl|6|-
+global_call_before_other_error_reject|check-fail|tests/safety/global_call_before_other_error_reject.tl|-|cannot call `rebind!` while global `g` is borrowed
+global_call_macro_late_twice_reject|check-fail|tests/safety/global_call_macro_late_twice_reject.tl|-|cannot call `read-after` while global `g` is borrowed
+cleanup_array_overwrite_reject|check-fail|tests/safety/cleanup_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_cleanup_holder_array_overwrite_reject|check-fail|tests/safety/mir_cleanup_holder_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place

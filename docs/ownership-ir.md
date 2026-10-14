@@ -718,6 +718,12 @@ the lifetimes the typechecker already carries in every type it publishes.
   computes for subtyping and hands to the normalizer
   (`tc-nominal-lifetime-variance-at`; Arena's brand stays invariant), as
   Rust's variance inference does; one that is not covariant is invariant.
+  Like Rust, typing solves it as a fixpoint over every parameter position the
+  declaration reaches, each in its declaring module; main counted a recursive
+  occurrence as covariant whatever position it filled, which a cycle that
+  permutes the parameters (`(L b a)` inside `L`) gets wrong, also for a type
+  that holds such a type (`variance_recursive_swapped_invariant_reject`,
+  `variance_recursive_through_holder_invariant_reject`).
   Relating a covariant argument both ways would hand a fresh value every loan
   of the binding it overwrites, so the overwrite could never end them.
 - **Constraints.** An edge `x -> y` means the loans of `x` are loans of `y`.
@@ -807,7 +813,7 @@ none rustc accepts among the function bodies and the reassigned bindings; the
 region-tagged constructor value, E0205). Before struct lifetimes took their
 declared variance and a borrow's referent loans were held through the
 borrowed root, it rejected 72 of the reassigned-binding programs rustc
-accepts. Every review finding is
+accepts. Every review finding that typing lets a program reach is
 a fixture, each oracle hole family has one
 (`region_signature_store_then_write_reject`), and the precision cases the
 second graph decides are pinned (`region_view_call_argument_ok`,
@@ -817,6 +823,86 @@ second graph decides are pinned (`region_view_call_argument_ok`,
 region pass grows is grown geometrically. Checking the compiler (opt2 builds
 of each tree, the same input, two runs each) peaks at 1.42 to 1.45 GB against
 1.50 GB before the region pass, and takes 6% longer (26.1 s against 24.5 s).
+
+### Calls that may assign a borrowed global (#7904)
+
+Main 4edc5866f rejects a call while a module value is borrowed if the callee
+may assign that value, through any chain of calls (b9065d8d4). Its global
+effect graph (`src/compiler_global_effects.tl`) and the collector that fills
+it from declarations (`tc-global-effect-scan!` and its helpers: direct
+writes, `&mut` borrows, address-of, indirect calls through a union of every
+function value, declared cleanups and their field hooks, and the inferred
+disposers of borrowed temporaries) are kept unchanged. Main asked which loans
+are live at a call from its walkers' borrow facts; here the ownership graph
+answers it, the way it answers any other write:
+
+- **The rule.** A body some loan of which borrows a module value asks the
+  effect graph, for every call and every such global, whether the callee may
+  assign it (`tc-selected-global-call-writes!`), and is normalized again with
+  the answers; a body that borrows no global cannot conflict and asks
+  nothing. A call names its callee as main's collector resolves it: a
+  declared function, extern, dispatcher or generated cleanup is its own node
+  (a C extern has none), and a locally bound callable is the union of every
+  function value (`TypedCallKind.Indirect` records the callee expression). A
+  safe `spawn`, typed as its own form (136) rather than a call, is the call of
+  the thread module's spawn that main's collector sees: its callee is
+  resolved from the call expression the occurrence records
+  (`tc-selected-spawn-callee`), so a task that may assign the global
+  conflicts with a borrow live across the spawn (`global_call_spawn_reject`,
+  valid twin `global_call_spawn_ok`). The normalizer then
+  assigns that global's place at the call, after the call's operands
+  (`normalize-global-writes!`). A loan of the global still live there,
+  through an argument, an earlier argument of an enclosing call or a
+  reference a call returned, conflicts like any other write to a borrowed
+  place, with Rust's non-lexical liveness; a value copied by value carries no
+  loan. The conflict is reported with main's message, code (E0222) and call
+  path, recomputed from the graph.
+- **Cleanups.** A temporary of a type with a declared cleanup, borrowed for
+  a call, is disposed of when the call returns: its cleanup's effects apply
+  there (`normalize-temporary-disposals!`). The synthetic referent of a
+  reference (one a call returned, say) has no name either but is no
+  temporary, and nothing disposes of it. A `with` binding's cleanup runs
+  at every exit of its scope, with the owner still held: the binder records
+  its cleanup expression (`TypedBinderKind.WithOwner`, or `MoveAwareOwner`
+  for the item `for` binds) and its effects apply at each exit before the
+  owner is consumed (`normalize-owner-cleanup-writes!`). A move-aware owner
+  may have been moved out by then, so it is not consumed there; the loans it
+  holds are demanded at each exit instead, also when it was discharged or
+  moved out before. Rust demands them only where the value may still be
+  initialized, so this is conservative. A cleanup named by a local function
+  value is any function value (`global_call_with_local_cleanup_reject`).
+- **Late edges.** Typing a later body can still add an inferred disposer
+  edge, so an empty answer is final only when no function the graph has
+  collected borrows a temporary. Otherwise the call is probed: a marker is
+  read there, and once the body is certified a loan of the global that is
+  live at the marker and whose borrow reaches it (the core's test for a
+  write) makes the call one of main's deferred queries
+  (`normalize-deferred-effects`), answered after the last body
+  (`tc-global-effect-late-diagnostics`) in the call's own file and macro
+  expansions; a query is the same only with the same call, file and
+  expansions (`global_call_macro_late_twice_reject`). Whether a borrow
+  reaches a probe takes one backward walk of the blocks per probe, so the
+  scan's work is probes times (loans plus blocks plus edges), all charged
+  before it starts.
+- **First error.** A body whose first normalization finds another ownership
+  error is normalized again with every global's writes, so a call that
+  assigns a borrowed global before that error is the one reported, as in
+  main (`global_call_before_other_error_reject`). The second run happens only
+  on that error path and only when the body has such writes.
+- **Verdicts.** Every global-call safety case of main gives main's verdict
+  and message. `global_call_cleanup_in_match_reject` read the match
+  scrutinee's borrow only before the `with` cleanup; main held it to the end
+  of the match, non-lexical liveness does not, so the case now reads the
+  borrowed payload after the cleanup and still rejects, and main's version is
+  accepted (`global_call_cleanup_in_match_dead_ok`). A module value named
+  with its own module's qualifier (`effects.deep.g`) resolves through
+  ordinary source lookup as in main's collector; the ownership walk had
+  failed closed on it (E0211, `global_call_qualified_global_reject`).
+  `global_call_explicit_cleanup_reject`, `global_call_dispatch_reject` and
+  `global_call_macro_callee_reject` pin the callee identity. A `with`
+  cleanup that receives its still-borrowed value and assigns the global is
+  rejected like the equivalent call; main accepted it
+  (`global_call_with_cleanup_argument_reject`).
 
 ### Verdict and diagnostic changes from the rebase onto main 08eae4017
 
@@ -848,10 +934,26 @@ is deliberate and has a regression twin:
   enum with a declared cleanup whose lifetime arguments hold references is
   a holding type (`tc-selected-holding-type?`) that also carries its cleanup
   obligation: its loans stay live to the explicit discharge, which uses the
-  value. Its bodies failed closed (E0211) before, though main accepts them
-  (`mir_cleanup_holder_param_ok`, `mir_cleanup_holder_assign_reject`, valid
-  twin `mir_cleanup_holder_assign_ok`, `mir_cleanup_holder_return_reject`,
-  `global_call_returned_referent_ok`).
+  value, and an array, dynamic array or box of such values cannot be
+  overwritten while initialized. Its bodies failed closed (E0211) before,
+  though main accepts them (`mir_cleanup_holder_param_ok`,
+  `mir_cleanup_holder_assign_reject`, valid twin
+  `mir_cleanup_holder_assign_ok`, `mir_cleanup_holder_return_reject`,
+  `mir_cleanup_holder_array_overwrite_reject`,
+  `global_call_returned_referent_ok`). As on main, an owned array of
+  cleanup-owning values is not checked for undischarged elements when it
+  leaves its scope, nor are the items a `for` loop leaves unbound when it
+  breaks.
+- **Stores through a reference of a cleanup owner.** A referent is always
+  initialized, so storing a cleanup-owning value through a `&mut` (into a
+  field, an element, a slice element or the whole referent) would lose the
+  old value's cleanup. The graph accepted it; main rejects it, and so does
+  this compiler again (`mir_cleanup_field_store_through_ref_reject`,
+  `mir_cleanup_store_through_ref_reject`, `mir_cleanup_slice_store_reject`).
+- **Box pattern binders.** A binder of a `box` pattern takes the loans the
+  box contents hold, as a part moved out of the box does; it held none, so a
+  push to the array its reference points into was accepted. Main rejects it
+  (`mir_box_pattern_binder_loan_reject`).
 - **Precision (main rejected a valid program).** A reassigned reference
   binding is split into its reaching definitions, so a read sees exactly the
   loans that can reach it: `reassigned_ref_ok` is accepted, while
@@ -972,7 +1074,11 @@ is deliberate and has a regression twin:
   literal element (`box_set_through_reference_borrow_live_reject`;
   `mutable_reference_reborrow_outer_live_reject`,
   `slice_view_shared_dynarray_push_reject` and
-  `two_phase_mutable_call_mutate_reject` keep main's expected text).
+  `two_phase_mutable_call_mutate_reject` keep main's expected text). The
+  label of a borrow that is still live sits on the borrow expression, as
+  Rust's does and as main's own E0222 label does: in
+  `tests/public-tools/lsp/diagnostics` the related location of
+  `(& text)` is its opening parenthesis, where main pointed at `text`.
 - **Earlier diagnostic.** A mutable borrow taken again on a loop trip while
   the previous trip's borrow is still held is rejected at that second borrow,
   where Rust reports E0499, instead of at a later write
@@ -984,8 +1090,8 @@ is deliberate and has a regression twin:
 
 #### Every safety case main accepts and this compiler rejects
 
-These 67 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
-main at be3f903ee and are rejected here, each with the diagnostic its manifest
+These 72 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
+main at 4edc5866f and are rejected here, each with the diagnostic its manifest
 row names. Each fixture's leading comment states the rule. One of
 them was an accepted case in main's manifest:
 `borrow_call_arg_final_use_before_nested_write_ok` is the same program as
@@ -1012,6 +1118,10 @@ implicit `f32` to `f64` widening now expect the rejections.
 | Returned borrows of by-value parameters (Rust E0515): a by-value parameter's storage belongs to the call, so a return type cannot name its lifetime, directly, through a field or inside a tuple or array. Main accepted these; with `in-arena` placing the parameter in an arena, the returned reference was read after `destroy-safe!` (freed memory). | `return_by_value_param_reference_reject`, `return_by_value_param_field_reference_reject`, `return_by_value_param_aggregate_reference_reject`, `return_by_value_param_arena_use_after_destroy_reject` |
 | No implicit numeric conversions (SPEC 3.8): an `f32` cannot stand for an `f64`. Main accepted one at returns, joins and stores and lowered the `f32` bits unconverted (the values read as 0); only call arguments were converted. | `scalar_implicit_widening_reject` |
 | Fail-closed bounds and declarations: a body past the graph's fixed bounds is rejected with the reason, never trusted; a struct or enum holding a reference must declare its lifetimes. | `mir_resource_limit_reject`, `mir_free_lifetime_field_reject` |
+| Cleanup obligations of `for` items (SPEC 4.7.1): an item moved out of an owned fixed array is a `let` owner that must be discharged; main accepted it and its lowering never ran the item's cleanup. Valid twin: `for_owned_array_cleanup_item_ok`. | `for_owned_array_cleanup_item_reject` |
+| A `with` cleanup that receives its still-borrowed value and may assign the global it borrows (#7904), as the call form already was. | `global_call_with_cleanup_argument_reject` |
+| Overwriting an initialized array of cleanup-owning values (SPEC 4.7.1) would lose the old elements' cleanups; main accepted it, for holders of references too. | `cleanup_array_overwrite_reject`, `mir_cleanup_holder_array_overwrite_reject` |
+| Variance through a C function pointer: a lifetime used in a `CFunc` signature is contravariant in its parameters, as in a function type; main counted it bivariant and accepted shortening it. | `variance_cfunc_parameter_reject` |
 
 ## Revalidated base and existing authorities
 
@@ -1836,9 +1946,13 @@ checks about 5G more), the ownership core's loan conflict walk (about 3G) and
 repeated type classification (`holds-reference?` family, about 4.5G); the rest
 is spread across the producer, normalizer and core. GitHub Actions gates this
 row at 0.5% and only refreshes it there. Stripped stage2 was 9,945,400 bytes
-then; after the rebase onto be3f903ee and the region pass, the converged
-compiler strips to 8,927,496 bytes on Linux (14 October,
-`scripts/check-stage0-size.sh`), 1,072,504 under the cap.
+then. On 4edc5866f, with main's #7904 collector and this branch's port of the
+check, the converged compiler measured 10,040,184 bytes
+(`scripts/check-stage0-size.sh`: a stripped copy of the bootstrap's stage3,
+embedded stdlib included), over the 10,000,000-byte cap. The owned-view
+lowering and the optimizer and register-allocator contexts passed by
+reference (first commit) bring it to 9,991,032 bytes (14 October), 8,968
+under the cap, which is unchanged.
 
 Compiler scaling (`scripts/check-compiler-scaling.sh`, marginal instructions
 per added declaration, CFG node, struct field or macro expansion) rose with

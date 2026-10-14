@@ -848,7 +848,7 @@
         (&mut store)
         (& lease)
         signature
-        typed.TypedCallKind.Indirect
+        (typed.TypedCallKind.Indirect -1)
         1)
         [(typed.TypedCallResult.Ok id) (= id.handle.index call.handle.index)]
         [_ false])]
@@ -876,7 +876,7 @@
         (&mut store)
         (& lease)
         type
-        typed.TypedCallKind.Indirect
+        (typed.TypedCallKind.Indirect -1)
         0)
         [(typed.TypedCallResult.Err error)
           (match error
@@ -933,7 +933,7 @@
         (&mut store)
         (& lease)
         c-function
-        typed.TypedCallKind.Indirect
+        (typed.TypedCallKind.Indirect -1)
         0)
         [(typed.TypedCallResult.Ok _) true]
         [_ false])
@@ -941,7 +941,7 @@
         (&mut store)
         (& lease)
         c-function
-        typed.TypedCallKind.Indirect
+        (typed.TypedCallKind.Indirect -1)
         1)
         [(typed.TypedCallResult.Err error)
           (match error
@@ -971,7 +971,7 @@
         (&mut store)
         (& lease)
         unknown
-        typed.TypedCallKind.Indirect
+        (typed.TypedCallKind.Indirect -1)
         0)
         [(typed.TypedCallResult.Err error)
           (match error

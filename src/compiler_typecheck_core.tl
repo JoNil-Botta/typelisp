@@ -11711,22 +11711,19 @@
   [return-type : typed.TypedTypeId]
   [noted : (& noted (__tl_dyn-array typed.TypedBinderId))]
   [capture-types : (& capture-types (__tl_dyn-array ast.AstType))]) : TcSelectedLambdaBody
-  (match (let
-    [table : TcSelectedTypeTable (tc-selected-type-shapes! ctx store lease)]
-    (ownership_normalize.ownership-normalize-with-products!
-      store
-      lease
-      root
-      return-type
-      table.classes
-      table.products
-      table.variances
-      (ownership_normalize.ownership-normalize-default-limits)))
+  (match (tc-selected-normalize-body
+    ctx
+    store
+    lease
+    root
+    return-type
+    (ownership_normalize.ownership-normalize-default-limits))
     [(ownership_normalize.OwnershipNormalizeResult.Err failure)
       (match (tc-selected-normalization-failure-in ctx store lease failure)
         [(ResultTcUnit.Ok) TcSelectedLambdaBody.Unrepresented]
         [(ResultTcUnit.Err message) (TcSelectedLambdaBody.Err message)])]
     [(ownership_normalize.OwnershipNormalizeResult.Ok output)
+      (tc-selected-defer-global-effects! ctx (& output.deferred))
       (TcSelectedLambdaBody.Ok
         (tc-selected-lambda-capability (& output) noted capture-types))]))
 
@@ -15987,7 +15984,7 @@
                   ;; A call through a value retains its callee as child 0.
                   [callee-children : i64
                     (match (& kind)
-                      [(typed.TypedCallKind.Indirect) 1]
+                      [(typed.TypedCallKind.Indirect _) 1]
                       [_ 0])]
                   (typed.typed-call-add!
                     store
@@ -16382,7 +16379,11 @@
                                             [(= key -1)
                                               typed.TypedCallKind.Construct]
                                             [(= key -2)
-                                              typed.TypedCallKind.Indirect]
+                                              (typed.TypedCallKind.Indirect
+                                                (tc-selected-effect-callee-id
+                                                  ctx
+                                                  env
+                                                  func-id))]
                                             [(tc-selected-discharge-call?
                                                 ctx
                                                 (tc-global-shared-view func)
@@ -16650,6 +16651,31 @@
     [(ResultTcType.Err message) (TcSelectedPlaceResult.Err message sink)]))
 
 ;; The symbol index of the module value `name` resolves to, or -1.
+;; The value symbol `name` names: the canonical lookup, then for a dotted name
+;; ordinary source lookup, which resolves a module value named with its own
+;; module's qualifier (`effects.deep.g`), as the global effect collector does.
+(define (tc-selected-value-symbol-handle [ctx : TcContext] [name : i64]) : i64
+  (let
+    [direct : i64 (tc-move-value-symbol-handle-id ctx name)]
+    (if (or
+      (csym.compiler-symbols-handle-found? direct)
+      (< (tc-name-first-dot-id (tc-context-structural-session ctx) name) 0))
+      direct
+      (match (tc-source-name-lookup-key-with-field-check-lookup
+        ctx
+        (tc-empty-env)
+        (tc-hygiene-name-text-id-for-session
+          (tc-context-structural-session ctx)
+          name)
+        name
+        false)
+        [(Ok _ key)
+          (csym.compiler-symbols-lookup-value-id-or
+            (tc-context-symbols ctx)
+            key
+            direct)]
+        [(Err _) direct]))))
+
 (define (tc-selected-global-index
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -16657,7 +16683,7 @@
   (if (tc-name-local-bound-before-module-scan-id? env name)
     -1
     (let
-      [handle : i64 (tc-move-value-symbol-handle-id ctx name)]
+      [handle : i64 (tc-selected-value-symbol-handle ctx name)]
       (if (and
         (csym.compiler-symbols-handle-found? handle)
         (=
@@ -16681,7 +16707,7 @@
     intern
     bind)
   (let
-    [handle : i64 (tc-move-value-symbol-handle-id ctx name)]
+    [handle : i64 (tc-selected-value-symbol-handle ctx name)]
     [foreign? : bool
       (not
         (tc-module-ids-same?
@@ -62150,6 +62176,9 @@
   ;; cleanup runs at an exit only while it still owns the value, so the body
   ;; may move or discharge it like an ordinary local.
   [move-aware? : bool]
+  ;; A `with` binding's cleanup function expression id, -2 for a locally
+  ;; bound callable, or -1 (`tc-selected-cleanup-callee-id`).
+  [cleanup : i64]
   [init : TcSelectedOccurrence]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
@@ -62258,8 +62287,11 @@
                       ;; A `let` of a cleanup-owning aggregate owns a cleanup
                       ;; obligation (SPEC 4.7.1).
                       (cond
-                        [move-aware? typed.TypedBinderKind.Local]
-                        [with? typed.TypedBinderKind.WithOwner]
+                        [move-aware?
+                          (if (= cleanup -1)
+                            typed.TypedBinderKind.Local
+                            (typed.TypedBinderKind.MoveAwareOwner cleanup))]
+                        [with? (typed.TypedBinderKind.WithOwner cleanup)]
                         [(tc-cleanup-owning-aggregate-type?
                             ctx
                             (tc-global-shared-view binding-ty))
@@ -62725,6 +62757,10 @@
                               init-box
                               true
                               move-aware?
+                              (tc-selected-cleanup-callee-id
+                                ctx
+                                env
+                                cleanup-box)
                               occurrence
                               next)
                               [(TcSelectedResult.Err message after)
@@ -62927,6 +62963,7 @@
           source-id
           false
           true
+          -1
           value
           next)
           [(TcSelectedResult.Err message after)
@@ -62957,6 +62994,7 @@
                     index-name-id
                     false
                     false
+                    -1
                     zero
                     zeroed)
                     [(TcSelectedResult.Err message indexed)
@@ -63209,6 +63247,7 @@
                   binding-id
                   false
                   false
+                  -1
                   element
                   after)
                   [(TcSelectedResult.Err message bound)
@@ -63522,6 +63561,7 @@
                     init-id
                     false
                     false
+                    -1
                     occurrence
                     next)
                     [(TcSelectedResult.Err message next)
@@ -88523,6 +88563,8 @@
   (origin TcMaybeAstSourceSpan)
   (label String)
   (source-path String)
+  ;; The macro expansions the call sits in (an `OwnershipSource` frame list).
+  (expansion String)
   (path-bound bool)
   (epoch i64)
   (next i64))
@@ -89955,7 +89997,11 @@
   [root : i64]
   [primary : TcMaybeAstSourceSpan]
   [origin : TcMaybeAstSourceSpan]
-  [label : String]) : unit
+  [label : String]
+  ;; The file of the call, or "" for the declaration's
+  ;; (`tc-global-effect-bind-query-path!`).
+  [path : String]
+  [expansion : String]) : unit
   (let
     [graph : global_effects.Graph
       (unsafe
@@ -89964,7 +90010,17 @@
       (unsafe
         (deref state).temporary-callers)]
     (when
-      (> (tc_i64_i64_map.len (& callers)) 0)
+      (and
+        (> (tc_i64_i64_map.len (& callers)) 0)
+        (not
+          (tc-global-effect-query-pending?
+            state
+            global
+            callee
+            root
+            (& primary)
+            (& path)
+            (& expansion))))
       (let
         [enclosing : i64 (arena.tl_arena_current)]
         [storage : i64
@@ -89984,7 +90040,8 @@
               primary
               origin
               (string.copy (& label))
-              ""
+              (string.copy (& path))
+              (string.copy (& expansion))
               false
               (effect_words.len (& graph.links))
               (unsafe
@@ -89994,6 +90051,55 @@
               (deref state).pending
               (cast (ptr->int (__tl_array-data cell)) : i64))
             (arena.tl_arena_set enclosing)))))))
+
+;; Whether the same query (a body normalized twice, as a lambda's is) is
+;; already pending: the same call, in the same file and expansions.
+(define (tc-global-effect-query-pending?
+  [state : (MutPtr TcGlobalCallEffects)]
+  [global : i64]
+  [callee : i64]
+  [root : i64]
+  [primary : (& primary TcMaybeAstSourceSpan)]
+  [path : (& path str)]
+  [expansion : (& expansion str)]) : bool
+  (let
+    [head : i64
+      (unsafe
+        (deref state).pending)]
+    (while (!= head 0)
+      (let
+        [query : TcGlobalBorrowQuery
+          (unsafe
+            (ptr-read (int->ptr (cast head : u64) : (Ptr TcGlobalBorrowQuery))))]
+        (when
+          (and
+            (= query.global global)
+            (= query.callee callee)
+            (= query.root root)
+            (tc-maybe-span-eq? (& query.primary) primary)
+            (string.eq (& query.source-path) path)
+            (string.eq (& query.expansion) expansion))
+          (return true))
+        (set! head query.next)))
+    false))
+
+(define (tc-maybe-span-eq?
+  [a : (& a TcMaybeAstSourceSpan)]
+  [b : (& b TcMaybeAstSourceSpan)]) : bool
+  (match a
+    [(Some left)
+      (match b
+        [(Some right)
+          (and
+            (= left.start-line right.start-line)
+            (= left.start-col right.start-col)
+            (= left.end-line right.end-line)
+            (= left.end-col right.end-col))]
+        [(No) false])]
+    [(No)
+      (match b
+        [(Some _) false]
+        [(No) true])]))
 
 (define (tc-global-effect-bind-query-path! [ctx : TcContext] [path : String]) : unit
   (let
@@ -90018,12 +90124,16 @@
             [query : (MutPtr TcGlobalBorrowQuery)
               (unsafe
                 (int->ptr (cast head : u64) : (MutPtr TcGlobalBorrowQuery)))]
-            (when
+            [current : TcGlobalBorrowQuery
               (unsafe
-                (deref query).path-bound)
-              (break))
+                (ptr-read
+                  (int->ptr (cast head : u64) : (Ptr TcGlobalBorrowQuery))))]
+            (when current.path-bound (break))
             (unsafe
-              (set! (deref query).source-path (string.copy (& path)))
+              ;; A call in another file (a macro's template) keeps its own.
+              (when
+                (= (string.string-length (& current.source-path)) 0)
+                (set! (deref query).source-path (string.copy (& path))))
               (set! (deref query).path-bound true)
               (set! head (deref query).next))))
         (unsafe
@@ -90162,7 +90272,10 @@
                     (cdiag.compiler-diagnostic-list-push!
                       (&mut out)
                       (cdiag.compiler-diagnostic-with-fallback-path
-                        (tc-diag-at-start rich)
+                        (tc-diag-at-start
+                          (tc-selected-expansion-framed
+                            (& query.expansion)
+                            rich))
                         (tc-global-shared-view query.source-path)))))))
             (set! head query.next)))))
     out))
@@ -117107,17 +117220,7 @@
         (tc-selected-budget-min
           limits.source-bytes
           (- 67108864 data.selected-retained-bytes))))
-    (match (let
-      [table : TcSelectedTypeTable (tc-selected-type-shapes! ctx store lease)]
-      (ownership_normalize.ownership-normalize-with-products!
-        store
-        lease
-        root
-        return-type
-        table.classes
-        table.products
-        table.variances
-        limits))
+    (match (tc-selected-normalize-body ctx store lease root return-type limits)
       [(ownership_normalize.OwnershipNormalizeResult.Err failure)
         (let
           [detail : String (tc-selected-uncertified-detail (& failure))]
@@ -117135,6 +117238,7 @@
               [(ResultTcUnit.Ok) (TcSelectedAdmission.Ok false)]
               [(ResultTcUnit.Err message) (TcSelectedAdmission.Err message)])))]
       [(ownership_normalize.OwnershipNormalizeResult.Ok output)
+        (tc-selected-defer-global-effects! ctx (& output.deferred))
         (let
           [index : i64 0]
           [parameter-count : i64 0]
@@ -119061,6 +119165,532 @@
             [_ false])))
       (set! index (+ index 1)))))
 
+(define (tc-i64-array-contains?
+  [items : (& items (__tl_dyn-array i64))]
+  [value : i64]) : bool
+  (let
+    [index : i64 0]
+    (while (< index (array-length items))
+      (when (= (array-ref items index) value) (return true))
+      (set! index (+ index 1)))
+    false))
+
+;; Whether `name`, or the leading part of a dotted `name`, is bound in the
+;; body's lexical scope rather than at module level.
+(define (tc-selected-name-locally-bound?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  (let
+    [leading : i64 (tc-global-effect-name-part ctx name true)]
+    (or
+      (tc-selected-env-local-bound? env name)
+      (and (>= leading 0) (tc-selected-env-local-bound? env leading)))))
+
+(define (tc-selected-env-local-bound? [env : TcTypeEnv] [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (and
+        (tc-type-env-scoped-runtime-active? env)
+        (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
+      (tc-name-local-bound-before-module-scan-id? env name))))
+
+;; The callee expression of a call through a value, when its name resolves at
+;; module level (`TypedCallKind.Indirect`), or -1: a locally bound callable
+;; is any function value (the effect graph's indirect union).
+(define (tc-selected-effect-callee-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : i64
+  (let
+    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
+    [name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-segment-bases ctx)
+        (tc-global-shared-view func))]
+    (if (or (< name 0) (tc-selected-name-locally-bound? ctx env name))
+      -1
+      func-id)))
+
+;; A `with` binding's cleanup function expression (`TypedBinderKind.WithOwner`):
+;; its id, or -2 when its name is a locally bound callable.
+(define (tc-selected-cleanup-callee-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [cleanup-id : i64]) : i64
+  (let
+    [cleanup : ast.AstExpr (tc-context-expr-get ctx cleanup-id)]
+    [name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-segment-bases ctx)
+        (tc-global-shared-view cleanup))]
+    (if (and (>= name 0) (tc-selected-name-locally-bound? ctx env name))
+      -2
+      cleanup-id)))
+
+;; The effect-graph node of a callee expression recorded by typing: -1
+;; records nothing, -2 a locally bound callable (the indirect union).
+(define (tc-global-effect-expr-node
+  [ctx : TcContext]
+  [expr : i64]
+  [indirect : i64]) : i64
+  (cond
+    [(= expr -2) indirect]
+    [(< expr 0) indirect]
+    [else
+      (tc-global-effect-callee ctx Nil (tc-context-expr-get ctx expr) indirect)]))
+
+;; The effect-graph node of the declaration a typed call names: a function or
+;; dispatcher, or an extern with the TypeLisp ABI, is its own node, as is a
+;; struct's or enum's declared cleanup (`cleanup?`); a C extern (the unsafe
+;; boundary) and a constructor have none (-1); a module value of function type
+;; is called through the indirect union.
+(define (tc-global-effect-declared-node
+  [ctx : TcContext]
+  [index : i64]
+  [cleanup? : bool]
+  [indirect : i64]) : i64
+  (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) index)
+    [(Ok decl)
+      (match (ast.ast-decl-unwrapped (& decl))
+        [(or (DefFn _ _ _ _ _ _) (DefDispatch _ _ _)) index]
+        [(Extern _ _ _ metadata _)
+          (match (ast.ast-extern-metadata-abi
+            (ast.ast-extern-metadata-box-shared-view metadata))
+            [(TypeLisp) index]
+            [_ -1])]
+        [(or (DefStruct _ _ _ _ _) (DefStructLifetimes _ _ _ _ _ _)
+             (DefEnum _ _ _ _) (DefEnumLifetimes _ _ _ _ _))
+          (if cleanup?
+            index
+            -1)]
+        [_ indirect])]
+    [(Err _) indirect]))
+
+;; The entries of the call keyed `key` with effect-graph node `callee` (none
+;; when negative): each global the callee may assign, or may still be found
+;; to while the graph grows (a probe).
+(define (tc-selected-global-writes-add!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeGlobalWrites)]
+  [key : i64]
+  [callee : i64]
+  [binders : (& binders (__tl_dyn-array i64))]
+  [globals : (& globals (__tl_dyn-array i64))]) : unit
+  (when
+    (>= callee 0)
+    (tc-global-call-effects-collect! ctx state callee)
+    (let
+      [global : i64 0]
+      [growing? : bool (tc-global-effects-growing? state)]
+      (while (< global (array-length globals))
+        (let
+          [known? : bool
+            (>
+              (effect_words.len
+                (&
+                  (tc-global-effect-witness!
+                    state
+                    callee
+                    (array-ref globals global))))
+              0)]
+          (when
+            (or known? growing?)
+            (__tl_array-push! out.calls key)
+            (__tl_array-push! out.binders (array-ref binders global))
+            (__tl_array-push! out.callees callee)
+            (__tl_array-push! out.globals (array-ref globals global))
+            (__tl_array-push! out.pending? (not known?))))
+        (set! global (+ global 1))))))
+
+;; The effect-graph node of the safe spawn at occurrence `index` (-1 when the
+;; occurrence is not one): its call's callee, as main's collector resolves it.
+(define (tc-selected-spawn-callee
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [index : i64]
+  [indirect : i64]) : i64
+  (let
+    [syntax : i64
+      (match (typed.typed-occurrence-at! store lease index)
+        [(typed.TypedOccurrenceResult.Ok id)
+          (match (typed.typed-occurrence-get! store lease id)
+            [(typed.TypedNodeResult.Ok node)
+              (match (& node.operation)
+                [(typed.TypedOperation.Primitive
+                    (typed.TypedPrimitive.Builtin code _))
+                  (if (= code (tc-selected-form-code-spawn))
+                    (match (& node.syntax)
+                      [(typed.TypedSyntax.Source expr) expr]
+                      [(typed.TypedSyntax.Generated) -2])
+                    -1)]
+                [_ -1])]
+            [(typed.TypedNodeResult.Err _) -1])]
+        [(typed.TypedOccurrenceResult.Err _) -1])]
+    (cond
+      [(= syntax -1) -1]
+      [(< syntax 0) indirect]
+      [else
+        (match (tc-selected-call-unwrap ctx (tc-context-expr-get ctx syntax))
+          [(ast.AstExpr.Call func-id _)
+            (tc-global-effect-expr-node ctx func-id indirect)]
+          [_ indirect])])))
+
+(define (tc-selected-call-unwrap [ctx : TcContext] [expr : ast.AstExpr]) : ast.AstExpr
+  (match (tc-global-shared-view expr)
+    [(or (ast.AstExpr.Spanned inner _) (ast.AstExpr.Ann inner _)
+         (ast.AstExpr.MacroExpansion inner _ _))
+      (tc-selected-call-unwrap ctx (tc-context-expr-get ctx inner))]
+    [_ expr]))
+
+;; The globals each call of the body may assign (#7904): every typed call
+;; whose callee reaches, in the global effect graph, a module value the body
+;; names. The normalizer assigns that global at the call, so a loan of it
+;; still live there is a conflict, whatever reference holds it. Likewise the
+;; declared cleanup of each class the body uses, which disposes of a borrowed
+;; temporary when its call returns.
+(define (tc-selected-global-call-writes!
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [table : (& table TcSelectedTypeTable)]
+  ;; The typed records of the global binders the body borrows, or every
+  ;; global binder (`every?`).
+  [borrowed : (& borrowed (__tl_dyn-array i64))]
+  [every? : bool]) : ownership_normalize.OwnershipNormalizeGlobalWrites
+  (let
+    [out : ownership_normalize.OwnershipNormalizeGlobalWrites
+      (ownership_normalize.ownership-normalize-global-writes-empty)]
+    [binders : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [globals : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    ;; `with` owners and their cleanup function expressions.
+    [owners : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [owner-exprs : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [binder-count : i64
+      (match (typed.typed-binder-count! store lease)
+        [(typed.TypedCountResult.Ok value) value]
+        [(typed.TypedCountResult.Err _) 0])]
+    [call-count : i64
+      (match (typed.typed-call-count! store lease)
+        [(typed.TypedCountResult.Ok value) value]
+        [(typed.TypedCountResult.Err _) 0])]
+    [occurrence-count : i64
+      (match (typed.typed-occurrence-count! store lease)
+        [(typed.TypedCountResult.Ok value) value]
+        [(typed.TypedCountResult.Err _) 0])]
+    [index : i64 0]
+    (while (< index binder-count)
+      (match (typed.typed-binder-at! store lease index)
+        [(typed.TypedBinderResult.Ok id)
+          (match (typed.typed-binder-get! store lease id)
+            [(typed.TypedBinderView.Ok binder)
+              (match (& binder.kind)
+                [(typed.TypedBinderKind.Global global)
+                  (when
+                    (or every? (tc-i64-array-contains? borrowed index))
+                    (__tl_array-push! binders index)
+                    (__tl_array-push! globals global.index))]
+                [(or (typed.TypedBinderKind.WithOwner cleanup)
+                     (typed.TypedBinderKind.MoveAwareOwner cleanup))
+                  (when
+                    (!= cleanup -1)
+                    (__tl_array-push! owners index)
+                    (__tl_array-push! owner-exprs cleanup))]
+                [_ unit])]
+            [(typed.TypedBinderView.Err _) unit])]
+        [(typed.TypedBinderResult.Err _) unit])
+      (set! index (+ index 1)))
+    (when (= (array-length binders) 0) (return out))
+    (let
+      [state : (MutPtr TcGlobalCallEffects)
+        (tc-global-call-effects-ensure! ctx)]
+      [indirect : i64
+        (unsafe
+          (deref state).graph.indirect)]
+      ;; A safe spawn (form 136) is the call of the thread module's spawn
+      ;; that main's collector sees, resolved the same way. Its entries are
+      ;; keyed -2 - occurrence, ascending ahead of the call records'.
+      (set! index (- occurrence-count 1))
+      (while (>= index 0)
+        (tc-selected-global-writes-add!
+          ctx
+          state
+          (&mut out)
+          (- -2 index)
+          (tc-selected-spawn-callee ctx store lease index indirect)
+          (& binders)
+          (& globals))
+        (set! index (- index 1)))
+      (set! index 0)
+      (while (< index call-count)
+        (let
+          [callee : i64
+            (match (typed.typed-call-at! store lease index)
+              [(typed.TypedCallResult.Ok id)
+                (match (typed.typed-call-get! store lease id)
+                  [(typed.TypedCallView.Ok call)
+                    (match (& call.kind)
+                      [(typed.TypedCallKind.Direct global)
+                        (tc-global-effect-declared-node
+                          ctx
+                          global.index
+                          false
+                          indirect)]
+                      [(or (typed.TypedCallKind.Declared key)
+                           (typed.TypedCallKind.Foreign key))
+                        (tc-global-effect-declared-node ctx key false indirect)]
+                      ;; A declared cleanup is keyed by its symbol handle.
+                      [(typed.TypedCallKind.Discharge key)
+                        (tc-global-effect-declared-node
+                          ctx
+                          (csym.compiler-symbol-handle-index key)
+                          true
+                          indirect)]
+                      [(typed.TypedCallKind.Indirect callee)
+                        (tc-global-effect-expr-node ctx callee indirect)]
+                      [(typed.TypedCallKind.Construct) -1])]
+                  [(typed.TypedCallView.Err _) -1])]
+              [(typed.TypedCallResult.Err _) -1])]
+          (tc-selected-global-writes-add!
+            ctx
+            state
+            (&mut out)
+            index
+            callee
+            (& binders)
+            (& globals)))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length table.representatives))
+        (let
+          [key : i64 (array-ref table.representative-classes index).key]
+          [handle : i64
+            (if (< key 0)
+              (csym.compiler-symbols-missing-handle)
+              (tc-move-declared-cleanup-handle
+                ctx
+                (tc-global-array-element-shared-view
+                  table.representatives
+                  index)))]
+          (when
+            (csym.compiler-symbols-handle-found? handle)
+            (let
+              [cleanup : i64 (csym.compiler-symbol-handle-index handle)]
+              [global : i64 0]
+              [growing? : bool false]
+              (tc-global-call-effects-collect! ctx state cleanup)
+              (set! growing? (tc-global-effects-growing? state))
+              (while (< global (array-length globals))
+                (let
+                  [known? : bool
+                    (>
+                      (effect_words.len
+                        (&
+                          (tc-global-effect-witness!
+                            state
+                            cleanup
+                            (array-ref globals global))))
+                      0)]
+                  (when
+                    (or known? growing?)
+                    (__tl_array-push! out.cleanup-keys key)
+                    (__tl_array-push!
+                      out.cleanup-binders
+                      (array-ref binders global))
+                    (__tl_array-push! out.cleanup-callees cleanup)
+                    (__tl_array-push!
+                      out.cleanup-globals
+                      (array-ref globals global))
+                    (__tl_array-push! out.cleanup-pending? (not known?))))
+                (set! global (+ global 1))))))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length owners))
+        (let
+          [cleanup : i64
+            (tc-global-effect-expr-node
+              ctx
+              (array-ref owner-exprs index)
+              indirect)]
+          (when
+            (>= cleanup 0)
+            (tc-global-call-effects-collect! ctx state cleanup)
+            (let
+              [global : i64 0]
+              [growing? : bool (tc-global-effects-growing? state)]
+              (while (< global (array-length globals))
+                (let
+                  [known? : bool
+                    (>
+                      (effect_words.len
+                        (&
+                          (tc-global-effect-witness!
+                            state
+                            cleanup
+                            (array-ref globals global))))
+                      0)]
+                  (when
+                    (or known? growing?)
+                    (__tl_array-push! out.owners (array-ref owners index))
+                    (__tl_array-push!
+                      out.owner-binders
+                      (array-ref binders global))
+                    (__tl_array-push! out.owner-callees cleanup)
+                    (__tl_array-push!
+                      out.owner-globals
+                      (array-ref globals global))
+                    (__tl_array-push! out.owner-pending? (not known?))))
+                (set! global (+ global 1))))))
+        (set! index (+ index 1)))
+      out)))
+
+;; Whether bodies typed later may still add inferred temporary cleanup edges:
+;; a function the graph has collected borrows a temporary. An empty witness
+;; is final only when none does (`tc-global-effect-defer-query!`).
+(define (tc-global-effects-growing? [state : (MutPtr TcGlobalCallEffects)]) : bool
+  (let
+    [callers : tc_i64_i64_map.Map
+      (unsafe
+        (deref state).temporary-callers)]
+    (> (tc_i64_i64_map.len (& callers)) 0)))
+
+;; The calls of a certified body at which a loan of a module value is live
+;; while their effect on it is still unknown: each becomes a query the global
+;; effect graph answers once every body has supplied its edges
+;; (`tc-global-effect-late-diagnostics`).
+(define (tc-selected-defer-global-effects!
+  [ctx : TcContext]
+  [deferred : (& deferred ownership_normalize.OwnershipNormalizeDeferred)]) : unit
+  (when
+    (> (array-length deferred.callees) 0)
+    (let
+      [state : (MutPtr TcGlobalCallEffects)
+        (tc-global-call-effects-ensure! ctx)]
+      [index : i64 0]
+      (while (< index (array-length deferred.callees))
+        (let
+          [name : i64 (array-ref deferred.names index)]
+          (tc-global-effect-defer-query!
+            state
+            (array-ref deferred.globals index)
+            (array-ref deferred.callees index)
+            name
+            (Some
+              (tc-selected-source-span (& (array-ref deferred.calls index))))
+            (Some
+              (tc-selected-source-span (& (array-ref deferred.borrows index))))
+            (tc-borrow-check-origin-label (tc-move-global-source-name name))
+            (string.copy (& (array-ref deferred.calls index).path))
+            (string.copy (& (array-ref deferred.calls index).expansion))))
+        (set! index (+ index 1))))))
+
+;; Normalize a selected body. Only a body some loan of which borrows a module
+;; value can conflict with a call's effect on a global (#7904), so only such
+;; a body asks the global effect graph, and is normalized again with the
+;; global writes its calls and cleanups make.
+(define (tc-selected-normalize-body
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [root : typed.TypedOccurrenceId]
+  [return-type : typed.TypedTypeId]
+  [limits : ownership_normalize.OwnershipNormalizeLimits]) : ownership_normalize.OwnershipNormalizeResult
+  (let
+    [table : TcSelectedTypeTable (tc-selected-type-shapes! ctx store lease)]
+    [first : ownership_normalize.OwnershipNormalizeResult
+      (ownership_normalize.ownership-normalize-with-products!
+        store
+        lease
+        (typed.TypedOccurrenceId (typed.typed-handle-copy (& root.handle)))
+        (typed.TypedTypeId (typed.typed-handle-copy (& return-type.handle)))
+        table.classes
+        table.products
+        table.variances
+        (ownership_normalize.ownership-normalize-global-writes-empty)
+        limits)]
+    (match first
+      [(ownership_normalize.OwnershipNormalizeResult.Ok output)
+        (if (> (array-length output.borrowed-globals) 0)
+          (let
+            [again : TcSelectedTypeTable
+              (tc-selected-type-shapes! ctx store lease)]
+            [writes : ownership_normalize.OwnershipNormalizeGlobalWrites
+              (tc-selected-global-call-writes!
+                ctx
+                store
+                lease
+                (& again)
+                (& output.borrowed-globals)
+                false)]
+            (ownership_normalize.ownership-normalize-with-products!
+              store
+              lease
+              root
+              return-type
+              again.classes
+              again.products
+              again.variances
+              writes
+              limits))
+          (ownership_normalize.OwnershipNormalizeResult.Ok output))]
+      ;; An ownership error the first pass finds may come after a call that
+      ;; assigns a borrowed global: normalized again with every global's
+      ;; writes, the body reports its first error, whichever it is.
+      [(ownership_normalize.OwnershipNormalizeResult.Err failure)
+        (if (tc-selected-normalize-diagnostic? (& failure))
+          (let
+            [again : TcSelectedTypeTable
+              (tc-selected-type-shapes! ctx store lease)]
+            [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+            [writes : ownership_normalize.OwnershipNormalizeGlobalWrites
+              (tc-selected-global-call-writes!
+                ctx
+                store
+                lease
+                (& again)
+                (& none)
+                true)]
+            (if (=
+              (+
+                (array-length writes.calls)
+                (array-length writes.cleanup-keys)
+                (array-length writes.owners))
+              0)
+              (ownership_normalize.OwnershipNormalizeResult.Err failure)
+              (match (ownership_normalize.ownership-normalize-with-products!
+                store
+                lease
+                root
+                return-type
+                again.classes
+                again.products
+                again.variances
+                writes
+                limits)
+                [(ownership_normalize.OwnershipNormalizeResult.Err retried)
+                  (if (tc-selected-normalize-diagnostic? (& retried))
+                    (ownership_normalize.OwnershipNormalizeResult.Err retried)
+                    (ownership_normalize.OwnershipNormalizeResult.Err failure))]
+                [(ownership_normalize.OwnershipNormalizeResult.Ok _)
+                  (ownership_normalize.OwnershipNormalizeResult.Err failure)])))
+          (ownership_normalize.OwnershipNormalizeResult.Err failure))])))
+
+;; A failure that is a diagnostic about the program, not a resource or
+;; internal limit.
+(define (tc-selected-normalize-diagnostic?
+  [failure : (& failure ownership_normalize.OwnershipNormalizeFailure)]) : bool
+  (match failure
+    [(or (ownership_normalize.OwnershipNormalizeFailure.Core _)
+         (ownership_normalize.OwnershipNormalizeFailure.Moved _ _)
+         (ownership_normalize.OwnershipNormalizeFailure.Borrowed _ _)
+         (ownership_normalize.OwnershipNormalizeFailure.MoveOut _)
+         (ownership_normalize.OwnershipNormalizeFailure.Obligation _))
+      true]
+    [_ false]))
+
 ;; The classes plus the product shape of every struct or tuple class the body
 ;; takes fields of (field and element projections of its typed places), and
 ;; the declared variance of the nominal types they name.
@@ -119519,7 +120149,30 @@
                       ctx
                       diagnostic.name
                       (& diagnostic.moved-fields))))))))]
+      ;; A call that may assign a borrowed module value (#7904), with the
+      ;; call path the global effect graph witnesses.
       [(ownership_normalize.OwnershipNormalizeFailure.Borrowed core diagnostic)
+        (when
+          (= diagnostic.access 6)
+          (let
+            [state : (MutPtr TcGlobalCallEffects)
+              (tc-global-call-effects-ensure! ctx)]
+            [path : effect_words.Vec
+              (tc-global-effect-witness!
+                state
+                diagnostic.callee
+                diagnostic.global)]
+            (return
+              (ResultTcUnit.Err
+                (tc-selected-expansion-framed
+                  (& core.source.expansion)
+                  (tc-rich-error-one-secondary
+                    (tc-selected-source-span (& core.source))
+                    (tc-global-effect-message ctx diagnostic.name (& path))
+                    (tc-borrow-check-help)
+                    (tc-selected-source-span (& diagnostic.borrow))
+                    (tc-borrow-check-origin-label
+                      (tc-move-global-source-name diagnostic.name))))))))
         (let
           [name : String
             (tc-selected-path-text ctx diagnostic.name (& diagnostic.fields))]

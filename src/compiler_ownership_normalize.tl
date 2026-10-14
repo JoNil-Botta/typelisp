@@ -104,8 +104,13 @@
 (defstruct OwnershipBorrowDiagnostic
   (name i64)
   (fields (__tl_dyn-array i64))
+  ;; 0 assign, 1 move, 2 mutable borrow, 3 shared borrow, 4 read, 5 mutable
+  ;; borrow through a shared reference, 6 a call that may assign the global
+  ;; (`callee` and `global` name the effect-graph nodes, else -1).
   (access i64)
-  (borrow own.OwnershipSource))
+  (borrow own.OwnershipSource)
+  (callee i64)
+  (global i64))
 
 (defenum OwnershipNormalizeFailure
   (Typed typed.TypedError)
@@ -204,6 +209,65 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array bool 0)))
+
+;; The globals the body's calls may assign (#7904), from typing's global
+;; effect graph: typed call record `calls[i]` may assign the module value
+;; whose typed binder record is `binders[i]`, reached from callee node
+;; `callees[i]` (global node `globals[i]`). The call assigns that global's
+;; place after its operands, so a loan of it still live there conflicts.
+;; Likewise the declared cleanup of the type with class key `cleanup-keys[j]`
+;; may assign the global of binder `cleanup-binders[j]`: a temporary of that
+;; type borrowed for a call is disposed of when the call returns. An entry
+;; whose effect is still unknown (`pending?`: no path yet, while bodies typed
+;; later may still add inferred cleanup edges) is probed instead of assigned:
+;; the body reports whether a loan of that global is live there
+;; (`OwnershipNormalizeDeferred`), and typing asks the graph again at the end.
+(defstruct OwnershipNormalizeGlobalWrites
+  (calls (__tl_dyn-array i64))
+  (binders (__tl_dyn-array i64))
+  (callees (__tl_dyn-array i64))
+  (globals (__tl_dyn-array i64))
+  (pending? (__tl_dyn-array bool))
+  (cleanup-keys (__tl_dyn-array i64))
+  (cleanup-binders (__tl_dyn-array i64))
+  (cleanup-callees (__tl_dyn-array i64))
+  (cleanup-globals (__tl_dyn-array i64))
+  (cleanup-pending? (__tl_dyn-array bool))
+  ;; The cleanup of `with` owner binder record `owners[k]` runs at each exit
+  ;; of its scope and may assign the global of binder `owner-binders[k]`.
+  (owners (__tl_dyn-array i64))
+  (owner-binders (__tl_dyn-array i64))
+  (owner-callees (__tl_dyn-array i64))
+  (owner-globals (__tl_dyn-array i64))
+  (owner-pending? (__tl_dyn-array bool)))
+
+(define (ownership-normalize-global-writes-empty) : OwnershipNormalizeGlobalWrites
+  (OwnershipNormalizeGlobalWrites
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)))
+
+;; The probed calls (`OwnershipNormalizeGlobalWrites`) at which a loan of the
+;; global is live: callee and global nodes, the global binder's name, the
+;; call's source and the live loan's.
+(defstruct OwnershipNormalizeDeferred
+  (callees (__tl_dyn-array i64))
+  (globals (__tl_dyn-array i64))
+  (names (__tl_dyn-array i64))
+  (calls (__tl_dyn-array own.OwnershipSource))
+  (borrows (__tl_dyn-array own.OwnershipSource)))
 
 ;; Whether nominal `name`'s lifetime parameter `index` is declared covariant.
 (define (normalize-nominal-covariant?
@@ -869,8 +933,10 @@
   ;; argument's type: it discharges a cleanup obligation. The second marks a
   ;; call through a function value, its child 0. Last, the typed type record
   ;; of the callee's signature (-1 when not yet read): the call relates its
-  ;; operands and result through it (`normalize-region-edges`).
-  (Call i64 i64 bool bool i64)
+  ;; operands and result through it (`normalize-region-edges`). Then the
+  ;; typed call record's index (-1 when not yet read), which names the globals
+  ;; the call may assign (`OwnershipNormalizeGlobalWrites`).
+  (Call i64 i64 bool bool i64 i64)
   (Primitive typed.TypedPrimitive)
   ;; A formed place: it evaluates nothing itself. Only whole binders are
   ;; represented; projections stay outside the normalized subset.
@@ -1045,7 +1111,7 @@
     ;; The record is read after the occurrence view ends (`normalize-header!`).
     [(typed.TypedOperation.Call _)
       (NormalizeOperationResult.Ok
-        (NormalizeOperation.Call -1 -1 false false -1))]
+        (NormalizeOperation.Call -1 -1 false false -1 -1))]
     [(typed.TypedOperation.Primitive primitive)
       (NormalizeOperationResult.Ok
         (NormalizeOperation.Primitive (normalize-primitive-copy primitive)))]
@@ -1134,7 +1200,12 @@
   (return-type i64)
   (charged-records i64)
   (charged-work i64)
-  (charged-bytes i64))
+  (charged-bytes i64)
+  (deferred OwnershipNormalizeDeferred)
+  ;; The typed records of the global binders some loan borrows: only such a
+  ;; global can conflict with a call's effect on it
+  ;; (`OwnershipNormalizeGlobalWrites`).
+  (borrowed-globals (__tl_dyn-array i64)))
 
 (defstruct NormalizeState
   (body own.OwnershipBody)
@@ -1182,6 +1253,24 @@
   ;; Product shapes by class key; keys this body projects take their shape.
   (products (__tl_dyn-array OwnershipNormalizeProduct))
   (variances OwnershipNormalizeVariances)
+  (global-writes OwnershipNormalizeGlobalWrites)
+  ;; The places of the global binders the write table names, by typed binder
+  ;; record, resolved before the walk (`normalize-global-places!`).
+  (global-binders (__tl_dyn-array i64))
+  (global-places (__tl_dyn-array i64))
+  ;; Each global assignment a call made: the global's place, the call's
+  ;; source position, and its effect-graph callee and global.
+  (effect-places (__tl_dyn-array i64))
+  (effect-sources (__tl_dyn-array own.OwnershipSource))
+  (effect-callees (__tl_dyn-array i64))
+  (effect-globals (__tl_dyn-array i64))
+  ;; Each probe of a still unknown effect: its marker place (a fresh scalar
+  ;; read at the call), the global's place, the nodes and the call's source.
+  (probe-places (__tl_dyn-array i64))
+  (probe-targets (__tl_dyn-array i64))
+  (probe-callees (__tl_dyn-array i64))
+  (probe-globals (__tl_dyn-array i64))
+  (probe-sources (__tl_dyn-array own.OwnershipSource))
   (projected (__tl_dyn-array bool))
   ;; The class key of each body type (-1 for primitives) and the field name id
   ;; of each place (-1 for a root).
@@ -1524,7 +1613,7 @@
           ;; A call through a function value has the callee as child 0.
           [indirect? : bool
             (match (& call.kind)
-              [(typed.TypedCallKind.Indirect) true]
+              [(typed.TypedCallKind.Indirect _) true]
               [_ false])]
           ;; A constructor takes owners over into its value, as the declared
           ;; cleanup function discharges them.
@@ -1545,7 +1634,8 @@
               count
               discharge?
               indirect?
-              signature-index)))]
+              signature-index
+              record.handle.index)))]
       [(typed.TypedCallView.Err error)
         (NormalizeOperationResult.Err (OwnershipNormalizeFailure.Typed error))])))
 
@@ -1808,7 +1898,8 @@
             [(typed.TypedBinderKind.Parameter) true]
             [(typed.TypedBinderKind.Local) false]
             [(typed.TypedBinderKind.Owner) false]
-            [(typed.TypedBinderKind.WithOwner) false]
+            [(typed.TypedBinderKind.WithOwner _) false]
+            [(typed.TypedBinderKind.MoveAwareOwner _) false]
             [(typed.TypedBinderKind.Affine) false]
             [(typed.TypedBinderKind.InvalidateParameter _) true]
             ;; Initialized by the first child of the place formed on it.
@@ -1830,8 +1921,10 @@
             binder.name
             (match (& binder.kind)
               [(typed.TypedBinderKind.Owner) 1]
-              [(typed.TypedBinderKind.WithOwner) 2]
+              [(typed.TypedBinderKind.WithOwner _) 2]
               [(typed.TypedBinderKind.Affine) 3]
+              ;; Cleanup effects only (`normalize-owner-cleanup-writes!`).
+              [(typed.TypedBinderKind.MoveAwareOwner _) 6]
               [_ 0])
             (match (& binder.kind)
               [(typed.TypedBinderKind.InvalidateParameter lifetime) lifetime]
@@ -2938,7 +3031,10 @@
         [place : i64 (array-ref state.owner-places index)]
         [marker : i64 (array-ref state.owner-markers index)]
         (cond
+          ;; The cleanup runs with the owner still held, so its effects come
+          ;; before the owner is consumed.
           [(= (array-ref state.owner-kinds index) 2)
+            (try (normalize-owner-cleanup-writes! state block place source))
             (try
               (normalize-exit-check!
                 state
@@ -2950,6 +3046,18 @@
                 (own.OwnershipOperation.Consume
                   (normalize-place-id (& state) place))
                 source))]
+          ;; A move-aware `with` owner's cleanup runs at an exit while it
+          ;; still owns its value: its effects apply there, and the loans it
+          ;; holds stay live to there whether or not it was moved out (Rust's
+          ;; drop-liveness, without the init test).
+          [(= (array-ref state.owner-kinds index) 6)
+            (try (normalize-owner-cleanup-writes! state block place source))
+            (try
+              (normalize-note-use!
+                state
+                block
+                (array-ref state.instruction-counts block)
+                place))]
           ;; An `:invalidate` brand must have ended.
           [(= (array-ref state.owner-kinds index) 5)
             (try
@@ -3460,7 +3568,9 @@
         (when
           (and
             (not assign?)
-            (normalize-cleanup-owner? (normalize-binder-owner (& state) dest)))
+            (or
+              (normalize-cleanup-owner? (normalize-binder-owner (& state) dest))
+              (= (normalize-binder-owner (& state) dest) 6)))
           (try
             (normalize-owner-bind!
               state
@@ -5336,7 +5446,9 @@
           (normalize-place-fields state place)
           5
           (own.ownership-source-copy
-            (& (array-ref state.body.loans parent).source)))))))
+            (& (array-ref state.body.loans parent).source))
+          -1
+          -1)))))
 
 (define (normalize-borrow!
   [state : (&mut state NormalizeState)]
@@ -6074,14 +6186,14 @@
                   ;; a tuple literal (form 129) and a closure's captures
                   ;; (form 135) move their values in.
                   (match (& node.operation)
-                    [(NormalizeOperation.Call _ _ _ _ _) true]
+                    [(NormalizeOperation.Call _ _ _ _ _ _) true]
                     [(NormalizeOperation.Primitive
                         (typed.TypedPrimitive.Builtin code _))
                       (not (normalize-builtin-moves-operands? code))]
                     [_ false])
                   ;; A constructor's arguments are stored (3); a call's are passed (2).
                   (match (& node.operation)
-                    [(NormalizeOperation.Call key _ discharge? _ _)
+                    [(NormalizeOperation.Call key _ discharge? _ _ _)
                       (if (and discharge? (< key 0))
                         3
                         2)]
@@ -6206,6 +6318,20 @@
               [target : i64 (array-ref state.body.loans loan).place.index]
               (try (normalize-note-flow! state stored target))
               (set! loan (+ loan 1)))))))
+    ;; A call that may assign a module value writes it here, after its
+    ;; operands (#7904); a safe spawn (form 136) is keyed by its occurrence.
+    (match (& node.operation)
+      [(NormalizeOperation.Call _ _ _ _ _ record)
+        (try (normalize-global-writes! state active record (& node.source)))]
+      [_
+        (when
+          (normalize-builtin-code? node 136)
+          (try
+            (normalize-global-writes!
+              state
+              active
+              (- -2 node.handle.index)
+              (& node.source))))])
     ;; A slice element (form 125) is always initialized: storing a cleanup
     ;; owner over it would lose its cleanup. The activated slice reference is
     ;; what is checked, so such a store is always rejected.
@@ -6234,7 +6360,7 @@
             state
             (array-ref operands index)
             (match (& node.operation)
-              [(NormalizeOperation.Call _ _ discharge? _ _) discharge?]
+              [(NormalizeOperation.Call _ _ discharge? _ _ _) discharge?]
               [_ false])
             (& node.source)))
         (try
@@ -6259,7 +6385,7 @@
         (let
           [signature : i64
             (match (& node.operation)
-              [(NormalizeOperation.Call _ _ _ _ signature) signature]
+              [(NormalizeOperation.Call _ _ _ _ signature _) signature]
               [_ -1])]
           (if (>= signature 0)
             (normalize-note-call!
@@ -6268,7 +6394,7 @@
               (& operands)
               result.place
               (match (& node.operation)
-                [(NormalizeOperation.Call _ _ _ indirect? _) indirect?]
+                [(NormalizeOperation.Call _ _ _ indirect? _ _) indirect?]
                 [_ false]))
             (begin
               (set! index 0)
@@ -6279,7 +6405,542 @@
                     (array-ref operands index)
                     result.place))
                 (set! index (+ index 1))))))
+        (match (& node.operation)
+          [(NormalizeOperation.Call _ _ _ _ _ _)
+            (try
+              (normalize-temporary-disposals!
+                state
+                result.block
+                (& operands)
+                (& node.source)))]
+          [_ unit])
         (NormalizeValueResult.Ok result)))))
+
+;; The place of every global binder the write table names, made before the
+;; walk: a module value is initialized at entry wherever it is first named.
+(define (normalize-global-places!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]) : NormalizeUnit
+  (let
+    [records : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 0]
+    (normalize-append-unique! (&mut records) (& state.global-writes.binders))
+    (normalize-append-unique!
+      (&mut records)
+      (& state.global-writes.cleanup-binders))
+    (normalize-append-unique!
+      (&mut records)
+      (& state.global-writes.owner-binders))
+    (try (normalize-charge! state 0 (array-length records) 0))
+    (while (< index (array-length records))
+      (let
+        [id : typed.TypedBinderId
+          (match (typed.typed-binder-at! store lease (array-ref records index))
+            [(typed.TypedBinderResult.Ok id) id]
+            [(typed.TypedBinderResult.Err error)
+              (return
+                (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+        [place : i64 (try (normalize-binder! state store lease id))]
+        (__tl_array-push! state.global-binders (array-ref records index))
+        (__tl_array-push! state.global-places place))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
+
+(define (normalize-global-place
+  [state : (& state NormalizeState)]
+  [binder : i64]) : i64
+  (let
+    [index : i64 0]
+    (while (< index (array-length state.global-binders))
+      (when
+        (= (array-ref state.global-binders index) binder)
+        (return (array-ref state.global-places index)))
+      (set! index (+ index 1)))
+    -1))
+
+;; The first index of sorted `calls` at or after `record`.
+(define (normalize-entries-lower-bound
+  [calls : (& calls (__tl_dyn-array i64))]
+  [record : i64]) : i64
+  (let
+    [low : i64 0]
+    [high : i64 (array-length calls)]
+    (while (< low high)
+      (let
+        [middle : i64 (/ (+ low high) 2)]
+        (if (< (array-ref calls middle) record)
+          (set! low (+ middle 1))
+          (set! high middle))))
+    low))
+
+;; A `with` owner's cleanup runs at this exit of its scope (a move-aware
+;; owner's may): it assigns each module value it may assign (#7904).
+(define (normalize-owner-cleanup-writes!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [owner : i64]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (let
+    [count : i64 (array-length state.global-writes.owners)]
+    [record : i64 -1]
+    [index : i64 0]
+    (when (= count 0) (return (NormalizeUnit.Ok unit)))
+    (try (normalize-charge! state 0 (+ count (array-length state.binders)) 0))
+    (while (< index (array-length state.binders))
+      (when
+        (= (array-ref state.binders index).place owner)
+        (set! record (array-ref state.binders index).handle.index))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index count)
+      (when
+        (and
+          (>= record 0)
+          (= (array-ref state.global-writes.owners index) record))
+        (try
+          (normalize-global-write!
+            state
+            block
+            (array-ref state.global-writes.owner-binders index)
+            (array-ref state.global-writes.owner-callees index)
+            (array-ref state.global-writes.owner-globals index)
+            (array-ref state.global-writes.owner-pending? index)
+            source)))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
+
+;; Typed call record `record` assigns each module value it may assign
+;; (`OwnershipNormalizeGlobalWrites`, sorted by call record), as the callee
+;; would: any loan of that global still live at the call conflicts, whatever
+;; reference holds it (#7904).
+(define (normalize-global-writes!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [record : i64]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (let
+    [count : i64 (array-length state.global-writes.calls)]
+    [index : i64
+      (normalize-entries-lower-bound (& state.global-writes.calls) record)]
+    (try (normalize-charge! state 0 64 0))
+    (while (and
+      (!= record -1)
+      (< index count)
+      (= (array-ref state.global-writes.calls index) record))
+      (try
+        (normalize-global-write!
+          state
+          block
+          (array-ref state.global-writes.binders index)
+          (array-ref state.global-writes.callees index)
+          (array-ref state.global-writes.globals index)
+          (array-ref state.global-writes.pending? index)
+          source))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
+
+;; A temporary of a type with a declared cleanup, borrowed for a call, is
+;; disposed of when the call returns: its cleanup assigns each module value
+;; it may assign there (#7904), after the call's own loans ended but while a
+;; reference the call returned, or an enclosing call's operand, may still
+;; hold a loan of that global.
+(define (normalize-temporary-disposals!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [operands : (& operands (__tl_dyn-array i64))]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (let
+    [count : i64 (array-length state.global-writes.cleanup-keys)]
+    [index : i64 0]
+    (when (= count 0) (return (NormalizeUnit.Ok unit)))
+    (try
+      (normalize-charge!
+        state
+        0
+        (* (array-length operands) (+ count state.origin-count))
+        0))
+    (while (< index (array-length operands))
+      (let
+        [root : i64 (normalize-place-root (& state) (array-ref operands index))]
+        [at : i64 0]
+        (while (< at state.origin-count)
+          (when
+            (= (array-ref state.origin-places at) root)
+            (let
+              [held : i64
+                (normalize-place-root
+                  (& state)
+                  (array-ref state.body.loans (array-ref state.origin-loans at)).place.index)]
+              [type : i64 (array-ref state.body.places held).type.index]
+              [key : i64
+                (if (and (>= type 0) (< type (array-length state.type-keys)))
+                  (array-ref state.type-keys type)
+                  -1)]
+              [entry : i64 0]
+              ;; A temporary: a value with no binder name of its own, and not
+              ;; the synthetic referent of a reference (a call's result, say),
+              ;; which nothing disposes of.
+              (when
+                (and
+                  (>= key 0)
+                  (< (normalize-binder-name (& state) held) 0)
+                  (= (normalize-region-root (& state) held) held))
+                (while (< entry count)
+                  (when
+                    (= (array-ref state.global-writes.cleanup-keys entry) key)
+                    (try
+                      (normalize-global-write!
+                        state
+                        block
+                        (array-ref state.global-writes.cleanup-binders entry)
+                        (array-ref state.global-writes.cleanup-callees entry)
+                        (array-ref state.global-writes.cleanup-globals entry)
+                        (array-ref state.global-writes.cleanup-pending? entry)
+                        source)))
+                  (set! entry (+ entry 1))))))
+          (set! at (+ at 1))))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
+
+;; Assign the module value of typed binder record `binder` at `block`, as
+;; effect-graph node `callee` may (global node `global`); kept, with the
+;; whole source of the call, for the diagnostic. A `pending?` effect is
+;; probed instead: a fresh scalar is read there, and once the body is
+;; certified the point is checked for a live loan of the global
+;; (`normalize-deferred-effects`).
+(define (normalize-global-write!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [binder : i64]
+  [callee : i64]
+  [global : i64]
+  [pending? : bool]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (let
+    [place : i64 (normalize-global-place (& state) binder)]
+    [copy : own.OwnershipSource (try (normalize-source-copy! state source))]
+    (when
+      (< place 0)
+      (return
+        (NormalizeUnit.Err
+          (OwnershipNormalizeFailure.Structural
+            "ownership normalization: unresolved global binder"))))
+    (if pending?
+      (let
+        [marker : i64 (try (normalize-local! state 0 true source))]
+        (try
+          (normalize-emit!
+            state
+            block
+            (own.OwnershipOperation.Read (normalize-place-id (& state) marker))
+            source))
+        (__tl_array-push! state.probe-places marker)
+        (__tl_array-push! state.probe-targets place)
+        (__tl_array-push! state.probe-callees callee)
+        (__tl_array-push! state.probe-globals global)
+        (__tl_array-push! state.probe-sources copy))
+      (begin
+        (try
+          (normalize-emit!
+            state
+            block
+            (own.OwnershipOperation.Assign (normalize-place-id (& state) place))
+            source))
+        (__tl_array-push! state.effect-places place)
+        (__tl_array-push! state.effect-sources copy)
+        (__tl_array-push! state.effect-callees callee)
+        (__tl_array-push! state.effect-globals global)))
+    (NormalizeUnit.Ok unit)))
+
+;; The records of the global binders some loan borrows (a module value or a
+;; part of one): only such a global can conflict with a call's effect on it.
+(define (normalize-borrowed-globals [state : (& state NormalizeState)]) : (__tl_dyn-array
+    i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 0]
+    (while (< index (array-length state.binders))
+      (let
+        [place : i64 (array-ref state.binders index).place]
+        [loan : i64 0]
+        [found : bool false]
+        (when
+          (normalize-global-local?
+            state
+            (array-ref state.body.places place).local.index)
+          (while (and (not found) (< loan (array-length state.body.loans)))
+            (when
+              (=
+                (normalize-place-root
+                  state
+                  (array-ref state.body.loans loan).place.index)
+                place)
+              (set! found true))
+            (set! loan (+ loan 1)))
+          (when
+            found
+            (__tl_array-push! out (array-ref state.binders index).handle.index))))
+      (set! index (+ index 1)))
+    out))
+
+;; The work `normalize-deferred-effects` does: one pass over the
+;; instructions and the edges, and per probe the loans and one backward walk
+;; of the blocks and edges.
+(define (normalize-deferred-work [state : (& state NormalizeState)]) : i64
+  (let
+    [instructions : i64 0]
+    [edges : i64 0]
+    [block : i64 0]
+    (while (< block (array-length state.body.blocks))
+      (set!
+        instructions
+        (+
+          instructions
+          1
+          (array-length (array-ref state.body.blocks block).instructions)))
+      (set! edges (+ edges (normalize-block-successor-count state block)))
+      (set! block (+ block 1)))
+    (+
+      instructions
+      (* 2 edges)
+      (array-length state.body.places)
+      (*
+        (array-length state.probe-places)
+        (+
+          (array-length state.body.loans)
+          (array-length state.body.blocks)
+          edges
+          1)))))
+
+;; The probes at which a loan of the probed global may be in force, by the
+;; certified body: the loan is live there (some later use may read it) and
+;; its borrow reaches the probe, so it may have been issued. Those calls
+;; conflict if the effect graph later finds that the callee may assign the
+;; global; this is the check the core applies to a known effect's write.
+(defenum NormalizeDeferredEffectsResult
+  (Ok OwnershipNormalizeDeferred)
+  (Err OwnershipNormalizeFailure))
+
+(define (normalize-deferred-effects
+  [state : (& state NormalizeState)]
+  [limits : own.OwnershipLimits]) : NormalizeDeferredEffectsResult
+  (let
+    [out : OwnershipNormalizeDeferred
+      (OwnershipNormalizeDeferred
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array own.OwnershipSource 0)
+        (__tl_make-array own.OwnershipSource 0))]
+    ;; Without loans no global is borrowed (the liveness table is then empty).
+    (when
+      (or
+        (= (array-length state.probe-places) 0)
+        (= (array-length state.body.loans) 0))
+      (return (NormalizeDeferredEffectsResult.Ok out)))
+    (match (own.ownership-loan-liveness (& state.body) limits)
+      [(own.OwnershipLoanLivenessResult.Err _)
+        (NormalizeDeferredEffectsResult.Err OwnershipNormalizeFailure.Resource)]
+      [(own.OwnershipLoanLivenessResult.Ok liveness)
+        (let
+          [places : i64 (array-length state.body.places)]
+          [loans : i64 (array-length state.body.loans)]
+          [blocks : i64 (array-length state.body.blocks)]
+          ;; Per place, the probe whose marker it is; per probe, its block and
+          ;; point; per loan, the block and instruction of its borrow.
+          [probe-of : (__tl_dyn-array i64) (__tl_make-array i64 places)]
+          [probe-blocks : (__tl_dyn-array i64)
+            (__tl_make-array i64 (array-length state.probe-places))]
+          [probe-indices : (__tl_dyn-array i64)
+            (__tl_make-array i64 (array-length state.probe-places))]
+          [loan-blocks : (__tl_dyn-array i64) (__tl_make-array i64 loans)]
+          [loan-indices : (__tl_dyn-array i64) (__tl_make-array i64 loans)]
+          ;; Per block, the last probe it has a path of edges to.
+          [predecessors : NormalizePredecessors
+            (normalize-block-predecessors state)]
+          [marks : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+          [work : (__tl_dyn-array i64) (__tl_make-array i64 (+ blocks 1))]
+          [index : i64 0]
+          [block : i64 0]
+          (while (< index places)
+            (set! (array-ref probe-of index) -1)
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index blocks)
+            (set! (array-ref marks index) -1)
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index (array-length state.probe-places))
+            (set!
+              (array-ref probe-of (array-ref state.probe-places index))
+              index)
+            (set! (array-ref probe-blocks index) -1)
+            (set! (array-ref probe-indices index) -1)
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index loans)
+            (set! (array-ref loan-blocks index) -1)
+            (set! (array-ref loan-indices index) -1)
+            (set! index (+ index 1)))
+          (while (< block blocks)
+            (let
+              [instructions : (&
+                state
+                (__tl_dyn-array own.OwnershipInstruction))
+                (& (array-ref state.body.blocks block).instructions)]
+              [at : i64 0]
+              (while (< at (array-length instructions))
+                (let
+                  [op : (& state own.OwnershipOperation)
+                    (& (array-ref instructions at).operation)]
+                  [defined : i64 (own.ownership-loan-definition op)]
+                  (when
+                    (and (>= defined 0) (< defined loans))
+                    (set! (array-ref loan-blocks defined) block)
+                    (set! (array-ref loan-indices defined) at))
+                  (match op
+                    [(own.OwnershipOperation.Read place)
+                      (when
+                        (and
+                          (>= place.index 0)
+                          (< place.index places)
+                          (>= (array-ref probe-of place.index) 0))
+                        (set!
+                          (array-ref
+                            probe-blocks
+                            (array-ref probe-of place.index))
+                          block)
+                        (set!
+                          (array-ref
+                            probe-indices
+                            (array-ref probe-of place.index))
+                          at))]
+                    [_ unit]))
+                (set! at (+ at 1))))
+            (set! block (+ block 1)))
+          (set! index 0)
+          (while (< index (array-length state.probe-places))
+            (let
+              [probe-block : i64 (array-ref probe-blocks index)]
+              [loan : i64 0]
+              [found : i64 -1]
+              [marked? : bool false]
+              (when
+                (and
+                  (>= probe-block 0)
+                  (< probe-block (array-length liveness.offsets)))
+                (let
+                  [point : i64
+                    (+
+                      (array-ref liveness.offsets probe-block)
+                      (array-ref probe-indices index))]
+                  (while (and (< found 0) (< loan loans))
+                    (when
+                      (and
+                        (=
+                          (normalize-place-root
+                            state
+                            (array-ref state.body.loans loan).place.index)
+                          (array-ref state.probe-targets index))
+                        (own.ownership-loan-live? (& liveness) point loan))
+                      ;; The borrow reaches the probe: earlier in its block,
+                      ;; or in a block with a path of edges to it.
+                      (unless
+                        marked?
+                        (set! marked? true)
+                        (normalize-mark-reaching!
+                          (& predecessors)
+                          probe-block
+                          index
+                          (&mut marks)
+                          (&mut work)))
+                      (let
+                        [from : i64 (array-ref loan-blocks loan)]
+                        (when
+                          (or
+                            (and
+                              (= from probe-block)
+                              (<
+                                (array-ref loan-indices loan)
+                                (array-ref probe-indices index)))
+                            (and (>= from 0) (= (array-ref marks from) index)))
+                          (set! found loan))))
+                    (set! loan (+ loan 1))))
+                (when
+                  (>= found 0)
+                  (__tl_array-push!
+                    out.callees
+                    (array-ref state.probe-callees index))
+                  (__tl_array-push!
+                    out.globals
+                    (array-ref state.probe-globals index))
+                  (__tl_array-push!
+                    out.names
+                    (normalize-binder-name
+                      state
+                      (array-ref state.probe-targets index)))
+                  (__tl_array-push!
+                    out.calls
+                    (own.ownership-source-copy
+                      (& (array-ref state.probe-sources index))))
+                  (__tl_array-push!
+                    out.borrows
+                    (own.ownership-source-copy
+                      (& (array-ref state.body.loans found).source))))))
+            (set! index (+ index 1)))
+          (NormalizeDeferredEffectsResult.Ok out))])))
+
+;; Mark with `stamp` every block that has a path of at least one edge to
+;; `target`: one backward walk, each block entering `work` at most once.
+(define (normalize-mark-reaching!
+  [predecessors : (& predecessors NormalizePredecessors)]
+  [target : i64]
+  [stamp : i64]
+  [marks : (&mut marks (__tl_dyn-array i64))]
+  [work : (&mut work (__tl_dyn-array i64))]) : unit
+  (let
+    [head : i64 0]
+    [tail : i64 1]
+    (set! (array-ref work 0) target)
+    (while (< head tail)
+      (let
+        [block : i64 (array-ref work head)]
+        [at : i64 (array-ref predecessors.start block)]
+        (set! head (+ head 1))
+        (while (< at (array-ref predecessors.start (+ block 1)))
+          (let
+            [from : i64 (array-ref predecessors.list at)]
+            (when
+              (!= (array-ref marks from) stamp)
+              (set! (array-ref marks from) stamp)
+              (set! (array-ref work tail) from)
+              (set! tail (+ tail 1))))
+          (set! at (+ at 1)))))))
+
+;; The global assignment a call made with exactly `source` to the root of
+;; `place` (`normalize-global-write!`), or -1.
+(define (normalize-global-effect-at
+  [state : (& state NormalizeState)]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : i64
+  (let
+    [root : i64 (normalize-place-root state place)]
+    [index : i64 0]
+    (while (< index (array-length state.effect-places))
+      (let
+        [effect : (& state own.OwnershipSource)
+          (& (array-ref state.effect-sources index))]
+        (when
+          (and
+            (= (array-ref state.effect-places index) root)
+            (= effect.line source.line)
+            (= effect.column source.column)
+            (string.eq (& effect.path) (& source.path))
+            (string.eq (& effect.expansion) (& source.expansion)))
+          (return index)))
+      (set! index (+ index 1)))
+    -1))
 
 (define (normalize-execute!
   [state : (&mut state NormalizeState)]
@@ -6309,7 +6970,7 @@
         [(NormalizeOperation.Continue) (= count 0)]
         [(NormalizeOperation.Return _) (<= count 1)]
         [(NormalizeOperation.Sequence) true]
-        [(NormalizeOperation.Call _ arguments _ _ _) (= count arguments)]
+        [(NormalizeOperation.Call _ arguments _ _ _ _) (= count arguments)]
         [(NormalizeOperation.Primitive primitive)
           (= count (typed.typed-primitive-arity primitive))]
         [(NormalizeOperation.FormPlace _) true]
@@ -6512,7 +7173,7 @@
         (normalize-sequence! state store lease node block depth)]
       [(NormalizeOperation.Return propagates?)
         (normalize-return! state store lease node block depth propagates?)]
-      [(NormalizeOperation.Call _ _ _ _ _)
+      [(NormalizeOperation.Call _ _ _ _ _ _)
         (normalize-call! state store lease node block depth)]
       [(NormalizeOperation.Primitive _)
         (normalize-operands! state store lease node block depth)]
@@ -9802,6 +10463,15 @@
             failure.place))
           0
           read)]
+      ;; An assignment a call made for a global it may assign (#7904).
+      [effect : i64
+        (match (&
+          (array-ref
+            (array-ref body.blocks failure.block).instructions
+            failure.instruction).operation)
+          [(own.OwnershipOperation.Assign _)
+            (normalize-global-effect-at state failure.place (& failure.source))]
+          [_ -1])]
       (if (or (< name 0) (< access 0))
         NormalizeBorrowDiagnosticResult.No
         (NormalizeBorrowDiagnosticResult.Some
@@ -9829,9 +10499,17 @@
                 (>= element 0)
                 (__tl_array-push! fields (normalize-element-field element)))
               fields)
-            access
+            (if (>= effect 0)
+              6
+              access)
             (own.ownership-source-copy
-              (& (array-ref body.loans failure.conflicting-loan).source))))))))
+              (& (array-ref body.loans failure.conflicting-loan).source))
+            (if (>= effect 0)
+              (array-ref state.effect-callees effect)
+              -1)
+            (if (>= effect 0)
+              (array-ref state.effect-globals effect)
+              -1)))))))
 
 (defenum NormalizeMoveDiagnosticResult
   (Some OwnershipMoveDiagnostic)
@@ -10001,6 +10679,7 @@
     classes
     (__tl_make-array OwnershipNormalizeProduct 0)
     (ownership-normalize-variances-empty)
+    (ownership-normalize-global-writes-empty)
     limits))
 
 ;; A signature lifetime is the caller's region: whatever a body stores into a
@@ -10295,6 +10974,7 @@
   [classes : (__tl_dyn-array OwnershipNormalizeTypeClass)]
   [products : (__tl_dyn-array OwnershipNormalizeProduct)]
   [variances : OwnershipNormalizeVariances]
+  [writes : OwnershipNormalizeGlobalWrites]
   [limits : OwnershipNormalizeLimits]) : OwnershipNormalizeResult
   ;; A hard depth ceiling bounds compiler stack use even for caller-supplied
   ;; limits (the compiler runs on the runtime's 1 GiB main stack). All
@@ -10361,6 +11041,18 @@
           (__tl_make-array i64 0)
           products
           variances
+          writes
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array own.OwnershipSource 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array own.OwnershipSource 0)
           (__tl_make-array bool 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
@@ -10464,6 +11156,8 @@
       [_parameters : unit
         (try (normalize-parameters! (&mut state) store lease))]
       [entry : i64 (try (normalize-parameter-entry! (&mut state)))]
+      [_globals : unit
+        (try (normalize-global-places! (&mut state) store lease))]
       [value
         : NormalizeValue
         ;; The body's value is what it returns.
@@ -10525,16 +11219,37 @@
       (normalize-mir-dump (& state.body))
       (match (own.ownership-check (& state.body) state.limits.core)
         [(own.OwnershipResult.Ok)
-          (OwnershipNormalizeResult.Ok
-            (OwnershipNormalizedBody
-              state.body
-              state.nodes
-              state.binders
-              root
-              result-type
-              state.records
-              state.work
-              state.bytes))]
+          (let
+            [_charged : unit
+              (try
+                (normalize-charge!
+                  (&mut state)
+                  0
+                  (+
+                    (normalize-deferred-work (& state))
+                    (*
+                      (array-length state.binders)
+                      (array-length state.body.loans)))
+                  0))]
+            [deferred : OwnershipNormalizeDeferred
+              (match (normalize-deferred-effects (& state) state.limits.core)
+                [(NormalizeDeferredEffectsResult.Ok value) value]
+                [(NormalizeDeferredEffectsResult.Err failure)
+                  (return (OwnershipNormalizeResult.Err failure))])]
+            [borrowed-globals : (__tl_dyn-array i64)
+              (normalize-borrowed-globals (& state))]
+            (OwnershipNormalizeResult.Ok
+              (OwnershipNormalizedBody
+                state.body
+                state.nodes
+                state.binders
+                root
+                result-type
+                state.records
+                state.work
+                state.bytes
+                deferred
+                borrowed-globals)))]
         ;; The core's own bounds and unsupported shapes are this route's
         ;; limits, not the program's: such a body is unsupported here.
         [(own.OwnershipResult.Err failure)

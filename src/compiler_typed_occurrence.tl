@@ -121,8 +121,14 @@
   ;; its scope must find it discharged.
   (Owner)
   ;; A `with` binding (SPEC 5.19): its cleanup runs on every exit of its
-  ;; scope, so no exit may find it moved.
-  (WithOwner)
+  ;; scope, so no exit may find it moved. The expression id of its cleanup
+  ;; function (-1 when none; -2 for a locally bound callable), whose effects
+  ;; run at those exits (#7904).
+  (WithOwner i64)
+  ;; A move-aware `with` binding (as `for` binds a cleanup-owning item): an
+  ;; ordinary local whose cleanup runs at an exit while it still owns its
+  ;; value; the cleanup function's expression id as for `WithOwner`.
+  (MoveAwareOwner i64)
   ;; A direct arena owner annotated with the bare `Arena` type, or an arena
   ;; phase token (SPEC 5.16): a Copy handle tracked as an owner, so a read of
   ;; the whole binder moves it. Borrowing reads go through a reference.
@@ -168,7 +174,11 @@
   ;; (SPEC 4.3): its children are the operands alone, each read for the call
   ;; (a non-Copy place is lent as a shared borrow), and its result is fresh.
   (Foreign i64)
-  (Indirect)
+  ;; A call through a function value, its child 0. The expression id of the
+  ;; callee when its name resolves at module level (a dispatcher, an extern,
+  ;; a module value of function type), naming its effects (#7904); -1 for a
+  ;; locally bound callable or any other value.
+  (Indirect i64)
   ;; A call of its argument type's declared cleanup function (key as for
   ;; Declared): it discharges that value's cleanup obligation.
   (Discharge i64))
@@ -933,7 +943,7 @@
                   (TypedCall
                     (cast 0 : u64)
                     (TypedTypeId (typed-empty-handle))
-                    TypedCallKind.Indirect
+                    (TypedCallKind.Indirect -1)
                     0))))
             (when
               (< index store.origin-count)
@@ -1435,7 +1445,7 @@
     [(TypedCallKind.Construct) unit]
     [(TypedCallKind.Foreign key)
       (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))]
-    [(TypedCallKind.Indirect) unit]
+    [(TypedCallKind.Indirect _) unit]
     [(TypedCallKind.Discharge key)
       (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))])
   (unless
@@ -1945,6 +1955,47 @@
   (try (typed-charge! store lease 1))
   (try (typed-projection-ok (& store) (& id)))
   (TypedProjectionView.Ok (& (array-ref store.projections id.handle.index))))
+
+(define (typed-call-count!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (try (typed-charge! store lease 1))
+  (TypedCountResult.Ok store.call-count))
+
+(define (typed-call-at!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [index : i64]) : TypedCallResult
+  (try (typed-charge! store lease 1))
+  (if (and (>= index 0) (< index store.call-count))
+    (TypedCallResult.Ok
+      (TypedCallId
+        (TypedHandle
+          (typed-body-copy (& store.body))
+          index
+          (array-ref store.calls index).serial)))
+    (TypedCallResult.Err TypedError.Unknown)))
+
+;; The body's occurrences in record order, as the call records are listed.
+(define (typed-occurrence-count!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (try (typed-charge! store lease 1))
+  (TypedCountResult.Ok store.occurrence-count))
+
+(define (typed-occurrence-at!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [index : i64]) : TypedOccurrenceResult
+  (try (typed-charge! store lease 1))
+  (if (and (>= index 0) (< index store.occurrence-count))
+    (TypedOccurrenceResult.Ok
+      (TypedOccurrenceId
+        (TypedHandle
+          (typed-body-copy (& store.body))
+          index
+          (array-ref store.occurrences index).serial)))
+    (TypedOccurrenceResult.Err TypedError.Unknown)))
 
 (define (typed-call-get!
   [store : (&mut store TypedStore)]

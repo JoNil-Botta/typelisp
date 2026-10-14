@@ -725,7 +725,7 @@
 (define (compiler-incremental-input-payload-size
   [input : (& input CompilerIncrementalInput)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(SourceContent path content)
+    [(or (SourceContent path content) (StdlibProvenance path content))
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& path))
         (compiler-incremental-content-size (& content)))]
@@ -748,10 +748,6 @@
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& version))
-        (compiler-incremental-content-size (& content)))]
-    [(StdlibProvenance distribution content)
-      (compiler-incremental-size-chain2
-        (compiler-incremental-string-frame-size (& distribution))
         (compiler-incremental-content-size (& content)))]
     [(Configuration config)
       (compiler-incremental-config-payload-size (& config))]
@@ -846,11 +842,7 @@
   [input : (& input CompilerIncrementalInput)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(SourceContent path _)
-      (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
-        compiler-incremental-error-value
-        compiler-incremental-error-path)]
-    [(ImportedArtifact _ path _ _)
+    [(or (SourceContent path _) (ImportedArtifact _ path _ _))
       (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         compiler-incremental-error-value
         compiler-incremental-error-path)]
@@ -886,7 +878,7 @@
           (binary.compiler-incremental-binary-push-u8! (&mut out) tag)
           (byte_le.push-u32! (&mut out) payload-size)
           (match (owned_view.compiler-owned-reference-shared-view input)
-            [(SourceContent path content)
+            [(or (SourceContent path content) (StdlibProvenance path content))
               (binary.compiler-incremental-binary-push-string!
                 (&mut out)
                 (& path))
@@ -926,11 +918,6 @@
               (binary.compiler-incremental-binary-push-string!
                 (&mut out)
                 (& version))
-              (compiler-incremental-push-content! (&mut out) (& content))]
-            [(StdlibProvenance distribution content)
-              (binary.compiler-incremental-binary-push-string!
-                (&mut out)
-                (& distribution))
               (compiler-incremental-push-content! (&mut out) (& content))]
             [(Configuration config)
               (binary.compiler-incremental-binary-push-string!

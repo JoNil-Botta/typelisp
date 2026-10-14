@@ -2068,20 +2068,22 @@
               "tl_alloc")
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (object_target.compiler-backend-object-bytes-from-hex "554889e5"))
+              (&
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "554889e5")))
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (object_target.compiler-backend-object-bytes-from-hex "c9c3"))
+              (& (object_target.compiler-backend-object-bytes-from-hex "c9c3")))
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (object_linux.compiler-backend-object-exit-bytes)))
+              (& (object_linux.compiler-backend-object-exit-bytes))))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (object_linux.compiler-backend-object-tlci-entry-bytes))
+            (& (object_linux.compiler-backend-object-tlci-entry-bytes)))
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (object_linux.compiler-backend-object-tlci-macro-entry-bytes)))
+              (& (object_linux.compiler-backend-object-tlci-macro-entry-bytes))))
           (let
             [kind (cobj.CompilerObjectRelocationKind.Abs64)]
             [target (backend.compiler-backend-string-data-label "hi")]
@@ -2120,8 +2122,9 @@
     [disabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish disabled-parts.text)]
     (and
-      (cobj.compiler-object-instr-list-contains-bytes? enabled expected)
-      (not (cobj.compiler-object-instr-list-contains-bytes? disabled expected)))))
+      (cobj.compiler-object-instr-list-contains-bytes? (& enabled) expected)
+      (not
+        (cobj.compiler-object-instr-list-contains-bytes? (& disabled) expected)))))
 
 ;; Let-bound if-merges whose phi destination differs from both inputs: the
 ;; object emitter must copy each edge value into the phi destination slot
@@ -2177,7 +2180,7 @@
             previous-store?
             (compiler-backend-object-rbp-store-chunk? value))]
         [(Jump symbol)
-          (if (cobj.compiler-object-string-contains? symbol "if_merge" 0)
+          (if (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0)
             (if previous-store?
               (set! edges (+ edges 1))
               (set! edges -1))
@@ -2186,7 +2189,7 @@
         [(Label symbol)
           (if (and
             previous-store?
-            (cobj.compiler-object-string-contains? symbol "if_merge" 0))
+            (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0))
             (set! edges (+ edges 1))
             unit)
           (set! previous-store? false)]
@@ -2206,7 +2209,9 @@
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (object_target.compiler-backend-object-bytes-from-hex "4883ec08")))
+              (&
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "4883ec08"))))
           (match (cobj.compiler-object-section-list-find sections (Text))
             [(Section _ _ instrs)
               (= (compiler-backend-object-merge-edge-stores instrs) 2)])))]
@@ -2310,9 +2315,11 @@
     [records : cobj.CompilerObjectDataRecordList
       (cobj.compiler-object-data-record-builder-finish records8)]
     (and
-      (= (cobj.compiler-object-data-record-end-offset (String "") 0) 1)
+      (= (cobj.compiler-object-data-record-end-offset (& (String "")) 0) 1)
       (=
-        (cobj.compiler-object-data-record-end-offset (String interior-nul) 1)
+        (cobj.compiler-object-data-record-end-offset
+          (& (String interior-nul))
+          1)
         5)
       (=
         (layout.compiler-object-layout-data-label-offset-from
@@ -3197,10 +3204,10 @@
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (object_target.compiler-backend-object-bytes-from-hex "488b00"))
+            (& (object_target.compiler-backend-object-bytes-from-hex "488b00")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (object_target.compiler-backend-object-bytes-from-hex "488945"))))]
+            (& (object_target.compiler-backend-object-bytes-from-hex "488945")))))]
     [(Err _) false]))
 
 (define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
@@ -3217,10 +3224,13 @@
         (backend.backend-and4
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (object_target.compiler-backend-object-bytes-from-hex "4889442420"))
+            (&
+              (object_target.compiler-backend-object-bytes-from-hex
+                "4889442420")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (object_target.compiler-backend-object-bytes-from-hex "488b4530"))
+            (&
+              (object_target.compiler-backend-object-bytes-from-hex "488b4530")))
           true
           true))]
     [(Err _) false]))
@@ -9003,26 +9013,29 @@
           ;; Four scalar vars plus a four-slot word1 region.
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-prologue-bytes
-              (backend.CompilerBackendTarget.Linux)
-              (backend.compiler-backend-frame-size 8)))
+            (&
+              (backend.compiler-backend-object-prologue-bytes
+                (backend.CompilerBackendTarget.Linux)
+                (backend.compiler-backend-frame-size 8))))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-store-slot-bytes 4 "%rdx"))
+            (& (backend.compiler-backend-object-store-slot-bytes 4 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-load-rbp-disp-bytes
-              (backend.compiler-backend-object-slot-disp 4)
-              "%rdx"))
+            (&
+              (backend.compiler-backend-object-load-rbp-disp-bytes
+                (backend.compiler-backend-object-slot-disp 4)
+                "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-store-slot-bytes 5 "%rdx"))
+            (& (backend.compiler-backend-object-store-slot-bytes 5 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-load-rbp-disp-bytes
-              (backend.compiler-backend-object-slot-disp 5)
-              "%rax"))))]
+            (&
+              (backend.compiler-backend-object-load-rbp-disp-bytes
+                (backend.compiler-backend-object-slot-disp 5)
+                "%rax")))))]
     [(Err _) false]))
 
 (define (compiler-backend-descriptor-pair-target-ok?
@@ -16585,7 +16598,7 @@ f:
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (backend.compiler-backend-object-cmp-imm32-rax-bytes 5)))
+              (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 5))))
           (cobj.compiler-object-section-contains-label?
             sections
             (Rodata)
@@ -16596,7 +16609,7 @@ f:
             ".Lf0_five")
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-switch-indirect-jump-bytes))))]
+            (& (backend.compiler-backend-object-switch-indirect-jump-bytes)))))]
     [(Err _) false]))
 
 (define (compiler-backend-spoofed-total-switch-stays-checked?) : bool
@@ -16611,7 +16624,7 @@ f:
       [(Ok image)
         (cobj.compiler-object-section-contains-bytes?
           image.sections
-          (backend.compiler-backend-object-cmp-imm32-rax-bytes 5))]
+          (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 5)))]
       [(Err _) false])))
 
 (define (compiler-backend-switch-asm-ok?) : bool
@@ -16908,10 +16921,10 @@ f:
             ".Lf0_two")
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-cmp-imm32-rax-bytes 2))
+            (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 2)))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-switch-indirect-jump-bytes))))]
+            (& (backend.compiler-backend-object-switch-indirect-jump-bytes)))))]
     [(Err diag) false]))
 
 (define (compiler-backend-switch-base-object-image-ok?) : bool
@@ -16925,10 +16938,10 @@ f:
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-sub-imm32-rax-bytes 4))
+            (& (backend.compiler-backend-object-sub-imm32-rax-bytes 4)))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (backend.compiler-backend-object-cmp-imm32-rax-bytes 1))))]
+            (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 1)))))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-object-shape-diagnostic-ok?) : bool
@@ -37558,10 +37571,10 @@ b_keep:
           ;; The rebind's byte copy, and the cell address it copies into.
           (cobj.compiler-object-section-contains-bytes?
             image.sections
-            (backend.compiler-backend-object-inline-aggregate-copy-bytes 16))
+            (& (backend.compiler-backend-object-inline-aggregate-copy-bytes 16)))
           (cobj.compiler-object-section-contains-bytes?
             image.sections
-            (backend.compiler-backend-object-inline-aggregate-copy-bytes 24))
+            (& (backend.compiler-backend-object-inline-aggregate-copy-bytes 24)))
           (cobj.compiler-object-relocation-list-contains?
             image.relocations
             (RipAddress)

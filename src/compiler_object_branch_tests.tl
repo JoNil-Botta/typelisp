@@ -41,22 +41,25 @@
             (if (= index 0)
               (owned_view.compiler-owned-shared-view target)
               "begin")))
-        (set! body (parts.compiler-backend-object-add-text body (Label label)))
+        (set!
+          body
+          (parts.compiler-backend-object-add-text body (& (Label label))))
         (set!
           body
           (parts.compiler-backend-object-add-text
             body
-            (Jcc
-              cc
-              (if (= index 0)
-                (owned_view.compiler-owned-shared-view target)
-                "begin"))))
+            (&
+              (Jcc
+                cc
+                (if (= index 0)
+                  (owned_view.compiler-owned-shared-view target)
+                  "begin")))))
         (if (= index 0)
           (set!
             body
             (parts.compiler-backend-object-add-text
               body
-              (Bytes (parts.compiler-backend-object-bytes-from-hex "90"))))
+              (& (Bytes (parts.compiler-backend-object-bytes-from-hex "90")))))
           unit)
         (set! index (+ index 1))))
     (cobj.CompilerObjectImage

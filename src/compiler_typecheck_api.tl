@@ -117,8 +117,8 @@
         (spec.spec-owner-context-new pools intern-state)]
       [generated-result : spec.ResultGenProgramWithPaths
         (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-          program
-          paths
+          (& program)
+          (& paths)
           ""
           owner-context)]
       (ast.ast-node-pool-context-install! pools)
@@ -189,8 +189,8 @@
                   (spec.spec-owner-context-new pools intern-state)]
                 [generated-result : spec.ResultGenProgramWithPaths
                   (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                    program
-                    paths
+                    (& program)
+                    (& paths)
                     ""
                     owner-context)]
                 (ast.ast-node-pool-context-install! pools)
@@ -215,18 +215,18 @@
                       (match macro-result
                         [(Ok expanded expanded-paths)
                           (if (spec.compiler-specialize-needed-with-pools
-                            (owned_view.compiler-owned-shared-view expanded)
+                            (& expanded)
                             pools)
                             (let
                               [owner-context : spec.SpecOwnerContext
                                 (spec.spec-owner-context-new pools intern-state)]
                               [normalized-result : spec.ResultGenProgramWithPaths
                                 (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                                  expanded
-                                  (owned_view.compiler-owned-shared-view
-                                    expanded-paths)
+                                  (& expanded)
+                                  (& expanded-paths)
                                   (tc_core.tc-decl-path-list-last
-                                    expanded-paths
+                                    (owned_view.compiler-owned-shared-view
+                                      expanded-paths)
                                     "")
                                   owner-context)]
                               ;; Publish explicit normalization mutations before
@@ -236,16 +236,13 @@
                               (match normalized-result
                                 [(Ok normalized normalized-paths)
                                   (if (spec.compiler-specialize-needed-with-pools
-                                    (owned_view.compiler-owned-shared-view
-                                      normalized)
+                                    (& normalized)
                                     pools)
                                     (let
                                       [symbol-result : csym.ResultCompilerSymbolsDiagnostic
                                         (csym.build-compiler-symbols-diagnostic-with-paths
-                                          (owned_view.compiler-owned-shared-view
-                                            normalized)
-                                          (owned_view.compiler-owned-shared-view
-                                            normalized-paths))]
+                                          (& normalized)
+                                          (& normalized-paths))]
                                       (ast.ast-node-pool-context-capture-active!
                                         pools)
                                       (ci.intern-compat-state-capture-from-globals!
@@ -255,15 +252,14 @@
                                           (let
                                             [specialized-result : spec.ResultSpecProgramWithPaths
                                               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-                                                normalized
-                                                (owned_view.compiler-owned-shared-view
-                                                  normalized-paths)
+                                                (& normalized)
+                                                (& normalized-paths)
                                                 (tc_core.tc-decl-path-list-last
-                                                  normalized-paths
+                                                  (owned_view.compiler-owned-shared-view
+                                                    normalized-paths)
                                                   "")
                                                 pools
-                                                (owned_view.compiler-owned-shared-view
-                                                  intern-state))]
+                                                (& intern-state))]
                                             (ast.ast-node-pool-context-install!
                                               pools)
                                             (ci.intern-compat-state-install!

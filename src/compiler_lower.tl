@@ -74810,7 +74810,7 @@
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (let
-    [specialized (try (spec.compiler-specialize-program program))]
+    [specialized (try (spec.compiler-specialize-program (& program)))]
     [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [keep-plan : LowerDeclKeepPlan
@@ -74859,7 +74859,7 @@
   ;; Generate declaration families before macro expansion (see
   ;; typecheck-compiler-program-with-paths for why).
   (let
-    [generated (try (spec.gen-normalize-program program))]
+    [generated (try (spec.gen-normalize-program (& program)))]
     (match (tc_core.macro-expand-program generated)
       [(Ok expanded _)
         (lower-compiler-expanded-program-unlocated-mode
@@ -75271,9 +75271,7 @@
     (let
       [intern-state : ci.InternCompatState intern-state-input]
       [needs-specialization : bool
-        (spec.compiler-specialize-needed-with-pools
-          (lower-global-shared-view program)
-          pools)]
+        (spec.compiler-specialize-needed-with-pools (& program) pools)]
       [names : LowerNameEnv
         (match (lower-global-shared-view program)
           [(Program decls-box)
@@ -75294,18 +75292,18 @@
             (cfg
               (any compile-profile test)
               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
-                program
-                paths
+                (& program)
+                (& paths)
                 (lower-global-shared-view entry-path)
                 pools
-                (lower-global-shared-view intern-state)
+                (& intern-state)
                 (compiler-lower-state-profile lower-state))
               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
-                program
-                paths
+                (& program)
+                (& paths)
                 (lower-global-shared-view entry-path)
                 pools
-                (lower-global-shared-view intern-state)))
+                (& intern-state)))
             (Ok program paths)))]
       ;; Explicit specialization mutates owner pool/interner cells; publish
       ;; them before matching either result or entering legacy lowering.
@@ -75621,13 +75619,13 @@
             (any compile-profile test)
             (spec.spec-owner-context-new-with-profile-state
               pools
-              (ci.intern-global-shared-view intern-state)
+              (& intern-state)
               (compiler-lower-state-profile lower-state))
             (spec.spec-owner-context-new pools intern-state))]
         [generated-result : spec.ResultGenProgramWithPaths
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-            program
-            paths
+            (& program)
+            (& paths)
             (lower-global-shared-view entry-path)
             generation-owner)]
         ;; Publish explicit generation mutations before matching either result

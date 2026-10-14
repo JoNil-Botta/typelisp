@@ -11,10 +11,10 @@
 (define (resource-with-owner [owner : (& owner spec.SpecOwnerContext)]) : ast.AstExpr
   (let
     [value : i64
-      (spec.spec-owner-expr-push owner (Var cbi.compiler-builtin-id-fix-x))]
+      (spec.spec-owner-expr-push owner (& (Var cbi.compiler-builtin-id-fix-x)))]
     [ty : i64
-      (spec.spec-owner-type-push owner (Var cbi.compiler-builtin-id-fix-T))]
-    [init : i64 (spec.spec-owner-expr-push owner (MakeArray ty value))]
+      (spec.spec-owner-type-push owner (& (Var cbi.compiler-builtin-id-fix-T)))]
+    [init : i64 (spec.spec-owner-expr-push owner (& (MakeArray ty value)))]
     [bindings : ast.AstResourceBindingList (ast.ast-resource-binding-list-new)]
     [body : ast.AstExprList (ast.ast-expr-list-new)]
     (ast.ast-resource-binding-list-push
@@ -88,7 +88,7 @@
           (I64 5)
           (spec.spec-value-subst-new)))]
     [ambient-count : i64 (ast.ast-node-pool-len)]
-    (match (spec.spec-substitute-expr-with-owner (& owner) expr (& subs))
+    (match (spec.spec-substitute-expr-with-owner (& owner) (& expr) (& subs))
       [(Ok result)
         (test.assert-true
           (rewritten-resource-ok? (& owner) result)
@@ -119,9 +119,9 @@
         (let
           [ambient-count : i64 (ast.ast-node-pool-len)]
           (match (spec.compiler-specialize-program-with-pools-and-intern-state
-            program
+            (& program)
             pools
-            (ci.intern-compat-state-capture-active))
+            (& (ci.intern-compat-state-capture-active)))
             [(Ok specialized)
               (match specialized
                 [(Program boxed-decls)
@@ -169,7 +169,7 @@
        (with ([r T U]) 0))
      (define (main) : i64 (bad (type i64) (type bool)))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Err boxed-diag)
           (let
             [diag : diagnostic.CompilerDiagnostic

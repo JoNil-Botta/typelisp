@@ -142,7 +142,7 @@
     (while (and ok (< index count))
       (match (cobj.compiler-object-section-list-ref sections index)
         [(Section _ _ instrs)
-          (if (layout.compiler-object-layout-instrs-encodable? instrs false)
+          (if (layout.compiler-object-layout-instrs-encodable? (& instrs) false)
             (set! index (+ index 1))
             (set! ok false))]))
     ok))
@@ -426,8 +426,8 @@
 (define (compiler-object-coff-render-relocation!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [reloc : cobj.CompilerObjectRelocation]) : unit
-  (match reloc
+  [reloc : (& cobj.CompilerObjectRelocation)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view reloc)
     [(Relocation section site kind target)
       (compiler-object-coff-render-relocation-record!
         out
@@ -469,10 +469,7 @@
               (cobj.compiler-object-instr-list-ref instrs index)]
             (set!
               end
-              (+
-                end
-                (layout.compiler-object-layout-instr-size
-                  (owned_view.compiler-owned-shared-view instr))))
+              (+ end (layout.compiler-object-layout-instr-size (& instr))))
             (match (layout.compiler-object-layout-instr-fixup instr)
               [(None) unit]
               [(One kind target)
@@ -510,10 +507,10 @@
       (let
         [reloc : cobj.CompilerObjectRelocation
           (cobj.compiler-object-relocation-list-ref relocs index)]
-        (match (owned_view.compiler-owned-shared-view reloc)
+        (match (& reloc)
           [(Relocation section _ _ _)
             (if (cobj.compiler-object-section-kind-eq? section kind)
-              (compiler-object-coff-render-relocation! out image reloc)
+              (compiler-object-coff-render-relocation! out image (& reloc))
               unit)])
         (set! index (+ index 1))))
     unit))
@@ -610,8 +607,8 @@
 (define (compiler-object-coff-render-symbol!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [symbol : cobj.CompilerObjectSymbol]) : unit
-  (match symbol
+  [symbol : (& cobj.CompilerObjectSymbol)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view symbol)
     [(Symbol name binding kind section)
       (compiler-object-coff-push-symbol-name! out image name)
       (layout.compiler-object-layout-push-u32!
@@ -639,7 +636,7 @@
       (compiler-object-coff-render-symbol!
         out
         image
-        (cobj.compiler-object-symbol-list-ref symbols index))
+        (& (cobj.compiler-object-symbol-list-ref symbols index)))
       (set! index (+ index 1)))
     unit))
 
@@ -782,12 +779,12 @@
               "")))])))
 
 (define (compiler-object-coff-check-section-relocation-layout
-  [acc : CompilerObjectCoffLayoutAccumulator]
+  [acc : (& CompilerObjectCoffLayoutAccumulator)]
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
   (compiler-object-coff-check-relocation-count-layout
-    acc
+    (owned_view.compiler-owned-reference-shared-view acc)
     kind
     (layout.compiler-object-layout-section-relocation-count image kind)
     max-output-size))
@@ -892,7 +889,7 @@
         (set!
           acc
           (compiler-object-coff-check-section-relocation-layout
-            acc
+            (& acc)
             image
             (layout.compiler-object-layout-section-at index)
             max-output-size))
@@ -1312,7 +1309,7 @@
 (cfg
   test
   (define (compiler-object-coff-text-smoke-bytes-ok?
-    [obj : String]
+    [obj : (& str)]
     [text-ptr : i64]) : bool
     (and
       (= (layout.compiler-object-layout-u8-at obj text-ptr) 0x48)
@@ -1335,8 +1332,8 @@
 (cfg
   test
   (define (compiler-object-coff-text-smoke-relocs-ok?
-    [image : cobj.CompilerObjectImage]
-    [obj : String]
+    [image : (& cobj.CompilerObjectImage)]
+    [obj : (& str)]
     [reloc-ptr : i64]) : bool
     (let
       [rel32 : i64 compiler-object-coff-reloc-amd64-rel32]
@@ -1420,10 +1417,11 @@
               (= text-size 50)
               (= text-ptr (compiler-object-coff-header-size))
               (= reloc-count 8)
-              (compiler-object-coff-text-smoke-bytes-ok?
-                (owned_view.compiler-owned-shared-view obj)
-                text-ptr)
-              (compiler-object-coff-text-smoke-relocs-ok? image obj reloc-ptr)))]
+              (compiler-object-coff-text-smoke-bytes-ok? (& obj) text-ptr)
+              (compiler-object-coff-text-smoke-relocs-ok?
+                (& image)
+                (& obj)
+                reloc-ptr)))]
         [(Err _) false]))))
 
 (cfg
@@ -1480,7 +1478,7 @@
 (cfg
   test
   (define (compiler-object-coff-header-has-relocation-overflow?
-    [obj : String]
+    [obj : (& str)]
     [kind : cobj.CompilerObjectSectionKind]) : bool
     (not
       (=
@@ -1516,14 +1514,14 @@
                 0)
               (not
                 (compiler-object-coff-header-has-relocation-overflow?
-                  (owned_view.compiler-owned-shared-view obj)
+                  (& obj)
                   (Text)))
               (=
                 (layout.compiler-object-layout-u16-at obj (+ header 32))
                 semantic-count)
               (not
                 (compiler-object-coff-header-has-relocation-overflow?
-                  (owned_view.compiler-owned-shared-view obj)
+                  (& obj)
                   (Data)))
               (compiler-object-coff-reloc-entry-ok?
                 obj
@@ -1582,10 +1580,10 @@
                 (layout.compiler-object-layout-u16-at obj (+ rodata-header 32))
                 0xffff)
               (compiler-object-coff-header-has-relocation-overflow?
-                (owned_view.compiler-owned-shared-view obj)
+                (& obj)
                 (Data))
               (compiler-object-coff-header-has-relocation-overflow?
-                (owned_view.compiler-owned-shared-view obj)
+                (& obj)
                 (Rodata))
               (compiler-object-coff-reloc-entry-ok?
                 obj

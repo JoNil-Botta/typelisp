@@ -11,7 +11,6 @@
 (import (hashmap.hashmap i64 i64) as spec_id_i64_map)
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
-(import compiler_owned_view as owned_view)
 (cfg test (import compiler_profile_state as profile_state))
 (cfg test (import stdlib.test))
 (import compiler_specialize as spec)
@@ -243,20 +242,21 @@
     [(F64 n)
       (str_cat.str-cat
         "f64_"
-        (spec.spec-string-key (cfloat.compiler-float-format-f64 n)))]
+        (spec.spec-string-key (& (cfloat.compiler-float-format-f64 n))))]
     [(F32 n)
       (str_cat.str-cat
         "f32_"
         (spec.spec-string-key
-          (cfloat.compiler-float-format-f64
-            (cfloat.compiler-float-round-f32-as-f64 n))))]
+          (&
+            (cfloat.compiler-float-format-f64
+              (cfloat.compiler-float-round-f32-as-f64 n)))))]
     [(Bool b)
       (if b
         "bool_1"
         "bool_0")]
     [(Char c) (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
-    [(String text _) (spec.spec-string-key text)]
-    [(Name text _) (spec.spec-string-key text)]
+    [(String text _) (spec.spec-string-key (& text))]
+    [(Name text _) (spec.spec-string-key (& text))]
     [(Unit) "unit"]
     [(Type ty) (str_cat.str-cat "type_" (spec-type-key ty))]
     [(Expr _ _) "Expr"]
@@ -350,7 +350,7 @@
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : spec.ResultSpecSubExpr
-        (spec.spec-substitute-expr-with-owner owner expr (& combined))]
+        (spec.spec-substitute-expr-with-owner owner (& expr) (& combined))]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
@@ -363,8 +363,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : spec.ResultSpecProgramWithPaths
       (spec.compiler-specialize-program-with-paths-and-pools
-        program
-        paths
+        (& program)
+        (& paths)
         fallback-path
         pools)]
     (ast.ast-node-pool-context-install! pools)
@@ -372,7 +372,7 @@
 
 (define (compiler-specialize-needed? [program : ast.AstProgram]) : bool
   (spec.compiler-specialize-needed-with-pools
-    program
+    (& program)
     (ast.ast-node-pool-context-capture-active)))
 
 (define (compiler-specialize-type-param-ok?) : bool
@@ -382,7 +382,7 @@
 (define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok specialized)
           (match specialized
             [(Program decls-box)
@@ -403,7 +403,7 @@
     "(define (bad [comptime T : type] [n : i64]) : i64 T)
 (define (main) : i64 (bad (type i64) 4))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok _) false]
         [(Err _) true])]
     [(Err _) false]))
@@ -413,7 +413,7 @@
     "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
 (define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok _) true]
         [(Err _) false])]
     [(Err _) false]))
@@ -424,7 +424,7 @@
 (define (main) : i64
   (+ (let [scale : i64 3] scale) (scale 2 7)))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok specialized)
           (match specialized
             [(Program decls-box)
@@ -471,9 +471,7 @@
           (ast.ast-param-list-new)
           (I64)
           (Literal (ast.ast-lit-int 2))))]
-    [base : spec.SpecTemplateEnv
-      (spec.spec-template-env-from-list
-        (owned_view.compiler-owned-shared-view items))]
+    [base : spec.SpecTemplateEnv (spec.spec-template-env-from-list (& items))]
     [shadow-x : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-x)]
     [duplicate-x : spec.SpecTemplateEnv
@@ -498,7 +496,9 @@
         (&mut patterns)
         (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-second))]
     [pattern-both : spec.SpecTemplateEnv
-      (spec.spec-template-env-shadow-pattern base (ast.ast-pat-tuple patterns))]
+      (spec.spec-template-env-shadow-pattern
+        base
+        (& (ast.ast-pat-tuple patterns)))]
     [params : ast.AstParamList (ast.ast-param-list-new)]
     [_param-x : unit
       (ast.ast-param-list-push
@@ -543,7 +543,7 @@
       (spec.spec-template-env-shadow-let-binding-names param-both bindings)]
     [unrelated : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
-    [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list items)]
+    [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list (& items))]
     [index : i64 0]
     [ok : bool true]
     ;; Cross multiple dense-record growth boundaries with repeated names.
@@ -668,7 +668,7 @@
   (let [T : i64 x] T))
 (define (main) : i64 (pick (type i64) 7))")
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok specialized)
           (match specialized
             [(Program decls-box)
@@ -720,7 +720,9 @@
     [substituted : ast.AstType
       (spec.spec-substitute-type-with-owner owner slice-t subs)]
     (and
-      (string.eq (spec.spec-type-key-with-owner owner slice-i64) "slice_i64")
+      (string.eq
+        (spec.spec-type-key-with-owner owner (& slice-i64))
+        "slice_i64")
       (match substituted
         [(Slice elem)
           (match (spec.spec-owner-type-get owner elem)
@@ -859,7 +861,7 @@
         owner-a
         key-a
         "alloc"
-        values-a)]
+        (& values-a))]
     [old-raw : i64 (spec.spec-structural-key-raw key-a)]
     [post-reset-values : spec.SpecValueList
       (spec.spec-value-cons (I64 -3) (spec.spec-value-list-new))]
@@ -931,7 +933,7 @@
           (compiler-specialize-decl-list-count-visible
             rest
             (spec.spec-place-shared-view name))]
-        (match (spec.gen-decl-visible-name decl)
+        (match (spec.gen-decl-visible-name (& decl))
           [(Some found)
             (if (string.eq found name)
               (+ 1 tail-count)
@@ -953,7 +955,7 @@
 (define (compiler-specialize-reuse-ok?) : bool
   (match (parser.parse-ast-source (& (compiler-specialize-reuse-source)))
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok specialized)
           (match specialized
             [(Program decls-box)
@@ -1202,7 +1204,7 @@
             (Literal (Bool true))))
         out)]
     [template-env : spec.SpecTemplateEnv
-      (spec.spec-template-env-from-list templates)]
+      (spec.spec-template-env-from-list (& templates))]
     [cache : spec_id_i64_map.Map
       (let
         [seed-cache : spec_id_i64_map.Map (spec_id_i64_map.with-capacity 8)]
@@ -1268,7 +1270,7 @@
         [expr-len-before : i64
           (ast.ast-node-pool-context-expr-len pools-before)]
         [specialized-result : spec.ResultSpecProgram
-          (spec.compiler-specialize-program program)]
+          (spec.compiler-specialize-program (& program))]
         (match specialized-result
           [(Ok specialized)
             (let
@@ -1398,11 +1400,11 @@
               (ast.ast-decl-list-box-shared-view decls-box)]
             [equal? : bool
               (spec.gen-decl-eq?
-                (ast.ast-decl-list-ref decls 0)
-                (ast.ast-decl-list-ref decls 1))]
+                (& (ast.ast-decl-list-ref decls 0))
+                (& (ast.ast-decl-list-ref decls 1)))]
             (and
               (= equal? reuse?)
-              (match (spec.compiler-specialize-program program)
+              (match (spec.compiler-specialize-program (& program))
                 [(Ok normalized)
                   (and
                     reuse?
@@ -1470,7 +1472,7 @@
     [(Ok program)
       (and
         (compiler-specialize-needed? (ast.ast-place-shared-view program))
-        (match (spec.compiler-specialize-program program)
+        (match (spec.compiler-specialize-program (& program))
           [(Ok normalized)
             (match normalized
               [(Program decls-box)
@@ -1488,7 +1490,7 @@
 (define (compiler-generated-decl-function-reuse-ok?) : bool
   (match (compiler-generated-decl-function-reuse-program)
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok normalized)
           (match normalized
             [(Program decls-box)
@@ -1506,7 +1508,7 @@
 (define (compiler-generated-decl-incompatible-rejected?) : bool
   (match (compiler-generated-decl-incompatible-program)
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok _) false]
         [(Err _) true])]
     [(Err _) false]))
@@ -1514,7 +1516,7 @@
 (define (compiler-generated-decl-incompatible-note-ok?) : bool
   (match (compiler-generated-decl-incompatible-program)
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok _) false]
         [(Err diag)
           (let
@@ -1561,7 +1563,7 @@
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (compiler-generated-decl-reuse-program)
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Ok normalized)
           (match normalized
             [(Program decls-box)
@@ -1609,11 +1611,11 @@
         "generated-key")]
     [registry : spec.GenRegistry
       (spec.gen-registry-insert-with-owner
-        (spec.gen-registry-empty)
+        (& (spec.gen-registry-empty))
         key
         (ast.ast-place-shared-view decl))]
     (match (spec.gen-registry-lookup-with-owner registry key)
-      [(Some found) (spec.gen-decl-eq? found decl)]
+      [(Some found) (spec.gen-decl-eq? (& found) (& decl))]
       [(None) false])))
 
 (define (compiler-generated-decl-spmd-metadata-distinct-ok?) : bool
@@ -1636,18 +1638,20 @@
       (ast.AstSpmdSpecialization 16 (box b-classes) Varying 0))
     (not
       (spec.gen-decl-eq?
-        (ast.ast-decl-def-fn-metadata-id
-          generated-id
-          (ast.ast-param-list-new)
-          (I64)
-          body
-          (& (ast.ast-fn-metadata-full No (Callable a-items))))
-        (ast.ast-decl-def-fn-metadata-id
-          generated-id
-          (ast.ast-param-list-new)
-          (I64)
-          body
-          (& (ast.ast-fn-metadata-full No (Callable b-items))))))))
+        (&
+          (ast.ast-decl-def-fn-metadata-id
+            generated-id
+            (ast.ast-param-list-new)
+            (I64)
+            body
+            (& (ast.ast-fn-metadata-full No (Callable a-items)))))
+        (&
+          (ast.ast-decl-def-fn-metadata-id
+            generated-id
+            (ast.ast-param-list-new)
+            (I64)
+            body
+            (& (ast.ast-fn-metadata-full No (Callable b-items)))))))))
 
 (define (compiler-generated-test-metadata-distinct-ok?) : bool
   (let
@@ -1657,23 +1661,26 @@
     (and
       (not
         (spec.gen-decl-eq?
-          (ast.ast-decl-test-id name body span)
+          (& (ast.ast-decl-test-id name body span))
+          (&
+            (ast.ast-decl-test-metadata-id
+              name
+              body
+              (ast.ast-test-metadata-new No true)
+              span))))
+      (spec.gen-decl-eq?
+        (&
           (ast.ast-decl-test-metadata-id
             name
             body
-            (ast.ast-test-metadata-new No true)
-            span)))
-      (spec.gen-decl-eq?
-        (ast.ast-decl-test-metadata-id
-          name
-          body
-          (ast.ast-test-metadata-new (Some "same reason") false)
-          span)
-        (ast.ast-decl-test-metadata-id
-          name
-          body
-          (ast.ast-test-metadata-new (Some "same reason") false)
-          span)))))
+            (ast.ast-test-metadata-new (Some "same reason") false)
+            span))
+        (&
+          (ast.ast-decl-test-metadata-id
+            name
+            body
+            (ast.ast-test-metadata-new (Some "same reason") false)
+            span))))))
 
 (define (compiler-specialize-generated-symbol-records-growth-ok?) : bool
   (let
@@ -1740,7 +1747,7 @@
         body
         ") (define (main) : i64 (bad (type i64)))")))
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Err _) true]
         [_ false])]
     [_ false]))
@@ -1823,7 +1830,7 @@
       "(define (pick [comptime n : i64]) : i64 n)
        (define (main) : i64 (with ([r 0 (pick 7)]) 0))")
       [(Ok program)
-        (match (spec.compiler-specialize-program program)
+        (match (spec.compiler-specialize-program (& program))
           [(Ok specialized)
             (match specialized
               [(Program decls)

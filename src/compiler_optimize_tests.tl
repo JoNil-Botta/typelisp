@@ -26302,6 +26302,10 @@
 ;; the loop's own bound, so once the word is read through the copy to its pack
 ;; the check is implied by the loop guard and the whole opt-2 pipeline drops
 ;; it, call and all. With an unrelated bound (%2) the same check must stay.
+;; The exit block reads the length through the copy once more. LICM gathers the
+;; pack, the copy and the loop's words into one preheader, where the block-local
+;; fold already sees them; this read stays outside that block, so only the
+;; cross-block copy step can fold it, and with it the check.
 (define (opt-slice-walk-function [bound : String]) : ir.CompilerIrFunction
   (opt-gvn-function
     (str_cat.str-cat "slice_walk_" (clone bound))
@@ -26332,7 +26336,9 @@
            %5 = add %5, 1 : i64
            jump header
          exit:
-           return %6"))))
+           %14 = word %4, 1 : i64
+           %15 = add %6, %14 : i64
+           return %15"))))
 
 (define (opt-slice-walk-optimized-blocks [bound : String]) : ir.CompilerIrBlockList
   (let

@@ -14320,8 +14320,10 @@
                       (TcSelectedCallTarget.Err message)]
                     [(ResultTcType.Ok _)
                       (TcSelectedCallTarget.Err
+                        ;; A missing lifetime declaration (E0210), not an
+                        ;; escape.
                         (tc-kind-message
-                          (cdiag.CompilerTypecheckKind.RegionEscape)
+                          (cdiag.CompilerTypecheckKind.LifetimeMismatch)
                           (str_cat.str-cat
                             "typecheck: `"
                             (tc-type-render
@@ -120517,8 +120519,10 @@
   [reason : String]) : String
   (let
     [message : String
+      ;; E0200, the code main gives a construct it does not implement: this
+      ;; is a limit of the checker, not a resource-ownership (E0211) finding.
       (tc-kind-message
-        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        (cdiag.CompilerTypecheckKind.Unclassified)
         "typecheck: the ownership checker does not support a construct in this function body")]
     (match (tc-expr-maybe-span (tc-context-expr-bases ctx) body)
       [(TcMaybeAstSourceSpan.Some span)

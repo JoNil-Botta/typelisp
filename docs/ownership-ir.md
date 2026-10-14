@@ -20,9 +20,11 @@ part is not yet implemented, the cutover section and the code take precedence.
 **One authority.** A body is accepted only when the producer represents it
 and the core certifies it. A body the producer cannot represent, or one the
 normalizer cannot certify (`Unsupported`, or `Resource` past its fixed record,
-work, depth or provenance bounds), is rejected with E0211 "the ownership
+work, depth or provenance bounds), is rejected with E0200 "the ownership
 checker does not support a construct in this function body" and the reason as
-help (`tc-selected-unsupported-body-error`). Typing (types, lifetimes named in
+help (`tc-selected-unsupported-body-error`). E0200 is the code main gives a
+construct it does not implement; this is a limit of the checker, not a
+resource-ownership finding (E0211). Typing (types, lifetimes named in
 signatures, region flow into returns) still runs before the graph; it is a
 type check, not a second ownership verdict.
 
@@ -71,7 +73,7 @@ apart from the reaching-definition split of reassigned reference bindings and
 the holder kills in loan liveness (below): a read can demand every loan its
 root may ever hold, and a holder overwritten only through a field write or a
 reference keeps its demands. A dereference or reborrow of a reference joined
-from several loans is not represented and is rejected with E0211, never
+from several loans is not represented and is rejected with E0200, never
 trusted, and so is `replace!` behind an opaque referent. A read through a
 reference that may point to several places sees the loans of all of them, so
 writing a place only one of them borrows can be rejected while another is
@@ -763,7 +765,7 @@ the lifetimes the typechecker already carries in every type it publishes.
   answered on a second graph in which each parameter's regions are its own
   and outlives edges (reborrows, well-formedness) are left out: a reference
   points at the loans that reached its outer region by value. A joined or
-  unknown answer still fails closed (E0211).
+  unknown answer still fails closed (E0200).
 
 **Typing: a reborrow is bounded by what it reborrows through.** A borrow
 through a reference lives no longer than any reference on its path, up to and
@@ -897,7 +899,7 @@ answers it, the way it answers any other write:
   accepted (`global_call_cleanup_in_match_dead_ok`). A module value named
   with its own module's qualifier (`effects.deep.g`) resolves through
   ordinary source lookup as in main's collector; the ownership walk had
-  failed closed on it (E0211, `global_call_qualified_global_reject`).
+  failed closed on it (E0200, `global_call_qualified_global_reject`).
   `global_call_explicit_cleanup_reject`, `global_call_dispatch_reject` and
   `global_call_macro_callee_reject` pin the callee identity. A `with`
   cleanup that receives its still-borrowed value and assigns the global is
@@ -935,7 +937,7 @@ is deliberate and has a regression twin:
   a holding type (`tc-selected-holding-type?`) that also carries its cleanup
   obligation: its loans stay live to the explicit discharge, which uses the
   value, and an array, dynamic array or box of such values cannot be
-  overwritten while initialized. Its bodies failed closed (E0211) before,
+  overwritten while initialized. Its bodies failed closed (E0200) before,
   though main accepts them (`mir_cleanup_holder_param_ok`,
   `mir_cleanup_holder_assign_reject`, valid twin
   `mir_cleanup_holder_assign_ok`, `mir_cleanup_holder_return_reject`,
@@ -985,7 +987,7 @@ is deliberate and has a regression twin:
   `call_store_contract_returned_ref_ok`, `mir_opaque_referent_read_reject`).
   A reborrow's parent is the one loan its binder points at, not the loans its
   referent holds: a reborrow of a `&mut` to a value holding a reference was
-  rejected with E0211 before (`mir_reborrow_holder_ok`;
+  failed closed before (`mir_reborrow_holder_ok`;
   `mir_reborrow_call_store_reject`, `mir_reborrow_param_call_store_reject`).
 - **Holes the cutover opened, closed (third review).** Main's former walkers
   rejected these programs, mostly as moves out of a reference; the graph
@@ -1630,7 +1632,7 @@ validation-only anonymous-body hook. Named function bodies use
 `tc-selected-prepare-named-body` while the lease is live: normalization and the
 core checker are the only ownership authority. Typed identity, structural and
 core failures are hard errors, and since the cutover so are Unsupported and
-Resource failures (E0211); no legacy region/move/borrow check remains to
+Resource failures (E0200); no legacy region/move/borrow check remains to
 select.
 
 The compile route records every certified named body in a job-owned registry.

@@ -3,6 +3,7 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
+(import stdlib.iterator)
 (import stdlib.string)
 
 (define (surface-binary-string-length [text : (& text str)]) : i64
@@ -17,13 +18,11 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
     (let
-      [index : i64 0]
       [length : i64 (surface-binary-string-length text)]
-      (while (< index length)
+      (for [index (iterator.range 0 length)]
         (byte_buf_core.byte-buf-builder-push
           out
-          (cast (surface-binary-string-ref text index) : u8))
-        (set! index (+ index 1)))
+          (cast (surface-binary-string-ref text index) : u8)))
       unit)))
 
 (define (surface-binary-bytes->string
@@ -32,9 +31,7 @@
   [length : i64]) : String
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (array-ref bytes (+ offset index)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (array-ref bytes (+ offset index))))
     (unsafe
       (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length))))

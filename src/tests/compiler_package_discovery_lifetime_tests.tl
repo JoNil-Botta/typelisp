@@ -1,5 +1,6 @@
 ;; Source-owned inline lifetime regressions, auto-discovered by
 ;; scripts/verify-inline-tests.sh on Linux and Windows.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
@@ -60,7 +61,7 @@
             (ast.ast-decl-path-list-get actual index ""))
           (= (ast.ast-decl-path-list-owner-id actual index 123) -1)
           (= (ast.ast-decl-path-list-provenance-id actual index 123) -1)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (and ok (> count 0))))
 
 (define (discovery-test-reuse-storage!) : unit
@@ -70,7 +71,7 @@
       [index : i64 0]
       (while (< index (array-length slots))
         (set! (array-ref slots index) 7666)
-        (set! index (+ index 1))))))
+        (+= index 1)))))
 
 (define (discovery-test-write-fixture!) : unit
   (load.compiler-load-test-mkdir "target/exp")
@@ -361,13 +362,11 @@
 (define (discovery-test-write-wide-fixture! [count : i64]) : unit
   (let
     [source : text_buf.TextBuf (text_buf.empty)]
-    [index : i64 0]
     (text_buf.append! source "(module wide)")
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (text_buf.append! source "\n(define wide_item_")
       (text_buf.append-int! source index)
-      (text_buf.append! source " : i64 1)")
-      (set! index (+ index 1)))
+      (text_buf.append! source " : i64 1)"))
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime/src")
@@ -393,10 +392,9 @@
     [table-id : i64 (ci.intern-active-table-id)]
     [live : i64 (ci.intern-structural-generations-live)]
     [ok? : bool true]
-    [index : i64 0]
     ;; Each job grows its child's records and map at least once, then
     ;; releases every generation before the parent is used again.
-    (while (< index 3)
+    (for [index (iterator.range 0 3)]
       (let
         [made : i64 (ci.intern-structural-generations-made-count)]
         (set!
@@ -405,8 +403,7 @@
             ok?
             (discovery-test-wide-load-ok?)
             (>= (ci.intern-structural-generations-made-count) (+ made 2))
-            (= (ci.intern-structural-generations-live) live)))
-        (set! index (+ index 1))))
+            (= (ci.intern-structural-generations-live) live)))))
     (unless
       (and ok? (= table-id (ci.intern-active-table-id)))
       (io.panic "package discovery retained structural generations"))))

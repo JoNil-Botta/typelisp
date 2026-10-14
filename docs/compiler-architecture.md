@@ -6,9 +6,9 @@ This page describes the compiler pipeline and command-line surface. Run
 ## Architecture
 
 The [ownership IR design and migration inventory](ownership-ir.md) records the
-typed control-flow foundation under development for #8449. Its standalone core
-does not yet replace the production AST ownership checks described by the
-pipeline below.
+typed control-flow foundation for #8449. Production ownership checks normalize
+typed occurrences into that IR and require the core's certificate before
+lowering. Checked MIR-to-IR lowering remains open.
 
 ```
 Source (.tl)
@@ -20,6 +20,14 @@ Source (.tl)
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
+
+Expression-pool aliases share their node allocation cursor and span-table
+headers. Canonical and ReSpan append counts and the ordering flag belong to
+those stable headers, not to copied pool-state values. Truncation changes the live extent
+and record validity for every alias. The span oracle checks the complete
+live extent, including nodes appended through another snapshot or installed
+writer. See `AstExprNodePoolState` and the segmented record accessors in
+[compiler_ast_types.tl](../src/compiler_ast_types.tl).
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:

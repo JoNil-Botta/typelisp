@@ -1107,7 +1107,7 @@ base for its loads. A forward scan uses the shared IR operand walker and the
 same write barriers to prove completeness. The frozen priced pipeline omits
 this live normalization, preserving the checked inliner's calibrated stages.
 Normalization builds private function slots and removes only dead capture
-moves. Unrelated definitions remain intact before the inline census; pruning
+moves before global-cell promotion counts reads. Unrelated definitions remain intact before the inline census; pruning
 those definitions would make inline admission depend on whether the function
 also captured a global. Borrowed input slots must never acquire replacement
 bodies from a shorter-lived arena.

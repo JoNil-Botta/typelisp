@@ -57111,10 +57111,15 @@
           [_ true])
         6]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-var? src 7))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-var? rhs 7)))]
           [_ true])
         7]
-      [(match (opt-gc-test-instr-at blocks 1 5)
+      [(match (opt-gc-test-instr-at blocks 1 4)
           [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_agg"))]
           [_ true])
         8]
@@ -57160,7 +57165,7 @@
         6]
       ;; the call itself is untouched -- this is a classification, not check,
       ;; trap or call motion
-      [(match (opt-gc-test-instr-at blocks 1 7)
+      [(match (opt-gc-test-instr-at blocks 1 6)
           [(Call _ target _ _) (not (= target callee))]
           [_ true])
         7]
@@ -57191,7 +57196,12 @@
           [_ true])
         5]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-global-named? rhs "gc_k")))]
           [_ true])
         6]
       ;; exactly those two, plus the non-word aggregate Mov
@@ -57556,6 +57566,11 @@
         (opt.compiler-opt-global-shared-view summaries-a)
         (opt.compiler-opt-global-shared-view out-a))]
     [blocks-f : ir.CompilerIrBlockList (opt.opt-function-blocks out-f)]
+    [idempotent? : bool
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& out-a)
+        (& out-f))]
     [cell-a : opt.OptGlobalCellSummary summaries-a.global-cell]
     [cell-d : opt.OptGlobalCellSummary summaries-d.global-cell]
     (cond
@@ -57579,7 +57594,7 @@
       ;; survives (the pass rewrites reads only). The negatives that DO bite
       ;; live in compiler-optimize-global-cell-observable-store-self-test.
       [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
-      [(match (opt-gc-test-instr-at blocks-b 1 7)
+      [(match (opt-gc-test-instr-at blocks-b 1 6)
           [(Store _ _ _) false]
           [_ true])
         27]
@@ -57633,15 +57648,16 @@
           [(Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
-      ;; fixture H: untouched -- no entry load, no fresh var, the single read
-      ;; still names the global directly
+      [(not idempotent?) 64]
+      ;; Fixture H: forwarding removes the capture, but its one remaining
+      ;; read still cannot pay for an entry load or a fresh variable.
       [(not (= (opt.opt-function-frame out-h) 2)) 70]
       [(not (= (opt-gc-test-block-instr-count blocks-h 0) 1)) 71]
       [(match (opt-gc-test-instr-at blocks-h 1 0)
-          [(Mov d src _)
-            (not (and (= d 0) (opt-gc-test-is-global-named? src "gc_k")))]
+          [(Return (Some src)) (not (opt-gc-test-is-global-named? src "gc_k"))]
           [_ true])
         72]
+      [(not (= (opt-gc-test-block-instr-count blocks-h 1) 1)) 73]
       [else 42])))
 
 ;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
@@ -62075,7 +62091,6 @@
              %1 = call mr_write_b() : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              %1 = call mr_write_b() : i64
              return @mr_a"
           false)
@@ -62085,7 +62100,6 @@
              store @mr_b, 9 : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              store @mr_b, 9 : i64
              return @mr_a"
           false)
@@ -62095,7 +62109,6 @@
              %1 = add 2, 3 : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              %1 = add 2, 3 : i64
              return @mr_a"
           false))]
@@ -62507,7 +62520,6 @@
       (irt.func
         "function @guard() -> i64 vars 16 {
            entry:
-             %0 = mov @sample : u64
              %1 = gep @sample, 0 : i64
              %2 = load %1 : i64
              %3 = gep @sample, 1 : i64

@@ -453,22 +453,24 @@ linux_memory_limit_sample_process_group() {
                 echo "process-group sampler failed to read process memory" >&2
                 return 1
             }
-        if [ "$_linux_memory_limit_rss" -eq 0 ]; then
+        if [ "$_linux_memory_limit_rss" -eq 0 ] &&
+            [ "$_linux_memory_limit_rss_excess_pending" -eq 0 ]; then
             break
         fi
         if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_peak_rss" ]; then
             _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
         fi
-        if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
-            # The exact workload cgroup cap remains active while one bounded
-            # resample lets its OOM state catch up with RSS collection. A
-            # sustained RSS-only excess still takes the termination path.
+        if [ "$_linux_memory_limit_rss_excess_pending" -gt 0 ] ||
+            [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
+            # The exact workload cgroup cap remains active during one bounded
+            # OOM recheck. Latch the RSS excess so a later drop or normal exit
+            # cannot turn an already failed memory bound into success.
             if [ "$_linux_memory_limit_rss_excess_pending" -eq 0 ]; then
-                _linux_memory_limit_rss_excess_pending=1
+                _linux_memory_limit_rss_excess_pending=$_linux_memory_limit_rss
                 sleep 0.05
                 continue
             fi
-            echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
+            echo "memory limit exceeded: aggregate RSS $_linux_memory_limit_rss_excess_pending KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
             kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
@@ -481,7 +483,6 @@ linux_memory_limit_sample_process_group() {
             fi
             return 137
         fi
-        _linux_memory_limit_rss_excess_pending=0
         sleep "$_linux_memory_limit_poll"
     done
 

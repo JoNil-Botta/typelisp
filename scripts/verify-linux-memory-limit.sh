@@ -134,14 +134,20 @@ while :; do
     while read -r key value; do
         [ "$key" != oom_kill ] || kills=$value
     done < "$workload/memory.events"
-    if [ "$TYPELISP_MEMORY_RACE_MODE" = rss ] || [ "$kills" -gt 0 ]; then break; fi
+    if [ "$TYPELISP_MEMORY_RACE_MODE" != kernel ] || [ "$kills" -gt 0 ]; then break; fi
     [ "$attempt" -lt 200 ] || exit 1
     attempt=$((attempt + 1))
     sleep 0.01
 done
 cat "$workload/memory.events" > "$TYPELISP_MEMORY_RACE_DIR/events"
 read -r pgid < "$TYPELISP_MEMORY_RACE_DIR/pgid"
-printf '%s %s 65536\n' "$pgid" "$pgid"
+if [ "$TYPELISP_MEMORY_RACE_MODE" = transient ] &&
+    [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
+    printf '%s %s 0\n' "$pgid" "$pgid"
+else
+    : > "$TYPELISP_MEMORY_RACE_DIR/excess-sampled"
+    printf '%s %s 65536\n' "$pgid" "$pgid"
+fi
 EOF
     cat > "$WORKDIR/rss-race-workload.sh" <<'EOF'
 #!/bin/sh
@@ -149,13 +155,13 @@ set -eu
 while [ ! -e "$TYPELISP_MEMORY_RACE_DIR/start" ]; do sleep 0.01; done
 case $TYPELISP_MEMORY_RACE_MODE in
     kernel) exec awk 'BEGIN { s = "x"; while (1) s = s s }' ;;
-    rss) exec sleep 30 ;;
+    rss | transient) exec sleep 30 ;;
 esac
 EOF
     chmod +x "$WORKDIR/rss-race-bin/ps"
     PATH="$WORKDIR/rss-race-bin:$PATH"
     export PATH
-    for TYPELISP_MEMORY_RACE_MODE in kernel rss; do
+    for TYPELISP_MEMORY_RACE_MODE in kernel rss transient; do
         TYPELISP_MEMORY_RACE_DIR="$WORKDIR/rss-race-$TYPELISP_MEMORY_RACE_MODE"
         export TYPELISP_MEMORY_RACE_MODE TYPELISP_MEMORY_RACE_DIR
         mkdir "$TYPELISP_MEMORY_RACE_DIR"

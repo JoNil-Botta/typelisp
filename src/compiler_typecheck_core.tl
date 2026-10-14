@@ -100993,10 +100993,9 @@
                   depth)))
             unit])])))
 
-;; Profile shim and copy-on-write commit. The inner walker still constructs one
-;; replacement node so its exhaustive syntax logic stays shared with captured
-;; syntax. For an owned node, immediately move that replacement into the
-;; transformer's original slot and rewind the one-node append.
+;; Captured/shared nodes keep the copy path. Uniquely owned span wrappers
+;; commit directly: a temporary wrapper's provenance must not survive the
+;; temporary's rollback. Other owned replacements still commit the final append.
 (define (macro-hygiene-expr
   [expr-bases : i64]
   [expr-id : i64]
@@ -101008,13 +101007,15 @@
       (cfg compile-profile (compiler-tc-walk-hygiene-start!))]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
     [result : i64
-      (macro-hygiene-expr-inner expr-bases expr env macro-name depth)]
+      (macro-hygiene-expr-inner expr-bases expr-id expr env macro-name depth)]
     [reuse? : bool
       (and
         (macro-hygiene-produced-owned? env.state expr-id)
-        (= (+ result 1) (ast.ast-node-pool-context-expr-len env.pools)))]
+        (or
+          (= result expr-id)
+          (= (+ result 1) (ast.ast-node-pool-context-expr-len env.pools))))]
     [out : i64
-      (if reuse?
+      (if (and reuse? (!= result expr-id))
         (let
           [replacement : ast.AstExpr (macro-hygiene-expr-get env result)]
           (ast.ast-node-pool-context-expr-set!
@@ -101061,6 +101062,7 @@
 
 (define (macro-hygiene-expr-inner
   [expr-bases : i64]
+  [expr-id : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -101068,12 +101070,19 @@
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (let
-        [inner : i64 inner-box]
-        [pools : ast.AstNodePoolContext env.pools]
-        (ast.ast-expr-spanned-with-pools
-          pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
-          span))]
+        [inner : i64
+          (macro-hygiene-expr expr-bases inner-box env macro-name depth)]
+        [replacement : ast.AstExpr (Spanned inner span)]
+        (if (macro-hygiene-produced-owned? env.state expr-id)
+          (begin
+            (ast.ast-node-pool-context-expr-set!
+              env.pools
+              expr-id
+              (& replacement))
+            expr-id)
+          (ast.ast-node-pool-context-expr-push-borrowed
+            (& env.pools)
+            (& replacement))))]
     ;; Do not apply a later expansion's hygiene environment to syntax behind a
     ;; provenance boundary.  Macro discovery still walks through the marker so
     ;; nested, not-yet-expanded calls can fire in their own hygiene pass.

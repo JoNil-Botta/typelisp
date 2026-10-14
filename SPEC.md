@@ -1013,9 +1013,10 @@ borrow expressions, `expr-array-ref` builds a checked element projection, and
 `expr-replace` builds the dedicated `(replace! place replacement)` expression;
 `expr-list-empty` and `expr-list-cons` build ordered argument lists; and
 `expr-call` builds an ordinary call from a callee expression and that list.
-These builders accept variadic caller lists and preserve their syntax ownership.
-A captured list must share node storage with the head or callee expression;
-unrelated owners are rejected rather than mixing their numeric identities.
+The list argument of `expr-list-cons` and `expr-call` may also be the operand
+list of a variadic macro parameter, such as `body` in
+`[bindings : ExprBindingClause ...] [body : Expr ...]`; its operands keep their
+order and their use-site context.
 `expr-mut-call0`, `expr-mut-call1`, and `expr-mut-call2` are compact
 fixed-arity builders that take a callee expression, a place, and zero, one, or two
 ordinary captured expressions respectively. They build the same ordinary call

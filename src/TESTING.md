@@ -288,6 +288,22 @@ must use borrowed declarations; selected signatures must own their payloads.
 The complete inline batch and `windows_param_preassign_backend.tl` exercise the
 compiler-sized search workload that exposed copying during failed lookups.
 
+## Captured syntax-list builders
+
+`compiler-ctfe-captured-list-builders` checks `expr-list-cons` and `expr-call`
+with captured lists: empty, singleton and growing inputs, retained pool
+snapshots, invalid arguments, and the internal rejection of a list from
+unrelated pool storage. `compiler-ctfe-captured-list-owner` checks owner
+selection under an unrelated retained binding and newer tail, retained,
+owning or active pool cursors. Its follow-up shapes then append through the
+captured head, tail, retained snapshot or active context and require the
+constructed call and every live child to survive. The native
+`comptime_captured_list_builders.tl` fixture reaches the same path from public
+macros with a binding-clause prefix, which captures the trailing operands as
+the prelude `for` body does; it composes nested macros, list inspection, begin
+bodies, quasiquote splicing and reuse of an operand list after a call at
+opt0/1/2.
+
 ## Compiler arena ownership
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`
@@ -415,15 +431,6 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 [#5510](https://github.com/JoNil-Botta/typelisp/issues/5510).
 
 ## Coverage layers
-
-`compiler-ctfe-captured-list-builders` checks syntax-list and call construction
-with captured lists, empty/singleton/growing inputs, retained pool snapshots,
-unrelated owners and invalid arguments. `compiler-ctfe-captured-list-owner`
-also checks an unrelated retained binding and newer tail, retained or active
-pool cursors, including a subsequent append through either the active context
-or the captured head, without overwriting live nodes. The integration companion
-`comptime_captured_list_builders.tl` composes the builders with nested macros,
-list inspection, begin bodies and quasiquote splicing at opt0/1/2.
 
 ### Module-local self-tests
 

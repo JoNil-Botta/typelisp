@@ -557,6 +557,18 @@ index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
 
+Declaration diagnostics look up a recorded origin only when their own span is
+absent. The parser's origin index keeps direct slot records and alias ranges
+separate; insertion order decides which record wins. Long alias chains use
+disjoint segments for each origin domain, with repeat aliases excluded from
+semantic occurrence lookup. Rebuilding a key reuses a geometrically grown
+reservation. Reader resets invalidate all index generations while retaining
+capacity. The parse smoke covers precedence, domain differences, interleaved
+rebuilds and reset isolation. During one declaration walk, the poisoned-name
+list only appends; cached module environments bind its new suffix only when
+both source environments retain their store, head and scoped-state capability.
+The `tc-poison-module-env-cache-identity-and-suffix` test guards that identity.
+
 Lexer tokens are scan scratch. Their geometric growth replaces dedicated
 storage after moving the live prefix, then retires the superseded owner and
 restores the caller's active arena. Token storage is not published until

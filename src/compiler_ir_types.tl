@@ -1684,15 +1684,12 @@
       (Some ty)]
     [(BinOp _ op _ _ ty) (Some (compiler-ir-binop-result-type (& op) ty))]
     [(MaskReduce _ _ _ _) (Some (Bool))]
-    [(Select payload-box)
-      (let
-        [payload : CompilerIrInstrSelectPayload
-          (compiler-ir-box-shared-view payload-box)]
-        (if (= payload.lanes 0)
-          (Some payload.ty)
-          (No)))]
-    [(SpmdCall payload-box)
-      (match (compiler-ir-box-field-shared-view payload-box result)
+    [(Select (box payload))
+      (if (= payload.lanes 0)
+        (Some payload.ty)
+        (No))]
+    [(SpmdCall (box (fields result)))
+      (match result
         [(Unit) (No)]
         [(Value _ _ ty) (Some ty)])]
     [(or (Alloc _ _) (AddrOf _ _ _) (Gep _ _ _ _) (StoreOwned _ _ _)
@@ -7141,24 +7138,16 @@
   [pools : ast.AstNodePoolContext]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match (compiler-ir-global-shared-view instr)
-    [(SpmdCall payload-box)
-      (let
-        [callee (deref payload-box).callee]
-        [backend (deref payload-box).backend]
-        [lanes (deref payload-box).lanes]
-        [active-mask
-          (compiler-ir-box-field-shared-view payload-box active-mask)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [result (compiler-ir-box-field-shared-view payload-box result)]
-        [origin (compiler-ir-box-field-shared-view payload-box origin)]
-        (ir-instr-spmd-call-with-origin
-          (compiler-ir-symbol-clone callee)
-          (compiler-ir-clone-spmd-backend backend)
-          lanes
-          (compiler-ir-clone-value (& active-mask))
-          (compiler-ir-clone-spmd-call-arg-seq pools args)
-          (compiler-ir-clone-spmd-call-result pools (& result))
-          (compiler-ir-clone-spmd-call-origin pools (& origin))))]
+    [(SpmdCall
+        (box (fields callee backend lanes active-mask args result origin)))
+      (ir-instr-spmd-call-with-origin
+        (compiler-ir-symbol-clone callee)
+        (compiler-ir-clone-spmd-backend backend)
+        lanes
+        (compiler-ir-clone-value (& active-mask))
+        (compiler-ir-clone-spmd-call-arg-seq pools args)
+        (compiler-ir-clone-spmd-call-result pools (& result))
+        (compiler-ir-clone-spmd-call-origin pools (& origin)))]
     [_
       (compiler-ir-instr-map
         instr
@@ -8007,9 +7996,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (match (compiler-ir-array-shared-view
-      (owned_view.compiler-owned-reference-shared-view slots)
-      index)
+    (match (array-ref slots index)
       [(Slot ty offset)
         (str_cat.str-cat
           (compiler-ir-type-render structural-session type-segment-bases (& ty))
@@ -8175,46 +8162,32 @@
         (string.int->string lanes)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(VectorBinOp payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "vector_"
-          (compiler-ir-bin-op-render (& op))
-          " "
-          (compiler-ir-value-render lhs)
-          ", "
-          (compiler-ir-value-render rhs)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
-    [(VectorPrefix payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [op (deref payload-box).op]
-        [src (compiler-ir-box-field-shared-view payload-box src)]
-        [carry (compiler-ir-box-field-shared-view payload-box carry)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "vector_prefix_"
-          (compiler-ir-vector-prefix-op-render op)
-          " "
-          (compiler-ir-value-render src)
-          ", carry "
-          (compiler-ir-value-render carry)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
+    [(VectorBinOp (box (fields dst op lhs rhs lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_"
+        (compiler-ir-bin-op-render (& op))
+        " "
+        (compiler-ir-value-render lhs)
+        ", "
+        (compiler-ir-value-render rhs)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
+    [(VectorPrefix (box (fields dst op src carry lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_prefix_"
+        (compiler-ir-vector-prefix-op-render op)
+        " "
+        (compiler-ir-value-render src)
+        ", carry "
+        (compiler-ir-value-render carry)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
     [(VectorReduce dst op value lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -8226,26 +8199,19 @@
         (string.int->string lanes)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(VectorCompare payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
-        [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "vector_compare_"
-          (compiler-ir-bin-op-render (& op))
-          " "
-          (compiler-ir-value-render lhs)
-          ", "
-          (compiler-ir-value-render rhs)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
+    [(VectorCompare (box (fields dst op lhs rhs lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_compare_"
+        (compiler-ir-bin-op-render (& op))
+        " "
+        (compiler-ir-value-render lhs)
+        ", "
+        (compiler-ir-value-render rhs)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
     [(MaskBinOp dst op lhs rhs lanes)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -8273,26 +8239,19 @@
         (compiler-ir-value-render value)
         " lanes "
         (string.int->string lanes))]
-    [(Select payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [on-true (compiler-ir-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-ir-box-field-shared-view payload-box on-false)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "select "
-          (compiler-ir-value-render mask)
-          ", "
-          (compiler-ir-value-render on-true)
-          ", "
-          (compiler-ir-value-render on-false)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
+    [(Select (box (fields dst mask on-true on-false lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "select "
+        (compiler-ir-value-render mask)
+        ", "
+        (compiler-ir-value-render on-true)
+        ", "
+        (compiler-ir-value-render on-false)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
     [(VectorLoad dst base index lanes ty)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -8304,116 +8263,79 @@
         (string.int->string lanes)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(VectorStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  vector_store "
-          (compiler-ir-value-render base)
-          ", "
-          (compiler-ir-value-render index)
-          ", "
-          (compiler-ir-value-render value)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
-    [(PredicatedStore payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [value (compiler-ir-box-field-shared-view payload-box value)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          "  predicated_store "
-          (compiler-ir-value-render base)
-          ", "
-          (compiler-ir-value-render index)
-          ", "
-          (compiler-ir-value-render value)
-          " mask "
-          (compiler-ir-value-render mask)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
-    [(PredicatedLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "predicated_load "
-          (compiler-ir-value-render base)
-          ", "
-          (compiler-ir-value-render index)
-          " mask "
-          (compiler-ir-value-render mask)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
-    [(GatherLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [index-base (compiler-ir-box-field-shared-view payload-box index-base)]
-        [index (compiler-ir-box-field-shared-view payload-box index)]
-        [lane-offset (deref payload-box).lane-offset]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "gather_load "
-          (compiler-ir-value-render base)
-          ", "
-          (compiler-ir-value-render index-base)
-          ", "
-          (compiler-ir-value-render index)
-          " lane_offset "
-          (if lane-offset
-            "true"
-            "false")
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
-    [(VectorShuffle payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        [source (compiler-ir-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-ir-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-ir-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-ir-box-field-shared-view payload-box active-lanes)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-ir-box-field-shared-view payload-box ty)]
-        (str_cat.str-cat
-          (compiler-ir-dst-render dst)
-          "vector_shuffle "
-          (compiler-ir-value-render source)
-          ", "
-          (compiler-ir-value-render selector-low)
-          ", "
-          (compiler-ir-maybe-value-render (& selector-high))
-          " active "
-          (compiler-ir-value-render active-lanes)
-          " lanes "
-          (string.int->string lanes)
-          " : "
-          (compiler-ir-type-render structural-session type-segment-bases (& ty))))]
+    [(VectorStore (box (fields base index value lanes ty)))
+      (str_cat.str-cat
+        "  vector_store "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-value-render index)
+        ", "
+        (compiler-ir-value-render value)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
+    [(PredicatedStore (box (fields base index value mask lanes ty)))
+      (str_cat.str-cat
+        "  predicated_store "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-value-render index)
+        ", "
+        (compiler-ir-value-render value)
+        " mask "
+        (compiler-ir-value-render mask)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
+    [(PredicatedLoad (box (fields dst base index mask lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "predicated_load "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-value-render index)
+        " mask "
+        (compiler-ir-value-render mask)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
+    [(GatherLoad (box (fields dst base index-base index lane-offset lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "gather_load "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-value-render index-base)
+        ", "
+        (compiler-ir-value-render index)
+        " lane_offset "
+        (if lane-offset
+          "true"
+          "false")
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
+    [(VectorShuffle
+        (box
+          (fields dst source selector-low selector-high active-lanes lanes ty)))
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_shuffle "
+        (compiler-ir-value-render source)
+        ", "
+        (compiler-ir-value-render selector-low)
+        ", "
+        (compiler-ir-maybe-value-render (& selector-high))
+        " active "
+        (compiler-ir-value-render active-lanes)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
     [(TailMask dst index length lanes)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -8476,25 +8398,20 @@
         (compiler-ir-call-args-render (& args))
         ") : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [name (deref payload-box).name]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [slots (compiler-ir-box-field-shared-view payload-box slots)]
-        (str_cat.str-cat
-          "  call_c_store "
-          (compiler-ir-symbol-text name)
-          "("
-          (compiler-ir-call-args-render (& args))
-          ") -> "
-          (compiler-ir-value-render base)
-          " ["
-          (compiler-ir-c-abi-return-slot-seq-render
-            structural-session
-            type-segment-bases
-            (& slots))
-          "]"))]
+    [(CallCAbiStoreResult (box (fields base name args slots)))
+      (str_cat.str-cat
+        "  call_c_store "
+        (compiler-ir-symbol-text name)
+        "("
+        (compiler-ir-call-args-render (& args))
+        ") -> "
+        (compiler-ir-value-render base)
+        " ["
+        (compiler-ir-c-abi-return-slot-seq-render
+          structural-session
+          type-segment-bases
+          (& slots))
+        "]")]
     [(CallIndirectCAbiStoreResult (box (fields base callee args slots)))
       (str_cat.str-cat
         "  call_c_store* "
@@ -8523,26 +8440,18 @@
         (& callee)
         (& args)
         (& ty))]
-    [(SpmdCall payload-box)
-      (let
-        [callee (deref payload-box).callee]
-        [backend (deref payload-box).backend]
-        [lanes (deref payload-box).lanes]
-        [active-mask
-          (compiler-ir-box-field-shared-view payload-box active-mask)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [result (compiler-ir-box-field-shared-view payload-box result)]
-        [origin (compiler-ir-box-field-shared-view payload-box origin)]
-        (compiler-ir-spmd-call-render
-          structural-session
-          type-segment-bases
-          callee
-          backend
-          lanes
-          (& active-mask)
-          (& args)
-          (& result)
-          (& origin)))]
+    [(SpmdCall
+        (box (fields callee backend lanes active-mask args result origin)))
+      (compiler-ir-spmd-call-render
+        structural-session
+        type-segment-bases
+        callee
+        backend
+        lanes
+        (& active-mask)
+        (& args)
+        (& result)
+        (& origin))]
     [(Store global value ty)
       (str_cat.str-cat
         "  store @"

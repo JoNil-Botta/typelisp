@@ -407,6 +407,94 @@
     cbi.compiler-builtin-id-fix-empty
     pools))
 
+(test
+  tc-poison-module-env-cache-identity-and-suffix
+  (let
+    [saved-poison-observed : bool tc_core.tc-poison-observed]
+    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [other : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    [names : tc_core.TcPoisonNameList
+      (tc_core.TcPoisonNameList (__tl_make-array i64 2) 0)]
+    [cached : tc_core.TcPoisonModuleEnvs (tc_core.tc-poison-module-envs-new)]
+    [first-name : i64 (ci.intern "poison-cache-first")]
+    [second-name : i64 (ci.intern "poison-cache-second")]
+    [visible-name : i64 (ci.intern "poison-cache-visible")]
+    (set! (array-ref names.slots 0) first-name)
+    (set! (array-ref names.slots 1) second-name)
+    (set! names.len 1)
+    (let
+      [first : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      [same : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      (unless
+        (and
+          (= first.global-env.head same.global-env.head)
+          (= first.local-env.head same.local-env.head))
+        (io.panic "typecheck: poison cache rebound an unchanged prefix")))
+    (set! names.len 2)
+    (let
+      [extended : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter! (&mut cached) 7 env env (& names))]
+      [changed : tc_core.TcTypeEnv (tc_core.tc-bind-id env visible-name (Bool))]
+      [replaced : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          changed
+          changed
+          (& names))]
+      (for [name (iterator.range 0 2)]
+        (unless
+          (match (tc_core.tc-lookup-id
+            extended.local-env
+            (array-ref names.slots name))
+            [(Ok ty) (tc_core.tc-poison-type? ty)]
+            [_ false])
+          (io.panic "typecheck: poison cache lost an appended name")))
+      (unless
+        (match (tc_core.tc-lookup-id replaced.local-env visible-name)
+          [(Ok ty) (tc_core.tc-type-eq ty (Bool))]
+          [_ false])
+        (io.panic "typecheck: poison cache reused a changed source head")))
+    (let
+      [different-store : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          other
+          other
+          (& names))]
+      [different-scope : tc_core.TcTypeEnv
+        (tc_core.TcTypeEnv other.store other.head env.abi-pad)]
+      [global-scope : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          different-scope
+          other
+          (& names))]
+      [local-scope : tc_core.TcPoisonModuleEnv
+        (tc_core.tc-poison-module-envs-enter!
+          (&mut cached)
+          7
+          different-scope
+          different-scope
+          (& names))]
+      (unless
+        (and
+          (= different-store.global-env.store other.store)
+          (= different-store.local-env.store other.store)
+          (= global-scope.global-env.abi-pad env.abi-pad)
+          (= local-scope.local-env.abi-pad env.abi-pad))
+        (io.panic
+          "typecheck: poison cache reused a changed store or scoped state")))
+    (tc_core.tc-job-state-retire-owned-storage! job)
+    (if saved-poison-observed
+      (tc_core.tc-poison-observation-note! (tc_core.tc-poison-type))
+      (tc_core.tc-poison-observation-reset!))))
+
 ;; Preparing a transformer compares the owned pools with the installed pool's
 ;; lengths (#7937). An owned context that argument normalisation extended past
 ;; the installed one, in either pool, is installed; an owned context that is not

@@ -4873,13 +4873,9 @@
 (define (lsp-signature-callable-kind?
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : bool
   (match kind
-    [(Value) true]
-    [(Function) true]
-    [(Macro) true]
-    [(ExternValue) true]
-    [(ExternFunction) true]
-    [(Parameter) true]
-    [(Local) true]
+    [(or (Value) (Function) (Macro) (ExternValue) (ExternFunction) (Parameter)
+         (Local))
+      true]
     [_ false]))
 
 (define (lsp-signature-named-parameter-owner?
@@ -4887,9 +4883,7 @@
   (and
     (= record.symbol.local-ordinal -1)
     (match record.kind
-      [(Function) true]
-      [(Macro) true]
-      [(ExternFunction) true]
+      [(or (Function) (Macro) (ExternFunction)) true]
       [_ false])))
 
 ;; Return names only when the semantic index proves a complete ordered
@@ -5293,14 +5287,9 @@
 (define (lsp-completion-symbol-kind
   [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : i64
   (match (deref kind)
-    [(Function) 3]
-    [(ExternFunction) 3]
-    [(Macro) 3]
+    [(or (Function) (ExternFunction) (Macro)) 3]
     [(Field) 5]
-    [(Value) 6]
-    [(ExternValue) 6]
-    [(Parameter) 6]
-    [(Local) 6]
+    [(or (Value) (ExternValue) (Parameter) (Local)) 6]
     [(Module) 9]
     [(Enum) 13]
     [(EnumMember) 20]
@@ -5348,8 +5337,7 @@
   [definition-path : (& definition-path str)]
   [current-path : String]) : i64
   (match kind
-    [(Parameter) 0]
-    [(Local) 0]
+    [(or (Parameter) (Local)) 0]
     [_
       (if (string.eq definition-path current-path)
         1
@@ -6220,8 +6208,7 @@
   (let
     [results : LspCompletionResults (lsp-completion-results-new)]
     (match context.kind
-      [(Suppressed) unit]
-      [(ImportAlias) unit]
+      [(or (Suppressed) (ImportAlias)) unit]
       [(ImportPathOrItem)
         (lsp-completion-collect-import! (&mut results) workspace context)]
       [(DottedMember)
@@ -6595,8 +6582,7 @@
           stdlib-roots
           (lsp-language-cfgs)
           job-state)
-          [(Ok _ _) unit]
-          [(Err _ _) unit])
+          [(or (Ok _ _) (Err _ _)) unit])
         (let
           [hints : json.JsonSeq
             (lsp-inlay-build inlay-state text start-line end-line)]
@@ -6943,8 +6929,7 @@
                           (Invalid line col msg (lsp-line-at text line)))
                         (set! done true))]
                     [(Ok _) unit])]
-                [(SomeDecl _) unit]
-                [(Decls _) unit])]))
+                [(or (SomeDecl _) (Decls _)) unit])]))
         result)]))
 
 ;; Find the byte offset where the body of a define/defmacro begins,
@@ -10098,17 +10083,7 @@
               lsp-semantic-token-type-comment
               0
               1)]
-          [(String spelling)
-            (lsp-semantic-token-add-split-span!
-              tokens
-              text
-              start
-              (+ start (string.string-length spelling))
-              lsp-semantic-token-type-string
-              0
-              1)
-            (set! head-position 0)]
-          [(Char spelling)
+          [(or (String spelling) (Char spelling))
             (lsp-semantic-token-add-split-span!
               tokens
               text
@@ -10169,11 +10144,9 @@
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : i64
   (match kind
     [(Module) lsp-semantic-token-type-namespace]
-    [(Struct) lsp-semantic-token-type-type]
-    [(Enum) lsp-semantic-token-type-type]
+    [(or (Struct) (Enum)) lsp-semantic-token-type-type]
     [(EnumMember) lsp-semantic-token-type-enum-member]
-    [(Function) lsp-semantic-token-type-function]
-    [(ExternFunction) lsp-semantic-token-type-function]
+    [(or (Function) (ExternFunction)) lsp-semantic-token-type-function]
     [(Macro) lsp-semantic-token-type-macro]
     [(Parameter) lsp-semantic-token-type-parameter]
     [(Field) lsp-semantic-token-type-property]
@@ -10185,8 +10158,8 @@
     [(Use) 0]
     [(Definition)
       (match record.kind
-        [(ExternValue) lsp-semantic-token-modifier-declaration]
-        [(ExternFunction) lsp-semantic-token-modifier-declaration]
+        [(or (ExternValue) (ExternFunction))
+          lsp-semantic-token-modifier-declaration]
         [_ lsp-semantic-token-modifier-definition])]))
 
 (define (lsp-semantic-token-add-records!
@@ -11805,8 +11778,7 @@
                 stdlib-roots
                 (lsp-language-cfgs)
                 job-state)
-                [(Ok _ _) unit]
-                [(Err _ _) unit])
+                [(or (Ok _ _) (Err _ _)) unit])
               (let
                 [found-idx : i64
                   (lsp-nearest-inlay-hint-index inlay-state text line1 col1)]
@@ -12065,10 +12037,9 @@
   (match access
     [(None) 1]
     [(Read) 2]
-    [(Write) 3]
     ;; LSP has no combined read/write highlight. Prefer the stronger write
     ;; classification when a future semantic producer proves both.
-    [(ReadWrite) 3]))
+    [(or (Write) (ReadWrite)) 3]))
 
 (define (lsp-document-highlight-candidate-less?
   [left : (& left LspDocumentHighlightCandidate)]

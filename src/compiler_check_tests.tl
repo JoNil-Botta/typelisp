@@ -760,6 +760,36 @@
         (check_core.compiler-check-advisories-for-job job)]
       (and carried? (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)))))
 
+;; An operand error inside a macro expansion is reported in the caller's file,
+;; at the operand, when the operand is caller syntax (#8870).
+(define (compiler-check-caller-operand-diagnostic-path-ok?) : bool
+  (and
+    (compiler-check-first-diagnostic-exact?
+      "tests/plus_eq_operand.tl"
+      "(define (main) : i64
+  (let
+    [total : i64 0]
+    (+= total \"x\")
+    total))"
+      "typecheck: integer operator expects matching integer operands: expected i64, found String"
+      4
+      15
+      4
+      15)
+    (compiler-check-first-diagnostic-exact?
+      "tests/plus_eq_in_for.tl"
+      "(define (main [s : String]) : i64
+  (let
+    [total : i64 0]
+    (for [i (array 1 2)]
+      (+= total s))
+    total))"
+      "typecheck: integer operator expects matching integer operands: expected i64, found String"
+      5
+      17
+      5
+      17)))
+
 (define (compiler-check-tests-ok?) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (and
@@ -776,6 +806,7 @@
     (compiler-check-subform-diagnostic-spans-ok?)
     (compiler-check-qualified-near-miss-ok?)
     (compiler-check-qualified-unbound-display-ok?)
+    (compiler-check-caller-operand-diagnostic-path-ok?)
     (overlay_tests.compiler-source-overlay-tests-ok?)))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
@@ -883,19 +914,10 @@
             [decl : ast.AstDecl
               (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
             (match decl
-              [(DefStruct decl-meta candidate _ _ _)
-                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
-                  (set! name-id candidate)
-                  unit)]
-              [(DefStructLifetimes decl-meta candidate _ _ _ _)
-                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
-                  (set! name-id candidate)
-                  unit)]
-              [(DefEnum decl-meta candidate _ _)
-                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
-                  (set! name-id candidate)
-                  unit)]
-              [(DefEnumLifetimes decl-meta candidate _ _ _)
+              [(or (DefStruct _ candidate _ _ _)
+                   (DefStructLifetimes _ candidate _ _ _ _)
+                   (DefEnum _ candidate _ _)
+                   (DefEnumLifetimes _ candidate _ _ _))
                 (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
                   (set! name-id candidate)
                   unit)]

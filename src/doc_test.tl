@@ -229,9 +229,8 @@
 
 (define (doc-test-expectation-error? [expectation : DocTestExpectation]) : bool
   (match expectation
-    [(Pass) false]
     [(Error) true]
-    [(Run _ _ _) false]))
+    [(or (Pass) (Run _ _ _)) false]))
 
 (define (doc-test-expectation-run? [expectation : DocTestExpectation]) : bool
   (match expectation
@@ -1025,8 +1024,7 @@
 (define (doc-test-runnable-target-supported?
   [target : backend.CompilerBackendTarget]) : bool
   (match target
-    [(Linux) true]
-    [(Windows) true]))
+    [(or (Linux) (Windows)) true]))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]

@@ -129,10 +129,9 @@
 
 (define (tltest-decl-name [decl : ast.AstDecl]) : String
   (match decl
-    [(Def decl-meta name _ _) (ci.intern-str name)]
-    [(DefFn decl-meta name _ _ _ _) (ci.intern-str name)]
-    [(DefMacro decl-meta name _ _ _) (ci.intern-str name)]
-    [(Extern decl-meta name _ _ _) (ci.intern-str name)]
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefMacro _ name _ _ _)
+         (Extern _ name _ _ _))
+      (ci.intern-str name)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

@@ -347,28 +347,7 @@
         [instr : cobj.CompilerObjectX64Instr
           (cobj.compiler-object-instr-list-ref instrs index)]
         (match (owned_view.compiler-owned-shared-view instr)
-          [(Call target)
-            (if (compiler-tlci-native-index-extern? symbols (& target))
-              (begin
-                (compiler-tlci-native-fail!
-                  error
-                  (str_cat.str-cat
-                    "tlci native image: direct extern call "
-                    target))
-                (set! ok false))
-              (set!
-                ok
-                (compiler-tlci-native-patch-rel32!
-                  import-names
-                  import-offsets
-                  import-count
-                  error
-                  bases
-                  symbols
-                  (&mut bytes)
-                  (+ offset 1)
-                  target)))]
-          [(TailCall target)
+          [(or (Call target) (TailCall target))
             (if (compiler-tlci-native-index-extern? symbols (& target))
               (begin
                 (compiler-tlci-native-fail!
@@ -461,124 +440,10 @@
                   (+ offset 10)
                   false-target))
               unit)]
-          [(LoadRip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(LoadRipAddress target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(LoadRipAddressR11 target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(StoreRip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(MovRcxRip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(MovRdxRip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(LoadRipAddressRdx target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(StoreR14Rip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(StoreR15Rip target)
-            (set!
-              ok
-              (compiler-tlci-native-patch-rel32!
-                import-names
-                import-offsets
-                import-count
-                error
-                bases
-                symbols
-                (&mut bytes)
-                (+ offset 3)
-                target))]
-          [(AddRcxRip target)
+          [(or (LoadRip target) (LoadRipAddress target)
+               (LoadRipAddressR11 target) (StoreRip target) (MovRcxRip target)
+               (MovRdxRip target) (LoadRipAddressRdx target)
+               (StoreR14Rip target) (StoreR15Rip target) (AddRcxRip target))
             (set!
               ok
               (compiler-tlci-native-patch-rel32!

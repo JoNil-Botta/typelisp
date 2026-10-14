@@ -221,8 +221,8 @@
 
 (define (embedded-stdlib-tlci-unwrap-expr [node : i64]) : compiler_ast_types.AstExpr
   (match (compiler_ast_types.ast-node-get node)
-    [(Spanned inner _) (embedded-stdlib-tlci-unwrap-expr inner)]
-    [(MacroExpansion inner _ _) (embedded-stdlib-tlci-unwrap-expr inner)]
+    [(or (Spanned inner _) (MacroExpansion inner _ _))
+      (embedded-stdlib-tlci-unwrap-expr inner)]
     [_ (compiler_ast_types.ast-node-get node)]))
 
 ;; Is this template position an unquote? Its substituted value already carries
@@ -4133,8 +4133,7 @@
 ;: Refs #5701.
 (define (embedded-native-data-cast-type? [ty : compiler_ast_types.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(Char) true]
+    [(or (I64) (Char)) true]
     [_ false]))
 
 ;: The generated i64 text of a canonical int literal, a compile-time data
@@ -5886,8 +5885,7 @@
                   (= argc 1)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                    [(If _ _ _) true]
-                    [(Match _) true]
+                    [(or (If _ _ _) (Match _)) true]
                     [(Call inner-func inner-args)
                       (match (embedded-stdlib-tlci-unwrap-expr inner-func)
                         [(Var inner-head-id)
@@ -5909,16 +5907,14 @@
                                   (& inner-args)
                                   0
                                   0))
-                                [(If _ _ _) true]
-                                [(Match _) true]
+                                [(or (If _ _ _) (Match _)) true]
                                 [_ false])
                               (match (embedded-stdlib-tlci-unwrap-expr
                                 (compiler_ast_types.ast-expr-list-get
                                   (& inner-args)
                                   1
                                   0))
-                                [(If _ _ _) true]
-                                [(Match _) true]
+                                [(or (If _ _ _) (Match _)) true]
                                 [_ false])))]
                         [_ false])]
                     [_ false]))
@@ -5942,13 +5938,11 @@
                   (or
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 0 0))
-                      [(If _ _ _) true]
-                      [(Match _) true]
+                      [(or (If _ _ _) (Match _)) true]
                       [_ false])
                     (match (embedded-stdlib-tlci-unwrap-expr
                       (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                      [(If _ _ _) true]
-                      [(Match _) true]
+                      [(or (If _ _ _) (Match _)) true]
                       [_ false])))
                 (embedded-native-computed-binary-code
                   params
@@ -5968,8 +5962,7 @@
                   (= argc 2)
                   (match (embedded-stdlib-tlci-unwrap-expr
                     (compiler_ast_types.ast-expr-list-get (& args) 1 0))
-                    [(Match _) true]
-                    [(If _ _ _) true]
+                    [(or (Match _) (If _ _ _)) true]
                     [_ false]))
                 (embedded-native-computed-binary-code
                   params
@@ -8052,9 +8045,7 @@
                     rest
                     ")\n"))))]
           [(Wildcard) (embedded-native-body-code params body-node)]
-          [(Binding binder)
-            (embedded-native-int-match-default params body-node binder name)]
-          [(Var binder (No))
+          [(or (Binding binder) (Var binder (No)))
             (embedded-native-int-match-default params body-node binder name)]
           [_ ""])])))
 

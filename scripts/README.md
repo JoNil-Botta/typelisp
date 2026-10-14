@@ -187,12 +187,18 @@ unbounded or RSS-polling fallback, and nothing uses `RLIMIT_AS` or treats
 virtual reservations as resident memory.
 
 `run-memory-bounded.sh` gives gates one fail-closed interface to that Linux
-backend and the Windows Job Object wrapper. On Linux it samples the process
-group's RSS inside the cgroup to report a trustworthy peak. Its unit uses
-`OOMPolicy=continue` and the workload raises its `oom_score_adj` to 1000, so a
-cgroup OOM kill takes a workload task and never the sampler. The sampler then
-sees the cgroup's `oom_kill` count rise, ends the rest of the workload, records
-the cgroup's exact `memory.peak` and reports exit 137. Direct
+backend and the Windows Job Object wrapper. On Linux the sampled route requires
+cgroup v2 memory delegation and systemd 254 or newer (`DelegateSubgroup=`).
+The delegated unit contains separate sampler and workload leaves. The workload
+keeps the exact requested `memory.max`, with swap disabled; its entire cgroup
+is killed on OOM. The sampler has a separate 64 MiB limit, and the containing
+unit is capped at the requested bytes plus that monitor headroom. This headroom
+does not raise the workload's ceiling. Missing delegation fails before user
+code starts. The sampler measures the process group's RSS from outside its OOM
+domain, reads the workload's `oom_kill` and `memory.peak`, and terminates its
+complete cgroup with `cgroup.kill` on OOM before reporting exit 137. The unit
+uses `OOMPolicy=continue` so systemd does not kill the sampler with the workload.
+The stop-post hook and systemd summary remain additional peak evidence. Direct
 `lib-linux-memory-limit.sh` callers keep `OOMPolicy=kill`, and an
 `ExecStopPost` hook records their peak. The Windows helper tests retain a
 one-second timeout classification case and separately check descendant cleanup

@@ -518,14 +518,12 @@
 
 (define (ast-c-function-mode-nullable? [mode : AstCFunctionMode]) : bool
   (match mode
-    [(Nullable) true]
-    [(UnsafeNullable) true]
+    [(or (Nullable) (UnsafeNullable)) true]
     [_ false]))
 
 (define (ast-c-function-mode-unsafe? [mode : AstCFunctionMode]) : bool
   (match mode
-    [(UnsafeNullable) true]
-    [(UnsafeNonNull) true]
+    [(or (UnsafeNullable) (UnsafeNonNull)) true]
     [_ false]))
 
 (define (ast-c-function-mode-name [mode : AstCFunctionMode]) : String
@@ -1611,15 +1609,7 @@
     ;; never installs, resets, grows, or rewrites an expression pool, so no
     ;; view survives a generation or exact-row mutation boundary.
     (match (ast-expr-segment-bases-shared-view expr-segment-bases id)
-      [(Spanned inner _)
-        (if (or (< inner 0) (>= inner count) (= inner id))
-          -1
-          (ast-expr-semantic-node-from-bases-fuel
-            expr-segment-bases
-            count
-            inner
-            (- fuel 1)))]
-      [(MacroExpansion inner _ _)
+      [(or (Spanned inner _) (MacroExpansion inner _ _))
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
           (ast-expr-semantic-node-from-bases-fuel
@@ -2892,8 +2882,7 @@
       (match (ast-expr-node-pool-state-span-oracle
         (owned_view.compiler-owned-reference-shared-view pool)
         id)
-        [(MissingSidecar) (set! ok false)]
-        [(UnexpectedDifference) (set! ok false)]
+        [(or (MissingSidecar) (UnexpectedDifference)) (set! ok false)]
         [_ unit])
       (+= id 1))
     ok))
@@ -5065,8 +5054,7 @@
 ;; immediate referent with its Region wrappers already stripped.
 (define (ast-type-fat-referent? [referent : (& AstType)]) : bool
   (match referent
-    [(Slice _) true]
-    [(Bytes) true]
+    [(or (Slice _) (Bytes)) true]
     [_ false]))
 
 ;; `ast-type-fat-referent?` for the referent node `inner` of the type pool at
@@ -5077,8 +5065,7 @@
   (match (ast-type-segment-bases-get type-segment-bases inner)
     [(Region _ nested)
       (ast-type-segment-bases-fat-referent? type-segment-bases nested)]
-    [(Slice _) true]
-    [(Bytes) true]
+    [(or (Slice _) (Bytes)) true]
     [_ false]))
 
 ;; Return the canonical nominal identity for aggregate metadata. Region is a
@@ -5086,10 +5073,8 @@
 ;; None so callers never need an empty-string or integer sentinel.
 (define (ast-aggregate-type-key [type-segment-bases : i64] [ty : (& AstType)]) : AstMaybeNominalKey
   (match ty
-    [(Struct name) (Some (ast-nominal-name-id-key name))]
-    [(StructArgs name _) (Some (ast-nominal-name-id-key name))]
-    [(Enum name) (Some (ast-nominal-name-id-key name))]
-    [(EnumArgs name _) (Some (ast-nominal-name-id-key name))]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (Some (ast-nominal-name-id-key name))]
     [(Region _ inner)
       (ast-aggregate-type-key
         type-segment-bases
@@ -8533,8 +8518,7 @@
 
 (define (ast-expr-for-owned? [expr : (& expr AstExpr)]) : bool
   (match expr
-    [(ForOwnedState _) true]
-    [(ForOwnedStep _) true]
+    [(or (ForOwnedState _) (ForOwnedStep _)) true]
     [_ false]))
 
 ;; --- AstType child schema ---
@@ -10043,16 +10027,12 @@
 
 (define (ast-decl-meta [decl : (& decl AstDecl)]) : AstDeclMeta
   (match (owned_view.compiler-owned-reference-shared-view decl)
-    [(Def decl-meta _ _ _) decl-meta]
-    [(DefFn decl-meta _ _ _ _ _) decl-meta]
-    [(DefMacro decl-meta _ _ _ _) decl-meta]
-    [(Extern decl-meta _ _ _ _) decl-meta]
-    [(DefEnum decl-meta _ _ _) decl-meta]
-    [(DefEnumLifetimes decl-meta _ _ _ _) decl-meta]
-    [(DefStruct decl-meta _ _ _ _) decl-meta]
-    [(DefStructLifetimes decl-meta _ _ _ _ _) decl-meta]
-    [(DefDispatch decl-meta _ _) decl-meta]
-    [(Import decl-meta _) decl-meta]
+    [(or (Def decl-meta _ _ _) (DefFn decl-meta _ _ _ _ _)
+         (DefMacro decl-meta _ _ _ _) (Extern decl-meta _ _ _ _)
+         (DefEnum decl-meta _ _ _) (DefEnumLifetimes decl-meta _ _ _ _)
+         (DefStruct decl-meta _ _ _ _) (DefStructLifetimes decl-meta _ _ _ _ _)
+         (DefDispatch decl-meta _ _) (Import decl-meta _))
+      decl-meta]
     [(Unsafe inner-box) (ast-decl-meta (deref inner-box))]
     [_ (ast-global-shared-view ast-decl-meta-runtime)]))
 
@@ -10071,8 +10051,7 @@
 ;; aggregate markers.
 (define (ast-decl-meta-aggregate-markers [meta : (& AstDeclMeta)]) : i64
   (match (__tl-box-place meta.value)
-    [(Runtime markers) markers]
-    [(Comptime _ markers) markers]))
+    [(or (Runtime markers) (Comptime _ markers)) markers]))
 
 (define (ast-decl-aggregate-markers [decl : (& decl AstDecl)]) : i64
   (ast-decl-meta-aggregate-markers (& (ast-decl-meta decl))))
@@ -10167,8 +10146,7 @@
 
 (define (ast-decl-unwrapped-module-or-import? [decl : (& AstDecl)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view decl)
-    [(Module _) true]
-    [(Import decl-meta _) true]
+    [(or (Module _) (Import _ _)) true]
     [(Unsafe inner-box)
       (ast-decl-unwrapped-module-or-import? (& (deref inner-box)))]
     [_ false]))
@@ -10177,8 +10155,7 @@
   [v : (& v AstDeclList)]
   [index : i64]) : bool
   (match (ast-decl-list-ref-borrowed v index)
-    [(Module _) true]
-    [(Import decl-meta _) true]
+    [(or (Module _) (Import _ _)) true]
     [(Unsafe _)
       (ast-decl-unwrapped-module-or-import?
         (& (ast-decl-list-get v index (ast-decl-fallback))))]
@@ -10187,9 +10164,7 @@
 ;; Module markers plus the two type-definition kinds the clone fixpoint reads.
 (define (ast-decl-unwrapped-module-or-type-definition? [decl : (& AstDecl)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view decl)
-    [(Module _) true]
-    [(DefEnum decl-meta _ _ _) true]
-    [(DefStruct decl-meta _ _ _ _) true]
+    [(or (Module _) (DefEnum _ _ _ _) (DefStruct _ _ _ _ _)) true]
     [(Unsafe inner-box)
       (ast-decl-unwrapped-module-or-type-definition? (& (deref inner-box)))]
     [_ false]))
@@ -10198,9 +10173,7 @@
   [v : (& v AstDeclList)]
   [index : i64]) : bool
   (match (ast-decl-list-ref-borrowed v index)
-    [(Module _) true]
-    [(DefEnum decl-meta _ _ _) true]
-    [(DefStruct decl-meta _ _ _ _) true]
+    [(or (Module _) (DefEnum _ _ _ _) (DefStruct _ _ _ _ _)) true]
     [(Unsafe _)
       (ast-decl-unwrapped-module-or-type-definition?
         (& (ast-decl-list-get v index (ast-decl-fallback))))]
@@ -11783,8 +11756,7 @@
 
 (define (ast-expr-unspan [expr : (& AstExpr)]) : AstExpr
   (match expr
-    [(Spanned inner-id _) (ast-expr-unspan (& (ast-node-get inner-id)))]
-    [(MacroExpansion inner-id _ _)
+    [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
       (ast-expr-unspan (& (ast-node-get inner-id)))]
     [_ (owned_view.compiler-owned-reference-shared-view expr)]))
 
@@ -11921,17 +11893,12 @@
 ;; function still does until a TypeLisp-internal convention exists.
 (define (ast-extern-abi-c? [abi : (& AstExternAbi)]) : bool
   (match abi
-    [(C) true]
-    [(CVarargsOpen) true]
-    [(CVarargsTyped _) true]
-    [(TypeLisp) true]))
+    [(or (C) (CVarargsOpen) (CVarargsTyped _) (TypeLisp)) true]))
 
 (define (ast-extern-abi-c-varargs? [abi : (& AstExternAbi)]) : bool
   (match abi
-    [(C) false]
-    [(CVarargsOpen) true]
-    [(CVarargsTyped _) true]
-    [(TypeLisp) false]))
+    [(or (CVarargsOpen) (CVarargsTyped _)) true]
+    [(or (C) (TypeLisp)) false]))
 
 (define (ast-extern-abi-c-varargs-open? [abi : (& AstExternAbi)]) : bool
   (match abi
@@ -12094,12 +12061,10 @@
 
 (define (ast-field-cleanup? [cleanup : AstFieldCleanup]) : bool
   (match cleanup
-    [(Fn _) true]
-    [(Owned) true]
+    [(or (Fn _) (Owned)) true]
     [(No) false]))
 
 (define (ast-variant-payload-cleanup? [cleanup : AstVariantPayloadCleanup]) : bool
   (match cleanup
-    [(Fn _) true]
-    [(Owned) true]
+    [(or (Fn _) (Owned)) true]
     [(No) false]))

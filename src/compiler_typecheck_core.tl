@@ -5772,11 +5772,9 @@
 (define (tc-caller-origin-bare-operand?
   [expanded-expr : (& ast.AstExpr)]
   [macro-name-id : i64]) : bool
-  (and
-    (< macro-name-id 0)
-    (match expanded-expr
-      [(Spanned _ _) false]
-      [_ true])))
+  (match expanded-expr
+    [(Spanned _ _) false]
+    [_ (< macro-name-id 0)]))
 
 (define (tc-caller-origin-operand-view
   [expanded : i64]
@@ -105280,10 +105278,13 @@
           ;; A job with a semantic observer (LSP, semantic lint) records a
           ;; fact for each Spanned row the check visits by id. Keep the
           ;; operand's own row there, so those facts stay exactly as they were.
+          ;; Without a caller marker, a copied string still needs that view.
           [keep-operand-row? : bool
-            (!=
-              (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
-              0)]
+            (if record-caller-origin
+              (!=
+                (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
+                0)
+              true)]
           (match (tc-context-expr-get ctx inner)
             [(Literal (String string-id))
               (let
@@ -105292,27 +105293,21 @@
                     expr-cell-address
                     type-cell-address
                     (Literal (String string-id)))]
-                (if (and record-caller-origin (not keep-operand-row?))
+                [operand : i64
+                  (if keep-operand-row?
+                    (tc-context-expr-push-cell-addresses
+                      expr-cell-address
+                      type-cell-address
+                      (Spanned literal span))
+                    literal)]
+                (if record-caller-origin
                   (macro-caller-origin-marker-node
                     expr-cell-address
                     type-cell-address
-                    literal
+                    operand
                     provenance-id
                     span)
-                  (let
-                    [operand : i64
-                      (tc-context-expr-push-cell-addresses
-                        expr-cell-address
-                        type-cell-address
-                        (Spanned literal span))]
-                    (if record-caller-origin
-                      (macro-caller-origin-marker-node
-                        expr-cell-address
-                        type-cell-address
-                        operand
-                        provenance-id
-                        span)
-                      operand))))]
+                  operand))]
             [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _))
               (if record-caller-origin
                 (macro-caller-origin-marker-node

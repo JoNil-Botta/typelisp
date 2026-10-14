@@ -57366,6 +57366,28 @@
             " cannot spawn from scoped arena; closure storage would not outlive the worker")))]
     [(No) (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
+;; A spawned lambda capturing a value that carries a scoped region or
+;; lifetime parameters cannot cross the thread boundary (E0217). That verdict
+;; is taken before the arguments are typed, so the lambda's generic capture
+;; escape check (E0205, which a plain reference capture still reports, as on
+;; main) does not pre-empt the thread-safety diagnostic. Other spawn verdicts
+;; keep their place after argument typing.
+(define (tc-thread-safe-spawn-region-capture-precheck
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]) : ResultTcUnit
+  (match (tc-check-thread-safe-spawn-call ctx env func args params ret)
+    [(ResultTcNameIdList.Err message)
+      (if (string.contains
+        (& message)
+        "scoped-region and lifetime-parameterized values cannot cross thread boundaries")
+        (ResultTcUnit.Err message)
+        ResultTcUnit.Ok)]
+    [_ ResultTcUnit.Ok]))
+
 (define (tc-check-thread-safe-spawn-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -57584,6 +57606,17 @@
                   (tc-global-shared-view params))]
               (if (ast.ast-lifetime-list-empty? (& lifetimes))
                 (let
+                  [_
+                    (try
+                      (if thread-spawn-args
+                        (tc-thread-safe-spawn-region-capture-precheck
+                          ctx
+                          env
+                          (tc-global-shared-view func)
+                          (tc-global-shared-view args)
+                          (tc-global-shared-view params)
+                          (tc-global-shared-view ret))
+                        ResultTcUnit.Ok))]
                   [_
                     (try
                       (if thread-spawn-args

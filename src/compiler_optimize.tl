@@ -112433,8 +112433,8 @@
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (if (>= pos count)
     ;; The copy of `instrs` keeps this an ordinary call. As a tail call, a
-    ;; stage0 without the stack-first tail marshalling
-    ;; (`compiler-backend-emit-direct-tail-call-args-stack-first`) writes %rdi
+    ;; stage0 without the parallel tail-call marshalling
+    ;; (`compiler-backend-emit-direct-tail-call-args-parallel`) writes %rdi
     ;; before it moves `instrs` out of %rdi into %r8. Drop the copy once stage0
     ;; carries that fix.
     (opt-inline-rewrite-single-block-seq-with-spans

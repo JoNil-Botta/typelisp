@@ -101,11 +101,35 @@
       weight)))
 
 (define (main) : i64
+  ;; Every argument is distinct, so an argument read from a register another
+  ;; argument already overwrote changes the result.
   (let
-    [a : Seq (Seq 3 0)]
-    [b : Seq (Seq 5 0)]
-    [c : Seq (Seq 1 0)]
-    (match (step (& a) 0 2 1 2 3 (& b) 0 (& a) (& c) 1 0 1 0 (& c) 0 (& c) 2)
-      ;; start 8 + len 6 + (9 + 5 + 7) + (13 + 19 + 2) = 69
-      [(Some s x y) (- (+ (+ s.len s.start) (+ x y)) 27)]
+    [instrs : Seq (Seq 3 0)]
+    [lead : Seq (Seq 5 0)]
+    [index : Seq (Seq 7 0)]
+    [census : Seq (Seq 11 0)]
+    [scc : Seq (Seq 13 0)]
+    [spans : Seq (Seq 17 0)]
+    (match (step
+      (& instrs)
+      0
+      2
+      1
+      12
+      3
+      (& lead)
+      10
+      (& index)
+      (& census)
+      4
+      5
+      6
+      7
+      (& scc)
+      8
+      (& spans)
+      9)
+      ;; s = Seq 6 18; x = 21 + 55 + 28 + 55 = 159;
+      ;; y = 78 + 119 + 247 + 184 + 153 = 781; 6 + 18 + 159 + 781 = 964.
+      [(Some s x y) (- (+ (+ s.len s.start) (+ x y)) 922)]
       [(None) 1])))

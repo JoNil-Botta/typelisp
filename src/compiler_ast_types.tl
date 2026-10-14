@@ -4072,6 +4072,8 @@
 
 ;; Independent state cells holding deep copies of both states: what `clone`
 ;; of a context produced while the context held its cells as dynamic arrays.
+;; Like a snapshot, the copy still shares the expression segments, span slots
+;; and span record tables, which the states reach through addresses.
 (define (ast-node-pool-context-clone [pools : AstNodePoolContext]) : AstNodePoolContext
   (let
     [expr-cell : (__tl_dyn-array AstExprNodePoolState)

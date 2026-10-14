@@ -1,5 +1,4 @@
 ;; compiler_object_coff.tl - COFF object-file serialization for object images.
-(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -149,7 +148,7 @@
 
 (define (compiler-object-coff-symbol-index-from
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
-  [name : String]
+  [name : (& str)]
   [index : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
@@ -171,8 +170,8 @@
 
 (define (compiler-object-coff-symbol-index
   [image : (& image cobj.CompilerObjectImage)]
-  [name : String]) : i64
-  (compiler-object-coff-symbol-index-from image.symbols name 0))
+  [name : (& str)]) : i64
+  (compiler-object-coff-symbol-index-from image.symbols (& name) 0))
 
 (define (compiler-object-coff-relocation-sites-known?
   [image : (& image cobj.CompilerObjectImage)]
@@ -185,16 +184,16 @@
       (match (cobj.compiler-object-relocation-list-ref relocs index)
         [(Relocation section site _ target)
           (if (match section
-            [(Text) (>= (compiler-object-coff-symbol-index image target) 0)]
+            [(Text) (>= (compiler-object-coff-symbol-index image (& target)) 0)]
             [_
               (and
                 (>=
                   (layout.compiler-object-layout-section-label-offset
                     image
                     section
-                    site)
+                    (& site))
                   0)
-                (>= (compiler-object-coff-symbol-index image target) 0))])
+                (>= (compiler-object-coff-symbol-index image (& target)) 0))])
             (set! index (+ index 1))
             (set! ok false))]))
     ok))
@@ -414,11 +413,11 @@
   [image : (& image cobj.CompilerObjectImage)]
   [offset : i64]
   [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : unit
+  [target : (& str)]) : unit
   (layout.compiler-object-layout-push-u32! out offset)
   (layout.compiler-object-layout-push-u32!
     out
-    (compiler-object-coff-symbol-index image target))
+    (compiler-object-coff-symbol-index image (& target)))
   (layout.compiler-object-layout-push-u16!
     out
     (compiler-object-coff-relocation-type kind)))
@@ -427,7 +426,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
   [reloc : (& cobj.CompilerObjectRelocation)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view reloc)
+  (match reloc
     [(Relocation section site kind target)
       (compiler-object-coff-render-relocation-record!
         out
@@ -470,7 +469,7 @@
             (set!
               end
               (+ end (layout.compiler-object-layout-instr-size (& instr))))
-            (match (layout.compiler-object-layout-instr-fixup instr)
+            (match (layout.compiler-object-layout-instr-fixup (& instr))
               [(None) unit]
               [(One kind target)
                 (compiler-object-coff-render-relocation-record!
@@ -478,20 +477,20 @@
                   image
                   (- end 4)
                   kind
-                  target)]
+                  (& target))]
               [(Branch true-target false-target)
                 (compiler-object-coff-render-relocation-record!
                   out
                   image
                   (- end 9)
                   (Branch)
-                  true-target)
+                  (& true-target))
                 (compiler-object-coff-render-relocation-record!
                   out
                   image
                   (- end 4)
                   (Branch)
-                  false-target)])
+                  (& false-target))])
             (set! index (+ index 1))))
         unit)]))
 
@@ -608,7 +607,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
   [symbol : (& cobj.CompilerObjectSymbol)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view symbol)
+  (match symbol
     [(Symbol name binding kind section)
       (compiler-object-coff-push-symbol-name! out image name)
       (layout.compiler-object-layout-push-u32!
@@ -782,12 +781,12 @@
               "")))])))
 
 (define (compiler-object-coff-check-section-relocation-layout
-  [acc : (& CompilerObjectCoffLayoutAccumulator)]
+  [acc : CompilerObjectCoffLayoutAccumulator]
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]
   [max-output-size : i64]) : CompilerObjectCoffLayoutAccumulator
   (compiler-object-coff-check-relocation-count-layout
-    (owned_view.compiler-owned-reference-shared-view acc)
+    acc
     kind
     (layout.compiler-object-layout-section-relocation-count image kind)
     max-output-size))
@@ -898,7 +897,7 @@
         (set!
           acc
           (compiler-object-coff-check-section-relocation-layout
-            (& acc)
+            acc
             image
             (layout.compiler-object-layout-section-at index)
             max-output-size))
@@ -1014,12 +1013,6 @@
   test
   (define (compiler-object-coff-smoke-image) : cobj.CompilerObjectImage
     (let
-      [empty-data : cobj.CompilerObjectDataRecordList
-        (cobj.compiler-object-data-record-builder-finish
-          (cobj.compiler-object-data-record-builder-with-capacity 1))]
-      [empty-instrs : cobj.CompilerObjectX64InstrList
-        (cobj.compiler-object-instr-builder-finish
-          (cobj.compiler-object-instr-builder-with-capacity 1))]
       [text0 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-with-capacity 1)]
       [text1 : cobj.CompilerObjectX64InstrBuilder
@@ -1059,7 +1052,7 @@
           sections0
           (Section
             (Text)
-            empty-data
+            (cobj.compiler-object-data-record-list-empty)
             (cobj.compiler-object-instr-builder-finish text1)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
@@ -1067,21 +1060,21 @@
           (Section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data4)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections3 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections2
           (Section
             (Rodata)
             (cobj.compiler-object-data-record-builder-finish rodata2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections4 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections3
           (Section
             (Bss)
             (cobj.compiler-object-data-record-builder-finish bss2)
-            empty-instrs))]
+            (cobj.compiler-object-instr-list-empty)))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 5)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -1251,12 +1244,6 @@
   test
   (define (compiler-object-coff-text-smoke-image) : cobj.CompilerObjectImage
     (let
-      [empty-data : cobj.CompilerObjectDataRecordList
-        (cobj.compiler-object-data-record-builder-finish
-          (cobj.compiler-object-data-record-builder-with-capacity 1))]
-      [empty-instrs : cobj.CompilerObjectX64InstrList
-        (cobj.compiler-object-instr-builder-finish
-          (cobj.compiler-object-instr-builder-with-capacity 1))]
       [data0 : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-with-capacity 4)]
       [data1 : cobj.CompilerObjectDataRecordBuilder
@@ -1276,7 +1263,7 @@
           sections0
           (Section
             (Text)
-            (owned_view.compiler-owned-shared-view empty-data)
+            (cobj.compiler-object-data-record-list-empty)
             (compiler-object-coff-text-smoke-instrs)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
@@ -1284,18 +1271,21 @@
           (Section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data4)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections3 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections2
           (Section
             (Rodata)
-            (owned_view.compiler-owned-shared-view empty-data)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
       [sections4 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections3
-          (Section (Bss) empty-data empty-instrs))]
+          (Section
+            (Bss)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
       (cobj.CompilerObjectImage
         (cobj.compiler-object-section-builder-finish sections4)
         (compiler-object-coff-text-smoke-symbols)
@@ -1655,23 +1645,21 @@
   test
   (define (compiler-object-coff-relocation-layout-rejection-ok?) : bool
     (let
-      [initial : CompilerObjectCoffLayoutAccumulator
-        (CompilerObjectCoffLayoutAccumulator 400 "")]
       [negative : CompilerObjectCoffLayoutAccumulator
         (compiler-object-coff-check-relocation-count-layout
-          (owned_view.compiler-owned-shared-view initial)
+          (CompilerObjectCoffLayoutAccumulator 400 "")
           (Pdata)
           -1
           1000)]
       [sentinel-overflow : CompilerObjectCoffLayoutAccumulator
         (compiler-object-coff-check-relocation-count-layout
-          (owned_view.compiler-owned-shared-view initial)
+          (CompilerObjectCoffLayoutAccumulator 400 "")
           (Xdata)
           0xffffffff
           compiler-object-coff-max-output-size)]
       [table-overflow : CompilerObjectCoffLayoutAccumulator
         (compiler-object-coff-check-relocation-count-layout
-          initial
+          (CompilerObjectCoffLayoutAccumulator 400 "")
           (Rsrc)
           10
           499)]

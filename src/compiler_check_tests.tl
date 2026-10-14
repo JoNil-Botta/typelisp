@@ -273,9 +273,10 @@
 ;; whole operand, the span its own Spanned view carried before the operand's
 ;; caller-origin marker took that view's place.
 (define (compiler-check-caller-operand-view-spans-ok?) : bool
-  (compiler-check-first-diagnostic-exact?
-    "tests/caller_operand_view.tl"
-    "(defmacro (once [e : Expr]) : unit
+  (and
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_view.tl"
+      "(defmacro (once [e : Expr]) : unit
   e)
 
 (define (f) : i64
@@ -287,11 +288,48 @@
 
 (define (main) : i64
   0)"
-    "typecheck: assignment type mismatch: expected i64, found String"
-    8
-    11
-    8
-    24))
+      "typecheck: assignment type mismatch: expected i64, found String"
+      8
+      11
+      8
+      24)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_overflow.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once 256))
+(define (main) : i64 0)"
+      "typecheck: integer literal 256 does not fit expected type u8"
+      2
+      24
+      2
+      24)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_nested.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once (once 256)))
+(define (main) : i64 0)"
+      "typecheck: integer literal 256 does not fit expected type u8"
+      2
+      30
+      2
+      30)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_string.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : i64 (once \"a\"))
+(define (main) : i64 0)"
+      "typecheck: return type mismatch: expected i64, found String"
+      2
+      25
+      2
+      25)
+    (match (check_core.compiler-check-source
+      "tests/caller_operand_boundary.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once (once 255)))
+(define (main) : i64 0)")
+      [(Ok _ _) true]
+      [(Err _ _) false])))
 
 (define (compiler-check-qualified-near-miss-ok?) : bool
   (match (tc_api.typecheck-compiler-source

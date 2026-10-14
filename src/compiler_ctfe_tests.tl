@@ -4153,6 +4153,142 @@
         (/ 1 0)
         unit))))
 
+(cfg
+  test
+  (define (compiler-ctfe-list-builder-owner-ok? [source : i64]) : bool
+    (let
+      [base : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+      [definition-pools : ast.AstNodePoolContext (ctfe.ctfe-env-pools base)]
+      [caller-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities-in-arena
+          2
+          2
+          (arena.tl_arena_current))]
+      [node : i64
+        (ast.ast-node-pool-context-expr-push
+          caller-pools
+          (Literal (ast.ast-lit-int 42)))]
+      [head-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-snapshot caller-pools)]
+      [items : ast.AstExprList
+        (ast.ast-expr-cons node (& (ast.ast-expr-list-new)))]
+      ;; The tail, retained binding, or active context supplies the newer
+      ;; cursor. Appending a call must not overwrite this unrelated live node.
+      [early : i64
+        (if (= source 0)
+          (ast.ast-node-pool-context-expr-push
+            caller-pools
+            (Literal (ast.ast-lit-int 55)))
+          -1)]
+      [tail-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-snapshot caller-pools)]
+      [sentinel : i64
+        (if (= source 0)
+          early
+          (ast.ast-node-pool-context-expr-push
+            caller-pools
+            (Literal (ast.ast-lit-int 55))))]
+      [head-name : i64 (ci.intern-generated-canonical-name "owner-head")]
+      [tail-name : i64 (ci.intern-generated-canonical-name "owner-tail")]
+      [decoy-name : i64 (ci.intern-generated-canonical-name "owner-decoy")]
+      [env : ctfe.CtfeEnv
+        (ctfe.ctfe-env-extend-id
+          (ctfe.ctfe-env-extend-id
+            (ctfe.ctfe-env-extend-id
+              base
+              head-name
+              (& (CapturedExpr node (I64) head-pools)))
+            tail-name
+            (& (CapturedExprList items tail-pools)))
+          decoy-name
+          (&
+            (CapturedExpr
+              (if (= source 1)
+                sentinel
+                (ctfe.ctfe-ast-push base (Literal (Unit))))
+              (I64)
+              (if (= source 1)
+                caller-pools
+                definition-pools))))]
+      [head : i64 (ctfe.ctfe-ast-push env (Var head-name))]
+      [tail : i64 (ctfe.ctfe-ast-push env (Var tail-name))]
+      [cons-call : i64
+        (compiler-ctfe-call2-in-env
+          env
+          (ctfe.ctfe-builtin "expr-list-cons")
+          head
+          tail)]
+      [call-call : i64
+        (compiler-ctfe-call2-in-env
+          env
+          (ctfe.ctfe-builtin "expr-call")
+          head
+          tail)]
+      [previous : ctfe.CtfeMaybeSyntaxPools
+        (if (ast.ast-node-pool-has-active-context?)
+          (Some (ast.ast-node-pool-context-active-live))
+          (None))]
+      (when (= source 2) (ast.ast-node-pool-context-install! caller-pools))
+      (let
+        [cons-ok? : bool
+          (match (ctfe.compiler-ctfe-eval
+            (& (ctfe.ctfe-ast-get env cons-call))
+            env
+            (ctfe.ctfe-fuel-limit))
+            [(Ok (CapturedExprList actual owner) _)
+              (and
+                (= actual.len 2)
+                (= (ast.ast-expr-list-get (& actual) 0 -1) node)
+                (= (ast.ast-expr-list-get (& actual) 1 -1) node)
+                (ctfe.ctfe-node-pools-share-storage? owner caller-pools))]
+            [_ false])]
+        [call-ok? : bool
+          (match (ctfe.compiler-ctfe-eval
+            (& (ctfe.ctfe-ast-get env call-call))
+            env
+            (ctfe.ctfe-fuel-limit))
+            [(Ok (CapturedExpr result _ owner) _)
+              (and
+                (ctfe.ctfe-node-pools-share-storage? owner caller-pools)
+                (> result sentinel)
+                (match (ast.ast-node-pool-context-expr-get owner result)
+                  [(Call callee args)
+                    (and
+                      (= callee node)
+                      (= args.len 1)
+                      (= (ast.ast-expr-list-get (& args) 0 -1) node))]
+                  [_ false])
+                (match (ast.ast-node-pool-context-expr-get owner sentinel)
+                  [(Literal (Int value _)) (= value 55)]
+                  [_ false]))]
+            [_ false])]
+        [next : i64
+          (if (= source 2)
+            (ast.ast-node-pool-context-expr-push
+              caller-pools
+              (Literal (ast.ast-lit-int 66)))
+            (+ sentinel 2))]
+        (when
+          (= source 2)
+          (match previous
+            [(Some pools) (ast.ast-node-pool-context-install! pools)]
+            [(None) (ast.ast-node-pool-active-context-clear!)]))
+        (and cons-ok? call-ok? (> next (+ sentinel 1)))))))
+
+(cfg
+  test
+  (test
+    compiler-ctfe-captured-list-owner
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (and
+      (compiler-ctfe-list-builder-owner-ok? 0)
+      (compiler-ctfe-list-builder-owner-ok? 1)
+      (compiler-ctfe-list-builder-owner-ok? 2))
+      unit
+      (begin
+        (/ 1 0)
+        unit))))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)

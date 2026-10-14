@@ -432,6 +432,7 @@ linux_memory_limit_sample_process_group() {
         return 137
     fi
     : > "$_linux_memory_limit_gate"
+    _linux_memory_limit_rss_excess_pending=0
 
     while :; do
         if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
@@ -459,6 +460,14 @@ linux_memory_limit_sample_process_group() {
             _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
         fi
         if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
+            # The exact workload cgroup cap remains active while one bounded
+            # resample lets its OOM state catch up with RSS collection. A
+            # sustained RSS-only excess still takes the termination path.
+            if [ "$_linux_memory_limit_rss_excess_pending" -eq 0 ]; then
+                _linux_memory_limit_rss_excess_pending=1
+                sleep 0.05
+                continue
+            fi
             echo "memory limit exceeded: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
@@ -472,6 +481,7 @@ linux_memory_limit_sample_process_group() {
             fi
             return 137
         fi
+        _linux_memory_limit_rss_excess_pending=0
         sleep "$_linux_memory_limit_poll"
     done
 

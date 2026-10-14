@@ -13,7 +13,7 @@
 (define (specialize-rejects-with? [source : String] [message : String]) : bool
   (match (parser.parse-ast-source (& source))
     [(Ok program)
-      (match (spec.compiler-specialize-program program)
+      (match (spec.compiler-specialize-program (& program))
         [(Err boxed-diag)
           (let
             [diag : diagnostic.CompilerDiagnostic
@@ -142,29 +142,35 @@
         (spec.spec-owner-context-new pools intern-state))]
     [rows-before-body : i64 (ast.ast-node-pool-context-expr-len pools)]
     [ty : i64
-      (spec.spec-owner-type-push (& owner) (Var cbi.compiler-builtin-id-fix-T))]
+      (spec.spec-owner-type-push
+        (& owner)
+        (& (Var cbi.compiler-builtin-id-fix-T)))]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     (ast.ast-expr-list-push
       (&mut items)
       (spec.spec-owner-expr-push
         (& owner)
-        (Ann
-          (spec.spec-owner-expr-push
-            (& owner)
-            (Var cbi.compiler-builtin-id-fix-x))
-          ty)))
+        (&
+          (Ann
+            (spec.spec-owner-expr-push
+              (& owner)
+              (& (Var cbi.compiler-builtin-id-fix-x)))
+            ty))))
     (ast.ast-expr-list-push
       (&mut items)
       (spec.spec-owner-expr-push
         (& owner)
-        (Cast
-          (spec.spec-owner-expr-push
-            (& owner)
-            (Var cbi.compiler-builtin-id-fix-x))
-          ty)))
+        (&
+          (Cast
+            (spec.spec-owner-expr-push
+              (& owner)
+              (& (Var cbi.compiler-builtin-id-fix-x)))
+            ty))))
     (ast.ast-expr-list-push
       (&mut items)
-      (spec.spec-owner-expr-push (& owner) (Var cbi.compiler-builtin-id-fix-x)))
+      (spec.spec-owner-expr-push
+        (& owner)
+        (& (Var cbi.compiler-builtin-id-fix-x))))
     (let
       [body : ast.AstExpr (Begin items)]
       [body-rows : i64
@@ -180,7 +186,7 @@
             (I64 5)
             (spec.spec-value-subst-new)))]
       [rows-before-walk : i64 (ast.ast-node-pool-context-expr-len pools)]
-      (match (spec.spec-substitute-expr-with-owner (& owner) body (& subs))
+      (match (spec.spec-substitute-expr-with-owner (& owner) (& body) (& subs))
         [(Ok result)
           (begin
             (test.assert-true

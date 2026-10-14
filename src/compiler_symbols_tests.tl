@@ -6,7 +6,6 @@
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
@@ -117,8 +116,8 @@
         insertion-index
         added-count)]
     (csym.build-compiler-registry-list-in-module
-      decls
-      paths
+      (& decls)
+      (& paths)
       shifted
       insertion-index
       module-id)))
@@ -147,7 +146,10 @@
       (match decl
         [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
           (compiler-symbols-option-or
-            (csym.compiler-variant-name-id-at-index variants variant-index 0)
+            (csym.compiler-variant-name-id-at-index
+              (& variants)
+              variant-index
+              0)
             -1)]
         [_ -1])]
     [(Err _) -1]))
@@ -463,7 +465,7 @@
           (&mut paths)
           "duplicate.tl"
           cbi.compiler-builtin-id-fix-empty)
-        (match (csym.build-compiler-symbols-with-paths program paths)
+        (match (csym.build-compiler-symbols-with-paths (& program) (& paths))
           [(Err message)
             (string.eq
               message
@@ -503,8 +505,8 @@
           (match (parser.parse-ast-source (& root-src))
             [(Ok (Program root-box))
               (match (csym.compiler-symbols-insert-decls
-                base-symbols
-                (deref root-box)
+                (& base-symbols)
+                (& (deref root-box))
                 (csym.compiler-symbol-root-module-id))
                 [(Ok symbols)
                   (match (csym.compiler-symbols-lookup-value-id
@@ -1013,8 +1015,8 @@
               (match splice-program
                 [(Program splice-box)
                   (match (csym.compiler-symbols-insert-decls
-                    base-symbols
-                    (deref splice-box)
+                    (& base-symbols)
+                    (& (deref splice-box))
                     (csym.compiler-symbol-root-module-id))
                     [(Ok appended)
                       (let
@@ -1072,14 +1074,14 @@
                         [append-index : i64
                           (csym.compiler-symbols-decl-count base-symbols)]
                         (match (csym.compiler-symbols-insert-decls
-                          base-symbols
-                          (ast.ast-place-shared-view splice-decls)
+                          (& base-symbols)
+                          (& splice-decls)
                           (csym.compiler-symbol-root-module-id))
                           [(Ok appended-symbols)
                             (match (csym.compiler-registries-append-decls
-                              base-registries
-                              splice-decls
-                              splice-paths
+                              (& base-registries)
+                              (& splice-decls)
+                              (& splice-paths)
                               append-index
                               (csym.compiler-symbol-root-module-id))
                               [(Ok appended-registries)
@@ -1624,7 +1626,7 @@
         cbi.compiler-builtin-id-fix-left
         cbi.compiler-builtin-id-fix-same)]
     (match (csym.compiler-symbols-add-value-id
-      (csym.compiler-symbols-empty)
+      (& (csym.compiler-symbols-empty))
       key-id
       "left/same"
       handle)
@@ -2116,8 +2118,8 @@
           [rewritten : ast.AstDeclPathList
             (ast.ast-decl-path-list-with-modules paths (& modules))]
           (match (csym.build-compiler-symbols-with-paths
-            program
-            (owned_view.compiler-owned-shared-view rewritten))
+            (& program)
+            (& rewritten))
             [(Ok symbols)
               (and
                 (=
@@ -2184,7 +2186,7 @@
       (not (csym.compiler-registry-indexes-encodable? -1 0))
       (not (csym.compiler-registry-indexes-encodable? 0 -1))
       (match (csym.compiler-registries-add-field-in-module-id
-        (csym.compiler-registries-empty)
+        (& (csym.compiler-registries-empty))
         cbi.compiler-builtin-id-fix-empty
         (ci.intern "Wide")
         (ci.intern "tail")
@@ -2201,7 +2203,7 @@
               " members"))]
         [(Ok _) false])
       (match (csym.compiler-registries-add-field-in-module-id
-        (csym.compiler-registries-empty)
+        (& (csym.compiler-registries-empty))
         cbi.compiler-builtin-id-fix-empty
         (ci.intern "Wide")
         (ci.intern "f0")
@@ -2216,7 +2218,7 @@
               "-declaration limit for structs and enums"))]
         [(Ok _) false])
       (match (csym.compiler-registries-add-variant-in-module-id
-        (csym.compiler-registries-empty)
+        (& (csym.compiler-registries-empty))
         cbi.compiler-builtin-id-fix-empty
         (ci.intern "Big")
         (ci.intern "Last")
@@ -2226,7 +2228,7 @@
           (string.eq message (compiler-registry-variant-limit-message-for-test))]
         [(Ok _) false])
       (match (csym.compiler-symbols-add-variant-value-in-module-id
-        (csym.compiler-symbols-empty)
+        (& (csym.compiler-symbols-empty))
         cbi.compiler-builtin-id-fix-empty
         (ci.intern "Big")
         (ci.intern "Last")

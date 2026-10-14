@@ -62010,7 +62010,7 @@
       (opt.opt-global-snapshot-function
         (& summaries)
         (& summaries.global-cell.call-memory)
-        false
+        (opt.OptGlobalSnapshotPolicy false false)
         fixture)]
     [expected (opt-snapshot-test-function after)]
     (opt.opt-function-eq bases (& optimized) (& expected))))
@@ -62313,7 +62313,7 @@
       (opt.opt-global-snapshot-normalize-functions
         (& summaries)
         (& summaries.global-cell.call-memory)
-        false
+        (opt.OptGlobalSnapshotPolicy false false)
         (& before-inline))]
     [expected
       (opt-snapshot-test-function
@@ -62384,6 +62384,99 @@
       (test.assert-false
         (opt_i64_i64_map.contains? (& summaries.const-lengths) name)
         "rebound, escaping and header-written arrays retain their checks"))))
+
+(define (opt-snapshot-guard-unchanged? [priced? : bool] [body : String]) : bool
+  (let
+    [input (irt.func body)]
+    [output
+      (opt.opt-global-cell-function
+        (opt.opt-program-summaries-empty-for priced?)
+        (clone input))]
+    (opt.opt-function-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& input)
+      (& output))))
+
+(test
+  global-snapshot-frozen-price
+  (test.assert-true
+    (opt-snapshot-guard-unchanged?
+      true
+      "function @guard() -> i64 vars 8 {
+         entry:
+           %0 = mov @sample : i64
+           store @other, 9 : i64
+           return %0
+       }")
+    "a live normalization cannot change the frozen price pipeline"))
+
+(test
+  global-snapshot-complete-projections
+  (let
+    [cases
+      (array
+        "function @guard(p=%7:u64) -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             store @other, 9 : i64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             store_ptr %7, 9 : i64
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }"
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             store @other, 9 : i64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             jump exit
+           exit:
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    (for [text cases]
+      (test.assert-true
+        (opt-snapshot-guard-unchanged? false text)
+        "a retained capture must not acquire duplicate descriptor roots")))
+  (let
+    [before
+      (irt.func
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    [after
+      (opt.opt-global-cell-function (opt.opt-program-summaries-empty) before)]
+    [expected
+      (irt.func
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             %1 = gep @sample, 0 : i64
+             %2 = load %1 : i64
+             %3 = gep @sample, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    (test.assert-true
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& after)
+        (& expected))
+      "all local projections can replace their capture")))
 
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;

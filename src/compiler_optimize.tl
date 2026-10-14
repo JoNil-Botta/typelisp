@@ -116420,7 +116420,7 @@
               (opt-global-snapshot-normalize-functions
                 (& summaries)
                 call-memory
-                false
+                (OptGlobalSnapshotPolicy false false)
                 functions))
             disq
             capacity)))]
@@ -122824,6 +122824,10 @@
     opt-global-cell-rewrite-block
     (owned_view.compiler-owned-reference-shared-view plan)))
 
+(defstruct OptGlobalSnapshotPolicy
+  (defer? bool)
+  (complete? bool))
+
 ;; A snapshot can rematerialize only while the cell retains its captured value.
 ;; Address projections may share one snapshot; a write ends substitution while
 ;; later uses retain the original saved value.
@@ -122911,6 +122915,61 @@
     [(Gep _ _ _ _) (opt-collect-instr-uses-array uses instr)]
     [_ unit]))
 
+(define (opt-global-snapshot-count-use
+  [var : i64]
+  [_role : ir.CompilerIrOperandRole]
+  [left : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (-
+    left
+    (if (opt-value-is-var? (& value) var)
+      1
+      0)))
+
+;; A retained capture must not acquire a second set of descriptor loads.
+;; The caller has proved every use is a Gep; count only uses the same block's
+;; forwarding environment can replace, stopping before its first write barrier.
+(define (opt-global-snapshot-complete?
+  [cell : (& cell OptGlobalCellSummary)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [policy : OptGlobalSnapshotPolicy]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [start : i64]
+  [var : i64]
+  [name : i64]
+  [expected : i64]) : bool
+  (let
+    [entry : OptCopyEntry (OptCopyEntry.Copy var (Global name))]
+    [at : i64 start]
+    [left : i64 expected]
+    [ready? : bool (not policy.defer?)]
+    (while (and (< at instrs.len) (> left 0))
+      (let
+        [instr (ir.compiler-ir-instr-seq-ref instrs at)]
+        [boundary? : bool
+          (match (& instr)
+            [(or (Call _ _ _ _) (TailCall _ _ _) (Store _ _ _)) true]
+            [_ false])]
+        (when
+          (opt-global-snapshot-entry-killed?
+            cell
+            call-memory
+            (& instr)
+            (& entry))
+          (return false))
+        (when
+          ready?
+          (set!
+            left
+            (ir.compiler-ir-instr-fold-uses
+              instr
+              left
+              opt-global-snapshot-count-use
+              var)))
+        (when boundary? (set! ready? true)))
+      (+= at 1))
+    (= left 0)))
+
 ;; The emitted and priced pipelines defer forwarding until a preserved call or
 ;; store boundary. Substituting earlier can change inline admission and extend
 ;; a global's live range. Analysis-only views may forward immediately; their
@@ -122921,7 +122980,7 @@
   [sources : (& sources OptValueSources)]
   [uses : (& uses (__tl_dyn-array i64))]
   [gep-uses : (& gep-uses (__tl_dyn-array i64))]
-  [defer? : bool]
+  [policy : OptGlobalSnapshotPolicy]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (if (not (opt-instrs-any? instrs opt-global-snapshot-candidate? cell))
     instrs
@@ -122942,7 +123001,7 @@
               (opt-global-snapshot-filter cell call-memory (& instr) env))]
           [_delayed-barrier : unit
             (when
-              defer?
+              policy.defer?
               (set!
                 delayed
                 (opt-global-snapshot-filter cell call-memory (& instr) delayed)))]
@@ -122967,7 +123026,18 @@
                         (= (array-ref uses dst) 1)
                         (and
                           (> (array-ref uses dst) 0)
-                          (= (array-ref uses dst) (array-ref gep-uses dst)))))
+                          (= (array-ref uses dst) (array-ref gep-uses dst))
+                          (or
+                            (not policy.complete?)
+                            (opt-global-snapshot-complete?
+                              cell
+                              call-memory
+                              policy
+                              (& instrs)
+                              (+ index 1)
+                              dst
+                              name
+                              (array-ref uses dst))))))
                     (set!
                       env
                       (opt-copy-env-push
@@ -122976,20 +123046,20 @@
                 [_ unit]))]
           [rewritten : ir.CompilerIrInstr
             (opt-copy-subst-instr
-              (if defer?
+              (if policy.defer?
                 (& delayed)
                 (& env))
               instr)]
           (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)
           (when
-            (and defer? boundary?)
+            (and policy.defer? boundary?)
             (set! delayed (compiler-opt-global-shared-view env)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-global-snapshot-function
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
-  [defer? : bool]
+  [policy : OptGlobalSnapshotPolicy]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(Function name params ret-ty frame blocks function-abi)
@@ -123023,7 +123093,7 @@
               (& sources)
               (& uses)
               (& gep-uses)
-              defer?)
+              policy)
             function-abi)))]))
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
@@ -123039,11 +123109,13 @@
   [input : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (let
     [func : ir.CompilerIrFunction
-      (opt-global-snapshot-function
-        (& summaries)
-        (& summaries.global-cell.call-memory)
-        true
-        input)]
+      (if summaries.priced?
+        input
+        (opt-global-snapshot-function
+          (& summaries)
+          (& summaries.global-cell.call-memory)
+          (OptGlobalSnapshotPolicy false true)
+          input))]
     (match (compiler-opt-global-shared-view func)
       [(Function name params ret-ty frame blocks function-abi)
         (let
@@ -128980,7 +129052,7 @@
 (define (opt-global-snapshot-normalize-functions
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
-  [defer? : bool]
+  [policy : OptGlobalSnapshotPolicy]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
   (let
     ;; Replacement bodies belong to this scope. The borrowed input's slots
@@ -128992,7 +129064,7 @@
           (opt-global-snapshot-function
             summaries
             call-memory
-            defer?
+            policy
             (ir.compiler-ir-function-seq-ref functions slot))]
         [frame (opt-function-frame (& normalized))]
         [blocks (opt-function-blocks (& normalized))]
@@ -129031,7 +129103,7 @@
       (opt-global-snapshot-normalize-functions
         (& summaries)
         (& opt-pure-call-inline-memory)
-        true
+        (OptGlobalSnapshotPolicy true false)
         functions))))
 
 (define (opt-pure-call-inline-memory-reset!) : unit

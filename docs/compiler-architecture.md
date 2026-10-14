@@ -1099,9 +1099,13 @@ Level 2 can rematerialize a single-definition, unescaped global capture within
 its block while the global still has the captured value. A direct store,
 possibly writing call, indirect store or unknown effect ends forwarding;
 later uses retain the saved value. Only single-use captures or captures used
-entirely for address projections qualify. The emitted and checked inline
-pipelines defer forwarding until a preserved call or store boundary, so
-normalization does not alter inline admission by exposing earlier global reads.
+entirely for address projections qualify. Before inlining, forwarding waits
+until a preserved call or store boundary. The final live pipeline can forward
+immediately, but only when every projection use is replaceable in the same
+block before a write barrier; otherwise the saved descriptor remains the one
+base for its loads. A forward scan uses the shared IR operand walker and the
+same write barriers to prove completeness. The frozen priced pipeline omits
+this live normalization, preserving the checked inliner's calibrated stages.
 Normalization builds private function slots and applies existing dead-code
 elimination only to bodies containing capture candidates. Borrowed input slots
 must never acquire replacement bodies from a shorter-lived arena.

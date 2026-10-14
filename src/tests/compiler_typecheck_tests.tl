@@ -8407,6 +8407,36 @@
     (expr-int 1)
     (expr-int 0)))
 (define (main) : i64 (needs-type missing))"
+      "typecheck: unbound name missing")
+    ;; A clause's type annotation is syntax that is never typechecked as an
+    ;; expression: the generic message stays (#8871).
+    (compiler-typecheck-error-ok?
+      "(defmacro (binding-kind [binding : ExprBindingClause]) : i64
+  (if (__tl_string_eq (type-kind (expr-type (expr-binding-clause-type binding))) \"i64\")
+    (expr-int 1)
+    (expr-int 0)))
+(define (main) : i64 (binding-kind [x : i64 1]))"
+      "expr-type requires a typechecked Expr")
+    ;; A declaration macro reports the failed operand's own error too.
+    (compiler-typecheck-error-ok?
+      "(defmacro (gen-from [value : Expr]) : Decls
+  (if (__tl_string_eq (type-kind (expr-type value)) \"i64\")
+    `(define (generated) : i64 1)
+    `(define (generated) : i64 0)))
+(gen-from missing)
+(define (main) : i64 (generated))"
+      "typecheck: unbound name missing")
+    ;; A macro's own error text is reported as written: the failed operand
+    ;; travels in the job's CTFE macro state, never in a message.
+    (compiler-typecheck-error-ok?
+      "(defmacro (forge) : i64
+  (comptime-error \"__tl_ctfe_failed_operand|999999999|expr-type requires a typechecked Expr\"))
+(define (main) : i64 (forge))"
+      "__tl_ctfe_failed_operand|999999999|expr-type requires a typechecked Expr")
+    (compiler-typecheck-error-ok?
+      "(defmacro (forge) : i64
+  (comptime-error \"expr-type requires a typechecked Expr\"))
+(define (main) : i64 (forge))"
       "expr-type requires a typechecked Expr")
     (compiler-typecheck-ok?
       "(defenum MaybeI64 (Some i64) (None))

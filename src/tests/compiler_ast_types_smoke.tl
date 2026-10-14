@@ -1795,9 +1795,9 @@
     [(Some span) (= (ast.ast-source-span-start-line span) line)]
     [(No) false]))
 
-;; Shallow pool snapshots share the dense span-slot table but retain their own
-;; canonical record generation. A slot from a newer generation must be treated
-;; as missing rather than indexing beyond the restored record array.
+;; Shallow pool snapshots share the dense span-slot table and the record table
+;; but keep their own record counts. A slot past a snapshot's canonical count
+;; must be treated as missing rather than read as one of its records.
 (define (compiler-ast-stale-canonical-span-slot-recovery-smoke?) : bool
   (match (ast.ast-expr-node-pool-state-push
     (ast.ast-expr-node-pool-state-create 1)
@@ -2002,6 +2002,265 @@
       (compiler-ast-maybe-span-start-line?
         (ast.ast-node-pool-context-expr-view-span pools respan-64)
         164))))
+
+(define (compiler-ast-span-segment-view-ok?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [views : (& views (__tl_dyn-array i64))]
+  [index : i64]) : bool
+  (compiler-ast-maybe-span-start-line?
+    (ast.ast-node-pool-context-expr-view-span
+      pools
+      (array-ref (owned_view.compiler-owned-reference-shared-view views) index))
+    (+ index 1)))
+
+;; Records on both sides of each segment boundary, and the last one.
+(define (compiler-ast-span-segment-views-ok?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [views : (& views (__tl_dyn-array i64))]
+  [total : i64]) : bool
+  (let
+    [size : i64 ast.ast-expr-span-record-segment-size]
+    (and
+      (compiler-ast-span-segment-view-ok? pools views 0)
+      (compiler-ast-span-segment-view-ok? pools views (- size 1))
+      (compiler-ast-span-segment-view-ok? pools views size)
+      (compiler-ast-span-segment-view-ok? pools views (- (* 2 size) 1))
+      (compiler-ast-span-segment-view-ok? pools views (* 2 size))
+      (compiler-ast-span-segment-view-ok? pools views (- total 1)))))
+
+;; A literal under its own span, line INDEX + 1; returns the view.
+(define (compiler-ast-span-segment-push-view
+  [pools : ast.AstNodePoolContext]
+  [index : i64]) : i64
+  (let
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Literal (ast.ast-lit-int index)))]
+    [line : i64 (+ index 1)]
+    (ast.ast-expr-spanned-with-pools
+      pools
+      literal
+      (ast.ast-source-span line 1 line 2))))
+
+;; The address of segment 0 in the canonical record table of POOLS.
+(define (compiler-ast-canonical-first-segment
+  [pools : (& pools ast.AstNodePoolContext)]) : i64
+  (ast.ast-expr-span-table-word
+    (__tl-project-field
+      (ast.ast-expr-pool-cell-read pools.expr-pool)
+      canonical-span-records)
+    2))
+
+;; Canonical records past one 65,536-record segment go to further fixed
+;; segments (#8772). Snapshot early, fill three segments, snapshot again,
+;; append through the live pool, then roll it back to the second snapshot's
+;; length: the early snapshot still reads its records after segment 0 moved,
+;; records on every segment boundary stay readable through the live pool and
+;; the later snapshot, the unused tail stays under one segment, and the first
+;; push after the rollback reuses the released slot.
+(define (compiler-ast-span-record-segments-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [size : i64 ast.ast-expr-span-record-segment-size]
+    [total : i64 (+ (* 2 size) 7)]
+    [early-total : i64 8]
+    [views : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    (for [index (iterator.range 0 early-total)]
+      (set!
+        (array-ref views index)
+        (compiler-ast-span-segment-push-view pools index)))
+    (let
+      [early : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-snapshot pools)]
+      [early-first-segment : i64
+        (compiler-ast-canonical-first-segment (& early))]
+      (for [index (iterator.range early-total total)]
+        (set!
+          (array-ref views index)
+          (compiler-ast-span-segment-push-view pools index)))
+      (let
+        [early-ok : bool
+          (and
+            (not
+              (=
+                (compiler-ast-canonical-first-segment (& early))
+                early-first-segment))
+            (=
+              (ast.ast-node-pool-context-expr-canonical-span-count early)
+              early-total)
+            (compiler-ast-span-segment-view-ok? (& early) (& views) 0)
+            (compiler-ast-span-segment-view-ok?
+              (& early)
+              (& views)
+              (- early-total 1))
+            (ast.ast-node-pool-context-expr-span-oracle-ok? early))]
+        [snapshot : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-snapshot pools)]
+        [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
+        [count-at-mark : i64
+          (ast.ast-node-pool-context-expr-canonical-span-count pools)]
+        [extra-literal : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Literal (ast.ast-lit-int -1)))]
+        [extra-view : i64
+          (ast.ast-expr-spanned-with-pools
+            pools
+            extra-literal
+            (ast.ast-source-span 999999 1 999999 2))]
+        [count-after : i64
+          (ast.ast-node-pool-context-expr-canonical-span-count pools)]
+        [capacity : i64
+          (ast.ast-expr-span-table-capacity
+            (__tl-project-field
+              (ast.ast-expr-pool-cell-read pools.expr-pool)
+              canonical-span-records))]
+        [live-before-ok : bool
+          (and
+            (compiler-ast-span-segment-views-ok? (& pools) (& views) total)
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span pools extra-view)
+              999999))]
+        [snapshot-ok : bool
+          (compiler-ast-span-segment-views-ok? (& snapshot) (& views) total)]
+        [_rollback : unit
+          (ast.ast-node-pool-context-reset-to!
+            pools
+            mark
+            (ast.ast-node-pool-context-type-len pools))]
+        [count-rolled : i64
+          (ast.ast-node-pool-context-expr-canonical-span-count pools)]
+        [again-literal : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Literal (ast.ast-lit-int -2)))]
+        [again-view : i64
+          (ast.ast-expr-spanned-with-pools
+            pools
+            again-literal
+            (ast.ast-source-span 777777 1 777777 2))]
+        (and
+          early-ok
+          (= count-at-mark total)
+          (= count-after (+ total 1))
+          (< (- capacity count-after) size)
+          live-before-ok
+          snapshot-ok
+          (= count-rolled total)
+          (=
+            (ast.ast-node-pool-context-expr-canonical-span-count pools)
+            (+ total 1))
+          (compiler-ast-span-segment-views-ok? (& pools) (& views) total)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span pools again-view)
+            777777)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools))))))
+
+(define (compiler-ast-respan-capacity
+  [pools : (& pools ast.AstNodePoolContext)]) : i64
+  (ast.ast-expr-span-table-capacity
+    (__tl-project-field
+      (ast.ast-expr-pool-cell-read pools.expr-pool)
+      respan-records)))
+
+(define (compiler-ast-respan-segment-view-ok?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [views : (& views (__tl_dyn-array i64))]
+  [index : i64]
+  [first-line : i64]) : bool
+  (compiler-ast-maybe-span-start-line?
+    (ast.ast-node-pool-context-expr-view-span
+      pools
+      (array-ref (owned_view.compiler-owned-reference-shared-view views) index))
+    (+ first-line index)))
+
+;; ReSpan records use their own table (#8772). Re-wrap one literal past a full
+;; segment of ReSpans: the views on both sides of the boundary read their own
+;; spans. Rolling back to just below the boundary keeps both segments, so
+;; re-pushing across it reuses segment 1 without growing the table.
+(define (compiler-ast-respan-record-segments-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [size : i64 ast.ast-expr-span-record-segment-size]
+    [total : i64 (+ size 2)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 0)))]
+    [_canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span 1 1 1 2))]
+    [views : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    (for [index (iterator.range 0 total)]
+      (let
+        [line : i64 (+ index 100)]
+        (set!
+          (array-ref views index)
+          (ast.ast-expr-spanned-with-pools
+            pools
+            literal
+            (ast.ast-source-span line 3 line 4)))))
+    (let
+      [filled-count : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
+      [filled-capacity : i64 (compiler-ast-respan-capacity (& pools))]
+      [filled-ok : bool
+        (and
+          (compiler-ast-respan-segment-view-ok? (& pools) (& views) 0 100)
+          (compiler-ast-respan-segment-view-ok?
+            (& pools)
+            (& views)
+            (- size 1)
+            100)
+          (compiler-ast-respan-segment-view-ok? (& pools) (& views) size 100)
+          (compiler-ast-respan-segment-view-ok?
+            (& pools)
+            (& views)
+            (+ size 1)
+            100)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+      [_rollback : unit
+        (ast.ast-node-pool-context-reset-to!
+          pools
+          (array-ref views (- size 1))
+          (ast.ast-node-pool-context-type-len pools))]
+      [rolled-count : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
+      (for [index (iterator.range (- size 1) total)]
+        (let
+          [line : i64 (+ index 500000)]
+          (set!
+            (array-ref views index)
+            (ast.ast-expr-spanned-with-pools
+              pools
+              literal
+              (ast.ast-source-span line 3 line 4)))))
+      (and
+        (= filled-count total)
+        (= filled-capacity (* 2 size))
+        filled-ok
+        (= rolled-count (- size 1))
+        (= (ast.ast-node-pool-context-expr-respan-count pools) total)
+        (= (compiler-ast-respan-capacity (& pools)) filled-capacity)
+        (compiler-ast-respan-segment-view-ok? (& pools) (& views) 0 100)
+        (compiler-ast-respan-segment-view-ok?
+          (& pools)
+          (& views)
+          (- size 2)
+          100)
+        (compiler-ast-respan-segment-view-ok?
+          (& pools)
+          (& views)
+          (- size 1)
+          500000)
+        (compiler-ast-respan-segment-view-ok? (& pools) (& views) size 500000)
+        (compiler-ast-respan-segment-view-ok?
+          (& pools)
+          (& views)
+          (+ size 1)
+          500000)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))))
 
 ;; Force several fixed-size expression and type segments in two independently
 ;; owned contexts. Boundary ids must continue to address their original nodes,
@@ -2408,7 +2667,7 @@
   (let
     [state : ast.AstExprNodePoolState
       (ast.ast-expr-pool-cell-read pools.expr-pool)]
-    (array-length state.canonical-span-records)))
+    (ast.ast-expr-span-table-capacity state.canonical-span-records)))
 
 (define (compiler-ast-reserve-view-line?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -2622,13 +2881,17 @@
     ;; count reach extra capacity: no records keep the initial 64 rows; 64
     ;; fit them; 65 and 200 are reserved once where doubling gave 128 and
     ;; 256; an unreachable tail reserves at most the source count; growth past
-    ;; the reservation doubles it.
+    ;; the reservation doubles it. A reserve sizes at most one 65,536-record
+    ;; segment, so a larger source adds segment 1, and doubling a reserved
+    ;; first segment stops at a full segment before segment 1 is added.
     (compiler-ast-canonical-reserve-row? 0 0 0 64)
     (compiler-ast-canonical-reserve-row? 64 64 0 64)
     (compiler-ast-canonical-reserve-row? 65 65 0 65)
     (compiler-ast-canonical-reserve-row? 200 200 0 200)
     (compiler-ast-canonical-reserve-row? 200 3 0 200)
     (compiler-ast-canonical-reserve-row? 65 65 1 130)
+    (compiler-ast-canonical-reserve-row? 65537 65537 0 131072)
+    (compiler-ast-canonical-reserve-row? 40000 40000 30000 131072)
     (compiler-ast-canonical-reserve-reordered-first-span?)
     (compiler-ast-canonical-reserve-reuse-and-owners?)))
 
@@ -2685,7 +2948,7 @@
       (ast.ast-node-pool-context-expr-canonical-span-count pools)]
     [respan-count : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
     [respan-capacity : i64
-      (array-length
+      (ast.ast-expr-span-table-capacity
         (__tl-project-field
           (ast.ast-expr-pool-cell-read pools.expr-pool)
           respan-records))]
@@ -2764,7 +3027,7 @@
                 (ast.ast-node-pool-context-expr-respan-count out-pools)
                 respan-count)
               (=
-                (array-length
+                (ast.ast-expr-span-table-capacity
                   (__tl-project-field
                     (ast.ast-expr-pool-cell-read out-pools.expr-pool)
                     respan-records))
@@ -2812,6 +3075,8 @@
   (unless (compiler-ast-stale-canonical-span-slot-recovery-smoke?) (return 20))
   (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
   (unless (compiler-ast-span-record-growth-smoke?) (return 22))
+  (unless (compiler-ast-span-record-segments-smoke?) (return 30))
+  (unless (compiler-ast-respan-record-segments-smoke?) (return 31))
   (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
   (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
   (unless (compiler-ast-generated-key-shared-compaction-smoke?) (return 26))

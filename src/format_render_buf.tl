@@ -38,13 +38,12 @@
           [bigger : (__tl_dyn-array u8) (__tl_make-array u8 newcap)]
           [n : i64 buf.len]
           (if (> n 0)
-            (string.str-copy-bytes-into
-              (unsafe
-                (ptr-cast (__tl_array-data cur) : (Ptr u8)))
-              (unsafe
-                (__tl_array-data bigger))
-              0
-              n)
+            (unsafe
+              (string.str-copy-bytes-into
+                (ptr-cast (__tl_array-data cur) : (Ptr u8))
+                (__tl_array-data bigger)
+                0
+                n))
             unit)
           (set! buf.data bigger))))))
 
@@ -56,13 +55,12 @@
       (let
         [base : i64 buf.len]
         (fmt-render-buf-reserve buf (+ base slen))
-        (string.str-copy-bytes-into
-          (unsafe
-            (string-data (& s)))
-          (unsafe
-            (__tl_array-data buf.data))
-          base
-          slen)
+        (unsafe
+          (string.str-copy-bytes-into
+            (string-data (& s))
+            (__tl_array-data buf.data)
+            base
+            slen))
         (set! buf.len (+ base slen))))))
 
 (define (fmt-render-buf-string [buf : FmtRenderBuf]) : String

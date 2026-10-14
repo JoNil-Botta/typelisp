@@ -85,6 +85,9 @@
 ;# ```
 (import stdlib.eq)
 
+;: Bounds trap for malformed public vector representations.
+(extern (tl_oob_abort) : never)
+
 ;: Emit a generated growable vector module for element type `T`.
 ;:
 ;: `(vector T)` retains the full vector API. `(vector T core)` emits only
@@ -327,6 +330,14 @@
         (define (new) : Vec
           (with-capacity 4))
         (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
+          ;; The non-aborting take cannot prove a raw replacement is in bounds.
+          ;; Validate public lengths before cleanup or writing changes ownership.
+          (when
+            (or
+              (< v.len 0)
+              (> v.len (array-length v.state.slots))
+              (> v.len (array-length v.state.live)))
+            (tl_oob_abort))
           (if (if (>= index 0)
             (< index v.len)
             false)

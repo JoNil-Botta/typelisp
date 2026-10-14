@@ -615,3 +615,41 @@ stdout empty
 stderr contains error[E0222]
 stderr contains while global `held` is borrowed
 stderr contains (via observe -> install!)
+
+
+# Unsafe callable effects survive type inference, qualification and unsafe scope.
+case check-string-raw-copy-function-values
+target linux-x86_64 windows-x86_64
+opt -
+each str-copy-bytes-into str-copy-owned-bytes-into str-copy-borrowed-bytes-into
+file -x safe-value.tl
+(import stdlib.string)
+(define (main) : i64
+  (let [copy string.{{each}}] 42))
+end-file
+file -x unsafe-value.tl
+(import stdlib.string as text)
+(define (main) : i64
+  (unsafe (let [copy text.{{each}}] 42)))
+end-file
+step source-safe
+run check "{{dir}}/safe-value.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains requires unsafe context
+step source-unsafe
+run check "{{dir}}/unsafe-value.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains is an unsafe callable and cannot be used as a plain function value
+cwd {{dir}}
+step embedded-safe
+run check "{{dir}}/safe-value.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains requires unsafe context
+step embedded-unsafe
+run check "{{dir}}/unsafe-value.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains is an unsafe callable and cannot be used as a plain function value

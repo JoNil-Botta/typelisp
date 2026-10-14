@@ -657,12 +657,12 @@
     [bigger : (MutPtr u8)
       (unsafe
         (compiler-backend-asm-buf-alloc capacity))]
-    (string.str-copy-bytes-into
-      (unsafe
-        (ptr-cast buf.data : (Ptr u8)))
-      bigger
-      0
-      buf.len)
+    (unsafe
+      (string.str-copy-bytes-into
+        (ptr-cast buf.data : (Ptr u8))
+        bigger
+        0
+        buf.len))
     (set! buf.data bigger)
     (set! buf.cap capacity)))
 
@@ -722,7 +722,8 @@
   [n : i64]) : unit
   (if (= n 0)
     unit
-    (string.str-copy-owned-bytes-into part buf.data off n)))
+    (unsafe
+      (string.str-copy-owned-bytes-into part buf.data off n))))
 
 (define (compiler-backend-asm-append
   [buf : (&mut buf CompilerBackendAsmBuf)]

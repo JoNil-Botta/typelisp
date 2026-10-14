@@ -97,6 +97,15 @@ source tokenization still belongs to the lexer. The LSP classifies incomplete
 editor prefixes separately and resolves only complete names at token boundaries,
 so an unsupported byte cannot turn an invalid operand into a valid prefix.
 
+Safe byte-range construction validates public representation before producing a
+borrowed view or using a raw destination. `ByteBuf` views prove its live length
+lies within the backing array; appends prove the destination extent after
+reservation. Cleanup-owning generated vectors prove the live prefix fits both
+slot and liveness arrays before replacement can clean or write an element.
+The three string raw-copy helpers carry unsafe-call effects; each caller keeps
+its source/destination proof at an explicit unsafe call, and a plain function
+value cannot erase that effect.
+
 `AstType.CFunc` separates a native code address from an ordinary TypeLisp
 function/closure descriptor. Its pooled `Func` operand records only argument and
 result shape; its second operand records nullability and the unsafe-call effect.

@@ -576,13 +576,12 @@
     ;; The source range was checked above and the storage now holds
     ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
     ;; makes, into storage reached through `&mut`.
-    (string.str-copy-bytes-into
-      (unsafe
-        (ptr-offset (byte_buf.bytes-data src) start))
-      (unsafe
-        (__tl_array-data buf.slots))
-      old-len
-      count)
+    (unsafe
+      (string.str-copy-bytes-into
+        (ptr-offset (byte_buf.bytes-data src) start)
+        (__tl_array-data buf.slots)
+        old-len
+        count))
     (set! buf.len (+ old-len count))))
 
 ;; --- decoding cursor ----------------------------------------------------------------

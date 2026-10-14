@@ -122,7 +122,13 @@ while read -r line; do
 done < /proc/self/cgroup
 case $cgroup in */sampler) workload="$cgroup/../workload" ;; *) exit 1 ;; esac
 if mkdir "$TYPELISP_MEMORY_RACE_DIR/first-sample" 2>/dev/null; then
-    read -r pid < "$workload/cgroup.procs"
+    # Process-group publication can precede the gated child's cgroup move.
+    placement=0
+    while ! read -r pid < "$workload/cgroup.procs"; do
+        [ "$placement" -lt 100 ] || exit 1
+        placement=$((placement + 1))
+        sleep 0.01
+    done
     "$TYPELISP_MEMORY_RACE_PS" -o pgid= -p "$pid" | awk 'NR == 1 { print $1 }' \
         > "$TYPELISP_MEMORY_RACE_DIR/pgid"
     exec "$TYPELISP_MEMORY_RACE_PS" "$@"

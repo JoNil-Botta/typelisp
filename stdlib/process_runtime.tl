@@ -1588,9 +1588,11 @@
   (cond
     [(= operation process-linux-operation-none) failure]
     [(= failure.primary-operation process-linux-operation-none)
-      (set! failure.primary-operation operation)
-      (set! failure.primary-result raw-result)
-      failure]
+      (ProcessLinuxFailure
+        operation
+        raw-result
+        failure.secondary-operation
+        failure.secondary-result)]
     [(= failure.secondary-operation process-linux-operation-none)
       (ProcessLinuxFailure
         failure.primary-operation

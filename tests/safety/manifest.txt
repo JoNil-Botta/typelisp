@@ -29,6 +29,7 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
+free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_binding_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
 rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)

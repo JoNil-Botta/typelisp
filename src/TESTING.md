@@ -418,7 +418,9 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 `compiler-ctfe-captured-list-builders` checks syntax-list and call construction
 with captured lists, empty/singleton/growing inputs, retained pool snapshots,
-unrelated owners and invalid arguments. Its native integration companion
+unrelated owners and invalid arguments. `compiler-ctfe-captured-list-owner`
+also checks an unrelated retained binding and newer tail, retained or active
+pool cursors without overwriting live nodes. The native integration companion
 `comptime_captured_list_builders.tl` composes the builders with nested macros,
 list inspection, begin bodies and quasiquote splicing at opt0/1/2.
 

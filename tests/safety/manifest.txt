@@ -1501,3 +1501,10 @@ compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_stat
 
 global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
 global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed
+# Earlier operator values and assignment places precede later effects.
+operator_snapshot_div_overflow_trap|run-trap|tests/safety/operator_snapshot_div_overflow_trap.tl|135|integer division or remainder error: dividend=-128 divisor=-1
+set_place_value_before_bounds_trap|run-trap|tests/safety/set_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_unit_place_value_before_bounds_trap|run-trap|tests/safety/set_unit_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+operator_snapshot_type_reject|check-fail|tests/safety/operator_snapshot_type_reject.tl|-|integer operator expects matching integer operands: expected i64, found bool
+set_place_shared_reject|check-fail|tests/safety/set_place_shared_reject.tl|-|set! array element requires mutable array access
+set_aggregate_value_before_bounds_trap|run-trap|tests/safety/set_aggregate_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64

@@ -21,6 +21,7 @@
 (import compiler_module_name as module_name)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
+(import compiler_expand_query as expand)
 (import compiler_semantic_index)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
@@ -4527,10 +4528,10 @@
   [module-name : String]
   [stdlib-roots : lsp_svec.Vec]) : String
   (match (compiler_load.compiler-load-resolve-module-import-with-roots
-    (owned_view.compiler-owned-shared-view path)
+    (& path)
     (compiler_load.compiler-load-dirname path)
-    (owned_view.compiler-owned-shared-view module-name)
-    stdlib-roots)
+    (& module-name)
+    (& stdlib-roots))
     [(Ok resolved) (compiler_load.compiler-load-normalize-path resolved)]
     [(Err _) module-name]))
 
@@ -4560,9 +4561,9 @@
               [resolved : String
                 (compiler_load.compiler-load-normalize-path
                   (compiler_load.compiler-load-resolve-import-with-roots
-                    path
+                    (& path)
                     spec
-                    stdlib-roots))]
+                    (& stdlib-roots)))]
               (Found resolved content-start content-end))]
           [(lsp-ident-char? c)
             (let
@@ -4838,13 +4839,9 @@
 (define (lsp-signature-callable-kind?
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : bool
   (match kind
-    [(Value) true]
-    [(Function) true]
-    [(Macro) true]
-    [(ExternValue) true]
-    [(ExternFunction) true]
-    [(Parameter) true]
-    [(Local) true]
+    [(or (Value) (Function) (Macro) (ExternValue) (ExternFunction) (Parameter)
+         (Local))
+      true]
     [_ false]))
 
 (define (lsp-signature-named-parameter-owner?
@@ -4852,9 +4849,7 @@
   (and
     (= record.symbol.local-ordinal -1)
     (match record.kind
-      [(Function) true]
-      [(Macro) true]
-      [(ExternFunction) true]
+      [(or (Function) (Macro) (ExternFunction)) true]
       [_ false])))
 
 ;; Return names only when the semantic index proves a complete ordered
@@ -5256,14 +5251,9 @@
 (define (lsp-completion-symbol-kind
   [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : i64
   (match (deref kind)
-    [(Function) 3]
-    [(ExternFunction) 3]
-    [(Macro) 3]
+    [(or (Function) (ExternFunction) (Macro)) 3]
     [(Field) 5]
-    [(Value) 6]
-    [(ExternValue) 6]
-    [(Parameter) 6]
-    [(Local) 6]
+    [(or (Value) (ExternValue) (Parameter) (Local)) 6]
     [(Module) 9]
     [(Enum) 13]
     [(EnumMember) 20]
@@ -5311,8 +5301,7 @@
   [definition-path : (& definition-path str)]
   [current-path : String]) : i64
   (match kind
-    [(Parameter) 0]
-    [(Local) 0]
+    [(or (Parameter) (Local)) 0]
     [_
       (if (string.eq definition-path current-path)
         1
@@ -6181,8 +6170,7 @@
   (let
     [results : LspCompletionResults (lsp-completion-results-new)]
     (match context.kind
-      [(Suppressed) unit]
-      [(ImportAlias) unit]
+      [(or (Suppressed) (ImportAlias)) unit]
       [(ImportPathOrItem)
         (lsp-completion-collect-import! (&mut results) workspace context)]
       [(DottedMember)
@@ -6556,8 +6544,7 @@
           stdlib-roots
           (lsp-language-cfgs)
           job-state)
-          [(Ok _ _) unit]
-          [(Err _ _) unit])
+          [(or (Ok _ _) (Err _ _)) unit])
         (let
           [hints : json.JsonSeq
             (lsp-inlay-build inlay-state text start-line end-line)]
@@ -6904,8 +6891,7 @@
                           (Invalid line col msg (lsp-line-at text line)))
                         (set! done true))]
                     [(Ok _) unit])]
-                [(SomeDecl _) unit]
-                [(Decls _) unit])]))
+                [(or (SomeDecl _) (Decls _)) unit])]))
         result)]))
 
 ;; Find the byte offset where the body of a define/defmacro begins,
@@ -10052,17 +10038,7 @@
               lsp-semantic-token-type-comment
               0
               1)]
-          [(String spelling)
-            (lsp-semantic-token-add-split-span!
-              tokens
-              text
-              start
-              (+ start (string.string-length spelling))
-              lsp-semantic-token-type-string
-              0
-              1)
-            (set! head-position 0)]
-          [(Char spelling)
+          [(or (String spelling) (Char spelling))
             (lsp-semantic-token-add-split-span!
               tokens
               text
@@ -10123,11 +10099,9 @@
   [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : i64
   (match kind
     [(Module) lsp-semantic-token-type-namespace]
-    [(Struct) lsp-semantic-token-type-type]
-    [(Enum) lsp-semantic-token-type-type]
+    [(or (Struct) (Enum)) lsp-semantic-token-type-type]
     [(EnumMember) lsp-semantic-token-type-enum-member]
-    [(Function) lsp-semantic-token-type-function]
-    [(ExternFunction) lsp-semantic-token-type-function]
+    [(or (Function) (ExternFunction)) lsp-semantic-token-type-function]
     [(Macro) lsp-semantic-token-type-macro]
     [(Parameter) lsp-semantic-token-type-parameter]
     [(Field) lsp-semantic-token-type-property]
@@ -10139,8 +10113,8 @@
     [(Use) 0]
     [(Definition)
       (match record.kind
-        [(ExternValue) lsp-semantic-token-modifier-declaration]
-        [(ExternFunction) lsp-semantic-token-modifier-declaration]
+        [(or (ExternValue) (ExternFunction))
+          lsp-semantic-token-modifier-declaration]
         [_ lsp-semantic-token-modifier-definition])]))
 
 (define (lsp-semantic-token-add-records!
@@ -11410,66 +11384,136 @@
       (lsp-write-error id -32600 "Document not found")
       (Continue docs)]))
 
-;; tl/expandMacro - Find the form at cursor position and return its text
-;; Returns the top-level form by name.
-;; Full macro expansion would require compiler macro expansion integration.
+;; One `tl/expandMacro` frame: the macro, its defining source and the
+;; invocation range in the document.
+(define (lsp-expand-frame-json
+  [text : (& text str)]
+  [frame : expand.CompilerExpandFrame]) : json.Json
+  (lsp-json-object3
+    "macro"
+    (JsonString frame.macro-name)
+    "definedIn"
+    (JsonString frame.module-path)
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-position-from-byte-line-col text frame.start-line frame.start-col)
+      "end"
+      (lsp-position-from-byte-line-col text frame.end-line frame.end-col))))
+
+(define (lsp-expand-frames-json
+  [text : (& text str)]
+  [frames : (& frames expand.CompilerExpandFrames)]) : json.Json
+  (let
+    [items : json.JsonSeq (json.list-empty)]
+    [index : i64 (- frames.len 1)]
+    (while (>= index 0)
+      (set!
+        items
+        (lsp-json-list-cons
+          (lsp-expand-frame-json
+            text
+            (expand.compiler-expand-frame-ref frames index))
+          items))
+      (set! index (- index 1)))
+    (lsp-json-array items)))
+
+;; tl/expandMacro - The checked expansion of the innermost macro invocation at
+;; `position`, answered by the same query as `typelisp expand` (#7067) over the
+;; document's current text. The response names the selected macro and lists
+;; every enclosing invocation from the outermost inward.
 (define (lsp-handle-tl-expand-macro
   [id : json.Json]
   [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document-decls params docs)
-    [(Found path text _ decls)
-      (match (lsp-json-string-field params "name")
-        [(Ok name)
-          (let
-            [i : i64 0]
-            [n : i64 (lsp_decl_vec.len (& decls))]
-            [found-idx : i64 -1]
-            (while (and (< i n) (= found-idx -1))
-              (let
-                [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
-                (if (string.eq entry.name name)
-                  (set! found-idx i)
-                  (+= i 1))))
-            (if (= found-idx -1)
-              (begin
-                (lsp-write-error id -32600 "Form not found")
-                (Continue docs))
-              (let
-                [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get
-                    (& decls)
-                    found-idx
-                    (lsp-decl-entry-fallback))]
-                [start-off : i64
-                  (lsp-offset-at-position
-                    text
-                    (- entry.form-start-line 1)
-                    (- entry.form-start-col 1))]
-                [end-off : i64
-                  (lsp-offset-at-position
-                    text
-                    (- entry.form-end-line 1)
-                    (- entry.form-end-col 1))]
-                [result : String
-                  (string.substring text start-off (- end-off start-off))]
-                (lsp-write-response
-                  id
-                  (lsp-json-object2
-                    "success"
-                    (JsonBool true)
-                    "text"
-                    (JsonString result)))
-                (Continue docs))))]
-        [(Missing)
-          (lsp-write-error id -32600 "Missing name parameter")
-          (Continue docs)])]
+  [docs : lsp_document_vec.Vec]
+  [stdlib-roots : lsp_svec.Vec]) : LspDocumentHandleResult
+  (match (lsp-get-document
+    (owned_view.compiler-owned-shared-view params)
+    (owned_view.compiler-owned-shared-view docs))
+    [(Found path text _)
+      (let
+        [pos-key : String "position"]
+        (match (json.object-get params (& pos-key))
+          [(JsonFound position)
+            (let
+              [line0 : i64 (lsp-json-int-field-default position "line" -1)]
+              [char0 : i64 (lsp-json-int-field-default position "character" -1)]
+              (match (lsp-offset-at-position-checked
+                (string.copy (& text))
+                line0
+                char0)
+                [(Missing)
+                  (lsp-write-error id -32602 "Invalid position parameter")
+                  (Continue docs)]
+                [(Found offset)
+                  (let
+                    [byte-lc : LspLineCol
+                      (lsp-byte-line-col-at-offset text offset)]
+                    (match (expand.compiler-expand-source-at
+                      path
+                      (owned_view.compiler-owned-shared-view text)
+                      stdlib-roots
+                      (lsp-language-cfgs)
+                      byte-lc.line
+                      byte-lc.col
+                      expand.compiler-expand-default-max-bytes)
+                      [(Expanded frames expansion truncated _)
+                        (let
+                          [selected : expand.CompilerExpandFrame
+                            (expand.compiler-expand-frame-ref
+                              (& frames)
+                              (- frames.len 1))]
+                          (lsp-write-response
+                            id
+                            (lsp-json-object
+                              (lsp-json-member
+                                "success"
+                                (JsonBool true)
+                                (lsp-json-member
+                                  "macro"
+                                  (JsonString selected.macro-name)
+                                  (lsp-json-member
+                                    "definedIn"
+                                    (JsonString selected.module-path)
+                                    (lsp-json-member
+                                      "frames"
+                                      (lsp-expand-frames-json
+                                        (& text)
+                                        (& frames))
+                                      (lsp-json-member
+                                        "expansion"
+                                        (JsonString expansion)
+                                        (lsp-json-member
+                                          "truncated"
+                                          (JsonBool truncated)
+                                          (json.member-list-empty)))))))))
+                          (Continue docs))]
+                      [(NotFound _)
+                        (lsp-write-response
+                          id
+                          (lsp-json-object2
+                            "success"
+                            (JsonBool false)
+                            "error"
+                            (JsonString "No macro invocation at this position")))
+                        (Continue docs)]
+                      [(Failed _)
+                        (lsp-write-response
+                          id
+                          (lsp-json-object2
+                            "success"
+                            (JsonBool false)
+                            "error"
+                            (JsonString
+                              "The document does not load; run tl/check for its diagnostics")))
+                        (Continue docs)]))]))]
+          [(JsonMissing)
+            (lsp-write-error id -32600 "Missing position parameter")
+            (Continue docs)]))]
     [(Missing)
       (lsp-write-error id -32600 "Document not found")
       (Continue docs)]))
 
-;; tl/check - Typecheck a document and return success/error JSON response
 (define (lsp-check-cache-valid?
   [check-cache : lsp_vector_families.LspCheckCache]) : bool
   (match check-cache
@@ -11683,8 +11727,7 @@
                 stdlib-roots
                 (lsp-language-cfgs)
                 job-state)
-                [(Ok _ _) unit]
-                [(Err _ _) unit])
+                [(or (Ok _ _) (Err _ _)) unit])
               (let
                 [found-idx : i64
                   (lsp-nearest-inlay-hint-index inlay-state text line1 col1)]
@@ -11943,10 +11986,9 @@
   (match access
     [(None) 1]
     [(Read) 2]
-    [(Write) 3]
     ;; LSP has no combined read/write highlight. Prefer the stronger write
     ;; classification when a future semantic producer proves both.
-    [(ReadWrite) 3]))
+    [(or (Write) (ReadWrite)) 3]))
 
 (define (lsp-document-highlight-candidate-less?
   [left : (& left LspDocumentHighlightCandidate)]
@@ -13484,7 +13526,15 @@
     [(string.eq method "tl/move")
       (lsp-handle-tl-structural-move id params docs)]
     [(string.eq method "tl/expandMacro")
-      (lsp-handle-tl-expand-macro id params docs)]
+      (let
+        [tool-result : LspDocumentHandleResult
+          (Continue (owned_view.compiler-owned-shared-view docs))]
+        (lsp-typecheck-tool-session-before!)
+        (set!
+          tool-result
+          (lsp-handle-tl-expand-macro id params docs stdlib-roots))
+        (lsp-typecheck-tool-session-after!)
+        tool-result)]
     [(string.eq method "tl/check")
       (lsp-handle-tl-check id params docs stdlib-roots)]
     [(string.eq method "tl/getType")

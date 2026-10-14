@@ -4456,6 +4456,26 @@ by-value read therefore never manufactures an untracked owning alias of
 mutable global storage. `extern` and raw static storage remain governed by
 their unsafe C boundary rather than this safe ordinary-global rule.
 
+While a reference derived from an ordinary global remains live, safe code
+cannot call a function that may assign, mutate, mutably borrow or take the
+address of that global. This includes transitive calls, recursion, later
+arguments, borrowed `match` scrutinees, automatic immutable borrows, and
+cleanup calls. A borrowed temporary is cleaned up after its call: ended
+call-argument loans permit cleanup, while returned references and live borrows
+in an enclosing call still exclude a conflicting disposer. E0222 names the
+global and a call chain to the writer and
+labels the original borrow. Writes only through an explicit `&mut` parameter
+retain the ordinary exclusivity rules; by-value Copy reads and calls that
+write a different global remain allowed.
+
+Direct callees use their transitive global write effects. A call through a
+function value or closure conservatively uses every function and lambda
+whose value is taken anywhere in the checked program. A package is checked
+against its own source globals. Dependency interfaces expose functions and
+types, not global places; a function with an unavailable package body also
+conservatively includes consumer callbacks. Raw `extern` calls remain the
+unsafe boundary. These rules do not change task-thread sharing (§6.5).
+
 **Move sites.** The checker treats these by-value positions as moves for
 move-only values and as copies for copyable values:
 
@@ -9614,6 +9634,7 @@ Commands:
   typelisp clean          Remove build artifacts
   typelisp compile        Generate assembly or IR
   typelisp doc            Generate documentation or run doc tests
+  typelisp expand         Show the checked expansion of a macro invocation
   typelisp explain        Explain a diagnostic code
   typelisp fmt            Format source files or a package
   typelisp init           Scaffold a package in the current directory
@@ -9958,8 +9979,10 @@ loaded file's own path, line and column for `.load`.
   internal TypeLisp rule only and does not authorize borrowed Slice parameters
   in C `extern` declarations.
 - Callers reserve 32 bytes of shadow space before each call.
-- The CRT owns process startup; Windows output emits `main` and no Linux
-  `_tl_start` wrapper.
+- Windows executables define user `main` and use the compiler-owned freestanding
+  `_tl_start` image entry, linked with `/ENTRY:_tl_start` and `/NODEFAULTLIB`.
+  The runtime's platform import libraries are `kernel32.lib` and `ntdll.lib`.
+  Section 6.2 defines argv construction, the main fiber stack, and termination.
 
 ### 11.3 Data layout
 

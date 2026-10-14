@@ -168,6 +168,14 @@ requested; `(try expr)` is the propagation form over compatible concrete
 Result-like enums, which may be different families as long as their `Err*`
 payload types are equal (SPEC.md section 9).
 
+To see what a macro generated, run `typelisp expand file.tl --at LINE:COL`
+on a position inside an expression macro invocation. It checks the file
+exactly as `typelisp check` does, then prints the innermost invocation that
+covers the position: every enclosing invocation from the outermost inward,
+and the checked expansion as source. Expansions that fail to typecheck are
+still shown, with their diagnostics. The language server answers
+`tl/expandMacro` with the same query.
+
 ### Top-level forms
 
 `define` (variable / function), `defenum`, `defstruct`, `extern`, `import`,

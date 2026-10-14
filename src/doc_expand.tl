@@ -338,12 +338,9 @@
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(Enum name) (doc-symbol-text ctx name)]
-    [(EnumArgs name _) (doc-symbol-text ctx name)]
-    [(Struct name) (doc-symbol-text ctx name)]
-    [(StructArgs name _) (doc-symbol-text ctx name)]
-    [(Var name) (doc-symbol-text ctx name)]
-    [(VarArgs name _) (doc-symbol-text ctx name)]
+    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
+         (Var name) (VarArgs name _))
+      (doc-symbol-text ctx name)]
     [(Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
     [(MutPtr elem) (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
@@ -1279,10 +1276,10 @@
               [loaded : compiler_load.ResultCompilerLoadWithPaths
                 (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
                   (owned_view.compiler-owned-shared-view load-state)
-                  (doc-cat2 source-path ".doc-examples.tl")
-                  (doc-expanded-example-source scan.forms)
+                  (& (doc-cat2 source-path ".doc-examples.tl"))
+                  (& (doc-expanded-example-source scan.forms))
                   (sym_i64_env.sym-i64-empty)
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (& stdlib-roots)
                   No
                   (parser.compiler-cfg-empty)
                   pools)]

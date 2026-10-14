@@ -62,8 +62,11 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-ast-write-invalid-name [context : SurfaceAstWriteContext]) : i64
-    (array-ref context.invalid-name 0)))
+  (define (surface-ast-write-invalid-name
+    [context : (& SurfaceAstWriteContext)]) : i64
+    (array-ref
+      (owned_view.compiler-owned-reference-shared-view (& context.invalid-name))
+      0)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -130,7 +133,7 @@
     (surface-ast-write-i64! out (ast.ast-source-span-end-col span))))
 
 (define (surface-ast-reader-new
-  [bytes : (__tl_dyn-array u8)]
+  [bytes : (& (__tl_dyn-array u8))]
   [structural-session : cis.InternStructuralSessionHandle]
   [identity-remap : (__tl_dyn-array i64)]) : SurfaceAstReader
   (let
@@ -140,7 +143,9 @@
       (array-ref c-function-signatures 0)
       (ast.ast-type-list-with-capacity 0))
     (SurfaceAstReader
-      (byte_reader.new bytes byte_reader.unlimited-work)
+      (byte_reader.new
+        (owned_view.compiler-owned-reference-shared-view bytes)
+        byte_reader.unlimited-work)
       structural-session
       identity-remap
       c-function-signatures)))
@@ -282,7 +287,7 @@
   (define (surface-ast-write-name-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [items : (__tl_dyn-array i64)]
+    [items : (& (__tl_dyn-array i64))]
     [count : i64]) : unit
     (let
       [index : i64 0]
@@ -296,8 +301,8 @@
   (define (surface-ast-write-lifetime-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [lifetimes : ast.AstLifetimeList]) : unit
-    (surface-ast-write-name-list! out context lifetimes.slots lifetimes.len)))
+    [lifetimes : (& ast.AstLifetimeList)]) : unit
+    (surface-ast-write-name-list! out context (& lifetimes.slots) lifetimes.len)))
 
 (define (surface-ast-read-lifetime-list!
   [reader : (&mut reader SurfaceAstReader)]) : ast.AstLifetimeList
@@ -314,7 +319,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-type-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
-    [types : ast.AstTypeList]) : unit
+    [types : (& ast.AstTypeList)]) : unit
     (let
       [index : i64 0]
       [count : i64 types.len]
@@ -338,7 +343,7 @@
   (define (surface-ast-write-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [ty : ast.AstType]) : unit
+    [ty : (& ast.AstType)]) : unit
     (match ty
       [(I64) (surface-ast-write-i64! out 0)]
       [(I32) (surface-ast-write-i64! out 1)]
@@ -361,11 +366,11 @@
       [(ExprList) (surface-ast-write-i64! out 18)]
       [(Func args ret)
         (surface-ast-write-i64! out 19)
-        (surface-ast-write-type-list! out (deref args))
+        (surface-ast-write-type-list! out (& (deref args)))
         (surface-ast-write-i64! out ret)]
       [(Tuple items)
         (surface-ast-write-i64! out 20)
-        (surface-ast-write-type-list! out (deref items))]
+        (surface-ast-write-type-list! out (& (deref items)))]
       [(Array elem count)
         (surface-ast-write-i64! out 21)
         (surface-ast-write-i64! out elem)
@@ -398,21 +403,21 @@
       [(EnumArgs name lifetimes)
         (surface-ast-write-i64! out 28)
         (surface-ast-write-name! out context name)
-        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
+        (surface-ast-write-lifetime-list! out context (& (deref lifetimes)))]
       [(Struct name)
         (surface-ast-write-i64! out 29)
         (surface-ast-write-name! out context name)]
       [(StructArgs name lifetimes)
         (surface-ast-write-i64! out 30)
         (surface-ast-write-name! out context name)
-        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
+        (surface-ast-write-lifetime-list! out context (& (deref lifetimes)))]
       [(Var name)
         (surface-ast-write-i64! out 31)
         (surface-ast-write-name! out context name)]
       [(VarArgs name lifetimes)
         (surface-ast-write-i64! out 32)
         (surface-ast-write-name! out context name)
-        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
+        (surface-ast-write-lifetime-list! out context (& (deref lifetimes)))]
       [(CFunc signature mode)
         (surface-ast-write-i64! out 38)
         (surface-ast-write-i64! out signature)
@@ -512,12 +517,12 @@
   (define (surface-ast-write-maybe-type!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [maybe-ty : ast.AstMaybeType]) : unit
+    [maybe-ty : (& ast.AstMaybeType)]) : unit
     (match maybe-ty
       [(No) (surface-ast-write-i64! out 0)]
       [(Some ty)
         (surface-ast-write-i64! out 1)
-        (surface-ast-write-type! out context ty)])))
+        (surface-ast-write-type! out context (& ty))])))
 
 (define (surface-ast-read-maybe-type! [reader : (&mut reader SurfaceAstReader)]) : ast.AstMaybeType
   (let
@@ -536,8 +541,8 @@
   (define (surface-ast-write-literal!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
-    [literal : ast.AstLiteral]) : unit
-    (match literal
+    [literal : (& ast.AstLiteral)]) : unit
+    (match (owned_view.compiler-owned-reference-shared-view literal)
       [(Int value text)
         (surface-ast-write-i64! out 0)
         (surface-ast-write-i64! out value)

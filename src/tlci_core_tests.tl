@@ -48,23 +48,23 @@
         (tlci.tlci-spmd-specializations-push
           (tlci.tlci-spmd-specializations-push
             (tlci.tlci-spmd-specializations-with-capacity 2)
-            avx)
-          scalar))]
+            (& avx))
+          (& scalar)))]
     [beta : tlci.TlciSpmdCallable
       (tlci.tlci-make-spmd-callable
         "demo.beta"
         "(-> i64 i64)"
         (tlci.tlci-spmd-specializations-push
           (tlci.tlci-spmd-specializations-with-capacity 1)
-          future))]
+          (& future)))]
     (tlci.tlci-make-metadata-v2
       "demo"
       "0.2.0"
       (tlci.tlci-spmd-callables-push
         (tlci.tlci-spmd-callables-push
           (tlci.tlci-spmd-callables-with-capacity 2)
-          alpha)
-        beta))))
+          (& alpha))
+        (& beta)))))
 
 (define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array u8)
   (let
@@ -303,7 +303,7 @@
   [table : tlci.TlciHostCallbackTable]
   [expected : String]) : bool
   (tlci-test-host-abi-rejects?
-    (tlci.tlci-validate-host-callback-table table)
+    (tlci.tlci-validate-host-callback-table (& table))
     expected))
 
 (define (tlci-test-registration-rejects?
@@ -323,23 +323,25 @@
     (and
       (tlci-test-host-abi-layout-ok?)
       (tlci-test-host-abi-accepts?
-        (tlci.tlci-validate-host-callback-table (tlci-test-host-callback-table)))
+        (tlci.tlci-validate-host-callback-table
+          (& (tlci-test-host-callback-table))))
       (tlci-test-host-abi-accepts?
         (tlci.tlci-validate-image-registration (tlci-test-image-registration)))
       (tlci-test-host-abi-accepts?
         (tlci.tlci-validate-host-callback-table
-          (tlci.TlciHostCallbackTable
-            magic
-            version
-            (+ size 16)
-            1234
-            0
-            0
-            0
-            8192
-            (__tl_make-array String 0)
-            (__tl_make-array i64 0)
-            0)))
+          (&
+            (tlci.TlciHostCallbackTable
+              magic
+              version
+              (+ size 16)
+              1234
+              0
+              0
+              0
+              8192
+              (__tl_make-array String 0)
+              (__tl_make-array i64 0)
+              0))))
       (tlci-test-host-abi-accepts?
         (tlci.tlci-validate-image-registration
           (tlci.TlciImageRegistration
@@ -431,20 +433,20 @@
         "tlci host ABI: macro entry table requires a count"))))
 
 (define (tlci-test-parse-round-trip? [image : tlci.TlciImage]) : bool
-  (match (tlci.tlci-emit-image image)
+  (match (tlci.tlci-emit-image (& image))
     [(Err _) false]
     [(Ok bytes)
-      (match (tlci.tlci-parse-image (clone bytes))
+      (match (tlci.tlci-parse-image (& (clone bytes)))
         [(Err _) false]
         [(Ok parsed)
-          (match (tlci.tlci-emit-image parsed)
+          (match (tlci.tlci-emit-image (& parsed))
             [(Err _) false]
             [(Ok again) (tlci.tlci-bytes-eq? bytes again)])])]))
 
 (define (tlci-test-metadata-emit-parse?) : bool
   (let
-    [source : String (tlci.tlci-metadata-emit (tlci-test-metadata))]
-    (match (tlci.tlci-metadata-parse (string.copy source))
+    [source : String (tlci.tlci-metadata-emit (& (tlci-test-metadata)))]
+    (match (tlci.tlci-metadata-parse (& (string.copy source)))
       [(Err _) false]
       [(Ok parsed)
         (and
@@ -494,13 +496,13 @@
 
 (define (tlci-test-v2-metadata-emit-parse?) : bool
   (let
-    [source : String (tlci.tlci-metadata-emit (tlci-test-v2-metadata))]
-    (match (tlci.tlci-metadata-parse (string.copy source))
+    [source : String (tlci.tlci-metadata-emit (& (tlci-test-v2-metadata)))]
+    (match (tlci.tlci-metadata-parse (& (string.copy source)))
       [(Err _) false]
       [(Ok parsed)
         (and
           (tlci-test-v2-parsed-shape? (clone parsed))
-          (string.eq source (tlci.tlci-metadata-emit parsed)))])))
+          (string.eq source (tlci.tlci-metadata-emit (& parsed))))])))
 
 (define (tlci-test-dense-spmd-sequences?) : bool
   (let
@@ -513,20 +515,22 @@
     (while (< index 33)
       (tlci.tlci-spmd-specializations-push!
         (&mut specializations)
-        (tlci.tlci-make-spmd-specialization
-          "spmd-call-v1"
-          "scalar"
-          (+ index 1)
-          "u"
-          "u"
-          -1
-          (str_cat.str-cat "specialization-" (string.int->string index))))
+        (&
+          (tlci.tlci-make-spmd-specialization
+            "spmd-call-v1"
+            "scalar"
+            (+ index 1)
+            "u"
+            "u"
+            -1
+            (str_cat.str-cat "specialization-" (string.int->string index)))))
       (tlci.tlci-spmd-callables-push!
         (&mut callables)
-        (tlci.tlci-make-spmd-callable
-          (str_cat.str-cat "helper-" (string.int->string index))
-          "(-> i64 i64)"
-          (tlci.tlci-spmd-specializations-empty)))
+        (&
+          (tlci.tlci-make-spmd-callable
+            (str_cat.str-cat "helper-" (string.int->string index))
+            "(-> i64 i64)"
+            (tlci.tlci-spmd-specializations-empty))))
       (set! index (+ index 1)))
     (set! index 0)
     (while (< index 33)
@@ -553,7 +557,7 @@
 
 (define (tlci-test-v1-emission-unchanged?) : bool
   (string.eq
-    (tlci.tlci-metadata-emit (tlci-test-metadata))
+    (tlci.tlci-metadata-emit (& (tlci-test-metadata)))
     (str_cat.str-cat
       "(typelisp-tlci-metadata\n"
       "  (version \"v1\")\n"
@@ -570,19 +574,19 @@
   (str_cat.str-cat
     "(specialization "
     "(abi "
-    (tlci.tlci-quote-string abi)
+    (tlci.tlci-quote-string (& abi))
     ") (backend "
-    (tlci.tlci-quote-string backend)
+    (tlci.tlci-quote-string (& backend))
     ") (lanes "
     (string.int->string lanes)
     ") (args "
-    (tlci.tlci-quote-string args)
+    (tlci.tlci-quote-string (& args))
     ") (result "
-    (tlci.tlci-quote-string result)
+    (tlci.tlci-quote-string (& result))
     ") (index-param "
     (string.int->string index-param)
     ") (symbol "
-    (tlci.tlci-quote-string symbol)
+    (tlci.tlci-quote-string (& symbol))
     "))"))
 
 (define (tlci-test-spmd-helper-source
@@ -591,9 +595,9 @@
   [specializations : String]) : String
   (str_cat.str-cat
     "(helper (name "
-    (tlci.tlci-quote-string name)
+    (tlci.tlci-quote-string (& name))
     ") (signature "
-    (tlci.tlci-quote-string signature)
+    (tlci.tlci-quote-string (& signature))
     ") "
     specializations
     ")"))
@@ -608,19 +612,19 @@
     "))"))
 
 (define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
-  (match (tlci.tlci-metadata-parse source)
+  (match (tlci.tlci-metadata-parse (& source))
     [(Err message) (string.eq message expected)]
     [(Ok _) false]))
 
 (define (tlci-test-parse-rejects?
   [bytes : (__tl_dyn-array u8)]
   [expected : String]) : bool
-  (match (tlci.tlci-parse-image bytes)
+  (match (tlci.tlci-parse-image (& bytes))
     [(Err message) (string.eq message expected)]
     [(Ok _) false]))
 
 (define (tlci-test-emit-rejects? [image : tlci.TlciImage] [expected : String]) : bool
-  (match (tlci.tlci-emit-image image)
+  (match (tlci.tlci-emit-image (& image))
     [(Err message) (string.eq message expected)]
     [(Ok _) false]))
 
@@ -634,7 +638,7 @@
     out))
 
 (define (tlci-test-rejections-ok?) : bool
-  (match (tlci.tlci-emit-image (tlci-test-metadata-only-image))
+  (match (tlci.tlci-emit-image (& (tlci-test-metadata-only-image)))
     [(Err _) false]
     [(Ok bytes)
       (and
@@ -677,11 +681,12 @@
   [code-bearing : bool]
   [host-platform : i64]) : tlci.TlciImageHostAdmission
   (match (tlci.tlci-emit-image
-    (tlci-test-platform-image
-      (if (= platform tlci.tlci-host-platform-x86-64-legacy)
-        host-platform
-        platform)
-      code-bearing))
+    (&
+      (tlci-test-platform-image
+        (if (= platform tlci.tlci-host-platform-x86-64-legacy)
+          host-platform
+          platform)
+        code-bearing)))
     [(Err message) (Rejected message)]
     [(Ok bytes)
       (tlci.tlci-set-u64! (&mut bytes) 16 platform)
@@ -689,7 +694,7 @@
         (&mut bytes)
         tlci.tlci-hash-field-offset
         (tlci.tlci-content-hash bytes))
-      (match (tlci.tlci-parse-image bytes)
+      (match (tlci.tlci-parse-image (& bytes))
         [(Err message) (Rejected message)]
         [(Ok image) (tlci.tlci-image-admit-host image host-platform)])]))
 
@@ -912,7 +917,7 @@
     (set!
       (array-ref sections 1)
       (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
-    (match (tlci.tlci-aux-pack-rodata (clone base) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (clone base)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -930,7 +935,7 @@
           (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-facts)
             [(Missing) true]
             [_ false])
-          (match (tlci.tlci-aux-pack-rodata base sections)
+          (match (tlci.tlci-aux-pack-rodata (& base) sections)
             [(Ok again) (tlci.tlci-bytes-eq? packed again)]
             [(Err _) false]))])))
 
@@ -944,7 +949,7 @@
         tlci.tlci-aux-kind-package-identity
         1
         (tlci.tlci-string->bytes "identity")))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (match (tlci.tlci-aux-directory packed)
@@ -982,10 +987,10 @@
       (array-ref duplicates 1)
       (owned_view.compiler-owned-array-element-shared-view sections 0))
     (and
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) duplicates)
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) duplicates)
         [(Err _) true]
         [_ false])
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
         [(Err _) false]
         [(Ok packed)
           (match (tlci.tlci-aux-directory packed)
@@ -1085,7 +1090,7 @@
     (set!
       (array-ref sections 0)
       (tlci.tlci-package-source-binding-section 12345))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -1111,7 +1116,7 @@
         tlci.tlci-aux-kind-package-source-binding
         2
         unsupported))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -1127,7 +1132,7 @@
         tlci.tlci-aux-kind-package-source-binding
         tlci.tlci-package-source-binding-schema-version
         short))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (match (tlci.tlci-package-source-binding-read packed)
@@ -1140,7 +1145,7 @@
         tlci.tlci-aux-kind-package-source-binding
         tlci.tlci-package-source-binding-schema-version
         zero))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -1163,7 +1168,7 @@
         tlci.tlci-aux-kind-package-source-binding
         tlci.tlci-package-source-binding-schema-version
         negative))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (match (tlci.tlci-package-source-binding-read packed)
@@ -1176,7 +1181,7 @@
         tlci.tlci-aux-kind-package-source-binding
         tlci.tlci-package-source-binding-schema-version
         limit))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+    (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
       [(Err _) false]
       [(Ok packed)
         (match (tlci.tlci-package-source-binding-read packed)

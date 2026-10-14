@@ -36949,15 +36949,22 @@ b_keep:
 (define (read-len) : i64 (+ (peek (& cell)) (+ cell.len triple.c)))
 (define (main) : i64 (begin (install! 3) (install3! 4) (read-len)))")
 
-;; The t2 shape: `observe` holds a borrow of `cell` across a call that rebinds
-;; it, so the box identity is observable and the global must stay boxed.
-(define (compiler-backend-inline-aggregate-global-escape-source) : String
-  "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
+;; A raw alias can observe box identity across a rebind. The corresponding
+;; safe reference program must be rejected before reaching the backend.
+(define (compiler-backend-inline-aggregate-global-escape-source
+  [raw-alias : bool]) : String
+  (str_cat.str-cat
+    "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
 (define cell : Cell (Cell (__tl_make-array i64 4) 4))
 (define (install! [n : i64]) : unit
   (set! cell (Cell (__tl_make-array i64 n) n)))
-(define (observe [c : (& Cell)]) : i64 (begin (install! 9) c.len))
-(define (main) : i64 (observe (& cell)))")
+"
+    (if raw-alias
+      "(define (observe [c : (MutPtr Cell)]) : i64
+  (begin (install! 9) (unsafe (deref c).len)))
+(define (main) : i64 (unsafe (observe (ptr-addr-of cell))))"
+      "(define (observe [c : (& Cell)]) : i64 (begin (install! 9) c.len))
+(define (main) : i64 (observe (& cell)))")))
 
 ;; `through` reads `cell` and calls through a function VALUE, so its callee set
 ;; is not enumerable and the global must stay boxed.
@@ -37023,13 +37030,8 @@ b_keep:
         (asm-lacks? asm "    movq _tl_cell(%rip), %"))]
     [(Err _) false]))
 
-;; (v) the safety rule: a global the reader's call graph can rebind keeps the
-;; BOXED 8-byte cell -- the pointer cell, the pointer store the pre-IAG backend
-;; emitted, and a cell READ at every use. This is the property the escape
-;; program actually has; its printed value is optimization-dependent for
-;; reasons that predate IAG-1 (the borrow is materialized after the rebind once
-;; the setter is inlined), so it is deliberately pinned HERE on the emitted
-;; shape rather than on an opt-level-specific runtime value.
+;; A global whose raw alias or indirect reader can observe a rebind retains
+;; the boxed cell, pointer store, and cell load at every use.
 (define (compiler-backend-inline-aggregate-global-excluded-shape-ok?
   [src : String]) : bool
   (match (backend.compiler-backend-emit-source src)
@@ -37058,8 +37060,15 @@ b_keep:
 
 (define (compiler-backend-inline-aggregate-global-safety-ok?) : bool
   (and
+    (match (backend.compiler-backend-emit-source
+      (compiler-backend-inline-aggregate-global-escape-source false))
+      [(Err diagnostic)
+        (string.eq
+          (cdiag.compiler-diagnostic-code-or-empty (__tl-box-place diagnostic))
+          "E0222")]
+      [(Ok _) false])
     (compiler-backend-inline-aggregate-global-excluded-shape-ok?
-      (compiler-backend-inline-aggregate-global-escape-source))
+      (compiler-backend-inline-aggregate-global-escape-source true))
     (compiler-backend-inline-aggregate-global-excluded-shape-ok?
       (compiler-backend-inline-aggregate-global-indirect-source))))
 

@@ -1015,7 +1015,7 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]) : bool
   (let
-    [normalized : String (cload.compiler-load-canonical-path path)]
+    [normalized : String (cload.compiler-load-canonical-path (& path))]
     [path-index : i64 0]
     [found : bool false]
     (while (and (< path-index index.path-len) (not found))
@@ -1026,7 +1026,7 @@
             path-index)]
         [owned-path : String (string.copy (& info.path))]
         (if (string.eq
-          (cload.compiler-load-canonical-path owned-path)
+          (cload.compiler-load-canonical-path (& owned-path))
           normalized)
           (set! found true)
           unit)
@@ -1331,7 +1331,7 @@
 (define (compiler-semantic-decl-symbol [decl : ast.AstDecl]) : CompilerSemanticMaybeDecl
   (match decl
     [(Def _ name _ _) (Some name Value)]
-    [(DefFn _ name _ _ _ _) (Some name Function)]
+    [(or (DefFn _ name _ _ _ _) (DefDispatch _ name _)) (Some name Function)]
     [(DefMacro _ name _ _ _) (Some name Macro)]
     [(Extern _ name kind _ _)
       (Some
@@ -1339,11 +1339,9 @@
         (match kind
           [(Value) ExternValue]
           [(Function) ExternFunction]))]
-    [(DefEnum _ name _ _) (Some name Enum)]
-    [(DefEnumLifetimes _ name _ _ _) (Some name Enum)]
-    [(DefStruct _ name _ _ _) (Some name Struct)]
-    [(DefStructLifetimes _ name _ _ _ _) (Some name Struct)]
-    [(DefDispatch _ name _) (Some name Function)]
+    [(or (DefEnum _ name _ _) (DefEnumLifetimes _ name _ _ _)) (Some name Enum)]
+    [(or (DefStruct _ name _ _ _) (DefStructLifetimes _ name _ _ _ _))
+      (Some name Struct)]
     [(Unsafe inner) (compiler-semantic-decl-symbol (deref inner))]
     [_ None]))
 
@@ -1722,9 +1720,9 @@
       (let
         [maybe-span : tc.TcMaybeAstSourceSpan
           (match decl
-            [(Def _ _ _ expr) (tc.tc-expr-id-maybe-span-installed expr)]
-            [(DefFn _ _ _ _ body _) (tc.tc-expr-id-maybe-span-installed body)]
-            [(DefMacro _ _ _ _ body) (tc.tc-expr-id-maybe-span-installed body)]
+            [(or (Def _ _ _ expr) (DefFn _ _ _ _ expr _)
+                 (DefMacro _ _ _ _ expr))
+              (tc.tc-expr-id-maybe-span-installed expr)]
             [(Unsafe inner)
               (match (compiler-semantic-decl-origin decls index (deref inner))
                 [(Some span) (Some span)]
@@ -1781,10 +1779,9 @@
     (match decl
       ;; DefMacro templates are checked by CTFE/macro expansion rather than the
       ;; final runtime body checker that publishes retained let facts.
-      [(DefMacro _ _ _ _ _) false]
       ;; Test bodies stay in the parsed program for tooling but ordinary source
       ;; checking deliberately does not execute/typecheck them.
-      [(Test _ _ _ _) false]
+      [(or (DefMacro _ _ _ _ _) (Test _ _ _ _)) false]
       [(Unsafe inner)
         (compiler-semantic-decl-retains-checked-let-facts? path (deref inner))]
       [_ true])))
@@ -2015,13 +2012,7 @@
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
     (match kind
-      [(Struct)
-        (let
-          [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
-          (if (csym.compiler-symbols-handle-found? handle)
-            (Some handle)
-            None))]
-      [(Enum)
+      [(or (Struct) (Enum))
         (let
           [handle : i64 (compiler-semantic-type-name-handle ctx name-id)]
           (if (csym.compiler-symbols-handle-found? handle)
@@ -2128,8 +2119,7 @@
   [kind : CompilerSemanticSymbolKind]) : i64
   (match kind
     [(Macro) 3]
-    [(Struct) 2]
-    [(Enum) 2]
+    [(or (Struct) (Enum)) 2]
     [(Module) 4]
     [(Field) 5]
     [(EnumMember) 6]
@@ -2155,14 +2145,7 @@
       (string.int->string (compiler-semantic-canonical-kind-tag record.kind))]
     [scoped-name : String
       (match record.kind
-        [(Field)
-          (str_cat.str-cat
-            (string.int->string
-              (csym.compiler-registry-handle-owner-index
-                record.symbol.declaration-ordinal))
-            "/"
-            record.display-name)]
-        [(EnumMember)
+        [(or (Field) (EnumMember))
           (str_cat.str-cat
             (string.int->string
               (csym.compiler-registry-handle-owner-index
@@ -2399,13 +2382,7 @@
     [owner-decl : ast.AstDecl (compiler-semantic-handle-decl ctx owner-handle)]
     [child-index : i64 (csym.compiler-registry-handle-child-index handle)]
     (match owner-decl
-      [(DefEnum _ _ _ variants)
-        (match (ast.ast-variant-def-list-get
-          (& variants)
-          child-index
-          (ast.ast-variant-def-fallback))
-          [(Def name _ _) (tc.tc-env-key-name-text name)])]
-      [(DefEnumLifetimes _ _ _ _ variants)
+      [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
         (match (ast.ast-variant-def-list-get
           (& variants)
           child-index
@@ -2413,13 +2390,7 @@
           [(Def name _ _) (tc.tc-env-key-name-text name)])]
       [(Unsafe inner)
         (match (__tl-box-place inner)
-          [(DefEnum _ _ _ variants)
-            (match (ast.ast-variant-def-list-get
-              (& variants)
-              child-index
-              (ast.ast-variant-def-fallback))
-              [(Def name _ _) (tc.tc-env-key-name-text name)])]
-          [(DefEnumLifetimes _ _ _ _ variants)
+          [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
             (match (ast.ast-variant-def-list-get
               (& variants)
               child-index
@@ -2822,16 +2793,7 @@
               [(None) unit]
               [(Some decl-name-id kind)
                 (match kind
-                  [(Struct)
-                    (compiler-semantic-record-type-name-use-with-kind!
-                      (owned_view.compiler-owned-shared-view state)
-                      origin
-                      decl
-                      handle
-                      module-id
-                      decl-name-id
-                      kind)]
-                  [(Enum)
+                  [(or (Struct) (Enum))
                     (compiler-semantic-record-type-name-use-with-kind!
                       (owned_view.compiler-owned-shared-view state)
                       origin
@@ -2901,11 +2863,8 @@
     [state : CompilerSemanticWalkState
       (owned_view.compiler-owned-reference-shared-view state)]
     (match (owned_view.compiler-owned-shared-view ty)
-      [(Struct name-id) (compiler-semantic-record-type-name-use! state name-id)]
-      [(StructArgs name-id _)
-        (compiler-semantic-record-type-name-use! state name-id)]
-      [(Enum name-id) (compiler-semantic-record-type-name-use! state name-id)]
-      [(EnumArgs name-id _)
+      [(or (Struct name-id) (StructArgs name-id _) (Enum name-id)
+           (EnumArgs name-id _))
         (compiler-semantic-record-type-name-use! state name-id)]
       [(Var name-id)
         (match (tc.tc-resolve-type state.ctx ty)
@@ -2916,9 +2875,7 @@
           [_ (compiler-semantic-record-type-name-use! state name-id)])]
       [(VarArgs name-id _)
         (match (tc.tc-resolve-type state.ctx ty)
-          [(StructArgs resolved-name-id _)
-            (compiler-semantic-record-type-name-use! state resolved-name-id)]
-          [(EnumArgs resolved-name-id _)
+          [(or (StructArgs resolved-name-id _) (EnumArgs resolved-name-id _))
             (compiler-semantic-record-type-name-use! state resolved-name-id)]
           [_ (compiler-semantic-record-type-name-use! state name-id)])]
       [_
@@ -3284,16 +3241,13 @@
   [env : tc.TcTypeEnv]
   [node-id : i64]) : unit
   (match (ast.ast-node-get node-id)
-    [(Unquote inner) (compiler-semantic-walk-node! state scope env inner)]
-    [(UnquoteSplicing inner)
+    [(or (Unquote inner) (UnquoteSplicing inner))
       (compiler-semantic-walk-node! state scope env inner)]
-    [(Quote _) unit]
     ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
     ;; the future quasiquote evaluation rather than the surrounding macro.
-    [(Quasiquote _) unit]
-    [(Replace _ _) unit]
-    [(ForOwnedState _) unit]
-    [(ForOwnedStep _) unit]
+    [(or (Quote _) (Quasiquote _) (Replace _ _) (ForOwnedState _)
+         (ForOwnedStep _))
+      unit]
     ;; Template syntax: only expression children can hold an unquote.
     [_
       (ast.ast-expr-for-each-child
@@ -3818,28 +3772,14 @@
   [origin : parse_core.CompilerParseSemanticOrigin]
   [access : CompilerSemanticAccess]) : unit
   (match receiver-ty
-    [(Struct struct-name-id)
+    [(or (Struct struct-name-id) (StructArgs struct-name-id _))
       (compiler-semantic-record-field-use-for-struct!
         state
         struct-name-id
         field-name-id
         origin
         access)]
-    [(StructArgs struct-name-id _)
-      (compiler-semantic-record-field-use-for-struct!
-        state
-        struct-name-id
-        field-name-id
-        origin
-        access)]
-    [(Ref _ inner)
-      (compiler-semantic-record-field-use-for-type!
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx inner)
-        field-name-id
-        origin
-        access)]
-    [(MutRef _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (compiler-semantic-record-field-use-for-type!
         (owned_view.compiler-owned-shared-view state)
         (tc.tc-context-type-get state.ctx inner)
@@ -3979,8 +3919,7 @@
             [resolved : ast.AstType (tc.tc-resolve-type state.ctx scrutinee-ty)]
             [enum-name-id : i64
               (match resolved
-                [(Enum name) name]
-                [(EnumArgs name _) name]
+                [(or (Enum name) (EnumArgs name _)) name]
                 [_ -1])]
             (if (< enum-name-id 0)
               unit
@@ -4035,8 +3974,7 @@
 (define (compiler-semantic-discard-variant-pattern-origin!
   [state : CompilerSemanticWalkState]) : unit
   (match (compiler-semantic-origin-take! state EnumVariantPattern)
-    [(None) unit]
-    [(Some _) unit]))
+    [(or (None) (Some _)) unit]))
 
 (define (compiler-semantic-bind-pattern!
   [state : CompilerSemanticWalkState]
@@ -4104,31 +4042,8 @@
             scrutinee-maybe-ty
             name)
           (CompilerSemanticBindResult scope env search-start)))]
-    [(Tuple items)
-      (compiler-semantic-bind-pattern-list!
-        state
-        scope
-        env
-        fact-env
-        facts-available
-        bound-names
-        (deref items)
-        No
-        search-start
-        search-limit)]
-    [(Array items)
-      (compiler-semantic-bind-pattern-list!
-        state
-        scope
-        env
-        fact-env
-        facts-available
-        bound-names
-        (deref items)
-        No
-        search-start
-        search-limit)]
-    [(Slice items _)
+    [(or (Tuple items) (Array items) (Slice items _) (Fields items)
+         (Field _ items))
       (compiler-semantic-bind-pattern-list!
         state
         scope
@@ -4193,30 +4108,6 @@
               cursor
               search-limit)))
         (CompilerSemanticBindResult first.scope first.env cursor))]
-    [(Fields items)
-      (compiler-semantic-bind-pattern-list!
-        state
-        scope
-        env
-        fact-env
-        facts-available
-        bound-names
-        (deref items)
-        No
-        search-start
-        search-limit)]
-    [(Field _ items)
-      (compiler-semantic-bind-pattern-list!
-        state
-        scope
-        env
-        fact-env
-        facts-available
-        bound-names
-        (deref items)
-        No
-        search-start
-        search-limit)]
     [_ (CompilerSemanticBindResult scope env search-start)]))
 
 ;; Records a later or-pattern alternative's binding site of `name-id` as
@@ -4285,21 +4176,7 @@
   [search-start : i64]
   [search-limit : i64]) : i64
   (match pattern
-    [(ast.AstPattern.Var name _)
-      (if (tc.tc-name-id-list-contains bound-names name)
-        (compiler-semantic-rebind-local!
-          state
-          scope
-          name
-          search-start
-          search-limit)
-        (begin
-          (compiler-semantic-record-variant-pattern-use!
-            state
-            scrutinee-maybe-ty
-            name)
-          search-start))]
-    [(ast.AstPattern.Binding name)
+    [(or (ast.AstPattern.Var name _) (ast.AstPattern.Binding name))
       (if (tc.tc-name-id-list-contains bound-names name)
         (compiler-semantic-rebind-local!
           state
@@ -4335,7 +4212,9 @@
         scrutinee-maybe-ty
         search-start
         search-limit)]
-    [(ast.AstPattern.Tuple items)
+    [(or (ast.AstPattern.Tuple items) (ast.AstPattern.Array items)
+         (ast.AstPattern.Slice items _) (ast.AstPattern.Fields items)
+         (ast.AstPattern.Field _ items))
       (compiler-semantic-rebind-pattern-list!
         state
         scope
@@ -4344,44 +4223,7 @@
         ast.AstMaybeType.No
         search-start
         search-limit)]
-    [(ast.AstPattern.Array items)
-      (compiler-semantic-rebind-pattern-list!
-        state
-        scope
-        bound-names
-        (deref items)
-        ast.AstMaybeType.No
-        search-start
-        search-limit)]
-    [(ast.AstPattern.Slice items _)
-      (compiler-semantic-rebind-pattern-list!
-        state
-        scope
-        bound-names
-        (deref items)
-        ast.AstMaybeType.No
-        search-start
-        search-limit)]
-    [(ast.AstPattern.Fields items)
-      (compiler-semantic-rebind-pattern-list!
-        state
-        scope
-        bound-names
-        (deref items)
-        ast.AstMaybeType.No
-        search-start
-        search-limit)]
-    [(ast.AstPattern.Field _ items)
-      (compiler-semantic-rebind-pattern-list!
-        state
-        scope
-        bound-names
-        (deref items)
-        ast.AstMaybeType.No
-        search-start
-        search-limit)]
-    [(ast.AstPattern.Wildcard) search-start]
-    [(ast.AstPattern.Literal _) search-start]))
+    [(or (ast.AstPattern.Wildcard) (ast.AstPattern.Literal _)) search-start]))
 
 (define (compiler-semantic-rebind-pattern-list!
   [state : CompilerSemanticWalkState]
@@ -4721,13 +4563,8 @@
   [state : CompilerSemanticWalkState]
   [ty : ast.AstType]) : i64
   (match (tc.tc-resolve-type state.ctx ty)
-    [(Struct name-id) name-id]
-    [(StructArgs name-id _) name-id]
-    [(Ref _ inner)
-      (compiler-semantic-struct-name-for-type
-        (owned_view.compiler-owned-shared-view state)
-        (tc.tc-context-type-get state.ctx inner))]
-    [(MutRef _ inner)
+    [(or (Struct name-id) (StructArgs name-id _)) name-id]
+    [(or (Ref _ inner) (MutRef _ inner))
       (compiler-semantic-struct-name-for-type
         (owned_view.compiler-owned-shared-view state)
         (tc.tc-context-type-get state.ctx inner))]
@@ -5159,12 +4996,9 @@
                 bindings
                 body
                 maybe-span)])]
-        [(Quote _) unit]
+        [(or (Quote _) (Replace _ _) (ForOwnedState _) (ForOwnedStep _)) unit]
         [(Quasiquote inner)
           (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-        [(Replace _ _) unit]
-        [(ForOwnedState _) unit]
-        [(ForOwnedStep _) unit]
         [_
           (ast.ast-expr-for-each-child
             (ast.ast-node-get node-id)
@@ -5671,18 +5505,14 @@
         state.top-env
         body)]
     [(Extern _ _ _ _ ty) (compiler-semantic-walk-type! state ty)]
-    [(DefEnum _ name _ variants)
+    [(or (DefEnum _ name _ variants) (DefEnumLifetimes _ name _ _ variants))
       (compiler-semantic-walk-variant-defs! state name variants)]
-    [(DefEnumLifetimes _ name _ _ variants)
-      (compiler-semantic-walk-variant-defs! state name variants)]
-    [(DefStruct _ name _ _ fields)
-      (compiler-semantic-walk-field-defs! state name fields)]
-    [(DefStructLifetimes _ name _ _ _ fields)
+    [(or (DefStruct _ name _ _ fields) (DefStructLifetimes _ name _ _ _ fields))
       (compiler-semantic-walk-field-defs! state name fields)]
     [(DefDispatch _ _ variants)
       (compiler-semantic-walk-dispatch-variants! state variants)]
-    [(Module _) (compiler-semantic-record-module-declaration! state)]
-    [(ModuleBody _ _) (compiler-semantic-record-module-declaration! state)]
+    [(or (Module _) (ModuleBody _ _))
+      (compiler-semantic-record-module-declaration! state)]
     [(Import _ spec) (compiler-semantic-walk-import! state spec)]
     [(Unsafe inner) (compiler-semantic-walk-decl! state (deref inner))]
     [_ unit]))
@@ -6781,11 +6611,7 @@
                       (owned_view.compiler-owned-shared-view decl))]
                   [semantic-origin : CompilerSemanticMaybeOrigin
                     (match kind
-                      [(Struct)
-                        (compiler-semantic-origin-take!
-                          walk-state
-                          TypeDefinition)]
-                      [(Enum)
+                      [(or (Struct) (Enum))
                         (compiler-semantic-origin-take!
                           walk-state
                           TypeDefinition)]
@@ -7189,10 +7015,15 @@
         (compiler-check-program-with-paths-index-cache
           path
           source
-          (cload.compiler-load-decl-list-append prelude-decls entry-decls)
+          (cload.compiler-load-decl-list-append
+            (& prelude-decls)
+            (& entry-decls))
           (cload.compiler-load-decl-path-list-append
-            prelude-paths
-            (ast.ast-decl-path-list-with-modules entry-paths (& entry-modules)))
+            (& prelude-paths)
+            (&
+              (ast.ast-decl-path-list-with-modules
+                entry-paths
+                (& entry-modules))))
           stdlib-roots
           cfgs
           cache-scope))]
@@ -7264,7 +7095,7 @@
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (match (parse_core.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view source)
+    (& source)
     cfgs)
     [(Fatal diagnostics)
       (begin
@@ -7274,15 +7105,15 @@
       (let
         [parse-identity : cload.CompilerLoadParseIdentity
           (cload.compiler-load-parse-identity
-            (owned_view.compiler-owned-shared-view path)
-            (cload.compiler-load-canonical-module-id-from-path path)
+            (& path)
+            (& (cload.compiler-load-canonical-module-id-from-path path))
             No)]
         [loaded : cload.ResultCompilerLoadWithPaths
           (cload.compiler-load-program-with-paths-and-roots-expect-cfg
             path
             program
             prelude-seen
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (& stdlib-roots)
             No
             cfgs
             parse-identity)]
@@ -7308,7 +7139,7 @@
     (cfg compile-profile (check_core.compiler-check-profile-start))
     (match (cload.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-source-with-prelude-index-recovery
@@ -7389,9 +7220,7 @@
         (compiler-semantic-binding-namespace-value-mask)
         (compiler-semantic-binding-namespace-type-mask))]
     [(Enum) (compiler-semantic-binding-namespace-type-mask)]
-    [(Module) 0]
-    [(Field) 0]
-    [(EnumMember) 0]
+    [(or (Module) (Field) (EnumMember)) 0]
     [_ (compiler-semantic-binding-namespace-value-mask)]))
 
 (define (compiler-semantic-rename-symbol-eq?

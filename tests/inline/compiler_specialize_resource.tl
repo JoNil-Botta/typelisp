@@ -112,7 +112,7 @@
              (+ later (pick 4)))
            (pick 5)))"]
     (match (parser.parse-ast-source-with-cfg-and-pools
-      source
+      (& source)
       (parser.compiler-cfg-empty)
       pools)
       [(Ok program)

@@ -44,9 +44,9 @@
     [state : load.CompilerLoadSessionState
       (owned_view.compiler-owned-reference-shared-view state)]
     (match (load.compiler-load-dependency-catalog-lookup-macro
-      state
+      (& state)
       slot
-      identity)
+      (& identity))
       [(Resolved capability) capability]
       [_ (io.panic "package tlci transition: macro was not a native result")])))
 
@@ -221,7 +221,7 @@
                 4)
               (load.compiler-load-dependency-catalog-key-eq?
                 old-capability.key
-                (owned_view.compiler-owned-shared-view restored-capability.key)))
+                (& restored-capability.key)))
             "package tlci transition: exact restored key was not reused")
           (io.print-format
             "{}"

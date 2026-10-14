@@ -243,11 +243,14 @@
         (compiler-check-program
           path
           (compiler_load.compiler-load-decl-list-append
-            prelude-decls
-            entry-decls)
+            (& prelude-decls)
+            (& entry-decls))
           (compiler_load.compiler-load-decl-path-list-append
-            prelude-paths
-            (ast.ast-decl-path-list-with-modules entry-paths (& entry-modules)))
+            (& prelude-paths)
+            (&
+              (ast.ast-decl-path-list-with-modules
+                entry-paths
+                (& entry-modules))))
           stdlib-roots
           cfgs
           cache-scope
@@ -271,7 +274,7 @@
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    source
+    (& source)
     cfgs)
     [(Fatal diagnostics)
       (begin
@@ -281,15 +284,15 @@
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
-            (owned_view.compiler-owned-shared-view path)
-            (compiler_load.compiler-load-canonical-module-id-from-path path)
+            (& path)
+            (& (compiler_load.compiler-load-canonical-module-id-from-path path))
             No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-program-with-paths-and-roots-expect-cfg
             path
             program
             prelude-seen
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (& stdlib-roots)
             No
             cfgs
             parse-identity)]
@@ -366,7 +369,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
     (owned_view.compiler-owned-shared-view path)
-    source
+    (& source)
     cfgs)
     [(Fatal diagnostics)
       (begin
@@ -376,18 +379,18 @@
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
           (compiler_load.compiler-load-parse-identity
-            (owned_view.compiler-owned-shared-view path)
-            (compiler_load.compiler-load-canonical-module-id-from-path path)
+            (& path)
+            (& (compiler_load.compiler-load-canonical-module-id-from-path path))
             No)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
           (compiler_load.compiler-load-package-program-with-paths-and-roots-expect
             path
             program
             prelude-seen
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (& stdlib-roots)
             No
-            manifest-dir
-            deps
+            (& manifest-dir)
+            (& deps)
             cfgs
             parse-identity)]
         (compiler-check-result-with-parse-diagnostics
@@ -418,9 +421,9 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      (owned_view.compiler-owned-shared-view manifest-dir)
-      (owned_view.compiler-owned-shared-view deps)
+      (& stdlib-roots)
+      (& manifest-dir)
+      (& deps)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-package-source-with-prelude-recovery
@@ -457,10 +460,10 @@
     (compiler-check-loaded-cache-with-paths
       (owned_view.compiler-owned-shared-view path)
       (compiler_load.compiler-load-package-file-with-runtime-cfg
-        path
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        manifest-dir
-        deps
+        (& path)
+        (& stdlib-roots)
+        (& manifest-dir)
+        (& deps)
         emit-entry
         cfgs)
       (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -486,7 +489,7 @@
     [_binding-tokens : unit
       (parser.compiler-parse-state-set-binding-origins! (& parse-state) true)]
     [parse-cfgs : sym_i64_env.SymI64Env
-      (parser.compiler-parse-state-cfgs parse-state request.cfgs)]
+      (parser.compiler-parse-state-cfgs (& parse-state) request.cfgs)]
     [previous : tc.TcSemanticObserver (tc.tc-job-state-semantic-observer job)]
     [_install : unit
       (tc.tc-job-state-set-semantic-observer! job request.observer)]
@@ -533,7 +536,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (& stdlib-roots)
       cfgs)
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (compiler-check-source-with-prelude-recovery

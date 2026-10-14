@@ -4,6 +4,7 @@
 ;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
 ;; the parsed `AstProgram` for typechecking/lowering.
 (import stdlib.iterator)
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_ast_types as ast)
@@ -82,9 +83,16 @@
 ;; Semantic-origin records live in the retained spanned-node sidecar pool. A
 ;; source index asks for one run per declaration, so rescanning that entire
 ;; pool for every slot makes a sequence of cached checks quadratic. Incrementally
-;; index appended sidecars instead, and invalidate the table when the reader
-;; resets its pool. Alias entries are expanded by destination slot so lookup
-;; remains constant-time and the existing bounded alias walk is preserved.
+;; index appended sidecars instead, and invalidate the index when the reader
+;; resets its pool.
+;;
+;; Direct records (one semantic run or one declaration span per slot) go into
+;; an open-addressing table. Aliases stay runs, chained per destination key from newest to
+;; oldest, and a lookup takes whichever of the slot's direct entry and newest
+;; covering run came last. A key built from many source lists can carry tens
+;; of thousands of runs, so a long chain is indexed on first lookup: its
+;; newest covering run per slot, as sorted disjoint segments that a lookup
+;; binary-searches.
 (defstruct CompilerParseSemanticOriginLookupSlot
   (generation i64)
   ;; 1 = semantic occurrence run, 2 = declaration span.
@@ -96,8 +104,55 @@
   (run-start i64)
   (run-count i64)
   (source-key i64)
-  (source-slot i64))
+  (source-slot i64)
+  ;; Insertion order: the latest record for a slot wins.
+  (order i64))
 
+;; One alias record: destination slots [target-start, target-start + count) of
+;; KEY map to SOURCE-KEY slots from SOURCE-START (all to SOURCE-START when
+;; REPEAT).
+(defstruct CompilerParseOriginAliasRun
+  (key i64)
+  (target-start i64)
+  (count i64)
+  (source-key i64)
+  (source-start i64)
+  (repeat bool)
+  (order i64)
+  ;; The next older run of the same key, or -1.
+  (older i64))
+
+;; The alias runs of one destination key.
+(defstruct CompilerParseOriginAliasHead
+  (generation i64)
+  (key i64)
+  (newest i64)
+  (runs i64)
+  ;; The oldest INDEXED-RUNS runs of the chain are covered by the key's
+  ;; segments, one range per domain in `compiler-parse-origin-segments`.
+  (indexed-runs i64)
+  (decl-segment-start i64)
+  (decl-segment-len i64)
+  (semantic-segment-start i64)
+  (semantic-segment-len i64)
+  ;; Both domain ranges share a reusable, geometrically grown reservation.
+  (segment-capacity i64))
+
+;; Slots [start, end) of a key whose newest covering run is RUN.
+(defstruct CompilerParseOriginSegment
+  (start i64)
+  (end i64)
+  (run i64))
+
+;; A lookup walks at most this many runs of a chain before it uses (or
+;; rebuilds) the key's segments.
+(define compiler-parse-origin-chain-walk-limit : i64
+  16)
+
+;; The tables share one arena that is never reset. A cache reset keeps them for
+;; reuse (entries of an older generation read as empty, run and segment counts
+;; restart at 0). Arrays and per-key segment reservations grow geometrically;
+;; rebuilding a key reuses its reservation instead of retaining each index.
 (define compiler-parse-semantic-origin-lookup-arena : i64
   (arena.tl_arena_make))
 (define compiler-parse-semantic-origin-lookup-slots : (__tl_dyn-array
@@ -107,10 +162,31 @@
   0)
 (define compiler-parse-semantic-origin-lookup-generation : i64
   1)
+(define compiler-parse-semantic-origin-lookup-order : i64
+  0)
 (define compiler-parse-semantic-origin-lookup-indexed-len : i64
   0)
 (define compiler-parse-semantic-origin-lookup-reader-reset-generation : i64
   0)
+(define compiler-parse-origin-alias-runs : (__tl_dyn-array
+    CompilerParseOriginAliasRun)
+  (__tl_make-array CompilerParseOriginAliasRun 0))
+(define compiler-parse-origin-alias-run-len : i64
+  0)
+(define compiler-parse-origin-alias-heads : (__tl_dyn-array
+    CompilerParseOriginAliasHead)
+  (__tl_make-array CompilerParseOriginAliasHead 0))
+(define compiler-parse-origin-alias-head-len : i64
+  0)
+(define compiler-parse-origin-segments : (__tl_dyn-array
+    CompilerParseOriginSegment)
+  (__tl_make-array CompilerParseOriginSegment 0))
+(define compiler-parse-origin-segment-len : i64
+  0)
+
+;; Scratch for indexing one key: the newest covering run of each slot.
+(define compiler-parse-origin-paint : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 
 (define (compiler-parse-semantic-origin-lookup-slots-shared) : (__tl_dyn-array
     CompilerParseSemanticOriginLookupSlot)
@@ -570,6 +646,9 @@
 (define (compiler-parse-semantic-origin-lookup-cache-reset!) : unit
   (+= compiler-parse-semantic-origin-lookup-generation 1)
   (set! compiler-parse-semantic-origin-lookup-len 0)
+  (set! compiler-parse-origin-alias-run-len 0)
+  (set! compiler-parse-origin-alias-head-len 0)
+  (set! compiler-parse-origin-segment-len 0)
   (set! compiler-parse-semantic-origin-lookup-indexed-len 0))
 
 (define (compiler-parse-semantic-origin-lookup-prepare!) : unit
@@ -610,7 +689,8 @@
   [run-start : i64]
   [run-count : i64]
   [source-key : i64]
-  [source-slot : i64]) : unit
+  [source-slot : i64]
+  [order : i64]) : unit
   (let
     [capacity : i64 (array-length compiler-parse-semantic-origin-lookup-slots)]
     [cursor : i64
@@ -635,7 +715,8 @@
                 run-start
                 run-count
                 source-key
-                source-slot))
+                source-slot
+                order))
             (+= compiler-parse-semantic-origin-lookup-len 1)
             (set! done true))
           (if (and
@@ -645,7 +726,7 @@
             (begin
               ;; Sidecar storage is append-only between resets. Replacing an
               ;; existing slot therefore keeps latest-wins behavior when an
-              ;; address is reused or an alias is superseded.
+              ;; address is reused.
               (set!
                 (array-ref compiler-parse-semantic-origin-lookup-slots cursor)
                 (CompilerParseSemanticOriginLookupSlot
@@ -657,7 +738,8 @@
                   run-start
                   run-count
                   source-key
-                  source-slot))
+                  source-slot
+                  order))
               (set! done true))
             (set! cursor (bit-and (+ cursor 1) (- capacity 1)))))))))
 
@@ -691,7 +773,8 @@
             entry.run-start
             entry.run-count
             entry.source-key
-            entry.source-slot)
+            entry.source-slot
+            entry.order)
           unit)))))
 
 (define (compiler-parse-semantic-origin-lookup-insert!
@@ -710,6 +793,7 @@
       (* (array-length compiler-parse-semantic-origin-lookup-slots) 7)))
     (compiler-parse-semantic-origin-lookup-grow!)
     unit)
+  (+= compiler-parse-semantic-origin-lookup-order 1)
   (compiler-parse-semantic-origin-lookup-insert-no-grow!
     domain
     key
@@ -718,7 +802,367 @@
     run-start
     run-count
     source-key
-    source-slot))
+    source-slot
+    compiler-parse-semantic-origin-lookup-order))
+
+;; The head slot of KEY: its occupied slot, or the free slot where it belongs.
+(define (compiler-parse-origin-alias-head-slot [key : i64]) : i64
+  (let
+    [capacity : i64 (array-length compiler-parse-origin-alias-heads)]
+    [cursor : i64 (compiler-parse-semantic-origin-lookup-hash 3 key 0 capacity)]
+    (for [probes (iterator.range 0 capacity)]
+      (let
+        [head : CompilerParseOriginAliasHead
+          (array-ref compiler-parse-origin-alias-heads cursor)]
+        (if (or
+          (!= head.generation compiler-parse-semantic-origin-lookup-generation)
+          (= head.key key))
+          (return cursor)
+          (set! cursor (bit-and (+ cursor 1) (- capacity 1))))))
+    cursor))
+
+(define (compiler-parse-origin-alias-heads-grow!) : unit
+  (let
+    [old : (__tl_dyn-array CompilerParseOriginAliasHead)
+      (owned_view.compiler-owned-shared-view compiler-parse-origin-alias-heads)]
+    [old-capacity : i64 (array-length old)]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        64
+        (* old-capacity 2))]
+    (set!
+      compiler-parse-origin-alias-heads
+      (in-arena
+        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (__tl_make-array CompilerParseOriginAliasHead next-capacity)))
+    (for [old-index (iterator.range 0 old-capacity)]
+      (let
+        [head : CompilerParseOriginAliasHead (array-ref old old-index)]
+        (when
+          (= head.generation compiler-parse-semantic-origin-lookup-generation)
+          (set!
+            (array-ref
+              compiler-parse-origin-alias-heads
+              (compiler-parse-origin-alias-head-slot head.key))
+            head))))))
+
+(define (compiler-parse-origin-alias-runs-grow!) : unit
+  (let
+    [old : (__tl_dyn-array CompilerParseOriginAliasRun)
+      (owned_view.compiler-owned-shared-view compiler-parse-origin-alias-runs)]
+    [next-capacity : i64
+      (if (< (array-length old) 1)
+        64
+        (* (array-length old) 2))]
+    (set!
+      compiler-parse-origin-alias-runs
+      (in-arena
+        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (__tl_make-array CompilerParseOriginAliasRun next-capacity)))
+    (for [index (iterator.range 0 compiler-parse-origin-alias-run-len)]
+      (set!
+        (array-ref compiler-parse-origin-alias-runs index)
+        (array-ref old index)))))
+
+;; Record one alias run as the newest run of KEY.
+(define (compiler-parse-origin-alias-insert!
+  [key : i64]
+  [target-start : i64]
+  [count : i64]
+  [source-key : i64]
+  [source-start : i64]
+  [repeat : bool]) : unit
+  (when
+    (>=
+      compiler-parse-origin-alias-run-len
+      (array-length compiler-parse-origin-alias-runs))
+    (compiler-parse-origin-alias-runs-grow!))
+  (when
+    (or
+      (< (array-length compiler-parse-origin-alias-heads) 1)
+      (>=
+        (* (+ compiler-parse-origin-alias-head-len 1) 10)
+        (* (array-length compiler-parse-origin-alias-heads) 7)))
+    (compiler-parse-origin-alias-heads-grow!))
+  (+= compiler-parse-semantic-origin-lookup-order 1)
+  (let
+    [head-slot : i64 (compiler-parse-origin-alias-head-slot key)]
+    [head : CompilerParseOriginAliasHead
+      (array-ref compiler-parse-origin-alias-heads head-slot)]
+    [present : bool
+      (= head.generation compiler-parse-semantic-origin-lookup-generation)]
+    [index : i64 compiler-parse-origin-alias-run-len]
+    (set!
+      (array-ref compiler-parse-origin-alias-runs index)
+      (CompilerParseOriginAliasRun
+        key
+        target-start
+        count
+        source-key
+        source-start
+        repeat
+        compiler-parse-semantic-origin-lookup-order
+        (if present
+          head.newest
+          -1)))
+    (set!
+      (array-ref compiler-parse-origin-alias-heads head-slot)
+      (if present
+        (CompilerParseOriginAliasHead
+          compiler-parse-semantic-origin-lookup-generation
+          key
+          index
+          (+ head.runs 1)
+          head.indexed-runs
+          head.decl-segment-start
+          head.decl-segment-len
+          head.semantic-segment-start
+          head.semantic-segment-len
+          head.segment-capacity)
+        (CompilerParseOriginAliasHead
+          compiler-parse-semantic-origin-lookup-generation
+          key
+          index
+          1
+          0
+          0
+          0
+          0
+          0
+          0)))
+    (unless present (+= compiler-parse-origin-alias-head-len 1))
+    (+= compiler-parse-origin-alias-run-len 1)))
+
+;; Whether RUN covers SLOT in DOMAIN. A repeat alias carries no semantic
+;; occurrence run, so domain 1 looks past it to older runs.
+(define (compiler-parse-origin-alias-run-covers?
+  [run : CompilerParseOriginAliasRun]
+  [domain : i64]
+  [slot : i64]) : bool
+  (and
+    (>= slot run.target-start)
+    (< slot (+ run.target-start run.count))
+    (or (!= domain 1) (not run.repeat))))
+
+(define (compiler-parse-origin-segments-reserve! [count : i64]) : unit
+  (when
+    (> count (array-length compiler-parse-origin-segments))
+    (let
+      [old : (__tl_dyn-array CompilerParseOriginSegment)
+        (owned_view.compiler-owned-shared-view compiler-parse-origin-segments)]
+      [capacity : i64
+        (if (< (array-length old) 1)
+          64
+          (array-length old))]
+      (while (< capacity count)
+        (set! capacity (* capacity 2)))
+      (set!
+        compiler-parse-origin-segments
+        (in-arena
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (__tl_make-array CompilerParseOriginSegment capacity)))
+      (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
+        (set!
+          (array-ref compiler-parse-origin-segments index)
+          (array-ref old index))))))
+
+(define (compiler-parse-origin-segments-push!
+  [start : i64]
+  [end : i64]
+  [run : i64]) : unit
+  (compiler-parse-origin-segments-reserve!
+    (+ compiler-parse-origin-segment-len 1))
+  (set!
+    (array-ref compiler-parse-origin-segments compiler-parse-origin-segment-len)
+    (CompilerParseOriginSegment start end run))
+  (+= compiler-parse-origin-segment-len 1))
+
+;; Append the segments of one domain of a chain whose runs cover slots
+;; [LO, LO + WIDTH), and return the first appended segment's index.
+(define (compiler-parse-origin-alias-segments-build!
+  [newest : i64]
+  [domain : i64]
+  [lo : i64]
+  [width : i64]) : i64
+  (let
+    [first : i64 compiler-parse-origin-segment-len]
+    [cursor : i64 newest]
+    [index : i64 0]
+    (for [offset (iterator.range 0 width)]
+      (set! (array-ref compiler-parse-origin-paint offset) -1))
+    ;; Newest first: a slot keeps the first run that paints it.
+    (while (>= cursor 0)
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs cursor)]
+        (when
+          (or (!= domain 1) (not run.repeat))
+          (for [slot
+            (iterator.range
+              (- run.target-start lo)
+              (- (+ run.target-start run.count) lo))]
+            (when
+              (< (array-ref compiler-parse-origin-paint slot) 0)
+              (set! (array-ref compiler-parse-origin-paint slot) cursor))))
+        (set! cursor run.older)))
+    (while (< index width)
+      (let
+        [run : i64 (array-ref compiler-parse-origin-paint index)]
+        [end : i64 (+ index 1)]
+        (if (< run 0)
+          (set! index end)
+          (begin
+            (while (and
+              (< end width)
+              (= (array-ref compiler-parse-origin-paint end) run))
+              (set! end (+ end 1)))
+            (compiler-parse-origin-segments-push! (+ lo index) (+ lo end) run)
+            (set! index end)))))
+    first))
+
+;; Index every run of the key at HEAD-SLOT into segments.
+(define (compiler-parse-origin-alias-index-key! [head-slot : i64]) : unit
+  (let
+    [head : CompilerParseOriginAliasHead
+      (array-ref compiler-parse-origin-alias-heads head-slot)]
+    [lo : i64 0]
+    [hi : i64 0]
+    [seen : bool false]
+    [cursor : i64 head.newest]
+    (while (>= cursor 0)
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs cursor)]
+        (when
+          (or (not seen) (< run.target-start lo))
+          (set! lo run.target-start))
+        (when
+          (or (not seen) (> (+ run.target-start run.count) hi))
+          (set! hi (+ run.target-start run.count)))
+        (set! seen true)
+        (set! cursor run.older)))
+    (when
+      (< (array-length compiler-parse-origin-paint) (- hi lo))
+      (set!
+        compiler-parse-origin-paint
+        (in-arena
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (__tl_make-array
+            i64
+            (if (< (* (array-length compiler-parse-origin-paint) 2) (- hi lo))
+              (- hi lo)
+              (* (array-length compiler-parse-origin-paint) 2))))))
+    (let
+      [decl-start : i64
+        (compiler-parse-origin-alias-segments-build! head.newest 2 lo (- hi lo))]
+      [semantic-start : i64
+        (compiler-parse-origin-alias-segments-build! head.newest 1 lo (- hi lo))]
+      [decl-len : i64 (- semantic-start decl-start)]
+      [semantic-len : i64 (- compiler-parse-origin-segment-len semantic-start)]
+      [count : i64 (+ decl-len semantic-len)]
+      [start : i64 head.decl-segment-start]
+      [capacity : i64 head.segment-capacity]
+      ;; Rebuild in the table's temporary tail, then reuse the key's reserved
+      ;; range. Only a geometric capacity increase retains a new range; an
+      ;; append/lookup sequence must not retain every superseded index.
+      (if (<= count capacity)
+        (begin
+          (for [index (iterator.range 0 count)]
+            (set!
+              (array-ref compiler-parse-origin-segments (+ start index))
+              (array-ref compiler-parse-origin-segments (+ decl-start index))))
+          (set! compiler-parse-origin-segment-len decl-start))
+        (begin
+          (set! start decl-start)
+          (set!
+            capacity
+            (if (> count (* capacity 2))
+              count
+              (* capacity 2)))
+          (compiler-parse-origin-segments-reserve! (+ start capacity))
+          (set! compiler-parse-origin-segment-len (+ start capacity))))
+      (set!
+        (array-ref compiler-parse-origin-alias-heads head-slot)
+        (CompilerParseOriginAliasHead
+          head.generation
+          head.key
+          head.newest
+          head.runs
+          head.runs
+          start
+          decl-len
+          (+ start decl-len)
+          semantic-len
+          capacity)))))
+
+;; The run of the segment in [START, START + LEN) that covers SLOT, or -1.
+(define (compiler-parse-origin-segments-find
+  [start : i64]
+  [len : i64]
+  [slot : i64]) : i64
+  (let
+    [lo : i64 start]
+    [hi : i64 (+ start len)]
+    ;; Find the first segment that starts after SLOT.
+    (while (< lo hi)
+      (let
+        [mid : i64 (/ (+ lo hi) 2)]
+        (if (<= (array-ref compiler-parse-origin-segments mid).start slot)
+          (set! lo (+ mid 1))
+          (set! hi mid))))
+    (if (and
+      (> lo start)
+      (< slot (array-ref compiler-parse-origin-segments (- lo 1)).end))
+      (array-ref compiler-parse-origin-segments (- lo 1)).run
+      -1)))
+
+;; The newest alias run of KEY covering SLOT in DOMAIN, or -1.
+(define (compiler-parse-origin-alias-covering
+  [domain : i64]
+  [key : i64]
+  [slot : i64]) : i64
+  (if (< (array-length compiler-parse-origin-alias-heads) 1)
+    -1
+    (let
+      [head-slot : i64 (compiler-parse-origin-alias-head-slot key)]
+      [head : CompilerParseOriginAliasHead
+        (array-ref compiler-parse-origin-alias-heads head-slot)]
+      (if (!= head.generation compiler-parse-semantic-origin-lookup-generation)
+        -1
+        (begin
+          (when
+            (and
+              (> head.runs compiler-parse-origin-chain-walk-limit)
+              (>
+                (- head.runs head.indexed-runs)
+                compiler-parse-origin-chain-walk-limit))
+            (compiler-parse-origin-alias-index-key! head-slot)
+            (set! head (array-ref compiler-parse-origin-alias-heads head-slot)))
+          ;; Walk the runs newer than the segments (every run of a short chain).
+          (let
+            [cursor : i64 head.newest]
+            [left : i64 (- head.runs head.indexed-runs)]
+            (while (> left 0)
+              (let
+                [run : CompilerParseOriginAliasRun
+                  (array-ref compiler-parse-origin-alias-runs cursor)]
+                (when
+                  (compiler-parse-origin-alias-run-covers? run domain slot)
+                  (return cursor))
+                (set! cursor run.older)
+                (-= left 1))))
+          (cond
+            [(= head.indexed-runs 0) -1]
+            [(= domain 1)
+              (compiler-parse-origin-segments-find
+                head.semantic-segment-start
+                head.semantic-segment-len
+                slot)]
+            [else
+              (compiler-parse-origin-segments-find
+                head.decl-segment-start
+                head.decl-segment-len
+                slot)]))))))
 
 (define (compiler-parse-semantic-origin-lookup-build!) : unit
   (let
@@ -777,44 +1221,25 @@
             [(or
                 (compiler-parse-marker? marker "__tl_decl_origin_alias")
                 (compiler-parse-marker? marker "__tl_decl_origin_alias_repeat"))
-              (let
-                [target-start : i64 (token.span-start-line marker-span)]
-                [count : i64 (token.span-start-col marker-span)]
-                [source-key : i64 (token.span-end-line marker-span)]
-                [source-start : i64 (token.span-end-col marker-span)]
-                [repeat : bool
+              ;; One run per record: target start, count, source key and
+              ;; source start ride in the marker span.
+              (when
+                (> (token.span-start-col marker-span) 0)
+                (compiler-parse-origin-alias-insert!
+                  record-key
+                  (token.span-start-line marker-span)
+                  (token.span-start-col marker-span)
+                  (token.span-end-line marker-span)
+                  (token.span-end-col marker-span)
                   (compiler-parse-marker?
                     marker
-                    "__tl_decl_origin_alias_repeat")]
-                (for [offset (iterator.range 0 count)]
-                  (if repeat
-                    unit
-                    (compiler-parse-semantic-origin-lookup-insert!
-                      1
-                      record-key
-                      (+ target-start offset)
-                      2
-                      0
-                      0
-                      source-key
-                      (+ source-start offset)))
-                  (compiler-parse-semantic-origin-lookup-insert!
-                    2
-                    record-key
-                    (+ target-start offset)
-                    2
-                    0
-                    0
-                    source-key
-                    (if repeat
-                      source-start
-                      (+ source-start offset)))))]
+                    "__tl_decl_origin_alias_repeat")))]
             [else unit])]
         [_ unit])
       (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
     (set! compiler-parse-semantic-origin-lookup-indexed-len limit)))
 
-(define (compiler-parse-semantic-origin-lookup
+(define (compiler-parse-semantic-origin-lookup-direct
   [domain : i64]
   [key : i64]
   [slot : i64]) : CompilerParseSemanticOriginLookupSlot
@@ -825,7 +1250,7 @@
         (compiler-parse-semantic-origin-lookup-hash domain key slot capacity)
         0)]
     [fallback : CompilerParseSemanticOriginLookupSlot
-      (CompilerParseSemanticOriginLookupSlot 0 0 0 0 0 0 0 0 0)]
+      (CompilerParseSemanticOriginLookupSlot 0 0 0 0 0 0 0 0 0 0)]
     (if (< capacity 1)
       fallback
       (begin
@@ -844,6 +1269,37 @@
                 (return entry)
                 (set! cursor (bit-and (+ cursor 1) (- capacity 1)))))))
         fallback))))
+
+;; The latest record for SLOT of KEY in DOMAIN: its direct entry, or an alias
+;; entry (kind 2) built from the newest covering run when that run came later.
+(define (compiler-parse-semantic-origin-lookup
+  [domain : i64]
+  [key : i64]
+  [slot : i64]) : CompilerParseSemanticOriginLookupSlot
+  (let
+    [direct : CompilerParseSemanticOriginLookupSlot
+      (compiler-parse-semantic-origin-lookup-direct domain key slot)]
+    [alias-index : i64 (compiler-parse-origin-alias-covering domain key slot)]
+    (if (< alias-index 0)
+      direct
+      (let
+        [run : CompilerParseOriginAliasRun
+          (array-ref compiler-parse-origin-alias-runs alias-index)]
+        (if (and (!= direct.kind 0) (> direct.order run.order))
+          direct
+          (CompilerParseSemanticOriginLookupSlot
+            compiler-parse-semantic-origin-lookup-generation
+            domain
+            key
+            slot
+            2
+            0
+            0
+            run.source-key
+            (if run.repeat
+              run.source-start
+              (+ run.source-start (- slot run.target-start)))
+            run.order))))))
 
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
@@ -890,22 +1346,19 @@
       [(Some span) (Some span)]
       [(No) None])
     (match (ast.ast-node-get expr-id)
-      [(Unary _ inner) (compiler-parse-expr-maybe-span inner)]
-      [(Ann inner _) (compiler-parse-expr-maybe-span inner)]
-      [(Cast inner _) (compiler-parse-expr-maybe-span inner)]
-      [(Borrow _ _ inner) (compiler-parse-expr-maybe-span inner)]
+      [(or (Unary _ inner) (Ann inner _) (Cast inner _) (Borrow _ _ inner))
+        (compiler-parse-expr-maybe-span inner)]
       [_ None])))
 
 ;; Definitions and tests record no declaration origin
 ;; (`compiler-parse-decl-origin-needs-record?`): a definition is located by
 ;; its value or body and a test by its own span.
-(define (compiler-parse-decl-body-span [decl : ast.AstDecl]) : CompilerParseMaybeDeclSpan
+(define (compiler-parse-decl-body-span [decl : (& ast.AstDecl)]) : CompilerParseMaybeDeclSpan
   (match decl
-    [(Def _ _ _ body) (compiler-parse-expr-maybe-span body)]
-    [(DefFn _ _ _ _ body _) (compiler-parse-expr-maybe-span body)]
-    [(DefMacro _ _ _ _ body) (compiler-parse-expr-maybe-span body)]
+    [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (DefMacro _ _ _ _ body))
+      (compiler-parse-expr-maybe-span body)]
     [(Test _ _ _ span) (Some span)]
-    [(Unsafe inner-box) (compiler-parse-decl-body-span (deref inner-box))]
+    [(Unsafe inner-box) (compiler-parse-decl-body-span (& (deref inner-box)))]
     [_ None]))
 
 ;; The source span of declaration SLOT of DECLS: its recorded origin, or the
@@ -917,7 +1370,7 @@
     [(Some span) (Some span)]
     [(None)
       (compiler-parse-decl-body-span
-        (ast.ast-array-shared-view decls.slots (+ decls.offset slot)))]))
+        (& (array-ref decls.slots (+ decls.offset slot))))]))
 
 (define (compiler-parse-decl-origin-register-key-maybe!
   [key : i64]
@@ -1057,12 +1510,12 @@
 (define (compiler-parse-decl-origin-register-list-aliases!
   [decls : (& decls ast.AstDeclList)]
   [decl-slot : i64]
-  [source : ast.AstDeclList]) : unit
+  [source : (& ast.AstDeclList)]) : unit
   (compiler-parse-decl-origin-register-alias-record!
     decls
     decl-slot
-    (ast.ast-decl-list-len (& source))
-    (compiler-parse-decl-list-storage-key (& source))
+    (ast.ast-decl-list-len source)
+    (compiler-parse-decl-list-storage-key source)
     source.offset
     false))
 
@@ -1141,7 +1594,7 @@
   [count : i64]
   [source-key : i64]
   [source-slot : i64]
-  [source-decl : ast.AstDecl]
+  [source-decl : (& ast.AstDecl)]
   [repeat : bool]) : unit
   (if (and
     (> count 0)
@@ -1839,7 +2292,7 @@
     (set! (array-ref owner 0) intern-state)
     (compiler-parse-state-new-from-owner owner)))
 
-(define (compiler-parse-state-control-addr [state : CompilerParseState]) : i64
+(define (compiler-parse-state-control-addr [state : (& CompilerParseState)]) : i64
   (compiler-parse-array-data-addr state.control))
 
 (define (compiler-parse-raw-i64-ref [address : i64] [index : i64]) : i64
@@ -1972,14 +2425,14 @@
       0)))
 
 (define (compiler-parse-spanned-result-with-cfg
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]) : lexer.ResultSpannedTokens
   (let
     [control : i64 (compiler-parse-cfg-intern-owner-control cfgs)]
     (if (= control 0)
       ;; Named compatibility branch for direct serial parser callers. Compile
       ;; jobs attach a state owner to cfgs and take the explicit branch below.
-      (lexer.spanned-result (& src))
+      (lexer.spanned-result src)
       (begin
         ;; Until #5754 retires the driver's installed-owner builtin bridge,
         ;; builtin seeding may have advanced the matching active scalar view.
@@ -1988,7 +2441,7 @@
           [intern-state : ci.InternCompatState
             (compiler-parse-state-owner control)]
           [result : lexer.ResultSpannedTokens
-            (lexer.spanned-result-with-intern-state (& src) (&mut intern-state))]
+            (lexer.spanned-result-with-intern-state src (&mut intern-state))]
           ;; Keep that same temporary installed view monotone across files;
           ;; inactive owners do not match and are never published.
           (compiler-parse-state-owner-sync-active! control)
@@ -2001,7 +2454,7 @@
   (cbi.compiler-builtin-initialize-for-parse!))
 
 (define (compiler-parse-state-cfgs
-  [state : CompilerParseState]
+  [state : (& CompilerParseState)]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind-id
     cfgs
@@ -2077,11 +2530,11 @@
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-empty))
 
-(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-enable cfgs (& name)))
+(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : (& str)]) : sym_i64_env.SymI64Env
+  (cfg_core.compiler-cfg-enable cfgs name))
 
-(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-union cfgs (& name)))
+(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : (& str)]) : sym_i64_env.SymI64Env
+  (cfg_core.compiler-cfg-union cfgs name))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
@@ -2992,7 +3445,7 @@
 
 (define (compiler-parse-dispatch-bind
   [env : sym_i64_env.SymI64Env]
-  [name : String]
+  [name : (& str)]
   [tag : i64]) : sym_i64_env.SymI64Env
   (let
     [control : i64
@@ -3005,10 +3458,10 @@
           compiler-parse-state-control-owner-addr))]
     [name-id : i64
       (if (= owner-address 0)
-        (reader.stable-symbol-id (& name))
+        (reader.stable-symbol-id name)
         (let
           [owner : ci.InternCompatState (compiler-parse-state-owner control)]
-          (ci.intern-compat-state-intern (&mut owner) (& name))))]
+          (ci.intern-compat-state-intern (&mut owner) name)))]
     (sym_i64_env.sym-i64-bind-id env name-id tag)))
 
 (define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -3690,7 +4143,7 @@
     [e15 : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-bind
         e14
-        (compiler-parse-removed-compressed-include-name)
+        (& (compiler-parse-removed-compressed-include-name))
         (compiler-parse-tag-decl-removed-compressed-include))]
     [e16 : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-bind
@@ -3813,7 +4266,7 @@
         (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)
         0)
         (compiler-parse-state-cfgs
-          (compiler-parse-default-state-shared-view)
+          (& (compiler-parse-default-state-shared-view))
           cfgs)
         cfgs)]
     [control : i64
@@ -3834,7 +4287,7 @@
   (let
     [control : i64
       (compiler-parse-state-control-addr
-        (compiler-parse-default-state-shared-view))]
+        (& (compiler-parse-default-state-shared-view)))]
     [base : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-env-for-control control)]
     (if (and
@@ -4553,10 +5006,15 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [name : ci.InternSyntaxId]
-  [ty : ast.AstType]
+  [ty : (& ast.AstType)]
   [end : (& program (Slice reader.SpannedSexpr))]) : ResultAstParam
   (match end
-    [(slice) (Ok (ast.ast-param-id (ci.intern-syntax-id-value name) ty false))]
+    [(slice)
+      (Ok
+        (ast.ast-param-id
+          (ci.intern-syntax-id-value name)
+          (owned_view.compiler-owned-reference-shared-view ty)
+          false))]
     [(slice metadata & metadata-rest)
       (match (parse-ast-param-invalidate-metadata metadata)
         [(Lifetime lifetime)
@@ -4565,7 +5023,7 @@
               (Ok
                 (ast.ast-param-id
                   (ci.intern-syntax-id-value name)
-                  (ast.ast-ty-invalidate-with-pools pools lifetime (& ty))
+                  (ast.ast-ty-invalidate-with-pools pools lifetime ty)
                   false))]
             [(slice next & _)
               (match (parse-ast-param-invalidate-metadata next)
@@ -4674,7 +5132,7 @@
                   dispatch
                   pools
                   first-name
-                  parsed-ty
+                  (& parsed-ty)
                   end))
               (Err
                 (parse-kind-message
@@ -4694,13 +5152,13 @@
       [(Param _ _ is-comptime) (when is-comptime (return true))]))
   false)
 
-(define (ast-macro-param-variadic? [param : ast.AstMacroParam]) : bool
+(define (ast-macro-param-variadic? [param : (& ast.AstMacroParam)]) : bool
   (match param
     [(Param _ _ variadic _) variadic]))
 
 (define (ast-macro-param-shape-delimited-variadic?
   [dispatch : sym_i64_env.SymI64Env]
-  [param : ast.AstMacroParam]) : bool
+  [param : (& ast.AstMacroParam)]) : bool
   (let
     [intern-state : ci.InternCompatState
       (compiler-parse-dispatch-intern-state dispatch)]
@@ -4855,7 +5313,7 @@
             (compiler-parse-dispatch-syntax-id-text dispatch tag))))]
     [_ (Err (parse-ast-macro-type-kind-error operand-name "is malformed"))]))
 
-(define (parse-ast-macro-type-operand? [ty : ast.AstType]) : bool
+(define (parse-ast-macro-type-operand? [ty : (& ast.AstType)]) : bool
   (match ty
     [(Var name) (= name cbi.compiler-builtin-id-fix-type)]
     [_ false]))
@@ -4863,13 +5321,13 @@
 (define (parse-ast-macro-param-after-type
   [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
-  [parsed-ty : ast.AstType]
+  [parsed-ty : (& ast.AstType)]
   [rest : (& program (Slice reader.SpannedSexpr))]) : ResultAstMacroParam
   (let
     [name-id : i64 (ci.intern-syntax-id-value name)]
     [name-text : String (compiler-parse-dispatch-syntax-id-text dispatch name)]
     (match rest
-      [(slice) (Ok (ast.ast-macro-param name-id (& parsed-ty) false))]
+      [(slice) (Ok (ast.ast-macro-param name-id parsed-ty false))]
       [(slice suffix & suffix-rest)
         (match (reader.sexpr-view suffix)
           [(Sym suffix-name)
@@ -4877,7 +5335,7 @@
               (ci.intern-syntax-id-value suffix-name)
               (cbi.compiler-builtin-ctfe "..."))
               (match suffix-rest
-                [(slice) (Ok (ast.ast-macro-param name-id (& parsed-ty) true))]
+                [(slice) (Ok (ast.ast-macro-param name-id parsed-ty true))]
                 [_
                   (Err
                     (parse-kind-message
@@ -4888,8 +5346,7 @@
                   (MalformedForm)
                   "parse: malformed macro operand")))]
           [(List (slice _ & _))
-            (if (parse-ast-macro-type-operand?
-              (compiler-parse-place-shared-view parsed-ty))
+            (if (parse-ast-macro-type-operand? parsed-ty)
               (match suffix-rest
                 [(slice)
                   (let
@@ -4902,7 +5359,8 @@
                     (Ok
                       (ast.ast-macro-param-with-type-kinds
                         name-id
-                        parsed-ty
+                        (owned_view.compiler-owned-reference-shared-view
+                          parsed-ty)
                         false
                         type-kinds)))]
                 [(slice (Sym dots-name _) & after-dots)
@@ -4952,7 +5410,11 @@
             (if (sexpr-colon? colon)
               (let
                 [parsed-ty (try (parse-ast-type dispatch pools ty))]
-                (parse-ast-macro-param-after-type dispatch name parsed-ty rest3))
+                (parse-ast-macro-param-after-type
+                  dispatch
+                  name
+                  (& parsed-ty)
+                  rest3))
               (Err
                 (parse-kind-message
                   (MalformedForm)
@@ -4985,8 +5447,7 @@
     [(slice head & tail)
       (let
         [parsed-head (try (parse-ast-macro-param dispatch pools head))]
-        (if (ast-macro-param-variadic?
-          (compiler-parse-place-shared-view parsed-head))
+        (if (ast-macro-param-variadic? (& parsed-head))
           (match tail
             [(slice)
               (ast.ast-macro-param-list-push out parsed-head)
@@ -4994,7 +5455,7 @@
             [_
               (if (ast-macro-param-shape-delimited-variadic?
                 dispatch
-                (compiler-parse-place-shared-view parsed-head))
+                (& parsed-head))
                 (begin
                   (ast.ast-macro-param-list-push out parsed-head)
                   (parse-ast-macro-param-list-into dispatch pools tail out))
@@ -5195,7 +5656,7 @@
         (parse-ast-field-metadata
           dispatch
           name
-          parsed-ty
+          (& parsed-ty)
           rest
           allow-cleanup
           allow-align
@@ -5212,7 +5673,7 @@
 (define (parse-ast-field-metadata
   [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
-  [ty : ast.AstType]
+  [ty : (& ast.AstType)]
   [items : (& program (Slice reader.SpannedSexpr))]
   [allow-cleanup : bool]
   [allow-align : bool]
@@ -5220,7 +5681,13 @@
   [seen-cleanup : bool]
   [align : i64]) : ResultAstFieldParts
   (match items
-    [(slice) (Ok (ast.ast-field-def-id name ty cleanup) align)]
+    [(slice)
+      (Ok
+        (ast.ast-field-def-id
+          name
+          (owned_view.compiler-owned-reference-shared-view ty)
+          cleanup)
+        align)]
     [(slice meta & rest)
       (if (parse-ast-align-metadata? meta)
         (cond
@@ -5398,8 +5865,8 @@
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]
   [tail : (& program (Slice reader.SpannedSexpr))]
-  [lifetimes : ast.AstLifetimeList]
-  [repr : ast.AstStructRepr]
+  [lifetimes : (& ast.AstLifetimeList)]
+  [repr : (& ast.AstStructRepr)]
   [cleanup : ast.AstStructCleanup]
   [markers : i64]
   [align : i64]
@@ -5408,7 +5875,11 @@
   [seen-repr : bool]
   [seen-cleanup : bool]) : ResultAstStructDefParts
   (let
-    [field-repr (try (parse-ast-defstruct-resolve-repr repr align))]
+    [field-repr
+      (try
+        (parse-ast-defstruct-resolve-repr
+          (owned_view.compiler-owned-reference-shared-view repr)
+          align))]
     (match (parse-ast-field-def
       dispatch
       pools
@@ -5436,11 +5907,12 @@
             dispatch
             pools
             tail
-            lifetimes
-            (ast.ast-struct-repr-with-field-align
-              field-repr
-              field-index
-              field-align)
+            (owned_view.compiler-owned-reference-shared-view lifetimes)
+            (&
+              (ast.ast-struct-repr-with-field-align
+                field-repr
+                field-index
+                field-align))
             cleanup
             markers
             0
@@ -5485,7 +5957,7 @@
   [pools : ast.AstNodePoolContext]
   [items : (& program (Slice reader.SpannedSexpr))]
   [lifetimes : ast.AstLifetimeList]
-  [repr : ast.AstStructRepr]
+  [repr : (& ast.AstStructRepr)]
   [cleanup : ast.AstStructCleanup]
   [markers : i64]
   [align : i64]
@@ -5497,7 +5969,11 @@
   (match items
     [(slice)
       (let
-        [final-repr (try (parse-ast-defstruct-resolve-repr repr align))]
+        [final-repr
+          (try
+            (parse-ast-defstruct-resolve-repr
+              (owned_view.compiler-owned-reference-shared-view repr)
+              align))]
         (Ok lifetimes final-repr cleanup markers fields))]
     [(slice head & tail)
       (match (reader.sexpr-view head)
@@ -5559,7 +6035,7 @@
                           pools
                           tail
                           lifetimes
-                          next-repr
+                          (& next-repr)
                           cleanup
                           markers
                           align
@@ -5581,7 +6057,7 @@
                     (let
                       [next-cleanup
                         (try (parse-ast-defstruct-cleanup-tail after-key))]
-                      (if (ast.ast-struct-repr-c? (& repr))
+                      (if (ast.ast-struct-repr-c? repr)
                         (Err
                           "parse: defstruct cannot combine :repr c with :cleanup metadata")
                         (parse-ast-defstruct-items
@@ -5693,7 +6169,7 @@
                   pools
                   head
                   tail
-                  lifetimes
+                  (& lifetimes)
                   repr
                   cleanup
                   markers
@@ -5708,7 +6184,7 @@
             pools
             head
             tail
-            lifetimes
+            (& lifetimes)
             repr
             cleanup
             markers
@@ -5918,7 +6394,7 @@
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]
   [tail : (& program (Slice reader.SpannedSexpr))]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& ast.AstLifetimeList)]
   [cleanup : ast.AstEnumCleanup]
   [markers : i64]
   [seen-lifetimes : bool]
@@ -5949,7 +6425,7 @@
       dispatch
       pools
       tail
-      lifetimes
+      (owned_view.compiler-owned-reference-shared-view lifetimes)
       cleanup
       markers
       seen-lifetimes
@@ -5987,7 +6463,7 @@
                   pools
                   head
                   tail
-                  lifetimes
+                  (& lifetimes)
                   cleanup
                   markers
                   seen-lifetimes
@@ -6077,7 +6553,7 @@
             pools
             head
             tail
-            lifetimes
+            (& lifetimes)
             cleanup
             markers
             seen-lifetimes
@@ -6107,7 +6583,7 @@
 
 ;; Whether `pattern` is the `&` marker that separates a slice pattern's element
 ;; patterns from its rest binding.
-(define (parse-ast-slice-rest-marker? [pattern : ast.AstPattern]) : bool
+(define (parse-ast-slice-rest-marker? [pattern : (& ast.AstPattern)]) : bool
   (match pattern
     [(Binding name) (= name (cbi.compiler-builtin-ctfe "&"))]
     [_ false]))
@@ -6116,7 +6592,7 @@
 ;; rather than a binder name.
 (define (parse-ast-slice-glued-rest?
   [intern-state : (& intern-state ci.InternCompatState)]
-  [pattern : ast.AstPattern]) : bool
+  [pattern : (& ast.AstPattern)]) : bool
   (match pattern
     [(Binding name)
       (let
@@ -6125,7 +6601,7 @@
         (and (> (string.string-length text) 1) (= (string.char-at text 0) '&')))]
     [_ false]))
 
-(define (parse-ast-slice-rest-target? [pattern : ast.AstPattern]) : bool
+(define (parse-ast-slice-rest-target? [pattern : (& ast.AstPattern)]) : bool
   (match pattern
     [(Binding name) (not (= name (cbi.compiler-builtin-ctfe "&")))]
     [(Wildcard) true]
@@ -6135,16 +6611,16 @@
 ;; `&` marker and keeps `rest` as the last item (AstPattern.Slice's flag).
 (define (parse-ast-slice-pattern
   [dispatch : sym_i64_env.SymI64Env]
-  [items : ast.AstPatternList]) : ResultAstPattern
+  [items : (& ast.AstPatternList)]) : ResultAstPattern
   (let
     [intern-state : ci.InternCompatState
       (compiler-parse-dispatch-intern-state dispatch)]
-    [count : i64 (ast.ast-pattern-list-len (& items))]
+    [count : i64 (ast.ast-pattern-list-len items)]
     [marker : i64 -1]
     (for [index (iterator.range 0 count)]
       (when
         (parse-ast-slice-rest-marker?
-          (ast.ast-pattern-list-get (& items) index (ast.ast-pattern-fallback)))
+          (& (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))))
         (if (< marker 0)
           (set! marker index)
           (return
@@ -6155,21 +6631,25 @@
       (when
         (parse-ast-slice-glued-rest?
           (& intern-state)
-          (ast.ast-pattern-list-get (& items) index (ast.ast-pattern-fallback)))
+          (& (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))))
         (return
           (Err
             (parse-kind-message
               (InvalidPattern)
               "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))))
     (if (< marker 0)
-      (Ok (ast.ast-pat-slice items false))
+      (Ok
+        (ast.ast-pat-slice
+          (owned_view.compiler-owned-reference-shared-view items)
+          false))
       (if (and
         (= marker (- count 2))
         (parse-ast-slice-rest-target?
-          (ast.ast-pattern-list-get
-            (& items)
-            (- count 1)
-            (ast.ast-pattern-fallback))))
+          (&
+            (ast.ast-pattern-list-get
+              items
+              (- count 1)
+              (ast.ast-pattern-fallback)))))
         (let
           [out : ast.AstPatternList
             (ast.ast-pattern-list-with-capacity (- count 1))]
@@ -6178,10 +6658,7 @@
               (= copy marker)
               (ast.ast-pattern-list-push
                 (&mut out)
-                (ast.ast-pattern-list-get
-                  (& items)
-                  copy
-                  (ast.ast-pattern-fallback)))))
+                (ast.ast-pattern-list-get items copy (ast.ast-pattern-fallback)))))
           (Ok (ast.ast-pat-slice out true)))
         (Err
           (parse-kind-message
@@ -6229,7 +6706,7 @@
               [(= tag (compiler-parse-tag-expr-array))
                 (Ok (ast.ast-pat-array parsed-args))]
               [(= name-id (cbi.compiler-builtin-ctfe "slice"))
-                (parse-ast-slice-pattern dispatch parsed-args)]
+                (parse-ast-slice-pattern dispatch (& parsed-args))]
               [(compiler-parse-pattern-head?
                   dispatch
                   name
@@ -6718,9 +7195,11 @@
     (string.eq message (parse-ast-if-missing-else-message))
     (string.eq message (parse-ast-if-arity-message))))
 
-(define (parse-ast-if-diagnostic-notes [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+(define (parse-ast-if-diagnostic-notes [diag : (& cdiag.CompilerDiagnostic)]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-note
-    (cdiag.compiler-diagnostic-with-note diag (parse-ast-if-one-sided-note))
+    (cdiag.compiler-diagnostic-with-note
+      (owned_view.compiler-owned-reference-shared-view diag)
+      (parse-ast-if-one-sided-note))
     (parse-ast-if-example-note)))
 
 (define (parse-ast-if
@@ -6813,13 +7292,7 @@
                       receiver-box
                       index-box
                       parsed-value))]
-                [(BoxGet receiver-box)
-                  (Ok
-                    (ast.ast-expr-box-set-with-pools
-                      pools
-                      receiver-box
-                      parsed-value))]
-                [(BoxTake receiver-box)
+                [(or (BoxGet receiver-box) (BoxTake receiver-box))
                   (Ok
                     (ast.ast-expr-box-set-with-pools
                       pools
@@ -6845,12 +7318,8 @@
   (match (ast.ast-expr-unspan-with-pools
     pools
     (& (ast.ast-node-pool-context-expr-get pools expr-id)))
-    [(Var _) true]
-    [(StructGet _ _) true]
+    [(or (Var _) (StructGet _ _) (ArrayRef _ _) (BoxGet _) (BoxTake _)) true]
     [(TupleRef _ index) (>= index 0)]
-    [(ArrayRef _ _) true]
-    [(BoxGet _) true]
-    [(BoxTake _) true]
     [_ false]))
 
 (define (parse-ast-replace
@@ -9434,7 +9903,7 @@
     (ast.ast-spmd-param-class-list-len right)))
 
 (define (parse-ast-spmd-specialization-eq?
-  [left : ast.AstSpmdSpecialization]
+  [left : (& ast.AstSpmdSpecialization)]
   [right : (& right ast.AstSpmdSpecialization)]) : bool
   (and
     (= left.lanes right.lanes)
@@ -9446,14 +9915,15 @@
 
 (define (parse-ast-spmd-specialization-present-at?
   [items : (& items ast.AstSpmdSpecializationList)]
-  [wanted : ast.AstSpmdSpecialization]) : bool
+  [wanted : (& ast.AstSpmdSpecialization)]) : bool
   (for [index (iterator.range 0 (ast.ast-spmd-specialization-list-len items))]
     (when
       (parse-ast-spmd-specialization-eq?
-        (ast.ast-spmd-specialization-list-get
-          items
-          index
-          (compiler-parse-place-shared-view wanted))
+        (&
+          (ast.ast-spmd-specialization-list-get
+            items
+            index
+            (owned_view.compiler-owned-reference-shared-view wanted)))
         wanted)
       (return true)))
   false)
@@ -9483,7 +9953,7 @@
                   (parse-ast-spmd-specialization dispatch fields param-count))]
               (if (parse-ast-spmd-specialization-present-at?
                 (& out)
-                (compiler-parse-place-shared-view specialization))
+                (& specialization))
                 (Err "parse: duplicate :spmd-callable specialization")
                 (let
                   [next : ast.AstSpmdSpecializationList out]
@@ -9546,16 +10016,16 @@
 
 (define (parse-ast-define-fn-finish
   [name : i64]
-  [params : ast.AstParamList]
+  [params : (& ast.AstParamList)]
   [ret : ast.AstType]
   [body : i64]
   [export : ast.AstFnExport]
-  [spmd-callable : ast.AstSpmdCallable]) : ResultAstDecl
+  [spmd-callable : (& ast.AstSpmdCallable)]) : ResultAstDecl
   (if (and
     (match export
       [(Export _) true]
       [_ false])
-    (match (compiler-parse-place-shared-view spmd-callable)
+    (match spmd-callable
       [(Callable _) true]
       [_ false]))
     (Err "parse: define :spmd-callable cannot be combined with :export-symbol")
@@ -9565,34 +10035,41 @@
           (Err
             "parse: define :export-symbol cannot be used on functions with comptime parameters")]
         [(No)
-          (match (compiler-parse-place-shared-view spmd-callable)
+          (match spmd-callable
             [(No)
               (Ok
                 (ast.ast-decl-def-fn-metadata-id
                   name
-                  params
+                  (owned_view.compiler-owned-reference-shared-view params)
                   ret
                   body
-                  (& (ast.ast-fn-metadata-full export spmd-callable))))]
+                  (&
+                    (ast.ast-fn-metadata-full
+                      export
+                      (owned_view.compiler-owned-reference-shared-view
+                        spmd-callable)))))]
             [(Callable _)
               (Err
                 "parse: define :spmd-callable cannot be used on functions with comptime parameters")])])
       (Ok
         (ast.ast-decl-def-fn-metadata-id
           name
-          params
+          (owned_view.compiler-owned-reference-shared-view params)
           ret
           body
-          (& (ast.ast-fn-metadata-full export spmd-callable)))))))
+          (&
+            (ast.ast-fn-metadata-full
+              export
+              (owned_view.compiler-owned-reference-shared-view spmd-callable))))))))
 
 (define (parse-ast-define-fn-rest
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [name : i64]
-  [params : ast.AstParamList]
+  [params : (& ast.AstParamList)]
   [export : ast.AstFnExport]
   [seen-export : bool]
-  [spmd-callable : ast.AstSpmdCallable]
+  [spmd-callable : (& ast.AstSpmdCallable)]
   [seen-spmd-callable : bool]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
@@ -9658,7 +10135,7 @@
                             (parse-ast-define-fn-spmd-callable-tail
                               dispatch
                               after-key
-                              (ast.ast-param-list-len (& params))))]
+                              (ast.ast-param-list-len params)))]
                         (parse-ast-define-fn-rest
                           dispatch
                           pools
@@ -9666,7 +10143,7 @@
                           params
                           export
                           seen-export
-                          parsed-callable
+                          (& parsed-callable)
                           true
                           tail)))]
                   [(compiler-parse-metadata-key? dispatch key)
@@ -9718,10 +10195,10 @@
       dispatch
       pools
       name
-      parsed-params
+      (& parsed-params)
       No
       false
-      No
+      (& (No))
       false
       rest)))
 
@@ -10192,30 +10669,33 @@
   [abi : ast.AstExternAbi]
   [symbol-id : ci.InternId]
   [seen-abi : bool]
-  [param-types : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultAstExternParts
+  [param-types : (& ast.AstTypeList)]
+  [ret : (& ast.AstType)]) : ResultAstExternParts
   (Ok
     abi
     symbol-id
     seen-abi
-    (ast.ast-ty-func-with-pools pools param-types (& ret))))
+    (ast.ast-ty-func-with-pools
+      pools
+      (owned_view.compiler-owned-reference-shared-view param-types)
+      ret)))
 
 (define (parse-ast-extern-head-post-ret
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [items : (& program (Slice reader.SpannedSexpr))]
-  [abi : ast.AstExternAbi]
+  [abi : (& ast.AstExternAbi)]
   [symbol-id : ci.InternId]
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
-  [param-types : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultAstExternParts
+  [param-types : (& ast.AstTypeList)]
+  [ret : (& ast.AstType)]) : ResultAstExternParts
   (match items
     [(slice)
       (parse-ast-extern-head-finish
         pools
-        abi
+        (owned_view.compiler-owned-reference-shared-view abi)
         symbol-id
         seen-abi
         param-types
@@ -10233,12 +10713,15 @@
                   [parsed-abi
                     (try (parse-ast-extern-abi-tail dispatch after-key))]
                   [combined-abi
-                    (try (parse-ast-extern-abi-combine abi parsed-abi))]
+                    (try
+                      (parse-ast-extern-abi-combine
+                        (owned_view.compiler-owned-reference-shared-view abi)
+                        parsed-abi))]
                   (parse-ast-extern-head-post-ret
                     dispatch
                     pools
                     tail
-                    combined-abi
+                    (& combined-abi)
                     symbol-id
                     link-inputs
                     true
@@ -10347,12 +10830,12 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [items : (& program (Slice reader.SpannedSexpr))]
-  [abi : ast.AstExternAbi]
+  [abi : (& ast.AstExternAbi)]
   [symbol-id : ci.InternId]
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
-  [param-types : ast.AstTypeList]) : ResultAstExternParts
+  [param-types : (& ast.AstTypeList)]) : ResultAstExternParts
   (match items
     [(slice head & tail)
       (if (sexpr-colon? head)
@@ -10364,11 +10847,11 @@
                   [parsed-ret (try (parse-ast-type-spanned dispatch pools ret))]
                   (parse-ast-extern-head-finish
                     pools
-                    abi
+                    (owned_view.compiler-owned-reference-shared-view abi)
                     symbol-id
                     seen-abi
                     param-types
-                    parsed-ret))]
+                    (& parsed-ret)))]
               [_
                 (let
                   [parsed-ret (try (parse-ast-type-spanned dispatch pools ret))]
@@ -10382,7 +10865,7 @@
                     seen-abi
                     seen-symbol
                     param-types
-                    parsed-ret))])]
+                    (& parsed-ret)))])]
           [_
             (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))])
         (match (reader.sexpr-view head)
@@ -10397,12 +10880,15 @@
                     [parsed-abi
                       (try (parse-ast-extern-abi-tail dispatch after-key))]
                     [combined-abi
-                      (try (parse-ast-extern-abi-combine abi parsed-abi))]
+                      (try
+                        (parse-ast-extern-abi-combine
+                          (owned_view.compiler-owned-reference-shared-view abi)
+                          parsed-abi))]
                     (parse-ast-extern-head-rest
                       dispatch
                       pools
                       tail
-                      combined-abi
+                      (& combined-abi)
                       symbol-id
                       link-inputs
                       true
@@ -10525,12 +11011,12 @@
           dispatch
           pools
           rest
-          abi
+          (& abi)
           source-symbol
           (&mut link-inputs)
           false
           false
-          param-types)
+          (& param-types))
           [(Ok parsed-abi parsed-symbol-id explicit-abi ty)
             (Ok
               (ast.ast-decl-extern-id
@@ -10669,7 +11155,7 @@
           pools
           fields
           (ast.ast-lifetime-list-new)
-          (Default)
+          (& (Default))
           (No)
           0
           0
@@ -10771,7 +11257,7 @@
               out)]
           [(Decls decls)
             (set! out.semantic-origins.len semantic-start)
-            (parse-ast-decl-vec-push-list! out decls)
+            (parse-ast-decl-vec-push-list! out (& decls))
             (parse-ast-module-body-forms-into-vec
               dispatch
               pools
@@ -10914,13 +11400,13 @@
         unit))
     start))
 
-(define (parse-ast-dotted-import-default-alias [name : String]) : String
+(define (parse-ast-dotted-import-default-alias [name : (& str)]) : String
   (let
     [start : i64 (parse-ast-dotted-import-default-alias-start name)]
     (string.substring name start (- (string.string-length name) start))))
 
 (define (parse-ast-dotted-import-default-alias-id-with-state
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& ci.InternCompatState)]
   [name-id : i64]) : i64
   (ci.intern-compat-state-dotted-final-id intern-state name-id))
 
@@ -11030,7 +11516,7 @@
               (Some module-name-id)
               (Some
                 (parse-ast-dotted-import-default-alias-id-with-state
-                  intern-state
+                  (& intern-state)
                   module-name-id))
               span)]
           [(List (slice (Sym head _) & _) _)
@@ -11302,12 +11788,17 @@
 (define (parse-ast-test-metadata-forms
   [dispatch : sym_i64_env.SymI64Env]
   [forms : reader.SpannedSexpr]
-  [ignore-reason : ast.AstTestIgnoreReason]
+  [ignore-reason : (& ast.AstTestIgnoreReason)]
   [seen-ignore : bool]
   [slow : bool]
   [seen-slow : bool]) : ResultAstTestMetadataForms
   (match (reader.spanned-sexpr-view forms)
-    [(List (slice) _) (Ok (ast.ast-test-metadata-new ignore-reason slow) forms)]
+    [(List (slice) _)
+      (Ok
+        (ast.ast-test-metadata-new
+          (owned_view.compiler-owned-reference-shared-view ignore-reason)
+          slow)
+        forms)]
     [(List (slice item & _) _)
       (let
         [tail (reader.spanned-sexpr-drop forms 1)]
@@ -11330,7 +11821,7 @@
                             (parse-ast-test-metadata-forms
                               dispatch
                               tail
-                              (Some reason)
+                              (& (Some reason))
                               true
                               slow
                               seen-slow)))]
@@ -11369,7 +11860,11 @@
                   (MalformedForm)
                   "parse: malformed test metadata"))])
           (if (parse-ast-test-body-metadata-free? dispatch forms)
-            (Ok (ast.ast-test-metadata-new ignore-reason slow) forms)
+            (Ok
+              (ast.ast-test-metadata-new
+                (owned_view.compiler-owned-reference-shared-view ignore-reason)
+                slow)
+              forms)
             (Err
               (parse-kind-message
                 (MalformedForm)
@@ -11392,7 +11887,7 @@
         (match (parse-ast-test-metadata-forms
           dispatch
           body-forms
-          No
+          (& (No))
           false
           false
           false)
@@ -11459,8 +11954,8 @@
       (let
         [decl (try (parse-ast-decl dispatch pools inner))]
         (match (compiler-parse-place-shared-view decl)
-          [(DefFn decl-meta _ _ _ _ _) (Ok (ast.ast-decl-unsafe decl))]
-          [(Extern decl-meta _ _ _ _) (Ok (ast.ast-decl-unsafe decl))]
+          [(or (DefFn _ _ _ _ _ _) (Extern _ _ _ _ _))
+            (Ok (ast.ast-decl-unsafe decl))]
           [_
             (Err
               (parse-kind-message
@@ -11695,17 +12190,20 @@
 
 (define (parse-ast-decl-vec-push
   [v : (&mut v ParseAstDeclVec)]
-  [value : ast.AstDecl]) : unit
-  (parse-ast-decl-vec-push-with-span v value (ast.ast-decl-span-fallback)))
+  [value : (& ast.AstDecl)]) : unit
+  (parse-ast-decl-vec-push-with-span
+    v
+    (owned_view.compiler-owned-reference-shared-view value)
+    (ast.ast-decl-span-fallback)))
 
 (define (parse-ast-decl-vec-push-list!
   [out : (&mut out ParseAstDeclVec)]
-  [decls : ast.AstDeclList]) : unit
+  [decls : (& ast.AstDeclList)]) : unit
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons head rest)
-      (parse-ast-decl-vec-push out head)
-      (parse-ast-decl-vec-push-list! out rest)]))
+      (parse-ast-decl-vec-push out (& head))
+      (parse-ast-decl-vec-push-list! out (& rest))]))
 
 (define (parse-ast-decl-vec-copy-to-list
   [items : (& items ParseAstDeclVec)]
@@ -11718,14 +12216,12 @@
       (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
     (parse-ast-decl-vec-copy-to-list items (+ index 1) out)))
 
-(define (compiler-parse-decl-origin-needs-record? [decl : ast.AstDecl]) : bool
+(define (compiler-parse-decl-origin-needs-record? [decl : (& ast.AstDecl)]) : bool
   (match decl
-    [(Def decl-meta _ _ _) false]
-    [(DefFn decl-meta _ _ _ _ _) false]
-    [(DefMacro decl-meta _ _ _ _) false]
-    [(Test _ _ _ _) false]
+    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _) (DefMacro _ _ _ _ _) (Test _ _ _ _))
+      false]
     [(Unsafe inner-box)
-      (compiler-parse-decl-origin-needs-record? (deref inner-box))]
+      (compiler-parse-decl-origin-needs-record? (& (deref inner-box)))]
     [_ true]))
 
 (define (compiler-parse-decl-origin-register-selected!
@@ -11733,7 +12229,7 @@
   [out : (& out ast.AstDeclList)]) : unit
   (for [index (iterator.range 0 (parse-ast-decl-vec-len items))]
     (if (compiler-parse-decl-origin-needs-record?
-      (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+      (& (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))))
       (let
         [span : ast.AstSourceSpan (array-ref items.spans index)]
         (compiler-parse-decl-origin-register-maybe!
@@ -11860,7 +12356,7 @@
 (define (parse-ast-program-forms-into-vec
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (__tl_dyn-array i64)]
   [semantic-origins : (MutPtr ParseSemanticOriginVec)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
@@ -11872,7 +12368,7 @@
       ;; truncate the spanned pool back to here before reading the next form.
       ;; Bounds the spanned pool to a single form so it never has to grow.
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.form-spanned-result (& toks) (&mut cur))
+      (match (reader.form-spanned-result toks (&mut cur))
         [(Ok form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -11902,7 +12398,7 @@
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
                 (compiler-parse-member-records-compact! mark records-start)
-                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-into-vec
                   dispatch
                   pools
@@ -11933,8 +12429,8 @@
 (define (parse-ast-program-forms
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [toks : (__tl_dyn-array token.SpannedToken)]
-  [cur : (__tl_dyn-array i64)]) : ResultAstDeclList
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
+  [cur : (& (__tl_dyn-array i64))]) : ResultAstDeclList
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     [result : ResultParseAstDeclVec
@@ -11942,7 +12438,7 @@
         dispatch
         pools
         toks
-        cur
+        (owned_view.compiler-owned-reference-shared-view cur)
         (unsafe
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
@@ -11956,7 +12452,7 @@
   (compiler-parse-dispatch-env-from-cfg cfgs))
 
 (define (parse-ast-program-with-cfg-and-pools
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
   (compiler-parse-semantic-origin-capture-end!)
@@ -11990,24 +12486,24 @@
       invocation-address
       compiler-parse-invocation-control-slot
       base-control)
-    (match (parse-ast-program-forms dispatch pools toks cur)
+    (match (parse-ast-program-forms dispatch pools toks (& cur))
       [(Ok decls) (Ok (ast.ast-program decls))]
       [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
 
-(define (parse-ast-source [src : String]) : ResultAstProgram
+(define (parse-ast-source [src : (& str)]) : ResultAstProgram
   (parse-ast-source-with-cfg src (compiler-cfg-empty)))
 
 (define (parse-ast-source-with-cfg-and-pools
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
   (compiler-parse-source-builtins-prepare!)
   (match (compiler-parse-spanned-result-with-cfg src cfgs)
-    [(Ok toks) (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
+    [(Ok toks) (parse-ast-program-with-cfg-and-pools (& toks) cfgs pools)]
     [(Err err) (Err (token.source-error-message err))]))
 
 (define (parse-ast-source-with-cfg
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -12016,7 +12512,7 @@
     (ast.ast-node-pool-context-install! pools)
     result))
 
-(define (parse-ast-repl-module-macro-call-decl? [decl : ast.AstDecl]) : bool
+(define (parse-ast-repl-module-macro-call-decl? [decl : (& ast.AstDecl)]) : bool
   (match decl
     [(Import decl-meta (Spec (MacroDecls _ _) path (No) (No) _))
       (string.eq path "")]
@@ -12026,13 +12522,16 @@
   (Err
     (box
       (parse-ast-canonical-diagnostic
-        (cdiag.compiler-diagnostic-from-span "" span message)))))
+        (& (cdiag.compiler-diagnostic-from-span "" span message))))))
 
-(define (parse-ast-repl-source-error [err : token.SourceError]) : ResultAstReplItem
+(define (parse-ast-repl-source-error [err : (& token.SourceError)]) : ResultAstReplItem
   (Err
     (box
       (parse-ast-canonical-diagnostic
-        (cdiag.compiler-diagnostic-from-source-error "" err)))))
+        (&
+          (cdiag.compiler-diagnostic-from-source-error
+            ""
+            (owned_view.compiler-owned-reference-shared-view err)))))))
 
 ;; The REPL dispatch carries no invocation frame to record the failing subform,
 ;; so an expression error is located at the input form.
@@ -12046,12 +12545,12 @@
       (parse-ast-repl-error (reader.spanned-sexpr-span form) message)]))
 
 (define (parse-ast-repl-source-with-pools
-  [src : String]
+  [src : (& str)]
   [pools : ast.AstNodePoolContext]) : ResultAstReplItem
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    (match (lexer.spanned-result (& src))
+    (match (lexer.spanned-result src)
       [(Ok toks)
         (let
           [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -12073,7 +12572,7 @@
                         (let
                           [result : ResultAstReplItem
                             (if (parse-ast-repl-module-macro-call-decl?
-                              (compiler-parse-place-shared-view decl))
+                              (& decl))
                               (parse-ast-repl-expr-item dispatch pools form)
                               (Ok (AstReplDecl decl)))]
                           (compiler-parse-member-records-compact!
@@ -12095,12 +12594,12 @@
                         "parse: trailing tokens after REPL input"))))]
               [(Err err)
                 (reader.sp-node-pool-truncate! mark)
-                (parse-ast-repl-source-error err)])))]
+                (parse-ast-repl-source-error (& err))])))]
       [(Err err)
         (reader.sp-node-pool-truncate! mark)
-        (parse-ast-repl-source-error err)])))
+        (parse-ast-repl-source-error (& err))])))
 
-(define (parse-ast-repl-source [src : String]) : ResultAstReplItem
+(define (parse-ast-repl-source [src : (& str)]) : ResultAstReplItem
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstReplItem (parse-ast-repl-source-with-pools src pools)]
@@ -12109,19 +12608,19 @@
 
 ;; Every parse error becomes a diagnostic through here. A tagged message or a
 ;; lexer or reader error already gave the diagnostic its kind's code.
-(define (parse-ast-canonical-diagnostic [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+(define (parse-ast-canonical-diagnostic [diag : (& cdiag.CompilerDiagnostic)]) : cdiag.CompilerDiagnostic
   (let
     [code : String
-      (match (cdiag.compiler-diagnostic-code (& diag))
+      (match (cdiag.compiler-diagnostic-code diag)
         [(CompilerDiagnosticSomeString tagged) tagged]
         [CompilerDiagnosticNoString
           (cdiag.compiler-diagnostic-code-for-parse-kind (UnclassifiedParse))])]
     [canonical : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-category
-        (& (cdiag.compiler-diagnostic-with-code (& diag) code))
+        (& (cdiag.compiler-diagnostic-with-code diag code))
         "parse")]
     (if (parse-ast-if-message? (cdiag.compiler-diagnostic-message canonical))
-      (parse-ast-if-diagnostic-notes canonical)
+      (parse-ast-if-diagnostic-notes (& canonical))
       canonical)))
 
 (define (parse-ast-recovery-prefix-tag? [tag : i64]) : bool
@@ -12174,17 +12673,17 @@
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (__tl_dyn-array i64)]
   [semantic-origins : (MutPtr ParseSemanticOriginVec)]
   [out : (&mut out ParseAstDeclVec)]
   [diagnostics : (&mut diagnostics cdiag.CompilerDiagnosticList)]) : unit
-  (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
+  (if (= (reader.peek-spanned-tag toks (& cur)) (token.tag-end))
     unit
     (let
       [mark : i64 (reader.sp-node-pool-len)]
       [form-start : i64 (reader.cur-pos (& cur))]
-      (match (reader.form-spanned-result (& toks) (&mut cur))
+      (match (reader.form-spanned-result toks (&mut cur))
         [(Ok spanned-form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -12217,7 +12716,7 @@
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
                 (compiler-parse-member-records-compact! mark records-start)
-                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-recovery-into-vec
                   path
                   dispatch
@@ -12244,12 +12743,13 @@
                 (let
                   [diag : cdiag.CompilerDiagnostic
                     (parse-ast-canonical-diagnostic
-                      (cdiag.compiler-diagnostic-from-span
-                        (compiler-parse-place-shared-view path)
-                        (parse-ast-error-span-current
-                          dispatch
-                          (reader.spanned-sexpr-span spanned-form))
-                        message))]
+                      (&
+                        (cdiag.compiler-diagnostic-from-span
+                          (compiler-parse-place-shared-view path)
+                          (parse-ast-error-span-current
+                            dispatch
+                            (reader.spanned-sexpr-span spanned-form))
+                          message)))]
                   (set! out.semantic-origins.len semantic-start)
                   (compiler-parse-semantic-origin-capture-end!)
                   (reader.sp-node-pool-truncate! mark)
@@ -12267,11 +12767,12 @@
           (let
             [diag : cdiag.CompilerDiagnostic
               (parse-ast-canonical-diagnostic
-                (cdiag.compiler-diagnostic-from-source-error
-                  (compiler-parse-place-shared-view path)
-                  err))]
+                (&
+                  (cdiag.compiler-diagnostic-from-source-error
+                    (compiler-parse-place-shared-view path)
+                    err)))]
             (reader.sp-node-pool-truncate! mark)
-            (parse-ast-recover-top-level-cursor! (& toks) (&mut cur) form-start)
+            (parse-ast-recover-top-level-cursor! toks (&mut cur) form-start)
             (cdiag.compiler-diagnostic-list-push! diagnostics diag)
             (parse-ast-program-forms-recovery-into-vec
               path
@@ -12285,7 +12786,7 @@
 
 (define (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
   [path : String]
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
   (let
@@ -12338,7 +12839,7 @@
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg-and-pools
   [path : String]
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
   (compiler-parse-source-builtins-prepare!)
@@ -12346,7 +12847,7 @@
     [(Ok toks)
       (parse-ast-program-recovery-diagnostic-with-cfg-and-pools
         path
-        toks
+        (& toks)
         cfgs
         pools)]
     [(Err err)
@@ -12354,11 +12855,11 @@
         (box
           (cdiag.compiler-diagnostic-list-single
             (parse-ast-canonical-diagnostic
-              (cdiag.compiler-diagnostic-from-source-error path err)))))]))
+              (& (cdiag.compiler-diagnostic-from-source-error path err))))))]))
 
 (define (parse-ast-source-recovery-diagnostic-with-cfg
   [path : String]
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramRecovery
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -12375,18 +12876,18 @@
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (__tl_dyn-array i64)]
   [semantic-origins : (MutPtr ParseSemanticOriginVec)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
-  (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
+  (if (= (reader.peek-spanned-tag toks (& cur)) (token.tag-end))
     (Ok)
     (let
       ;; Bound the spanned pool to a single top-level form (see
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
       ;; before reading the next form.
       [mark : i64 (reader.sp-node-pool-len)]
-      (match (reader.form-spanned-result (& toks) (&mut cur))
+      (match (reader.form-spanned-result toks (&mut cur))
         [(Ok spanned-form)
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
@@ -12418,7 +12919,7 @@
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
                 (compiler-parse-member-records-compact! mark records-start)
-                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
@@ -12446,25 +12947,26 @@
                 (Err
                   (box
                     (parse-ast-canonical-diagnostic
-                      (cdiag.compiler-diagnostic-from-span
-                        path
-                        (parse-ast-error-span-current
-                          dispatch
-                          (reader.spanned-sexpr-span spanned-form))
-                        message))))]))]
+                      (&
+                        (cdiag.compiler-diagnostic-from-span
+                          path
+                          (parse-ast-error-span-current
+                            dispatch
+                            (reader.spanned-sexpr-span spanned-form))
+                          message)))))]))]
         [(Err err)
           (reader.sp-node-pool-truncate! mark)
           (Err
             (box
               (parse-ast-canonical-diagnostic
-                (cdiag.compiler-diagnostic-from-source-error path err))))]))))
+                (& (cdiag.compiler-diagnostic-from-source-error path err)))))]))))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [toks : (__tl_dyn-array token.SpannedToken)]
-  [cur : (__tl_dyn-array i64)]) : ResultAstDeclListDiagnostic
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
+  [cur : (& (__tl_dyn-array i64))]) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
     [result : ResultParseAstDeclVecDiagnostic
@@ -12473,7 +12975,7 @@
         dispatch
         pools
         toks
-        cur
+        (owned_view.compiler-owned-reference-shared-view cur)
         (unsafe
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
@@ -12482,7 +12984,7 @@
 
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
-  [toks : (__tl_dyn-array token.SpannedToken)]
+  [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
@@ -12517,30 +13019,31 @@
       base-control)
     (let
       [decls
-        (try (parse-ast-program-forms-diagnostic path dispatch pools toks cur))]
+        (try
+          (parse-ast-program-forms-diagnostic path dispatch pools toks (& cur)))]
       (Ok (ast.ast-program decls)))))
 
-(define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
+(define (parse-ast-source-diagnostic [path : String] [src : (& str)]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))
 
 (define (parse-ast-source-diagnostic-with-cfg-and-pools
   [path : String]
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
   (compiler-parse-source-builtins-prepare!)
   (match (compiler-parse-spanned-result-with-cfg src cfgs)
     [(Ok toks)
-      (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
+      (parse-ast-program-diagnostic-with-cfg-and-pools path (& toks) cfgs pools)]
     [(Err err)
       (Err
         (box
           (parse-ast-canonical-diagnostic
-            (cdiag.compiler-diagnostic-from-source-error path err))))]))
+            (& (cdiag.compiler-diagnostic-from-source-error path err)))))]))
 
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
-  [src : String]
+  [src : (& str)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -12549,8 +13052,8 @@
     (ast.ast-node-pool-context-install! pools)
     result))
 
-(define (ast-decl-list-count [decls : ast.AstDeclList]) : i64
-  (ast.ast-decl-list-len (& decls)))
+(define (ast-decl-list-count [decls : (& ast.AstDeclList)]) : i64
+  (ast.ast-decl-list-len decls))
 
 ;; Serial tool compatibility adapter. Production parsing above uses the
 ;; explicit-state twin; lint ownership is tracked separately by #4699.

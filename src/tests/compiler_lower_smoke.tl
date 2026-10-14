@@ -222,7 +222,7 @@
         [items : svec.Vec (svec.new)]
         (svec.push-ref! (&mut items) (string.copy root))
         items)]
-    (load.compiler-load-test-mkdir root)
+    (load.compiler-load-test-mkdir (& root))
     (compiler-lower-smoke-write-text
       dep
       "(module stdlib.maybe_string)
@@ -238,9 +238,9 @@
       [(maybe_string.MaybeString.No) \"\"]
       [(maybe_string.MaybeString.Some head) head])))")
     (match (load.compiler-load-file-with-paths-and-roots
-      (string.copy entry)
+      (& (string.copy entry))
       (sym_i64_env.sym-i64-empty)
-      roots)
+      (& roots))
       [(Ok decls paths _ _)
         (match (lower_tests.lower-compiler-program-with-decl-paths
           entry
@@ -283,7 +283,7 @@
         [items : svec.Vec (svec.new)]
         (svec.push-ref! (&mut items) "stdlib")
         items)]
-    (load.compiler-load-test-mkdir dir)
+    (load.compiler-load-test-mkdir (& dir))
     (compiler-lower-smoke-write-text
       (string.copy leaf)
       "(module issue6339_leaf)
@@ -525,7 +525,7 @@
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parser.parse-ast-source
-    (lower_tests.compiler-lower-module-entry-main-source))
+    (& (lower_tests.compiler-lower-module-entry-main-source)))
     [(Ok program)
       (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
@@ -622,7 +622,7 @@
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-lower-smoke-stdlib-string-public-substring-source))
+    (& (compiler-lower-smoke-stdlib-string-public-substring-source)))
     [(Ok program)
       (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/string.tl"

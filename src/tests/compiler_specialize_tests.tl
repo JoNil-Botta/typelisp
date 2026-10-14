@@ -694,10 +694,11 @@
         (spec-type-key (ast.ast-ty-mut-ptr (& (ast.ast-ty-ptr (& (U8))))))
         "mutptr_ptr_u8")
       (ctfe.ctfe-type-eq
-        (spec-substitute-type
-          (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
-          subs)
-        (ast.ast-ty-mut-ptr (& (I64)))))))
+        (&
+          (spec-substitute-type
+            (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
+            subs))
+        (& (ast.ast-ty-mut-ptr (& (I64))))))))
 
 (define (compiler-specialize-owner-slice-type-ok?) : bool
   (let
@@ -950,7 +951,7 @@
 ;: `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
 ;: `alloc` template is removed.
 (define (compiler-specialize-reuse-ok?) : bool
-  (match (parser.parse-ast-source (compiler-specialize-reuse-source))
+  (match (parser.parse-ast-source (& (compiler-specialize-reuse-source)))
     [(Ok program)
       (match (spec.compiler-specialize-program program)
         [(Ok specialized)
@@ -1030,10 +1031,10 @@
 
 (define (compiler-specialize-module-identity-ok?) : bool
   (match (parser.parse-ast-source
-    (compiler-specialize-module-identity-other-source))
+    (& (compiler-specialize-module-identity-other-source)))
     [(Ok other)
       (match (parser.parse-ast-source
-        (compiler-specialize-module-identity-main-source))
+        (& (compiler-specialize-module-identity-main-source)))
         [(Ok main)
           (let
             [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 8)]
@@ -1252,8 +1253,8 @@
         [(Bool flag) flag]
         [_ false])
       (ctfe.ctfe-type-eq
-        (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U)
-        (Bool)))))
+        (& (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U))
+        (& (Bool))))))
 
 (define (compiler-specialize-reflection-string-param-ok?) : bool
   (match (parser.parse-ast-source
@@ -1327,7 +1328,7 @@
   [second-index : i64]
   [second-arg : String]) : parser.ResultAstProgram
   (let
-    [program (try (parser.parse-ast-source source))]
+    [program (try (parser.parse-ast-source (& source)))]
     (compiler-generated-decl-mark!
       (ast.ast-place-shared-view program)
       first-index
@@ -1733,10 +1734,11 @@
 ;; these source-local tests isolate the specialization traversal itself.
 (define (compiler-specialize-resource-error? [body : String]) : bool
   (match (parser.parse-ast-source
-    (str_cat.str-cat
-      "(define (bad [comptime T : type]) : i64 "
-      body
-      ") (define (main) : i64 (bad (type i64)))"))
+    (&
+      (str_cat.str-cat
+        "(define (bad [comptime T : type]) : i64 "
+        body
+        ") (define (main) : i64 (bad (type i64)))")))
     [(Ok program)
       (match (spec.compiler-specialize-program program)
         [(Err _) true]

@@ -48,10 +48,10 @@ tl_backtrace_stack_high:
   [next-reg : String]
   [profile : bool]) : String
   (runtime_common.compiler-backend-runtime-fast-alloc-functions
-    (compiler-backend-current-arena-load "%r8")
-    (compiler-backend-runtime-usable-end-offset)
-    size-reg
-    next-reg
+    (& (compiler-backend-current-arena-load "%r8"))
+    (& (compiler-backend-runtime-usable-end-offset))
+    (& size-reg)
+    (& next-reg)
     profile))
 
 ;; tl_region_mark's body is the target-neutral recipe, which also feeds the

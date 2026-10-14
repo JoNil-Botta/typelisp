@@ -106,7 +106,7 @@
     [(Rsrc) 6]))
 
 (define (compiler-object-layout-data-records-size-from
-  [records : cobj.CompilerObjectDataRecordList]
+  [records : (& cobj.CompilerObjectDataRecordList)]
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
@@ -116,17 +116,17 @@
       (set!
         cur-offset
         (cobj.compiler-object-data-record-end-offset
-          (cobj.compiler-object-data-record-list-ref records index)
+          (& (cobj.compiler-object-data-record-list-ref records index))
           cur-offset))
       (set! index (+ index 1)))
     cur-offset))
 
 (define (compiler-object-layout-data-records-size
-  [records : cobj.CompilerObjectDataRecordList]) : i64
+  [records : (& cobj.CompilerObjectDataRecordList)]) : i64
   (compiler-object-layout-data-records-size-from records 0))
 
 (define (compiler-object-layout-instr-size
-  [instr : cobj.CompilerObjectX64Instr]) : i64
+  [instr : (& cobj.CompilerObjectX64Instr)]) : i64
   (match instr
     [(Label _) 0]
     [(or (Call _) (TailCall _) (Jump _)) 5]
@@ -144,7 +144,7 @@
 ;; Every instruction form encodes except a Jcc whose condition code is not
 ;; 0-15, and Raw bytes in a format that takes none (`raw` false).
 (define (compiler-object-layout-instrs-encodable?
-  [instrs : cobj.CompilerObjectX64InstrList]
+  [instrs : (& cobj.CompilerObjectX64InstrList)]
   [raw : bool]) : bool
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
@@ -185,14 +185,15 @@
     [_ (None)]))
 
 (define (compiler-object-layout-instr-relocation-count
-  [instr : cobj.CompilerObjectX64Instr]) : i64
-  (match (compiler-object-layout-instr-fixup instr)
+  [instr : (& cobj.CompilerObjectX64Instr)]) : i64
+  (match (compiler-object-layout-instr-fixup
+    (owned_view.compiler-owned-reference-shared-view instr))
     [(None) 0]
     [(One _ _) 1]
     [(Branch _ _) 2]))
 
 (define (compiler-object-layout-instrs-relocation-count
-  [instrs : cobj.CompilerObjectX64InstrList]) : i64
+  [instrs : (& cobj.CompilerObjectX64InstrList)]) : i64
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
@@ -203,12 +204,12 @@
         (+
           total
           (compiler-object-layout-instr-relocation-count
-            (cobj.compiler-object-instr-list-ref instrs index))))
+            (& (cobj.compiler-object-instr-list-ref instrs index)))))
       (set! index (+ index 1)))
     total))
 
 (define (compiler-object-layout-instrs-size-from
-  [instrs : cobj.CompilerObjectX64InstrList]
+  [instrs : (& cobj.CompilerObjectX64InstrList)]
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
@@ -220,12 +221,12 @@
         (+
           cur-offset
           (compiler-object-layout-instr-size
-            (cobj.compiler-object-instr-list-ref instrs index))))
+            (& (cobj.compiler-object-instr-list-ref instrs index)))))
       (set! index (+ index 1)))
     cur-offset))
 
 (define (compiler-object-layout-instrs-size
-  [instrs : cobj.CompilerObjectX64InstrList]) : i64
+  [instrs : (& cobj.CompilerObjectX64InstrList)]) : i64
   (compiler-object-layout-instrs-size-from instrs 0))
 
 (define (compiler-object-layout-section-virtual-size
@@ -234,8 +235,8 @@
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data instrs)
       (match kind
-        [(Text) (compiler-object-layout-instrs-size instrs)]
-        [_ (compiler-object-layout-data-records-size data)])]))
+        [(Text) (compiler-object-layout-instrs-size (& instrs))]
+        [_ (compiler-object-layout-data-records-size (& data))])]))
 
 (define (compiler-object-layout-section-raw-size
   [image : (& image cobj.CompilerObjectImage)]
@@ -248,7 +249,7 @@
 ;; absolute addresses, plus image-relative 32-bit ones where the format has
 ;; them (COFF's ADDR32NB, used by unwind and resource tables).
 (define (compiler-object-layout-relocation-supported?
-  [reloc : cobj.CompilerObjectRelocation]
+  [reloc : (& cobj.CompilerObjectRelocation)]
   [addr32nb : bool]) : bool
   (match reloc
     [(Relocation section _ kind _)
@@ -272,7 +273,7 @@
     [ok : bool true]
     (while (and ok (< index count))
       (if (compiler-object-layout-relocation-supported?
-        (cobj.compiler-object-relocation-list-ref relocs index)
+        (& (cobj.compiler-object-relocation-list-ref relocs index))
         addr32nb)
         (set! index (+ index 1))
         (set! ok false)))
@@ -292,7 +293,7 @@
       (let
         [record : cobj.CompilerObjectDataRecord
           (cobj.compiler-object-data-record-list-ref records index)]
-        (match (owned_view.compiler-owned-shared-view record)
+        (match (& record)
           [(Label found)
             (if (string.eq found label)
               (begin
@@ -302,12 +303,14 @@
           [_
             (set!
               cur-offset
-              (cobj.compiler-object-data-record-end-offset record cur-offset))
+              (cobj.compiler-object-data-record-end-offset
+                (& record)
+                cur-offset))
             (set! index (+ index 1))])))
     result))
 
 (define (compiler-object-layout-instr-label-offset-from
-  [instrs : cobj.CompilerObjectX64InstrList]
+  [instrs : (& cobj.CompilerObjectX64InstrList)]
   [label : String]
   [offset : i64]) : i64
   (let
@@ -320,7 +323,7 @@
       (let
         [instr : cobj.CompilerObjectX64Instr
           (cobj.compiler-object-instr-list-ref instrs index)]
-        (match (owned_view.compiler-owned-shared-view instr)
+        (match (& instr)
           [(Label found)
             (if (string.eq found label)
               (begin
@@ -330,7 +333,7 @@
           [_
             (set!
               cur-offset
-              (+ cur-offset (compiler-object-layout-instr-size instr)))
+              (+ cur-offset (compiler-object-layout-instr-size (& instr))))
             (set! index (+ index 1))])))
     result))
 
@@ -341,7 +344,8 @@
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data instrs)
       (match kind
-        [(Text) (compiler-object-layout-instr-label-offset-from instrs label 0)]
+        [(Text)
+          (compiler-object-layout-instr-label-offset-from (& instrs) label 0)]
         [_ (compiler-object-layout-data-label-offset-from data label 0)])]))
 
 (define (compiler-object-layout-symbol-value
@@ -404,7 +408,7 @@
   [image : (& image cobj.CompilerObjectImage)]) : i64
   (match (cobj.compiler-object-section-list-find image.sections (Text))
     [(Section _ _ instrs)
-      (compiler-object-layout-instrs-relocation-count instrs)]))
+      (compiler-object-layout-instrs-relocation-count (& instrs))]))
 
 (define (compiler-object-layout-relocation-count
   [relocs : (& relocs cobj.CompilerObjectRelocationList)]
@@ -452,7 +456,7 @@
     [(String text)
       (compiler-object-layout-push-string-bytes! out text)
       (compiler-object-layout-push-u8! out 0)
-      (cobj.compiler-object-data-record-end-offset (String text) offset)]
+      (cobj.compiler-object-data-record-end-offset (& (String text)) offset)]
     [(F64 bits)
       (compiler-object-layout-push-u64! out (cast bits : i64))
       (+ offset 8)]
@@ -474,7 +478,7 @@
 
 (define (compiler-object-layout-render-data-records!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [records : cobj.CompilerObjectDataRecordList]
+  [records : (& cobj.CompilerObjectDataRecordList)]
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
@@ -525,7 +529,7 @@
 
 (define (compiler-object-layout-render-instr!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [instr : cobj.CompilerObjectX64Instr]) : unit
+  [instr : (& cobj.CompilerObjectX64Instr)]) : unit
   (match instr
     [(Label _) unit]
     [(Call _) (compiler-object-layout-push-rel32-instr! out "e8")]
@@ -562,14 +566,14 @@
 
 (define (compiler-object-layout-render-instrs!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [instrs : cobj.CompilerObjectX64InstrList]) : unit
+  [instrs : (& cobj.CompilerObjectX64InstrList)]) : unit
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     (while (< index count)
       (compiler-object-layout-render-instr!
         out
-        (cobj.compiler-object-instr-list-ref instrs index))
+        (& (cobj.compiler-object-instr-list-ref instrs index)))
       (set! index (+ index 1)))
     unit))
 
@@ -580,9 +584,9 @@
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ data instrs)
       (match kind
-        [(Text) (compiler-object-layout-render-instrs! out instrs)]
+        [(Text) (compiler-object-layout-render-instrs! out (& instrs))]
         [_
-          (compiler-object-layout-render-data-records! out data 0)
+          (compiler-object-layout-render-data-records! out (& data) 0)
           unit])]))
 
 (define (compiler-object-layout-u8-at [text : (& text str)] [offset : i64]) : i64
@@ -622,7 +626,7 @@
 
 (define (compiler-object-layout-contains?
   [text : (& text str)]
-  [needle : String]) : bool
+  [needle : (& str)]) : bool
   (let
     [i : i64 0]
     [n : i64 (compiler-object-layout-string-length text)]

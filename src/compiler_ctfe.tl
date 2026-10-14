@@ -29,6 +29,14 @@
 
 (defstruct CompilerCtfeMacroStateData
   (result-hygiene-free-node i64)
+  ;; The operand node of the last `expr-type` that failed on an operand the
+  ;; macro walk could not typecheck, or -1 (#8871), and the pools the
+  ;; evaluation read it from. Only `ctfe-expr-type-value` sets them, and only
+  ;; for a value the walk's own capture marked failed, so the node is a real
+  ;; operand of the call being expanded. The native route evaluates in its
+  ;; host session's pools, which the caller adopts only when the call succeeds.
+  (failed-operand-node i64)
+  (failed-operand-pools ast.AstNodePoolContext)
   (result-may-contain-macro bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
@@ -50,6 +58,8 @@
       (array-ref cell 0)
       (CompilerCtfeMacroStateData
         -1
+        -1
+        (ast.AstNodePoolContext 0 0 0)
         false
         (ctfe_key_map.with-capacity 1)
         (ctfe_key_map.with-capacity 1)
@@ -144,6 +154,38 @@
   [state : CompilerCtfeMacroState]) : i64
   (unsafe
     (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
+
+;; `expr-type`'s failed-operand channel (#8871). The noted operand belongs to the
+;; failing transformer evaluation: the macro walk takes it on that call's error
+;; path, which clears it.
+(define (ctfe-failed-operand-note-for-state!
+  [state : CompilerCtfeMacroState]
+  [node : i64]
+  [pools : ast.AstNodePoolContext]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-node
+      node)
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).failed-operand-pools
+      pools)))
+
+;: The pools of the noted failed operand; read before taking it.
+(define (ctfe-failed-operand-pools-for-state [state : CompilerCtfeMacroState]) : ast.AstNodePoolContext
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).failed-operand-pools))
+
+;: The noted failed operand, or -1; the channel is cleared either way.
+(define (ctfe-failed-operand-take-for-state! [state : CompilerCtfeMacroState]) : i64
+  (let
+    [node : i64
+      (unsafe
+        (deref (compiler-ctfe-macro-state-view state)).failed-operand-node)]
+    (ctfe-failed-operand-note-for-state!
+      state
+      -1
+      (ast.AstNodePoolContext 0 0 0))
+    node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -930,10 +972,30 @@
 (define (ctfe-untyped-expr-type) : ast.AstType
   (Var (ctfe-untyped-expr-type-id)))
 
+;; An operand the macro walk tried to typecheck and could not. It is untyped
+;; everywhere, except that `expr-type` on it notes the operand node in the job's
+;; macro state, so the walk can report the operand's own error instead (#8871).
+(define (ctfe-failed-expr-type-id) : i64
+  -6)
+
+(define (ctfe-failed-expr-type) : ast.AstType
+  (Var (ctfe-failed-expr-type-id)))
+
+(define (ctfe-failed-expr-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Var name) (= name (ctfe-failed-expr-type-id))]
+    [_ false]))
+
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name)
+      (or
+        (= name (ctfe-untyped-expr-type-id))
+        (= name (ctfe-failed-expr-type-id)))]
     [_ false]))
+
+(define (ctfe-expr-type-untyped-message) : String
+  "expr-type requires a typechecked Expr")
 
 (define (ctfe-captured-expr-type-id) : i64
   -4)
@@ -7067,6 +7129,41 @@
     (Ok (ExprList (ast.ast-expr-list-new)) fuel)
     (Err (box (ctfe-diagnostic-at-expr expr "expr-list-empty expects no args")))))
 
+;; Publish `pools`' cursor to `peer` and to the owning, retained and active
+;; contexts that share its storage, so no later append through any of them can
+;; reuse a slot that a builder's result refers to.
+(define (ctfe-list-builder-publish-pools!
+  [env : (& env CtfeEnv)]
+  [pools : ast.AstNodePoolContext]
+  [peer : ast.AstNodePoolContext]) : unit
+  (ast.ast-node-pool-context-adopt-newer! peer pools)
+  (ctfe-env-adopt-captured-pools! env pools)
+  (when
+    (ast.ast-node-pool-has-active-context?)
+    (ast.ast-node-pool-context-adopt-newer!
+      (ast.ast-node-pool-context-active-live)
+      pools)))
+
+;; Captured children determine the result's domain even when an unrelated
+;; binding is the environment's most recently retained syntax value. Advance
+;; the tail's context to the newest cursor among the head, owning, retained and
+;; active contexts; only state cells that share its storage change.
+(define (ctfe-list-builder-pools
+  [env : (& env CtfeEnv)]
+  [head : ast.AstNodePoolContext]
+  [tail : ast.AstNodePoolContext]) : ast.AstNodePoolContext
+  (ast.ast-node-pool-context-adopt-newer! tail head)
+  (ast.ast-node-pool-context-adopt-newer! tail (ctfe-env-pools env))
+  (ast.ast-node-pool-context-adopt-newer!
+    tail
+    (ctfe-env-syntax-pool-context-live env))
+  (when
+    (ast.ast-node-pool-has-active-context?)
+    (ast.ast-node-pool-context-adopt-newer!
+      tail
+      (ast.ast-node-pool-context-active-live)))
+  tail)
+
 (define (ctfe-eval-expr-list-cons-call
   [args : (& ast.AstExprList)]
   [expr : (& ast.AstExpr)]
@@ -7079,6 +7176,10 @@
       (match (compiler-ctfe-eval (& head-arg) env fuel)
         [(Ok head-value head-fuel)
           (let
+            [head-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools (& head-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [head-node : i64
               (ctfe-syntax-expr-value-node (& head-value) (& env))]
             (if (>= head-node 0)
@@ -7089,6 +7190,31 @@
                       (Ok
                         (ExprList (ast.ast-expr-cons head-node (& tail)))
                         tail-fuel)]
+                    [(CapturedExprList tail pools)
+                      ;; Child ids index one pool's storage. Expansion keeps
+                      ;; operands and generated syntax in one storage, so the
+                      ;; rejection guards internal callers rather than a
+                      ;; macro-visible rule.
+                      (if (ctfe-node-pools-share-storage? head-pools pools)
+                        (let
+                          [owner : ast.AstNodePoolContext
+                            (ctfe-list-builder-pools (& env) head-pools pools)]
+                          ;; Nothing is appended, but the result keeps the
+                          ;; tail's children live under the newest cursor.
+                          (ctfe-list-builder-publish-pools!
+                            (& env)
+                            owner
+                            head-pools)
+                          (Ok
+                            (CapturedExprList
+                              (ast.ast-expr-cons head-node (& tail))
+                              owner)
+                            tail-fuel))
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-list-cons expects head and tail from the same syntax pool"))))]
                     [_
                       (Err
                         (box
@@ -7120,6 +7246,10 @@
       (match (compiler-ctfe-eval (& callee-arg) env fuel)
         [(Ok callee-value callee-fuel)
           (let
+            [callee-pools : ast.AstNodePoolContext
+              (match (ctfe-value-syntax-pools (& callee-value))
+                [(Some pools) pools]
+                [(None) (ctfe-env-pools env)])]
             [callee-node : i64
               (ctfe-syntax-expr-value-node (& callee-value) (& env))]
             (if (>= callee-node 0)
@@ -7137,6 +7267,32 @@
                             (& call-args))
                           (ctfe-untyped-expr-type))
                         args-fuel)]
+                    [(CapturedExprList call-args pools)
+                      ;; The storage guard matches `expr-list-cons`. The call
+                      ;; is appended through the tail's refreshed context, and
+                      ;; its cursor then reaches the callee's context too.
+                      (if (ctfe-node-pools-share-storage? callee-pools pools)
+                        (let
+                          [owner : ast.AstNodePoolContext
+                            (ctfe-list-builder-pools (& env) callee-pools pools)]
+                          [node : i64
+                            (ctfe-ast-expr-call-with-provenance
+                              (ctfe-env-macro-state env)
+                              owner
+                              callee-node
+                              (& call-args))]
+                          (ctfe-list-builder-publish-pools!
+                            (& env)
+                            owner
+                            callee-pools)
+                          (Ok
+                            (CapturedExpr node (ctfe-untyped-expr-type) owner)
+                            args-fuel))
+                        (Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-call expects callee and arguments from the same syntax pool"))))]
                     [_
                       (Err
                         (box
@@ -7366,12 +7522,18 @@
 (define (ctfe-expr-type-value
   [pools : ast.AstNodePoolContext]
   [reflections : (& reflections CtfeReflectInfoList)]
+  [state : CompilerCtfeMacroState]
+  [node : i64]
   [ty : (& ast.AstType)]) : CtfeBuilt
   (let
     [actual-ty : ast.AstType
       (ctfe-captured-expr-type-inner-with-pools pools ty)]
     (if (ctfe-untyped-expr-type? actual-ty)
-      (Err "expr-type requires a typechecked Expr")
+      (begin
+        (when
+          (and (ctfe-failed-expr-type? actual-ty) (>= node 0))
+          (ctfe-failed-operand-note-for-state! state node pools))
+        (Err (ctfe-expr-type-untyped-message)))
       (Ok
         (Type
           (ctfe-reflect-resolve-type-with-pools pools reflections actual-ty))))))
@@ -7389,14 +7551,26 @@
           (let
             [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
             (match value
-              [(Expr _ ty)
+              [(Expr node ty)
                 (ctfe-built-result
-                  (ctfe-expr-type-value (ctfe-env-pools env) reflections (& ty))
+                  (ctfe-expr-type-value
+                    (ctfe-env-pools env)
+                    reflections
+                    (ctfe-env-macro-state env)
+                    node
+                    (& ty))
                   expr
                   arg-fuel)]
+              ;; A captured list element's node names another pool, so its
+              ;; diagnostic stays generic.
               [(CapturedExpr _ ty pools)
                 (ctfe-built-result
-                  (ctfe-expr-type-value pools reflections (& ty))
+                  (ctfe-expr-type-value
+                    pools
+                    reflections
+                    (ctfe-env-macro-state env)
+                    -1
+                    (& ty))
                   expr
                   arg-fuel)]
               [_

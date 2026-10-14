@@ -13408,6 +13408,33 @@
             (String "leaf")))
         (& (ir.compiler-ir-function-seq-empty))))))
 
+;; The sequence element accessor's shape: check the index, then return the
+;; element's address. Called twice with variable arguments, so the generic
+;; has-bounds policy refuses it and only the bounds-leaf path can admit it.
+(define (opt-inline-bounds-leaf-ref-functions) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
+    (&
+      (irt.func
+        "function @main(base=%0:(& r i64), len=%1:i64) -> i64 vars 6 {
+           entry:
+             %2 = mov 1 : i64
+             %3 = call bounds_leaf_ref_inline(%0, %2, %1) : (& r i64)
+             %4 = call bounds_leaf_ref_inline(%0, %1, %2) : (& r i64)
+             %5 = load %3 : i64
+             return %5
+           }"))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (irt.func
+            "function @bounds_leaf_ref_inline(base=%0:(& r i64), idx=%1:i64, len=%2:i64) -> (& r i64) vars 4 {
+               entry:
+                 bounds_check %1, %2 message \"bounds_leaf_ref.ok\"
+                 %3 = gep %0, %1 : i64
+                 return %3
+               }"))
+        (& (ir.compiler-ir-function-seq-empty))))))
+
 (define (opt-inline-band-symbol) : i64
   (opt-test-symbol "band_inline"))
 
@@ -14396,7 +14423,9 @@
 ;; checks land in the caller. An owned `String` result keeps its call boundary,
 ;; because that boundary carries cleanup semantics the expansion does not
 ;; reproduce; refusal must also leave the callee's bounds check in the callee
-;; rather than leak a copy into the caller.
+;; rather than leak a copy into the caller. A reference result is a non-owning
+;; address and inlines like `char`: the element accessor shape below loses both
+;; call boundaries and keeps both bounds checks.
 (define (compiler-optimize-inline-bounds-leaf-char-return-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
@@ -14410,13 +14439,28 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-owned-functions symbols)
         2)]
+    [ref-program : ir.CompilerIrFunctionSeq
+      (opt-test-inline-program-functions
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-bounds-leaf-ref-functions)
+        2)]
     [char-instrs : ir.CompilerIrInstrSeq
       (opt-inline-function-instrs char-program "main")]
     [owned-instrs : ir.CompilerIrInstrSeq
       (opt-inline-function-instrs owned-program "main")]
+    [ref-instrs : ir.CompilerIrInstrSeq
+      (opt-inline-function-instrs ref-program "main")]
     (and
       (opt.opt-inline-bounds-leaf-return-type? (& (Char)))
+      (opt.opt-inline-bounds-leaf-return-type? (& (Ref 0 0)))
+      (opt.opt-inline-bounds-leaf-return-type? (& (MutRef 0 0)))
       (not (opt.opt-inline-bounds-leaf-return-type? (& (String))))
+      (=
+        (opt-count-direct-call-name-instr-seq
+          ref-instrs
+          "bounds_leaf_ref_inline")
+        0)
+      (= (opt-count-bounds-instrs ref-instrs) 2)
       (=
         (opt-count-direct-call-name-instr-seq
           char-instrs
@@ -57067,10 +57111,15 @@
           [_ true])
         6]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-var? src 7))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-var? rhs 7)))]
           [_ true])
         7]
-      [(match (opt-gc-test-instr-at blocks 1 5)
+      [(match (opt-gc-test-instr-at blocks 1 4)
           [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_agg"))]
           [_ true])
         8]
@@ -57116,7 +57165,7 @@
         6]
       ;; the call itself is untouched -- this is a classification, not check,
       ;; trap or call motion
-      [(match (opt-gc-test-instr-at blocks 1 7)
+      [(match (opt-gc-test-instr-at blocks 1 6)
           [(Call _ target _ _) (not (= target callee))]
           [_ true])
         7]
@@ -57147,7 +57196,12 @@
           [_ true])
         5]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-global-named? rhs "gc_k")))]
           [_ true])
         6]
       ;; exactly those two, plus the non-word aggregate Mov
@@ -57512,6 +57566,11 @@
         (opt.compiler-opt-global-shared-view summaries-a)
         (opt.compiler-opt-global-shared-view out-a))]
     [blocks-f : ir.CompilerIrBlockList (opt.opt-function-blocks out-f)]
+    [idempotent? : bool
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& out-a)
+        (& out-f))]
     [cell-a : opt.OptGlobalCellSummary summaries-a.global-cell]
     [cell-d : opt.OptGlobalCellSummary summaries-d.global-cell]
     (cond
@@ -57535,7 +57594,7 @@
       ;; survives (the pass rewrites reads only). The negatives that DO bite
       ;; live in compiler-optimize-global-cell-observable-store-self-test.
       [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
-      [(match (opt-gc-test-instr-at blocks-b 1 7)
+      [(match (opt-gc-test-instr-at blocks-b 1 6)
           [(Store _ _ _) false]
           [_ true])
         27]
@@ -57589,15 +57648,16 @@
           [(Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
-      ;; fixture H: untouched -- no entry load, no fresh var, the single read
-      ;; still names the global directly
+      [(not idempotent?) 64]
+      ;; Fixture H: forwarding removes the capture, but its one remaining
+      ;; read still cannot pay for an entry load or a fresh variable.
       [(not (= (opt.opt-function-frame out-h) 2)) 70]
       [(not (= (opt-gc-test-block-instr-count blocks-h 0) 1)) 71]
       [(match (opt-gc-test-instr-at blocks-h 1 0)
-          [(Mov d src _)
-            (not (and (= d 0) (opt-gc-test-is-global-named? src "gc_k")))]
+          [(Return (Some src)) (not (opt-gc-test-is-global-named? src "gc_k"))]
           [_ true])
         72]
+      [(not (= (opt-gc-test-block-instr-count blocks-h 1) 1)) 73]
       [else 42])))
 
 ;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
@@ -62031,7 +62091,6 @@
              %1 = call mr_write_b() : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              %1 = call mr_write_b() : i64
              return @mr_a"
           false)
@@ -62041,7 +62100,6 @@
              store @mr_b, 9 : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              store @mr_b, 9 : i64
              return @mr_a"
           false)
@@ -62051,7 +62109,6 @@
              %1 = add 2, 3 : i64
              return %0"
           "entry:
-             %0 = mov @mr_a : i64
              %1 = add 2, 3 : i64
              return @mr_a"
           false))]
@@ -62463,7 +62520,6 @@
       (irt.func
         "function @guard() -> i64 vars 16 {
            entry:
-             %0 = mov @sample : u64
              %1 = gep @sample, 0 : i64
              %2 = load %1 : i64
              %3 = gep @sample, 1 : i64

@@ -1510,3 +1510,7 @@ set_place_shared_reject|check-fail|tests/safety/set_place_shared_reject.tl|-|set
 set_aggregate_value_before_bounds_trap|run-trap|tests/safety/set_aggregate_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
 
 set_intermediate_bounds_before_value_trap|run-trap|tests/safety/set_intermediate_bounds_before_value_trap.tl|134|array index out of bounds: index=1 length=1
+
+# A macro operand that fails to typecheck reports its own error when the macro
+# asks for its type (#8871).
+macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_type_reject.tl|-|typecheck: array elements must have same type: expected i32, found i64

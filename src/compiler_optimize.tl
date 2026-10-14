@@ -103396,16 +103396,29 @@
 
 ;; Return-to-mov cloning rewrites the callee return into a Mov of the returned
 ;; value into the call's destination. That reproduces the call boundary exactly
-;; for the non-owning scalars -- integers, Bool, Char, and Unit. Each is a
-;; single-register value the Mov carries under its own declared type, and none
-;; of them owns storage, so retiring the boundary retires nothing else with it.
+;; for the non-owning scalars -- integers, Bool, Char, and Unit -- and for
+;; references, shared or mutable. Each is a single-register value the Mov
+;; carries under its own declared type, and none of them owns storage, so
+;; retiring the boundary retires nothing else with it. A reference is the
+;; address the body computed (a Gep off a parameter, typically), and the region
+;; it carries is a typechecker fact the optimizer never reads, so the Mov keeps
+;; it exactly as the Return did.
+;;
+;; References matter here because the element accessor of every sequence type
+;; is this exact shape: `(& (array-ref seq.slots i))` is a bounds check, a few
+;; loads and a Gep, returning `(& T)`. Its by-value twin returns an aggregate
+;; and stays out of this path, so without the reference arm a by-reference
+;; accessor would keep its call boundary at every non-constant site (the
+;; generic path refuses has-bounds callees there) while the copy it replaced
+;; was being inlined.
+;;
 ;; Owned String and aggregate results stay out of this path; their call boundary
 ;; carries cleanup semantics that the bounds-leaf expansion does not reproduce.
 (define (opt-inline-bounds-leaf-return-type? [ty : (& ast.AstType)]) : bool
   (if (opt-integer-type? ty)
     true
     (match ty
-      [(or (Unit) (Bool) (Char)) true]
+      [(or (Unit) (Bool) (Char) (Ref _ _) (MutRef _ _)) true]
       [_ false])))
 
 (define (opt-inline-bounds-leaf-ok?
@@ -112490,9 +112503,11 @@
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (if (>= pos count)
-    ;; The copy of `instrs` keeps this an ordinary call. As a tail call its
-    ;; stack-argument marshalling writes %rdi before it moves `instrs` out of
-    ;; %rdi into %r8 (a backend bug, reported separately).
+    ;; The copy of `instrs` keeps this an ordinary call. As a tail call, a
+    ;; stage0 without the parallel tail-call marshalling
+    ;; (`compiler-backend-emit-direct-tail-call-args-parallel`) writes %rdi
+    ;; before it moves `instrs` out of %rdi into %r8. Drop the copy once stage0
+    ;; carries that fix.
     (opt-inline-rewrite-single-block-seq-with-spans
       block-label
       head-label
@@ -123108,6 +123123,32 @@
             (set! delayed (compiler-opt-global-shared-view env)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
+;; Removing a rematerialized capture must not delete unrelated definitions
+;; before the inline census, where even a dead function value is address-taken.
+(define (opt-global-snapshot-keep-instr
+  [cell : (& cell OptGlobalCellSummary)]
+  [uses : (& (__tl_dyn-array i64))]
+  [builder : ir.CompilerIrInstrBuilder]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstrBuilder
+  (unless
+    (and
+      (opt-global-snapshot-candidate? cell (& instr))
+      (not (opt-used-array-contains uses (ir.compiler-ir-instr-dst instr))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
+  builder)
+
+(define (opt-global-snapshot-prune-seq
+  [cell : (& cell OptGlobalCellSummary)]
+  [uses : (& (__tl_dyn-array i64))]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (ir.compiler-ir-instr-builder-to-seq
+    (opt-instrs-fold
+      instrs
+      (ir.compiler-ir-instr-builder-with-capacity instrs.len)
+      opt-global-snapshot-keep-instr
+      cell
+      uses)))
+
 (define (opt-global-snapshot-function
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -123132,11 +123173,7 @@
               blocks
               opt-global-snapshot-count-geps!
               (compiler-opt-global-shared-view gep-uses))]
-          (Function
-            name
-            params
-            ret-ty
-            frame
+          [normalized : ir.CompilerIrBlockList
             (opt-blocks-map-seq
               blocks
               opt-global-snapshot-seq
@@ -123145,7 +123182,19 @@
               (& sources)
               (& uses)
               (& gep-uses)
-              policy)
+              policy)]
+          ;; A dead capture is no longer a cell read. Remove it before promotion
+          ;; counts references, so rematerialization cannot create profitability.
+          (Function
+            name
+            params
+            ret-ty
+            frame
+            (opt-blocks-map-seq
+              normalized
+              opt-global-snapshot-prune-seq
+              (& summaries.global-cell)
+              (& (opt-collect-blocks-uses-array frame (& normalized))))
             function-abi)))]))
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
@@ -129101,32 +129150,6 @@
 (define opt-pure-call-inline-memory-on : bool
   false)
 
-;; Removing a rematerialized capture must not delete unrelated definitions
-;; before the inline census, where even a dead function value is address-taken.
-(define (opt-global-snapshot-keep-instr
-  [cell : (& cell OptGlobalCellSummary)]
-  [uses : (& (__tl_dyn-array i64))]
-  [builder : ir.CompilerIrInstrBuilder]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstrBuilder
-  (unless
-    (and
-      (opt-global-snapshot-candidate? cell (& instr))
-      (not (opt-used-array-contains uses (ir.compiler-ir-instr-dst instr))))
-    (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
-  builder)
-
-(define (opt-global-snapshot-prune-seq
-  [cell : (& cell OptGlobalCellSummary)]
-  [uses : (& (__tl_dyn-array i64))]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (ir.compiler-ir-instr-builder-to-seq
-    (opt-instrs-fold
-      instrs
-      (ir.compiler-ir-instr-builder-with-capacity instrs.len)
-      opt-global-snapshot-keep-instr
-      cell
-      uses)))
-
 (define (opt-global-snapshot-normalize-functions
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -129137,30 +129160,13 @@
     ;; must never point into an analysis or inline arena that can retire first.
     [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
     (for [slot (iterator.range 0 functions.len)]
-      (let
-        [normalized
-          (opt-global-snapshot-function
-            summaries
-            call-memory
-            policy
-            (ir.compiler-ir-function-seq-ref functions slot))]
-        [frame (opt-function-frame (& normalized))]
-        [blocks (opt-function-blocks (& normalized))]
-        (ir.compiler-ir-function-builder-push!
-          (&mut builder)
-          (opt-function-with-frame-blocks
-            (& normalized)
-            frame
-            (if (opt-blocks-any?
-              blocks
-              opt-global-snapshot-candidate?
-              (& summaries.global-cell))
-              (opt-blocks-map-seq
-                blocks
-                opt-global-snapshot-prune-seq
-                (& summaries.global-cell)
-                (& (opt-collect-blocks-uses-array frame (& blocks))))
-              blocks)))))
+      (ir.compiler-ir-function-builder-push!
+        (&mut builder)
+        (opt-global-snapshot-function
+          summaries
+          call-memory
+          policy
+          (ir.compiler-ir-function-seq-ref functions slot))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
 (define (opt-pure-call-inline-memory-install!

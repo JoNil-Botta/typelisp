@@ -4169,7 +4169,9 @@
           caller-pools
           (Literal (ast.ast-lit-int 42)))]
       [head-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-snapshot caller-pools)]
+        (if (= source 3)
+          caller-pools
+          (ast.ast-node-pool-context-snapshot caller-pools))]
       [items : ast.AstExprList
         (ast.ast-expr-cons node (& (ast.ast-expr-list-new)))]
       ;; The tail, retained binding, or active context supplies the newer
@@ -4263,7 +4265,7 @@
                   [_ false]))]
             [_ false])]
         [next : i64
-          (if (= source 2)
+          (if (>= source 2)
             (ast.ast-node-pool-context-expr-push
               caller-pools
               (Literal (ast.ast-lit-int 66)))
@@ -4283,7 +4285,8 @@
     (if (and
       (compiler-ctfe-list-builder-owner-ok? 0)
       (compiler-ctfe-list-builder-owner-ok? 1)
-      (compiler-ctfe-list-builder-owner-ok? 2))
+      (compiler-ctfe-list-builder-owner-ok? 2)
+      (compiler-ctfe-list-builder-owner-ok? 3))
       unit
       (begin
         (/ 1 0)

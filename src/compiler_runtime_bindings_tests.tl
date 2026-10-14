@@ -1,5 +1,6 @@
 ;; compiler_runtime_bindings_tests.tl - The runtime binding table against its
 ;; producers and the Windows object route (#8318).
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -35,7 +36,7 @@
       (when
         (string.eq (string.substring (& haystack) index n) needle)
         (set! found true))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (runtime-bindings-test-set-add [set : String] [name : String]) : String
@@ -59,7 +60,7 @@
     (while (and
       (< end (string.string-length text))
       (runtime-bindings-test-identifier-char? (string.char-at text end)))
-      (set! end (+ end 1)))
+      (+= end 1))
     (string.substring text start (- end start))))
 
 ;; Names `.extern`-declared, defined as labels, and called or jumped to in
@@ -85,7 +86,7 @@
           (or
             (= (string.char-at text first) ' ')
             (= (string.char-at text first) '\t')))
-          (set! first (+ first 1)))
+          (+= first 1))
         (let
           [word : String (runtime-bindings-test-word text first)]
           [after : i64 (+ first (string.string-length (& word)))]
@@ -180,14 +181,12 @@
         true
         false)]
     [count : i64 (cobj.compiler-object-symbol-list-count (& image.symbols))]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-symbol-list-ref (& image.symbols) index)
         [(Symbol name (Extern) _ _)
           (set! out (runtime-bindings-test-set-add out name))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     out))
 
 ;; The binding table's rows for `target` with `feature` (or any feature for
@@ -624,9 +623,8 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
   (let
     [planned : backend.BackendStringSeq
       (backend.compiler-backend-object-runtime-symbols-list)]
-    [index : i64 0]
     (test.assert-true (> planned.len 0) "the object runtime plans definitions")
-    (while (< index planned.len)
+    (for [index (iterator.range 0 planned.len)]
       (let
         [name : String (string.copy (& (array-ref planned.slots index)))]
         (test.assert-true
@@ -637,8 +635,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
                 (string.copy (& name))
                 "\tfunction\tkernel32.lib\talways\tobject"))
             (str_cat.str-cat "row 1: compiler-owned runtime name " name))
-          "a planned runtime definition is not an external binding"))
-      (set! index (+ index 1)))
+          "a planned runtime definition is not an external binding")))
     (test.assert-true
       (string.eq
         (runtime-bindings-test-error

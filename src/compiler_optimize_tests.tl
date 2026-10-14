@@ -26211,6 +26211,90 @@
        %5 = gt %4, %0 : i64
        return %5"))
 
+;; Shapes where a `word` must NOT be read from a pack (#8901). In each one the
+;; word reads `%5` and the compare keeps reading it.
+;;
+;; The pack group's own storage is written through its address before the
+;; dominated read, by a store or by a call handed the address. A group whose
+;; address is taken is memory, not a value: neither its words nor its copies
+;; give a fact.
+(define (opt-global-pack-word-addr-taken-blocks [write : String]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      "entry:
+         %2 = pack [%0, %1] : Pair
+         %3 = addr_of %2
+         %4 = gep %3, 8 : u8
+         "
+      write
+      "
+         jump use
+       use:
+         %5 = word %2, 1 : i64
+         %6 = gt %5, %0 : i64
+         return %6")))
+
+;; A packed var whose own address is taken: the store after the pack changes
+;; the var, not the word the pack already holds, so the word may not be read
+;; as the var.
+(define (opt-global-pack-word-value-addr-taken-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %7 = mov 3 : i64
+       %8 = addr_of %7
+       %2 = pack [%0, %7] : Pair
+       store_ptr %8, 9 : i64
+       jump use
+     use:
+       %5 = word %2, 1 : i64
+       %6 = gt %5, %0 : i64
+       return %6"))
+
+;; The group is loop-carried: a phi joins the entry pack and a pack rebuilt in
+;; the body, and the header reads a word of a copy of the phi. The phi is no
+;; pack, so the copy resolves to it and the word stays.
+(define (opt-global-pack-word-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = pack [%0, %1] : Pair
+       jump header
+     header:
+       %3 = phi [%2, entry], [%7, body] : Pair
+       %4 = mov %3 : Pair
+       %5 = word %4, 1 : i64
+       %6 = gt %5, %0 : i64
+       branch %6, body, exit
+     body:
+       %7 = pack [%0, %0] : Pair
+       jump header
+     exit:
+       return %5"))
+
+;; The group is loaded from memory, not packed: the copy resolves to the load,
+;; which gives no word fact.
+(define (opt-global-pack-word-load-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %3 = load %0 : Pair
+       %4 = mov %3 : Pair
+       jump use
+     use:
+       %5 = word %4, 1 : i64
+       %6 = gt %5, %0 : i64
+       return %6"))
+
+;; Whether the run kept the read: one Word, and the compare `%6` still reads
+;; `%5`.
+(define (opt-global-pack-word-kept? [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (= (opt-count-words-blocks (ir.compiler-ir-block-list-view blocks)) 1)
+    (=
+      (opt-blocks-binop-lhs-var
+        (ir.compiler-ir-block-list-view blocks)
+        6
+        (- 0 1))
+      5)))
+
 ;; A slice walk as the lowering hands it over (#8901): the slice is a `pack`
 ;; of a data pointer and `len` copied into its binding var, the loop is bounded
 ;; by `bound`, and every element is read behind `bounds_check i, (word slice
@@ -27701,6 +27785,27 @@
       (opt-global-pack-word-run
         "global_pack_word_copied"
         (opt-global-pack-word-copied-blocks))]
+    [pack-word-stored : ir.CompilerIrBlockList
+      (opt-global-pack-word-run
+        "global_pack_word_stored"
+        (opt-global-pack-word-addr-taken-blocks "store_ptr %4, 7 : i64"))]
+    [pack-word-called : ir.CompilerIrBlockList
+      (opt-global-pack-word-run
+        "global_pack_word_called"
+        (opt-global-pack-word-addr-taken-blocks
+          "%9 = call pack_word_clobber(%3) : unit"))]
+    [pack-word-value-stored : ir.CompilerIrBlockList
+      (opt-global-pack-word-run
+        "global_pack_word_value_stored"
+        (opt-global-pack-word-value-addr-taken-blocks))]
+    [pack-word-phi : ir.CompilerIrBlockList
+      (opt-global-pack-word-run
+        "global_pack_word_phi"
+        (opt-global-pack-word-phi-blocks))]
+    [pack-word-load : ir.CompilerIrBlockList
+      (opt-global-pack-word-run
+        "global_pack_word_load"
+        (opt-global-pack-word-load-blocks))]
     [slice-walk : ir.CompilerIrBlockList (opt-slice-walk-optimized-blocks "%1")]
     [slice-walk-other : ir.CompilerIrBlockList
       (opt-slice-walk-optimized-blocks "%2")]
@@ -27972,6 +28077,13 @@
               (ir.compiler-ir-block-list-view pack-word-copied))
             0))
         40]
+      ;; No fold through a group whose storage a store or a call can write, a
+      ;; loop-carried phi, a load, or a packed var written after the pack.
+      [(not (opt-global-pack-word-kept? pack-word-stored)) 49]
+      [(not (opt-global-pack-word-kept? pack-word-called)) 50]
+      [(not (opt-global-pack-word-kept? pack-word-phi)) 51]
+      [(not (opt-global-pack-word-kept? pack-word-load)) 52]
+      [(not (opt-global-pack-word-kept? pack-word-value-stored)) 53]
       ;; The slice walk bounded by the slice's own length keeps its call and
       ;; drops its element check; bounded by anything else it keeps both.
       [(not

@@ -15506,20 +15506,27 @@
                   (OptGlobalFact.Expr key dst block-id pos)))]
             [(None) unit])]
         [(No) unit])]
+    ;; A group whose address is taken lives in memory: a store or a call
+    ;; through that address rewrites its words after the pack, so it gives no
+    ;; word facts at all. A packed var whose address is taken can change the
+    ;; same way after the pack, so it gives no fact for its own word.
     [(PackWord)
       (match instr
         [(Pack group words _)
-          (for [index (iterator.range 0 words.len)]
-            (let
-              [value : ir.CompilerIrValue
-                (ir.compiler-ir-value-seq-ref words index)]
-              (if (and
-                (opt-copy-safe-source? value)
-                (not (opt-value-is-var? value group)))
-                (opt_global_fact_vec.push-ref!
-                  items
-                  (OptGlobalFact.PackWord group index value block-id pos))
-                unit)))]
+          (if (opt-addr-taken-var? addr-taken group)
+            unit
+            (for [index (iterator.range 0 words.len)]
+              (let
+                [value : ir.CompilerIrValue
+                  (ir.compiler-ir-value-seq-ref words index)]
+                (if (and
+                  (opt-copy-safe-source? value)
+                  (not (opt-value-is-var? value group))
+                  (not (opt-addr-taken-value? addr-taken value)))
+                  (opt_global_fact_vec.push-ref!
+                    items
+                    (OptGlobalFact.PackWord group index value block-id pos))
+                  unit))))]
         [_ unit])]
     [_
       (match instr

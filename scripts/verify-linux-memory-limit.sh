@@ -106,6 +106,127 @@ exercise_backend() {
     echo "[linux-memory-limit] $_memory_backend pass/fail fixtures passed"
 }
 
+exercise_sampled_backend() {
+    _sampled_prefix="$WORKDIR/sampled"
+    "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.containment" -- sh -c '
+            while read -r line; do
+                case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}" ;; esac
+            done < /proc/self/cgroup
+            case $cgroup in */workload) ;; *) exit 1 ;; esac
+            read -r cap < "$cgroup/memory.max"
+            read -r swap < "$cgroup/memory.swap.max"
+            [ "$cap" = 33554432 ] && [ "$swap" = 0 ]
+        ' > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || {
+            cat "$_sampled_prefix.stderr" >&2 || true
+            fail "sampled workload did not enter its exact capped child cgroup"
+        }
+    _sampled_run=1
+    while [ "$_sampled_run" -le 20 ]; do
+        _sampled_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+            --report "$_sampled_prefix-$_sampled_run.memory" -- \
+            awk 'BEGIN { s = "x"; while (1) s = s s }' \
+            > "$_sampled_prefix.stdout" 2> "$_sampled_prefix-$_sampled_run.stderr" || \
+            _sampled_status=$?
+        _sampled_peak=$(sed -n 's/.*systemd summary [0-9]*, sampler \([0-9]*\);.*/\1/p' \
+            "$_sampled_prefix-$_sampled_run.stderr")
+        _sampled_kills=$(sed -n 's/.*(oom_kill \([0-9]*\)).*/\1/p' \
+            "$_sampled_prefix-$_sampled_run.stderr")
+        if [ "$_sampled_status" -ne 137 ] ||
+            [ "${_sampled_peak:-0}" -lt 33554432 ] ||
+            [ "${_sampled_kills:-0}" -lt 1 ]; then
+            cat "$_sampled_prefix-$_sampled_run.stderr" >&2 || true
+            fail "fast OOM $_sampled_run lost the sampler's own peak or OOM evidence"
+        fi
+        _sampled_run=$((_sampled_run + 1))
+    done
+    _sampled_pid="$WORKDIR/sampled-detached.pid"
+    _sampled_status=0
+    "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.detached" -- sh -c '
+            setsid sleep 30 &
+            printf "%s\n" "$!" > "$1"
+            awk '\''BEGIN { s = "x"; while (1) s = s s }'\''
+        ' sh "$_sampled_pid" > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 137 ] || fail "detached descendant OOM did not report 137"
+    read -r _sampled_child < "$_sampled_pid"
+    sleep 0.1
+    if kill -0 "$_sampled_child" 2>/dev/null; then
+        fail "sampled OOM left detached descendant $_sampled_child alive"
+    fi
+    for _sampled_exit in 23 124; do
+        _sampled_timeout=0
+        _sampled_delay=0.1
+        if [ "$_sampled_exit" -eq 124 ]; then
+            _sampled_timeout=1
+            _sampled_delay=30
+        fi
+        _sampled_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+            --timeout-seconds "$_sampled_timeout" \
+            --report "$_sampled_prefix.detached-$_sampled_exit" -- sh -c '
+                setsid sleep 30 &
+                printf "%s\n" "$!" > "$1"
+                sleep "$2"
+                exit 23
+            ' sh "$_sampled_pid" "$_sampled_delay" \
+            > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+            _sampled_status=$?
+        [ "$_sampled_status" -eq "$_sampled_exit" ] || \
+            fail "sampled descendant cleanup changed exit $_sampled_exit to $_sampled_status"
+        read -r _sampled_child < "$_sampled_pid"
+        sleep 0.1
+        if kill -0 "$_sampled_child" 2>/dev/null; then
+            fail "sampled exit $_sampled_exit left detached descendant $_sampled_child alive"
+        fi
+    done
+
+    _sampled_status=0
+    linux_memory_limit_run_sampled 9223372036854775807 sh -c 'echo must-not-run' \
+        > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 2 ] || fail "sampler headroom overflow did not fail closed"
+    [ ! -s "$_sampled_prefix.stdout" ] || fail "sampler headroom overflow ran the workload"
+    grep -Fq 'cannot reserve sampler headroom' "$_sampled_prefix.stderr" || \
+        fail "sampler headroom overflow lost its actionable diagnostic"
+
+    # Simulate an unavailable delegation property while preserving systemd's
+    # actual hard parent cap. No requested workload may start on this path.
+    _sampled_systemd=$(command -v systemd-run)
+    mkdir "$WORKDIR/no-delegation"
+    cat > "$WORKDIR/no-delegation/systemd-run" <<'EOF'
+#!/bin/sh
+remaining=$#
+while [ "$remaining" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+        --property=DelegateSubgroup=sampler) ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+    remaining=$((remaining - 1))
+done
+exec "$TYPELISP_MEMORY_TEST_SYSTEMD_RUN" "$@"
+EOF
+    chmod +x "$WORKDIR/no-delegation/systemd-run"
+    _sampled_status=0
+    PATH="$WORKDIR/no-delegation:$PATH" \
+        TYPELISP_MEMORY_TEST_SYSTEMD_RUN=$_sampled_systemd \
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
+        --report "$_sampled_prefix.no-delegation" -- sh -c 'echo must-not-run' \
+        > "$_sampled_prefix.stdout" 2> "$_sampled_prefix.stderr" || \
+        _sampled_status=$?
+    [ "$_sampled_status" -eq 2 ] || fail "missing delegation did not fail closed"
+    [ ! -s "$_sampled_prefix.stdout" ] || fail "missing delegation ran the workload"
+    grep -Fq 'requires systemd DelegateSubgroup=sampler' "$_sampled_prefix.stderr" || \
+        fail "missing delegation lost its actionable diagnostic"
+    grep -Fxq 'reason=wrapper-failure' "$_sampled_prefix.no-delegation" || \
+        fail "missing delegation lost wrapper-failure classification"
+    echo "[linux-memory-limit] sampled containment, 20 fast OOMs and missing delegation passed"
+}
+
 exercise_nested_backend() {
     _nested_backend=$1
     assert_no_nested_scratch() {
@@ -250,6 +371,7 @@ linux_memory_limit_select_backend
 [ "$LINUX_MEMORY_LIMIT_BACKEND" = systemd-user-cgroup ] ||
     fail "Linux memory limiting selected $LINUX_MEMORY_LIMIT_BACKEND, expected systemd-user-cgroup"
 exercise_backend systemd-user-cgroup
+exercise_sampled_backend
 exercise_nested_backend systemd-user-cgroup
 
 echo "Linux memory-limit helper self-tests passed"

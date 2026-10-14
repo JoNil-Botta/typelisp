@@ -7,15 +7,16 @@
 # MemorySwapMax=0 keeps the result resident. A host without a usable user
 # manager fails closed; nothing falls back to an unbounded run.
 #
-# linux_memory_limit_sample_process_group runs inside that cgroup (see
-# run-memory-bounded.sh): it launches the command in a new process group and
+# linux_memory_limit_sample_process_group runs beside a capped workload child
+# in a delegated service (see run-memory-bounded.sh). It launches the command
+# in a new process group and
 # samples the group's aggregate RSS from `ps` to report a trustworthy peak,
 # terminating the group if observed RSS crosses the same ceiling. A launch gate
 # keeps user code suspended until process-group isolation and the first
 # successful memory sample are established. It never caps virtual address
 # space, which avoids the mmap-reservation failures RLIMIT_AS causes. Under
-# linux_memory_limit_run_sampled a kernel OOM kill takes only a workload task,
-# so the sampler survives it and reports the cgroup's exact peak.
+# linux_memory_limit_run_sampled a workload OOM cannot select the sampler or
+# its helpers, which record the workload cgroup's exact peak before exiting.
 
 LINUX_MEMORY_LIMIT_BACKEND=${LINUX_MEMORY_LIMIT_BACKEND:-}
 
@@ -50,6 +51,7 @@ linux_memory_limit_systemd_available() {
 linux_memory_limit_run_systemd() {
     _linux_memory_limit_bytes=$1
     shift
+    _linux_memory_limit_service_bytes=$_linux_memory_limit_bytes
 
     # A metrics destination belongs to this invocation, not to its workload.
     # The bounded runner's explicit sampler re-establishes its own destination
@@ -62,6 +64,16 @@ linux_memory_limit_run_systemd() {
     # environment name; omitting `=value` asks systemd-run to copy the exact
     # value from its own process environment without shell re-quoting it.
     set -- -- "$@"
+    if [ "${_linux_memory_limit_sampled:-0}" -eq 1 ]; then
+        # The workload keeps its exact requested ceiling. The separate sampler
+        # leaf has bounded headroom outside the workload's OOM domain.
+        _linux_memory_limit_service_bytes=$((_linux_memory_limit_bytes + 67108864))
+        [ "$_linux_memory_limit_service_bytes" -gt "$_linux_memory_limit_bytes" ] || {
+            echo "Linux memory limiting cannot reserve sampler headroom" >&2
+            return 2
+        }
+        set -- --property=Delegate=memory --property=DelegateSubgroup=sampler "$@"
+    fi
     for _linux_memory_limit_env_name in $(env | sed -n \
         's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
         set -- "--setenv=$_linux_memory_limit_env_name" "$@"
@@ -77,7 +89,7 @@ linux_memory_limit_run_systemd() {
             --same-dir \
             --service-type=exec \
             --property=MemoryAccounting=yes \
-            --property="MemoryMax=$_linux_memory_limit_bytes" \
+            --property="MemoryMax=$_linux_memory_limit_service_bytes" \
             --property=MemorySwapMax=0 \
             --property=OOMPolicy=kill \
             "$@"
@@ -111,7 +123,7 @@ linux_memory_limit_run_systemd() {
     }
     # The hook writes labelled lines, and its own errors, so an OOM report can
     # show what it saw: `ran`, `cgroup PATH`, `kills N` and `peak N`.
-    _linux_memory_limit_record_peak='{ echo ran; while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; echo "cgroup $cgroup"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/memory.events"; echo "kills $kills"; read -r peak < "$cgroup/memory.peak" && echo "peak $peak" ;; esac; done < /proc/self/cgroup; } > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" 2>&1 || true'
+    _linux_memory_limit_record_peak='{ echo ran; while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; case $cgroup in */.control) cgroup=${cgroup%/.control}; [ ! -d "$cgroup/workload" ] || cgroup="$cgroup/workload" ;; esac; echo "cgroup $cgroup"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/memory.events"; echo "kills $kills"; read -r peak < "$cgroup/memory.peak" && echo "peak $peak" ;; esac; done < /proc/self/cgroup; } > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" 2>&1 || true'
     _linux_memory_limit_status=0
     TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
         LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
@@ -122,7 +134,7 @@ linux_memory_limit_run_systemd() {
         --same-dir \
         --service-type=exec \
         --property=MemoryAccounting=yes \
-        --property="MemoryMax=$_linux_memory_limit_bytes" \
+        --property="MemoryMax=$_linux_memory_limit_service_bytes" \
         --property=MemorySwapMax=0 \
         --property="OOMPolicy=${_linux_memory_limit_oom_policy:-kill}" \
         --setenv=TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE \
@@ -195,6 +207,14 @@ linux_memory_limit_run_systemd() {
             _linux_memory_limit_peak_bytes=$_linux_memory_limit_cgroup_bytes
         fi
         echo "[memory-limit] OOM peak sources: cgroup memory.peak $_linux_memory_limit_cgroup_bytes (oom_kill $_linux_memory_limit_cgroup_kills), systemd summary $_linux_memory_limit_summary_bytes, sampler $_linux_memory_limit_sampled_bytes; stop-post hook: $(tr '\n' ' ' < "$_linux_memory_limit_cgroup_peak")" >&2
+    fi
+    if [ "${_linux_memory_limit_sampled:-0}" -eq 1 ] &&
+        [ "$_linux_memory_limit_status" -eq 2 ] &&
+        [ "$_linux_memory_limit_sampled_bytes" -eq 0 ] &&
+        [ "$_linux_memory_limit_oom" -eq 0 ]; then
+        # A failed sampler setup must not turn the launcher's own memory into
+        # evidence that the requested workload ran under an established cap.
+        _linux_memory_limit_peak_bytes=0
     fi
     rm -f "$_linux_memory_limit_systemd_stderr" "$_linux_memory_limit_cgroup_peak"
     printf '%s\n' "$_linux_memory_limit_peak_bytes" \
@@ -278,13 +298,35 @@ linux_memory_limit_sample_process_group() {
     _linux_memory_limit_poll=${TYPELISP_LINUX_MEMORY_LIMIT_POLL_SECONDS:-0.05}
     _linux_memory_limit_peak_rss=0
 
-    # Under linux_memory_limit_run_sampled the kernel kills only the task it
-    # chooses on an OOM. The workload raises its own oom_score_adj to 1000 so
-    # the choice is always a workload task, never this sampler. The sampler
-    # then sees the cgroup's oom_kill count rise, ends the rest of the process
-    # group, records the cgroup's exact memory.peak and reports exit 137.
-    linux_memory_limit_own_cgroup &&
-        linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" || {
+    # Domain controllers require an empty inner node. systemd places the
+    # sampler (and timeout) in its own leaf before this code starts, so enabling
+    # memory and capping its workload sibling never exposes user code unbounded.
+    linux_memory_limit_own_cgroup || {
+        echo "process-group sampler requires delegated cgroup v2 memory" >&2
+        return 2
+    }
+    case $_linux_memory_limit_cgroup in
+        */sampler) _linux_memory_limit_parent=${_linux_memory_limit_cgroup%/sampler} ;;
+        *)
+            echo "process-group sampler requires systemd DelegateSubgroup=sampler" >&2
+            return 2
+            ;;
+    esac
+    _linux_memory_limit_workload="$_linux_memory_limit_parent/workload"
+    if ! {
+        printf '+memory\n' > "$_linux_memory_limit_parent/cgroup.subtree_control" &&
+        printf '67108864\n' > "$_linux_memory_limit_cgroup/memory.max" &&
+        mkdir "$_linux_memory_limit_workload" &&
+        printf '%s\n' "$_linux_memory_limit_bytes" > "$_linux_memory_limit_workload/memory.max" &&
+        printf '0\n' > "$_linux_memory_limit_workload/memory.swap.max" &&
+        printf '1\n' > "$_linux_memory_limit_workload/memory.oom.group" &&
+        [ -w "$_linux_memory_limit_workload/cgroup.kill" ]
+    }; then
+        echo "process-group sampler requires writable delegated cgroup v2 memory and cgroup.kill" >&2
+        return 2
+    fi
+    _linux_memory_limit_cgroup=$_linux_memory_limit_workload
+    linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" || {
         echo "process-group sampler cannot read its cgroup's memory.events" >&2
         return 1
     }
@@ -302,12 +344,16 @@ linux_memory_limit_sample_process_group() {
     _linux_memory_limit_gate="$_linux_memory_limit_gate_dir/start"
     setsid sh -c '
         gate=$1
-        shift
+        cgroup=$2
+        shift 2
+        printf "%s\n" "$$" > "$cgroup/cgroup.procs" || {
+            echo "process-group sampler failed to place workload in delegated cgroup" >&2
+            exit 2
+        }
         while [ ! -e "$gate" ]; do sleep 0.01; done
         unset TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
-        echo 1000 > /proc/self/oom_score_adj
         exec "$@"
-    ' sh "$_linux_memory_limit_gate" "$@" &
+    ' sh "$_linux_memory_limit_gate" "$_linux_memory_limit_cgroup" "$@" &
     _linux_memory_limit_pid=$!
     _linux_memory_limit_pgid=$(ps -o pgid= -p "$_linux_memory_limit_pid" 2>/dev/null \
         | awk 'NR == 1 { print $1 }')
@@ -390,7 +436,7 @@ linux_memory_limit_sample_process_group() {
     while :; do
         if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
             [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then
-            kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
+            printf '1\n' > "$_linux_memory_limit_cgroup/cgroup.kill"
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
             rm -f "$_linux_memory_limit_gate"
             rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
@@ -439,6 +485,7 @@ linux_memory_limit_sample_process_group() {
     # The group can empty between two polls because of an OOM kill.
     if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
         [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then
+        printf '1\n' > "$_linux_memory_limit_cgroup/cgroup.kill"
         linux_memory_limit_record_oom_peak "$_linux_memory_limit_cgroup"
         return 137
     fi
@@ -464,15 +511,15 @@ linux_memory_limit_run() {
 
 # linux_memory_limit_run for a command that runs
 # linux_memory_limit_sample_process_group (run-memory-bounded.sh
-# --linux-rss-measure). Its unit uses OOMPolicy=continue: the kernel kills only
-# the task it chooses, which the sampler makes a workload task, so the sampler
-# survives an OOM kill to record the cgroup's exact peak and to end the rest of
-# the workload itself. OOMPolicy=kill would kill the sampler with the workload
-# (memory.oom.group), leaving the peak to evidence written after the kill.
+# --linux-rss-measure). Delegation isolates the capped workload from the
+# sampler. OOMPolicy=continue keeps systemd from terminating the sampler when
+# the workload child OOMs; the sampler records that child's peak and kills it.
 linux_memory_limit_run_sampled() {
+    _linux_memory_limit_sampled=1
     _linux_memory_limit_oom_policy=continue
     _linux_memory_limit_sampled_status=0
     linux_memory_limit_run "$@" || _linux_memory_limit_sampled_status=$?
     _linux_memory_limit_oom_policy=
+    _linux_memory_limit_sampled=0
     return "$_linux_memory_limit_sampled_status"
 }

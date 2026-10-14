@@ -33685,6 +33685,30 @@
           message))
       message)))
 
+;; An error located at an operand's span outside that operand's own check. When
+;; the operand is caller syntax a macro spliced into its template, frame the
+;; error with the operand's caller-origin marker, as checking the operand itself
+;; would, so the location is reported in the caller's file rather than the
+;; macro's (#8870).
+(define (tc-caller-origin-operand-error
+  [expr-bases : i64]
+  [operand : (& ast.AstExpr)]
+  [located : String]) : String
+  (match operand
+    [(Spanned inner-id span)
+      (match (ast.ast-expr-segment-bases-get expr-bases inner-id)
+        [(MacroExpansion _ provenance-id macro-name-id)
+          (if (< macro-name-id 0)
+            (tc-macro-framed-error
+              (macro-expansion-invocation-path-id provenance-id)
+              span
+              (macro-expansion-origin-path-id provenance-id)
+              macro-name-id
+              located)
+            located)]
+        [_ located])]
+    [_ located]))
+
 (define (tc-locate-integer-binop-error
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -33710,11 +33734,14 @@
                     (tc-global-shared-view left-ty)
                     (tc-global-shared-view right-ty))))
                 (Err
-                  (tc-located-error
-                    (match right
-                      [(Spanned _ right-span) right-span]
-                      [_ fallback])
-                    (tc-type-mismatch-message right-ty left-ty message)))
+                  (tc-caller-origin-operand-error
+                    (tc-context-expr-bases ctx)
+                    right
+                    (tc-located-error
+                      (match right
+                        [(Spanned _ right-span) right-span]
+                        [_ fallback])
+                      (tc-type-mismatch-message right-ty left-ty message))))
                 (Err (tc-located-error fallback message)))]
             [(Err _) (Err (tc-located-error fallback message))])]
         [(Err _) (Err (tc-located-error fallback message))])]
@@ -107369,6 +107396,54 @@
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
 (define (macro-eval-transformer-expanded
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [fallback-module : String]
+  [fallback-module-id : i64]
+  [type-env : TcTypeEnv]
+  [macro-name-id : i64]
+  [declaration-id : i64]
+  [macro-name : String]
+  [params : ast.AstMacroParamList]
+  [ret : ast.AstType]
+  [body : ast.AstExpr]
+  [expanded-args : ast.AstExprList]
+  [call-expr : ast.AstExpr]) : ResultMacroValue
+  ;; The shared expansion environment lives in the pool's base arena. Its
+  ;; binding store keeps every binding an evaluation appends (operands, `let`
+  ;; locals), so restore its length once the transformer has returned: the next
+  ;; evaluation then reuses those slots instead of adding segments that stay in
+  ;; the base arena until the expanded program is detached. An expression
+  ;; transformer returns syntax, which holds no environment reference; a nested
+  ;; evaluation started inside this one restores its own mark first.
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [env-ready? : bool (tc-macro-walk-field state macro-expand-ctfe-env-ready)]
+    [env : ctfe_support.CtfeEnv
+      (tc-macro-walk-field state macro-expand-ctfe-env-value)]
+    [mark : i64
+      (if env-ready?
+        (ctfe_support.ctfe-env-binding-mark (& env))
+        -1)]
+    [result : ResultMacroValue
+      (macro-eval-transformer-expanded-in-env
+        ctx
+        decls
+        fallback-module
+        fallback-module-id
+        type-env
+        macro-name-id
+        declaration-id
+        macro-name
+        params
+        ret
+        body
+        expanded-args
+        call-expr)]
+    (when env-ready? (ctfe_support.ctfe-env-release-bindings-to! (& env) mark))
+    result))
+
+(define (macro-eval-transformer-expanded-in-env
   [ctx : TcContext]
   [decls : ast.AstDeclList]
   [fallback-module : String]

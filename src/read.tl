@@ -440,9 +440,9 @@
           : (Ptr SpannedSexpr))
         id))))
 
-;; An unchecked read of a builder row, for the per-item flush loop of
-;; `spanned-sexpr-list-from-builder`: there `(array-ref ...)` adds a bounds check
-;; per list item, +10.4M self-compile Ir. Rows are Copy.
+;; The list flush visits initialized rows in [builder.start, sp-builder-count),
+;; within sp-builder-slots. Rows are Copy, so these unchecked reads preserve
+;; the pooled values and their ownership.
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read

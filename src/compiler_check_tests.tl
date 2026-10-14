@@ -175,6 +175,40 @@
           (= (cdiag.compiler-diagnostic-end-line diagnostic) end-line)
           (= (cdiag.compiler-diagnostic-end-col diagnostic) end-col)))]))
 
+;; A macro asking `expr-type` about an operand that fails to typecheck reports
+;; the operand's own error at the operand, not a generic message at 1:1 (#8871).
+(define (compiler-check-failed-operand-diagnostic-spans-ok?) : bool
+  (and
+    (compiler-check-first-diagnostic-exact?
+      "tests/for_range_no_import.tl"
+      "(define (main) : i64
+  (let
+    [total : i64 0]
+    (for [i (iterator.range 0 3)]
+      (+= total i))
+    total))"
+      "typecheck: unknown qualified name iterator.range; import the module or use a visible dotted module alias"
+      4
+      13
+      4
+      32)
+    (compiler-check-first-diagnostic-exact?
+      "tests/for_array_mixed.tl"
+      "(define limit : i64
+  65536)
+
+(define (main) : i64
+  (let
+    [total : i64 0]
+    (for [index (array 0 limit)]
+      (set! total index))
+    total))"
+      "typecheck: array elements must have same type: expected i32, found i64"
+      7
+      17
+      7
+      31)))
+
 (define (compiler-check-subform-diagnostic-spans-ok?) : bool
   (and
     (compiler-check-first-diagnostic-exact?
@@ -797,6 +831,7 @@
     (compiler-check-near-miss-fix-ok?)
     (compiler-check-stdlib-import-help-not-machine-fix-ok?)
     (compiler-check-duplicate-type-location-ok?)
+    (compiler-check-failed-operand-diagnostic-spans-ok?)
     (compiler-check-independent-diagnostics-ok?)
     (compiler-check-parser-recovery-diagnostics-ok?)
     (compiler-check-poison-suppresses-derived-diagnostics-ok?)

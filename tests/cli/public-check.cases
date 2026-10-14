@@ -405,6 +405,31 @@ stderr contains error[E0206]
 stderr contains 3 |   (+ true 1))
 stderr contains |   ^^^^^^^^^
 
+# #8871: when `for` asks for the type of a source operand that fails to
+# typecheck, the operand's own error is reported at the operand, not
+# "expr-type requires a typechecked Expr" at 1:1. This gate's converged compiler
+# expands stdlib macros through its embedded TLCI image, so this covers the
+# native route.
+case check-macro-failed-operand
+file main.tl
+(define limit : i64
+  65536)
+
+(define (main) : i64
+  (let
+    [total : i64 0]
+    (for [index (array 0 limit)]
+      (set! total index))
+    total))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains typecheck: array elements must have same type: expected i32, found i64
+stderr contains main.tl:7:17
+stderr contains in expansion of macro `stdlib.core_macros/for` invoked here
+stderr not-contains expr-type requires a typechecked Expr
+
 # #5448: a batch entry that fails during macro expansion fails the entry and
 # exits nonzero cleanly; the driver must not segfault (exit 139).
 case normal-macro-error-compile-batch

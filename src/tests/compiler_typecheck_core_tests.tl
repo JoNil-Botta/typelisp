@@ -11222,3 +11222,95 @@
             local-region
             "global lookup restores scoped locals and their lifetimes")
           (tc_core.tc-type-env-scoped-runtime-restore! saved))))))
+
+;; The failed-operand channel (#8871): a noted node is only re-checked for the
+;; generic `expr-type` failure and only inside the context's pool, and every
+;; call takes the note, used or not.
+(test
+  macro-failed-operand-diagnostic-guards-the-noted-node
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
+    [env : tc_core.TcTypeEnv (tc_core.tc-type-env-new)]
+    [state : ctfe_support.CompilerCtfeMacroState
+      (tc_core.tc-context-ctfe-macro-state ctx)]
+    [generic : String (ctfe_support.ctfe-expr-type-untyped-message)]
+    (ctfe_support.ctfe-failed-operand-note-for-state! state 1000000 pools)
+    (let
+      [out : cdiag.CompilerDiagnostic
+        (tc_core.macro-failed-operand-diagnostic
+          ctx
+          env
+          (cdiag.compiler-diagnostic-at-start
+            ""
+            (ctfe_support.ctfe-expr-type-untyped-message)))]
+      (test.assert-true
+        (string.eq (cdiag.compiler-diagnostic-message (& out)) generic)
+        "a node outside the pool is never read")
+      (test.assert-i64-eq
+        (ctfe_support.ctfe-failed-operand-take-for-state! state)
+        -1
+        "the out-of-pool note was taken"))
+    (ctfe_support.ctfe-failed-operand-note-for-state! state 0 pools)
+    (let
+      [out : cdiag.CompilerDiagnostic
+        (tc_core.macro-failed-operand-diagnostic
+          ctx
+          env
+          (cdiag.compiler-diagnostic-at-start "" "a macro's own error"))]
+      (test.assert-true
+        (string.eq
+          (cdiag.compiler-diagnostic-message (& out))
+          "a macro's own error")
+        "another failure keeps its diagnostic")
+      (test.assert-i64-eq
+        (ctfe_support.ctfe-failed-operand-take-for-state! state)
+        -1
+        "an unused note is still taken"))))
+
+;; An implicit borrow of a call argument borrows the argument's own node and
+;; adds no row to the pool (#8411).
+(test
+  tc-call-effective-arg-expr-borrows-the-argument-node
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [name : i64 (ci.intern "auto-borrow-operand")]
+    [var : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        var
+        (ast.ast-source-span 2 3 2 22))]
+    [want : ast.AstType
+      (ast.ast-ty-ref-with-pools
+        pools
+        (ci.intern "auto-borrow-region")
+        (& (String)))]
+    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [rows : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [operand : i64
+        (match (tc_core.tc-call-effective-arg-expr
+          ctx
+          env
+          arg
+          (tc_core.tc-context-expr-get ctx arg)
+          want)
+          [(Ok (Borrow mutable _ operand))
+            (if mutable
+              -1
+              operand)]
+          [_ -1])]
+      [rows-after : i64 (ast.ast-node-pool-context-expr-len pools)]
+      (ast.ast-node-pool-context-install! saved)
+      (test.assert-i64-eq
+        operand
+        arg
+        "the implicit borrow borrows the argument's own node")
+      (test.assert-i64-eq rows-after rows "the implicit borrow adds no row"))))

@@ -27,17 +27,17 @@
     (test.assert-true
       (cobj.compiler-object-section-contains-bytes?
         linux-sections
-        (object_linux.compiler-backend-object-tlci-entry-bytes))
+        (& (object_linux.compiler-backend-object-tlci-entry-bytes)))
       "Linux leaf owns the System V TLCI image bridge")
     (test.assert-true
       (cobj.compiler-object-section-contains-bytes?
         linux-sections
-        (object_linux.compiler-backend-object-tlci-macro-entry-bytes))
+        (& (object_linux.compiler-backend-object-tlci-macro-entry-bytes)))
       "Linux leaf owns the System V TLCI macro bridge")
     (test.assert-true
       (cobj.compiler-object-section-contains-bytes?
         linux-sections
-        (object_linux.compiler-backend-object-exit-bytes))
+        (& (object_linux.compiler-backend-object-exit-bytes)))
       "Linux leaf owns the syscall exit tail")
     (test.assert-true
       (cobj.compiler-object-symbol-list-contains?
@@ -52,12 +52,12 @@
     (test.assert-true
       (cobj.compiler-object-section-contains-bytes?
         windows-sections
-        (object_windows.compiler-backend-object-tlci-entry-bytes))
+        (& (object_windows.compiler-backend-object-tlci-entry-bytes)))
       "Windows leaf owns the Win64 TLCI image bridge")
     (test.assert-true
       (cobj.compiler-object-section-contains-bytes?
         windows-sections
-        (object_windows.compiler-backend-object-tlci-macro-entry-bytes))
+        (& (object_windows.compiler-backend-object-tlci-macro-entry-bytes)))
       "Windows leaf owns the Win64 TLCI macro bridge")
     (test.assert-true
       (cobj.compiler-object-section-contains-label?

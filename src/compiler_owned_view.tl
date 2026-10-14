@@ -11,6 +11,10 @@
 
 ;; A non-reference operand is a Copy part already bound by value through a
 ;; shared reference (SPEC section 5.13); its copy is its own view.
+;;
+;; The reference is stored in a one-element array cell and read back through
+;; the cell's data pointer. A dynamic array or string reference carries the
+;; handle itself; any other reference carries the referent's address.
 (defmacro (compiler-owned-reference-shared-view [reference : Expr]) : Expr
   (let
     [reference-ty : comptime.Expr (comptime.expr-type reference)]
@@ -38,23 +42,19 @@
                   (ptr-cast
                     (__tl_array-data (array ,reference))
                     : (Ptr ,value-ty))))
-              `(let
-                [address : u64
-                  (unsafe
-                    (ptr-read
-                      (ptr-cast
-                        (__tl_array-data (array ,reference))
-                        : (Ptr u64))))]
-                (unsafe
-                  (ptr-read (int->ptr address : (Ptr ,value-ty))))))]
-          [_
-            `(let
-              [address : u64
-                (unsafe
+              `(unsafe
+                (ptr-read
                   (ptr-read
-                    (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
-              (unsafe
-                (ptr-read (int->ptr address : (Ptr ,value-ty)))))])))))
+                    (ptr-cast
+                      (__tl_array-data (array ,reference))
+                      : (Ptr (Ptr ,value-ty)))))))]
+          [_
+            `(unsafe
+              (ptr-read
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array ,reference))
+                    : (Ptr (Ptr ,value-ty))))))])))))
 
 (defmacro (compiler-owned-shared-view [place : Expr]) : Expr
   `(unsafe

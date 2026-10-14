@@ -12437,7 +12437,7 @@
   [pools : ast.AstNodePoolContext]
   [interns : (& interns ci.InternCompatState)]
   [program : (& program ir.CompilerIrProgram)]) : ResultCompilerOptimizeVerify
-  (match (owned_view.compiler-owned-reference-shared-view program)
+  (match program
     [(ir.CompilerIrProgram.Program _ functions externs authority)
       (let
         [catalog : ir.CompilerIrReturnStorageIndex
@@ -19706,7 +19706,7 @@
   (match blocks
     [(slice) unit]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block label instrs)
           (ir.compiler-ir-block-builder-push!
             out
@@ -29574,7 +29574,7 @@
   (match blocks
     [(slice) unit]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block label instrs)
           (ir.compiler-ir-block-builder-push!
             out
@@ -29723,7 +29723,7 @@
   (match blocks
     [(slice) unit]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block label instrs)
           (cond
             [(= label shape.preheader)
@@ -86193,7 +86193,7 @@
   (match blocks
     [(slice) unit]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block label instrs)
           (ir.compiler-ir-block-builder-push!
             out
@@ -113946,7 +113946,7 @@
   [caller : i64]
   [call-instr : (& call-instr ir.CompilerIrInstr)]
   [callee : i64]) : OptInlineMultiSpanClone
-  (match (owned_view.compiler-owned-reference-shared-view block)
+  (match block
     [(Block label instrs)
       (let
         [cloned-label : i64
@@ -115490,7 +115490,7 @@
   [vars : i64]
   [source-spans : (& source-spans ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanState
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Call dst cname cargs cret)
       (match (opt-inline-tiny-leaf-lookup index flags cname)
         [(Some callee)
@@ -117139,7 +117139,7 @@
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ params _ _ blocks _)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
@@ -127011,7 +127011,7 @@
 (define (opt-merge-eligible?
   [observed : (& observed opt_i64_i64_map.Map)]
   [func : (& func ir.CompilerIrFunction)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function name _ _ _ blocks abi)
       (and
         (match abi
@@ -127059,7 +127059,7 @@
 
 ;; Bucket key: equal bodies have equal shapes.
 (define (opt-merge-shape [func : (& func ir.CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ params _ frame blocks _)
       (let
         [no-instrs : i64 0]

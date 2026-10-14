@@ -57372,11 +57372,13 @@
     [(No) (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
 ;; A spawned lambda capturing a value that carries a scoped region or
-;; lifetime parameters cannot cross the thread boundary (E0217). That verdict
-;; is taken before the arguments are typed, so the lambda's generic capture
-;; escape check (E0205, which a plain reference capture still reports, as on
-;; main) does not pre-empt the thread-safety diagnostic. Other spawn verdicts
-;; keep their place after argument typing.
+;; lifetime parameters cannot cross the thread boundary (E0217). When the
+;; innermost capture that cannot cross fails for that reason, the verdict is
+;; taken before the arguments are typed, so the lambda's generic capture
+;; escape check (E0205) does not pre-empt it; a lone plain reference capture
+;; still reports E0205, as on main. Any other first failure leaves the order
+;; as it was, so with several such captures the first diagnostic can differ
+;; from main's (both reject the program).
 (define (tc-thread-safe-spawn-region-capture-precheck
   [ctx : TcContext]
   [env : TcTypeEnv]

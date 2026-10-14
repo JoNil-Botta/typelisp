@@ -3362,7 +3362,7 @@
 (define (ty-node-persist [node : (& AstType)]) : AstType
   (let
     [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]
-    (match (owned_view.compiler-owned-reference-shared-view node)
+    (match node
       [(Func args ret)
         (Func (box (ty-node-persist-type-list (& (deref args)))) ret)]
       [(Tuple args) (Tuple (box (ty-node-persist-type-list (& (deref args)))))]
@@ -6664,7 +6664,7 @@
 
 (define (ast-imported-spmd-metadata-clone
   [metadata : (& AstImportedSpmdMetadata)]) : AstImportedSpmdMetadata
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(No) No]
     [(Package owner version name callables)
       (Package
@@ -6674,7 +6674,7 @@
         (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]))
 
 (define (ast-fn-metadata-clone [metadata : (& AstFnMetadata)]) : AstFnMetadata
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(No) No]
     [(Export symbol) (Export symbol)]
     [(SpmdCallable items)
@@ -6694,12 +6694,12 @@
     [(Callable items) (SpmdCallable (box items))]))
 
 (define (ast-fn-metadata-export [metadata : (& AstFnMetadata)]) : AstFnExport
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(Export symbol) (Export symbol)]
     [_ No]))
 
 (define (ast-fn-metadata-spmd-callable [metadata : (& AstFnMetadata)]) : AstSpmdCallable
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(SpmdCallable items)
       (Callable (ast-spmd-specialization-list-clone (& (deref items))))]
     [_ No]))
@@ -9238,7 +9238,7 @@
 
 ;: Intern a maybe-type into the installed type pool, `-1` for absent.
 (define (ast-maybe-type-to-id [maybe-ty : (& AstMaybeType)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
+  (match maybe-ty
     [(No) ast-maybe-type-id-absent]
     [(Some ty) (ty-node-push (& ty))]))
 
@@ -10341,7 +10341,7 @@
 ;; re-read on the arm that consumes a payload, so a row copy is paid only where
 ;; it is used.
 (define (ast-decl-unwrapped-import? [decl : (& AstDecl)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view decl)
+  (match decl
     [(Import decl-meta _) true]
     [(Unsafe inner-box) (ast-decl-unwrapped-import? (& (deref inner-box)))]
     [_ false]))
@@ -10357,7 +10357,7 @@
     [_ false]))
 
 (define (ast-decl-unwrapped-module-or-import? [decl : (& AstDecl)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view decl)
+  (match decl
     [(or (Module _) (Import _ _)) true]
     [(Unsafe inner-box)
       (ast-decl-unwrapped-module-or-import? (& (deref inner-box)))]
@@ -10375,7 +10375,7 @@
 
 ;; Module markers plus the two type-definition kinds the clone fixpoint reads.
 (define (ast-decl-unwrapped-module-or-type-definition? [decl : (& AstDecl)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view decl)
+  (match decl
     [(or (Module _) (DefEnum _ _ _ _) (DefStruct _ _ _ _ _)) true]
     [(Unsafe inner-box)
       (ast-decl-unwrapped-module-or-type-definition? (& (deref inner-box)))]
@@ -11275,7 +11275,7 @@
 (define (ast-compaction-remap-extern-metadata
   [remap : (& remap AstProgramCompactionRemap)]
   [metadata : (& AstExternMetadata)]) : AstExternMetadata
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(Metadata abi symbol links flags imported-spmd)
       (Metadata
         (ast-compaction-remap-extern-abi remap (& abi))
@@ -12078,7 +12078,7 @@
 ;; A copy whose field array owns fresh storage, for moving a declaration into
 ;; another arena.
 (define (ast-struct-repr-copy [repr : (& AstStructRepr)]) : AstStructRepr
-  (match (owned_view.compiler-owned-reference-shared-view repr)
+  (match repr
     [(C align fields)
       (C
         align
@@ -12189,17 +12189,17 @@
 (define (ast-extern-link-input-eq?
   [a : (& AstExternLinkInput)]
   [b : (& AstExternLinkInput)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
+  (match a
     [(Lib aname)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Lib bname) (string.eq aname bname)]
         [_ false])]
     [(Search adir)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Search bdir) (string.eq adir bdir)]
         [_ false])]
     [(Arg aarg)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(Arg barg) (string.eq aarg barg)]
         [_ false])]))
 
@@ -12233,11 +12233,11 @@
   true)
 
 (define (ast-extern-metadata-symbol [metadata : (& AstExternMetadata)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(Metadata _ symbol-id _ _ _) (ci.intern-id-str symbol-id)]))
 
 (define (ast-extern-metadata-symbol-id [metadata : (& AstExternMetadata)]) : ci.InternId
-  (match (owned_view.compiler-owned-reference-shared-view metadata)
+  (match metadata
     [(Metadata _ symbol-id _ _ _) symbol-id]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi

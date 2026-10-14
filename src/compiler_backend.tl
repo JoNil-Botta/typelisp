@@ -1470,7 +1470,7 @@
       (in-arena
         owner
         (if reuse?
-          (match (owned_view.compiler-owned-reference-shared-view program)
+          (match program
             [(compiler_ir_types.CompilerIrProgram.Program
                 _
                 functions
@@ -65009,7 +65009,7 @@
   (match blocks
     [(slice) false]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
             (& instrs))

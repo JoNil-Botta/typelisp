@@ -7632,9 +7632,12 @@
         (ast.ast-decl-generated-meta decl)
         (tc-decl-location-diag expr-bases decl message))]))
 
-(define (tc-decl-diag-with-maybe-origin
+;; Declaration origins supply a fallback only when the diagnostic has no span.
+;; Avoid building the origin index when its result would be discarded.
+(define (tc-decl-diag-with-origin
   [expr-bases : i64]
-  [origin : parser.CompilerParseMaybeDeclSpan]
+  [origin-key : i64]
+  [origin-slot : i64]
   [decl : ast.AstDecl]
   [message : String]) : cdiag.CompilerDiagnostic
   (let
@@ -7644,7 +7647,9 @@
       (= (cdiag.compiler-diagnostic-col diag) 1)
       (= (cdiag.compiler-diagnostic-end-line diag) 1)
       (= (cdiag.compiler-diagnostic-end-col diag) 1))
-      (match origin
+      (match (parser.compiler-parse-decl-origin-span-key-slot
+        origin-key
+        origin-slot)
         [(Some span)
           (cdiag.compiler-diagnostic-with-primary-span
             (& diag)
@@ -116872,15 +116877,16 @@
         [(No) (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])]
     [else (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]))
 
-(define (tc-typecheck-diag-with-maybe-origin-and-path
+(define (tc-typecheck-diag-with-origin-and-path
   [expr-bases : i64]
-  [origin : parser.CompilerParseMaybeDeclSpan]
+  [origin-key : i64]
+  [origin-slot : i64]
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
   (let
     [diag : cdiag.CompilerDiagnostic
-      (tc-decl-diag-with-maybe-origin expr-bases origin decl message)]
+      (tc-decl-diag-with-origin expr-bases origin-key origin-slot decl message)]
     (cdiag.compiler-diagnostic-with-fallback-path diag path)))
 
 (define (tc-typecheck-diag-with-path
@@ -116889,9 +116895,10 @@
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
-  (tc-typecheck-diag-with-maybe-origin-and-path
+  (tc-typecheck-diag-with-origin-and-path
     expr-bases
-    (parser.compiler-parse-decl-origin-span decls 0)
+    (parser.compiler-parse-decl-list-storage-key decls)
+    decls.offset
     decl
     path
     message))
@@ -116902,11 +116909,10 @@
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
-  (tc-typecheck-diag-with-maybe-origin-and-path
+  (tc-typecheck-diag-with-origin-and-path
     expr-bases
-    (parser.compiler-parse-decl-origin-span-key-slot
-      (parser.compiler-parse-decl-list-storage-key rest)
-      (- rest.offset 1))
+    (parser.compiler-parse-decl-list-storage-key rest)
+    (- rest.offset 1)
     decl
     path
     message))
@@ -116962,20 +116968,147 @@
       (tc-decl-poison-name module-id (ast.ast-decl-box-shared-view inner))]
     [_ No]))
 
-(define (tc-poison-name-list-bind
+(define (tc-poison-name-list-bind-from
   [env : TcTypeEnv]
-  [names : (& names TcPoisonNameList)]) : TcTypeEnv
-  (if (= names.len 0)
+  [names : (& names TcPoisonNameList)]
+  [start : i64]) : TcTypeEnv
+  (if (>= start names.len)
     env
     (let
       [out : TcTypeEnv env]
       ;; Slots are appended oldest to newest, matching the former recursive
       ;; bind order and its duplicate-name shadowing behavior.
-      (for [index (iterator.range 0 names.len)]
+      (for [index (iterator.range start names.len)]
         (set!
           out
           (tc-bind-id out (array-ref names.slots index) (tc-poison-type))))
       out)))
+
+;; Within one declaration walk, poisoned names only append. A module revisit
+;; with identical source environments extends its cached environments with the
+;; suffix, preserving binding order and duplicate-name shadowing.
+(defstruct TcPoisonModuleEnv
+  (module-id i64)
+  (global-source TcTypeEnv)
+  (local-source TcTypeEnv)
+  (bound i64)
+  (global-env TcTypeEnv)
+  (local-env TcTypeEnv))
+
+(defstruct TcPoisonModuleEnvs
+  (entries (__tl_dyn-array TcPoisonModuleEnv))
+  (len i64))
+
+(define (tc-poison-module-envs-new) : TcPoisonModuleEnvs
+  (TcPoisonModuleEnvs (__tl_make-array TcPoisonModuleEnv 0) 0))
+
+(define (tc-poison-module-envs-index
+  [envs : (& envs TcPoisonModuleEnvs)]
+  [module-id : i64]) : i64
+  (for [index (iterator.range 0 envs.len)]
+    (when (= (array-ref envs.entries index).module-id module-id) (return index)))
+  -1)
+
+(define (tc-poison-module-envs-copy-prefix!
+  [src : (& src (__tl_dyn-array TcPoisonModuleEnv))]
+  [dst : (&mut dst (__tl_dyn-array TcPoisonModuleEnv))]
+  [len : i64]) : unit
+  (for [cursor (iterator.range 0 len)]
+    (set! (array-ref dst cursor) (array-ref src cursor))))
+
+(define (tc-poison-module-envs-put!
+  [envs : (&mut envs TcPoisonModuleEnvs)]
+  [index : i64]
+  [entry : TcPoisonModuleEnv]) : unit
+  (if (>= index 0)
+    (set! (array-ref envs.entries index) entry)
+    (begin
+      (when
+        (>= envs.len (array-length envs.entries))
+        (let
+          [next : (__tl_dyn-array TcPoisonModuleEnv)
+            (__tl_make-array
+              TcPoisonModuleEnv
+              (if (< envs.len 8)
+                16
+                (* envs.len 2)))]
+          (tc-poison-module-envs-copy-prefix!
+            (& envs.entries)
+            (&mut next)
+            envs.len)
+          (set! envs.entries next)))
+      (set! (array-ref envs.entries envs.len) entry)
+      (+= envs.len 1))))
+
+;; Enter MODULE-ID with GLOBAL-SOURCE (before its hygiene boundary) and
+;; LOCAL-SOURCE: the module's global and local environments with every name
+;; in NAMES poisoned.
+(define (tc-poison-module-envs-enter!
+  [envs : (&mut envs TcPoisonModuleEnvs)]
+  [module-id : i64]
+  [global-source : TcTypeEnv]
+  [local-source : TcTypeEnv]
+  [names : (& names TcPoisonNameList)]) : TcPoisonModuleEnv
+  (if (= names.len 0)
+    (TcPoisonModuleEnv
+      module-id
+      global-source
+      local-source
+      0
+      (tc-hygiene-global-env global-source)
+      local-source)
+    (let
+      [index : i64 (tc-poison-module-envs-index envs module-id)]
+      [entry : TcPoisonModuleEnv
+        (if (and
+          (>= index 0)
+          (=
+            (array-ref envs.entries index).global-source.store
+            global-source.store)
+          (=
+            (array-ref envs.entries index).global-source.head
+            global-source.head)
+          (=
+            (array-ref envs.entries index).global-source.abi-pad
+            global-source.abi-pad)
+          (=
+            (array-ref envs.entries index).local-source.store
+            local-source.store)
+          (= (array-ref envs.entries index).local-source.head local-source.head)
+          (=
+            (array-ref envs.entries index).local-source.abi-pad
+            local-source.abi-pad))
+          (let
+            [bound : i64 (array-ref envs.entries index).bound]
+            [known-global : TcTypeEnv
+              (TcTypeEnv
+                (array-ref envs.entries index).global-env.store
+                (array-ref envs.entries index).global-env.head
+                (array-ref envs.entries index).global-env.abi-pad)]
+            [known-local : TcTypeEnv
+              (TcTypeEnv
+                (array-ref envs.entries index).local-env.store
+                (array-ref envs.entries index).local-env.head
+                (array-ref envs.entries index).local-env.abi-pad)]
+            (TcPoisonModuleEnv
+              module-id
+              global-source
+              local-source
+              names.len
+              (tc-poison-name-list-bind-from known-global names bound)
+              (tc-poison-name-list-bind-from known-local names bound)))
+          (TcPoisonModuleEnv
+            module-id
+            global-source
+            local-source
+            names.len
+            (tc-poison-name-list-bind-from
+              (tc-hygiene-global-env global-source)
+              names
+              0)
+            (tc-poison-name-list-bind-from local-source names 0)))]
+      (tc-poison-module-envs-put! envs index entry)
+      entry)))
 
 (define (tc-poison-decl-env
   [env : TcTypeEnv]
@@ -117086,6 +117219,7 @@
         compile-profile
         (tc-poison-name-list-new)
         (TcPoisonNameList (__tl_make-array i64 0) 0))]
+    [poison-module-envs : TcPoisonModuleEnvs (tc-poison-module-envs-new)]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
     ;; Generated modules are walked contiguously. Retain the latest clone
@@ -117160,21 +117294,21 @@
                       next-module
                       (tc-global-shared-view cur-cache))
                       [(Ok next-local-env-copy _)
-                        (set! cur-decls rest)
-                        (set! cur-paths rest-paths)
-                        (set! cur-module (tc-env-key-name-text next-module))
-                        (set! cur-module-id next-module)
-                        (set! cur-cache next-cache)
-                        (set!
-                          cur-global-env
-                          (tc-poison-name-list-bind
-                            (tc-hygiene-global-env next-local-env)
-                            poison-names))
-                        (set!
-                          cur-local-env
-                          (tc-poison-name-list-bind
-                            next-local-env-copy
-                            poison-names))]
+                        (let
+                          [entered : TcPoisonModuleEnv
+                            (tc-poison-module-envs-enter!
+                              (&mut poison-module-envs)
+                              next-module
+                              next-local-env
+                              next-local-env-copy
+                              poison-names)]
+                          (set! cur-decls rest)
+                          (set! cur-paths rest-paths)
+                          (set! cur-module (tc-env-key-name-text next-module))
+                          (set! cur-module-id next-module)
+                          (set! cur-cache next-cache)
+                          (set! cur-global-env entered.global-env)
+                          (set! cur-local-env entered.local-env))]
                       [(Err message)
                         (cdiag.compiler-diagnostic-list-push!
                           (&mut diagnostics)

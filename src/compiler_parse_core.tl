@@ -4512,7 +4512,7 @@
           [(slice signature-node)
             (let
               [signature (try (parse-ast-type dispatch pools signature-node))]
-              (match (compiler-parse-place-shared-view signature)
+              (match (& signature)
                 [(Func _ _)
                   (Ok
                     (CFunc
@@ -11960,7 +11960,7 @@
     [(List (slice inner) _)
       (let
         [decl (try (parse-ast-decl dispatch pools inner))]
-        (match (compiler-parse-place-shared-view decl)
+        (match (& decl)
           [(or (DefFn _ _ _ _ _ _) (Extern _ _ _ _ _))
             (Ok (ast.ast-decl-unsafe decl))]
           [_

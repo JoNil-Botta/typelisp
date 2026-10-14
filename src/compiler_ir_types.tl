@@ -5291,7 +5291,7 @@
               bases
               (ast.ast-type-segment-bases-get bases result-id)
               (compiler-ir-global-shared-view abi.output))
-              (if (match (compiler-ir-global-shared-view abi.physical-result)
+              (if (match (& abi.physical-result)
                 [(ast.AstType.U64) true]
                 [_
                   (and

@@ -439,7 +439,7 @@
                 [(ir.CompilerIrReturnStorage.None)
                   (if (or
                     decl.c-abi?
-                    (match (ir.compiler-ir-global-shared-view decl.signature)
+                    (match (& decl.signature)
                       [(ast.AstType.Func _ _) true]
                       [_ false]))
                     ;; A foreign declaration can lack a lowered aggregate
@@ -695,7 +695,7 @@
         (ReturnStorageProof.Unavailable))]
     [(CalleeEvidence.Typed ty)
       (if c?
-        (match (ir.compiler-ir-global-shared-view ty)
+        (match (& ty)
           [(ast.AstType.CFunc _ _) (indirect-c bases catalog ty args result)]
           [_
             (ReturnStorageProof.Invalid

@@ -2036,7 +2036,7 @@
       ;; In-place semantic rewrites retain the identity's canonical slot.  A
       ;; copied wrapper additionally establishes its per-use view immediately;
       ;; prefix rollback later rebuilds records in id order.
-      (match (ast-global-shared-view node)
+      (match (& node)
         [(Spanned _ _)
           (let
             [canonical-before : i64 ast-node-canonical-span-count]
@@ -2952,7 +2952,7 @@
         (& pool)
         id
         (ast-global-shared-view node))]
-    (match (ast-global-shared-view node)
+    (match (& node)
       [(Spanned _ _)
         (let
           [canonical-before : i64 pool.canonical-span-count]

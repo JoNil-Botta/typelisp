@@ -4758,7 +4758,7 @@
                 (ctfe.ctfe-fuel-limit))
                 [(Ok value _)
                   (if (spec-type-kind? (ast.ast-place-shared-view param-ty))
-                    (match (spec-place-shared-view value)
+                    (match (& value)
                       [(Type _)
                         (match (spec-rewrite-specialized-args-at
                           params

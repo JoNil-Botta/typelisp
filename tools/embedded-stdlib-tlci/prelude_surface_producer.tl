@@ -177,12 +177,10 @@
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
             (ast.ast-decl-list-len (& decls)))])]
-    (if (spec.compiler-specialize-needed-with-pools
-      (ast.ast-place-shared-view expanded)
-      pools)
+    (if (spec.compiler-specialize-needed-with-pools (& expanded) pools)
       (match (spec.compiler-specialize-program-with-paths-and-pools
-        (ast.ast-place-shared-view expanded)
-        (ast.ast-place-shared-view expanded-paths)
+        (& expanded)
+        (& expanded-paths)
         ""
         pools)
         [(Err diag)
@@ -234,8 +232,8 @@
       (spec.spec-owner-context-new pools intern-state)]
     [generated-result : spec.ResultGenProgramWithPaths
       (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-        (ast.ast-program decls)
-        paths
+        (& (ast.ast-program decls))
+        (& paths)
         ""
         owner)]
     ;; Publish the owner's interner before the legacy expansion phase reads it.

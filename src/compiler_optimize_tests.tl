@@ -62534,6 +62534,68 @@
         (& expected))
       "all local projections can replace their capture")))
 
+(test
+  global-snapshot-scalar-canonical
+  (let
+    [cases
+      (array
+        (OptSnapshotTestCase
+          "function @guard(position=%0:i64) -> i64 vars 8 {
+             entry:
+               %1 = mov @sample : i64
+               %2 = mul %0, 2 : i64
+               %3 = add %1, %2 : i64
+               return %3
+           }"
+          "function @guard(position=%0:i64) -> i64 vars 8 {
+             entry:
+               %2 = mul %0, 2 : i64
+               %3 = add %2, @sample : i64
+               return %3
+           }"
+          false)
+        (OptSnapshotTestCase
+          "function @guard(value=%0:i64) -> i64 vars 8 {
+             entry:
+               %1 = mov @sample : i64
+               %2 = add %1, %0 : i64
+               store @sample, %2 : i64
+               return %2
+           }"
+          "function @guard(value=%0:i64) -> i64 vars 8 {
+             entry:
+               %2 = add @sample, %0 : i64
+               store @sample, %2 : i64
+               return %2
+           }"
+          false)
+        (OptSnapshotTestCase
+          "function @guard(value=%0:f64) -> f64 vars 8 {
+             entry:
+               %1 = mov @sample : f64
+               %2 = add %1, %0 : f64
+               return %2
+           }"
+          "function @guard(value=%0:f64) -> f64 vars 8 {
+             entry:
+               %2 = add @sample, %0 : f64
+               return %2
+           }"
+          false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        [input (irt.func (clone case.before))]
+        [expected (irt.func case.after)]
+        [actual
+          (opt.opt-global-cell-function (opt.opt-program-summaries-empty) input)]
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          case.before)))))
+
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;
 ;; One descriptor chain -- `gep @g, 0` / `load` / `gep, 1` / `load` -- in a loop

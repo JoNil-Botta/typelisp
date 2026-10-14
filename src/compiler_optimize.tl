@@ -122787,7 +122787,7 @@
 (define (opt-global-cell-subst-value
   [plan : (& opt_i64_i64_map.Map)]
   [v : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match (compiler-opt-global-shared-view v)
+  (match (& v)
     [(Global name)
       (match (opt_i64_i64_map.get plan (ir.compiler-ir-symbol-id name))
         [(LookupFound fresh) (Var fresh)]
@@ -123117,7 +123117,29 @@
                 (& delayed)
                 (& env))
               instr)]
-          (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)
+          [rmw? : bool
+            (and
+              policy.complete?
+              (< (+ index 1) count)
+              (opt-fold-rmw-shape?
+                (& rewritten)
+                (& (ir.compiler-ir-instr-seq-ref instrs (+ index 1)))))]
+          ;; Forwarding can expose a cell operand after the fold stage. Keep
+          ;; its memory-source spelling, except for an immediate cell update.
+          [commute? : bool
+            (and
+              policy.complete?
+              (match (& rewritten)
+                [(BinOp _ op lhs rhs ty)
+                  (opt-binop-commute-cell-lhs? op lhs rhs ty rmw?)]
+                [_ false]))]
+          [canonical : ir.CompilerIrInstr
+            (if commute?
+              (match (compiler-opt-global-shared-view rewritten)
+                [(BinOp dst op lhs rhs ty) (BinOp dst op rhs lhs ty)]
+                [_ rewritten])
+              rewritten)]
+          (ir.compiler-ir-instr-builder-push! (&mut builder) canonical)
           (when
             (and policy.defer? boundary?)
             (set! delayed (compiler-opt-global-shared-view env)))))

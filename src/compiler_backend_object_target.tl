@@ -268,14 +268,6 @@
         macro-entry-bytes)
       with-image-entry)))
 
-(define (compiler-backend-object-empty-data-records) : cobj.CompilerObjectDataRecordList
-  (cobj.compiler-object-data-record-builder-finish
-    (cobj.compiler-object-data-record-builder-with-capacity 1)))
-
-(define (compiler-backend-object-empty-instrs) : cobj.CompilerObjectX64InstrList
-  (cobj.compiler-object-instr-builder-finish
-    (cobj.compiler-object-instr-builder-with-capacity 1)))
-
 (define (compiler-backend-object-base-sections
   [text : cobj.CompilerObjectX64InstrBuilder]
   [data : cobj.CompilerObjectDataRecordBuilder]
@@ -290,7 +282,7 @@
         sections0
         (Section
           (Text)
-          (compiler-backend-object-empty-data-records)
+          (cobj.compiler-object-data-record-list-empty)
           (cobj.compiler-object-instr-builder-finish text)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
@@ -298,17 +290,17 @@
         (Section
           (Data)
           (cobj.compiler-object-data-record-builder-finish data)
-          (compiler-backend-object-empty-instrs)))]
+          (cobj.compiler-object-instr-list-empty)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (Section
           (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata)
-          (compiler-backend-object-empty-instrs)))]
+          (cobj.compiler-object-instr-list-empty)))]
     (cobj.compiler-object-section-builder-push
       sections3
       (Section
         (Bss)
         (cobj.compiler-object-data-record-builder-finish bss)
-        (compiler-backend-object-empty-instrs)))))
+        (cobj.compiler-object-instr-list-empty)))))

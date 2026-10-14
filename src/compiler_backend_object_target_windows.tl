@@ -951,14 +951,14 @@
         (Section
           (Pdata)
           (cobj.compiler-object-data-record-builder-finish pdata)
-          (object_target.compiler-backend-object-empty-instrs)))]
+          (cobj.compiler-object-instr-list-empty)))]
     [sections6 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections5
         (Section
           (Xdata)
           (cobj.compiler-object-data-record-builder-finish xdata)
-          (object_target.compiler-backend-object-empty-instrs)))]
+          (cobj.compiler-object-instr-list-empty)))]
     (cobj.compiler-object-section-builder-finish
       (cobj.compiler-object-section-builder-push
         sections6
@@ -966,8 +966,8 @@
           (Rsrc)
           (if emit-manifest-resource
             (compiler-backend-object-manifest-resource-records)
-            (object_target.compiler-backend-object-empty-data-records))
-          (object_target.compiler-backend-object-empty-instrs))))))
+            (cobj.compiler-object-data-record-list-empty))
+          (cobj.compiler-object-instr-list-empty))))))
 
 (define (compiler-backend-object-image-symbols
   [symbols : cobj.CompilerObjectSymbolBuilder]

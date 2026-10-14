@@ -297,7 +297,7 @@
         [new-slots : (__tl_dyn-array SpannedSexpr)
           (__tl_make-array SpannedSexpr new-cap)]
         (for [i (iterator.range 0 sp-builder-count)]
-          (set! (array-ref new-slots i) (sp-builder-shared-view i)))
+          (set! (array-ref new-slots i) (array-ref sp-builder-slots i)))
         (set! sp-builder-slots new-slots)))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
@@ -418,9 +418,9 @@
           (< sp-node-pool-slot-count end-slot)
           (set! sp-node-pool-slot-count end-slot))))))
 
-;; Reader nodes and builder rows live in the reader's arena-backed pools. These
-;; compatibility accessors expose immutable/shared views without transferring
-;; ownership out of their global storage.
+;; Reader nodes live in the reader's arena-backed segmented pool. This
+;; compatibility accessor exposes an immutable/shared view without transferring
+;; ownership out of its global storage.
 (define (sp-node-pool-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read
@@ -435,6 +435,9 @@
           : (Ptr SpannedSexpr))
         id))))
 
+;; The list flush visits initialized rows in [builder.start, sp-builder-count),
+;; within sp-builder-slots. Rows are Copy, so these unchecked reads preserve
+;; the pooled values and their ownership.
 (define (sp-builder-shared-view [id : i64]) : SpannedSexpr
   (unsafe
     (ptr-read
@@ -553,7 +556,7 @@
               (+= slot covered)
               (set! sp-node-pool-slot-count slot))))))
     (for [index (iterator.range 0 sp-builder-count)]
-      (set! (array-ref next-builders index) (sp-builder-shared-view index)))
+      (set! (array-ref next-builders index) (array-ref sp-builder-slots index)))
     (set! sp-builder-slots next-builders)
     (set! sp-node-pool-base-arena transfer-arena)
     (set! sp-node-pool-retained-arena transfer-arena)

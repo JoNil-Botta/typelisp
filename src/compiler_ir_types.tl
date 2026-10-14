@@ -7996,7 +7996,7 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (match (array-ref slots index)
+    (match (& (array-ref slots index))
       [(Slot ty offset)
         (str_cat.str-cat
           (compiler-ir-type-render structural-session type-segment-bases (& ty))

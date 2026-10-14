@@ -835,7 +835,8 @@
     (set!
       compiler-parse-origin-alias-heads
       (in-arena
-        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (unsafe
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasHead next-capacity)))
     (for [old-index (iterator.range 0 old-capacity)]
       (let
@@ -859,7 +860,8 @@
     (set!
       compiler-parse-origin-alias-runs
       (in-arena
-        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (unsafe
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasRun next-capacity)))
     (for [index (iterator.range 0 compiler-parse-origin-alias-run-len)]
       (set!
@@ -961,7 +963,8 @@
       (set!
         compiler-parse-origin-segments
         (in-arena
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (unsafe
+            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array CompilerParseOriginSegment capacity)))
       (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
         (set!
@@ -1048,7 +1051,8 @@
       (set!
         compiler-parse-origin-paint
         (in-arena
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (unsafe
+            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array
             i64
             (if (< (* (array-length compiler-parse-origin-paint) 2) (- hi lo))

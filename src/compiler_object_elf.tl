@@ -1,5 +1,4 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
-(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -192,7 +191,7 @@
 
 (define (compiler-object-elf-global-symbol-index-from
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
-  [name : String]
+  [name : (& str)]
   [index : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
@@ -216,7 +215,7 @@
 
 (define (compiler-object-elf-symbol-index
   [image : (& image cobj.CompilerObjectImage)]
-  [name : String]) : i64
+  [name : (& str)]) : i64
   (let
     [symbols : cobj.CompilerObjectSymbolList image.symbols]
     [local : i64 (compiler-object-elf-local-symbol-index-from symbols name 1)]
@@ -224,7 +223,7 @@
       local
       (compiler-object-elf-global-symbol-index-from
         symbols
-        name
+        (& name)
         (+ 1 (compiler-object-elf-local-symbol-count symbols))))))
 
 (define (compiler-object-elf-relocation-sites-known?
@@ -242,9 +241,9 @@
               (layout.compiler-object-layout-section-label-offset
                 image
                 section
-                site)
+                (& site))
               0)
-            (>= (compiler-object-elf-symbol-index image target) 0))
+            (>= (compiler-object-elf-symbol-index image (& target)) 0))
             (set! index (+ index 1))
             (set! ok false))]))
     ok))
@@ -484,12 +483,12 @@
   [image : (& image cobj.CompilerObjectImage)]
   [offset : i64]
   [kind : cobj.CompilerObjectRelocationKind]
-  [target : String]) : unit
+  [target : (& str)]) : unit
   (layout.compiler-object-layout-push-u64! out offset)
   (layout.compiler-object-layout-push-u64!
     out
     (bit-or
-      (shl (compiler-object-elf-symbol-index image target) 32)
+      (shl (compiler-object-elf-symbol-index image (& target)) 32)
       (compiler-object-elf-relocation-type kind)))
   (layout.compiler-object-layout-push-u64!
     out
@@ -499,7 +498,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
   [reloc : (& cobj.CompilerObjectRelocation)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view reloc)
+  (match reloc
     [(Relocation section site kind target)
       (compiler-object-elf-render-relocation-record!
         out
@@ -524,7 +523,7 @@
             (set!
               end
               (+ end (layout.compiler-object-layout-instr-size (& instr))))
-            (match (layout.compiler-object-layout-instr-fixup instr)
+            (match (layout.compiler-object-layout-instr-fixup (& instr))
               [(None) unit]
               [(One kind target)
                 (compiler-object-elf-render-relocation-record!
@@ -532,20 +531,20 @@
                   image
                   (- end 4)
                   kind
-                  target)]
+                  (& target))]
               [(Branch true-target false-target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (- end 9)
                   (Branch)
-                  true-target)
+                  (& true-target))
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (- end 4)
                   (Branch)
-                  false-target)])
+                  (& false-target))])
             (set! index (+ index 1))))
         unit)]))
 
@@ -657,7 +656,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
   [symbol : (& cobj.CompilerObjectSymbol)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view symbol)
+  (match symbol
     [(Symbol name binding kind section)
       (layout.compiler-object-layout-push-u32!
         out
@@ -1110,12 +1109,6 @@
   test
   (define (compiler-object-elf-text-smoke-image) : cobj.CompilerObjectImage
     (let
-      [empty-data : cobj.CompilerObjectDataRecordList
-        (cobj.compiler-object-data-record-builder-finish
-          (cobj.compiler-object-data-record-builder-with-capacity 1))]
-      [empty-instrs : cobj.CompilerObjectX64InstrList
-        (cobj.compiler-object-instr-builder-finish
-          (cobj.compiler-object-instr-builder-with-capacity 1))]
       [data0 : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-with-capacity 2)]
       [data1 : cobj.CompilerObjectDataRecordBuilder
@@ -1137,7 +1130,7 @@
           sections0
           (Section
             (Text)
-            (owned_view.compiler-owned-shared-view empty-data)
+            (cobj.compiler-object-data-record-list-empty)
             (compiler-object-elf-text-smoke-instrs)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
@@ -1145,18 +1138,21 @@
           (Section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections3 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections2
           (Section
             (Rodata)
             (cobj.compiler-object-data-record-builder-finish rodata2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections4 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections3
-          (Section (Bss) empty-data empty-instrs))]
+          (Section
+            (Bss)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 7)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -1196,12 +1192,6 @@
   test
   (define (compiler-object-elf-smoke-image) : cobj.CompilerObjectImage
     (let
-      [empty-data : cobj.CompilerObjectDataRecordList
-        (cobj.compiler-object-data-record-builder-finish
-          (cobj.compiler-object-data-record-builder-with-capacity 1))]
-      [empty-instrs : cobj.CompilerObjectX64InstrList
-        (cobj.compiler-object-instr-builder-finish
-          (cobj.compiler-object-instr-builder-with-capacity 1))]
       [text0 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-with-capacity 2)]
       [text1 : cobj.CompilerObjectX64InstrBuilder
@@ -1249,7 +1239,7 @@
           sections0
           (Section
             (Text)
-            empty-data
+            (cobj.compiler-object-data-record-list-empty)
             (cobj.compiler-object-instr-builder-finish text2)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
@@ -1257,21 +1247,21 @@
           (Section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data3)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections3 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections2
           (Section
             (Rodata)
             (cobj.compiler-object-data-record-builder-finish rodata5)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections4 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections3
           (Section
             (Bss)
             (cobj.compiler-object-data-record-builder-finish bss2)
-            empty-instrs))]
+            (cobj.compiler-object-instr-list-empty)))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 5)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -1397,14 +1387,8 @@
 (cfg
   test
   (define (compiler-object-elf-rodata-record-image
-    [record : (& cobj.CompilerObjectDataRecord)]) : cobj.CompilerObjectImage
+    [record : cobj.CompilerObjectDataRecord]) : cobj.CompilerObjectImage
     (let
-      [empty-data : cobj.CompilerObjectDataRecordList
-        (cobj.compiler-object-data-record-builder-finish
-          (cobj.compiler-object-data-record-builder-with-capacity 1))]
-      [empty-instrs : cobj.CompilerObjectX64InstrList
-        (cobj.compiler-object-instr-builder-finish
-          (cobj.compiler-object-instr-builder-with-capacity 1))]
       [data0 : cobj.CompilerObjectDataRecordBuilder
         (cobj.compiler-object-data-record-builder-with-capacity 2)]
       [data1 : cobj.CompilerObjectDataRecordBuilder
@@ -1418,9 +1402,7 @@
           rodata0
           (Label "_tl_table"))]
       [rodata2 : cobj.CompilerObjectDataRecordBuilder
-        (cobj.compiler-object-data-record-builder-push
-          rodata1
-          (owned_view.compiler-owned-reference-shared-view record))]
+        (cobj.compiler-object-data-record-builder-push rodata1 record)]
       [sections0 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-with-capacity 4)]
       [sections1 : cobj.CompilerObjectSectionBuilder
@@ -1428,26 +1410,29 @@
           sections0
           (Section
             (Text)
-            (owned_view.compiler-owned-shared-view empty-data)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
       [sections2 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections1
           (Section
             (Data)
             (cobj.compiler-object-data-record-builder-finish data2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections3 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections2
           (Section
             (Rodata)
             (cobj.compiler-object-data-record-builder-finish rodata2)
-            (owned_view.compiler-owned-shared-view empty-instrs)))]
+            (cobj.compiler-object-instr-list-empty)))]
       [sections4 : cobj.CompilerObjectSectionBuilder
         (cobj.compiler-object-section-builder-push
           sections3
-          (Section (Bss) empty-data empty-instrs))]
+          (Section
+            (Bss)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
       [symbols0 : cobj.CompilerObjectSymbolBuilder
         (cobj.compiler-object-symbol-builder-with-capacity 1)]
       [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -1468,9 +1453,9 @@
   (define (compiler-object-elf-rva32-rejected-ok?) : bool
     (let
       [rva : cobj.CompilerObjectImage
-        (compiler-object-elf-rodata-record-image (& (SymbolRva32 "_tl_cell")))]
+        (compiler-object-elf-rodata-record-image (SymbolRva32 "_tl_cell"))]
       [control : cobj.CompilerObjectImage
-        (compiler-object-elf-rodata-record-image (& (SymbolAddress "_tl_cell")))]
+        (compiler-object-elf-rodata-record-image (SymbolAddress "_tl_cell"))]
       (and
         (not (compiler-object-elf-image-supported? rva))
         (match (compiler-object-elf-render rva)

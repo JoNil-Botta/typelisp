@@ -116,7 +116,10 @@
       (UndeclaredExternal
         (compiler_object_coff.compiler-object-coff-section-name section)
         (owned_view.compiler-owned-shared-view label)
-        (layout.compiler-object-layout-section-label-offset image section label)
+        (layout.compiler-object-layout-section-label-offset
+          image
+          section
+          (& label))
         target)]))
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability

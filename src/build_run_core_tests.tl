@@ -405,3 +405,48 @@
     (source-tool-link-dependency-rendering-smoke-ok?)
     (source-tool-link-dependency-merge-smoke-ok?)
     (source-tool-link-failure-notes-smoke-ok?)))
+
+(test
+  source-tool-deterministic-archive-argv
+  (let
+    [command : process.ProcessCommand
+      (build_run.source-tool-archiver-command
+        "input object.o"
+        "output archive.a")]
+    (if (and
+      (string.eq
+        (process.command-executable (& command))
+        (build_run.source-tool-resolve-command "ar"))
+      (source-tool-string-list-eq?
+        (process.command-argv (& command))
+        (process.args-cons
+          "rcsD"
+          (process.args-cons
+            "output archive.a"
+            (process.args-single "input object.o"))))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-windows-msvc-archiver-args
+          "input object.obj"
+          "output archive.lib")
+        (process.args-cons
+          "/NOLOGO"
+          (process.args-cons
+            "/Brepro"
+            (process.args-cons
+              "/OUT:output archive.lib"
+              (process.args-single "input object.obj")))))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-windows-llvm-archiver-args
+          "input object.obj"
+          "output archive.lib")
+        (process.args-cons
+          "--format=coff"
+          (process.args-cons
+            "rcsD"
+            (process.args-cons
+              "output archive.lib"
+              (process.args-single "input object.obj"))))))
+      unit
+      (begin
+        (/ 1 0)
+        unit))))

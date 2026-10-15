@@ -420,7 +420,7 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 62 explicit
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 64 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
 every embedded module against its source with the inline tests blanked and
 prose comments cut. It also re-lexes both texts and proves the blanking

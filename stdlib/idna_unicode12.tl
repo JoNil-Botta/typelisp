@@ -2,9 +2,18 @@
 ;# protocol profile. This module performs no decoding or label validation.
 ;# IANA's derived-property snapshot is convenience data; its contextual rules
 ;# are normative updates to RFC 5892. See tools/idna-unicode12-data/README.md.
+;#
+;# ```typelisp
+;# (import stdlib.idna_unicode12 as idna)
+;# (define (main) : i64
+;#   (match (idna.lookup 2381)
+;#     [(idna.Scalar properties) (if (= properties.ccc 9) 42 1)]
+;#     [(idna.InvalidScalar) 1]))
+;# ```
 (import stdlib.generated.idna_unicode12_data as data)
 (import stdlib.string)
 
+;: Closed IANA derived properties for this reviewed profile.
 (defenum DerivedProperty
   (Disallowed)
   (PValid)
@@ -12,6 +21,7 @@
   (ContextO)
   (Unassigned))
 
+;: Contextual-rule scripts; all other scripts share OtherScript.
 (defenum ContextScript
   (OtherScript)
   (Greek)
@@ -20,6 +30,7 @@
   (Katakana)
   (Han))
 
+;: Unicode joining values, including explicit NonJoining and JoinCausing.
 (defenum JoiningType
   (NonJoining)
   (LeftJoining)
@@ -28,6 +39,7 @@
   (RightJoining)
   (JoinCausing))
 
+;: All Unicode 12 bidi classes; label rules select the permitted subset.
 (defenum BidiClass
   (L)
   (R)
@@ -53,11 +65,13 @@
   (FSI)
   (PDI))
 
+;: Canonical normalization quick-check result, with Maybe distinct from No.
 (defenum NfcQuickCheck
   (NfcYes)
   (NfcNo)
   (NfcMaybe))
 
+;: The nine reviewed IANA contextual rule identities plus absence.
 (defenum ContextRule
   (NoContextRule)
   (ZeroWidthNonJoiner)
@@ -70,11 +84,13 @@
   (ArabicIndicDigits)
   (ExtendedArabicIndicDigits))
 
+;: Rule identity and separate registration/lookup applicability.
 (defstruct ContextApplicability
   (rule ContextRule)
   (registration bool)
   (lookup bool))
 
+;: The scalar properties consumed by the strict IDNA label validator.
 (defstruct ScalarProperties
   (derived DerivedProperty)
   (ccc u8)
@@ -84,10 +100,12 @@
   (bidi BidiClass)
   (nfc NfcQuickCheck))
 
+;: Explicit rejection of non-scalars, or one complete property record.
 (defenum ScalarLookup
   (InvalidScalar)
   (Scalar ScalarProperties))
 
+;: Checked canonical pool span; valid empty spans denote no decomposition.
 (defstruct DecompositionSpan
   (valid bool)
   (offset u32)
@@ -97,7 +115,7 @@
 (define (valid-scalar? [cp : i64]) : bool
   (and (>= cp 0) (<= cp 1114111) (or (< cp 55296) (> cp 57343))))
 
-;; Internal reads have statically generated widths and checked table indexes.
+;: Internal fixed-width reads have statically generated widths and checked table indexes.
 (define (word [table : (& table str)] [offset : i64] [width : i64]) : u32
   (let
     [value : u32 0]
@@ -117,7 +135,7 @@
       (set! index (+ index 1)))
     value))
 
-;; Upper-bound search over disjoint ranges covering the entire code-point space.
+;: Internal upper-bound search over disjoint ranges covering the entire code-point space.
 (define (range-value [table : (& table str)] [width : i64] [cp : i64]) : u32
   (let
     [low : i64 0]
@@ -289,26 +307,34 @@
 (define (hangul-s-base) : i64
   44032)
 
+;: Standard Hangul l-base constant.
 (define (hangul-l-base) : i64
   4352)
 
+;: Standard Hangul v-base constant.
 (define (hangul-v-base) : i64
   4449)
 
+;: Standard Hangul t-base constant.
 (define (hangul-t-base) : i64
   4519)
 
+;: Standard Hangul l-count constant.
 (define (hangul-l-count) : i64
   19)
 
+;: Standard Hangul v-count constant.
 (define (hangul-v-count) : i64
   21)
 
+;: Standard Hangul t-count constant.
 (define (hangul-t-count) : i64
   28)
 
+;: Standard Hangul n-count constant.
 (define (hangul-n-count) : i64
   588)
 
+;: Standard Hangul s-count constant.
 (define (hangul-s-count) : i64
   11172)

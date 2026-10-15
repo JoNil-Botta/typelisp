@@ -1300,8 +1300,8 @@
 ;;   snapshot  `snapshot` or `snapshot-seq` declares prefix-<name>, an
 ;;             exact-size copy of the live prefix that leaves the builder
 ;;             usable; `_` declares none.
-;; Reads through the resulting sequences stay the unchecked
-;; compiler-ir-array-shared-view accessors each family defines.
+;; Each family reads the resulting sequences through its `-seq-ref`, a borrow
+;; of the slot, or its `-seq-shared-view` twin, an unchecked shallow copy.
 (defmacro (compiler-ir-dense-builder
   [T : type (:kind struct enum)]
   [builder-type : type (:kind struct)]
@@ -5221,10 +5221,11 @@
 (defmacro (compiler-ir-instr-seq-empty? [instrs : Expr]) : Expr
   `(= (__tl-project-field-name ,instrs "len") 0))
 
-;; Internal shallow read: callers prove valid storage and index < logical len.
-;; compiler-ir-array-shared-view does not perform a bounds check. Preserve its
-;; inferred inline-enum element type/stride rather than rebuilding pointer casts
-;; at each consumer.
+;; A borrow of the element, bounds-checked against the slot storage. A `share`d
+;; sequence's storage can be longer than its len, so callers still keep
+;; index < len. Do not hold the borrow across a write to the same slots: a
+;; write made through a shallow copy of the sequence is invisible to the
+;; checker, and the borrow would observe it.
 (defmacro (compiler-ir-instr-seq-ref [instrs : Expr] [index : i64]) : Expr
   `(& (array-ref (__tl-project-field-name ,instrs "slots") ,index)))
 
@@ -5310,7 +5311,8 @@
 (defmacro (compiler-ir-block-seq-count [blocks : Expr]) : Expr
   `(__tl-project-field-name ,blocks "len"))
 
-;; Same shallow-read and logical-len precondition as compiler-ir-instr-seq-ref.
+;; The same checked borrow and index < len precondition as
+;; compiler-ir-instr-seq-ref.
 (defmacro (compiler-ir-block-seq-ref [blocks : Expr] [index : Expr]) : Expr
   `(& (array-ref (__tl-project-field-name ,blocks "slots") ,index)))
 

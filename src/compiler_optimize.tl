@@ -123611,7 +123611,7 @@
     (ir.compiler-source-spans-clear-instrs
       (owned_view.compiler-owned-reference-shared-view source-spans))
     (match source-spans
-      [(Spans _ instr-entries _)
+      [(Spans _ instr-entries _ _)
         (match program
           [(Program _ functions _)
             (opt-remap-spans-functions

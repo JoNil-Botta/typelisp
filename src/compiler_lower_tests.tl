@@ -15462,3 +15462,509 @@
             (& types.error)
             "debug type graph: Point size is 8, the typechecker says 16"))))
     "a layout disagreement is kept, first one only, and only under --verify-ir"))
+
+(defstruct LowerSpmdDecisionCase
+  (source String)
+  (expected String))
+
+;; This test rendering deliberately names every closed fact variant. It is not
+;; the warning policy or a production diagnostic renderer.
+(define (compiler-lower-spmd-form-name [form : ir.CompilerSpmdForm]) : String
+  (match form
+    [(Foreach) "foreach"]
+    [(Reduce) "reduce"]
+    [(Scan) "scan"]
+    [(Compact) "compact"]
+    [(Broadcast) "broadcast"]
+    [(Shuffle) "shuffle"]))
+
+(define (compiler-lower-spmd-route-name [route : ir.CompilerSpmdRoute]) : String
+  (match route
+    [(NativeGangs) "native"]
+    [(CompilerFallback) "fallback"]
+    [(SpecifiedScalar) "specified"]
+    [(ScalarBackend) "scalar"]
+    [(Inactive) "inactive"]
+    [(Rejected) "rejected"]))
+
+(define (compiler-lower-spmd-reason-name [reason : ir.CompilerSpmdReason]) : String
+  (match reason
+    [(DirectMap) "DirectMap"]
+    [(MaskedMap) "MaskedMap"]
+    [(ContiguousReduction) "ContiguousReduction"]
+    [(FusedReduction) "FusedReduction"]
+    [(ContiguousScan) "ContiguousScan"]
+    [(ScalarBackendSelected) "ScalarBackendSelected"]
+    [(OrderedCompact) "OrderedCompact"]
+    [(ExplicitAtomic) "ExplicitAtomic"]
+    [(ScalarCrossLane) "ScalarCrossLane"]
+    [(IndexType) "IndexType"]
+    [(MapShape) "MapShape"]
+    [(DuplicateDestination) "DuplicateDestination"]
+    [(DependentStores) "DependentStores"]
+    [(MixedLaneShape) "MixedLaneShape"]
+    [(ReductionValueShape) "ReductionValueShape"]
+    [(ScanInputShape) "ScanInputShape"]
+    [(ScanOutputShape) "ScanOutputShape"]
+    [(LaneType) "LaneType"]
+    [(Operator) "Operator"]
+    [(NumericPolicy) "NumericPolicy"]
+    [(VaryingWhile) "VaryingWhile"]
+    [(VaryingIf) "VaryingIf"]
+    [(VaryingEnumMatch) "VaryingEnumMatch"]
+    [(VaryingMatch) "VaryingMatch"]
+    [(ShuffleShape) "ShuffleShape"]
+    [(UnsupportedShift) "UnsupportedShift"]
+    [(UnsupportedMap) "UnsupportedMap"]
+    [(ForeachActive) "ForeachActive"]
+    [(PrivateHelper) "PrivateHelper"]
+    [(NotLowered) "NotLowered"]
+    [(UnsupportedSource) "UnsupportedSource"]))
+
+(define (compiler-lower-spmd-facts-text
+  [facts : (& facts ir.CompilerSpmdDecisions)]) : String
+  (let
+    [out : String ""]
+    (for [index (iterator.range 0 facts.decisions.len)]
+      (let
+        [item : ir.CompilerSpmdDecision
+          (clone (array-ref facts.decisions.slots index))]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            (string.int->string item.site.ordinal)
+            ":"
+            (compiler-lower-spmd-form-name item.form)
+            ":"
+            (compiler-lower-spmd-route-name item.route)
+            ":"
+            (compiler-lower-spmd-reason-name item.reason)
+            ":"
+            (string.int->string item.lanes)
+            ":"
+            (string.int->string item.parent-ordinal)
+            "\n"))))
+    out))
+
+(define (compiler-lower-spmd-decisions-text
+  [source : String]
+  [mode : lower.CompilerLowerMode]) : String
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [result : lower.ResultCompilerLower
+      (lower.lower-compiler-source-with-path-mode-and-state
+        owner
+        "app.tl"
+        source
+        mode)]
+    (match result
+      [(Ok _ spans)
+        (compiler-lower-spmd-facts-text
+          (ir.compiler-source-spans-spmd (& spans)))]
+      [(Err diagnostic)
+        (let
+          [spans : ir.CompilerSourceSpans
+            (lower.compiler-lower-state-spmd-rejected-spans owner)]
+          (str_cat.str-cat
+            "error\n"
+            (compiler-lower-spmd-facts-text
+              (ir.compiler-source-spans-spmd (& spans)))))])))
+
+(test
+  compiler-lower-spmd-decisions-routes
+  (let
+    [cases : (Array LowerSpmdDecisionCase 22)
+      (array
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ (array-ref xs i) 1))))"
+          "0:foreach:native:DirectMap:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+          "0:reduce:native:ContiguousReduction:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 2)))"
+          "0:reduce:native:FusedReduction:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))"
+          "0:reduce:fallback:ReductionValueShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) prefix)))"
+          "0:scan:native:ContiguousScan:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (+ (array-ref xs i) 1) (set! (array-ref out i) prefix)))"
+          "0:scan:fallback:ScanInputShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (begin (set! (array-ref out i) prefix) unit)))"
+          "0:scan:fallback:ScanOutputShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-compact ([i : i64 0 n] [slot : i64 0]) true (set! (array-ref out slot) (array-ref xs i))))"
+          "0:compact:specified:OrderedCompact:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))))"
+          "0:foreach:native:DirectMap:4:-1\n1:broadcast:native:DirectMap:4:0\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+          "0:foreach:native:DirectMap:4:-1\n1:shuffle:native:DirectMap:4:0\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs (+ i 1)))))"
+          "error\n0:foreach:rejected:UnsupportedMap:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([y : i64 0 2] [x : i64 0 3]) unit))"
+          "0:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 0]) (set! (array-ref out i) (array-ref xs i))))"
+          "0:foreach:native:DirectMap:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 3]) (set! (array-ref out i) (array-ref xs i))))"
+          "0:foreach:native:DirectMap:4:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (begin (foreach ([i : i64 0 0]) unit) (foreach ([i : i64 0 3]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (begin (return unit) (foreach ([i : i64 0 0]) unit)))"
+          "0:foreach:inactive:NotLowered:0:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (begin (foreach ([i : i64 0 0]) unit) (return unit) (foreach ([j : i64 0 0]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (begin (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)) (foreach ([k : i64 0 1]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (begin (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)) (foreach ([k : i64 0 n]) (set! (array-ref out k) (array-ref xs (+ k 1)))) (foreach ([m : i64 0 1]) unit)))"
+          "error\n0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:rejected:UnsupportedMap:1:-1\n3:foreach:inactive:NotLowered:0:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : (-> unit) (lambda () : unit (foreach ([i : i64 0 0]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (foreach ([j : i64 0 n]) (set! (array-ref out j) (array-ref xs (+ j 1))))))"
+          "error\n0:foreach:rejected:UnsupportedSource:1:-1\n1:foreach:inactive:NotLowered:0:0\n"))]
+    (for [index (iterator.range 0 22)]
+      (let
+        [row : (& cases LowerSpmdDecisionCase) (& (array-ref cases index))]
+        (test.assert-owned-string-eq
+          (compiler-lower-spmd-decisions-text
+            (clone row.source)
+            (lower.CompilerLowerMode.LinuxAvx2))
+          (clone row.expected)
+          "final SPMD route and first reason")))))
+
+(define (compiler-lower-spmd-same-facts?
+  [left : (& left ir.CompilerSpmdDecisions)]
+  [right : (& right ir.CompilerSpmdDecisions)]) : bool
+  (when
+    (or
+      (not (= left.decisions.len right.decisions.len))
+      (not (= left.frames.len right.frames.len)))
+    (return false))
+  (unless
+    (string.eq
+      (compiler-lower-spmd-facts-text left)
+      (compiler-lower-spmd-facts-text right))
+    (return false))
+  (for [index (iterator.range 0 left.decisions.len)]
+    (let
+      [a : ir.CompilerSpmdDecision
+        (clone (array-ref left.decisions.slots index))]
+      [b : ir.CompilerSpmdDecision
+        (clone (array-ref right.decisions.slots index))]
+      (unless
+        (and
+          (ir.compiler-ir-symbol-id-eq? a.site.function b.site.function)
+          (= a.primary.path-id b.primary.path-id)
+          (= a.actionable.path-id b.actionable.path-id)
+          (ast.ast-source-span-eq? a.primary.span b.primary.span)
+          (ast.ast-source-span-eq? a.actionable.span b.actionable.span)
+          (= a.frame-start b.frame-start)
+          (= a.frame-count b.frame-count)
+          (= a.frames-truncated b.frames-truncated))
+        (return false))))
+  (for [index (iterator.range 0 left.frames.len)]
+    (let
+      [a : ir.CompilerSpmdMacroFrame
+        (clone (array-ref left.frames.slots index))]
+      [b : ir.CompilerSpmdMacroFrame
+        (clone (array-ref right.frames.slots index))]
+      (unless
+        (and
+          (= a.name-id b.name-id)
+          (= a.invocation.path-id b.invocation.path-id)
+          (= a.origin-path-id b.origin-path-id)
+          (ast.ast-source-span-eq? a.invocation.span b.invocation.span))
+        (return false))))
+  true)
+
+(define (compiler-lower-spmd-source-facts
+  [owner : lower.CompilerLowerState]
+  [source : String]
+  [mode : lower.CompilerLowerMode]) : ir.CompilerSpmdDecisions
+  (match (lower.lower-compiler-source-with-path-mode-and-state
+    owner
+    "app.tl"
+    source
+    mode)
+    [(Ok _ spans)
+      (ir.compiler-spmd-decisions-escape
+        (ir.compiler-source-spans-spmd (& spans)))]
+    [(Err diagnostic) (io.panic "SPMD facts fixture rejected")]))
+
+(test
+  compiler-lower-spmd-decisions-scalar-and-wide
+  (let
+    [modes : (Array lower.CompilerLowerMode 6)
+      (array
+        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.WindowsScalar)
+        (lower.CompilerLowerMode.LinuxAvx2)
+        (lower.CompilerLowerMode.WindowsAvx2)
+        (lower.CompilerLowerMode.LinuxAvx512)
+        (lower.CompilerLowerMode.WindowsAvx512))]
+    (for [index (iterator.range 0 6)]
+      (let
+        [mode : lower.CompilerLowerMode (array-ref modes index)]
+        [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+        [facts : ir.CompilerSpmdDecisions
+          (compiler-lower-spmd-source-facts
+            owner
+            (compiler-lower-spmd-broadcast-source)
+            mode)]
+        [expected : String
+          (if (< index 2)
+            "0:foreach:scalar:ScalarBackendSelected:1:-1\n1:broadcast:scalar:ScalarBackendSelected:1:0\n"
+            (if (< index 4)
+              "0:foreach:native:DirectMap:4:-1\n1:broadcast:native:DirectMap:4:0\n"
+              "0:foreach:native:DirectMap:8:-1\n1:broadcast:native:DirectMap:8:0\n"))]
+        (test.assert-owned-string-eq
+          (compiler-lower-spmd-facts-text (& facts))
+          expected
+          "backend and native lane shape")))))
+
+(test
+  compiler-lower-spmd-decisions-atomic
+  (test.assert-owned-string-eq
+    (compiler-lower-spmd-decisions-text
+      "(import stdlib.atomic)\n(define (f [out : (& out atomic.AtomicI64Buffer)] [xs : (__tl_dyn-array i64)] [n : i64]) : unit\n  (foreach ([i : i64 0 n]) (atomic.atomic-i64-add! out (array-ref xs i) 1)))"
+      (lower.CompilerLowerMode.LinuxAvx2))
+    "0:foreach:specified:ExplicitAtomic:1:-1\n"
+    "explicit atomic scatter is specified scalar"))
+
+(define (compiler-lower-spmd-macro-source) : String
+  "(defmacro (region [body : Expr]) : Expr body)\n(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit\n  (region (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs i))))\n  (foreach ([i : i64 0 0]) unit))")
+
+(test
+  compiler-lower-spmd-decisions-macro-ownership
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [original : ir.CompilerSpmdDecisions
+      (compiler-lower-spmd-source-facts
+        owner
+        (compiler-lower-spmd-macro-source)
+        (lower.CompilerLowerMode.LinuxAvx2))]
+    [facts : ir.CompilerSpmdDecisions
+      (ir.compiler-spmd-decisions-escape (& original))]
+    [_reuse : ir.CompilerSpmdDecisions
+      (compiler-lower-spmd-source-facts
+        owner
+        (compiler-lower-spmd-broadcast-source)
+        (lower.CompilerLowerMode.WindowsAvx512))]
+    (test.assert-true
+      (compiler-lower-spmd-same-facts? (& original) (& facts))
+      "source pool reuse preserves owned facts")
+    (test.assert-i64-eq
+      facts.decisions.len
+      2
+      "one macro site and one independent source site")
+    (let
+      [generated : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 0))]
+      [ordinary : ir.CompilerSpmdDecision (array-ref facts.decisions.slots 1)]
+      (test.assert-i64-eq generated.frame-count 1 "macro frame retained")
+      (test.assert-i64-eq
+        ordinary.frame-count
+        0
+        "macro context ends at its subtree")
+      (test.assert-i64-eq
+        (cast generated.actionable.span.start-line : i64)
+        3
+        "actionable argument")
+      (test.assert-i64-eq
+        (cast ordinary.primary.span.start-line : i64)
+        4
+        "independent source span"))))
+
+(test
+  compiler-lower-spmd-decisions-macro-bound
+  (let
+    [source : String ""]
+    (for [index (iterator.range 0 10)]
+      (let
+        [name : String (str_cat.str-cat "m" (string.int->string index))]
+        [body : String
+          (if (= index 9)
+            "body"
+            (str_cat.str-cat "`(m" (string.int->string (+ index 1)) " ,body)"))]
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "(defmacro ("
+            name
+            " [body : Expr]) : Expr "
+            body
+            ")\n"))))
+    (set!
+      source
+      (str_cat.str-cat
+        source
+        "(define (f) : unit (m0 (foreach ([i : i64 0 0]) unit)))"))
+    (let
+      [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      [facts : ir.CompilerSpmdDecisions
+        (compiler-lower-spmd-source-facts
+          owner
+          source
+          (lower.CompilerLowerMode.LinuxAvx2))]
+      [item : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 0))]
+      [outer : ir.CompilerSpmdMacroFrame
+        (array-ref facts.frames.slots item.frame-start)]
+      [inner : ir.CompilerSpmdMacroFrame
+        (array-ref facts.frames.slots (+ item.frame-start 7))]
+      (test.assert-i64-eq
+        item.frame-count
+        ir.compiler-spmd-max-macro-frames
+        "bounded frames")
+      (test.assert-true item.frames-truncated "truncation is explicit")
+      (test.assert-owned-string-eq
+        (lower.compiler-lower-state-name-text owner outer.name-id)
+        "m0"
+        "outermost frame first")
+      (test.assert-owned-string-eq
+        (lower.compiler-lower-state-name-text owner inner.name-id)
+        "m7"
+        "bounded order is outer to inner"))))
+
+(test
+  compiler-lower-spmd-decisions-optimizer-retention
+  (for [level (iterator.range 0 3)]
+    (match (lower.lower-compiler-source-with-mode
+      (compiler-lower-spmd-broadcast-source)
+      (lower.CompilerLowerMode.LinuxAvx2))
+      [(Ok program spans)
+        (let
+          [before : ir.CompilerSpmdDecisions
+            (ir.compiler-spmd-decisions-escape
+              (ir.compiler-source-spans-spmd (& spans)))]
+          (match (optimize.optimize-program-with-spans-and-level
+            (& program)
+            spans
+            level)
+            [(Program _ after)
+              (test.assert-true
+                (compiler-lower-spmd-same-facts?
+                  (& before)
+                  (ir.compiler-source-spans-spmd (& after)))
+                "optimizer retains source identities and origins")]))]
+      [(Err _) (test.assert-true false "optimizer fixture lowers")])))
+
+(test
+  compiler-lower-spmd-decisions-many-regions
+  (let
+    [source : String "(define (f) : unit (begin"]
+    (for [_index (iterator.range 0 200)]
+      (set! source (str_cat.str-cat source " (foreach ([i : i64 0 0]) unit)")))
+    (set! source (str_cat.str-cat source "))"))
+    (let
+      [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      [facts : ir.CompilerSpmdDecisions
+        (compiler-lower-spmd-source-facts
+          owner
+          source
+          (lower.CompilerLowerMode.LinuxAvx2))]
+      (test.assert-i64-eq
+        facts.decisions.len
+        200
+        "one final record per independent region")
+      (test.assert-i64-eq facts.frames.len 0 "no macro context allocations")
+      (for [index (iterator.range 0 facts.decisions.len)]
+        (let
+          [item : ir.CompilerSpmdDecision
+            (array-ref facts.decisions.slots index)]
+          (test.assert-i64-eq item.site.ordinal index "source order is stable")
+          (test.assert-i64-eq
+            item.parent-ordinal
+            -1
+            "regions remain independent"))))))
+
+(test
+  compiler-lower-spmd-decisions-function-identity
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [facts : ir.CompilerSpmdDecisions
+      (compiler-lower-spmd-source-facts
+        owner
+        "(define (f) : unit (foreach ([i : i64 0 0]) unit))
+(define (g) : (-> unit) (lambda () : unit (foreach ([j : i64 0 0]) unit)))"
+        (lower.CompilerLowerMode.LinuxAvx2))]
+    (test.assert-i64-eq
+      facts.decisions.len
+      2
+      "both function scopes retain sites")
+    (let
+      [first : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 0))]
+      [second : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 1))]
+      (test.assert-i64-eq first.site.ordinal 0 "first function ordinal")
+      (test.assert-i64-eq second.site.ordinal 0 "lambda owns its ordinal")
+      (test.assert-true
+        (not (= first.site.function.value second.site.function.value))
+        "typed function symbols distinguish source scopes"))))
+
+(test
+  compiler-lower-spmd-decisions-unlocated-root
+  (let
+    [source : String "(define (f) : unit (foreach ([i : i64 0 0]) unit))"]
+    (match (parser.parse-ast-source (& source))
+      [(Ok program)
+        (let
+          [pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
+          (match program
+            [(Program declarations)
+              (let
+                [decls : ast.AstDeclList (deref declarations)]
+                (for [index (iterator.range 0 decls.len)]
+                  (let
+                    [decl : ast.AstDecl
+                      (ast.ast-decl-list-get
+                        (& decls)
+                        index
+                        (ast.ast-decl-fallback))]
+                    (match (ast.ast-decl-unwrapped (& decl))
+                      [(DefFn _ _ _ _ body _)
+                        (let
+                          [expr : ast.AstExpr
+                            (ast.ast-node-pool-context-expr-get (& pools) body)]
+                          [plain : ast.AstExpr
+                            (ast.ast-expr-unspan-with-pools (& pools) (& expr))]
+                          (ast.ast-node-pool-context-expr-set!
+                            pools
+                            body
+                            (& plain)))]
+                      [_ unit])))
+                (match (lower.lower-compiler-program-with-path-mode
+                  "api.tl"
+                  (ast.AstProgram.Program (box decls))
+                  (lower.CompilerLowerMode.LinuxAvx2))
+                  [(Ok _ spans)
+                    (test.assert-owned-string-eq
+                      (compiler-lower-spmd-facts-text
+                        (ir.compiler-source-spans-spmd (& spans)))
+                      "0:foreach:fallback:MapShape:1:-1\n"
+                      "unspanned API root retains its site")]
+                  [(Err _) (test.assert-true false "unspanned API AST lowers")]))]))]
+      [(Err _) (test.assert-true false "API root source parses")])))

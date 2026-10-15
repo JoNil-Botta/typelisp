@@ -15151,6 +15151,30 @@ f:
 ;; program forces the tens-of-MB CTFE reflection/layout metadata build for that
 ;; compile (#5872, #5875). This module is outside `main.tl`'s closure, so the
 ;; assertions cost the self-compile nothing.
+(define (compiler-backend-spmd-source-site-retention-ok?) : bool
+  (match (lower.lower-compiler-source-with-mode
+    (lower_tests.compiler-lower-spmd-broadcast-source)
+    (lower.CompilerLowerMode.LinuxAvx2))
+    [(Ok _ spans)
+      (let
+        [before : ir.CompilerSpmdDecisions
+          (ir.compiler-spmd-decisions-escape
+            (ir.compiler-source-spans-spmd (& spans)))]
+        [first : ir.CompilerSpmdDecision (array-ref before.decisions.slots 0)]
+        [remap : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [_remap : unit (set! (array-ref remap 0) 17)]
+        [after : ir.CompilerSourceSpans
+          (backend.compiler-backend-remap-source-spans
+            spans
+            (ir.compiler-ir-symbol-id-value first.site.function)
+            remap)]
+        (and
+          (= before.decisions.len 2)
+          (lower_tests.compiler-lower-spmd-same-facts?
+            (& before)
+            (ir.compiler-source-spans-spmd (& after)))))]
+    [(Err _) false]))
+
 (define (compiler-backend-source-span-symbol-provenance-ok?) : bool
   (let
     [symbol-id-bytes : i64 (ir.compiler-ir-symbol-id-size)]
@@ -37490,6 +37514,7 @@ b_keep:
       (and
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-source-span-symbol-provenance-ok?)
+        (compiler-backend-spmd-source-site-retention-ok?)
         (compiler-backend-debug-disabled-sparse-paths-ok?)
         (compiler-backend-debug-path-remap-ok?)
         (compiler-backend-backtrace-metadata-shape-ok?)
@@ -40986,3 +41011,9 @@ user_fn:
       (compiler-backend-shared-object-runtime-ok? false false true)
       (compiler-backend-shared-object-runtime-ok? true true true))
     (io.panic "the shared-object code model rewrote an emission wrongly")))
+
+(test
+  backend-spmd-source-site-retention
+  (unless
+    (compiler-backend-spmd-source-site-retention-ok?)
+    (io.panic "backend remapping lost a source SPMD site or origin")))

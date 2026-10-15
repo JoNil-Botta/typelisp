@@ -19,7 +19,6 @@
 (import compiler_pointer_proof_input as pointer_proof)
 (import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
-(import compiler_ast_types.AstExpr)
 (import compiler_clone as clone_support)
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
@@ -1420,13 +1419,11 @@
     [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
     [count : i64 (ast.ast-node-pool-context-expr-len pools)]
     (for [index (iterator.range 0 count)]
-      (let
-        [expr : AstExpr (ast.ast-expr-segment-bases-shared-view bases index)]
-        (match (& expr)
-          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-               (SpmdBroadcast _ _) (SpmdShuffle _ _))
-            (return true)]
-          [_ unit])))
+      (match (ast.ast-expr-segment-bases-shared-view bases index ast.AstExpr)
+        [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+             (SpmdBroadcast _ _) (SpmdShuffle _ _))
+          (return true)]
+        [_ unit]))
     false))
 
 (define (lower-spmd-origin-id

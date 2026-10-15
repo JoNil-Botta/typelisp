@@ -1712,7 +1712,7 @@
     ;; The row view is consumed by this match before recursion. This walker
     ;; never installs, resets, grows, or rewrites an expression pool, so no
     ;; view survives a generation or exact-row mutation boundary.
-    (match (ast-expr-segment-bases-shared-view expr-segment-bases id)
+    (match (ast-expr-segment-bases-shared-view expr-segment-bases id AstExpr)
       [(or (Spanned inner _) (MacroExpansion inner _ _))
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
@@ -4833,10 +4833,12 @@
 ;; cannot invalidate the address; reset/generation handoff and rewriting this
 ;; exact row still end the view's lifetime. Keeping this as a macro lets
 ;; aggregate call lowering hand the stable row directly to the callee instead
-;; of returning it through a second 32-byte value slot.
+;; of returning it through a second 32-byte value slot. The caller supplies
+;; AstExpr in its own namespace so imported callers retain the canonical type.
 (defmacro (ast-expr-segment-bases-shared-view
   [segment-bases : Expr]
-  [id : Expr]) : Expr
+  [id : Expr]
+  [node-type : Expr]) : Expr
   `(let
     [bases-address : i64 ,segment-bases]
     [row-id : i64 ,id]
@@ -4848,7 +4850,7 @@
       (ptr-read
         (int->ptr
           (+ biased-base (* row-id (ast-expr-node-bytes)))
-          : (Ptr AstExpr))))))
+          : (Ptr ,node-type))))))
 
 ;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
 ;; this table in place and never moves it, and a push rewrites the cell without
@@ -11182,7 +11184,8 @@
                   remap
                   (ast-expr-segment-bases-shared-view
                     remap.source-expr-bases
-                    id))]
+                    id
+                    AstExpr))]
               (ast-compaction-remap-dest-expr-set! remap id owned-expr)
               id)
             (let
@@ -11191,7 +11194,8 @@
                   remap
                   (ast-expr-segment-bases-shared-view
                     remap.source-expr-bases
-                    id))]
+                    id
+                    AstExpr))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
               (ast-compaction-map-set!
@@ -11618,7 +11622,7 @@
         [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
           (set!
             current
-            (ast-expr-segment-bases-shared-view segment-bases inner-id))]
+            (ast-expr-segment-bases-shared-view segment-bases inner-id AstExpr))]
         [_ (return current)]))
     current))
 

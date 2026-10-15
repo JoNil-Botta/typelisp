@@ -877,7 +877,10 @@
             (string.eq
               (cdiag.compiler-diagnostic-message (__tl-box-place diag))
               "lower-compiler-source-with-path-mode: standalone resetting compiler entry cannot run inside an active compiler load session")]
-          [(Ok _ _) false])))
+          [(Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            false])))
     "lower standalone entry rejects a live compiler session before reset"))
 
 (test

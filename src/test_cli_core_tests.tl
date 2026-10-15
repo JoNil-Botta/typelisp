@@ -1468,7 +1468,10 @@
                 (owned_view.compiler-owned-shared-view roots)
                 (tltest.tltest-cfgs target)
                 (tltest-typecheck-cache-scope roots target))
-                [(Ok _ _) true]
+                [(Ok _ _ owner)
+                  (lower.compiler-lower-arena-state-release!
+                    (lower.compiler-lower-state-arenas owner))
+                  true]
                 [(Err diag)
                   (io.print-error
                     (driver.compiler-driver-render-source-diagnostic

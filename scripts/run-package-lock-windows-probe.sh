@@ -22,6 +22,6 @@ cat "$WORK/run.stdout"
 cat "$WORK/run.stderr" >&2
 printf '%s\n' "$status" > "$WORK/run.exit"
 [ "$status" -eq 42 ]
-for witness in no-reader reader-share3 reader-share7 readonly-destination after-reader-close=success; do
+for witness in legacy-no-reader legacy-reader-share3 legacy-reader-share7 legacy-readonly-destination posix-no-reader posix-reader-share3 posix-reader-share7 posix-readonly-destination after-reader-close=success reader-retains-old=success; do
     grep -Fx "$witness" "$WORK/run.stdout"
 done

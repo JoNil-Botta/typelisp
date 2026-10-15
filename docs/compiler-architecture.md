@@ -249,7 +249,7 @@ cleanup; cleanup-containing aggregates without their own disposer are rejected.
 The call instruction reads its operands only after every argument has been
 lowered, so an argument read from storage would see later arguments' writes.
 That storage is a local's var or a register-resident field var.
-`lower-call-arg-snapshot` copies a scalar, raw-pointer or register-resident
+`lower-operand-snapshot` copies a scalar, raw-pointer or register-resident
 aggregate argument into a fresh var before the later arguments are lowered,
 when one of them can write that storage. For a read through a name, that is a
 `set!`, `replace!`, field or element store, push, take, mutable borrow or
@@ -261,6 +261,21 @@ Once a call's remaining arguments are found free of writes, the collectors
 pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
+
+Binary operators use the same snapshot helper and storage-write scan with a
+single pending right operand, without allocating an argument list. Their left
+global reads are materialized before an effectful right operand. Short-circuit
+operators consume their condition before entering the right branch. Array
+assignment captures its receiver before index and value effects and its index
+before value effects. A descriptor snapshot retains its array type so the
+existing memory summary can distinguish element writes from header writes.
+The value runs before checking and addressing the logical element in the
+selected array's current buffer, so RHS growth does not strand the store in
+an old buffer. Direct constructors retain a deferred destination until their
+existing argument collector evaluates every field; the same builders then
+store those values without an aggregate copy. Box assignment captures its
+selected pointer before value effects. Zero-sized array values still run their
+effects before the final bounds check.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -691,6 +706,12 @@ exactly as parsed, so none of these can inherit an earlier check's rewrites:
 - a later `typelisp test` file;
 - a later doc example.
 
+Raw expression-pool capture publishes all eleven state words, including the
+span sidecar, record-table addresses, record counts and rollback-order flag.
+The table words retain their existing pool owner; capture must not create
+replacement storage in the caller's temporary arena. Installed contexts
+and fresh snapshots therefore observe the same published span generation.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,
@@ -960,6 +981,15 @@ first and preserve local IDs, negative global keys and pack-word keys. The copy
 environment smoke covers growth, wide entries, forks, zeroed storage, clears,
 source invalidation and retained snapshots.
 
+Program-wide global facts record direct stores and address-taking independently.
+The constant-substitution disqualification walk records every `GlobalAddr`
+operand through the shared IR operand visitor, including call arguments and
+aggregate words. A direct store can also disqualify a constant, but cannot
+remove an address fact. Both global-cell summaries and aggregate live-in
+analysis consume this same address set. Any address-taken global prevents the
+per-global no-write table from being built: a pointer-writing call may reach
+that cell even when it has no direct `Store` instruction naming the global.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before
@@ -1110,12 +1140,48 @@ Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
 
-The constant-length rewrite also recognizes literal String descriptors. Their
+Level 2 can rematerialize a single-definition, unescaped global capture within
+its block while the global still has the captured value. A direct store,
+possibly writing call, indirect store or unknown effect ends forwarding;
+later uses retain the saved value. Only single-use captures or captures used
+entirely for address projections qualify. Before inlining, forwarding waits
+until a preserved call or store boundary. The final live pipeline can forward
+immediately, but only when every projection use is replaceable in the same
+block before a write barrier; otherwise the saved descriptor remains the one
+base for its loads. A forward scan uses the shared IR operand walker and the
+same write barriers to prove completeness. The frozen priced pipeline omits
+this live normalization, preserving the checked inliner's calibrated stages.
+Normalization builds private function slots and removes only dead capture
+moves before global-cell promotion counts reads. A live substitution also
+restores the existing integer cell-operand ordering, including its immediate
+read-modify-write exception; floating-point operand order stays intact.
+Unrelated definitions remain intact before the inline census; pruning
+those definitions would make inline admission depend on whether the function
+also captured a global. Borrowed input slots must never acquire replacement
+bodies from a shorter-lived arena.
+
+Constant-length summary construction uses a private normalized view inside its
+existing scratch arena. That analysis may forward immediately to distinguish a
+descriptor projection from an escape. Only the resulting length maps are
+cloned out; optimizer-input bodies and the checked inline price remain intact.
+The constant-length rewrite follows a direct capture of a proven immutable
+global descriptor using the same definition and address-taken guards as literal
+captures. The walker excludes global captures in initializers, because a global
+may not yet have its final descriptor.
+
+The constant-load rewrite also recognizes literal String descriptors. Their
 read-only length word contains the byte length, including for empty and UTF-8
-text. It folds only i64 loads from that slot. Both a literal-backed variable
-and the GEP destination must have one definition, counting parameters, and
-neither may have its address taken. Other fields, offsets and load types retain
-their memory operations. Literal lengths do not depend on global initialization.
+text, and their data word names the same read-only bytes throughout the program.
+Length-slot loads fold only at i64 type. Integer data loads fold at their exact
+1/2/4/8-byte width and signedness when the entire access is within the literal.
+The existing definition index traces descriptor copies, data-slot pointer loads,
+word-preserving casts and constant GEP offsets. Every traced variable has one
+definition, counting parameters, and no address-taking alias. The proof walk is
+bounded; cycles, unknown/negative/overflowed offsets, out-of-bounds accesses and
+unsupported load types retain memory operations. Facts and checked block
+borrows live only for the current fold; block storage keeps its input IR owner.
+Literal facts do not depend on global initialization or infer constancy for
+writable runtime strings.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),

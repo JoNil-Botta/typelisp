@@ -2702,12 +2702,12 @@
       (layout.compiler-object-layout-section-label-offset
         image
         (Rsrc)
-        (owned_view.compiler-owned-shared-view manifest-label))]
+        (& manifest-label))]
     [data-offset : i64
       (layout.compiler-object-layout-section-label-offset
         image
         (Rsrc)
-        rsrc-data-label)]
+        (& rsrc-data-label))]
     (match (coff.compiler-object-coff-render image)
       [(Ok obj)
         (let
@@ -2755,7 +2755,9 @@
                 rsrc-reloc-ptr
                 0
                 data-offset
-                (coff.compiler-object-coff-symbol-index image manifest-label)
+                (coff.compiler-object-coff-symbol-index
+                  image
+                  (& manifest-label))
                 coff.compiler-object-coff-reloc-amd64-addr32nb)
               (=
                 (layout.compiler-object-layout-u32-at

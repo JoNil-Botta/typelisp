@@ -5,7 +5,7 @@
 (import compiler_incremental_trace as trace)
 (import compiler_incremental_binary as binary)
 (import stdlib.string)
-(import stdlib.str_cat as str_cat)
+(import stdlib.str_cat)
 (import stdlib.vector)
 (import (stdlib.vector.vector trace.CompilerIncrementalTraceRecord) as record_vec)
 

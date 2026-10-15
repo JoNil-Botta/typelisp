@@ -41,25 +41,22 @@
             (if (= index 0)
               (owned_view.compiler-owned-shared-view target)
               "begin")))
-        (set!
-          body
-          (parts.compiler-backend-object-add-text body (& (Label label))))
+        (set! body (parts.compiler-backend-object-add-text body (Label label)))
         (set!
           body
           (parts.compiler-backend-object-add-text
             body
-            (&
-              (Jcc
-                cc
-                (if (= index 0)
-                  (owned_view.compiler-owned-shared-view target)
-                  "begin")))))
+            (Jcc
+              cc
+              (if (= index 0)
+                (owned_view.compiler-owned-shared-view target)
+                "begin"))))
         (if (= index 0)
           (set!
             body
             (parts.compiler-backend-object-add-text
               body
-              (& (Bytes (parts.compiler-backend-object-bytes-from-hex "90")))))
+              (Bytes (parts.compiler-backend-object-bytes-from-hex "90"))))
           unit)
         (set! index (+ index 1))))
     (cobj.CompilerObjectImage
@@ -146,9 +143,10 @@
                     (+ relocs (+ (* index 24) 12)))
                   (elf.compiler-object-elf-symbol-index
                     image
-                    (if (= index 0)
-                      "end"
-                      "begin")))
+                    (&
+                      (if (= index 0)
+                        "end"
+                        "begin"))))
                 (test.assert-true
                   (elf.compiler-object-elf-rela-addend-rel32?
                     bytes
@@ -176,9 +174,10 @@
                     (layout.compiler-object-layout-u32-at bytes (+ record 4))
                     (coff.compiler-object-coff-symbol-index
                       image
-                      (if (= index 0)
-                        "end"
-                        "begin")))
+                      (&
+                        (if (= index 0)
+                          "end"
+                          "begin"))))
                   (branch-i64!
                     (layout.compiler-object-layout-u16-at bytes (+ record 8))
                     4)

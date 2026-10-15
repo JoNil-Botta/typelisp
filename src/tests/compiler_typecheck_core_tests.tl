@@ -43,6 +43,346 @@
 ;; lint-allow: unused-import
 (import compiler_typecheck_core.TcTypeEnvStore)
 
+(define (tc-hygiene-span-line?
+  [pools : ast.AstNodePoolContext]
+  [id : i64]
+  [canonical? : bool]
+  [line : i64]) : bool
+  (match (if canonical?
+    (ast_tests.ast-node-pool-context-expr-canonical-span pools id)
+    (ast.ast-node-pool-context-expr-view-span pools id))
+    [(Some span) (= (ast.ast-source-span-start-line span) line)]
+    [_ false]))
+
+(define (tc-hygiene-span-case? [mode : (& mode str)] [prefix : i64]) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [home : arena.Arena (arena.current)]
+    [owner : arena.Arena (arena.make)]
+    [scratch : arena.Arena (arena.make)]
+    [_enter : unit
+      (unsafe
+        (arena.set! owner))]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+    [nested? : bool (string.eq mode "nested")]
+    [alternate? : bool (or nested? (string.eq mode "alternate"))]
+    [expansion? : bool (string.eq mode "expansion")]
+    [captured-child? : bool (or expansion? (string.eq mode "captured-child"))]
+    [shared? : bool (string.eq mode "shared-root")]
+    [copy? : bool
+      (or (string.eq mode "captured-root") (string.eq mode "invalid-floor"))]
+    [rename? : bool (string.eq mode "rename")]
+    [base : i64 -1]
+    [captured-view : i64 -1]
+    [name : i64 -1]
+    [renamed : i64 -1]
+    (ast.ast-node-pool-context-install! pools)
+    (unless
+      alternate?
+      (for [index (iterator.range 0 prefix)]
+        (let
+          [literal : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (Literal (ast.ast-lit-int index)))]
+          (ast.ast-expr-spanned-with-pools
+            pools
+            literal
+            (ast.ast-source-span (+ index 10) 1 (+ index 10) 2)))))
+    (when
+      captured-child?
+      (set!
+        base
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Literal (ast.ast-lit-int 7))))
+      (set!
+        captured-view
+        (ast.ast-expr-spanned-with-pools
+          pools
+          base
+          (ast.ast-source-span 1 1 1 2))))
+    (tc_core.macro-hygiene-produced-eval-start-with-pools! state pools)
+    (when
+      rename?
+      (let
+        [source : i64 (ci.intern "owned-span-original")]
+        [source-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [_bind : unit
+          (tc_core.tc-macro-state-bind-source-names!
+            state
+            (ci.intern-source-name-session-handle-from-state source-state))]
+        (set!
+          name
+          (cis.intern-template-source-identity-raw
+            (cis.intern-structural-session-template-source-identity
+              (tc_core.tc-macro-state-structural-session state)
+              source)))
+        (set! renamed (ci.intern "owned-span-renamed"))))
+    (unless
+      captured-child?
+      (set!
+        base
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (if rename?
+            (Var name)
+            (Literal (ast.ast-lit-int 7))))))
+    (when
+      alternate?
+      (let
+        [_canonical : i64
+          (ast.ast-expr-spanned-with-pools
+            pools
+            base
+            (ast.ast-source-span 1 1 1 2))]
+        unit)
+      (for [index (iterator.range 0 prefix)]
+        (ast.ast-expr-spanned-with-pools
+          pools
+          base
+          (ast.ast-source-span (+ index 100) 1 (+ index 100) 2))))
+    (let
+      [child : i64
+        (if expansion?
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (MacroExpansion captured-view 0 0))
+          (if nested?
+            (ast.ast-expr-spanned-with-pools
+              pools
+              base
+              (ast.ast-source-span 3 1 3 2))
+            base))]
+      [view : i64
+        (ast.ast-expr-spanned-with-pools
+          pools
+          child
+          (ast.ast-source-span 2 1 2 2))]
+      [root : i64
+        (if shared?
+          (let
+            [items : ast.AstExprList (ast.ast-expr-list-new)]
+            (ast.ast-expr-list-push (&mut items) view)
+            (ast.ast-expr-list-push (&mut items) view)
+            (ast.ast-node-pool-context-expr-push pools (Begin items)))
+          view)]
+      (when
+        copy?
+        (tc_core.macro-hygiene-produced-eval-start-with-pools! state pools))
+      (when
+        (string.eq mode "invalid-floor")
+        (unsafe
+          (set!
+            (deref (tc_core.tc-macro-hygiene-produced-state-ptr state)).floor
+            (+ (ast.ast-node-pool-context-expr-len pools) 1))))
+      (ast.ast-node-pool-context-publish-to-compat! pools)
+      (let
+        [before : i64 (ast.ast-node-pool-context-expr-len pools)]
+        [respans : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
+        [env : tc_core.MacroHygieneEnv
+          (tc_core.macro-hygiene-env-empty state pools)]
+        [_bind : unit
+          (when
+            rename?
+            (set! env (tc_core.macro-hygiene-env-bind-raw env name renamed)))]
+        [_scratch : unit
+          (unsafe
+            (arena.set! scratch))]
+        [result
+          : i64
+          ;; Compound child lists live in the output owner, as at the real
+          ;; expansion boundary. Scalar span commits also tolerate scratch.
+          (in-arena
+            (if shared?
+              owner
+              scratch)
+            (tc_core.macro-hygiene-produced-expr
+              root
+              env
+              (tc_core.MacroHygieneContext -1 -1 -1 0)
+              0))]
+        [_leave : unit
+          (unsafe
+            (arena.set! owner))]
+        [_retire : unit
+          (unsafe
+            (arena.destroy scratch))]
+        [out-view : i64
+          (if shared?
+            (match (ast.ast-node-pool-context-expr-get pools result)
+              [(Begin items) (ast.ast-expr-list-get (& items) 0 -1)]
+              [_ -1])
+            result)]
+        [out-child : i64
+          (match (ast.ast-node-pool-context-expr-get pools out-view)
+            [(Spanned inner _) inner]
+            [_ -1])]
+        [ok : bool
+          (and
+            (if copy?
+              (>= result before)
+              (= result root))
+            (if shared?
+              (>= out-view before)
+              (= out-view result))
+            (=
+              (ast.ast-node-pool-context-expr-source-owner pools out-view)
+              out-view)
+            (tc-hygiene-span-line? pools out-view false 2)
+            (tc-hygiene-span-line?
+              pools
+              out-child
+              true
+              (if (or expansion? alternate?)
+                1
+                2))
+            (=
+              (ast.ast-node-pool-context-expr-respan-count pools)
+              (+
+                respans
+                (if nested?
+                  2
+                  (if (or expansion? alternate?)
+                    1
+                    0))))
+            (if nested?
+              (and
+                (= out-child child)
+                (=
+                  (ast.ast-node-pool-context-expr-source-owner pools child)
+                  child)
+                (tc-hygiene-span-line? pools child false 3))
+              true)
+            (if (or copy? shared?)
+              (= (ast.ast-node-pool-context-expr-source-owner pools view) view)
+              true)
+            (if captured-child?
+              (and
+                (=
+                  (ast.ast-node-pool-context-expr-source-owner pools base)
+                  captured-view)
+                (tc-hygiene-span-line? pools base true 1))
+              true)
+            (if expansion?
+              (match (ast.ast-node-pool-context-expr-get pools out-child)
+                [(MacroExpansion inner _ _) (= inner captured-view)]
+                [_ false])
+              true)
+            (if rename?
+              (match (ast.ast-node-pool-context-expr-get pools out-child)
+                [(Var actual) (= actual renamed)]
+                [_ false])
+              true)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+        [unrelated : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Literal (ast.ast-lit-int 99)))]
+        [_unrelated-view : i64
+          (ast.ast-expr-spanned-with-pools
+            pools
+            unrelated
+            (ast.ast-source-span 99 1 99 2))]
+        (set!
+          ok
+          (and
+            ok
+            (=
+              (ast.ast-node-pool-context-expr-source-owner pools out-view)
+              out-view)
+            (tc-hygiene-span-line? pools out-view false 2)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))
+        (tc_core.tc-job-state-retire-owned-storage! job)
+        (ast.ast-node-pool-context-install! previous)
+        (ast.ast-node-pool-context-destroy-storage! pools)
+        (unsafe
+          (arena.set! home))
+        (unsafe
+          (arena.destroy owner))
+        ok))))
+
+(test
+  tc-hygiene-owned-span
+  (let
+    [modes : (Array String 8)
+      (array
+        "owned"
+        "captured-child"
+        "captured-root"
+        "shared-root"
+        "expansion"
+        "nested"
+        "rename"
+        "invalid-floor")]
+    (for [index (iterator.range 0 (array-length modes))]
+      (let
+        [mode : (& modes str) (& (array-ref modes index))]
+        (test.assert-true
+          (tc-hygiene-span-case? mode 0)
+          (str_cat.str-cat "hygiene span owner: " (string.copy mode)))))))
+
+(test
+  tc-hygiene-span-growth
+  (let
+    [prefixes : (Array i64 4) (array 0 62 63 64)]
+    (for [index (iterator.range 0 (array-length prefixes))]
+      (let
+        [prefix : i64 (array-ref prefixes index)]
+        (test.assert-true
+          (tc-hygiene-span-case? "captured-child" prefix)
+          (str_cat.str-cat
+            "hygiene canonical growth: "
+            (string.int->string prefix)))
+        (test.assert-true
+          (tc-hygiene-span-case? "alternate" prefix)
+          (str_cat.str-cat
+            "hygiene alternate growth: "
+            (string.int->string prefix)))))))
+
+(test
+  tc-hygiene-span-interleaved-pools
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 42)))]
+    [view : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span 42 1 42 2))]
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [other-ok? : bool
+        (and
+          (tc-hygiene-span-case? "captured-child" 64)
+          (tc-hygiene-span-case? "alternate" 64))]
+      [restored : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      (test.assert-true
+        (and
+          other-ok?
+          (= (ast.ast-node-pool-len) 2)
+          (=
+            (ast.ast-node-pool-context-expr-source-owner restored literal)
+            view)
+          (= (ast.ast-node-pool-context-expr-len pools) 2)
+          (= (ast.ast-node-pool-context-expr-source-owner pools literal) view)
+          (tc-hygiene-span-line? pools literal true 42)
+          (tc-hygiene-span-line? pools view false 42)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools))
+        "hygiene on another pool must preserve the installed owner"))
+    (ast.ast-node-pool-context-install! previous)
+    (ast.ast-node-pool-context-destroy-storage! pools)))
+
 ;; Copies of core's walk-state field macros: a type named in a macro template
 ;; resolves where the macro expands, so core's own copies work only inside core.
 (defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr

@@ -13,8 +13,10 @@ set -eu
 # change that removed them lowers the baseline to the new count.
 #
 # It also reports, without gating, the views weighted by the call sites of the
-# function or macro that holds them, so a view hidden inside a widely called
-# accessor is not counted as one.
+# function or macro that holds them, with thin wrappers (an accessor around one
+# view) transparent: a wrapper's call sites count as views at their callers.
+# A copy moved from inside an accessor to its call sites then weighs the same,
+# so the report compares a migration's two sides on one rule.
 #
 # usage: scripts/check-shared-view-count.sh [--self-test]
 
@@ -71,34 +73,91 @@ count_uses() {
 }
 
 # Report only: the views weighted by how often the code holding them runs a
-# call site. A view inside a function body or macro template counts once per
-# call site of that function or macro (at least once; call sites of a name
-# that several modules define are shared among them), so a view hidden inside
-# a widely called accessor weighs what it costs. Views inside the
-# `*-shared-view` wrappers themselves are not weighted again; their call sites
-# are. Comments and string literals are skipped.
-count_weighted() {
+# call site. A view counts once per call site of the function or macro that
+# holds it (at least once; call sites of a name that several modules define
+# are shared among them), so a view hidden inside a widely called function is
+# not counted as one.
+#
+# A thin wrapper is transparent: a function or macro whose body is one view
+# and at most two other calls (an accessor such as `(define (x-ref [s : (& S)]
+# [i : i64]) : T (x-array-shared-view s.slots i))`), or any `*-shared-view`
+# definition. Its call sites count as views, each weighted by the call sites
+# of the function that holds it, exactly as the view would if it were written
+# there; the view inside the wrapper is not weighted again (a wrapper nothing
+# calls still counts its view once). So moving a copy out of an accessor to
+# its call sites leaves the number unchanged, and turning those call sites
+# into borrows lowers it. Comments and string literals are skipped.
+weighted_files() {
     find "$ROOT/src" "$ROOT/stdlib" -type f -name '*.tl' -print |
         LC_ALL=C sort |
         while IFS= read -r _file; do
             cat "$_file"
             echo
-        done |
-        LC_ALL=C awk '
+        done
+}
+
+# The awk prelude both passes share: strip strings and comments, and track the
+# definition a line belongs to.
+WEIGHTED_SCAN='
+    function scan_line() {
+        line = $0
+        gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
+        sub(/;.*/, "", line)
+        definition = 0
+        if (line ~ /^\(/) {
+            current = ""
+            if (match(line, /^\((define|defmacro) \([^ ()]+/)) {
+                current = substr(line, RSTART, RLENGTH)
+                sub(/^\((define|defmacro) \(/, "", current)
+                defs[current]++
+                definition = 1
+            }
+        }
+    }
+'
+
+count_weighted() {
+    _wrappers=$(mktemp)
+    # Pass 1: the transparent wrappers.
+    weighted_files |
+        LC_ALL=C awk "$WEIGHTED_SCAN"'
             {
-                line = $0
-                gsub(/"([^"\\]|\\.)*"/, "\"\"", line)
-                sub(/;.*/, "", line)
-                definition = 0
-                if (line ~ /^\(/) {
-                    current = ""
-                    if (match(line, /^\((define|defmacro) \([^ ()]+/)) {
-                        current = substr(line, RSTART, RLENGTH)
-                        sub(/^\((define|defmacro) \(/, "", current)
-                        defs[current]++
-                        definition = 1
+                scan_line()
+                rest = line
+                first = definition
+                while (match(rest, /\([A-Za-z0-9_.\/?!*<>=+-]+/)) {
+                    head = substr(rest, RSTART + 1, RLENGTH - 1)
+                    rest = substr(rest, RSTART + RLENGTH)
+                    if (first) {
+                        first = 0
+                        continue
+                    }
+                    if (current == "" || head == "&" || head == "&mut" || head ~ /^[A-Z]/) {
+                        continue
+                    }
+                    if (head ~ /-shared-view/) {
+                        views[current]++
+                    }
+                    inner[current]++
+                }
+            }
+            END {
+                for (name in views) {
+                    if (name !~ /-shared-view/ && views[name] == 1 && inner[name] <= 3) {
+                        print name
                     }
                 }
+            }' > "$_wrappers"
+    # Pass 2: views and wrapper call sites, by the call sites of their holder.
+    weighted_files |
+        LC_ALL=C awk -v wrappers="$_wrappers" "$WEIGHTED_SCAN"'
+            BEGIN {
+                while ((getline name < wrappers) > 0) {
+                    transparent[name] = 1
+                }
+            }
+            {
+                scan_line()
                 rest = line
                 while (match(rest, /\([A-Za-z0-9_.\/?!*<>=+-]+/)) {
                     head = substr(rest, RSTART + 1, RLENGTH - 1)
@@ -106,20 +165,25 @@ count_weighted() {
                     base = head
                     sub(/^.*\./, "", base)
                     heads[base]++
-                    if (head !~ /-shared-view/ || current ~ /-shared-view/) {
+                    if (current ~ /-shared-view/ || (current in transparent)) {
+                        if (head ~ /-shared-view/) {
+                            hidden[current]++
+                        }
                         continue
                     }
                     if (definition && head == current) {
                         continue
                     }
-                    views[current]++
+                    if (head ~ /-shared-view/ || (base in transparent)) {
+                        sites[current]++
+                    }
                 }
             }
             END {
                 total = 0
-                for (name in views) {
+                for (name in sites) {
                     if (name == "") {
-                        total += views[name]
+                        total += sites[name]
                         continue
                     }
                     # Several modules may define the same name (`main`):
@@ -128,10 +192,16 @@ count_weighted() {
                     if (calls < 1) {
                         calls = 1
                     }
-                    total += views[name] * calls
+                    total += sites[name] * calls
+                }
+                for (name in hidden) {
+                    if ((name in transparent) && heads[name] - defs[name] <= 0) {
+                        total += hidden[name]
+                    }
                 }
                 printf "%d\n", total + 0.5
             }'
+    rm -f "$_wrappers"
 }
 
 read_baseline() {
@@ -152,7 +222,7 @@ read_baseline() {
 run_check() {
     _baseline=$(read_baseline)
     _uses=$(count_uses)
-    echo "check-shared-view-count: weighted by call sites of the enclosing function or macro: $(count_weighted) (report only)"
+    echo "check-shared-view-count: weighted by call sites of the enclosing function or macro, thin wrappers transparent: $(count_weighted) (report only)"
     if [ "$_uses" -gt "$_baseline" ]; then
         echo "check-shared-view-count: $_uses shared-view uses exceed the baseline of $_baseline." >&2
         echo "check-shared-view-count: borrow with (& x), (&mut x), (& (array-ref items i)) or a pattern instead of adding a *-shared-view call." >&2
@@ -181,32 +251,37 @@ EOF
   (thing-box-shared-view b))
 (define (h) : i64 (ast.ast-expr-list-box-shared-view? 1))
 (define (m) : i64 (+ (f 1) (f 2)))
+(define (acc [x : i64]) : i64 (owned_view.compiler-owned-shared-view x))
+(define (user) : i64 (acc 1))
+(define (top) : i64 (+ (user) (user)))
 EOF
     cat > "$_work/stdlib/c.tl" <<'EOF'
 ;; mentions compiler-owned-shared-view without calling it
 (define (k [x : i64]) : i64 (compiler-owned-place-shared-view x))
 EOF
-    printf 'max_uses\t5\n' > "$_work/scripts/shared-view-baseline.tsv"
+    printf 'max_uses\t6\n' > "$_work/scripts/shared-view-baseline.tsv"
     _counted=$(SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" 2>&1) || {
         echo "self-test: an at-baseline tree failed: $_counted" >&2
         exit 1
     }
     case "$_counted" in
-        *"5 shared-view uses (baseline 5)"*) ;;
+        *"6 shared-view uses (baseline 6)"*) ;;
         *)
-            echo "self-test: expected 5 uses, got: $_counted" >&2
+            echo "self-test: expected 6 uses, got: $_counted" >&2
             exit 1
             ;;
     esac
     # f holds 2 views and has 2 callers; g, h and k hold 1 each and have none.
+    # acc is a thin wrapper, so its call site in user counts as a view there,
+    # and user has 2 callers: 4 + 1 + 1 + 1 + 2.
     case "$_counted" in
-        *"call sites of the enclosing function or macro: 7 (report only)"*) ;;
+        *"thin wrappers transparent: 9 (report only)"*) ;;
         *)
-            echo "self-test: expected a weighted count of 7, got: $_counted" >&2
+            echo "self-test: expected a weighted count of 9, got: $_counted" >&2
             exit 1
             ;;
     esac
-    printf 'max_uses\t4\n' > "$_work/scripts/shared-view-baseline.tsv"
+    printf 'max_uses\t5\n' > "$_work/scripts/shared-view-baseline.tsv"
     if SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" > "$_work/over.out" 2>&1; then
         echo "self-test: a count above the baseline was not rejected" >&2
         exit 1
@@ -217,7 +292,7 @@ EOF
         exit 1
     }
     case "$_lower" in
-        *"lower max_uses"*"to 5"*) ;;
+        *"lower max_uses"*"to 6"*) ;;
         *)
             echo "self-test: a lower count printed no reminder: $_lower" >&2
             exit 1

@@ -392,8 +392,11 @@ names participate in identity. Each source `foreach`, reduce, scan, compact,
 broadcast and shuffle has one site. A parent ordinal relates nested cross-lane
 forms to their owning region. Enumeration uses the shared AST child order
 before planners consume expressions or emit scalar tails; lambdas enumerate
-under their own function identity. Its AST-ID lookup is function scratch and
-never escapes as identity.
+under their own function identity. Captured syntax reused by a macro receives
+a distinct ordinal at each expanded source occurrence. The function-scratch
+AST-ID lookup links those occurrences in preorder; lowering advances within
+the source parent's subtree, while scalar-tail revisits reuse its entered site.
+The lookup and occurrence links never escape as identity.
 
 A final decision records the selected backend and lane count, route and first
 typed reason. Routes distinguish native gangs, compiler-limitation fallback,

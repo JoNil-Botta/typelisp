@@ -15574,8 +15574,20 @@
 (test
   compiler-lower-spmd-decisions-routes
   (let
-    [cases : (Array LowerSpmdDecisionCase 22)
+    [cases : (Array LowerSpmdDecisionCase 26)
       (array
+        (LowerSpmdDecisionCase
+          "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f) : unit (twice (twice (foreach ([i : i64 0 0]) unit))))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:-1\n2:foreach:fallback:MapShape:1:-1\n3:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f) : unit (twice (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit))))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:fallback:MapShape:1:-1\n3:foreach:inactive:NotLowered:0:2\n")
+        (LowerSpmdDecisionCase
+          "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (twice (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0)))))"
+          "0:foreach:native:DirectMap:4:-1\n1:broadcast:native:DirectMap:4:0\n2:foreach:native:DirectMap:4:-1\n3:broadcast:native:DirectMap:4:2\n")
+        (LowerSpmdDecisionCase
+          "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f) : unit (twice (foreach ([i : i64 0 0]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:-1\n")
         (LowerSpmdDecisionCase
           "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ (array-ref xs i) 1))))"
           "0:foreach:native:DirectMap:4:-1\n")
@@ -15642,7 +15654,7 @@
         (LowerSpmdDecisionCase
           "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (foreach ([j : i64 0 n]) (set! (array-ref out j) (array-ref xs (+ j 1))))))"
           "error\n0:foreach:rejected:UnsupportedSource:1:-1\n1:foreach:inactive:NotLowered:0:0\n"))]
-    (for [index (iterator.range 0 22)]
+    (for [index (iterator.range 0 (array-length cases))]
       (let
         [row : (& cases LowerSpmdDecisionCase) (& (array-ref cases index))]
         (test.assert-owned-string-eq

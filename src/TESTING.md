@@ -301,7 +301,9 @@ maps, empty/tail ranges, cross-lane parent identities and deterministic order.
 Control-flow cases retain inactive source sites after returns and inside empty
 regions without hiding later live or rejected sites. Terminal completion is
 separate from provisional plan selection. Lambda cases pin distinct typed
-function identities with independent source ordinals.
+function identities with independent source ordinals. Repeated captured syntax
+has separate sites for each expanded occurrence, including nested empty regions
+and native cross-lane operations revisited by scalar-tail lowering.
 Macro cases distinguish primary generated spans from actionable invocation or
 argument spans, keep frame context local to the generated subtree, and enforce
 the frame bound. Preserve those checks when changing macro transparency or

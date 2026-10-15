@@ -427,6 +427,10 @@ If no row contains one, function provenance enumeration can be skipped. The
 scan is conservative over quoted, inactive and retained rows; any such site
 keeps normal enumeration. Entry reset restores the conservative default, and
 standalone function callers also enumerate unless a prepared job proves absence.
+Only the six source forms enter decision bookkeeping from the ordinary
+expression dispatcher. Each expansion frame pairs its invocation span with the
+current origin path, so an imported template's nested call keeps the template
+file while a forwarded caller operand keeps the caller file.
 
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,

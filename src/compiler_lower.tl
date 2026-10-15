@@ -28986,7 +28986,7 @@
       (__tl-project-set-field (__tl-box-place sites) source-hint prior)
       result)))
 
-(define (lower-expr-with-type
+(define (lower-spmd-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -29038,7 +29038,7 @@
                 [_ unit]))))
         (let
           [result : ResultLowerExpr
-            (lower-expr-with-type-inner
+            (lower-spmd-expr-with-type-inner
               ctx
               state
               env
@@ -29061,9 +29061,154 @@
                   (lower-spmd-publish-spans state)))))
           (set! sites.active prior)
           result))]
-    [_ (lower-expr-with-type-inner ctx state env type-env expr origin expr-ty)]))
+    [_
+      (lower-spmd-expr-with-type-inner
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expr-ty)]))
 
-(define (lower-expr-with-type-inner
+(define (lower-spmd-expr-with-type-inner
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match expr
+    [(Foreach fe-box)
+      (match (__tl-box-place fe-box)
+        [(Foreach index index-ty start-box end-box body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-foreach
+              ctx
+              state
+              env
+              type-env
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              body))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (lower-foreach2
+            ctx
+            state
+            env
+            type-env
+            outer
+            a-box
+            b-box
+            inner
+            c-box
+            d-box
+            body-box)])]
+    [(SpmdReduce reduce-box)
+      (match (__tl-box-place reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            (lower-spmd-reduce
+              ctx
+              state
+              env
+              type-env
+              expr-ty
+              op
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              init
+              value))])]
+    [(SpmdScan scan-box)
+      (match (__tl-box-place scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-spmd-scan
+              ctx
+              state
+              env
+              type-env
+              op
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              prefix
+              (tc_core.tc-env-key-name-text prefix)
+              prefix-ty
+              init
+              value
+              body))])]
+    [(SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(Compact index _ start-box end-box slot _ init-box keep-box body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-spmd-compact
+              ctx
+              state
+              env
+              type-env
+              index
+              start
+              end
+              slot
+              init
+              keep
+              body))])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+        (lower-spmd-broadcast ctx state env type-env value lane))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+        (lower-spmd-shuffle ctx state env type-env value lane))]
+    [_
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: expected source SPMD form")))]))
+
+(define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -29362,125 +29507,59 @@
         (ast.ast-for-owned-step-done-name (& payload))
         (ast.ast-for-owned-step-body (& payload)))]
     [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-foreach
-              ctx
-              state
-              env
-              type-env
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              body))]
-        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
-          (lower-foreach2
-            ctx
-            state
-            env
-            type-env
-            outer
-            a-box
-            b-box
-            inner
-            c-box
-            d-box
-            body-box)])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.Foreach fe-box)
+        origin
+        expr-ty)]
     [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(Reduce op index index-ty start-box end-box init-box value-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-            (lower-spmd-reduce
-              ctx
-              state
-              env
-              type-env
-              expr-ty
-              op
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              init
-              value))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdReduce reduce-box)
+        origin
+        expr-ty)]
     [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-spmd-scan
-              ctx
-              state
-              env
-              type-env
-              op
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              prefix
-              (tc_core.tc-env-key-name-text prefix)
-              prefix-ty
-              init
-              value
-              body))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdScan scan-box)
+        origin
+        expr-ty)]
     [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(Compact index _ start-box end-box slot _ init-box keep-box body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-spmd-compact
-              ctx
-              state
-              env
-              type-env
-              index
-              start
-              end
-              slot
-              init
-              keep
-              body))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdCompact compact-box)
+        origin
+        expr-ty)]
     [(SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (lower-spmd-broadcast ctx state env type-env value lane))]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdBroadcast value-box lane-box)
+        origin
+        expr-ty)]
     [(SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (lower-spmd-shuffle ctx state env type-env value lane))]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdShuffle value-box lane-box)
+        origin
+        expr-ty)]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)

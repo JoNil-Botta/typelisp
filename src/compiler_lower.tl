@@ -595,6 +595,7 @@
     : lower_i64_i64_map.Map
     (lower_i64_i64_map.with-capacity 8)]
   [current-source-path-id : i64 0]
+  [spmd-source-present : bool true]
   [spmd-rejected-spans
     : ir.CompilerSourceSpans
     (unobserved (ir.compiler-source-spans-empty))]
@@ -1344,6 +1345,9 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [body : ast.AstExpr]) : unit
+  (unless
+    (compiler-lower-state-spmd-source-present (lower-state-owner state))
+    (return unit))
   (let
     [frames : ir.CompilerSpmdMacroFrameList
       (ir.compiler-spmd-macro-frame-list-empty)]
@@ -1354,6 +1358,23 @@
     [origin : LowerSpmdOrigin
       (LowerSpmdOrigin (clone location) location false false)]
     (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
+
+;; The prepared pool contains every source child before lowering starts.
+;; Scanning all rows is conservative: quoted or unreachable sites keep the
+;; ordinary enumeration path. A negative result is local to this prepared job;
+;; standalone function callers retain the constructor's conservative default.
+(define (lower-spmd-pools-have-sites?
+  [pools : (& pools ast.AstNodePoolContext)]) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
+    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+    (for [index (iterator.range 0 count)]
+      (match (ast.ast-expr-segment-bases-get bases index)
+        [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+             (SpmdBroadcast _ _) (SpmdShuffle _ _))
+          (return true)]
+        [_ unit]))
+    false))
 
 (define (lower-spmd-origin-id
   [ctx : tc_core.TcContext]
@@ -8371,6 +8392,7 @@
   (comptime (size-of (type LowerVariantArmResolution))))
 
 (define (compiler-lower-state-reset! [lower-state : CompilerLowerState]) : unit
+  (compiler-lower-state-set-spmd-source-present! lower-state true)
   (compiler-lower-state-set-spmd-rejected-spans!
     lower-state
     (ir.compiler-source-spans-empty))
@@ -70433,6 +70455,9 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
+  (compiler-lower-state-set-spmd-source-present!
+    lower-state
+    (lower-spmd-pools-have-sites? (& (tc_core.tc-context-pools ctx))))
   (compiler-lower-state-set-active-symbols!
     lower-state
     (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))

@@ -15900,6 +15900,57 @@
             "regions remain independent"))))))
 
 (test
+  compiler-lower-spmd-decisions-presence-reset
+  (let
+    [saved-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_fresh : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 64 16))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [ordinary : String "(define (f) : i64 42)"]
+    [empty : ir.CompilerSpmdDecisions
+      (compiler-lower-spmd-source-facts
+        owner
+        (clone ordinary)
+        (lower.CompilerLowerMode.Scalar))]
+    (test.assert-i64-eq empty.decisions.len 0 "ordinary program has no sites")
+    (test.assert-true
+      (not (lower.compiler-lower-state-spmd-source-present owner))
+      "prepared ordinary pool skips provenance enumeration")
+    (ast.ast-node-pool-context-install!
+      (ast.ast-node-pool-context-new-with-capacities 64 16))
+    (let
+      [generated : ir.CompilerSpmdDecisions
+        (compiler-lower-spmd-source-facts
+          owner
+          "(defmacro (region) : Expr `(foreach ([i : i64 0 0]) unit)) (define (f) : unit (region))"
+          (lower.CompilerLowerMode.Scalar))]
+      (test.assert-i64-eq
+        generated.decisions.len
+        1
+        "macro-generated site is present")
+      (test.assert-true
+        (lower.compiler-lower-state-spmd-source-present owner)
+        "new prepared pool invalidates a negative result"))
+    (ast.ast-node-pool-context-install!
+      (ast.ast-node-pool-context-new-with-capacities 64 16))
+    (let
+      [again : ir.CompilerSpmdDecisions
+        (compiler-lower-spmd-source-facts
+          owner
+          ordinary
+          (lower.CompilerLowerMode.Scalar))]
+      (test.assert-i64-eq
+        again.decisions.len
+        0
+        "next program has no stale sites")
+      (test.assert-true
+        (not (lower.compiler-lower-state-spmd-source-present owner))
+        "presence belongs to the current prepared job"))
+    (ast.ast-node-pool-context-install! saved-pools)))
+
+(test
   compiler-lower-spmd-decisions-function-identity
   (let
     [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]

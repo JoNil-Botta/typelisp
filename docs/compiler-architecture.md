@@ -422,6 +422,11 @@ are retained in the lower owner's `spmd-rejected-spans` result field and escaped
 beside the diagnostic before scratch retirement; entry reset clears them.
 Optimizer instruction-span rebuilding and backend register remapping retain the
 source decisions unchanged. Functions without SPMD allocate no site collection.
+A prepared job scans its owned expression pool once for the six source forms.
+If no row contains one, function provenance enumeration can be skipped. The
+scan is conservative over quoted, inactive and retained rows; any such site
+keeps normal enumeration. Entry reset restores the conservative default, and
+standalone function callers also enumerate unless a prepared job proves absence.
 
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,

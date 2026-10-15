@@ -5754,14 +5754,15 @@
 (define (macro-expansion-provenance-id [path-id : i64] [origin-path-id : i64]) : i64
   (ci.intern-composite-pair-id path-id origin-path-id))
 
-;; The macro name of a compact caller-origin marker. Caller-origin markers have
-;; a negative macro name. A compact one, captured from a spanned operand, sits
-;; directly over the operand's semantic node, under one Spanned view with the
-;; operand's span (`macro-captured-expr-node`). Every other caller-origin
-;; marker has -1, including those the CTFE route builds over a binding clause's
-;; initializer, which also sit over a bare node; they are checked as before.
+;; The macro name of a compact caller-origin marker
+;; (`ctfe-compact-caller-origin-name`). Caller-origin markers have a negative
+;; macro name. A compact one, captured from a spanned operand, sits directly over
+;; the operand's semantic node, under one Spanned view with the operand's span
+;; (`macro-captured-expr-node`). Every other caller-origin marker has -1,
+;; including those the CTFE route builds over a binding clause's initializer,
+;; which also sit over a bare node; they are checked as before.
 (define (tc-compact-caller-origin-name) : i64
-  -2)
+  (ctfe_support.ctfe-compact-caller-origin-name))
 
 (define (tc-compact-caller-origin-marker? [macro-name-id : i64]) : bool
   (= macro-name-id (tc-compact-caller-origin-name)))

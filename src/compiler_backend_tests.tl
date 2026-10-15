@@ -38315,10 +38315,7 @@ b_keep:
   [group-arena : arena.Arena]) : text_buf.TextBuf
   (let
     [chunks : text_buf.TextBufChunkList buf.chunks]
-    [chunk-count : i64
-      (text_buf.chunk-count
-        (backend.compiler-backend-global-shared-view chunks)
-        0)]
+    [chunk-count : i64 (text_buf.chunk-count (& chunks) 0)]
     [items : (__tl_dyn-array String) (__tl_make-array String chunk-count)]
     [initial : CompilerBackendPeepholeChunkState
       (CompilerBackendPeepholeChunkState (text_buf.empty) (text_buf.empty))]

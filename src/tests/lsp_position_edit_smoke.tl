@@ -9,7 +9,6 @@
 (import lsp_frame_core as lsp)
 (import lsp_frame_core_tests as lsp_tests)
 (import format_tests)
-(import compiler_owned_view as owned_view)
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
 ;; --------------------------------------------------------------------------
@@ -138,7 +137,7 @@
     [name : String
       (lsp.lsp-structural-move-name-with-decls
         params
-        (owned_view.compiler-owned-shared-view text)
+        (string.copy (& text))
         decls)]
     (match (lsp.lsp-replace-form-at-position-with-decls
       text

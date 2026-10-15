@@ -3,7 +3,6 @@
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. Package runs reuse the package build path, then execute the emitted
 ;; binary artifact. `--direct` remains accepted as a compatibility no-op.
-(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
@@ -218,29 +217,20 @@
   [mode : backend.CompilerBackendMode]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
-    [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
-      (__tl_make-array stdlib-roots)]
-    [cfgs-cell : (__tl_dyn-array cli_svec.Vec) (__tl_make-array cfgs)]
     [doctest-status : i64
       (doc_test.doc-test-typecheck-file-status
         (string.copy (& source))
-        (owned_view.compiler-owned-array-element-shared-view
-          stdlib-roots-cell
-          0))]
+        (cli_svec.from-slice (cli_svec.view (& stdlib-roots))))]
     (if (= doctest-status 0)
       (let
         [inline-test-status : i64
           (test_cli_core.tltest-inline-typecheck-file-with-cfg
             (string.copy (& source))
-            (owned_view.compiler-owned-array-element-shared-view
-              stdlib-roots-cell
-              0)
+            (cli_svec.from-slice (cli_svec.view (& stdlib-roots)))
             (driver.compiler-driver-target-cfgs
               target
               (build_run_core.source-tool-cfg-names-to-env
-                (owned_view.compiler-owned-array-element-shared-view
-                  cfgs-cell
-                  0)))
+                (cli_svec.from-slice (cli_svec.view (& cfgs)))))
             "typecheck-prefix-inline-run")]
         (if (= inline-test-status 0)
           (begin
@@ -248,10 +238,8 @@
             (build_run_core.source-tool-run-source
               source
               target
-              (owned_view.compiler-owned-array-element-shared-view
-                stdlib-roots-cell
-                0)
-              (owned_view.compiler-owned-array-element-shared-view cfgs-cell 0)
+              stdlib-roots
+              cfgs
               runtime-args
               opt-level
               mode
@@ -329,8 +317,6 @@
                 "run: package manifest kind must be bin to execute")
               1)
             (let
-              [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
-                (__tl_make-array stdlib-roots)]
               [build-status : i64
                 (build_cli_core.build-package-from-path-announce
                   (string.copy (& manifest-path))
@@ -340,9 +326,7 @@
                   opt-level
                   profile
                   lock-policy
-                  (owned_view.compiler-owned-array-element-shared-view
-                    stdlib-roots-cell
-                    0)
+                  stdlib-roots
                   (string.copy (& producer-identity))
                   false)]
               (if (= build-status 0)

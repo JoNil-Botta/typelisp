@@ -65,15 +65,21 @@
         [(option_i64.Some _) false]
         [(option_i64.None) true]))))
 
+;; A fresh `(array (Enum id) 1)` type each call site consumes.
+(define (tc-reverse-mixed-array-type [id : i64]) : ast.AstType
+  (ast.ast-ty-array (& (Enum id)) 1))
+
+;; A fresh `(&mut lifetime (Enum id))` type each call site consumes.
+(define (tc-reverse-mixed-ref-type [lifetime-id : i64] [id : i64]) : ast.AstType
+  (ast.ast-ty-mut-ref lifetime-id (& (Enum id))))
+
 (define (tc-reverse-mixed-parsed-module-id
   [program : (& program ast.AstProgram)]) : i64
-  (match (csym.compiler-symbols-program-shared-view program)
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        (match (ast.ast-decl-list-ref decls 1)
-          [(Import _ (Spec _ _ (Some target) _ _)) target]
-          [_ -1]))]))
+  (match program
+    [(Program decls)
+      (match (ast.ast-decl-list-ref decls 1)
+        [(Import _ (Spec _ _ (Some target) _ _)) target]
+        [_ -1])]))
 
 (define (tc-reverse-mixed-source-nominal-match-smoke?) : bool
   (match (parser.parse-ast-source
@@ -108,11 +114,11 @@
                   (csym.compiler-symbol-module-key-id-by-id
                     module-id
                     (ci.intern "ReverseMixedOther"))]
-                [actual : ast.AstType (ast.ast-ty-array (& (Enum flat-id)) 1)]
+                [actual : ast.AstType (tc-reverse-mixed-array-type flat-id)]
                 [expected : ast.AstType
-                  (ast.ast-ty-array (& (Enum qualified-id)) 1)]
+                  (tc-reverse-mixed-array-type qualified-id)]
                 [different : ast.AstType
-                  (ast.ast-ty-array (& (Enum other-qualified-id)) 1)]
+                  (tc-reverse-mixed-array-type other-qualified-id)]
                 [lifetime-id : i64 (ci.intern "out")]
                 [type-module-ctx : compiler_typecheck_core.TcContext
                   (compiler_typecheck_core.tc-context-with-type-module-id
@@ -121,11 +127,11 @@
                 [type-env : compiler_typecheck_core.TcTypeEnv
                   (compiler_typecheck_core.tc-default-env)]
                 [actual-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (& (Enum flat-id)))]
+                  (tc-reverse-mixed-ref-type lifetime-id flat-id)]
                 [expected-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (& (Enum qualified-id)))]
+                  (tc-reverse-mixed-ref-type lifetime-id qualified-id)]
                 [different-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (& (Enum other-qualified-id)))]
+                  (tc-reverse-mixed-ref-type lifetime-id other-qualified-id)]
                 [other-constructor-id : i64
                   (ci.intern-generated-canonical-name "ReverseMixedOther.Value")]
                 [missing-constructor-id : i64
@@ -148,15 +154,15 @@
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
                     type-env
-                    (compiler_typecheck_core.tc-global-shared-view actual)
-                    (compiler_typecheck_core.tc-global-shared-view expected))
+                    (tc-reverse-mixed-array-type flat-id)
+                    (tc-reverse-mixed-array-type qualified-id))
                     [(Compatible _) true]
                     [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
                     type-env
                     expected
-                    (compiler_typecheck_core.tc-global-shared-view actual))
+                    (tc-reverse-mixed-array-type flat-id))
                     [(Compatible _) true]
                     [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
@@ -169,16 +175,15 @@
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
                     type-env
-                    (compiler_typecheck_core.tc-global-shared-view actual-ref)
-                    (compiler_typecheck_core.tc-global-shared-view expected-ref))
+                    (tc-reverse-mixed-ref-type lifetime-id flat-id)
+                    (tc-reverse-mixed-ref-type lifetime-id qualified-id))
                     [(Compatible _) true]
                     [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
                     type-env
-                    (compiler_typecheck_core.tc-global-shared-view actual-ref)
-                    (compiler_typecheck_core.tc-global-shared-view
-                      different-ref))
+                    (tc-reverse-mixed-ref-type lifetime-id flat-id)
+                    (tc-reverse-mixed-ref-type lifetime-id other-qualified-id))
                     [(Compatible _) false]
                     [(Mismatch _) true])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
@@ -186,7 +191,7 @@
                     type-env
                     (ast.ast-lifetime-list-new)
                     Nil
-                    (compiler_typecheck_core.tc-global-shared-view actual-ref)
+                    (tc-reverse-mixed-ref-type lifetime-id flat-id)
                     expected-ref)
                     [(Ok _) true]
                     [(Err _) false])

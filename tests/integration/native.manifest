@@ -371,6 +371,9 @@ arena_poison_clone_survives|all|-|tests/integration/arena_poison_clone_survives.
 arena_poison_stale_array_trap|linux|-|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl|-
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+clone_boxed_list_opt0|all|-|tests/integration/clone_boxed_list.tl|42|0|-|stdlib/arena.tl stdlib/string.tl stdlib/clone.tl|-
+clone_boxed_list_opt1|all|-|tests/integration/clone_boxed_list.tl|42|1|-|stdlib/arena.tl stdlib/string.tl stdlib/clone.tl|-
+clone_boxed_list_opt2|all|-|tests/integration/clone_boxed_list.tl|42|2|-|stdlib/arena.tl stdlib/string.tl stdlib/clone.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 clone_dynarray_scalar_bulk|all|-|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-

@@ -319,6 +319,15 @@ the prelude `for` body does; it composes nested macros, list inspection, begin
 bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
+## Boxed-list clone helpers
+
+`tests/integration/clone_boxed_list.tl` pins both list-variant orders at opt0/1/2.
+It checks empty, single and 30,000-element lists, original/copy isolation,
+owned string heads after retiring the source arena, and mutable boxed heads.
+The late stdlib clone producer must emit ordinary dereference syntax; macro
+calls introduced after expansion otherwise become unresolved native calls.
+Keep the long cases so the accumulator/reverse helpers retain bounded stack use.
+
 ## Compiler arena ownership
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`

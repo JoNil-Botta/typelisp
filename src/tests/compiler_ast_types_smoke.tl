@@ -3326,20 +3326,36 @@
   [kind : i64]
   [index : i64]
   [expected : ast.AstExprCanonicalSpanRecord]) : bool
-  (if (= kind ast.ast-expr-span-record-kind-canonical)
-    (let
-      [actual : ast.AstExprCanonicalSpanRecord
-        (ast.ast-expr-canonical-record-get table index)]
-      (and
-        (= actual.semantic-node expected.semantic-node)
-        (= actual.owner-node expected.owner-node)
-        (ast.ast-source-span-eq? actual.span expected.span)))
-    (let
-      [actual : ast.AstExprReSpan (ast.ast-expr-respan-record-get table index)]
-      (and
-        (= actual.view-node expected.semantic-node)
-        (= actual.semantic-node expected.owner-node)
-        (ast.ast-source-span-eq? actual.span expected.span)))))
+  (and
+    (=
+      (ast.ast-expr-semantic-node-from-span-slot
+        (if (= kind ast.ast-expr-span-record-kind-canonical)
+          (+ index 1)
+          (- 0 (+ index 1)))
+        table
+        (+ index 1)
+        table
+        (+ index 1))
+      (cast
+        (if (= kind ast.ast-expr-span-record-kind-canonical)
+          expected.semantic-node
+          expected.owner-node)
+        : i64))
+    (if (= kind ast.ast-expr-span-record-kind-canonical)
+      (let
+        [actual : ast.AstExprCanonicalSpanRecord
+          (ast.ast-expr-canonical-record-get table index)]
+        (and
+          (= actual.semantic-node expected.semantic-node)
+          (= actual.owner-node expected.owner-node)
+          (ast.ast-source-span-eq? actual.span expected.span)))
+      (let
+        [actual : ast.AstExprReSpan
+          (ast.ast-expr-respan-record-get table index)]
+        (and
+          (= actual.view-node expected.semantic-node)
+          (= actual.semantic-node expected.owner-node)
+          (ast.ast-source-span-eq? actual.span expected.span))))))
 
 (define (compiler-ast-packed-record-write!
   [table : i64]
@@ -3408,7 +3424,11 @@
       (array
         (ast.ast-expr-span-table-new owner-handle 0 64)
         (ast.ast-expr-span-table-new owner-handle 1 64))]
-    [ok : bool true]
+    [ok : bool
+      (and
+        (= (ast.ast-expr-semantic-node-from-span-slot 0 0 0 0 0) -1)
+        (= (ast.ast-expr-semantic-node-from-span-slot 1 0 0 0 0) -1)
+        (= (ast.ast-expr-semantic-node-from-span-slot -1 0 0 0 0) -1))]
     ;; The current scratch must own no overflow payload, even across growth.
     (in-arena
       scratch

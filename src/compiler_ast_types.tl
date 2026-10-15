@@ -2012,27 +2012,42 @@
   [canonical-count : i64]
   [respans : i64]
   [respan-count : i64]) : i64
-  (if (> slot 0)
-    (let
-      [index : i64 (- slot 1)]
-      (if (>= index canonical-count)
-        -1
-        (cast
-          (__tl-project-field
-            (ast-expr-canonical-record-get canonical-records index)
-            semantic-node)
-          : i64)))
-    (if (< slot 0)
+  (let
+    [canonical? : bool (> slot 0)]
+    [index : i64
+      (if canonical?
+        (- slot 1)
+        (- (- 0 slot) 1))]
+    [count : i64
+      (if canonical?
+        canonical-count
+        respan-count)]
+    (if (or (= slot 0) (>= index count))
+      -1
       (let
-        [index : i64 (- (- 0 slot) 1)]
-        (if (>= index respan-count)
-          -1
-          (cast
-            (__tl-project-field
-              (ast-expr-respan-record-get respans index)
-              semantic-node)
-            : i64)))
-      -1)))
+        [table : i64
+          (if canonical?
+            canonical-records
+            respans)]
+        [address : i64 (ast-expr-packed-span-record-address table index)]
+        [ids : i64
+          (unsafe
+            (ptr-read (int->ptr address : (Ptr i64))))]
+        [node-offset : i64
+          (if canonical?
+            0
+            1)]
+        (if (= (bit-and (shr ids 56) 255) ast-expr-span-packed-escape-tag)
+          (let
+            [overflow : i64
+              (unsafe
+                (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
+            (cast
+              (unsafe
+                (ptr-read
+                  (ptr-offset (int->ptr overflow : (Ptr i32)) node-offset)))
+              : i64))
+          (bit-and (shr ids (* node-offset 28)) ast-expr-span-packed-node-mask))))))
 
 (define (ast-expr-span-record-direct-active! [id : i64] [span : AstSourceSpan]) : unit
   (if (>=

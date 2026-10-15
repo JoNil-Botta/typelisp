@@ -4992,7 +4992,9 @@ arena-owned storage escape the scoped region.
 
 ### 5.4 Arithmetic and logical operators
 
-All operators are prefix functions (or special forms):
+All operators are prefix functions (or special forms). Evaluated operands run
+left-to-right and retain the values they had when evaluated, as call arguments
+do (§5.3). Short-circuiting forms evaluate only their selected operands:
 
 | Operator | Signature | Description |
 |----------|-----------|-------------|
@@ -5142,6 +5144,15 @@ guards.
 - A function `define` or function `extern` declares a callable name, not a
   storage place. Assigning to it is rejected before checking the replacement,
   including through imports. Function-valued storage remains assignable.
+- The place is evaluated first, left-to-right through its receiver and
+  projections, retaining each receiver and index value before evaluating
+  `expr` once. Rebinding a receiver or changing an index does not retarget the
+  store. An array-element place denotes that logical index in the selected
+  array: after `expr`, the store checks the current length and uses the current
+  buffer, including when `expr` grows the array. Checks needed to read an
+  intermediate projection run when that projection is evaluated. The final
+  array bounds check follows the value's effects, including for zero-sized
+  elements; an earlier trap prevents the remaining evaluation.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.

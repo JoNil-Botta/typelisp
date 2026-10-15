@@ -19,6 +19,7 @@
 (import compiler_pointer_proof_input as pointer_proof)
 (import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
+(import compiler_ast_types.AstExpr)
 (import compiler_clone as clone_support)
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
@@ -1095,11 +1096,8 @@
       [(No)
         (let
           [sites : (Box LowerSpmdSites) (box (lower-spmd-sites-empty))]
-          (__tl-project-set-field
-            (__tl-box-place data)
-            spmd-sites
-            (Some (lower-global-shared-view sites)))
-          sites)])))
+          (__tl-project-set-field (__tl-box-place data) spmd-sites (Some sites))
+          (lower-state-spmd-sites state))])))
 
 (define (lower-spmd-backend [mode : CompilerLowerMode]) : ir.CompilerSpmdBackend
   (match (lower-mode-simd mode)
@@ -1422,11 +1420,13 @@
     [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
     [count : i64 (ast.ast-node-pool-context-expr-len pools)]
     (for [index (iterator.range 0 count)]
-      (match (ast.ast-expr-segment-bases-get bases index)
-        [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-             (SpmdBroadcast _ _) (SpmdShuffle _ _))
-          (return true)]
-        [_ unit]))
+      (let
+        [expr : AstExpr (ast.ast-expr-segment-bases-shared-view bases index)]
+        (match (& expr)
+          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+               (SpmdBroadcast _ _) (SpmdShuffle _ _))
+            (return true)]
+          [_ unit])))
     false))
 
 (define (lower-spmd-origin-id

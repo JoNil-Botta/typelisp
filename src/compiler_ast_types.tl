@@ -1267,6 +1267,27 @@
             (+ (shr record-index 16) 2))))
       (* (bit-and record-index 65535) 16))))
 
+;: Decode one id without constructing coordinates. OFFSET is 0 or 1.
+(defmacro (ast-expr-packed-span-record-node
+  [table : Expr]
+  [index : Expr]
+  [offset : Expr]) : Expr
+  `(let
+    [address : i64 (ast-expr-packed-span-record-address ,table ,index)]
+    [ids : i64
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr i64))))]
+    (if (= (bit-and (shr ids 56) 255) ast-expr-span-packed-escape-tag)
+      (let
+        [overflow : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
+        (cast
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr overflow : (Ptr i32)) ,offset)))
+          : i64))
+      (bit-and (shr ids (* ,offset 28)) ast-expr-span-packed-node-mask))))
+
 ;; Logical setter wrappers own their value while these private byte writers run;
 ;; the span pointer is consumed synchronously and is never stored or returned.
 ;: Decode by value. The two physical words are loaded once; neither an
@@ -1366,9 +1387,12 @@
     [delta : i64 (- end-line start-line)]
     [compact? : bool
       (and
-        (= (shr (bit-or first-node second-node) 28) 0)
-        (< (cast delta : u64) (cast 255 : u64))
-        (= (shr (bit-or start-col end-col) 16) 0))]
+        (=
+          (bit-or
+            (shr (bit-or first-node second-node) 28)
+            (shr (bit-or (cast start-col : i32) (cast end-col : i32)) 16))
+          0)
+        (< (cast delta : u64) (cast 255 : u64)))]
     [old-tag : i64
       (cast
         (unsafe
@@ -1477,8 +1501,8 @@
             (shl ast-expr-span-packed-escape-tag 56))
           (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) slot))))))
 
-;; make-array zero-fills even reused arenas, so each unused slot starts with
-;; tag zero before the setter inspects it; no second initialization is needed.
+;; make-array zero-fills even reused arenas. Unused slots start with tag zero;
+;; table segment addresses and the overflow free-list head also start at zero.
 (define (ast-expr-span-segment-new [owner : i64] [_kind : i64] [records : i64]) : i64
   (let
     [segment : (__tl_dyn-array i64)
@@ -1508,16 +1532,10 @@
         [(> capacity ast-expr-span-record-segment-size)
           ast-expr-span-record-segment-size]
         [else capacity])]
-    (for [index (iterator.range 3 (+ ast-expr-span-record-max-segments 2))]
-      (ast-expr-span-table-word-set! table index 0))
     (ast-expr-span-table-word-set!
       table
       (+ ast-expr-span-record-max-segments 2)
       owner)
-    (ast-expr-span-table-word-set!
-      table
-      (+ ast-expr-span-record-max-segments 3)
-      0)
     (ast-expr-span-table-word-set! table 0 first)
     (ast-expr-span-table-word-set! table 1 first)
     (ast-expr-span-table-word-set!
@@ -2012,42 +2030,19 @@
   [canonical-count : i64]
   [respans : i64]
   [respan-count : i64]) : i64
-  (let
-    [canonical? : bool (> slot 0)]
-    [index : i64
-      (if canonical?
-        (- slot 1)
-        (- (- 0 slot) 1))]
-    [count : i64
-      (if canonical?
-        canonical-count
-        respan-count)]
-    (if (or (= slot 0) (>= index count))
-      -1
+  (if (> slot 0)
+    (let
+      [index : i64 (- slot 1)]
+      (if (>= index canonical-count)
+        -1
+        (ast-expr-packed-span-record-node canonical-records index 0)))
+    (if (< slot 0)
       (let
-        [table : i64
-          (if canonical?
-            canonical-records
-            respans)]
-        [address : i64 (ast-expr-packed-span-record-address table index)]
-        [ids : i64
-          (unsafe
-            (ptr-read (int->ptr address : (Ptr i64))))]
-        [node-offset : i64
-          (if canonical?
-            0
-            1)]
-        (if (= (bit-and (shr ids 56) 255) ast-expr-span-packed-escape-tag)
-          (let
-            [overflow : i64
-              (unsafe
-                (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
-            (cast
-              (unsafe
-                (ptr-read
-                  (ptr-offset (int->ptr overflow : (Ptr i32)) node-offset)))
-              : i64))
-          (bit-and (shr ids (* node-offset 28)) ast-expr-span-packed-node-mask))))))
+        [index : i64 (- (- 0 slot) 1)]
+        (if (>= index respan-count)
+          -1
+          (ast-expr-packed-span-record-node respans index 1)))
+      -1)))
 
 (define (ast-expr-span-record-direct-active! [id : i64] [span : AstSourceSpan]) : unit
   (if (>=

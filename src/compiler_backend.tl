@@ -86013,8 +86013,7 @@ tl_shared_object_init:
 (define (compiler-backend-peephole-chunk-array [group : text_buf.TextBuf]) : CompilerBackendPeepholeChunkArray
   (let
     [chunks : text_buf.TextBufChunkList group.chunks]
-    [count : i64
-      (text_buf.chunk-count (compiler-backend-global-shared-view chunks) 0)]
+    [count : i64 (text_buf.chunk-count (& chunks) 0)]
     [items : (__tl_dyn-array String) (__tl_make-array String count)]
     (text_buf.chunks-fill-array-rev chunks (&mut items) (- count 1))
     (compiler-backend-peephole-chunks-normalize items count group.len)))

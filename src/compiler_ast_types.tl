@@ -1332,41 +1332,6 @@
       record-value.semantic-node
       (& record-value.span))))
 
-(define (ast-expr-span-overflow-acquire! [table : i64]) : i64
-  (let
-    [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
-    [free : i64 (ast-expr-span-table-word table free-index)]
-    (if (not (= free 0))
-      (begin
-        (ast-expr-span-table-word-set!
-          table
-          free-index
-          (unsafe
-            (ptr-read (int->ptr free : (Ptr i64)))))
-        free)
-      (let
-        [owner : i64
-          (ast-expr-span-table-word
-            table
-            (+ ast-expr-span-record-max-segments 2))]
-        [slot : (__tl_dyn-array AstExprCanonicalSpanRecord)
-          (in-arena
-            (arena.Arena owner)
-            (__tl_make-array AstExprCanonicalSpanRecord 1))]
-        (cast
-          (unsafe
-            (ptr->int (__tl_array-data slot)))
-          : i64)))))
-
-(define (ast-expr-span-overflow-release! [table : i64] [slot : i64]) : unit
-  (let
-    [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
-    (unsafe
-      (ptr-write!
-        (int->ptr slot : (MutPtr i64))
-        (ast-expr-span-table-word table free-index)))
-    (ast-expr-span-table-word-set! table free-index slot)))
-
 (define (ast-expr-packed-span-record-set!
   [table : i64]
   [index : i64]
@@ -1375,6 +1340,36 @@
   [span : (& span AstSourceSpan)]) : unit
   (let
     [address : i64 (ast-expr-packed-span-record-address table index)]
+    [data : (Ptr i32)
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of span) : (Ptr (Ptr i32)))))]
+    [start-line : i64
+      (cast
+        (unsafe
+          (ptr-read data))
+        : i64)]
+    [start-col : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 1)))
+        : i64)]
+    [end-line : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 2)))
+        : i64)]
+    [end-col : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 3)))
+        : i64)]
+    [delta : i64 (- end-line start-line)]
+    [compact? : bool
+      (and
+        (= (shr (bit-or (cast first-node : i64) (cast second-node : i64)) 28) 0)
+        (>= start-line 0)
+        (< (cast delta : u64) (cast 15 : u64))
+        (= (shr (bit-or start-col end-col) 16) 0))]
     [old-tag : i64
       (bit-and
         (shr
@@ -1384,32 +1379,69 @@
             : i64)
           28)
         15)]
-    [old-wide? : bool (= old-tag ast-expr-span-packed-escape-tag)]
-    [delta : i64 (- (cast span.end-line : i64) (cast span.start-line : i64))]
-    [compact? : bool
-      (and
-        (= (shr (bit-or (cast first-node : i64) (cast second-node : i64)) 28) 0)
-        (>= span.start-line 0)
-        (< (cast delta : u64) (cast 15 : u64))
-        (=
-          (shr
-            (bit-or (cast span.start-col : i64) (cast span.end-col : i64))
-            16)
-          0))]
+    (if (and compact? (not (= old-tag ast-expr-span-packed-escape-tag)))
+      (unsafe
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or
+            (cast first-node : i64)
+            (shl (bit-or (cast second-node : i64) (shl delta 28)) 32)))
+        (ptr-write!
+          (ptr-offset (int->ptr address : (MutPtr i64)) 1)
+          (bit-or (shl start-line 32) (bit-or (shl start-col 16) end-col))))
+      (ast-expr-span-record-overflow-write!
+        table
+        index
+        first-node
+        second-node
+        span
+        compact?))))
+
+;; Ordinary compact writes never call an allocator or retain values over a
+;; call. Only wide records and transitions out of wide storage reach here.
+(define (ast-expr-span-record-overflow-write!
+  [table : i64]
+  [index : i64]
+  [first-node : i32]
+  [second-node : i32]
+  [span : (& span AstSourceSpan)]
+  [compact? : bool]) : unit
+  (let
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
+    [old-tag : i64
+      (bit-and
+        (shr
+          (cast
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr address : (Ptr i32)) 1)))
+            : i64)
+          28)
+        15)]
+    [old-slot : i64
+      (if (= old-tag ast-expr-span-packed-escape-tag)
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))
+        0)]
     (if compact?
       (begin
-        (when
-          old-wide?
-          (ast-expr-span-overflow-release!
-            table
-            (unsafe
-              (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))))
+        (unsafe
+          (ptr-write!
+            (int->ptr old-slot : (MutPtr i64))
+            (ast-expr-span-table-word table free-index)))
+        (ast-expr-span-table-word-set! table free-index old-slot)
         (unsafe
           (ptr-write!
             (int->ptr address : (MutPtr i64))
             (bit-or
               (cast first-node : i64)
-              (shl (bit-or (cast second-node : i64) (shl delta 28)) 32)))
+              (shl
+                (bit-or
+                  (cast second-node : i64)
+                  (shl
+                    (- (cast span.end-line : i64) (cast span.start-line : i64))
+                    28))
+                32)))
           (ptr-write!
             (ptr-offset (int->ptr address : (MutPtr i64)) 1)
             (bit-or
@@ -1418,11 +1450,32 @@
                 (shl (cast span.start-col : i64) 16)
                 (cast span.end-col : i64))))))
       (let
+        [free : i64 (ast-expr-span-table-word table free-index)]
         [slot : i64
-          (if old-wide?
-            (unsafe
-              (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))
-            (ast-expr-span-overflow-acquire! table))]
+          (cond
+            [(not (= old-slot 0)) old-slot]
+            [(not (= free 0))
+              (begin
+                (ast-expr-span-table-word-set!
+                  table
+                  free-index
+                  (unsafe
+                    (ptr-read (int->ptr free : (Ptr i64)))))
+                free)]
+            [else
+              (let
+                [owner : i64
+                  (ast-expr-span-table-word
+                    table
+                    (+ ast-expr-span-record-max-segments 2))]
+                [storage : (__tl_dyn-array AstExprCanonicalSpanRecord)
+                  (in-arena
+                    (arena.Arena owner)
+                    (__tl_make-array AstExprCanonicalSpanRecord 1))]
+                (cast
+                  (unsafe
+                    (ptr->int (__tl_array-data storage)))
+                  : i64))])]
         (unsafe
           (ptr-write!
             (int->ptr slot : (MutPtr AstExprCanonicalSpanRecord))

@@ -1321,7 +1321,7 @@
   (process.command
     (source-tool-resolve-command "ar")
     (process.args-cons
-      "rcs"
+      "rcsD"
       (process.args-cons
         archive-path
         (process.args-cons obj-path (process.args-empty))))))
@@ -1500,7 +1500,7 @@
   (match target
     [(Linux)
       (source-tool-run-command
-        "archiver"
+        "archiver (deterministic Linux archives require rcsD support; use GNU ar or llvm-ar)"
         target
         (source-tool-archiver-command obj-path archive-path))]
     [(Windows)

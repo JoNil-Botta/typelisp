@@ -3993,7 +3993,11 @@ Example:
   `bin` packages produce `<package-name>` on Linux and `<package-name>.exe` on
   Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
   `<package-name>.lib` on Windows. Assembly and object side artifacts use the
-  same profile directory. Windows static archives use a stable member order
+  same profile directory. Linux static archives invoke `ar rcsD`; the selected
+  archiver must support deterministic metadata through `D`. A rejected `D`
+  fails the build without retrying in nondeterministic mode. The complete
+  archiver command remains part of runtime artifact freshness.
+  Windows static archives use a stable member order
   and reproducible header metadata: TypeLisp invokes discovered MSVC `lib.exe`
   with `/Brepro`, or falls back to `llvm-ar --format=coff rcsD`.
   `TYPELISP_WINDOWS_LIB` may name either tool family by the executable basename

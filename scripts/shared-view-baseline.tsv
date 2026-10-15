@@ -1,7 +1,7 @@
 # Call uses of `*-shared-view*` identifiers in src/ and stdlib/ (definitions
 # excluded) that scripts/check-shared-view-count.sh allows. A change that
 # removes views lowers max_uses to the new count; never raise it.
-# One exception: a one-time raise of max_uses from 20188 to 20873 for the
+# One exception: a one-time raise of max_uses from 20187 to 20872 for the
 # sequence-accessor migration (#8920 only), authorized by the maintainer on
 # 2026-10-15: "ok to raise now, the final goal is 0". Before it, each
 # compiler-ir-*-seq-ref call made an unchecked copy inside one of nine accessor
@@ -9,4 +9,4 @@
 # slot and 685 (598 in the compiler, 87 in its tests) copy through a
 # -seq-shared-view twin named at the call site. The twins are transitional:
 # converting a site to a borrow removes its view and lowers max_uses here.
-max_uses	20873
+max_uses	20872

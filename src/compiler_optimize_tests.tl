@@ -59672,6 +59672,43 @@
           "abcd"
           (opt-sl-data-test-chain 60)
           ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "second pointer load stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%5 = load %2 : (Ptr u8)\n%3 = gep %5, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "length slot is not a data pointer"
+          "abcdefgh"
+          "%1 = gep %0, 1 : i64\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "non-integer element stride stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : f32\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        ;; %9 keeps the word-load candidate filter from skipping the proof.
+        (OptSlDataCase
+          "narrow data-pointer load stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%9 = load %1 : (Ptr u8)\n%2 = load %1 : u32\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "narrow pointer move stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = mov %2 : u32\n%3 = gep %7, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "phi pointer stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = phi [%2, sl_data] : (Ptr u8)\n%3 = gep %7, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
           "%4 = load %3 : u32"))]
     (for [index (iterator.range 0 (array-length cases))]
       (opt-sl-data-test-case! (& (array-ref cases index))))
@@ -59686,6 +59723,16 @@
       ""
       "%4 = mov 1684234849 : u32"
       "direct literal descriptor")
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "direct_word")
+          (opt-test-instrs-with-tail
+            (irt.instrs "%4 = load %1 : i64\nreturn")
+            (ir.CompilerIrInstr.Gep 1 (String "abcdefgh") (I64 0) (U8)))))
+      ""
+      "%4 = load %1 : i64"
+      "descriptor word is not literal data")
     (opt-sl-data-test-blocks!
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block

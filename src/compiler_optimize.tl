@@ -116063,7 +116063,8 @@
     [_ true]))
 
 ;; The shared definition index records instruction positions starting at one;
-;; parameters and phis have position zero and cannot prove a literal address.
+;; phis have position zero and parameters have no entry, so neither can prove a
+;; literal address.
 (define (opt-string-literal-definition
   [facts : (& facts OptConstLoadFacts)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -116291,18 +116292,23 @@
       blocks
       (opt-cl-rewrite-blocks (& facts) (& blocks)))))
 
-;; --- string literal lengths --------------------------------------------------
+;; --- string literal loads ----------------------------------------------------
 ;;
-;; A string literal's descriptor `{data, len}` is emitted read-only, so its
-;; length word holds the literal's byte length at every program point. A
-;; length-slot `Gep` off a literal therefore loads a constant (#8795), whether
-;; its base is the literal itself or a var whose only definition is a `Mov` of
-;; it, the parameter copy an inlined callee receives. Folding that load is what
-;; lets an inlined `string.eq` against a literal prune its 8/4/2/1-byte dispatch
-;; to the literal's width. The literal var and the gep's destination must each
-;; have exactly one definition (parameters count) and must not have their
-;; address taken, so no other value can reach the folded load. Unlike CL-1's
-;; globals, a literal needs no initializer, so init functions fold too.
+;; A string literal's descriptor `{data, len}` and its bytes are emitted
+;; read-only, so at every program point the length word holds the literal's
+;; byte length and the data word names the same bytes (#8795). A length-slot
+;; `Gep` off a literal therefore loads a constant, whether its base is the
+;; literal itself or a var whose only definition is a `Mov` of it, the parameter
+;; copy an inlined callee receives. Folding that load is what lets an inlined
+;; `string.eq` against a literal prune its 8/4/2/1-byte dispatch to the
+;; literal's width. The literal var and the gep's destination must each have
+;; exactly one definition (parameters count) and must not have their address
+;; taken, so no other value can reach the folded load. When the function also
+;; loads a word that may be a literal's data pointer, the facts carry the value
+;; sources, address-taken marks and definition index that
+;; opt-string-literal-load-value needs to fold integer loads of the literal's
+;; bytes under the same rules. Unlike CL-1's globals, a literal needs no
+;; initializer, so init functions fold too.
 (define (opt-string-literal-load-facts
   [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]

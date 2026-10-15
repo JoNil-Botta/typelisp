@@ -199,8 +199,12 @@ little-endian literal word.
 literal descriptor/data loads, copied pointers, word-preserving casts and
 cross-block definitions. It keeps unknown runtime descriptors, aliases with
 real pointer writes, nonunique definitions, unsupported casts/types, negative
-or overflowing offsets and overreads as loads. Its deep-chain boundary and
-cyclic definitions check that proof walks terminate conservatively. String
+or overflowing offsets and overreads as loads. Descriptor words, non-zero
+descriptor slots, second pointer loads, narrow pointer loads and moves, phi
+pointers and non-integer element strides also stay loads; removing the
+data-mode, descriptor-slot, stride, pointer-load or word-type guard fails one
+of these controls. Its deep-chain boundary and cyclic definitions check that
+proof walks terminate conservatively. String
 operands alone use constructed IR because their text spelling is not lossless;
 the instructions and expected replacements use parsed IR text. Keep these
 checks with the existing literal-length and native equality coverage.

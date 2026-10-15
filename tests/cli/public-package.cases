@@ -507,3 +507,22 @@ exit nonzero
 stderr contains error[E0222]
 stderr contains while global `g` is borrowed
 stderr contains (via observe -> apply! -> <indirect call/lambda> -> reset!)
+
+# Deterministic external archives, freshness, and a fail-closed D rejection.
+case package-staticlib-linux-deterministic
+hosts linux
+file pkg with spaces/typelisp.pkg
+(package
+  (name "archive_probe")
+  (version "0.1.0")
+  (kind staticlib))
+end-file
+file pkg with spaces/src/lib.tl
+(define (archive-answer) : i64 42)
+end-file
+step deterministic-archives
+exec sh "{{root}}/tests/public-tools/check-linux-archive.sh" "{{compiler}}" "{{dir}}"
+stderr empty
+stdout contains ar/scalar reproducible and fresh
+stdout contains ar/avx2 reproducible and fresh
+stdout contains Linux deterministic archive checks passed

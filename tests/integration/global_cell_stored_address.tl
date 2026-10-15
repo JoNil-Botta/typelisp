@@ -4,8 +4,7 @@
 (define g : i64
   10)
 (define saved-ptr : (MutPtr i64)
-  (unsafe
-    (ptr-null : (MutPtr i64))))
+  (ptr-null : (MutPtr i64)))
 
 ;; Recursion keeps the pointer write behind a call at every optimization level.
 (define (set-via [p : (&mut p i64)] [v : i64] [depth : i64]) : i64

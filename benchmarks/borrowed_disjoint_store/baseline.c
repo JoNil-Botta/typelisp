@@ -35,7 +35,8 @@ __attribute__((noinline)) static uint64_t borrowed_disjoint_store_loop(
 
 int main(int argc, char **argv) {
     (void)argv;
-    BorrowedPair left = {17, 0};
+    /* The read field is a runtime input, as in bench.tl: 17 for a bare run. */
+    BorrowedPair left = {16ULL + (uint64_t)argc, 0};
     BorrowedPair right = {23, 0};
     uint64_t iterations = 100000000ULL + (uint64_t)argc;
     uint64_t first_iterations = iterations / 2;

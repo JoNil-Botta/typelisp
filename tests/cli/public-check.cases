@@ -653,3 +653,59 @@ run check "{{dir}}/unsafe-value.tl" --target {{target}}
 exit 1
 stdout empty
 stderr contains is an unsafe callable and cannot be used as a plain function value
+
+
+case run-bytebuf-valid-extents
+do none
+target -
+opt 0 1 2
+each shared-empty shared-zero shared-equal mutable-empty mutable-zero mutable-equal append-equal
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 42
+stdout empty
+stderr empty
+
+
+case run-bytebuf-invalid-extents
+do none
+target -
+opt 0 1 2
+each shared-negative shared-over shared-maximum shared-empty-over mutable-negative mutable-over mutable-maximum mutable-empty-over append-negative append-negative-zero append-maximum
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 134
+stdout empty
+stderr contains tl: array index out of bounds
+
+
+case run-vector-valid-extent
+do none
+target -
+opt 0 1 2
+each valid
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/vector_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 42
+stdout empty
+stderr empty
+
+
+case run-vector-invalid-extents
+do none
+target -
+opt 0 1 2
+each negative maximum slots live
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/vector_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 134
+stdout empty
+stderr contains tl: array index out of bounds

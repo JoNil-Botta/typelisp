@@ -289,29 +289,8 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/idna_unicode12_api.tl|42|printf:lookup allocated bytes=0\n|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/string_raw_copy_api.tl|42|-|-|-
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-empty
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-zero
 stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-equal
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:mutable-empty
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:mutable-zero
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:mutable-equal
-stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:append-equal
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:shared-negative
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:shared-over
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:shared-maximum
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:shared-empty-over
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:mutable-negative
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:mutable-over
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:mutable-maximum
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:mutable-empty-over
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:append-negative
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:append-negative-zero
-stdlib/tests/byte_buf_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:append-maximum
 stdlib/tests/vector_live_extent.tl|42|-|-|literal:valid
-stdlib/tests/vector_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:negative
-stdlib/tests/vector_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:maximum
-stdlib/tests/vector_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:slots
-stdlib/tests/vector_live_extent.tl|134|-|printf:tl: array index out of bounds\n|literal:live
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-

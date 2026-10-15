@@ -209,6 +209,8 @@ crypto_secret.tl
 crypto_sha1_git.tl
 crypto_sha256.tl
 crypto_sha512.tl
+generated/idna_unicode12_data.tl
+idna_unicode12.tl
 dense_list.tl
 io_core.tl
 io.tl
@@ -284,6 +286,7 @@ stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
+stdlib/tests/idna_unicode12_api.tl|42|printf:lookup allocated bytes=0\n|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-

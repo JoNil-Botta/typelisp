@@ -544,7 +544,7 @@
 
 ;: Return the first borrowed argv validation error, or `ProcessNoString`.
 (define (args-validation-error-from
-  [args : (ProcessBorrowedStringList text)]
+  [args : (& args (ProcessBorrowedStringList text))]
   [count : i64]) : process.ProcessMaybeString
   (match args
     [(ProcessBorrowedStringNil _) (process.no-stdin)]
@@ -556,16 +556,16 @@
           (process.stdin-string "process: argument exceeds storage limit")]
         [(process.string-contains-char? value '\0')
           (process.stdin-string "process: argument contains NUL")]
-        [else (args-validation-error-from (deref rest) (+ count 1))])]))
+        [else (args-validation-error-from rest (+ count 1))])]))
 
 ;: Return the first borrowed argv validation error, including the storage cap.
 (define (args-validation-error
   [args : (& args (ProcessBorrowedStringList text))]) : process.ProcessMaybeString
-  (args-validation-error-from (borrowed-string-list-shared-view args) 0))
+  (args-validation-error-from args 0))
 
 ;: Return the first borrowed env validation error, or `ProcessNoString`.
 (define (env-validation-error-from
-  [env : (ProcessBorrowedEnvList text)]
+  [env : (& env (ProcessBorrowedEnvList text))]
   [count : i64]) : process.ProcessMaybeString
   (match env
     [(ProcessBorrowedEnvNil _) (process.no-stdin)]
@@ -590,11 +590,11 @@
         [(process.string-contains-char? value '\0')
           (process.stdin-string
             "process: environment variable value contains NUL")]
-        [else (env-validation-error-from (deref rest) (+ count 1))])]))
+        [else (env-validation-error-from rest (+ count 1))])]))
 
 ;: Return the first borrowed environment validation error, or `ProcessNoString`.
 (define (env-validation-error [env : (& env (ProcessBorrowedEnvList text))]) : process.ProcessMaybeString
-  (env-validation-error-from (borrowed-env-list-shared-view env) 0))
+  (env-validation-error-from env 0))
 
 ;: Return the first borrowed command validation error, or `ProcessNoString`.
 (define (command-validation-error

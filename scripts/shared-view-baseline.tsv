@@ -1,11 +1,12 @@
 # Call uses of `*-shared-view*` identifiers in src/ and stdlib/ (definitions
 # excluded) that scripts/check-shared-view-count.sh allows. A change that
 # removes views lowers max_uses to the new count; never raise it.
-# One-time raise to 21076 (the sequence-accessor migration; main counted 20390):
-# the 1,857 compiler-ir-*-seq-ref call sites each made an unchecked copy hidden
-# inside nine accessor bodies, so the count saw nine. 1,175 now borrow with a
-# bounds check; the 682 copies that remain (595 in the compiler, 87 in its
-# tests) name their -seq-shared-view at the call site and are counted. Weighted
-# the same way on both sides, unchecked copies fall 4,249 -> 2,159 by
-# caller-weighted call site, and 65.8M -> 36.3M executed in a self-compile.
+# One exception: a one-time raise of max_uses from 20390 to 21076 for the
+# sequence-accessor migration (#8920 only), authorized by the maintainer on
+# 2026-10-15: "ok to raise now, the final goal is 0". Before it, each
+# compiler-ir-*-seq-ref call made an unchecked copy inside one of nine accessor
+# bodies, so this count saw nine. Of the 1,859 call sites, 1,173 now borrow the
+# slot and 686 (599 in the compiler, 87 in its tests) copy through a
+# -seq-shared-view twin named at the call site. The twins are transitional:
+# converting a site to a borrow removes its view and lowers max_uses here.
 max_uses	21076

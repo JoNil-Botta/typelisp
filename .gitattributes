@@ -18,4 +18,4 @@ tests/apps/** text eol=lf
 scripts/ci-gates.tsv text eol=lf
 
 # Unicode profile inputs are exact upstream byte oracles (including CSV CRLF).
-tools/idna-unicode12-data/inputs/* -text
+tools/idna-unicode12-data/inputs/* binary

@@ -1366,7 +1366,7 @@
     [delta : i64 (- end-line start-line)]
     [compact? : bool
       (and
-        (= (shr (bit-or (cast first-node : i64) (cast second-node : i64)) 28) 0)
+        (= (shr (bit-or first-node second-node) 28) 0)
         (< (cast delta : u64) (cast 255 : u64))
         (= (shr (bit-or start-col end-col) 16) 0))]
     [old-tag : i64
@@ -1374,7 +1374,14 @@
         (unsafe
           (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 7)))
         : i64)]
-    (if (and compact? (not (= old-tag ast-expr-span-packed-escape-tag)))
+    (if (or (not compact?) (= old-tag ast-expr-span-packed-escape-tag))
+      (ast-expr-span-record-overflow-write!
+        table
+        index
+        first-node
+        second-node
+        span-data
+        compact?)
       (unsafe
         (ptr-write!
           (int->ptr address : (MutPtr i64))
@@ -1383,14 +1390,7 @@
             (bit-or (shl (cast second-node : i64) 28) (shl delta 56))))
         (ptr-write!
           (ptr-offset (int->ptr address : (MutPtr i64)) 1)
-          (bit-or (shl start-line 32) (bit-or (shl start-col 16) end-col))))
-      (ast-expr-span-record-overflow-write!
-        table
-        index
-        first-node
-        second-node
-        span-data
-        compact?))))
+          (bit-or (shl start-line 32) (bit-or (shl start-col 16) end-col)))))))
 
 ;; Ordinary compact writes never call an allocator or retain values over a
 ;; call. Only wide records and transitions out of wide storage reach here.

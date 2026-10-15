@@ -2065,7 +2065,7 @@
     lower-state))
 
 ;; The lowered IR functions live in a dedicated arena
-;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
+;; owned by the lower job; at opt levels >= 1 the optimizer deep-clones every
 ;; surviving function out of it, so the arena is dead weight once optimization
 ;; returns. At level 0 the lowered program flows to the backend unchanged and
 ;; the arena must stay alive.
@@ -3951,11 +3951,13 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
-                (Err
-                  (box
-                    (compiler-driver-ty-node-pool-exhausted-diagnostic
-                      input-path))
-                  (compiler-driver-serial-advisories))
+                (begin
+                  (compiler-driver-release-lower-arenas-after-emit! lower-state)
+                  (Err
+                    (box
+                      (compiler-driver-ty-node-pool-exhausted-diagnostic
+                        input-path))
+                    (compiler-driver-serial-advisories)))
                 (compiler-driver-lowered-from-active-pools-and-profile-state
                   program
                   spans
@@ -4024,11 +4026,13 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase profile-state "lower"))
               (if (compiler_ast_types.ast-node-pool-reader-type-exhausted?)
-                (Err
-                  (box
-                    (compiler-driver-ty-node-pool-exhausted-diagnostic
-                      input-path))
-                  (compiler-driver-serial-advisories))
+                (begin
+                  (compiler-driver-release-lower-arenas-after-emit! lower-state)
+                  (Err
+                    (box
+                      (compiler-driver-ty-node-pool-exhausted-diagnostic
+                        input-path))
+                    (compiler-driver-serial-advisories)))
                 (compiler-driver-lowered-from-active-pools-and-profile-state
                   program
                   spans
@@ -4701,35 +4705,6 @@
         opt-level
         true
         crt-entry))))
-
-(define (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
-  [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [emit-entry : bool]) : ResultCompilerDriverBuffer
-  (let
-    [profile-state : profile_state.CompilerProfileState
-      (profile_state.compiler-profile-state-new)]
-    (begin
-      (cfg compile-profile (compiler-driver-profile-start-total profile-state))
-      (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
-        (owned_view.compiler-owned-shared-view input-path)
-        (compiler-driver-load-and-lower-escaping-and-profile-state
-          input-path
-          target
-          stdlib-roots
-          mode
-          (compiler-driver-target-cfgs target cfgs)
-          profile-state)
-        target
-        has-target
-        mode
-        opt-level
-        emit-entry))))
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]

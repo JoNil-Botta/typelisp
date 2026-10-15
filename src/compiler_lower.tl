@@ -1487,6 +1487,17 @@
   (Ok ir.CompilerIrProgram ir.CompilerSourceSpans CompilerLowerState)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; Fresh standalone owners cannot escape an error result. Diagnostics have
+;; already escaped function scratch into the enclosing caller arena.
+(define (lower-standalone-result
+  [owner : CompilerLowerState]
+  [result : ResultCompilerLower]) : ResultCompilerLower
+  (match (& result)
+    [(Err _)
+      (compiler-lower-arena-state-release! (compiler-lower-state-arenas owner))]
+    [_ unit])
+  result)
+
 (defstruct CompilerLowerRequest
   (mode CompilerLowerMode)
   (pointer-proof pointer_proof.PointerProofRequest))
@@ -67586,13 +67597,6 @@
   [state : (& state CompilerLowerArenaState)]) : i64
   (array-ref state.ir-arena 0))
 
-(define (compiler-lower-arena-state-set!
-  [state : (& state CompilerLowerArenaState)]
-  [scratch : i64]
-  [ir : i64]) : unit
-  (set! (array-ref state.scratch-arena 0) scratch)
-  (set! (array-ref state.ir-arena 0) ir))
-
 ;; Lazy creation immediately publishes the stable arena root in this job's
 ;; cell. Growth does not require capture; releasing another job cannot select
 ;; or mutate this owner.
@@ -71206,11 +71210,11 @@
   [path : String]
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (lower-compiler-program-with-path-mode-and-state
-    (compiler-lower-state-new)
-    path
-    program
-    mode))
+  (let
+    [owner : CompilerLowerState (compiler-lower-state-new)]
+    (lower-standalone-result
+      owner
+      (lower-compiler-program-with-path-mode-and-state owner path program mode))))
 
 ;; Check source declarations once, collect clone-helper roots as a side effect
 ;; of that real semantic walk, then append the generated helpers and extend the
@@ -71896,15 +71900,19 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerLower
-  (lower-compiler-program-with-decl-paths-mode-cache-and-state
-    (compiler-lower-state-new)
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cfgs
-    cache-scope))
+  (let
+    [owner : CompilerLowerState (compiler-lower-state-new)]
+    (lower-standalone-result
+      owner
+      (lower-compiler-program-with-decl-paths-mode-cache-and-state
+        owner
+        entry-path
+        program
+        paths
+        mode
+        stdlib-roots
+        cfgs
+        cache-scope))))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
   [lower-state : CompilerLowerState]
@@ -72209,22 +72217,26 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
-  (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
-    (compiler-lower-state-new)
-    load-state
-    prefix-cache
-    job-state
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cfgs
-    cache-scope
-    pools
-    source-names
-    (ci.intern-compat-state-capture-active)
-    (cbi.state-capture)))
+  (let
+    [owner : CompilerLowerState (compiler-lower-state-new)]
+    (lower-standalone-result
+      owner
+      (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+        owner
+        load-state
+        prefix-cache
+        job-state
+        entry-path
+        program
+        paths
+        mode
+        stdlib-roots
+        cfgs
+        cache-scope
+        pools
+        source-names
+        (ci.intern-compat-state-capture-active)
+        (cbi.state-capture)))))
 
 ;; Serial/test compatibility adapter. Driver-owned compilation uses the
 ;; explicit load-state entry above.
@@ -72510,11 +72522,11 @@
   [path : String]
   [src : String]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (lower-compiler-source-with-path-mode-and-state
-    (compiler-lower-state-new)
-    path
-    src
-    mode))
+  (let
+    [owner : CompilerLowerState (compiler-lower-state-new)]
+    (lower-standalone-result
+      owner
+      (lower-compiler-source-with-path-mode-and-state owner path src mode))))
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode path src (CompilerLowerMode.Scalar)))
@@ -72558,4 +72570,4 @@
                 "pointer proof: requested source lowering did not complete")]
             [_ unit])]
         [_ unit])
-      result)))
+      (lower-standalone-result state result))))

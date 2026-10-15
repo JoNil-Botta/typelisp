@@ -57,33 +57,48 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-foreach-multi-output-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (and
-            (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 2)
-            (=
-              (lower_tests.lower-test-count functions "fill" (VectorBinop))
-              (if predicated?
-                6
-                3))
-            (= (lower_tests.lower-test-count functions "fill" (VectorStore)) 2)
-            (=
-              (lower_tests.lower-test-count functions "fill" (PredicatedLoad))
-              (if predicated?
-                2
-                0))
-            (=
-              (lower_tests.lower-test-count functions "fill" (PredicatedStore))
-              (if predicated?
-                2
-                0))
-            (=
-              (lower_tests.lower-test-count functions "fill" (TailMask))
-              (if predicated?
-                1
-                0))
-            (> (lower_tests.lower-test-count functions "fill" (StorePtr)) 0))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _)
+              (and
+                (=
+                  (lower_tests.lower-test-count functions "fill" (VectorLoad))
+                  2)
+                (=
+                  (lower_tests.lower-test-count functions "fill" (VectorBinop))
+                  (if predicated?
+                    6
+                    3))
+                (=
+                  (lower_tests.lower-test-count functions "fill" (VectorStore))
+                  2)
+                (=
+                  (lower_tests.lower-test-count
+                    functions
+                    "fill"
+                    (PredicatedLoad))
+                  (if predicated?
+                    2
+                    0))
+                (=
+                  (lower_tests.lower-test-count
+                    functions
+                    "fill"
+                    (PredicatedStore))
+                  (if predicated?
+                    2
+                    0))
+                (=
+                  (lower_tests.lower-test-count functions "fill" (TailMask))
+                  (if predicated?
+                    1
+                    0))
+                (> (lower_tests.lower-test-count functions "fill" (StorePtr)) 0))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-foreach-multi-output-shape-ok?) : bool
@@ -120,21 +135,36 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-masked-full-gang-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (and
-            (= (lower_tests.lower-test-count functions "fill" (TailMask)) 1)
-            (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 1)
-            (= (lower_tests.lower-test-count functions "fill" (VectorStore)) 1)
-            (=
-              (lower_tests.lower-test-count functions "fill" (PredicatedLoad))
-              1)
-            ;; One parent tail store plus two divergent stores in each of the
-            ;; full and tail bodies. Child masks must remain predicated.
-            (=
-              (lower_tests.lower-test-count functions "fill" (PredicatedStore))
-              5))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _)
+              (and
+                (= (lower_tests.lower-test-count functions "fill" (TailMask)) 1)
+                (=
+                  (lower_tests.lower-test-count functions "fill" (VectorLoad))
+                  1)
+                (=
+                  (lower_tests.lower-test-count functions "fill" (VectorStore))
+                  1)
+                (=
+                  (lower_tests.lower-test-count
+                    functions
+                    "fill"
+                    (PredicatedLoad))
+                  1)
+                ;; One parent tail store plus two divergent stores in each of the
+                ;; full and tail bodies. Child masks must remain predicated.
+                (=
+                  (lower_tests.lower-test-count
+                    functions
+                    "fill"
+                    (PredicatedStore))
+                  5))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-masked-full-gang-ok?) : bool
@@ -162,40 +192,45 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-spmd-reduce-split-source)
     (Scalar))
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (and
-            (=
-              (lower_tests.lower-test-function-binop-op-count
-                functions
-                "reduce_split_pos"
-                Mul)
-              1)
-            (=
-              (lower_tests.lower-test-function-binop-op-count
-                functions
-                "reduce_split_pos_swapped"
-                Mul)
-              1)
-            (=
-              (lower_tests.lower-test-function-binop-op-count
-                functions
-                "reduce_split_neg_i32"
-                Mul)
-              0)
-            (=
-              (lower_tests.lower-test-function-binop-op-count
-                functions
-                "reduce_split_neg_index"
-                Mul)
-              0)
-            (=
-              (lower_tests.lower-test-function-binop-op-count
-                functions
-                "reduce_split_neg_rebind"
-                Mul)
-              0))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _)
+              (and
+                (=
+                  (lower_tests.lower-test-function-binop-op-count
+                    functions
+                    "reduce_split_pos"
+                    Mul)
+                  1)
+                (=
+                  (lower_tests.lower-test-function-binop-op-count
+                    functions
+                    "reduce_split_pos_swapped"
+                    Mul)
+                  1)
+                (=
+                  (lower_tests.lower-test-function-binop-op-count
+                    functions
+                    "reduce_split_neg_i32"
+                    Mul)
+                  0)
+                (=
+                  (lower_tests.lower-test-function-binop-op-count
+                    functions
+                    "reduce_split_neg_index"
+                    Mul)
+                  0)
+                (=
+                  (lower_tests.lower-test-function-binop-op-count
+                    functions
+                    "reduce_split_neg_rebind"
+                    Mul)
+                  0))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
@@ -209,7 +244,12 @@
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-imported-local-vector-source))
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
@@ -246,7 +286,12 @@
           entry
           (ast.ast-program decls)
           paths)
-          [(Ok _ _) true]
+          [(Ok _ _ lower-owner)
+            (let
+              [ok : bool true]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              ok)]
           [(Err diag)
             (io.panic
               (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
@@ -268,7 +313,12 @@
       roots
       (Scalar)
       (driver.compiler-driver-target-cfgs (Linux) (parser.compiler-cfg-empty)))
-      [(Ok _ _ _ _ _ _) true]
+      [(Ok _ _ _ _ _ _ lower-owner)
+        (let
+          [result : bool true]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          result)]
       [(Err _ _) false])))
 
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
@@ -307,7 +357,12 @@
           (driver.compiler-driver-target-cfgs
             (Linux)
             (parser.compiler-cfg-empty)))
-          [(Ok _ _ _ _ _ _) false]
+          [(Ok _ _ _ _ _ _ lower-owner)
+            (let
+              [result : bool false]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              result)]
           [(Err diag-box _)
             (let
               [diag : diagnostic.CompilerDiagnostic
@@ -360,7 +415,12 @@
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
@@ -390,6 +450,8 @@
 ;; every source function, since no `main` roots reachability.
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
+    [state : driver.CompilerDriverState
+      (driver.compiler-driver-state-new-for-compile)]
     [path : String "target/lower_direct_no_main_symbols.tl"]
     [roots : svec.Vec
       (let
@@ -400,24 +462,29 @@
       (string.copy path)
       "(define (no-main-direct-helper) : i64 7)")
     (driver.compiler-driver-reset-file-state!)
-    (match (driver.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
-      path
-      (Linux)
-      true
-      roots
-      0
-      (Scalar)
-      (parser.compiler-cfg-empty)
-      false)
-      [(Ok buf _)
-        (let
-          [asm : String (text_buf.render buf)]
-          [needle : String
-            "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
-          (string.contains (& asm) (& needle)))]
-      [(Err diag _)
-        (io.panic
-          (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])))
+    (let
+      [ok : bool
+        (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+          (owned_view.compiler-owned-shared-view state)
+          path
+          (Linux)
+          true
+          roots
+          0
+          (Scalar)
+          (parser.compiler-cfg-empty)
+          false)
+          [(Ok buf _)
+            (let
+              [asm : String (text_buf.render buf)]
+              [needle : String
+                "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
+              (string.contains (& asm) (& needle)))]
+          [(Err diag _)
+            (io.panic
+              (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
+      (driver.compiler-driver-state-release-file-state! state)
+      ok)))
 
 ;; P4/C4.3 per-instantiation typecheck-completeness regression.
 ;;
@@ -473,19 +540,34 @@
 (define (compiler-lower-smoke-c43-vector-push-only-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-only-source))
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-c43-vector-push-map-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-map-source))
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-smoke-c43-unreachable-error-rejected?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-unreachable-error-source))
-    [(Ok _ _) false]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) true]))
 
 (define (compiler-lower-smoke-c43-typecheck-completeness-ok?) : bool
@@ -531,40 +613,46 @@
         "stdlib/arena.tl"
         program
         (ast.ast-decl-path-list-new))
-        [(Ok lowered _)
-          (match lowered
-            [(Program _ functions _)
-              (unless
-                (lower_tests.lower-test-function-defined? functions "main")
-                (io.panic "lower: module entry main function missing"))
-              (unless
-                (lower_tests.lower-test-function-defined?
-                  functions
-                  "arena.tl::stdlib.arena/helper")
-                (io.panic "lower: module entry helper function missing"))
-              (let
-                [path-count : i64
-                  (lower_tests.lower-test-function-direct-call-count
-                    functions
-                    "main"
-                    "arena.tl::stdlib.arena/helper")]
-                [module-count : i64
-                  (lower_tests.lower-test-function-direct-call-count
-                    functions
-                    "main"
-                    "stdlib.arena/helper")]
-                [bare-count : i64
-                  (lower_tests.lower-test-function-direct-call-count
-                    functions
-                    "main"
-                    "helper")]
-                (unless
-                  (= path-count 1)
-                  (if (= module-count 1)
-                    (io.panic "lower: module entry main uses module helper")
-                    (if (= bare-count 1)
-                      (io.panic "lower: module entry main uses bare helper")
-                      (io.panic "lower: module entry main helper call missing")))))])]
+        [(Ok lowered _ lower-owner)
+          (let
+            [result : unit
+              (match lowered
+                [(Program _ functions _)
+                  (unless
+                    (lower_tests.lower-test-function-defined? functions "main")
+                    (io.panic "lower: module entry main function missing"))
+                  (unless
+                    (lower_tests.lower-test-function-defined?
+                      functions
+                      "arena.tl::stdlib.arena/helper")
+                    (io.panic "lower: module entry helper function missing"))
+                  (let
+                    [path-count : i64
+                      (lower_tests.lower-test-function-direct-call-count
+                        functions
+                        "main"
+                        "arena.tl::stdlib.arena/helper")]
+                    [module-count : i64
+                      (lower_tests.lower-test-function-direct-call-count
+                        functions
+                        "main"
+                        "stdlib.arena/helper")]
+                    [bare-count : i64
+                      (lower_tests.lower-test-function-direct-call-count
+                        functions
+                        "main"
+                        "helper")]
+                    (unless
+                      (= path-count 1)
+                      (if (= module-count 1)
+                        (io.panic "lower: module entry main uses module helper")
+                        (if (= bare-count 1)
+                          (io.panic "lower: module entry main uses bare helper")
+                          (io.panic
+                            "lower: module entry main helper call missing")))))])]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            result)]
         [(Err diag)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
@@ -628,15 +716,20 @@
         "stdlib/string.tl"
         program
         (compiler-lower-smoke-stdlib-string-public-substring-paths))
-        [(Ok lowered _)
-          (match lowered
-            [(Program _ functions _)
-              (and
-                (not
-                  (compiler-lower-smoke-stdlib-runtime-substring-defined?
-                    (ir.compiler-ir-global-shared-view functions)))
-                (compiler-lower-smoke-stdlib-string-public-substring-defined?
-                  functions))])]
+        [(Ok lowered _ lower-owner)
+          (let
+            [ok : bool
+              (match lowered
+                [(Program _ functions _)
+                  (and
+                    (not
+                      (compiler-lower-smoke-stdlib-runtime-substring-defined?
+                        (ir.compiler-ir-global-shared-view functions)))
+                    (compiler-lower-smoke-stdlib-string-public-substring-defined?
+                      functions))])]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            ok)]
         [(Err _) false])]
     [(Err _) false]))
 

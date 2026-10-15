@@ -105,6 +105,7 @@ benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-te
 stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint	stage2	256	-	gate_benchmark_correctness
 stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-fixpoint	stage2	512	-	scripts/run-optimization-benchmarks.sh --correctness
 stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corpus opt2 runtime correctness	bootstrap-fixpoint	stage2	512	-	gate_optimization_opt2_correctness
+stage2-idna-unicode12-data	all	stage2 pinned IDNA Unicode 12 data	bootstrap-fixpoint	stage2	768	-	scripts/verify-idna-unicode12-data.sh
 stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint	stage2	512	embedded-payload	scripts/verify-stdlib.sh
 stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint	stage2	3584	-	scripts/verify-stdlib-selfhost.sh
 stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	stage2	512	-	scripts/verify-spmd-simd.sh

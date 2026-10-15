@@ -133,6 +133,12 @@
   payload-string-caller-result
   "../stdlib/string_caller_result.tl")
 
+(include-str-lzss payload-idna-unicode12 "../stdlib/idna_unicode12.tl")
+
+(include-str-lzss
+  payload-idna-unicode12-data
+  "../stdlib/generated/idna_unicode12_data.tl")
+
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
   (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
@@ -148,6 +154,10 @@
 
 (define (compiler-embedded-stdlib-payload-lookup [suffix : String]) : CompilerEmbeddedStdlibPayload
   (cond
+    [(string.eq suffix "idna_unicode12.tl")
+      (compiler-embedded-stdlib-payload-copy payload-idna-unicode12)]
+    [(string.eq suffix "generated/idna_unicode12_data.tl")
+      (compiler-embedded-stdlib-payload-copy payload-idna-unicode12-data)]
     [(string.eq suffix "arena.tl")
       (compiler-embedded-stdlib-payload-copy payload-arena)]
     [(string.eq suffix "atomic.tl")

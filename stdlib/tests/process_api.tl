@@ -7,188 +7,173 @@
 (import (vector.vector String) as svec)
 
 (define (assert-owned-string-eq
-  [actual : String]
-  [expected : String]
+  [actual : (& actual str)]
+  [expected : (& expected str)]
   [message : (& message str)]) : unit
-  (test.assert-string-eq (& actual) (& expected) (string.copy message)))
+  (test.assert-string-eq actual expected (string.copy message)))
 
+;; `items` holds exactly the listed entries, read through `args-ref`.
 (define (assert-process-string-list
-  [items : process.ProcessStringList]
-  [first : String]
-  [second : String]
+  [items : (& items process.ProcessStringList)]
+  [first : (& first str)]
+  [second : (& second str)]
   [message : (& message str)]) : unit
-  (let
-    [a : process.ProcessStringStep (process.string-step items)]
-    (if (not (process.string-step-present? a))
-      (io.panic message)
-      (let
-        [b : process.ProcessStringStep
-          (process.string-step (process.string-step-rest a))]
-        (if (not (process.string-step-present? b))
-          (io.panic message)
-          (let
-            [tail : process.ProcessStringStep
-              (process.string-step (process.string-step-rest b))]
-            (if (process.string-step-present? tail)
-              (io.panic message)
-              (begin
-                (assert-owned-string-eq
-                  (process.string-step-value a)
-                  first
-                  message)
-                (assert-owned-string-eq
-                  (process.string-step-value b)
-                  second
-                  message)))))))))
+  (test.assert-i64-eq (process.args-count items) 2 (string.copy message))
+  (assert-owned-string-eq (& (process.args-ref items 0)) first message)
+  (assert-owned-string-eq (& (process.args-ref items 1)) second message))
 
 (define (assert-process-string-empty
-  [items : process.ProcessStringList]
+  [items : (& items process.ProcessStringList)]
   [message : (& message str)]) : unit
-  (let
-    [step : process.ProcessStringStep (process.string-step items)]
-    (if (process.string-step-present? step)
-      (io.panic message)
-      unit)))
+  (test.assert-i64-eq (process.args-count items) 0 (string.copy message)))
 
 (define (assert-process-string-list1
-  [items : process.ProcessStringList]
-  [first : String]
+  [items : (& items process.ProcessStringList)]
+  [first : (& first str)]
   [message : (& message str)]) : unit
-  (let
-    [a : process.ProcessStringStep (process.string-step items)]
-    (if (not (process.string-step-present? a))
-      (io.panic message)
-      (let
-        [tail : process.ProcessStringStep
-          (process.string-step (process.string-step-rest a))]
-        (if (process.string-step-present? tail)
-          (io.panic message)
-          (assert-owned-string-eq (process.string-step-value a) first message))))))
+  (test.assert-i64-eq (process.args-count items) 1 (string.copy message))
+  (assert-owned-string-eq (& (process.args-ref items 0)) first message))
 
 (define (assert-process-string-list3
+  [items : (& items process.ProcessStringList)]
+  [first : (& first str)]
+  [second : (& second str)]
+  [third : (& third str)]
+  [message : (& message str)]) : unit
+  (test.assert-i64-eq (process.args-count items) 3 (string.copy message))
+  (assert-owned-string-eq (& (process.args-ref items 0)) first message)
+  (assert-owned-string-eq (& (process.args-ref items 1)) second message)
+  (assert-owned-string-eq (& (process.args-ref items 2)) third message))
+
+;; Steps through an owned three-entry list with `string-step`, reading each
+;; value before the step is consumed for its tail.
+(define (assert-process-string-steps3
   [items : process.ProcessStringList]
-  [first : String]
-  [second : String]
-  [third : String]
+  [first : (& first str)]
+  [second : (& second str)]
+  [third : (& third str)]
   [message : (& message str)]) : unit
   (let
     [a : process.ProcessStringStep (process.string-step items)]
-    (if (not (process.string-step-present? a))
-      (io.panic message)
+    (test.assert-true (process.string-step-present? a) (string.copy message))
+    (assert-owned-string-eq (process.string-step-value a) first message)
+    (let
+      [b : process.ProcessStringStep
+        (process.string-step (process.string-step-rest a))]
+      (test.assert-true (process.string-step-present? b) (string.copy message))
+      (assert-owned-string-eq (process.string-step-value b) second message)
       (let
-        [b : process.ProcessStringStep
-          (process.string-step (process.string-step-rest a))]
-        (if (not (process.string-step-present? b))
-          (io.panic message)
-          (let
-            [c : process.ProcessStringStep
-              (process.string-step (process.string-step-rest b))]
-            (if (not (process.string-step-present? c))
-              (io.panic message)
-              (let
-                [tail : process.ProcessStringStep
-                  (process.string-step (process.string-step-rest c))]
-                (if (process.string-step-present? tail)
-                  (io.panic message)
-                  (begin
-                    (assert-owned-string-eq
-                      (process.string-step-value a)
-                      first
-                      message)
-                    (assert-owned-string-eq
-                      (process.string-step-value b)
-                      second
-                      message)
-                    (assert-owned-string-eq
-                      (process.string-step-value c)
-                      third
-                      message)))))))))))
+        [c : process.ProcessStringStep
+          (process.string-step (process.string-step-rest b))]
+        (test.assert-true
+          (process.string-step-present? c)
+          (string.copy message))
+        (assert-owned-string-eq (process.string-step-value c) third message)
+        (test.assert-false
+          (process.string-step-present?
+            (& (process.string-step (process.string-step-rest c))))
+          (string.copy message))))))
 
 (define (assert-process-some-string
-  [value : process.ProcessMaybeString]
-  [expected : String]
+  [value : (& value process.ProcessMaybeString)]
+  [expected : (& expected str)]
   [message : (& message str)]) : unit
-  (let
-    [info : process.ProcessMaybeStringInfo (process.maybe-string-info value)]
-    (if (process.maybe-string-info-present? info)
-      (assert-owned-string-eq
-        (process.maybe-string-info-value info)
-        expected
-        message)
-      (io.panic message))))
+  (match value
+    [(process.ProcessSomeString text)
+      (assert-owned-string-eq text expected message)]
+    [(process.ProcessNoString) (io.panic message)]))
 
 (define (assert-process-no-string
+  [value : (& value process.ProcessMaybeString)]
+  [message : (& message str)]) : unit
+  (match value
+    [(process.ProcessSomeString _) (io.panic message)]
+    [(process.ProcessNoString) unit]))
+
+;; Reads an owned optional string through `maybe-string-info`.
+(define (assert-process-some-string-info
   [value : process.ProcessMaybeString]
+  [expected : (& expected str)]
   [message : (& message str)]) : unit
   (let
     [info : process.ProcessMaybeStringInfo (process.maybe-string-info value)]
-    (if (process.maybe-string-info-present? info)
-      (io.panic message)
-      unit)))
+    (test.assert-true
+      (process.maybe-string-info-present? info)
+      (string.copy message))
+    (assert-owned-string-eq
+      (process.maybe-string-info-value info)
+      expected
+      message)))
 
 (define (assert-process-env-head
-  [env : process.ProcessEnvList]
-  [expected-name : String]
-  [expected-value : String]
+  [env : (& env process.ProcessEnvList)]
+  [expected-name : (& expected-name str)]
+  [expected-value : (& expected-value str)]
   [message : (& message str)]) : unit
-  (let
-    [step : process.ProcessEnvStep (process.env-step env)]
-    (if (not (process.env-step-present? step))
-      (io.panic message)
-      (begin
-        (assert-owned-string-eq
-          (process.env-step-name step)
-          expected-name
-          message)
-        (assert-owned-string-eq
-          (process.env-step-value step)
-          expected-value
-          message)))))
+  (test.assert-true (> (process.env-count env) 0) (string.copy message))
+  (assert-owned-string-eq
+    (& (process.env-name-ref env 0))
+    expected-name
+    message)
+  (assert-owned-string-eq
+    (& (process.env-value-ref env 0))
+    expected-value
+    message))
 
 (define (assert-process-env-list2
+  [env : (& env process.ProcessEnvList)]
+  [first-name : (& first-name str)]
+  [first-value : (& first-value str)]
+  [second-name : (& second-name str)]
+  [second-value : (& second-value str)]
+  [message : (& message str)]) : unit
+  (test.assert-i64-eq (process.env-count env) 2 (string.copy message))
+  (assert-owned-string-eq (& (process.env-name-ref env 0)) first-name message)
+  (assert-owned-string-eq (& (process.env-value-ref env 0)) first-value message)
+  (assert-owned-string-eq (& (process.env-name-ref env 1)) second-name message)
+  (assert-owned-string-eq
+    (& (process.env-value-ref env 1))
+    second-value
+    message))
+
+;; Steps through an owned two-row env list with `env-step`, reading each row
+;; before the step is consumed for its tail.
+(define (assert-process-env-steps2
   [env : process.ProcessEnvList]
-  [first-name : String]
-  [first-value : String]
-  [second-name : String]
-  [second-value : String]
+  [first-name : (& first-name str)]
+  [first-value : (& first-value str)]
+  [second-name : (& second-name str)]
+  [second-value : (& second-value str)]
   [message : (& message str)]) : unit
   (let
     [first : process.ProcessEnvStep (process.env-step env)]
-    (if (not (process.env-step-present? first))
-      (io.panic message)
-      (let
-        [second : process.ProcessEnvStep
-          (process.env-step (process.env-step-rest first))]
-        (if (not (process.env-step-present? second))
-          (io.panic message)
-          (let
-            [tail : process.ProcessEnvStep
-              (process.env-step (process.env-step-rest second))]
-            (if (process.env-step-present? tail)
-              (io.panic message)
-              (begin
-                (assert-owned-string-eq
-                  (process.env-step-name first)
-                  first-name
-                  message)
-                (assert-owned-string-eq
-                  (process.env-step-value first)
-                  first-value
-                  message)
-                (assert-owned-string-eq
-                  (process.env-step-name second)
-                  second-name
-                  message)
-                (assert-owned-string-eq
-                  (process.env-step-value second)
-                  second-value
-                  message)))))))))
+    (test.assert-true (process.env-step-present? first) (string.copy message))
+    (assert-owned-string-eq (process.env-step-name first) first-name message)
+    (assert-owned-string-eq (process.env-step-value first) first-value message)
+    (let
+      [second : process.ProcessEnvStep
+        (process.env-step (process.env-step-rest first))]
+      (test.assert-true
+        (process.env-step-present? second)
+        (string.copy message))
+      (assert-owned-string-eq
+        (process.env-step-name second)
+        second-name
+        message)
+      (assert-owned-string-eq
+        (process.env-step-value second)
+        second-value
+        message)
+      (test.assert-false
+        (process.env-step-present?
+          (& (process.env-step (process.env-step-rest second))))
+        (string.copy message)))))
 
 (define (assert-process-env-validation
   [value : process.ProcessMaybeString]
-  [expected : String]
+  [expected : (& expected str)]
   [message : (& message str)]) : unit
-  (assert-process-some-string value expected message))
+  (assert-process-some-string-info value expected message))
 
 (define (process-api-string-vec0) : svec.Vec
   (svec.new))
@@ -421,26 +406,28 @@
       "process: exact environment exceeds storage limit"
       "exact env rejects rows past the block cap")
     (assert-process-no-string
-      (process.command-validation-error
-        (&
-          (process-api-exact-command
-            (process.env-cons
-              "A"
-              (process-api-repeat-a process.process-storage-max-string-bytes)
-              (process.env-empty)))))
+      (&
+        (process.command-validation-error
+          (&
+            (process-api-exact-command
+              (process.env-cons
+                "A"
+                (process-api-repeat-a process.process-storage-max-string-bytes)
+                (process.env-empty))))))
       "exact env accepts one row at the field cap")
     ;; The cap is inclusive and each row costs `NAME=VALUE\0`: rows totalling
     ;; exactly the cap are accepted, and one byte more is rejected.
     (assert-process-no-string
-      (process.command-validation-error
-        (&
-          (process-api-exact-command
-            (process-api-env2
-              "A"
-              (process-api-repeat-a process.process-storage-max-string-bytes)
-              "B"
-              (process-api-repeat-a
-                (- process.process-storage-max-string-bytes 6))))))
+      (&
+        (process.command-validation-error
+          (&
+            (process-api-exact-command
+              (process-api-env2
+                "A"
+                (process-api-repeat-a process.process-storage-max-string-bytes)
+                "B"
+                (process-api-repeat-a
+                  (- process.process-storage-max-string-bytes 6)))))))
       "exact env accepts rows totalling exactly the block cap")
     (assert-process-env-validation
       (process.command-validation-error
@@ -496,9 +483,9 @@
       (process.command-executable command)
       "echo"
       "process executable")
-    (assert-process-string-list (clone args) "hello" "world" "process argv")
+    (assert-process-string-list (& (clone args)) "hello" "world" "process argv")
     (assert-process-string-list3
-      (process.command-argv command)
+      (& (process.command-argv command))
       "hello"
       "world"
       "!"
@@ -510,7 +497,7 @@
         3
         "process argv count"))
     (assert-process-string-list3
-      (process.args-append args (process.args-single "again"))
+      (& (process.args-append args (process.args-single "again")))
       "hello"
       "world"
       "again"
@@ -534,39 +521,39 @@
           (process.command "echo" (process.args-single "base"))
           (& tail-argv))]
       (assert-process-string-empty
-        (process.args-from-string-vec (& empty-argv))
+        (& (process.args-from-string-vec (& empty-argv)))
         "process argv vec empty")
       (assert-process-string-list1
-        (process.args-from-string-vec (& solo-argv))
+        (& (process.args-from-string-vec (& solo-argv)))
         "solo"
         "process argv vec single")
       (assert-process-string-list3
-        (process.args-from-string-vec (& multi-argv))
+        (& (process.args-from-string-vec (& multi-argv)))
         "hello"
         "world"
         "!"
         "process argv vec multi")
       (assert-process-string-empty
-        (process.command-argv empty-command)
+        (& (process.command-argv empty-command))
         "process command argv vec empty")
       (assert-process-string-list1
-        (process.command-argv solo-command)
+        (& (process.command-argv solo-command))
         "solo"
         "process command argv vec single")
       (assert-process-string-list3
-        (process.command-argv multi-command)
+        (& (process.command-argv multi-command))
         "hello"
         "world"
         "!"
         "process command argv vec multi")
       (assert-process-string-list3
-        (process.command-argv replace-command)
+        (& (process.command-argv replace-command))
         "vec"
         "replace"
         "argv"
         "process command argv vec replace")
       (assert-process-string-list3
-        (process.command-argv append-command)
+        (& (process.command-argv append-command))
         "base"
         "vec"
         "tail"
@@ -580,7 +567,7 @@
       "stdin"
       "process stdin")
     (assert-process-env-head
-      (process.command-env command)
+      (& (process.command-env command))
       "TL_TEST"
       "1"
       "process env")
@@ -593,7 +580,7 @@
           (clone command)
           (process.env-cons "TL_REPLACED" "yes" (process.env-empty)))]
       (assert-process-env-head
-        (process.command-env replaced-env-command)
+        (& (process.command-env replaced-env-command))
         "TL_REPLACED"
         "yes"
         "process env list"))
@@ -625,21 +612,21 @@
         (process.env-vec-valid? (& env-vec))
         "process env vec valid")
       (assert-process-env-list2
-        (process.env-vec-to-list (& env-vec))
+        (& (process.env-vec-to-list (& env-vec)))
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two"
         "process env vec order")
       (assert-process-env-list2
-        (process.command-env env-command)
+        (& (process.command-env env-command))
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two"
         "process command env vec order")
       (assert-process-env-list2
-        (process.env-vec-to-list (& env-dup))
+        (& (process.env-vec-to-list (& env-dup)))
         "TL_DUP"
         "first"
         "TL_DUP"

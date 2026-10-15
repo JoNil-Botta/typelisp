@@ -4,7 +4,6 @@
 (import stdlib.io)
 (import (vector.vector String) as cli_svec)
 (import compile_cli_core)
-(import compiler_owned_view as owned_view)
 
 (define (compile-cli-batch-vector-entry-at?
   [entries : (& entries cli_svec.Vec)]
@@ -21,14 +20,15 @@
   (let
     [source : String
       "a.tl|a.s\n\nb.tl|b.s\r\nc.tl|c.s\nd.tl|d.s\r\ne.tl|e.s\nf.tl|f.s"]
+    [source-length : i64 (string.string-length source)]
     ;; Each parsed batch entry occupies an adjacent input/output pair.
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
       (compile_cli_core.compile-cli-batch-parse-entries-into!
-        (owned_view.compiler-owned-shared-view source)
+        source
         0
         1
-        (string.string-length source)
+        source-length
         (&mut entries))]
     [empty : cli_svec.Vec (cli_svec.new)]
     [empty-status : i64

@@ -65,7 +65,7 @@
     [empty : bool (= (array-length slots) tc_core.tc-agg-layout-cache-capacity)]
     [index : i64 0]
     (while (and empty (< index (array-length slots)))
-      (match (tc_core.tc-global-array-element-shared-view slots index)
+      (match (& (array-ref slots index))
         [(Empty) unit]
         [(Full _ _) (set! empty false)])
       (set! index (+ index 1)))

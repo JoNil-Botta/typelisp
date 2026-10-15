@@ -43,6 +43,29 @@
     [copied : (TextBufBorrowed text) (append-copy joined chunk)]
     (render copied)))
 
+;: Inline test helper: two adjacent slices of `source` merged into one tail.
+(cfg
+  test
+  (define (test-sliced-one [source : (& text str)]) : (TextBufBorrowed text)
+    (append-slice (append-slice (empty-like source) source 3 0) source 0 6)))
+
+;: Inline test helper: `test-sliced-one` extended over the rest of `source`.
+(cfg
+  test
+  (define (test-sliced-two [source : (& text str)]) : (TextBufBorrowed text)
+    (append-slice (test-sliced-one source) source 6 4)))
+
+;: Inline test helper: a sliced buffer joined with a sliced, owned and char
+;: tail buffer.
+(cfg
+  test
+  (define (test-mixed-joined [source : (& text str)]) : (TextBufBorrowed text)
+    (append-buffer
+      (append-slice (empty-like source) source 0 2)
+      (append-char
+        (append-owned (append-slice (empty-like source) source 2 1) "-")
+        '!'))))
+
 (test
   text-buf-borrowed-api
   (let
@@ -51,30 +74,14 @@
     [empty : (TextBufBorrowed text) (empty-like (& text))]
     [rendered : String (test-render text chunk)]
     [sliced-source : String "alpha\nbeta"]
-    [sliced-empty : (TextBufBorrowed sliced-source)
-      (empty-like (& sliced-source))]
     [sliced-zero : (TextBufBorrowed sliced-source)
-      (append-slice sliced-empty (& sliced-source) 3 0)]
-    [sliced-one : (TextBufBorrowed sliced-source)
-      (append-slice
-        (text_buf_family.text-buf-family-shared-view sliced-zero)
-        (& sliced-source)
-        0
-        6)]
+      (append-slice (empty-like (& sliced-source)) (& sliced-source) 3 0)]
     [sliced-two : (TextBufBorrowed sliced-source)
-      (append-slice
-        (text_buf_family.text-buf-family-shared-view sliced-one)
-        (& sliced-source)
-        6
-        4)]
+      (test-sliced-two (& sliced-source))]
     [mixed : (TextBufBorrowed sliced-source)
-      (append-char
-        (append-owned
-          (text_buf_family.text-buf-family-shared-view sliced-two)
-          "-")
-        '!')]
-    [mixed-rendered : String
-      (render (text_buf_family.text-buf-family-shared-view mixed))]
+      (append-char (append-owned (test-sliced-two (& sliced-source)) "-") '!')]
+    [mixed-count : i64 (chunk-count mixed)]
+    [mixed-rendered : String (render mixed)]
     (test.assert-true (empty? empty) "text-buf-borrowed-api: (empty? empty)")
     (test.assert-true
       (= (length empty) 0)
@@ -95,10 +102,10 @@
       (string.eq (render sliced-two) sliced-source)
       "text-buf-borrowed-api: (string.eq (render sliced-two) sliced-source)")
     (test.assert-true
-      (string.eq (render sliced-one) "alpha\n")
+      (string.eq (render (test-sliced-one (& sliced-source))) "alpha\n")
       "text-buf-borrowed-api: (string.eq (render sliced-one) \"alpha\\n\")")
     (test.assert-true
-      (= (chunk-count mixed) 3)
+      (= mixed-count 3)
       "text-buf-borrowed-api: (= (chunk-count mixed) 3)")
     (test.assert-true
       (string.eq mixed-rendered "alpha\nbeta-!")
@@ -124,13 +131,9 @@
       [branch-base : (TextBufBorrowed branch-source)
         (empty-like (& branch-source))]
       [branch-left : (TextBufBorrowed branch-source)
-        (append-char
-          (text_buf_family.text-buf-family-shared-view branch-base)
-          '!')]
+        (append-char (empty-like (& branch-source)) '!')]
       [branch-right : (TextBufBorrowed branch-source)
-        (append-owned
-          (text_buf_family.text-buf-family-shared-view branch-base)
-          "?")]
+        (append-owned (empty-like (& branch-source)) "?")]
       (test.assert-true
         (= (chunk-count branch-base) 0)
         "text-buf-borrowed-api: (= (chunk-count branch-base) 0)")
@@ -142,38 +145,17 @@
         "text-buf-borrowed-api: (string.eq (render branch-right) \"?\")"))
     (let
       [mixed-source : String "abc"]
-      [mixed-empty : (TextBufBorrowed mixed-source)
-        (empty-like (& mixed-source))]
-      [mixed-left : (TextBufBorrowed mixed-source)
-        (append-slice
-          (text_buf_family.text-buf-family-shared-view mixed-empty)
-          (& mixed-source)
-          0
-          2)]
-      [mixed-right : (TextBufBorrowed mixed-source)
-        (append-char
-          (append-owned
-            (append-slice
-              (text_buf_family.text-buf-family-shared-view mixed-empty)
-              (& mixed-source)
-              2
-              1)
-            "-")
-          '!')]
-      [joined : (TextBufBorrowed mixed-source)
-        (append-buffer mixed-left mixed-right)]
       [owned-rendered : String
-        (match (text_buf_family.text-buf-family-shared-view joined)
+        (match (test-mixed-joined (& mixed-source))
           [(TextBufBorrowed joined-chunks joined-len)
             (let
               [owned : text_buf.TextBuf
                 (text_buf.TextBuf (chunks-to-owned joined-chunks) joined-len)]
               (text_buf.render owned))])]
+      [joined-rendered : String (render (test-mixed-joined (& mixed-source)))]
       (test.assert-true
-        (string.eq
-          (render (text_buf_family.text-buf-family-shared-view joined))
-          "abc-!")
-        "text-buf-borrowed-api: (string.eq (render (text_buf_family.text-buf-family-share...")
+        (string.eq joined-rendered "abc-!")
+        "text-buf-borrowed-api: (string.eq (render joined) \"abc-!\")")
       (test.assert-true
-        (string.eq owned-rendered (render joined))
+        (string.eq owned-rendered joined-rendered)
         "text-buf-borrowed-api: (string.eq owned-rendered (render joined))"))))

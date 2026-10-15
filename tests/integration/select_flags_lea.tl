@@ -114,26 +114,23 @@
         (set! i (+ i 1))))
     acc))
 
+;; The scans' shared input, built afresh for each scan: 1 9 3 7.
+(define (sfl-scan-input) : (__tl_dyn-array i64)
+  (__tl_make-array 1 9 3 7))
+
 (define (main) : i64
   (let
     ;; (io.arg-count) = 1 without args; it blocks constant folding.
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [us : (__tl_dyn-array u64) (__tl_make-array u64 4)]
-    [_x0 : unit (set! (array-ref xs 0) 1)]
-    [_x1 : unit (set! (array-ref xs 1) 9)]
-    [_x2 : unit (set! (array-ref xs 2) 3)]
-    [_x3 : unit (set! (array-ref xs 3) 7)]
     [_u0 : unit (set! (array-ref us 0) (cast 1 : u64))]
     [_u1 : unit (set! (array-ref us 1) (cast 9 : u64))]
     [_u2 : unit (set! (array-ref us 2) (cast 3 : u64))]
     [_u3 : unit (set! (array-ref us 3) (cast 7 : u64))]
     ;; min(1,5) + min(9,5) + min(3,5) + min(7,5) = 1 + 5 + 3 + 5 = 14
-    [mn : i64
-      (sfl-min-scan (owned_view.compiler-owned-shared-view xs) (+ v 3) 5)]
+    [mn : i64 (sfl-min-scan (sfl-scan-input) (+ v 3) 5)]
     ;; max(1,5) + max(9,5) + max(3,5) + max(7,5) = 5 + 9 + 5 + 7 = 26
-    [mx : i64
-      (sfl-max-scan (owned_view.compiler-owned-shared-view xs) (+ v 3) 5)]
+    [mx : i64 (sfl-max-scan (sfl-scan-input) (+ v 3) 5)]
     [umn : u64 (sfl-umin-scan us (+ v 3) (cast 5 : u64))]
     [src : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 8)]

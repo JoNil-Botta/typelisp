@@ -2481,33 +2481,32 @@
 ;; Inline test coverage.
 (cfg
   test
-  (defmacro (io-test-global-shared-view [place : Expr]) : Expr
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  (define (io-file) : String
+    "tests/scratch/io_edges_file.txt"))
 
 (cfg
   test
-  (define io-file : String
-    "tests/scratch/io_edges_file.txt"))
-(cfg
-  test
-  (define io-empty-file : String
+  (define (io-empty-file) : String
     "tests/scratch/io_edges_empty.txt"))
+
 (cfg
   test
-  (define io-created-file : String
+  (define (io-created-file) : String
     "tests/scratch/io_edges_created_"))
+
 (cfg
   test
-  (define io-missing-file : String
+  (define (io-missing-file) : String
     "tests/scratch/io_edges_missing.txt"))
+
 (cfg
   test
-  (define io-missing-parent-file : String
+  (define (io-missing-parent-file) : String
     "tests/scratch/stdlib-inline-missing-parent/io_edges.txt"))
+
 (cfg
   test
-  (define io-directory-path : String
+  (define (io-directory-path) : String
     "tests/scratch"))
 
 (cfg
@@ -2529,7 +2528,9 @@
       [(ErrIoBytes error)
         (begin
           (test.assert-true
-            (error-not-found? (io-test-global-shared-view error))
+            (match (& error)
+              [(IoNotFound _) true]
+              [_ false])
             "missing read error kind")
           (test.assert-owned-string-eq
             (error-message error)
@@ -2624,7 +2625,9 @@
   (define (io-edges-test-expect-invalid-path [error : IoError]) : unit
     (begin
       (test.assert-true
-        (error-invalid-path? (io-test-global-shared-view error))
+        (match (& error)
+          [(IoInvalidPath _) true]
+          [_ false])
         "invalid path error kind")
       (test.assert-owned-string-eq
         (error-message error)
@@ -2635,10 +2638,8 @@
   test
   (test
     io-edges-api
-    (io-edges-test-expect-try-read-missing
-      (io-test-global-shared-view io-missing-file))
-    (match (io-edges-test-try-file-exists?
-      (io-test-global-shared-view io-missing-file))
+    (io-edges-test-expect-try-read-missing (io-missing-file))
+    (match (io-edges-test-try-file-exists? (io-missing-file))
       [(OkIoBool exists)
         (test.assert-false exists "missing file does not exist")]
       [(ErrIoBool error) (panic (error-message error))])
@@ -2659,60 +2660,42 @@
       (match (try-append-file (& path) (byte_buf.str-as-bytes (& contents)))
         [(OkIoUnit) (panic "empty path append should fail")]
         [(ErrIoUnit error) (io-edges-test-expect-invalid-path error)]))
-    (io-edges-test-expect-try-read-error
-      (io-test-global-shared-view io-directory-path))
-    (io-edges-test-expect-try-write-error
-      (io-test-global-shared-view io-missing-parent-file))
-    (io-edges-test-expect-try-append-error
-      (io-test-global-shared-view io-missing-parent-file))
+    (io-edges-test-expect-try-read-error (io-directory-path))
+    (io-edges-test-expect-try-write-error (io-missing-parent-file))
+    (io-edges-test-expect-try-append-error (io-missing-parent-file))
     (test.assert-owned-string-eq
-      (io-edges-test-read-file-or
-        (io-test-global-shared-view io-missing-file)
-        "fallback")
+      (io-edges-test-read-file-or (io-missing-file) "fallback")
       "fallback"
       "missing file fallback")
     (test.assert-false
-      (io-edges-test-file-nonempty?
-        (io-test-global-shared-view io-missing-file))
+      (io-edges-test-file-nonempty? (io-missing-file))
       "missing file is not nonempty")
     (let
       [contents : String ""]
-      (write-file
-        (io-test-global-shared-view io-empty-file)
-        (byte_buf.str-as-bytes (& contents))))
+      (write-file (io-empty-file) (byte_buf.str-as-bytes (& contents))))
     (test.assert-false
-      (io-edges-test-file-nonempty? (io-test-global-shared-view io-empty-file))
+      (io-edges-test-file-nonempty? (io-empty-file))
       "empty file is not nonempty")
-    (io-edges-test-expect-try-write-ok
-      (io-test-global-shared-view io-file)
-      "alpha")
-    (io-edges-test-expect-try-read-ok
-      (io-test-global-shared-view io-file)
-      "alpha")
+    (io-edges-test-expect-try-write-ok (io-file) "alpha")
+    (io-edges-test-expect-try-read-ok (io-file) "alpha")
     (test.assert-owned-string-eq
-      (io-edges-test-read-file-or
-        (io-test-global-shared-view io-file)
-        "fallback")
+      (io-edges-test-read-file-or (io-file) "fallback")
       "alpha"
       "read existing file")
     (test.assert-true
-      (io-edges-test-file-nonempty? (io-test-global-shared-view io-file))
+      (io-edges-test-file-nonempty? (io-file))
       "written file is nonempty")
     (let
       [contents : String "-beta"]
-      (match (io-edges-test-try-append-file
-        (io-test-global-shared-view io-file)
-        contents)
+      (match (io-edges-test-try-append-file (io-file) contents)
         [(OkIoUnit) unit]
         [(ErrIoUnit error) (panic (error-message error))]))
     (test.assert-owned-string-eq
-      (byte_buf.to-string (read-file (io-test-global-shared-view io-file)))
+      (byte_buf.to-string (read-file (io-file)))
       "alpha-beta"
       "append existing file")
     (let
-      [created-file : String
-        (io-edges-test-missing-path
-          (io-test-global-shared-view io-created-file))]
+      [created-file : String (io-edges-test-missing-path (io-created-file))]
       [contents : String "created"]
       (begin
         (io-edges-test-append-file created-file contents)
@@ -2724,23 +2707,27 @@
 ;; Inline test coverage.
 (cfg
   test
-  (define handle-read-file : String
+  (define (handle-read-file) : String
     "target/io_file_handle_read.txt"))
+
 (cfg
   test
-  (define handle-truncate-file : String
+  (define (handle-truncate-file) : String
     "target/io_file_handle_truncate.txt"))
+
 (cfg
   test
-  (define handle-append-file : String
+  (define (handle-append-file) : String
     "target/io_file_handle_append.txt"))
+
 (cfg
   test
-  (define handle-created-file-prefix : String
+  (define (handle-created-file-prefix) : String
     "target/io_file_handle_created_"))
+
 (cfg
   test
-  (define handle-missing-file : String
+  (define (handle-missing-file) : String
     "target/io_file_handle_missing.txt"))
 
 (cfg
@@ -2925,12 +2912,10 @@
       [read-handle : FileHandle
         (begin
           (io-handle-test-assert-ok-unit
-            (io-handle-test-try-write-file
-              (io-test-global-shared-view handle-read-file)
-              "abcdef")
+            (io-handle-test-try-write-file (handle-read-file) "abcdef")
             "seed read handle file: ")
           (io-handle-test-expect-open-ok
-            (io-handle-test-file-open handle-read-file OpenRead)
+            (io-handle-test-file-open (handle-read-file) OpenRead)
             "open read: "))]
       (begin
         (io-handle-test-assert-read-invalid
@@ -2990,20 +2975,20 @@
           "flush"
           "invalid flush handle returns unsupported")
         (io-handle-test-assert-open-not-found
-          (io-handle-test-file-open handle-missing-file OpenRead)
+          (io-handle-test-file-open (handle-missing-file) OpenRead)
           "missing read open")
         (io-handle-test-assert-open-invalid
           (io-handle-test-file-open "" OpenRead)
           "empty path open")
         (io-handle-test-assert-ok-unit
-          (io-handle-test-try-write-file
-            (io-test-global-shared-view handle-truncate-file)
-            "payload")
+          (io-handle-test-try-write-file (handle-truncate-file) "payload")
           "seed truncate file: ")
         (let
           [truncate-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open handle-truncate-file OpenWriteTruncate)
+              (io-handle-test-file-open
+                (handle-truncate-file)
+                OpenWriteTruncate)
               "open truncate: ")]
           (begin
             (io-handle-test-assert-read-unsupported
@@ -3025,7 +3010,7 @@
               (file-close truncate-handle)
               "close truncate handle: ")
             (io-handle-test-assert-file-contents
-              handle-truncate-file
+              (handle-truncate-file)
               "alpha-beta"
               "truncate writes replace existing file")
             (io-handle-test-assert-unit-unsupported
@@ -3037,14 +3022,12 @@
               "flush"
               "flush after close returns unsupported")))
         (io-handle-test-assert-ok-unit
-          (io-handle-test-try-write-file
-            (io-test-global-shared-view handle-truncate-file)
-            "readonly")
+          (io-handle-test-try-write-file (handle-truncate-file) "readonly")
           "seed read-only write test file: ")
         (let
           [read-only-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open handle-truncate-file OpenRead)
+              (io-handle-test-file-open (handle-truncate-file) OpenRead)
               "open read-only for write test: ")]
           (begin
             (io-handle-test-assert-unit-unsupported
@@ -3059,14 +3042,12 @@
               (file-close read-only-handle)
               "close read-only handle: ")))
         (io-handle-test-assert-ok-unit
-          (io-handle-test-try-write-file
-            (io-test-global-shared-view handle-append-file)
-            "seed")
+          (io-handle-test-try-write-file (handle-append-file) "seed")
           "seed append file: ")
         (let
           [append-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open handle-append-file OpenWriteAppend)
+              (io-handle-test-file-open (handle-append-file) OpenWriteAppend)
               "open append existing: ")]
           (begin
             (io-handle-test-assert-ok-unit
@@ -3079,13 +3060,12 @@
               (file-close append-handle)
               "close append handle: ")
             (io-handle-test-assert-file-contents
-              handle-append-file
+              (handle-append-file)
               "seed-tail"
               "append mode writes at end of file")))
         (let
           [created-path : String
-            (io-handle-test-missing-path
-              (io-test-global-shared-view handle-created-file-prefix))]
+            (io-handle-test-missing-path (handle-created-file-prefix))]
           [created-handle : FileHandle
             (io-handle-test-expect-open-ok
               (io-handle-test-file-open created-path OpenWriteAppend)
@@ -3116,15 +3096,13 @@
       [i : i64 0]
       (begin
         (io-handle-test-assert-ok-unit
-          (io-handle-test-try-write-file
-            (io-test-global-shared-view handle-read-file)
-            "reuse")
+          (io-handle-test-try-write-file (handle-read-file) "reuse")
           "seed reusable handle file: ")
         (while (< i 1100)
           (let
             [handle : FileHandle
               (io-handle-test-expect-open-ok
-                (io-handle-test-file-open handle-read-file OpenRead)
+                (io-handle-test-file-open (handle-read-file) OpenRead)
                 "reopen reusable read handle: ")]
             (begin
               (io-handle-test-assert-ok-unit
@@ -3141,7 +3119,7 @@
       windows
       (begin
         (io-handle-test-assert-open-not-found
-          (io-handle-test-file-open handle-missing-file OpenRead)
+          (io-handle-test-file-open (handle-missing-file) OpenRead)
           "windows missing read handle reports not found")
         (io-handle-test-assert-read-unsupported
           (file-read-chunk (FileHandle 1) 1)

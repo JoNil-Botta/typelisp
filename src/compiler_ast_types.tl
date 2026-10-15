@@ -1271,11 +1271,6 @@
             (+ (shr record-index 16) 2))))
       (* (bit-and record-index 65535) 16))))
 
-(defmacro (ast-expr-packed-span-record-tag [record : Expr]) : Expr
-  `(let
-    [tagged-record : AstExprPackedSpanRecord ,record]
-    (shr (bit-and (cast tagged-record.tagged-node : i64) 4294967295) 28)))
-
 ;: Decode by value. The two physical words are loaded once; neither an
 ;: overflow pointer nor a borrowed physical row is returned to the caller.
 (define (ast-expr-canonical-record-get [table : i64] [index : i64]) : AstExprCanonicalSpanRecord
@@ -1313,7 +1308,7 @@
       ,index
       record-value.semantic-node
       record-value.owner-node
-      record-value.span)))
+      (& record-value.span))))
 
 (define (ast-expr-respan-record-get [table : i64] [index : i64]) : AstExprReSpan
   (let
@@ -1335,7 +1330,7 @@
       ,index
       record-value.view-node
       record-value.semantic-node
-      record-value.span)))
+      (& record-value.span))))
 
 (define (ast-expr-span-overflow-acquire! [table : i64]) : i64
   (let
@@ -1377,18 +1372,19 @@
   [index : i64]
   [first-node : i32]
   [second-node : i32]
-  [span : AstSourceSpan]) : unit
+  [span : (& span AstSourceSpan)]) : unit
   (let
-    [address : (MutPtr AstExprPackedSpanRecord)
-      (unsafe
-        (int->ptr
-          (ast-expr-packed-span-record-address table index)
-          : (MutPtr AstExprPackedSpanRecord)))]
-    [old : AstExprPackedSpanRecord
-      (unsafe
-        (ptr-read address))]
-    [old-wide? : bool
-      (= (ast-expr-packed-span-record-tag old) ast-expr-span-packed-escape-tag)]
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [old-tag : i64
+      (bit-and
+        (shr
+          (cast
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr address : (Ptr i32)) 1)))
+            : i64)
+          28)
+        15)]
+    [old-wide? : bool (= old-tag ast-expr-span-packed-escape-tag)]
     [delta : i64 (- (cast span.end-line : i64) (cast span.start-line : i64))]
     [compact? : bool
       (and
@@ -1400,42 +1396,55 @@
             (bit-or (cast span.start-col : i64) (cast span.end-col : i64))
             16)
           0))]
-    [next : AstExprPackedSpanRecord
-      (if compact?
-        (begin
-          (when
-            old-wide?
-            (ast-expr-span-overflow-release! table old.coordinates))
-          (AstExprPackedSpanRecord
-            first-node
-            (cast (bit-or (cast second-node : i64) (shl delta 28)) : i32)
+    (if compact?
+      (begin
+        (when
+          old-wide?
+          (ast-expr-span-overflow-release!
+            table
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))))
+        (unsafe
+          (ptr-write!
+            (int->ptr address : (MutPtr i64))
+            (bit-or
+              (cast first-node : i64)
+              (shl (bit-or (cast second-node : i64) (shl delta 28)) 32)))
+          (ptr-write!
+            (ptr-offset (int->ptr address : (MutPtr i64)) 1)
             (bit-or
               (shl (cast span.start-line : i64) 32)
               (bit-or
                 (shl (cast span.start-col : i64) 16)
-                (cast span.end-col : i64)))))
-        (let
-          [slot : i64
-            (if old-wide?
-              old.coordinates
-              (ast-expr-span-overflow-acquire! table))]
-          (unsafe
-            (ptr-write!
-              (int->ptr slot : (MutPtr AstExprCanonicalSpanRecord))
-              (AstExprCanonicalSpanRecord first-node second-node span)))
-          (AstExprPackedSpanRecord first-node (cast 4026531840 : i32) slot)))]
-    (unsafe
-      (ptr-write! address next))))
+                (cast span.end-col : i64))))))
+      (let
+        [slot : i64
+          (if old-wide?
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))
+            (ast-expr-span-overflow-acquire! table))]
+        (unsafe
+          (ptr-write!
+            (int->ptr slot : (MutPtr AstExprCanonicalSpanRecord))
+            (AstExprCanonicalSpanRecord
+              first-node
+              second-node
+              (clone (deref span))))
+          (ptr-write!
+            (int->ptr address : (MutPtr i64))
+            (bit-or
+              (bit-and (cast first-node : i64) 4294967295)
+              (shl ast-expr-span-packed-escape-tag 60)))
+          (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) slot))))))
 
-;; Initialize tags before the setter reads an unused slot's overflow state.
+;; make-array zero-fills even reused arenas, so each unused slot starts with
+;; tag zero before the setter inspects it; no second initialization is needed.
 (define (ast-expr-span-segment-new [owner : i64] [_kind : i64] [records : i64]) : i64
   (let
     [segment : (__tl_dyn-array AstExprPackedSpanRecord)
       (in-arena
         (arena.Arena owner)
         (__tl_make-array AstExprPackedSpanRecord records))]
-    (for [index (iterator.range 0 records)]
-      (set! (array-ref segment index) (AstExprPackedSpanRecord 0 0 0)))
     (cast
       (unsafe
         (ptr->int (__tl_array-data segment)))

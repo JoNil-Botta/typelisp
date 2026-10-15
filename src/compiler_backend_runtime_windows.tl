@@ -1907,23 +1907,10 @@ tl_mem_copy8_fwd:
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String
-  "    .globl tl_memchr
-tl_memchr:
-    testq %rdx, %rdx
-    jle .Ltl_memchr_not_found
-    movzbl %r8b, %r8d
-    xorq %rax, %rax
-.Ltl_memchr_loop:
-    cmpb %r8b, (%rcx,%rax)
-    je .Ltl_memchr_found
-    incq %rax
-    cmpq %rdx, %rax
-    jl .Ltl_memchr_loop
-.Ltl_memchr_not_found:
-    movq $-1, %rax
-.Ltl_memchr_found:
-    ret
-")
+  (str_cat.str-cat
+    "    .globl tl_memchr
+"
+    (runtime_common.compiler-backend-runtime-memchr-body "%rcx" "%rdx" "%r8b")))
 
 ;; Fill `count` pointer-sized slots at `buf` with `value`, one instruction per
 ;; slot under the deterministic instruction-count gate (a `rep stosq` is one Ir

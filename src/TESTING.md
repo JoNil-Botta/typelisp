@@ -26,6 +26,16 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+## Runtime byte search
+
+`tests/integration/runtime_memchr.tl` compares the runtime byte search with a
+byte-loop oracle at every SIMD alignment, lengths 0 through 65, every hit
+position and all byte values. It checks adjacent matches, misses, non-positive
+lengths with a null pointer, public string offsets, and Linux inaccessible
+pages before and after the range. The native manifest runs it at opt0/1/2 on
+both hosts; its inline test runs the same checks. The focused runtime leaf test
+also compares the complete Linux/Windows search bodies after ABI substitution.
+
 ## Linux thread storage
 
 `tests/integration/thread_local_word.tl` checks the private Linux runtime word

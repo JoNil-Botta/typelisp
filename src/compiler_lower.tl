@@ -1299,19 +1299,17 @@
             (& (deref frames))))]
       [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) (return unit)]
       [_ unit])
-    (let
-      [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
-      (for [index (iterator.range 0 children.len)]
-        (let
-          [child : i64 (ast.ast-expr-list-get (& children) index -1)]
-          (lower-spmd-enumerate!
-            ctx
-            state
-            (tc_core.tc-context-expr-get ctx child)
-            child
-            next-parent
-            origin
-            frames))))
+    (ast.ast-expr-for-each-child
+      expr
+      lower-spmd-enumerate-child!
+      ast.ast-child-unit
+      ast.ast-child-unit
+      ast.ast-child-unit
+      ctx
+      state
+      next-parent
+      origin
+      frames)
     (when
       (> next-parent parent)
       (let
@@ -1325,6 +1323,22 @@
             (lower-spmd-site-fallback))]
         (set! item.subtree-end (lower_spmd_sites.len (& sites.items)))
         (lower_spmd_sites.set! sites.items next-parent item)))))
+
+(define (lower-spmd-enumerate-child!
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [parent : i64]
+  [origin : (&mut origin LowerSpmdOrigin)]
+  [frames : (&mut frames ir.CompilerSpmdMacroFrameList)]
+  [child : i64]) : unit
+  (lower-spmd-enumerate!
+    ctx
+    state
+    (tc_core.tc-context-expr-get ctx child)
+    child
+    parent
+    origin
+    frames))
 
 (define (lower-spmd-enumerate-function!
   [ctx : tc_core.TcContext]

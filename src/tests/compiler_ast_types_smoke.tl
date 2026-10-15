@@ -3312,6 +3312,15 @@
       (compiler-ast-installed-span-capture? true))
     "global span changes reach installed cells and retained captures"))
 
+(define (compiler-ast-packed-overflow-slot [table : i64] [index : i64]) : i64
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (int->ptr
+          (ast.ast-expr-packed-span-record-address table index)
+          : (Ptr i64))
+        1))))
+
 (define (compiler-ast-packed-record-eq?
   [table : i64]
   [kind : i64]
@@ -3441,8 +3450,7 @@
             [compact : ast.AstExprCanonicalSpanRecord (array-ref cases 1)]
             [_first : unit
               (compiler-ast-packed-record-write! table kind 128 wide)]
-            [slot : i64
-              (ast.ast-expr-packed-span-record-at table 128).coordinates]
+            [slot : i64 (compiler-ast-packed-overflow-slot table 128)]
             (for [_repeat (iterator.range 0 200)]
               (compiler-ast-packed-record-write! table kind 128 compact)
               (compiler-ast-packed-record-write! table kind 129 wide)
@@ -3450,9 +3458,7 @@
                 ok
                 (and
                   ok
-                  (=
-                    slot
-                    (ast.ast-expr-packed-span-record-at table 129).coordinates)
+                  (= slot (compiler-ast-packed-overflow-slot table 129))
                   (compiler-ast-packed-record-eq? table kind 128 compact)
                   (compiler-ast-packed-record-eq? table kind 129 wide)))
               (compiler-ast-packed-record-write! table kind 129 compact)
@@ -3461,9 +3467,7 @@
                 ok
                 (and
                   ok
-                  (=
-                    slot
-                    (ast.ast-expr-packed-span-record-at table 128).coordinates)
+                  (= slot (compiler-ast-packed-overflow-slot table 128))
                   (compiler-ast-packed-record-eq? table kind 128 wide))))))))
     (arena.destroy-safe! scratch)
     ;; Validate all exceptional values again after the decoy arena retires.

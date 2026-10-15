@@ -1258,60 +1258,49 @@
   `(unsafe
     (ptr-read (int->ptr ,table : (Ptr i64)))))
 
-;: Physical record INDEX of TABLE; callers already proved it addressable.
-(defmacro (ast-expr-packed-span-record-at [table : Expr] [index : Expr]) : Expr
+;: Byte address of physical record INDEX; the caller proved it addressable.
+(defmacro (ast-expr-packed-span-record-address [table : Expr] [index : Expr]) : Expr
   `(let
     [record-table : i64 ,table]
     [record-index : i64 ,index]
-    (unsafe
-      (ptr-read
-        (ptr-offset
-          (int->ptr
-            (ptr-read
-              (ptr-offset
-                (int->ptr record-table : (Ptr i64))
-                (+ (shr record-index 16) 2)))
-            : (Ptr AstExprPackedSpanRecord))
-          (bit-and record-index 65535))))))
+    (+
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr record-table : (Ptr i64))
+            (+ (shr record-index 16) 2))))
+      (* (bit-and record-index 65535) 16))))
 
 (defmacro (ast-expr-packed-span-record-tag [record : Expr]) : Expr
   `(let
     [tagged-record : AstExprPackedSpanRecord ,record]
     (shr (bit-and (cast tagged-record.tagged-node : i64) 4294967295) 28)))
 
-(defmacro (ast-expr-packed-span-record-inline-span [record : Expr]) : Expr
-  `(let
-    [packed-record : AstExprPackedSpanRecord ,record]
-    [start-line : i64 (shr packed-record.coordinates 32)]
-    (AstSourceSpan
-      (cast start-line : i32)
-      (cast (bit-and (shr packed-record.coordinates 16) 65535) : i32)
-      (cast
-        (+ start-line (ast-expr-packed-span-record-tag packed-record))
-        : i32)
-      (cast (bit-and packed-record.coordinates 65535) : i32))))
-
-;: Decode one logical record by value; no packed or overflow pointer escapes.
+;: Decode by value. The two physical words are loaded once; neither an
+;: overflow pointer nor a borrowed physical row is returned to the caller.
 (define (ast-expr-canonical-record-get [table : i64] [index : i64]) : AstExprCanonicalSpanRecord
   (let
-    [packed-record : AstExprPackedSpanRecord
-      (ast-expr-packed-span-record-at table index)]
-    (if (=
-      (ast-expr-packed-span-record-tag packed-record)
-      ast-expr-span-packed-escape-tag)
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [ids : i64
       (unsafe
-        (ptr-read
-          (int->ptr
-            packed-record.coordinates
-            : (Ptr AstExprCanonicalSpanRecord))))
-      (AstExprCanonicalSpanRecord
-        packed-record.first-node
-        (cast
-          (bit-and
-            (cast packed-record.tagged-node : i64)
-            ast-expr-span-packed-node-mask)
-          : i32)
-        (ast-expr-packed-span-record-inline-span packed-record)))))
+        (ptr-read (int->ptr address : (Ptr i64))))]
+    [coordinates : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
+    [tag : i64 (bit-and (shr ids 60) 15)]
+    (if (= tag ast-expr-span-packed-escape-tag)
+      (unsafe
+        (ptr-read (int->ptr coordinates : (Ptr AstExprCanonicalSpanRecord))))
+      (let
+        [start-line : i64 (shr coordinates 32)]
+        (AstExprCanonicalSpanRecord
+          (cast ids : i32)
+          (cast (bit-and (shr ids 32) ast-expr-span-packed-node-mask) : i32)
+          (AstSourceSpan
+            (cast start-line : i32)
+            (cast (bit-and (shr coordinates 16) 65535) : i32)
+            (cast (+ start-line tag) : i32)
+            (cast (bit-and coordinates 65535) : i32)))))))
 
 (defmacro (ast-expr-canonical-record-set!
   [table : Expr]
@@ -1390,12 +1379,11 @@
   [second-node : i32]
   [span : AstSourceSpan]) : unit
   (let
-    [base : i64 (ast-expr-span-table-word table (+ (shr index 16) 2))]
     [address : (MutPtr AstExprPackedSpanRecord)
       (unsafe
-        (ptr-offset
-          (int->ptr base : (MutPtr AstExprPackedSpanRecord))
-          (bit-and index 65535)))]
+        (int->ptr
+          (ast-expr-packed-span-record-address table index)
+          : (MutPtr AstExprPackedSpanRecord)))]
     [old : AstExprPackedSpanRecord
       (unsafe
         (ptr-read address))]
@@ -1404,17 +1392,14 @@
     [delta : i64 (- (cast span.end-line : i64) (cast span.start-line : i64))]
     [compact? : bool
       (and
-        (>= first-node 0)
-        (<= (cast first-node : i64) ast-expr-span-packed-node-mask)
-        (>= second-node 0)
-        (<= (cast second-node : i64) ast-expr-span-packed-node-mask)
+        (= (shr (bit-or (cast first-node : i64) (cast second-node : i64)) 28) 0)
         (>= span.start-line 0)
-        (>= delta 0)
-        (< delta 15)
-        (>= span.start-col 0)
-        (<= span.start-col 65535)
-        (>= span.end-col 0)
-        (<= span.end-col 65535))]
+        (< (cast delta : u64) (cast 15 : u64))
+        (=
+          (shr
+            (bit-or (cast span.start-col : i64) (cast span.end-col : i64))
+            16)
+          0))]
     [next : AstExprPackedSpanRecord
       (if compact?
         (begin

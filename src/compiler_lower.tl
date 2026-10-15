@@ -3,6 +3,7 @@
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
 (import stdlib.iterator)
+(import stdlib.dense_list)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -1033,18 +1034,32 @@
 ;; identity is the typed function symbol and source-order ordinal.
 (defstruct LowerSpmdSite
   (subtree-end i64)
+  (next-source i64)
+  (previous-source i64)
+  (source-tail i64)
   (selected bool)
   (entered bool)
   (finished bool)
   (decision ir.CompilerSpmdDecision))
 
-(import (vector.vector LowerSpmdSite core) as lower_spmd_sites)
+(defstruct LowerSpmdSiteList
+  (slots (__tl_dyn-array LowerSpmdSite))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  LowerSpmdSite
+  LowerSpmdSiteList
+  lower-spmd-site-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage)
 
 (defstruct LowerSpmdSites
-  (items lower_spmd_sites.Vec)
+  (items LowerSpmdSiteList)
   (by-source lower_i64_i64_map.Map)
   (frames ir.CompilerSpmdMacroFrameList)
   (active i64)
+  (lookup-parent i64)
   (source-hint i64)
   (flushed i64)
   (flushed-frames i64)
@@ -1062,9 +1077,10 @@
 
 (define (lower-spmd-sites-empty) : LowerSpmdSites
   (LowerSpmdSites
-    (lower_spmd_sites.with-capacity 1)
+    (lower-spmd-site-list-new)
     (lower_i64_i64_map.with-capacity 1)
     (ir.compiler-spmd-macro-frame-list-empty)
+    -1
     -1
     -1
     0
@@ -1109,13 +1125,21 @@
   (let
     [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
     [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
-    [ordinal : i64 (lower_spmd_sites.len (& sites.items))]
+    [ordinal : i64 sites.items.len]
+    [head : i64 (lower_i64_i64_map.get-value-or (& sites.by-source) id -1)]
+    [previous : i64
+      (if (>= head 0)
+        (array-ref sites.items.slots head).source-tail
+        -1)]
     [frame-start : i64 sites.frames.len]
     (lower-spmd-snapshot-frames! frames (&mut sites.frames))
-    (lower_spmd_sites.push!
-      sites.items
+    (lower-spmd-site-list-push
+      (&mut sites.items)
       (LowerSpmdSite
         (+ ordinal 1)
+        -1
+        previous
+        ordinal
         false
         false
         false
@@ -1139,8 +1163,50 @@
           origin.truncated)))
     ;; An unspanned root has the function-local sentinel ID; child IDs remain
     ;; ordinary pool indices. Keeping that root key avoids dropping API ASTs.
-    (lower_i64_i64_map.insert-ref! (&mut sites.by-source) id ordinal)
+    (if (>= head 0)
+      (begin
+        (set! (array-ref sites.items.slots previous).next-source ordinal)
+        (set! (array-ref sites.items.slots head).source-tail ordinal))
+      (lower_i64_i64_map.insert-ref! (&mut sites.by-source) id ordinal))
     ordinal))
+
+;; Captured syntax can reuse one AST node in several source positions. The
+;; map advances through those occurrences in preorder. A tail revisit stays
+;; within its active source parent and reuses an entered occurrence instead
+;; of consuming the same node's occurrence in a later region.
+(define (lower-spmd-site-for-source!
+  [sites : (&mut sites LowerSpmdSites)]
+  [id : i64]) : i64
+  (let
+    [cursor : i64 (lower_i64_i64_map.get-value-or (& sites.by-source) id -1)]
+    [parent : i64 sites.lookup-parent]
+    [limit : i64
+      (if (>= parent 0)
+        (array-ref sites.items.slots parent).subtree-end
+        sites.items.len)]
+    [index : i64 cursor]
+    (while (and (>= index 0) (< index limit))
+      (let
+        [item : LowerSpmdSite (clone (array-ref sites.items.slots index))]
+        (when
+          (and (= item.decision.parent-ordinal parent) (not item.entered))
+          (lower_i64_i64_map.insert-ref!
+            (&mut sites.by-source)
+            id
+            (if (>= item.next-source 0)
+              item.next-source
+              index))
+          (return index))
+        (set! index item.next-source)))
+    (set! index cursor)
+    (while (>= index 0)
+      (let
+        [item : LowerSpmdSite (clone (array-ref sites.items.slots index))]
+        (when
+          (and (= item.decision.parent-ordinal parent) item.entered)
+          (return index))
+        (set! index item.previous-source)))
+    -1))
 
 ;; Span and expansion wrappers update provenance. Lambdas have their own
 ;; function identity and enumeration; quoted/compile-time syntax is not a
@@ -1321,12 +1387,12 @@
         [sites : (&mut sites-box LowerSpmdSites)
           (&mut (__tl-box-place sites-box))]
         [item : LowerSpmdSite
-          (lower_spmd_sites.get
+          (lower-spmd-site-list-get
             (& sites.items)
             next-parent
             (lower-spmd-site-fallback))]
-        (set! item.subtree-end (lower_spmd_sites.len (& sites.items)))
-        (lower_spmd_sites.set! sites.items next-parent item)))))
+        (set! item.subtree-end sites.items.len)
+        (set! (array-ref sites.items.slots next-parent) item)))))
 
 (define (lower-spmd-enumerate-function!
   [ctx : tc_core.TcContext]
@@ -1384,7 +1450,7 @@
       (>= sites.active 0)
       (let
         [item : LowerSpmdSite
-          (lower_spmd_sites.get
+          (lower-spmd-site-list-get
             (& sites.items)
             sites.active
             (lower-spmd-site-fallback))]
@@ -1410,7 +1476,7 @@
               (ScalarBackendSelected)
               reason))
           (set! item.decision.lanes lanes)
-          (lower_spmd_sites.set! sites.items sites.active item))))))
+          (set! (array-ref sites.items.slots sites.active) item))))))
 
 (define (lower-spmd-site-fallback) : LowerSpmdSite
   (let
@@ -1418,6 +1484,9 @@
       (ir.CompilerSourceLocation 0 (ast.ast-source-span 0 0 0 0))]
     (LowerSpmdSite
       0
+      -1
+      -1
+      -1
       false
       false
       false
@@ -1443,7 +1512,7 @@
     [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
     [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
     [item : LowerSpmdSite
-      (lower_spmd_sites.get (& sites.items) site (lower-spmd-site-fallback))]
+      (lower-spmd-site-list-get (& sites.items) site (lower-spmd-site-fallback))]
     (when
       failed
       (unless
@@ -1455,7 +1524,7 @@
       (set! item.selected true))
     (set! item.entered true)
     (set! item.finished true)
-    (lower_spmd_sites.set! sites.items site (clone item))
+    (set! (array-ref sites.items.slots site) (clone item))
     ;; Source preorder makes every subtree contiguous. Skip an already-final
     ;; child subtree, including scalar-tail revisits, rather than scanning the
     ;; remainder of the function for each source form.
@@ -1464,7 +1533,7 @@
       (while (< index item.subtree-end)
         (let
           [child : LowerSpmdSite
-            (lower_spmd_sites.get
+            (lower-spmd-site-list-get
               (& sites.items)
               index
               (lower-spmd-site-fallback))]
@@ -1476,7 +1545,7 @@
                 (set! child.decision.route (clone item.decision.route))
                 (set! child.decision.reason (clone item.decision.reason))
                 (set! child.decision.lanes item.decision.lanes)
-                (lower_spmd_sites.set! sites.items index (clone child))
+                (set! (array-ref sites.items.slots index) (clone child))
                 (lower-spmd-finish-site! state index failed)]
               [_ unit]))
           (set!
@@ -1511,13 +1580,10 @@
               (ir.compiler-spmd-macro-frame-list-append!
                 (&mut facts.frames)
                 (clone (array-ref sites.frames.slots index))))
-            (for [index
-              (iterator.range
-                sites.flushed
-                (lower_spmd_sites.len (& sites.items)))]
+            (for [index (iterator.range sites.flushed sites.items.len)]
               (let
                 [site : LowerSpmdSite
-                  (lower_spmd_sites.get
+                  (lower-spmd-site-list-get
                     (& sites.items)
                     index
                     (lower-spmd-site-fallback))]
@@ -1548,10 +1614,10 @@
         [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
         [sites : (&mut sites-box LowerSpmdSites)
           (&mut (__tl-box-place sites-box))]
-        (for [index (iterator.range 0 (lower_spmd_sites.len (& sites.items)))]
+        (for [index (iterator.range 0 sites.items.len)]
           (let
             [item : LowerSpmdSite
-              (lower_spmd_sites.get
+              (lower-spmd-site-list-get
                 (& sites.items)
                 index
                 (lower-spmd-site-fallback))]
@@ -1562,7 +1628,7 @@
               (set! item.decision.route (Inactive))
               (set! item.decision.reason (NotLowered))
               (set! item.decision.lanes 0)
-              (lower_spmd_sites.set! sites.items index item))))))))
+              (set! (array-ref sites.items.slots index) item))))))))
 
 (define (lower-spmd-complete-function
   [state : LowerState]
@@ -29002,29 +29068,30 @@
         [sites : (&mut sites-box LowerSpmdSites)
           (&mut (__tl-box-place sites-box))]
         [prior : i64 sites.active]
+        [prior-parent : i64 sites.lookup-parent]
         [site : i64
-          (lower_i64_i64_map.get-value-or
-            (& sites.by-source)
-            (lower-spmd-origin-id ctx (clone origin) sites.source-hint)
-            -1)]
+          (lower-spmd-site-for-source!
+            sites
+            (lower-spmd-origin-id ctx (clone origin) sites.source-hint))]
         (set! sites.active site)
         (when
           (>= site 0)
+          (set! sites.lookup-parent site)
           (let
             [item : LowerSpmdSite
-              (lower_spmd_sites.get
+              (lower-spmd-site-list-get
                 (& sites.items)
                 site
                 (lower-spmd-site-fallback))]
             (set! item.entered true)
-            (lower_spmd_sites.set! sites.items site (clone item))
+            (set! (array-ref sites.items.slots site) (clone item))
             (when
               (>= item.decision.parent-ordinal 0)
               (match item.decision.form
                 [(or (Broadcast) (Shuffle))
                   (let
                     [parent : LowerSpmdSite
-                      (lower_spmd_sites.get
+                      (lower-spmd-site-list-get
                         (& sites.items)
                         item.decision.parent-ordinal
                         (lower-spmd-site-fallback))]
@@ -29060,6 +29127,7 @@
                   (lower-state-owner state)
                   (lower-spmd-publish-spans state)))))
           (set! sites.active prior)
+          (set! sites.lookup-parent prior-parent)
           result))]
     [_
       (lower-spmd-expr-with-type-inner

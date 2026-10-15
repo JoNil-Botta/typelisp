@@ -15899,6 +15899,67 @@
             -1
             "regions remain independent"))))))
 
+(define (compiler-lower-spmd-location-text
+  [owner : lower.CompilerLowerState]
+  [location : (& location ir.CompilerSourceLocation)]) : String
+  (str_cat.str-cat
+    (lower.compiler-lower-state-name-text owner location.path-id)
+    ":"
+    (string.int->string (cast location.span.start-line : i64))))
+
+(test
+  compiler-lower-spmd-decisions-imported-origins
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [facts : ir.CompilerSpmdDecisions
+      (compiler-lower-spmd-source-facts
+        owner
+        "(import stdlib.iterator)\n(import tests.fixtures.spmd_decision_caller as caller)\n(define (main) : i64 (caller.from-template) (caller.from-operand) 42)"
+        (lower.CompilerLowerMode.Scalar))]
+    (test.assert-i64-eq
+      facts.decisions.len
+      2
+      "both imported source sites retained")
+    (let
+      [generated : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 0))]
+      [forwarded : ir.CompilerSpmdDecision
+        (clone (array-ref facts.decisions.slots 1))]
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text owner (& generated.primary))
+        "tests/fixtures/spmd_decision_macros.tl:2"
+        "generated primary span belongs to the imported template")
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text owner (& generated.actionable))
+        "tests/fixtures/spmd_decision_caller.tl:4"
+        "outer call is actionable")
+      (test.assert-i64-eq generated.frame-count 2 "nested frames retained")
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text
+          owner
+          (& (array-ref facts.frames.slots generated.frame-start).invocation))
+        "tests/fixtures/spmd_decision_caller.tl:4"
+        "outer frame uses caller coordinates and path")
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text
+          owner
+          (&
+            (array-ref facts.frames.slots (+ generated.frame-start 1)).invocation))
+        "tests/fixtures/spmd_decision_macros.tl:5"
+        "inner frame uses template coordinates and path")
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text owner (& forwarded.primary))
+        "tests/fixtures/spmd_decision_caller.tl:7"
+        "forwarded operand keeps its caller origin")
+      (test.assert-owned-string-eq
+        (compiler-lower-spmd-location-text owner (& forwarded.actionable))
+        "tests/fixtures/spmd_decision_caller.tl:7"
+        "forwarded operand remains actionable")
+      (test.assert-i64-eq
+        forwarded.frame-count
+        1
+        "forwarded operand owns one frame"))))
+
 (test
   compiler-lower-spmd-decisions-presence-reset
   (let

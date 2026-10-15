@@ -31,6 +31,10 @@ invariant_loop_call_write|all|0,2|tests/integration/invariant_loop_call.tl|0|190
 invariant_loop_call_nested|all|0,2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|stage-stdlib
 invariant_loop_call_varying|all|0,2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|stage-stdlib
 loop_call_addr_taken|all|0,2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|stage-stdlib
+global_cell_stored_address_loop|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|0 0|-|stage-stdlib
+global_cell_stored_address_alias|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|1 0|-|stage-stdlib
+global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|2 0|-|stage-stdlib
+global_cell_stored_address_twice|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|3 0|-|stage-stdlib
 hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
 aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
 static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl|-

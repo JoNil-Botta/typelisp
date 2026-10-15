@@ -71364,8 +71364,24 @@
     (ir.CompilerIrInstr.Load 6 (Var 5) (I64))
     (irt.instr "return %6")))
 
-(define (opt-t22-cell-row-loads [symbols : OptT22CellSymbols] [callee : i64]) : i64
+;; The whole-program builder must refuse its no-write table when the reader
+;; takes g's address. The callees-only form separately tests the load-CSE
+;; consumer with an oracle table: these fixed callees write named cells only.
+(define (opt-t22-cell-row-loads
+  [symbols : OptT22CellSymbols]
+  [callee : i64]
+  [whole-program? : bool]) : i64
   (let
+    [callees : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-t22-store-function symbols.writer symbols.g))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-t22-store-function symbols.clean symbols.h))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-t22-opaque-function symbols.opaque))
+                (& (ir.compiler-ir-function-seq-empty)))))))]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (&
@@ -71373,16 +71389,7 @@
             symbols.caller
             (ir.compiler-ir-param-seq-empty)
             (opt-t22-cell-row-instrs symbols callee)))
-        (&
-          (ir.compiler-ir-function-seq-prepend
-            (& (opt-t22-store-function symbols.writer symbols.g))
-            (&
-              (ir.compiler-ir-function-seq-prepend
-                (& (opt-t22-store-function symbols.clean symbols.h))
-                (&
-                  (ir.compiler-ir-function-seq-prepend
-                    (& (opt-t22-opaque-function symbols.opaque))
-                    (& (ir.compiler-ir-function-seq-empty)))))))))]
+        (& callees))]
     [blocks
       (opt-t22-run
         (ir.compiler-ir-param-seq-empty)
@@ -71390,7 +71397,9 @@
         (opt.opt-global-cell-summary-build
           (opt-t22-type-bases)
           (& (opt-t22-cell-globals symbols))
-          (& functions))
+          (if whole-program?
+            (& functions)
+            (& callees)))
         (opt-t22-blocks (opt-t22-cell-row-instrs symbols callee)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
 
@@ -71656,10 +71665,12 @@
       ;; has no class and drops the entry.
       [(not (= (opt-t22-element-call-loads (I64)) 1)) 11]
       [(not (= (opt-t22-element-call-loads (U8)) 2)) 12]
-      ;; (e) a cell word survives a call whose row excludes it, and does not
-      ;; survive a callee that may write any cell.
-      [(not (= (opt-t22-cell-row-loads cells cells.clean) 1)) 13]
-      [(not (= (opt-t22-cell-row-loads cells cells.opaque) 2)) 14]
+      ;; (e) the consumer honors a proven callee row, while the whole-program
+      ;; builder refuses that table when the reader takes a stored cell's address.
+      [(not (= (opt-t22-cell-row-loads cells cells.clean false) 1)) 13]
+      [(not (= (opt-t22-cell-row-loads cells cells.opaque false) 2)) 14]
+      [(not (= (opt-t22-cell-row-loads cells cells.clean true) 2)) 20]
+      [(not (= (opt-t22-cell-row-loads cells cells.opaque true) 2)) 21]
       ;; (c) wide constants still do not substitute into ordinary operands.
       [(not
           (opt_i64_i64_map.contains?
@@ -76684,3 +76695,85 @@
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
       "an addition cannot fault")))
+
+(define (opt-global-address-facts-case?
+  [text : String]
+  [stored? : bool]
+  [address? : bool]) : bool
+  (let
+    [name : i64 (opt-test-symbol "address_fact")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-spans-function (irt.instrs text)))
+        (& (ir.compiler-ir-function-seq-empty)))]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build (& functions))]
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    [_decl : unit
+      (opt-test-global-builder-push! (&mut builder) name (I64) (I64 10))]
+    [globals : ir.CompilerIrGlobalSeq
+      (ir.compiler-ir-global-builder-to-seq builder)]
+    [cells : opt.OptGlobalCellSummary
+      (opt.opt-global-cell-summary-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& globals)
+        (& functions))]
+    (and
+      (= cells.mod-ref.built? (not address?))
+      (= (opt_i64_i64_map.contains? (& cells.addr-taken) name) address?)
+      (= (opt_i64_i64_map.contains? (& facts.disq) name) (or stored? address?))
+      (= (opt_i64_i64_map.contains? (& facts.cells.stores) name) stored?)
+      (= (opt_i64_i64_map.contains? (& facts.addr-taken) name) address?))))
+
+(test
+  global-address-facts-preserve-store-borrow-overlap
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       return 0"
+      true
+      false)
+    "a direct store disqualifies constants without taking an address")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = mov &@address_fact : i64
+       return %0"
+      false
+      true)
+    "an address operand marks the global independently")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       %0 = call opaque(&@address_fact) : i64
+       return %0"
+      true
+      true)
+    "a store before a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = call opaque(&@address_fact) : i64
+       store @address_fact, 1 : i64
+       return %0"
+      true
+      true)
+    "a store after a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_other, 1 : i64
+       return @address_fact"
+      false
+      false)
+    "reads and stores of other globals do not imply address-taking")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "tailcall opaque(&@address_fact) : i64"
+      false
+      true)
+    "tailcall arguments include address operands")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = pack [&@address_fact] : i64
+       return %0"
+      false
+      true)
+    "aggregate words include address operands"))

@@ -2763,12 +2763,10 @@
     [(Var id) (opt-used-add set id)]
     [_ set]))
 
-;; What a use scan records in a map for each use: the var it reads, the
-;; global whose address it takes, or one more occurrence of the global it
-;; names. The scans share one expansion of compiler-ir-instr-visit-uses.
+;; Use scans record either a variable read or another occurrence of a global.
+;; They share one expansion of compiler-ir-instr-visit-uses.
 (defenum OptUseNote
   (Var)
-  (GlobalAddr)
   (GlobalCount))
 
 (define (opt-note-use!
@@ -2780,11 +2778,6 @@
     [(Var)
       (match value
         [(Var id) (opt_i64_i64_map.insert-ref! set id 1)]
-        [_ unit])]
-    [(GlobalAddr)
-      (match value
-        [(GlobalAddr name)
-          (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id name) 1)]
         [_ unit])]
     [(GlobalCount)
       (match value
@@ -114288,23 +114281,35 @@
 ;; opt-global-cell-scan-instr). Only the level-2 summaries read them; the index
 ;; is built only within the summary function limit, above which every summary
 ;; reading it declines.
+(defstruct OptGlobalDisqualifications
+  (disq opt_i64_i64_map.Map)
+  (addr-taken opt_i64_i64_map.Map))
+
 (defstruct OptProgramFacts
   (index OptProgramIndex)
   (disq opt_i64_i64_map.Map)
-  (cells OptGlobalCellScan))
+  (cells OptGlobalCellScan)
+  (addr-taken opt_i64_i64_map.Map))
 
 (define (opt-program-facts-build
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramFacts
   (let
     [count : i64 (opt-function-seq-count functions)]
-    (OptProgramFacts
-      (if (<= count (opt-summary-function-limit))
-        (opt-program-index-build functions)
-        (opt-program-index-empty))
+    [disqualified : OptGlobalDisqualifications
       (opt-const-globals-disqualified
-        (& (opt_i64_i64_map.with-capacity (opt-function-index-capacity count)))
-        functions)
-      (opt-global-cell-scan-functions (& (opt-global-cell-scan-new)) functions))))
+        (opt-function-index-capacity count)
+        functions)]
+    (match disqualified
+      [(OptGlobalDisqualifications disq addr-taken)
+        (OptProgramFacts
+          (if (<= count (opt-summary-function-limit))
+            (opt-program-index-build functions)
+            (opt-program-index-empty))
+          disq
+          (opt-global-cell-scan-functions
+            (& (opt-global-cell-scan-new))
+            functions)
+          addr-taken)])))
 
 (define (opt-program-index-count [index : (& index OptProgramIndex)]) : i64
   index.calls.count)
@@ -115365,33 +115370,47 @@
 ;; there -- a new operand position can never silently escape the address-taken
 ;; check.
 ;;
-;; Disqualify a global on a direct store to it OR on any `CompilerIrValue.GlobalAddr`
-;; operand. Like opt-reach-instr it skips Pack words; `CompilerIrInstr.Store`
-;; also records its target name, and call/tail targets (function names, never
-;; const-global candidates) are not scanned.
+;; A direct store disqualifies constant substitution. Address operands also
+;; disqualify it and independently mark an escaped cell; a store must never
+;; erase that address fact. The shared operand visitor includes every role.
+(define (opt-const-globals-disq-use!
+  [scan : (&mut scan OptGlobalDisqualifications)]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(GlobalAddr name)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        (opt_i64_i64_map.insert-ref! (&mut scan.disq) id 1)
+        (opt_i64_i64_map.insert-ref! (&mut scan.addr-taken) id 1))]
+    [_ unit]))
+
 (define (opt-const-globals-disq-instr
-  [disq : opt_i64_i64_map.Map]
-  [instr : ir.CompilerIrInstr]) : opt_i64_i64_map.Map
+  [scan : OptGlobalDisqualifications]
+  [instr : ir.CompilerIrInstr]) : OptGlobalDisqualifications
   (let
-    [out : opt_i64_i64_map.Map disq]
+    [out : OptGlobalDisqualifications scan]
     (match (opt-instr-target (compiler-opt-global-shared-view instr))
       [(Store name)
         (opt_i64_i64_map.insert-ref!
-          (&mut out)
+          (&mut out.disq)
           (ir.compiler-ir-symbol-id name)
           1)]
       [_ unit])
-    (match (& instr)
-      [(Pack _ _ _) unit]
-      [_ (opt-note-uses! (GlobalAddr) (&mut out) instr)])
+    (ir.compiler-ir-instr-visit-uses
+      instr
+      opt-const-globals-disq-use!
+      (&mut out))
     out))
 
 (define (opt-const-globals-disqualified
-  [disq : (& opt_i64_i64_map.Map)]
-  [functions : (& functions ir.CompilerIrFunctionSeq)]) : opt_i64_i64_map.Map
+  [capacity : i64]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptGlobalDisqualifications
   (opt-functions-fold
     functions
-    (owned_view.compiler-owned-reference-shared-view disq)
+    (OptGlobalDisqualifications
+      (opt_i64_i64_map.with-capacity capacity)
+      (opt_i64_i64_map.with-capacity capacity))
     opt-const-globals-disq-instr))
 
 ;; An ordinary operand only earns substitution when it fits a signed 32-bit
@@ -117221,42 +117240,6 @@
     [(LookupFound index)
       (Some (compiler-opt-global-array-element-shared-view cell.types index))]
     [(LookupMissing) (No)]))
-
-;; The address-taken set is exactly the const-global disqualified set minus the
-;; program's direct-store targets: the disqualify walk records a global on a
-;; `CompilerIrInstr.Store name` OR a `CompilerIrValue.GlobalAddr name` operand and
-;; nothing else, so subtracting the former leaves precisely the latter. Both
-;; walks are total matches over the IR, so the derivation cannot drift when the
-;; IR grows an instruction variant.
-(define (opt-global-cell-addr-taken-fill
-  [globals : (& ir.CompilerIrGlobalSeq)]
-  [disq : (& disq opt_i64_i64_map.Map)]
-  [stores : (& stores opt_i64_i64_map.Map)]
-  [out : opt_i64_i64_map.Map]
-  [index : i64]) : opt_i64_i64_map.Map
-  (if (>= index globals.len)
-    out
-    (match (ir.compiler-ir-global-seq-ref globals index)
-      [(Global name _ _)
-        (opt-global-cell-addr-taken-fill
-          globals
-          disq
-          stores
-          (if (and
-            (opt_i64_i64_map.contains? (& disq) (ir.compiler-ir-symbol-id name))
-            (not
-              (opt_i64_i64_map.contains?
-                (& stores)
-                (ir.compiler-ir-symbol-id name))))
-            (let
-              [next-out : opt_i64_i64_map.Map out]
-              (opt_i64_i64_map.insert-ref!
-                (&mut next-out)
-                (ir.compiler-ir-symbol-id name)
-                1)
-              next-out)
-            out)
-          (+ index 1))])))
 
 (define (opt-global-cell-word-count
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -120537,8 +120520,8 @@
 ;; and a use inside F can REBIND the cell. Four refusals close that:
 ;;
 ;;   (1) g's address is never taken -- it is not in the cell summary's
-;;       `addr-taken` set (opt-global-cell-addr-taken-fill: the globals a
-;;       `CompilerIrValue.GlobalAddr` operand names and no `Store` targets). A
+;;       `addr-taken` set (the globals named by `GlobalAddr` operands,
+;;       independently of direct-store targets). A
 ;;       pointer to the cell is the only way a `StorePtr` could write it without
 ;;       a `Store g`. P18's table rests on the same fact and refuses to build at
 ;;       all while that set is non-empty, so reaching the census already implies
@@ -121368,18 +121351,9 @@
         functions)
       (let
         [capacity : i64 (opt-function-index-capacity count)]
-        ;; The cell summary's own derivation, at the same program point:
-        ;; `disq` records a global on a `Store` target OR a `GlobalAddr`
-        ;; operand, so subtracting the direct-store targets leaves precisely the
-        ;; globals whose ADDRESS the program takes.
+        ;; Address facts come from operands independently of direct stores.
         [facts : OptProgramFacts (opt-program-facts-build functions)]
-        [addr-taken : opt_i64_i64_map.Map
-          (opt-global-cell-addr-taken-fill
-            globals
-            facts.disq
-            facts.cells.stores
-            (opt_i64_i64_map.with-capacity capacity)
-            0)]
+        [addr-taken : opt_i64_i64_map.Map facts.addr-taken]
         [mod-ref : OptGlobalModRef
           (opt-global-mod-ref-build
             globals
@@ -121950,12 +121924,7 @@
               0))]
         [_data-slot-on : unit (set! opt-licm-global-data-slot-on true)]
         [addr-taken : opt_i64_i64_map.Map
-          (opt-global-cell-addr-taken-fill
-            globals
-            facts.disq
-            facts.cells.stores
-            (opt_i64_i64_map.with-capacity capacity)
-            0)]
+          (owned_view.compiler-owned-reference-shared-view facts.addr-taken)]
         ;; The non-negativity table reads `addr-taken` and the declared types,
         ;; so it is built from a partly-filled summary carrying exactly those.
         [seed : OptGlobalCellSummary

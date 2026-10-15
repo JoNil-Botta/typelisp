@@ -34,9 +34,17 @@
 
 (define (lower-test-functions [result : lower.ResultCompilerLower]) : LowerTestFunctions
   (match result
-    [(Ok program _)
+    [(Ok program _ owner)
       (match program
-        [(Program _ functions _) (Some functions)])]
+        [(Program _ functions _)
+          (let
+            [copied : ir.CompilerIrFunctionSeq
+              (ir.compiler-ir-clone-function-seq
+                (ast.ast-node-pool-reader-context-current)
+                (& functions))]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            (Some copied))])]
     [(Err _) (No)]))
 
 ;; --- fixtures moved from production compiler_lower.tl -------------------------
@@ -538,22 +546,27 @@
 
 (define (lower-test-optimized-product-shape [source : String] [name : String]) : LowerTestProductShape
   (match (lower.lower-compiler-source source)
-    [(Ok program spans)
-      (match (match (optimize.optimize-program-with-spans-and-level
-        (& program)
-        spans
-        2)
-        [(Program optimized _) optimized])
-        [(Program _ functions _)
-          (match (lower-test-function-seq-find functions name)
-            [(Some func)
-              (match func
-                [(Function _ _ _ _ blocks _)
-                  (lower-test-product-shape-blocks
-                    (ir.compiler-ir-block-list-view blocks)
-                    0
-                    (LowerTestProductShape 0 0 -1))])]
-            [(No) (LowerTestProductShape -1 -1 -2)])])]
+    [(Ok program spans lower-owner)
+      (let
+        [result : LowerTestProductShape
+          (match (match (optimize.optimize-program-with-spans-and-level
+            (& program)
+            spans
+            2)
+            [(Program optimized _) optimized])
+            [(Program _ functions _)
+              (match (lower-test-function-seq-find functions name)
+                [(Some func)
+                  (match func
+                    [(Function _ _ _ _ blocks _)
+                      (lower-test-product-shape-blocks
+                        (ir.compiler-ir-block-list-view blocks)
+                        0
+                        (LowerTestProductShape 0 0 -1))])]
+                [(No) (LowerTestProductShape -1 -1 -2)])])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) (LowerTestProductShape -1 -1 -3)]))
 
 (define (lower-test-product-shapes-match? [name : String]) : bool
@@ -815,7 +828,12 @@
   (match (lower.lower-compiler-source src)
     [(Err diag)
       (string.eq (cdiag.compiler-diagnostic-message (__tl-box-place diag)) want)]
-    [(Ok _ _) false]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (define (compiler-lower-comptime-error-runtime-diagnostics-ok?) : bool
   (and
@@ -1041,7 +1059,12 @@
   (match (lower.lower-compiler-source-with-mode src mode)
     [(Err diag)
       (string.eq (cdiag.compiler-diagnostic-message (__tl-box-place diag)) want)]
-    [(Ok _ _) false]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (define (compiler-lower-mode-diagnostic-ok?
   [src : String]
@@ -1058,13 +1081,23 @@
           (string.eq (cdiag.compiler-diagnostic-message diag) want)
           (= (cdiag.compiler-diagnostic-line diag) line)
           (= (cdiag.compiler-diagnostic-col diag) col)))]
-    [(Ok _ _) false]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
   (match (lower.lower-compiler-source src)
     [(Err diag)
       (string.eq (cdiag.compiler-diagnostic-message (__tl-box-place diag)) want)]
-    [(Ok _ _) false]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
   (match (lower.lower-compiler-source-with-mode
@@ -1072,7 +1105,12 @@
     (lower.CompilerLowerMode.WindowsScalar))
     [(Err diag)
       (string.eq (cdiag.compiler-diagnostic-message (__tl-box-place diag)) want)]
-    [(Ok _ _) false]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool false]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (define (compiler-lower-entry-moduled-main-ok?) : bool
   (let
@@ -1361,25 +1399,35 @@
 (define (compiler-lower-slice-whole-array-pack-shape-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-slice-whole-array-pack-source))
-    [(Ok program _)
+    [(Ok program _ lower-owner)
       (let
-        [pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (match program
-          [(Program _ functions _)
-            (and
-              (= (lower-test-count functions "main" (Pack)) 1)
-              (=
-                (lower-test-function-pack-shape-count functions "main" pools)
-                1)
-              (= (lower-test-count functions "slice-from-array-ref" (Pack)) 1)
-              (=
-                (lower-test-function-pack-shape-count
-                  functions
-                  "slice-from-array-ref"
-                  pools)
-                1)
-              (= (lower-test-count functions "slice-forward" (Pack)) 0))]))]
+        [ok : bool
+          (let
+            [pools : ast.AstNodePoolContext
+              (ast.ast-node-pool-context-capture-active)]
+            (match program
+              [(Program _ functions _)
+                (and
+                  (= (lower-test-count functions "main" (Pack)) 1)
+                  (=
+                    (lower-test-function-pack-shape-count
+                      functions
+                      "main"
+                      pools)
+                    1)
+                  (=
+                    (lower-test-count functions "slice-from-array-ref" (Pack))
+                    1)
+                  (=
+                    (lower-test-function-pack-shape-count
+                      functions
+                      "slice-from-array-ref"
+                      pools)
+                    1)
+                  (= (lower-test-count functions "slice-forward" (Pack)) 0))]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-slice-split-at-source) : String
@@ -3088,7 +3136,12 @@
 
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower.lower-compiler-source src)
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 ;; Provenance side-table smoke: the smoke source defines two functions
@@ -3112,34 +3165,44 @@
 
 (define (compiler-lower-spans-ok? [src : String]) : bool
   (match (lower.lower-compiler-source src)
-    [(Ok _ spans)
-      (and
-        (= (ir.compiler-source-spans-count (& spans)) 2)
-        (compiler-lower-span-start-line-ok?
-          (owned_view.compiler-owned-shared-view spans)
-          "inc"
-          3)
-        (compiler-lower-span-start-line-ok? spans "main" 5))]
+    [(Ok _ spans lower-owner)
+      (let
+        [ok : bool
+          (and
+            (= (ir.compiler-source-spans-count (& spans)) 2)
+            (compiler-lower-span-start-line-ok?
+              (owned_view.compiler-owned-shared-view spans)
+              "inc"
+              3)
+            (compiler-lower-span-start-line-ok? spans "main" 5))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool
   (match (lower.lower-compiler-source src)
-    [(Ok program _)
+    [(Ok program _ lower-owner)
       (let
-        [summary : ir.CompilerIrSummary
-          (ir.compiler-ir-program-summary (& program))]
-        (and
-          (= (ir.compiler-ir-summary-globals summary) 1)
-          (= (ir.compiler-ir-summary-functions summary) 2)
-          (= (ir.compiler-ir-summary-externs summary) 1)
-          (= (ir.compiler-ir-summary-blocks summary) 7)
-          (= (ir.compiler-ir-summary-instructions summary) 20)
-          (= (ir.compiler-ir-summary-vars summary) 13)
-          (= (ir.compiler-ir-summary-empty-blocks summary) 0)
-          (= (ir.compiler-ir-summary-max-instructions-function summary) 17)
-          (= (ir.compiler-ir-summary-max-instructions-block summary) 6)
-          (= (ir.compiler-ir-summary-call-arg-entries summary) 1)
-          (= (ir.compiler-ir-summary-phi-input-entries summary) 0)))]
+        [ok : bool
+          (let
+            [summary : ir.CompilerIrSummary
+              (ir.compiler-ir-program-summary (& program))]
+            (and
+              (= (ir.compiler-ir-summary-globals summary) 1)
+              (= (ir.compiler-ir-summary-functions summary) 2)
+              (= (ir.compiler-ir-summary-externs summary) 1)
+              (= (ir.compiler-ir-summary-blocks summary) 7)
+              (= (ir.compiler-ir-summary-instructions summary) 20)
+              (= (ir.compiler-ir-summary-vars summary) 13)
+              (= (ir.compiler-ir-summary-empty-blocks summary) 0)
+              (= (ir.compiler-ir-summary-max-instructions-function summary) 17)
+              (= (ir.compiler-ir-summary-max-instructions-block summary) 6)
+              (= (ir.compiler-ir-summary-call-arg-entries summary) 1)
+              (= (ir.compiler-ir-summary-phi-input-entries summary) 0)))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 ;; Count `CompilerIrInstr.Phi` nodes, to assert the merge-phi shape of lowered scalar
@@ -4737,76 +4800,81 @@
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (lower.lower-compiler-source (compiler-lower-defdispatch-source))
-    [(Ok program _)
-      (match program
-        [(Program globals functions _)
-          (let
-            [cache-name : String "__tl_dispatch_cache_dot"]
-            [scalar-name : String
-              "__tl_dispatch_variant_scalar_dot__dot-scalar"]
-            [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
-            [avx512-name : String
-              "__tl_dispatch_variant_avx512_dot__dot-avx512"]
-            (and
-              (lower-test-dispatch-cache-word? globals cache-name)
-              (lower-test-function-defined? functions "dot")
-              (lower-test-function-defined?
-                functions
-                (owned_view.compiler-owned-shared-view scalar-name))
-              (lower-test-function-defined?
-                functions
-                (owned_view.compiler-owned-shared-view avx2-name))
-              (lower-test-function-defined?
-                functions
-                (owned_view.compiler-owned-shared-view avx512-name))
-              (not (lower-test-function-defined? functions "dot-scalar"))
-              (not (lower-test-function-defined? functions "dot-avx2"))
-              (not (lower-test-function-defined? functions "dot-avx512"))
-              (= (lower-test-function-call-count functions "main" "dot") 1)
-              (>= (lower-test-count functions "dot" (IndirectCall)) 4)
-              (=
-                (lower-test-function-store-global-count
-                  functions
-                  "dot"
-                  cache-name)
-                0)
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "dot"
-                  "tl_atomic_i64_load_ptr")
-                1)
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "dot"
-                  "tl_atomic_i64_cas_ptr")
-                3)
-              (= (lower-test-count functions "dot" (Select)) 3)
-              (= (lower-test-count functions "dot" (Cast)) 4)
-              (>= (lower-test-functions-cpuid-count functions) 6)
-              (= (lower-test-functions-xgetbv-count functions) 2)
-              (=
-                (lower-test-function-call-arg-function-count
-                  functions
-                  "dot"
-                  "tl_atomic_i64_cas_ptr"
-                  scalar-name)
-                1)
-              (=
-                (lower-test-function-call-arg-function-count
-                  functions
-                  "dot"
-                  "tl_atomic_i64_cas_ptr"
-                  avx2-name)
-                1)
-              (=
-                (lower-test-function-call-arg-function-count
-                  functions
-                  "dot"
-                  "tl_atomic_i64_cas_ptr"
-                  avx512-name)
-                1)))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals functions _)
+              (let
+                [cache-name : String "__tl_dispatch_cache_dot"]
+                [scalar-name : String
+                  "__tl_dispatch_variant_scalar_dot__dot-scalar"]
+                [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
+                [avx512-name : String
+                  "__tl_dispatch_variant_avx512_dot__dot-avx512"]
+                (and
+                  (lower-test-dispatch-cache-word? globals cache-name)
+                  (lower-test-function-defined? functions "dot")
+                  (lower-test-function-defined?
+                    functions
+                    (owned_view.compiler-owned-shared-view scalar-name))
+                  (lower-test-function-defined?
+                    functions
+                    (owned_view.compiler-owned-shared-view avx2-name))
+                  (lower-test-function-defined?
+                    functions
+                    (owned_view.compiler-owned-shared-view avx512-name))
+                  (not (lower-test-function-defined? functions "dot-scalar"))
+                  (not (lower-test-function-defined? functions "dot-avx2"))
+                  (not (lower-test-function-defined? functions "dot-avx512"))
+                  (= (lower-test-function-call-count functions "main" "dot") 1)
+                  (>= (lower-test-count functions "dot" (IndirectCall)) 4)
+                  (=
+                    (lower-test-function-store-global-count
+                      functions
+                      "dot"
+                      cache-name)
+                    0)
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "dot"
+                      "tl_atomic_i64_load_ptr")
+                    1)
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "dot"
+                      "tl_atomic_i64_cas_ptr")
+                    3)
+                  (= (lower-test-count functions "dot" (Select)) 3)
+                  (= (lower-test-count functions "dot" (Cast)) 4)
+                  (>= (lower-test-functions-cpuid-count functions) 6)
+                  (= (lower-test-functions-xgetbv-count functions) 2)
+                  (=
+                    (lower-test-function-call-arg-function-count
+                      functions
+                      "dot"
+                      "tl_atomic_i64_cas_ptr"
+                      scalar-name)
+                    1)
+                  (=
+                    (lower-test-function-call-arg-function-count
+                      functions
+                      "dot"
+                      "tl_atomic_i64_cas_ptr"
+                      avx2-name)
+                    1)
+                  (=
+                    (lower-test-function-call-arg-function-count
+                      functions
+                      "dot"
+                      "tl_atomic_i64_cas_ptr"
+                      avx512-name)
+                    1)))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-defdispatch-structural-shape-ok?) : bool
@@ -4934,18 +5002,23 @@
         "app.tl"
         program
         (compiler-lower-module-symbol-paths))
-        [(Ok lowered _)
-          (match lowered
-            [(Program globals functions _)
-              (and
-                (lower-test-global-list-has-name? globals "lib.tl::answer")
-                (>
-                  (lower-test-functions-direct-call-count
-                    functions
-                    "lib.tl::inc")
-                  0)
-                (> (lower-test-count functions "lib.tl::inc" (Binop)) 0)
-                (>= (lower-test-count functions "main" (Binop)) 0))])]
+        [(Ok lowered _ lower-owner)
+          (let
+            [ok : bool
+              (match lowered
+                [(Program globals functions _)
+                  (and
+                    (lower-test-global-list-has-name? globals "lib.tl::answer")
+                    (>
+                      (lower-test-functions-direct-call-count
+                        functions
+                        "lib.tl::inc")
+                      0)
+                    (> (lower-test-count functions "lib.tl::inc" (Binop)) 0)
+                    (>= (lower-test-count functions "main" (Binop)) 0))])]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            ok)]
         [(Err _) false])]
     [(Err _) false]))
 
@@ -5004,15 +5077,20 @@
 
 (define (compiler-lower-module-qualified-ok?) : bool
   (match (lower.lower-compiler-source (compiler-lower-module-qualified-source))
-    [(Ok lowered _)
-      (match lowered
-        [(Program globals functions _)
-          (and
-            (lower-test-global-list-has-name? globals "left/same")
-            (lower-test-global-list-has-name? globals "right/same")
-            (> (lower-test-functions-call-count functions "left/get") 0)
-            (> (lower-test-functions-call-count functions "right/get") 0)
-            (> (lower-test-count functions "main" (Binop)) 0))])]
+    [(Ok lowered _ lower-owner)
+      (let
+        [ok : bool
+          (match lowered
+            [(Program globals functions _)
+              (and
+                (lower-test-global-list-has-name? globals "left/same")
+                (lower-test-global-list-has-name? globals "right/same")
+                (> (lower-test-functions-call-count functions "left/get") 0)
+                (> (lower-test-functions-call-count functions "right/get") 0)
+                (> (lower-test-count functions "main" (Binop)) 0))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-import-alias-source) : String
@@ -5224,19 +5302,24 @@
 (define (compiler-lower-module-macro-global-init-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-module-macro-global-init-source))
-    [(Ok lowered _)
-      (match lowered
-        [(Program globals functions _)
-          (and
-            (lower-test-global-list-has-name?
-              globals
-              "generated.global_init_user/answer")
-            (lower-test-function-defined?
-              functions
-              "__global_init_generated.global_init_user/answer")
-            (lower-test-function-defined?
-              functions
-              "generated.global_init_user/read-answer"))])]
+    [(Ok lowered _ lower-owner)
+      (let
+        [ok : bool
+          (match lowered
+            [(Program globals functions _)
+              (and
+                (lower-test-global-list-has-name?
+                  globals
+                  "generated.global_init_user/answer")
+                (lower-test-function-defined?
+                  functions
+                  "__global_init_generated.global_init_user/answer")
+                (lower-test-function-defined?
+                  functions
+                  "generated.global_init_user/read-answer"))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-module-macro-stdlib-vector-import-source) : String
@@ -5267,7 +5350,12 @@
 (define (compiler-lower-module-macro-stdlib-vector-import-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-module-macro-stdlib-vector-import-source))
-    [(Ok _ _) true]
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool true]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-function-decl-count-wrapped-ok?) : bool
@@ -5512,19 +5600,24 @@
 (define (compiler-lower-extern-link-metadata-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-lower-extern-link-metadata-source))
-    [(Ok program _)
-      (match program
-        [(Program _ _ externs)
-          (and
-            (= externs.len 1)
-            (match (ir.compiler-ir-extern-seq-ref externs 0)
-              [(Extern name-id name-id name _ abi symbol-id link-inputs _)
-                (and
-                  (string.eq (ci.intern-str name-id) "ffi-add")
-                  (string.eq name "ffi-add")
-                  (string.eq (ci.intern-str symbol-id) "ffi_add")
-                  (ast.ast-extern-abi-c? (& abi))
-                  (compiler-lower-extern-link-inputs-ok? link-inputs))]))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ _ externs)
+              (and
+                (= externs.len 1)
+                (match (ir.compiler-ir-extern-seq-ref externs 0)
+                  [(Extern name-id name-id name _ abi symbol-id link-inputs _)
+                    (and
+                      (string.eq (ci.intern-str name-id) "ffi-add")
+                      (string.eq name "ffi-add")
+                      (string.eq (ci.intern-str symbol-id) "ffi_add")
+                      (ast.ast-extern-abi-c? (& abi))
+                      (compiler-lower-extern-link-inputs-ok? link-inputs))]))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-extern-value-fnptr-source) : String
@@ -5724,19 +5817,27 @@
 
 (define (compiler-lower-global-shape-ok?) : bool
   (match (lower.lower-compiler-source (compiler-lower-global-source))
-    [(Ok program _)
-      (match program
-        [(Program globals functions externs)
-          (and
-            (= globals.len 3)
-            (= externs.len 1)
-            (lower-test-global-list-has-name? globals "answer")
-            (lower-test-global-list-has-name? globals "flag")
-            (lower-test-global-list-has-name? globals "widened")
-            (= (ir.compiler-ir-extern-seq-count externs) 1)
-            (>
-              (lower-test-function-store-global-count functions "main" "answer")
-              0))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals functions externs)
+              (and
+                (= globals.len 3)
+                (= externs.len 1)
+                (lower-test-global-list-has-name? globals "answer")
+                (lower-test-global-list-has-name? globals "flag")
+                (lower-test-global-list-has-name? globals "widened")
+                (= (ir.compiler-ir-extern-seq-count externs) 1)
+                (>
+                  (lower-test-function-store-global-count
+                    functions
+                    "main"
+                    "answer")
+                  0))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-numeric-source) : String
@@ -6604,23 +6705,30 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-mutable-global-function-value-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program globals functions _)
-          (and
-            (lower-test-global-function-initializer?
-              globals
-              "callback"
-              "initial")
-            (= (lower-test-count functions "invoke" (IndirectCall)) 1)
-            (= (lower-test-function-call-count functions "invoke" "callback") 0)
-            (=
-              (lower-test-function-store-global-count
-                functions
-                "install!"
-                "callback")
-              1)
-            (= (lower-test-function-call-count functions "main" "invoke") 1))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals functions _)
+              (and
+                (lower-test-global-function-initializer?
+                  globals
+                  "callback"
+                  "initial")
+                (= (lower-test-count functions "invoke" (IndirectCall)) 1)
+                (=
+                  (lower-test-function-call-count functions "invoke" "callback")
+                  0)
+                (=
+                  (lower-test-function-store-global-count
+                    functions
+                    "install!"
+                    "callback")
+                  1)
+                (= (lower-test-function-call-count functions "main" "invoke") 1))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-mutable-global-function-value-shape-ok?) : bool
@@ -6667,28 +6775,33 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-global-reference-initializer-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program globals _ _)
-          (and
-            (string.eq
-              (lower-test-global-initializer-kind globals "base")
-              "i64")
-            (string.eq
-              (lower-test-global-initializer-kind globals "copy")
-              "runtime")
-            (string.eq
-              (lower-test-global-initializer-kind globals "widened")
-              "runtime")
-            (string.eq
-              (lower-test-global-initializer-kind globals "color")
-              "runtime")
-            (string.eq
-              (lower-test-global-initializer-kind globals "callback")
-              "function:inc")
-            (string.eq
-              (lower-test-global-initializer-kind globals "callback-copy")
-              "runtime"))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals _ _)
+              (and
+                (string.eq
+                  (lower-test-global-initializer-kind globals "base")
+                  "i64")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "copy")
+                  "runtime")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "widened")
+                  "runtime")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "color")
+                  "runtime")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "callback")
+                  "function:inc")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "callback-copy")
+                  "runtime"))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (lower-test-byte-list [bytes : String] [index : i64]) : String
@@ -6709,37 +6822,42 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-static-array-global-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program globals _ _)
-          (and
-            (string.eq
-              (lower-test-global-initializer-kind globals "wide")
-              "static:1,0,0,1,255,255")
-            (string.eq
-              (lower-test-global-initializer-kind globals "halves")
-              "static:0,0,192,63,0,0,0,128")
-            (string.eq
-              (lower-test-global-initializer-kind globals "flags")
-              "static:1,0")
-            (string.eq
-              (lower-test-global-initializer-kind globals "letters")
-              "static:65")
-            (string.eq
-              (lower-test-global-initializer-kind globals "negatives")
-              "static:255,128")
-            (string.eq
-              (lower-test-global-initializer-kind globals "empty")
-              "static:")
-            (string.eq
-              (lower-test-global-initializer-kind globals "computed")
-              "runtime")
-            (string.eq
-              (lower-test-global-initializer-kind globals "converted")
-              "runtime")
-            (string.eq
-              (lower-test-global-initializer-kind globals "nested")
-              "runtime"))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals _ _)
+              (and
+                (string.eq
+                  (lower-test-global-initializer-kind globals "wide")
+                  "static:1,0,0,1,255,255")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "halves")
+                  "static:0,0,192,63,0,0,0,128")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "flags")
+                  "static:1,0")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "letters")
+                  "static:65")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "negatives")
+                  "static:255,128")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "empty")
+                  "static:")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "computed")
+                  "runtime")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "converted")
+                  "runtime")
+                (string.eq
+                  (lower-test-global-initializer-kind globals "nested")
+                  "runtime"))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-static-array-global-shape-ok?) : bool
@@ -7699,7 +7817,12 @@
           (> (cdiag.compiler-diagnostic-col diag) 0)
           (io.panic "SPMD numeric diagnostic has no source column"))
         true)]
-    [(Ok _ _) (io.panic "SPMD numeric source unexpectedly lowered")]))
+    [(Ok _ _ lower-owner)
+      (let
+        [ok : bool (io.panic "SPMD numeric source unexpectedly lowered")]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]))
 
 (test
   compiler-lower-spmd-numeric-diagnostics
@@ -7824,14 +7947,19 @@
                 ", expected `"
                 want
                 "` at 6:9"))))]
-      [(Ok _ _)
-        (io.panic
-          (str_cat.str-cat
-            "masked cast from "
-            source
-            " to "
-            destination
-            " unexpectedly lowered"))])))
+      [(Ok _ _ lower-owner)
+        (let
+          [ok : bool
+            (io.panic
+              (str_cat.str-cat
+                "masked cast from "
+                source
+                " to "
+                destination
+                " unexpectedly lowered"))]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          ok)])))
 
 ;; `src` lowers in `mode` through the masked emitter: its store is predicated.
 (define (compiler-lower-masked-cast-vectorized?
@@ -8996,42 +9124,47 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-masked-if-shift-value-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (let
-            [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
-            [shl-count : i64
-              (lower-test-function-vector-binop-op-count
-                functions
-                "fill"
-                (Shl (I64)))]
-            [shr-count : i64
-              (lower-test-function-vector-binop-op-count
-                functions
-                "fill"
-                (Shr (I64)))]
-            [abort-count : i64
-              (lower-test-functions-call-count functions "tl_shift_abort")]
-            [shape-count : i64
-              (lower-test-function-vector-shape-count
-                functions
-                "fill"
-                lanes
-                (I64))]
-            (unless
-              (= shl-count 2)
-              (io.panic "lower: masked shift shl IR count mismatch"))
-            (unless
-              (= shr-count 2)
-              (io.panic "lower: masked shift shr IR count mismatch"))
-            (unless
-              (= abort-count 4)
-              (io.panic "lower: masked shift abort call count mismatch"))
-            (unless
-              (>= shape-count 20)
-              (io.panic "lower: masked shift vector shape count mismatch"))
-            true)])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _)
+              (let
+                [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
+                [shl-count : i64
+                  (lower-test-function-vector-binop-op-count
+                    functions
+                    "fill"
+                    (Shl (I64)))]
+                [shr-count : i64
+                  (lower-test-function-vector-binop-op-count
+                    functions
+                    "fill"
+                    (Shr (I64)))]
+                [abort-count : i64
+                  (lower-test-functions-call-count functions "tl_shift_abort")]
+                [shape-count : i64
+                  (lower-test-function-vector-shape-count
+                    functions
+                    "fill"
+                    lanes
+                    (I64))]
+                (unless
+                  (= shl-count 2)
+                  (io.panic "lower: masked shift shl IR count mismatch"))
+                (unless
+                  (= shr-count 2)
+                  (io.panic "lower: masked shift shr IR count mismatch"))
+                (unless
+                  (= abort-count 4)
+                  (io.panic "lower: masked shift abort call count mismatch"))
+                (unless
+                  (>= shape-count 20)
+                  (io.panic "lower: masked shift vector shape count mismatch"))
+                true)])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err diag)
       (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
@@ -9040,54 +9173,59 @@
   (match (lower.lower-compiler-source-with-mode
     (compiler-lower-masked-if-narrow-shift-source)
     mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (let
-            [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I16))]
-            [shl-count : i64
-              (lower-test-function-vector-binop-op-count
-                functions
-                "fill"
-                (Shl (I16)))]
-            [shr-count : i64
-              (lower-test-function-vector-binop-op-count
-                functions
-                "fill"
-                (Shr (I16)))]
-            [abort-count : i64
-              (lower-test-functions-call-count functions "tl_shift_abort")]
-            [shape-count : i64
-              (lower-test-function-vector-shape-count
-                functions
-                "fill"
-                lanes
-                (I16))]
-            (unless
-              (= shl-count 2)
-              (io.panic
-                (str_cat.str-cat
-                  "lower: narrow masked shift shl IR count mismatch: "
-                  (string.int->string shl-count))))
-            (unless
-              (= shr-count 2)
-              (io.panic
-                (str_cat.str-cat
-                  "lower: narrow masked shift shr IR count mismatch: "
-                  (string.int->string shr-count))))
-            (unless
-              (= abort-count 4)
-              (io.panic
-                (str_cat.str-cat
-                  "lower: narrow masked shift abort call count mismatch: "
-                  (string.int->string abort-count))))
-            (unless
-              (>= shape-count 10)
-              (io.panic
-                (str_cat.str-cat
-                  "lower: narrow masked shift vector shape count mismatch: "
-                  (string.int->string shape-count))))
-            true)])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _)
+              (let
+                [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I16))]
+                [shl-count : i64
+                  (lower-test-function-vector-binop-op-count
+                    functions
+                    "fill"
+                    (Shl (I16)))]
+                [shr-count : i64
+                  (lower-test-function-vector-binop-op-count
+                    functions
+                    "fill"
+                    (Shr (I16)))]
+                [abort-count : i64
+                  (lower-test-functions-call-count functions "tl_shift_abort")]
+                [shape-count : i64
+                  (lower-test-function-vector-shape-count
+                    functions
+                    "fill"
+                    lanes
+                    (I16))]
+                (unless
+                  (= shl-count 2)
+                  (io.panic
+                    (str_cat.str-cat
+                      "lower: narrow masked shift shl IR count mismatch: "
+                      (string.int->string shl-count))))
+                (unless
+                  (= shr-count 2)
+                  (io.panic
+                    (str_cat.str-cat
+                      "lower: narrow masked shift shr IR count mismatch: "
+                      (string.int->string shr-count))))
+                (unless
+                  (= abort-count 4)
+                  (io.panic
+                    (str_cat.str-cat
+                      "lower: narrow masked shift abort call count mismatch: "
+                      (string.int->string abort-count))))
+                (unless
+                  (>= shape-count 10)
+                  (io.panic
+                    (str_cat.str-cat
+                      "lower: narrow masked shift vector shape count mismatch: "
+                      (string.int->string shape-count))))
+                true)])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err diag)
       (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
@@ -9257,19 +9395,30 @@
   [src : String]
   [mode : lower.CompilerLowerMode]) : i64
   (match (lower.lower-compiler-source-with-mode src mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _)
-          (lower-test-function-spmd-call-count functions "fill")])]
+    [(Ok program _ lower-owner)
+      (let
+        [result : i64
+          (match program
+            [(Program _ functions _)
+              (lower-test-function-spmd-call-count functions "fill")])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) (- 0 1)]))
 
 (define (compiler-lower-spmd-source-function-count
   [src : String]
   [mode : lower.CompilerLowerMode]) : i64
   (match (lower.lower-compiler-source-with-mode src mode)
-    [(Ok program _)
-      (match program
-        [(Program _ functions _) (ir.compiler-ir-function-seq-count functions)])]
+    [(Ok program _ lower-owner)
+      (let
+        [result : i64
+          (match program
+            [(Program _ functions _)
+              (ir.compiler-ir-function-seq-count functions)])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) (- 0 1)]))
 
 (define (compiler-lower-spmd-scalar-call-shape-source) : String
@@ -9739,28 +9888,33 @@
   [mode : lower.CompilerLowerMode]
   [level : i64]) : bool
   (match (lower.lower-compiler-source-with-mode src mode)
-    [(Ok program spans)
+    [(Ok program spans lower-owner)
       (let
-        [before : String
-          (match (ir.compiler-ir-global-shared-view program)
-            [(Program _ functions _)
-              (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
-        [optimized : ir.CompilerIrProgram
-          (match (optimize.optimize-program-with-spans-and-level
-            (& program)
-            spans
-            level)
-            [(Program optimized _) optimized])]
-        (match optimized
-          [(Program _ functions _)
-            (and
-              (> (string.string-length before) 0)
-              (string.eq
-                (ir.compiler-ir-spmd-private-abi-program-error functions)
-                "")
-              (string.eq
-                (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
-                before))]))]
+        [ok : bool
+          (let
+            [before : String
+              (match (ir.compiler-ir-global-shared-view program)
+                [(Program _ functions _)
+                  (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
+            [optimized : ir.CompilerIrProgram
+              (match (optimize.optimize-program-with-spans-and-level
+                (& program)
+                spans
+                level)
+                [(Program optimized _) optimized])]
+            (match optimized
+              [(Program _ functions _)
+                (and
+                  (> (string.string-length before) 0)
+                  (string.eq
+                    (ir.compiler-ir-spmd-private-abi-program-error functions)
+                    "")
+                  (string.eq
+                    (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
+                    before))]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (lower-test-twice [shape : String]) : String
@@ -10618,7 +10772,12 @@
   (match (parser.parse-ast-source (& (compiler-lower-string-runtime-source)))
     [(Ok program)
       (match (lower-compiler-program program)
-        [(Ok _ _) true]
+        [(Ok _ _ lower-owner)
+          (let
+            [ok : bool true]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            ok)]
         [(Err _) false])]
     [(Err _) false]))
 
@@ -10626,7 +10785,12 @@
   (match (parser.parse-ast-source (& (compiler-lower-stdio-source)))
     [(Ok program)
       (match (lower-compiler-program program)
-        [(Ok _ _) true]
+        [(Ok _ _ lower-owner)
+          (let
+            [ok : bool true]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            ok)]
         [(Err _) false])]
     [(Err _) false]))
 
@@ -11034,13 +11198,18 @@
   (match (lower.lower-compiler-source
     "(import stdlib.comptime)
 (define (main) : i64 0)")
-    [(Ok program _)
-      (match program
-        [(Program globals _ _)
-          (not
-            (lower-test-global-list-has-name?
-              globals
-              "__enum_obj_stdlib.comptime/Pattern_Wildcard"))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program globals _ _)
+              (not
+                (lower-test-global-list-has-name?
+                  globals
+                  "__enum_obj_stdlib.comptime/Pattern_Wildcard"))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String
@@ -11719,13 +11888,18 @@
     "entry.tl"
     (compiler-lower-stdlib-comptime-runtime-dce-program)
     (ast.ast-decl-path-list-new))
-    [(Ok lowered _)
-      (match lowered
-        [(Program _ functions externs)
-          (and
-            (= (ir.compiler-ir-function-seq-count functions) 1)
-            (= (ir.compiler-ir-extern-seq-count externs) 0)
-            (lower-test-function-defined? functions "main"))])]
+    [(Ok lowered _ lower-owner)
+      (let
+        [ok : bool
+          (match lowered
+            [(Program _ functions externs)
+              (and
+                (= (ir.compiler-ir-function-seq-count functions) 1)
+                (= (ir.compiler-ir-extern-seq-count externs) 0)
+                (lower-test-function-defined? functions "main"))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : ast.AstDeclList]) : bool
@@ -15352,15 +15526,17 @@
   [mode : lower.CompilerLowerMode]) : lower.ResultCompilerLower
   (let
     [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
-    (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
+    (lower.lower-standalone-result
       state
-      entry-path
-      program
-      paths
-      mode
-      (svec.new)
-      (lower.lower-source-language-cfgs)
-      (tc_core.tc-prefix-default-cache-scope))))
+      (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
+        state
+        entry-path
+        program
+        paths
+        mode
+        (svec.new)
+        (lower.lower-source-language-cfgs)
+        (tc_core.tc-prefix-default-cache-scope)))))
 
 (define (lower-compiler-program-with-path
   [path : String]
@@ -15389,16 +15565,21 @@
           (lower.CompilerLowerMode.Scalar)))]
     (ir.compiler-debug-info-set-enabled! false)
     (ir.compiler-debug-type-graph-verify-set! false)
-    (match result
-      [(lower.ResultCompilerLower.Ok _ _)
-        (let
-          [graph : ir.CompilerDebugTypeGraph
-            (lower.compiler-lower-state-debug-type-graph state)]
-          (ir.compiler-debug-type-graph-render (& graph)))]
-      [(lower.ResultCompilerLower.Err diag)
-        (str_cat.str-cat
-          "error: "
-          (cdiag.compiler-diagnostic-render (deref diag)))])))
+    (let
+      [rendered : String
+        (match result
+          [(lower.ResultCompilerLower.Ok _ _ _)
+            (let
+              [graph : ir.CompilerDebugTypeGraph
+                (lower.compiler-lower-state-debug-type-graph state)]
+              (ir.compiler-debug-type-graph-render (& graph)))]
+          [(lower.ResultCompilerLower.Err diag)
+            (str_cat.str-cat
+              "error: "
+              (cdiag.compiler-diagnostic-render (deref diag)))])]
+      (lower.compiler-lower-arena-state-release!
+        (lower.compiler-lower-state-arenas state))
+      rendered)))
 
 ;; Every scalar width, nested and register-pair structs, a tuple, an enum with
 ;; unit, scalar and aggregate payloads, a fixed array of structs, a recursive
@@ -15429,18 +15610,22 @@
   (test.assert-true
     (let
       [state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
-      (match (lower.lower-compiler-source-with-path-mode-and-state
-        state
-        "<source>"
-        (compiler-lower-debug-type-graph-source)
-        (lower.CompilerLowerMode.Scalar))
-        [(lower.ResultCompilerLower.Ok _ _)
-          (=
-            (__tl-project-field
-              (lower.compiler-lower-state-debug-type-graph state)
-              node-count)
-            0)]
-        [(lower.ResultCompilerLower.Err _) false]))
+      [ok : bool
+        (match (lower.lower-compiler-source-with-path-mode-and-state
+          state
+          "<source>"
+          (compiler-lower-debug-type-graph-source)
+          (lower.CompilerLowerMode.Scalar))
+          [(lower.ResultCompilerLower.Ok _ _ _)
+            (=
+              (__tl-project-field
+                (lower.compiler-lower-state-debug-type-graph state)
+                node-count)
+              0)]
+          [(lower.ResultCompilerLower.Err _) false])]
+      (lower.compiler-lower-arena-state-release!
+        (lower.compiler-lower-state-arenas state))
+      ok)
     "without debug info lowering builds no graph"))
 
 (test

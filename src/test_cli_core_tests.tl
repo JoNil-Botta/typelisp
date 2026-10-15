@@ -1184,7 +1184,7 @@
         "typecheck-prefix-test-cli"
         legacy-roots
         (tltest.tltest-cfgs target)))
-      [(Ok lowered _)
+      [(Ok lowered _ _lower-owner)
         (match lowered
           [(Program _ functions _)
             (tltest-function-base-defined? functions "clone$Pair")])]

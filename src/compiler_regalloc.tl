@@ -27699,7 +27699,14 @@
       (compiler-reg-stack-only-block-intervals func)]
     (Plan
       (compiler-reg-assignment-table-empty)
-      (live.compiler-live-set-empty)
+      ;; Storage stays reachable after its last direct mention. Use the same
+      ;; memory exclusions as scalar allocation so coloring cannot share an
+      ;; AddrOf source with a later value while a derived pointer is live.
+      (match func
+        [(Function _ _ _ _ blocks _)
+          (compiler-reg-ineligible-memory
+            (& blocks)
+            (live.compiler-live-set-empty))])
       intervals
       type-info
       (compiler-reg-call-split-empty))))

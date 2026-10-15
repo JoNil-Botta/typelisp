@@ -282,6 +282,8 @@ licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
+addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
 bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-
 bounds_dom_addr_taken_local_last|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|43|-|0 3 1|stdlib/io.tl stdlib/string.tl|-
 bounds_dom_addr_taken_local_check_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|0 4 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:77:31: array index out of bounds: index=4 length=4\n

@@ -1116,7 +1116,36 @@ Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
 
-The constant-load rewrite recognizes literal String descriptors. Their
+Level 2 can rematerialize a single-definition, unescaped global capture within
+its block while the global still has the captured value. A direct store,
+possibly writing call, indirect store or unknown effect ends forwarding;
+later uses retain the saved value. Only single-use captures or captures used
+entirely for address projections qualify. Before inlining, forwarding waits
+until a preserved call or store boundary. The final live pipeline can forward
+immediately, but only when every projection use is replaceable in the same
+block before a write barrier; otherwise the saved descriptor remains the one
+base for its loads. A forward scan uses the shared IR operand walker and the
+same write barriers to prove completeness. The frozen priced pipeline omits
+this live normalization, preserving the checked inliner's calibrated stages.
+Normalization builds private function slots and removes only dead capture
+moves before global-cell promotion counts reads. A live substitution also
+restores the existing integer cell-operand ordering, including its immediate
+read-modify-write exception; floating-point operand order stays intact.
+Unrelated definitions remain intact before the inline census; pruning
+those definitions would make inline admission depend on whether the function
+also captured a global. Borrowed input slots must never acquire replacement
+bodies from a shorter-lived arena.
+
+Constant-length summary construction uses a private normalized view inside its
+existing scratch arena. That analysis may forward immediately to distinguish a
+descriptor projection from an escape. Only the resulting length maps are
+cloned out; optimizer-input bodies and the checked inline price remain intact.
+The constant-length rewrite follows a direct capture of a proven immutable
+global descriptor using the same definition and address-taken guards as literal
+captures. The walker excludes global captures in initializers, because a global
+may not yet have its final descriptor.
+
+The constant-load rewrite also recognizes literal String descriptors. Their
 read-only length word contains the byte length, including for empty and UTF-8
 text, and their data word names the same read-only bytes throughout the program.
 Length-slot loads fold only at i64 type. Integer data loads fold at their exact

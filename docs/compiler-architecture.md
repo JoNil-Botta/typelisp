@@ -410,10 +410,11 @@ These records contain facts; warning classification and rendering are consumers.
 Provenance enumeration reads raw context nodes before the ordinary lowering
 accessor makes macro wrappers transparent. It snapshots canonical path IDs,
 primary and actionable spans, and up to eight ordered expansion frames, with
-an explicit truncation flag. Mutable traversal carriers own their location
-copies. A flat scratch prefix holds at most eight frames and each subtree
-restores its incoming length; sites copy the prefix before siblings overwrite
-it. The result stores flat frame
+an explicit truncation flag. Traversal borrows one origin; span and macro
+wrappers save and restore only the fields they change. Ordinary children share
+that origin and sites own copied snapshots. A flat scratch prefix holds at most
+eight frames and macro subtrees restore its incoming length; sites copy the
+prefix before siblings overwrite it. The result stores flat frame
 and decision arrays, with no AST or provenance-composite handles. Path/name IDs
 use the compiler job's existing intern/source ownership. Function scratch escape
 copies live record prefixes into the enclosing result arena. Rejected facts

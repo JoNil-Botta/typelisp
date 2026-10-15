@@ -1163,24 +1163,38 @@
     source.has-actionable
     source.truncated))
 
-;; The scratch prefix holds at most eight frames. Each subtree restores its
-;; incoming length; a site owns its copied prefix before siblings overwrite it.
+;; Only provenance wrappers change the borrowed origin. They restore their
+;; incoming state; ordinary children share it and sites own copied snapshots.
 (define (lower-spmd-enumerate!
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [expr : ast.AstExpr]
   [id : i64]
   [parent : i64]
-  [origin : LowerSpmdOrigin]
+  [origin : (&mut origin LowerSpmdOrigin)]
   [frames : (&mut frames ir.CompilerSpmdMacroFrameList)]) : unit
   (let
-    [frame-mark : i64 frames.len]
-    [next-origin : LowerSpmdOrigin (lower-spmd-origin-copy (& origin))]
     [next-parent : i64 parent]
     (match (& expr)
-      [(Spanned _ span) (set! next-origin.primary.span span)]
-      [(MacroExpansion _ provenance name-id)
+      [(Spanned inner span)
         (let
+          [prior-span : ast.AstSourceSpan (clone origin.primary.span)]
+          (set! origin.primary.span span)
+          (lower-spmd-enumerate!
+            ctx
+            state
+            (tc_core.tc-context-expr-get ctx inner)
+            inner
+            parent
+            origin
+            frames)
+          (set! origin.primary.span prior-span)
+          (return unit))]
+      [(MacroExpansion inner provenance name-id)
+        (let
+          [prior-origin : LowerSpmdOrigin
+            (lower-spmd-origin-copy (& (deref origin)))]
+          [frame-mark : i64 frames.len]
           [invocation : i64
             (tc_core.macro-expansion-invocation-path-id provenance)]
           [origin-path : i64
@@ -1188,11 +1202,13 @@
           (when
             (>= name-id 0)
             (unless
-              next-origin.has-actionable
+              origin.has-actionable
               (set!
-                next-origin.actionable
-                (ir.CompilerSourceLocation invocation next-origin.primary.span))
-              (set! next-origin.has-actionable true))
+                origin.actionable
+                (ir.CompilerSourceLocation
+                  invocation
+                  (clone origin.primary.span)))
+              (set! origin.has-actionable true))
             (if (< frames.len ir.compiler-spmd-max-macro-frames)
               (ir.compiler-spmd-macro-frame-list-append!
                 frames
@@ -1200,16 +1216,27 @@
                   name-id
                   (ir.CompilerSourceLocation
                     invocation
-                    next-origin.primary.span)
+                    (clone origin.primary.span))
                   origin-path))
-              (set! next-origin.truncated true)))
+              (set! origin.truncated true)))
           (when
             (>= origin-path 0)
-            (set! next-origin.primary.path-id origin-path)
+            (set! origin.primary.path-id origin-path)
             (when
               (< name-id 0)
-              (set! next-origin.actionable (clone next-origin.primary))
-              (set! next-origin.has-actionable true))))]
+              (set! origin.actionable (clone origin.primary))
+              (set! origin.has-actionable true)))
+          (lower-spmd-enumerate!
+            ctx
+            state
+            (tc_core.tc-context-expr-get ctx inner)
+            inner
+            parent
+            origin
+            frames)
+          (set! (deref origin) prior-origin)
+          (set! frames.len frame-mark)
+          (return unit))]
       [(Foreach _)
         (set!
           next-parent
@@ -1218,7 +1245,7 @@
             id
             parent
             (Foreach)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(SpmdReduce _)
         (set!
@@ -1228,7 +1255,7 @@
             id
             parent
             (Reduce)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(SpmdScan _)
         (set!
@@ -1238,7 +1265,7 @@
             id
             parent
             (Scan)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(SpmdCompact _)
         (set!
@@ -1248,7 +1275,7 @@
             id
             parent
             (Compact)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(SpmdBroadcast _ _)
         (set!
@@ -1258,7 +1285,7 @@
             id
             parent
             (Broadcast)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(SpmdShuffle _ _)
         (set!
@@ -1268,7 +1295,7 @@
             id
             parent
             (Shuffle)
-            (clone next-origin)
+            (lower-spmd-origin-copy (& (deref origin)))
             (& (deref frames))))]
       [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) (return unit)]
       [_ unit])
@@ -1283,7 +1310,7 @@
             (tc_core.tc-context-expr-get ctx child)
             child
             next-parent
-            (clone next-origin)
+            origin
             frames))))
     (when
       (> next-parent parent)
@@ -1297,8 +1324,7 @@
             next-parent
             (lower-spmd-site-fallback))]
         (set! item.subtree-end (lower_spmd_sites.len (& sites.items)))
-        (lower_spmd_sites.set! sites.items next-parent item)))
-    (set! frames.len frame-mark)))
+        (lower_spmd_sites.set! sites.items next-parent item)))))
 
 (define (lower-spmd-enumerate-function!
   [ctx : tc_core.TcContext]
@@ -1311,14 +1337,9 @@
       (ir.CompilerSourceLocation
         (lower-state-current-source-path-id state)
         (ast.ast-source-span 0 0 0 0))]
-    (lower-spmd-enumerate!
-      ctx
-      state
-      body
-      -1
-      -1
-      (LowerSpmdOrigin (clone location) location false false)
-      (&mut frames))))
+    [origin : LowerSpmdOrigin
+      (LowerSpmdOrigin (clone location) location false false)]
+    (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
 
 (define (lower-spmd-origin-id
   [ctx : tc_core.TcContext]

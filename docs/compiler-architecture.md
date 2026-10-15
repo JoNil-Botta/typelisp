@@ -714,14 +714,6 @@ with different bytes or a ledger over its limit rejects the check, and so does
 an admitted source a passing check never read. Re-reading the ledger's disk entries (`compiler-source-ledger-stale-paths`)
 lets a caller that later writes files detect inputs that changed in between.
 
-The embedded stdlib manifest also includes `idna_unicode12` and its generated
-Unicode 12 data module. Its fixed-width hexadecimal tables are static string
-literals; scalar lookups allocate nothing. The offline generator verifies all
-pinned source bytes before parsing, and the cross-host IDNA gate checks exact
-regeneration and independent normalization conformance. The
-[profile contract](../tools/idna-unicode12-data/README.md) fixes this module's
-Unicode version independently of other Unicode consumers.
-
 Package runtime emission uses `CompilerDriverPackageRuntimeScope`: its carrier
 lives in an outer job arena, while source pools, parser allocations, interner,
 analysis state and derived dependency surfaces have explicit temporary owners.

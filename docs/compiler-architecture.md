@@ -1224,15 +1224,20 @@ callback with its body-list flag so it agrees with interpreted expansion.
 Caller-origin macro markers have a negative macro-name ID and preserve the
 captured operand's source path without adding a user-visible expansion frame.
 For ordinary unobserved operands, capture replaces
-`Spanned(MacroExpansion(Spanned(operand, span), caller, -1), span)` with
-`Spanned(MacroExpansion(operand, caller, -1), span)`. Typechecking and diagnostic
-framing reconstruct the inner source view as a temporary `AstExpr` value, so
-the operand keeps its whole-expression diagnostic span without another pooled
-row. Capture retains the inner `Spanned` row above calls, nested source views
-and expansion markers, where its immediate position identifies a call frame
-or distinct source span. Jobs with semantic observers also retain that row:
-their expression facts are keyed by visited node IDs. String operands keep
-their existing literal copy during capture.
+`Spanned(MacroExpansion(Spanned(operand, span), caller, -1), span)` with the
+compact `Spanned(MacroExpansion(operand, caller, -2), span)`. Below a compact
+marker (macro name -2), typechecking and diagnostic framing reconstruct the
+inner source view as a temporary `AstExpr` value, so the operand keeps its
+whole-expression diagnostic span without another pooled row. Every other
+caller-origin marker keeps -1 and is checked as before, including the markers
+the CTFE route builds over a binding clause's initializer, which also sit over
+a bare node. Capture retains the inner `Spanned` row, under a -1 marker, above
+calls, nested source views and expansion markers, where its immediate position
+identifies a call frame or distinct source span. Jobs with a semantic observer
+(only the semantic lint facts collector, `compiler_semantic_lint_facts.tl`,
+installs one) also retain that row: their expression facts are keyed by
+visited node IDs. String operands keep their existing literal copy during
+capture.
 
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects

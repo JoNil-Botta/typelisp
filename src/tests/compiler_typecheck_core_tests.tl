@@ -10993,16 +10993,20 @@
 (cfg
   test
   ;; The node a caller-origin marker capture wraps: OUT is
-  ;; Spanned(MacroExpansion(node, caller, -1), SPAN), or -1 for any other shape.
+  ;; Spanned(MacroExpansion(node, caller, NAME), SPAN), or -1 for any other
+  ;; shape or marker name.
   (define (tc-caller-marker-test-wrapped
     [ctx : tc_core.TcContext]
     [out : i64]
+    [name : i64]
     [span : ast.AstSourceSpan]) : i64
     (match (tc_core.tc-context-expr-get ctx out)
       [(Spanned marker view-span)
         (match (tc_core.tc-context-expr-get ctx marker)
-          [(MacroExpansion node _ name)
-            (if (and (= name -1) (ast.ast-source-span-eq? view-span span))
+          [(MacroExpansion node _ marker-name)
+            (if (and
+              (= marker-name name)
+              (ast.ast-source-span-eq? view-span span))
               node
               -1)]
           [_ -1])]
@@ -11035,43 +11039,88 @@
         pools
         (Literal (String (ci.intern "caller-marker-text"))))]
     [text-arg : i64 (ast.ast-expr-source-view-with-pools pools text span)]
+    ;; An operand that is itself an expansion frame (a macro call's output)
+    ;; and one that is already a compact caller-origin marker.
+    [frame-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ci.intern "caller-marker-macro")))
+        span)]
+    [marked-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (tc_core.tc-compact-caller-origin-name)))
+        span)]
     [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (ast.ast-node-pool-context-install! pools)
-    ;; Unobserved: the marker takes the operand's Spanned place.
+    ;; Unobserved: the compact marker takes the operand's Spanned place.
     (test.assert-i64-eq
       (tc-caller-marker-test-wrapped
         ctx
         (tc-caller-marker-test-capture ctx var-arg true)
+        (tc_core.tc-compact-caller-origin-name)
         span)
       var
-      "a plain operand's marker wraps its semantic node")
+      "a plain operand's compact marker wraps its semantic node")
     ;; A call keeps its row: the expansion walk frames a macro call with the
     ;; Spanned row directly above it. A nested view keeps its distinct span.
     (test.assert-i64-eq
       (tc-caller-marker-test-wrapped
         ctx
         (tc-caller-marker-test-capture ctx call-arg true)
+        -1
         span)
       call-arg
-      "a call operand keeps its Spanned row")
+      "a call operand keeps its Spanned row under a -1 marker")
     (test.assert-i64-eq
       (tc-caller-marker-test-wrapped
         ctx
         (tc-caller-marker-test-capture ctx nested-arg true)
+        -1
         span)
       nested-arg
-      "a nested source view keeps its row")
+      "a nested source view keeps its row under a -1 marker")
+    ;; A marker over a marker: an expansion frame and a compact marker are
+    ;; both recognized by the Spanned row directly above them, so the new
+    ;; marker goes over that row.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx frame-arg true)
+        -1
+        span)
+      frame-arg
+      "an expansion-frame operand keeps its Spanned row under a -1 marker")
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx marked-arg true)
+        -1
+        span)
+      marked-arg
+      "a marked operand keeps its Spanned row under a -1 marker")
     ;; A string literal is copied, never aliased.
     (let
       [copy : i64
         (tc-caller-marker-test-wrapped
           ctx
           (tc-caller-marker-test-capture ctx text-arg true)
+          (tc_core.tc-compact-caller-origin-name)
           span)]
       (test.assert-true
         (and (>= copy 0) (!= copy text))
-        "a string operand's marker wraps a fresh literal")
+        "a string operand's compact marker wraps a fresh literal")
       (test.assert-true
         (match (tc_core.tc-context-expr-get ctx copy)
           [(Literal (String id)) (= id (ci.intern "caller-marker-text"))]
@@ -11091,8 +11140,9 @@
           (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
         [_ false])
       "an unmarked string operand is a spanned copy")
-    ;; An observed job keeps the operand's own row: its semantic facts are
-    ;; keyed by the Spanned rows the check visits.
+    ;; A job with a semantic observer keeps the operand's own row under a -1
+    ;; marker: its semantic facts are keyed by the Spanned rows the check
+    ;; visits.
     (tc_core.tc-job-state-set-semantic-observer!
       (tc_core.tc-context-job-state ctx)
       (tc_core.TcSemanticObserver 1))
@@ -11101,11 +11151,13 @@
         (tc-caller-marker-test-wrapped
           ctx
           (tc-caller-marker-test-capture ctx var-arg true)
+          -1
           span)]
       [observed-text : i64
         (tc-caller-marker-test-wrapped
           ctx
           (tc-caller-marker-test-capture ctx text-arg true)
+          -1
           span)]
       (tc_core.tc-job-state-set-semantic-observer!
         (tc_core.tc-context-job-state ctx)

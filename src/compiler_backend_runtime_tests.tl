@@ -36,6 +36,37 @@
     31))
 
 (test
+  compiler-backend-runtime-memchr-parity
+  (let
+    [linux : String (runtime_linux.compiler-backend-runtime-memchr-functions)]
+    [windows : String
+      (runtime_windows.compiler-backend-runtime-memchr-functions)]
+    [normalized : String
+      (runtime_common.compiler-backend-runtime-replace-all
+        (runtime_common.compiler-backend-runtime-replace-all
+          (runtime_common.compiler-backend-runtime-replace-all
+            (string.replace
+              (string.replace linux "    .type tl_memchr,@function\n" "")
+              "    .size tl_memchr, . - tl_memchr\n"
+              "")
+            "%rdi"
+            "%rcx")
+          "%rsi"
+          "%rdx")
+        "%dl"
+        "%r8b")]
+    (test.assert-true
+      (string.eq (& normalized) (& windows))
+      "both ABIs use the same bounded search and volatile scratch registers")
+    (test.assert-true
+      (and
+        (string.contains (& windows) "    cmpq $16, %rdx\n")
+        (string.contains (& windows) "    movdqu (%rcx,%rax), %xmm1\n")
+        (string.contains (& windows) "    pcmpeqb %xmm0, %xmm1\n")
+        (string.contains (& windows) "    bsfl %r9d, %r9d\n"))
+      "full blocks compare bytes in parallel and return the first matching byte")))
+
+(test
   compiler-backend-runtime-leaf-feature-subsets
   (let
     [minimal : runtime_common.CompilerBackendRuntimeFeatures

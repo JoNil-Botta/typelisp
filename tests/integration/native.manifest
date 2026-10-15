@@ -930,6 +930,7 @@ factored_addresses|all|0,1,2|tests/integration/factored_addresses.tl|0|257269108
 inline_alloc_alias|all|0,1,2|tests/integration/inline_alloc_alias.tl|42|-|-|-|stage-stdlib
 memcpy_short_runtime|all|0,1,2|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|stage-stdlib
 runtime_leaf_aliases|all|0,1,2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|stage-stdlib
+runtime_memchr|all|0,1,2|tests/integration/runtime_memchr.tl|42|-|-|-|stage-stdlib
 replayed_loop_call_lagged_neg3|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_0|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_1|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|stage-stdlib

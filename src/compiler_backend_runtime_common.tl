@@ -60,6 +60,63 @@
           (owned_view.compiler-owned-shared-view new))))
     out))
 
+;; SSE2 and these scratch registers are volatile on both x86-64 ABIs. Every
+;; vector load has at least 16 bytes remaining; the byte tail reads only the
+;; caller's range, including at a page boundary. pmovmskb orders bits by byte
+;; address, so bsf selects the first match even for NUL and high-bit bytes.
+(define (compiler-backend-runtime-memchr-body
+  [data : String]
+  [count : String]
+  [byte : String]) : String
+  (compiler-backend-runtime-replace-all
+    (compiler-backend-runtime-replace-all
+      (compiler-backend-runtime-replace-all
+        "tl_memchr:
+    testq COUNT, COUNT
+    jle .Ltl_memchr_not_found
+    xorq %rax, %rax
+    cmpq $16, COUNT
+    jl .Ltl_memchr_loop
+    movzbl BYTE, %r9d
+    movd %r9d, %xmm0
+    punpcklbw %xmm0, %xmm0
+    punpcklwd %xmm0, %xmm0
+    pshufd $0, %xmm0, %xmm0
+    movq COUNT, %r10
+.Ltl_memchr_wide:
+    movdqu (DATA,%rax), %xmm1
+    pcmpeqb %xmm0, %xmm1
+    pmovmskb %xmm1, %r9d
+    testl %r9d, %r9d
+    jne .Ltl_memchr_wide_found
+    addq $16, %rax
+    subq $16, %r10
+    cmpq $16, %r10
+    jae .Ltl_memchr_wide
+    testq %r10, %r10
+    je .Ltl_memchr_not_found
+.Ltl_memchr_loop:
+    cmpb BYTE, (DATA,%rax)
+    je .Ltl_memchr_found
+    incq %rax
+    cmpq COUNT, %rax
+    jl .Ltl_memchr_loop
+.Ltl_memchr_not_found:
+    movq $-1, %rax
+.Ltl_memchr_found:
+    ret
+.Ltl_memchr_wide_found:
+    bsfl %r9d, %r9d
+    addq %r9, %rax
+    ret
+"
+        "DATA"
+        data)
+      "COUNT"
+      count)
+    "BYTE"
+    byte))
+
 ;; The arena-debug root registry and its checked entry points for one target:
 ;; ARG is the first argument register, IDX the slot index, and SUFFIX tells the
 ;; target's local labels apart. The ELF leaf closes each symbol's extent and

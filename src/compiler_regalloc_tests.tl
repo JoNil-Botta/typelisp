@@ -13577,9 +13577,10 @@
     [func : ir.CompilerIrFunction (irt.func source)]
     [plan : reg.CompilerRegPlan
       (compiler-reg-plan-function-stack-only (clone func))]
-    [ineligible : live.CompilerLiveI64Set
-      (reg.compiler-reg-plan-ineligible
-        (reg.compiler-reg-global-shared-view plan))]
+    [storage-ineligible? : bool
+      (match (& plan)
+        [(Plan _ ineligible _ _ _)
+          (live.compiler-live-set-contains? ineligible storage)])]
     (match func
       [(Function _ params _ vars blocks _)
         (match (reg.compiler-reg-color-stack-slots-with-stack-only
@@ -13601,10 +13602,7 @@
                     (not (= var storage))
                     (= (array-ref remap var) (array-ref remap storage)))
                   (set! private? false)))
-              (and
-                private?
-                (> slots 0)
-                (live.compiler-live-set-contains? ineligible storage)))]
+              (and private? (> slots 0) storage-ineligible?))]
           [(None) false])])))
 
 (test

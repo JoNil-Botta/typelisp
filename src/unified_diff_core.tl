@@ -16,6 +16,7 @@
 ;# Output streams to a caller-owned sink in chunks of at most `chunk-bytes`.
 ;# Beyond its inputs, a rendering allocates one line-start index per side and
 ;# one staging buffer; the complete diff is never materialized.
+(import stdlib.iterator)
 (import stdlib.byte_buf)
 (import stdlib.string)
 
@@ -82,7 +83,7 @@
     [count : i64 1]
     [cursor : i64 (string.index-of-byte text 0 (newline-byte))]
     (while (>= cursor 0)
-      (set! count (+ count 1))
+      (+= count 1)
       (set! cursor (string.index-of-byte text (+ cursor 1) (newline-byte))))
     (let
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
@@ -91,7 +92,7 @@
       (set! (array-ref starts 0) 0)
       (while (>= next 0)
         (set! (array-ref starts line) (+ next 1))
-        (set! line (+ line 1))
+        (+= line 1)
         (set! next (string.index-of-byte text (+ next 1) (newline-byte))))
       (set! (array-ref starts count) (+ (string.string-length text) 1))
       (Side text starts count))))
@@ -140,7 +141,7 @@
                   (=
                     (ptr-read (ptr-offset lw index))
                     (ptr-read (ptr-offset rw index))))
-                  (set! index (+ index 1)))
+                  (+= index 1))
                 (and
                   (= index words)
                   (=
@@ -229,7 +230,7 @@
           (set!
             same
             (same-line? old (+ old-index offset) new (+ new-index offset)))
-          (set! offset (+ offset 1)))
+          (+= offset 1))
         same))))
 
 ;; Search edit distance first, so a one-line insertion/deletion wins over a
@@ -288,8 +289,8 @@
               (set! found true)
               (set! found-old old-skip)
               (set! found-new new-skip))
-            (set! old-skip (+ old-skip 1))))
-        (set! distance (+ distance 1))))
+            (+= old-skip 1)))
+        (+= distance 1)))
     (if found
       (SyncFound found-old found-new)
       (SyncMissing))))
@@ -310,8 +311,8 @@
     [old-index : i64 scan-old]
     [new-index : i64 scan-new]
     (while (line-eq? old old-index old-len new new-index new-len)
-      (set! old-index (+ old-index 1))
-      (set! new-index (+ new-index 1)))
+      (+= old-index 1)
+      (+= new-index 1))
     (if (and (>= old-index old-len) (>= new-index new-len))
       (NoHunk)
       (let
@@ -333,8 +334,8 @@
               [common-old : i64 old-index]
               [common-new : i64 new-index]
               (while (line-eq? old old-index old-len new new-index new-len)
-                (set! old-index (+ old-index 1))
-                (set! new-index (+ new-index 1)))
+                (+= old-index 1)
+                (+= new-index 1))
               (cond
                 [(> (- old-index common-old) (* 2 context-lines))
                   (set! old-end (+ common-old context-lines))
@@ -346,8 +347,8 @@
                 [else unit]))
             (match (find-sync old old-index old-len new new-index new-len)
               [(SyncFound old-skip new-skip)
-                (set! old-index (+ old-index old-skip))
-                (set! new-index (+ new-index new-skip))]
+                (+= old-index old-skip)
+                (+= new-index new-skip)]
               [(SyncMissing)
                 (set! old-index (window-end old-index old-len))
                 (set! new-index (window-end new-index new-len))
@@ -414,8 +415,8 @@
       [status : i64 (sink (byte_buf.as-bytes (& out.stage)))]
       (if (= status 0)
         (begin
-          (set! out.emitted-bytes (+ out.emitted-bytes out.stage.len))
-          (set! out.emitted-lines (+ out.emitted-lines out.staged-lines))
+          (+= out.emitted-bytes out.stage.len)
+          (+= out.emitted-lines out.staged-lines)
           (set! out.staged-lines 0)
           (set! out.stage.len 0))
         (set! out.status status)))))
@@ -463,12 +464,12 @@
             offset
             n)
           (set! out.stage.len (+ offset n))
-          (set! cursor (+ cursor n))
-          (set! left (- left n)))))))
+          (+= cursor n)
+          (-= left n))))))
 
 (define (put-newline! [out : (&mut o Output)] [sink : (-> (& bytes) i64)]) : unit
   (put-byte! out sink (newline-byte))
-  (when (= out.status 0) (set! out.staged-lines (+ out.staged-lines 1))))
+  (when (= out.status 0) (+= out.staged-lines 1)))
 
 ;; Admit one output line of `size` bytes, or count it as omitted. Every line
 ;; of either input is rendered at most once, so all totals stay within a small
@@ -481,13 +482,13 @@
       (not out.truncated)
       (< out.admitted-lines out.max-lines)
       (<= size (- out.max-bytes out.admitted-bytes)))
-      (set! out.admitted-bytes (+ out.admitted-bytes size))
-      (set! out.admitted-lines (+ out.admitted-lines 1))
+      (+= out.admitted-bytes size)
+      (+= out.admitted-lines 1)
       true]
     [else
       (set! out.truncated true)
-      (set! out.omitted-bytes (+ out.omitted-bytes size))
-      (set! out.omitted-lines (+ out.omitted-lines 1))
+      (+= out.omitted-bytes size)
+      (+= out.omitted-lines 1)
       false]))
 
 (define (decimal-width [value : i64]) : i64
@@ -495,7 +496,7 @@
     [width : i64 1]
     [rest : i64 (/ value 10)]
     (while (> rest 0)
-      (set! width (+ width 1))
+      (+= width 1)
       (set! rest (/ rest 10)))
     width))
 
@@ -505,10 +506,8 @@
   [value : i64]) : unit
   (let
     [divisor : i64 1]
-    [digit : i64 1]
-    (while (< digit (decimal-width value))
-      (set! divisor (* divisor 10))
-      (set! digit (+ digit 1)))
+    (for [digit (iterator.range 1 (decimal-width value))]
+      (set! divisor (* divisor 10)))
     (while (> divisor 0)
       (put-byte!
         out
@@ -530,11 +529,9 @@
 
 (define (escaped-path-width [path : (& p str)]) : i64
   (let
-    [index : i64 0]
     [width : i64 0]
-    (while (< index (string.string-length path))
-      (set! width (+ width (escape-width (text-byte path index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (string.string-length path))]
+      (+= width (escape-width (text-byte path index))))
     width))
 
 (define (put-escaped-byte!
@@ -590,11 +587,8 @@
       (when quoted (put-byte! out sink (ascii '"')))
       (put-byte! out sink side-letter)
       (put-byte! out sink (ascii '/'))
-      (let
-        [index : i64 0]
-        (while (< index (string.string-length path))
-          (put-escaped-byte! out sink (text-byte path index))
-          (set! index (+ index 1))))
+      (for [index (iterator.range 0 (string.string-length path))]
+        (put-escaped-byte! out sink (text-byte path index)))
       (when quoted (put-byte! out sink (ascii '"')))
       (put-newline! out sink))))
 
@@ -644,7 +638,7 @@
           (put-byte! out sink marker)
           (put-text! out sink lines.text (line-start lines index) len)
           (put-newline! out sink))
-        (set! index (+ index 1))))))
+        (+= index 1)))))
 
 (define (put-hunk!
   [out : (&mut o Output)]
@@ -662,8 +656,8 @@
       (if (line-eq? old old-index hunk.old-end new new-index hunk.new-end)
         (begin
           (put-range! out sink (ascii ' ') old old-index (+ old-index 1))
-          (set! old-index (+ old-index 1))
-          (set! new-index (+ new-index 1)))
+          (+= old-index 1)
+          (+= new-index 1))
         (match (find-sync old old-index hunk.old-end new new-index hunk.new-end)
           [(SyncFound old-skip new-skip)
             (put-range!
@@ -680,8 +674,8 @@
               new
               new-index
               (+ new-index new-skip))
-            (set! old-index (+ old-index old-skip))
-            (set! new-index (+ new-index new-skip))]
+            (+= old-index old-skip)
+            (+= new-index new-skip)]
           [(SyncMissing)
             ;; Keep probing after a bounded unmatched window. A whole-file
             ;; line-ending change can otherwise hide a short equal tail

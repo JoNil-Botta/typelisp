@@ -19,6 +19,7 @@
 ;; in for a body the image has not materialized (#8317).
 ;; The Linux runtime text declares and calls no external symbol, so Linux has
 ;; no rows.
+(import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -56,10 +57,8 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
   [end : i64]) : i64
   (let
     [count : i64 1]
-    [index : i64 start]
-    (while (< index end)
-      (when (= (string.char-at text index) '\t') (set! count (+ count 1)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range start end)]
+      (when (= (string.char-at text index) '\t') (+= count 1)))
     count))
 
 ;; Field `field` (0-based) of the row in `start..end`, or "" past the last.
@@ -81,8 +80,8 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
           [(= seen field) (set! field-end index)]
           [(= (+ seen 1) field) (set! field-start (+ index 1))]
           [else unit])
-        (set! seen (+ seen 1)))
-      (set! index (+ index 1)))
+        (+= seen 1))
+      (+= index 1))
     (cond
       [(< field-start 0) ""]
       [(< field-end 0) (string.substring text field-start (- end field-start))]
@@ -206,7 +205,7 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
                 name))]
           [else unit])
         (set! start (+ end 1))
-        (set! row (+ row 1))))
+        (+= row 1)))
     error))
 
 ;: The route of `target`'s binding of `name` as a `kind` symbol, or "" when the
@@ -251,10 +250,8 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
 (define (compiler-runtime-binding-row-bound [text : (& text str)]) : i64
   (let
     [count : i64 1]
-    [index : i64 0]
-    (while (< index (string.string-length text))
-      (when (= (string.char-at text index) '\n') (set! count (+ count 1)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (string.string-length text))]
+      (when (= (string.char-at text index) '\n') (+= count 1)))
     count))
 
 ;: `target`'s providers in the table `text`, in first-use order, without
@@ -273,23 +270,16 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
         [end : i64 (compiler-runtime-binding-line-end text start)]
         [provider : String (compiler-runtime-binding-field text start end 3)]
         [seen : bool false]
-        [index : i64 0]
         (when
           (string.eq (compiler-runtime-binding-field text start end 0) target)
-          (while (< index count)
-            (when (string.eq (array-ref out index) provider) (set! seen true))
-            (set! index (+ index 1)))
-          (unless
-            seen
-            (set! (array-ref out count) provider)
-            (set! count (+ count 1))))
+          (for [index (iterator.range 0 count)]
+            (when (string.eq (array-ref out index) provider) (set! seen true)))
+          (unless seen (set! (array-ref out count) provider) (+= count 1)))
         (set! start (+ end 1))))
     (let
       [result : (__tl_dyn-array String) (__tl_make-array String count)]
-      [index : i64 0]
-      (while (< index count)
-        (set! (array-ref result index) (array-ref out index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 count)]
+        (set! (array-ref result index) (array-ref out index)))
       result)))
 
 ;: `target`'s providers in first-use order, without repeats.

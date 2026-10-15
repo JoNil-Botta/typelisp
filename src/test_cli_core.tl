@@ -2495,11 +2495,11 @@
         "typecheck-prefix-test-cli"
         legacy-roots
         (tltest-cfgs target)))
-      [(Ok ir spans)
+      [(Ok ir spans lower-state)
         (match (build_run_core.source-tool-link-and-run
           (build_run_core.SourceToolLinkRequest
             (owned_view.compiler-owned-shared-view source)
-            (Lowered ir spans)
+            (Lowered ir spans lower-state)
             target
             opt-level
             backend-mode

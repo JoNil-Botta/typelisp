@@ -108733,7 +108733,7 @@
 ;;
 ;; A string literal argument specializes the same way (#8795): pinned by a
 ;; `Mov` of the `String`, the callee's reads of its length fold
-;; (opt-descriptor-length-geps), so an inlined `string.eq` against a
+;; (opt-descriptor-load-facts), so an inlined `string.eq` against a
 ;; literal collapses to the literal's width. A slot's flag is 1 for an `I64`
 ;; and 2 for a `String`, whose text sits in the parallel string lanes.
 (define (opt-inline-checked-literal-max) : i64
@@ -116044,21 +116044,204 @@
       [_ unit])
     next))
 
+;; CL-1 facts are local to one fold and borrow no storage beyond its scratch.
+(defstruct OptConstLoadFacts
+  (lengths opt_i64_i64_map.Map)
+  (has-literals bool)
+  (sources OptValueSources)
+  (defs (__tl_dyn-array OptMaybeVarDef))
+  (marks (__tl_dyn-array bool)))
+
+;; A data-slot load may hide behind copied descriptor values. This is only a
+;; cheap candidate filter; every followed definition is proved again below.
+(define (opt-string-literal-data-free?
+  [has-literal : bool]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(Gep _ (String _) (I64 0) _) false]
+    [(Load _ src ty)
+      (not
+        (and
+          (opt-aggregate-split-word-type? (& ty))
+          (or
+            has-literal
+            (match src
+              [(String _) true]
+              [_ false]))))]
+    [_ true]))
+
+;; The shared definition index records instruction positions starting at one;
+;; phis have position zero and parameters have no entry, so neither can prove a
+;; literal address.
+(define (opt-string-literal-definition
+  [facts : (& facts OptConstLoadFacts)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [var : i64]) : OptMaybeInstr
+  (if (not
+    (opt-descriptor-length-stable-var? (& facts.sources) (& facts.marks) var))
+    (No)
+    (match (opt-var-def-lookup (& facts.defs) var)
+      [(No) (No)]
+      [(Some (Def _ block position))
+        (match blocks
+          [(Array seq)
+            (if (or (< block 0) (>= block seq.len) (<= position 0))
+              (No)
+              (match (& (array-ref seq.slots block))
+                [(Block _ instrs)
+                  (if (> position (ir.compiler-ir-instr-seq-count instrs))
+                    (No)
+                    (Some (ir.compiler-ir-instr-seq-ref instrs (- position 1))))]))])]
+      [_ (No)])))
+
+;; Resolve backwards from an integer load through a single-source, unaliased
+;; pointer chain. Before the pointer load, offsets name literal bytes; after it,
+;; only descriptor slot zero is admissible. The bounded walk rejects cycles and
+;; deep/unknown chains without changing their memory interpretation.
+(define (opt-string-literal-load-value
+  [facts : (& facts OptConstLoadFacts)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [value : (& value ir.CompilerIrValue)]
+  [data : bool]
+  [offset : i64]
+  [ty : (& ty ast.AstType)]
+  [budget : i64]) : ir.CompilerIrMaybeValue
+  (when (<= budget 0) (return (No)))
+  (match value
+    [(String text)
+      (let
+        [width : i64 (/ (opt-int-width ty) 8)]
+        [length : i64 (string.string-length text)]
+        (if (or data (< offset 0) (> offset length) (> width (- length offset)))
+          (No)
+          (let
+            [bits : i64 0]
+            (for [byte (iterator.range 0 width)]
+              (set!
+                bits
+                (bit-or
+                  bits
+                  (shl
+                    (cast (string.string-ref text (+ offset byte)) : i64)
+                    (* byte 8)))))
+            (opt-fold-cast (& (SomeConst (I64 bits) (U64))) (& (U64)) ty))))]
+    [(Var var)
+      (match (opt-string-literal-definition facts blocks var)
+        [(No) (No)]
+        [(Some instr)
+          (match instr
+            [(Mov _ source move-ty)
+              (if (or (not data) (opt-aggregate-split-word-type? (& move-ty)))
+                (opt-string-literal-load-value
+                  facts
+                  blocks
+                  (& source)
+                  data
+                  offset
+                  ty
+                  (- budget 1))
+                (No))]
+            [(Gep _ base (I64 index) elem-ty)
+              (let
+                [stride : i64 (/ (opt-int-width (& elem-ty)) 8)]
+                (cond
+                  [(< index 0) (No)]
+                  [(not data)
+                    (if (= index 0)
+                      (opt-string-literal-load-value
+                        facts
+                        blocks
+                        (& base)
+                        false
+                        offset
+                        ty
+                        (- budget 1))
+                      (No))]
+                  [(= index 0)
+                    (opt-string-literal-load-value
+                      facts
+                      blocks
+                      (& base)
+                      true
+                      offset
+                      ty
+                      (- budget 1))]
+                  [(or
+                      (<= stride 0)
+                      (> index (/ (- 0x7fffffffffffffff offset) stride)))
+                    (No)]
+                  [else
+                    (opt-string-literal-load-value
+                      facts
+                      blocks
+                      (& base)
+                      true
+                      (+ offset (* index stride))
+                      ty
+                      (- budget 1))]))]
+            [(Load _ source load-ty)
+              (if (and data (opt-aggregate-split-word-type? (& load-ty)))
+                (opt-string-literal-load-value
+                  facts
+                  blocks
+                  (& source)
+                  false
+                  offset
+                  ty
+                  (- budget 1))
+                (No))]
+            [(or (Cast _ source from to) (Bitcast _ source from to))
+              (if (and
+                (opt-aggregate-split-word-type? (& from))
+                (opt-aggregate-split-word-type? (& to)))
+                (opt-string-literal-load-value
+                  facts
+                  blocks
+                  (& source)
+                  data
+                  offset
+                  ty
+                  (- budget 1))
+                (No))]
+            [_ (No)])])]
+    [_ (No)]))
+
 (define (opt-cl-rewrite-instr
-  [geps : (& geps opt_i64_i64_map.Map)]
+  [facts : (& facts OptConstLoadFacts)]
+  [source-blocks : (& source-blocks ir.CompilerIrBlockList)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
-    [(Load dst src (I64))
-      (match src
-        [(Var v)
-          (match (opt_i64_i64_map.get (& geps) v)
-            [(LookupFound n) (Mov dst (I64 n) (I64))]
-            [(LookupMissing) instr])]
-        [_ instr])]
+    [(Load dst src ty)
+      (when
+        (match (& ty)
+          [(I64) true]
+          [_ false])
+        (match (& src)
+          [(Var v)
+            (match (opt_i64_i64_map.get (& facts.lengths) v)
+              [(LookupFound n) (return (Mov dst (I64 n) (I64)))]
+              [(LookupMissing) unit])]
+          [_ unit]))
+      (if (and
+        facts.has-literals
+        (opt-integer-type? (& ty))
+        (not (opt-addr-taken-var? (& facts.marks) dst)))
+        (match (opt-string-literal-load-value
+          facts
+          source-blocks
+          (& src)
+          true
+          0
+          (& ty)
+          64)
+          [(Some value) (Mov dst value ty)]
+          [(No) instr])
+        instr)]
     [_ instr]))
 
 (define (opt-cl-rewrite-seq
-  [geps : (& geps opt_i64_i64_map.Map)]
+  [facts : (& facts OptConstLoadFacts)]
+  [source-blocks : (& source-blocks ir.CompilerIrBlockList)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -116067,16 +116250,20 @@
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref slots index)
-        (opt-cl-rewrite-instr geps (ir.compiler-ir-instr-seq-ref instrs index))))
+        (opt-cl-rewrite-instr
+          facts
+          source-blocks
+          (ir.compiler-ir-instr-seq-ref instrs index))))
     (ir.CompilerIrInstrSeq slots count)))
 
 (define (opt-cl-rewrite-blocks
-  [geps : (& geps opt_i64_i64_map.Map)]
+  [facts : (& facts OptConstLoadFacts)]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (opt-blocks-map-seq
     (owned_view.compiler-owned-reference-shared-view blocks)
     opt-cl-rewrite-seq
-    geps))
+    facts
+    blocks))
 
 (define (opt-const-length-rewrite-summary-blocks
   [type-segment-bases : i64]
@@ -116100,8 +116287,8 @@
           opt-cl-collect-gep
           type-segment-bases
           lengths))]
-    [geps : opt_i64_i64_map.Map
-      (opt-descriptor-length-geps
+    [facts : OptConstLoadFacts
+      (opt-descriptor-load-facts
         type-segment-bases
         lengths
         (not initializer?)
@@ -116109,9 +116296,11 @@
         frame
         (& blocks)
         global-geps)]
-    (if (= (opt_i64_i64_map.len (& geps)) 0)
+    (if (and
+      (= (opt_i64_i64_map.len (& facts.lengths)) 0)
+      (not facts.has-literals))
       blocks
-      (opt-cl-rewrite-blocks (& geps) (& blocks)))))
+      (opt-cl-rewrite-blocks (& facts) (& blocks)))))
 
 ;; --- immutable descriptor lengths -------------------------------------------
 ;;
@@ -116124,14 +116313,16 @@
 ;; have exactly one definition (parameters count) and must not have their
 ;; address taken, so no other value can reach the folded load. Unlike CL-1's
 ;; globals, a literal needs no initializer, so init functions fold too.
-(define (opt-descriptor-length-geps
+;; Literal data loads retain the same source, address and definition proofs;
+;; immutable descriptor lengths never prove runtime descriptor bytes constant.
+(define (opt-descriptor-load-facts
   [type-segment-bases : i64]
   [lengths : (& lengths opt_i64_i64_map.Map)]
   [globals? : bool]
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [geps : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  [geps : opt_i64_i64_map.Map]) : OptConstLoadFacts
   (let
     [literals : opt_i64_i64_map.Map
       (opt-blocks-fold
@@ -116147,22 +116338,45 @@
           opt-descriptor-length-gep-free?
           type-segment-bases
           (& literals)))]
-    (if (not has-literal-gep)
-      geps
+    (if (not
+      (or
+        has-literal-gep
+        (not
+          (opt-blocks-every?
+            blocks
+            opt-string-literal-data-free?
+            (> (opt_i64_i64_map.len (& literals)) 0)))))
+      (OptConstLoadFacts
+        geps
+        false
+        (opt-value-sources-new)
+        (__tl_make-array OptMaybeVarDef 0)
+        (__tl_make-array bool 0))
       (let
         [sources : OptValueSources
           (opt-gvn-sources-blocks
             blocks
             (& (opt-gvn-sources-params params (opt-value-sources-new))))]
         [marks : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
-        (opt-blocks-fold
-          blocks
-          geps
-          opt-descriptor-length-collect-gep
-          type-segment-bases
-          (& literals)
-          (& sources)
-          (& marks))))))
+        [defs : (__tl_dyn-array OptMaybeVarDef)
+          (__tl_make-array OptMaybeVarDef frame)]
+        (opt-var-defs-index-blocks!
+          (ir.compiler-ir-block-list-view blocks)
+          0
+          (&mut defs))
+        (OptConstLoadFacts
+          (opt-blocks-fold
+            blocks
+            geps
+            opt-descriptor-length-collect-gep
+            type-segment-bases
+            (& literals)
+            (& sources)
+            (& marks))
+          true
+          sources
+          defs
+          marks)))))
 
 ;; Var -> immutable length for direct descriptor captures. The definition and
 ;; address-taken guards apply where the var is used as a gep base.

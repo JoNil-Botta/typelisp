@@ -4030,3 +4030,7 @@
 (test
   function-index-leaf-starts
   (smoke-require-42 (smoke-function-index-leaf-starts-self-test)))
+
+(test
+  disjoint-store-forward
+  (smoke-require-42 (ot.compiler-optimize-disjoint-store-forward-self-test)))

@@ -8163,6 +8163,113 @@
       (return 7))
     42))
 
+(test
+  load-sink-constant-address
+  (test.assert-true
+    (= (compiler-optimize-load-sink-self-test) 42)
+    "existing load sink cases")
+  (let
+    [cases
+      (array
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = add %1, 2 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %12 = add %1, 2 : i64
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           bounds_check %2, %3 message \"bounds\"
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           bounds_check %2, %3 message \"bounds\"
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = gep %1, 2 : i64
+           %11 = load %10 : i64
+           %13 = load %12 : i64
+           %14 = add %11, %13 : i64
+           return %14"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %11 = load %10 : i64
+           %12 = gep %1, 2 : i64
+           %13 = load %12 : i64
+           %14 = add %11, %13 : i64
+           return %14")]
+    (for [index (iterator.range 0 (/ (array-length cases) 2))]
+      (let
+        [expected
+          (opt-load-sink-run
+            (irt.blocks (clone (array-ref cases (+ (* index 2) 1)))))]
+        [actual
+          (opt-load-sink-run (irt.blocks (clone (array-ref cases (* index 2)))))]
+        (test.assert-true
+          (opt.opt-block-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          "constant projections become adjacent without moving an already moved consumer")
+        (test.assert-true
+          (opt.opt-block-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& (opt-load-sink-run (ir.compiler-ir-blocks (clone actual)))))
+          "address scheduling is idempotent"))))
+  (let
+    [refused
+      (array
+        "entry:
+           %10 = gep %0, 1 : i64
+           store_ptr %1, 9 : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = call opaque() : i64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %0 = mov %1 : u64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %10 = mov %1 : u64
+           %11 = load %10 : i64
+           return %11"
+        "entry:
+           %10 = gep %0, 1 : i64
+           %12 = add %1, 2 : i64
+           %11 = load %10 : i64
+           %13 = load %10 : i64
+           return %13"
+        "entry:
+           %10 = gep %0, %1 : i64
+           %12 = add %2, 2 : i64
+           %11 = load %10 : i64
+           return %11")]
+    (for [index (iterator.range 0 (array-length refused))]
+      (let
+        [text (clone (array-ref refused index))]
+        [expected (irt.blocks (clone text))]
+        [actual (opt.opt-load-sink-blocks 32 (irt.blocks text))]
+        (test.assert-true
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          "stores, calls, redefinitions, multiple uses and dynamic offsets keep their order")))))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; Fixtures share two i64 parameters (vars 0 and 1) plus a spare var 2 that
@@ -55125,7 +55232,8 @@
           (& globals)
           functions
           facts.disq
-          8))]
+          8
+          (& (opt_i64_i64_map.with-capacity 1))))]
     [cl-call-length : i64
       (opt.opt-cl-init-length
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -57236,10 +57344,15 @@
           [_ true])
         6]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-var? src 7))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-var? rhs 7)))]
           [_ true])
         7]
-      [(match (opt-gc-test-instr-at blocks 1 5)
+      [(match (opt-gc-test-instr-at blocks 1 4)
           [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_agg"))]
           [_ true])
         8]
@@ -57285,7 +57398,7 @@
         6]
       ;; the call itself is untouched -- this is a classification, not check,
       ;; trap or call motion
-      [(match (opt-gc-test-instr-at blocks 1 7)
+      [(match (opt-gc-test-instr-at blocks 1 6)
           [(Call _ target _ _) (not (= target callee))]
           [_ true])
         7]
@@ -57316,7 +57429,12 @@
           [_ true])
         5]
       [(match (opt-gc-test-instr-at blocks 1 3)
-          [(Mov _ src _) (not (opt-gc-test-is-global-named? src "gc_k"))]
+          [(BinOp d (Add) lhs rhs _)
+            (not
+              (and
+                (= d 5)
+                (opt-gc-test-is-var? lhs 3)
+                (opt-gc-test-is-global-named? rhs "gc_k")))]
           [_ true])
         6]
       ;; exactly those two, plus the non-word aggregate Mov
@@ -57681,6 +57799,11 @@
         (opt.compiler-opt-global-shared-view summaries-a)
         (opt.compiler-opt-global-shared-view out-a))]
     [blocks-f : ir.CompilerIrBlockList (opt.opt-function-blocks out-f)]
+    [idempotent? : bool
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& out-a)
+        (& out-f))]
     [cell-a : opt.OptGlobalCellSummary summaries-a.global-cell]
     [cell-d : opt.OptGlobalCellSummary summaries-d.global-cell]
     (cond
@@ -57704,7 +57827,7 @@
       ;; survives (the pass rewrites reads only). The negatives that DO bite
       ;; live in compiler-optimize-global-cell-observable-store-self-test.
       [(not (= (opt-gc-test-plain-hoist-ok? out-b) 42)) 20]
-      [(match (opt-gc-test-instr-at blocks-b 1 7)
+      [(match (opt-gc-test-instr-at blocks-b 1 6)
           [(Store _ _ _) false]
           [_ true])
         27]
@@ -57758,15 +57881,16 @@
           [(Gep _ base _ _) (not (opt-gc-test-is-var? base 8))]
           [_ true])
         63]
-      ;; fixture H: untouched -- no entry load, no fresh var, the single read
-      ;; still names the global directly
+      [(not idempotent?) 64]
+      ;; Fixture H: forwarding removes the capture, but its one remaining
+      ;; read still cannot pay for an entry load or a fresh variable.
       [(not (= (opt.opt-function-frame out-h) 2)) 70]
       [(not (= (opt-gc-test-block-instr-count blocks-h 0) 1)) 71]
       [(match (opt-gc-test-instr-at blocks-h 1 0)
-          [(Mov d src _)
-            (not (and (= d 0) (opt-gc-test-is-global-named? src "gc_k")))]
+          [(Return (Some src)) (not (opt-gc-test-is-global-named? src "gc_k"))]
           [_ true])
         72]
+      [(not (= (opt-gc-test-block-instr-count blocks-h 1) 1)) 73]
       [else 42])))
 
 ;; --- constant fill -> tl_mem_fill8 (fill_call) self-tests ---------------------
@@ -59335,6 +59459,417 @@
       [(not (= (opt-sl-test-folded (& rewritten) 34) -1)) 140]
       [(not (= (opt-sl-test-folded (& rewritten) 37) -1)) 150]
       [else (opt-sl-test-unpublish)])))
+
+(defstruct OptSlDataCase
+  (label String)
+  (text String)
+  (body String)
+  (params String)
+  (expected String))
+
+(define (opt-sl-data-test-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [params : String]
+  [expected-text : String]
+  [label : String]) : unit
+  (let
+    [summaries : opt.OptProgramSummaries
+      (opt.opt-program-summaries-empty-for false)]
+    [rewritten : ir.CompilerIrBlockList
+      (opt.opt-const-length-rewrite-summary-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-test-symbol "sl_data_fn")
+        (& summaries)
+        (& (irt.params params))
+        96
+        blocks)]
+    [expected : ir.CompilerIrInstr (irt.instr expected-text)]
+    (test.assert-true
+      (=
+        (opt-count-exact-instr-blocks
+          (ir.compiler-ir-block-list-view (& rewritten))
+          (& expected))
+        1)
+      (str_cat.str-cat "literal-data: " label))))
+
+(define (opt-sl-data-test-case! [case : (& case OptSlDataCase)]) : unit
+  (opt-sl-data-test-blocks!
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "sl_data")
+        (opt-test-instrs-with-tail
+          (irt.instrs (string.copy (& case.body)))
+          (ir.CompilerIrInstr.Mov 0 (String (string.copy (& case.text))) (Str)))))
+    (string.copy (& case.params))
+    (string.copy (& case.expected))
+    (string.copy (& case.label))))
+
+(define (opt-sl-data-test-chain [moves : i64]) : String
+  (let
+    [body : String "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n"]
+    [previous : i64 2]
+    (for [index (iterator.range 0 moves)]
+      (let
+        [next : i64 (+ 7 index)]
+        (set!
+          body
+          (str_cat.str-cat
+            body
+            "%"
+            (string.int->string next)
+            " = mov %"
+            (string.int->string previous)
+            " : u64\n"))
+        (set! previous next)))
+    (str_cat.str-cat
+      body
+      "%3 = gep %"
+      (string.int->string previous)
+      ", 0 : u8\n%4 = load %3 : u32\nreturn")))
+
+(test
+  string-literal-data-fold
+  (let
+    [cases
+      (array
+        (OptSlDataCase
+          "four-byte little endian"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "signed utf8 byte"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i8\nreturn"
+          ""
+          "%4 = mov -61 : i8")
+        (OptSlDataCase
+          "unsigned utf8 byte"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 195 : u8")
+        (OptSlDataCase
+          "signed word"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i16\nreturn"
+          ""
+          "%4 = mov -23101 : i16")
+        (OptSlDataCase
+          "unsigned word"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u16\nreturn"
+          ""
+          "%4 = mov 42435 : u16")
+        (OptSlDataCase
+          "signed full word"
+          "abcdefé"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov -6214010475179187615 : i64")
+        (OptSlDataCase
+          "unsigned full word"
+          "abcdefé"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u64\nreturn"
+          ""
+          "%4 = mov -6214010475179187615 : u64")
+        (OptSlDataCase
+          "boundary-ending offset"
+          "abcdefghi"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u8\n\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov 7595434461045744482 : i64")
+        (OptSlDataCase
+          "scaled offset"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u32\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1751606885 : u32")
+        (OptSlDataCase
+          "length 0"
+          ""
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = load %3 : u8")
+        (OptSlDataCase
+          "length 1"
+          "a"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 2"
+          "ab"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 3"
+          "abc"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 4"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 7"
+          "abcdefg"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 8"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 9"
+          "abcdefghi"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 17"
+          "abcdefghijklmnopq"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "short literal"
+          "abc"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "past end"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "negative offset"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, -1 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "overflowed scale"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 9223372036854775807 : i64\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "unknown offset"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, %5 : u8\n\n%4 = load %3 : u32\nreturn"
+          "index=%5:i64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "parameter overlaps literal"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          "overlap=%0:str"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "descriptor address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %0\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "pointer address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %2\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "load destination address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %4\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "duplicate data pointer"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%2 = mov %5 : u64\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "descriptor move"
+          "abcd"
+          "%7 = mov %0 : str\n%1 = gep %7, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "unsupported float load"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : f32\nreturn"
+          ""
+          "%4 = load %3 : f32")
+        (OptSlDataCase
+          "unsupported bool load"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : bool\nreturn"
+          ""
+          "%4 = load %3 : bool")
+        (OptSlDataCase
+          "i32 high bit"
+          "🙂"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : i32\nreturn"
+          ""
+          "%4 = mov -2103861264 : i32")
+        (OptSlDataCase
+          "u32 high bit"
+          "🙂"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 2191106032 : u32")
+        (OptSlDataCase
+          "one byte cannot supply word"
+          "a"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u16\nreturn"
+          ""
+          "%4 = load %3 : u16")
+        (OptSlDataCase
+          "seven bytes cannot supply full word"
+          "abcdefg"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = load %3 : i64")
+        (OptSlDataCase
+          "later full-word boundary"
+          "abcdefghijklmnopq"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 9 : u8\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov 8174155843750357866 : i64")
+        (OptSlDataCase
+          "descriptor alias write"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%6 = addr_of %0\nstore_ptr %6, %5 : u64\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "data pointer alias write"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%6 = addr_of %2\nstore_ptr %6, %5 : u64\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "nonliteral parameter"
+          "abcd"
+          "%1 = gep %5, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "runtime=%5:str"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "word preserving casts"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = cast %2 : (Ptr u8) to u64\n%8 = bitcast %7 : u64 to (Ptr u32)\n%3 = gep %8, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "float cast stays unknown"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = bitcast %2 : (Ptr u8) to f64\n%8 = bitcast %7 : f64 to (Ptr u32)\n%3 = gep %8, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "cycle stops proof walk"
+          "abcd"
+          "%1 = mov %2 : u64\n%2 = mov %1 : u64\n%6 = load %1 : (Ptr u8)\n%3 = gep %6, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "deep chain admitted"
+          "abcd"
+          (opt-sl-data-test-chain 59)
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "deep chain stays memory"
+          "abcd"
+          (opt-sl-data-test-chain 60)
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "second pointer load stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%5 = load %2 : (Ptr u8)\n%3 = gep %5, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "length slot is not a data pointer"
+          "abcdefgh"
+          "%1 = gep %0, 1 : i64\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "non-integer element stride stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : f32\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        ;; %9 keeps the word-load candidate filter from skipping the proof.
+        (OptSlDataCase
+          "narrow data-pointer load stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%9 = load %1 : (Ptr u8)\n%2 = load %1 : u32\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "narrow pointer move stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = mov %2 : u32\n%3 = gep %7, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "phi pointer stays memory"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = phi [%2, sl_data] : (Ptr u8)\n%3 = gep %7, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32"))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (opt-sl-data-test-case! (& (array-ref cases index))))
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "direct")
+          (opt-test-instrs-with-tail
+            (irt.instrs
+              "%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn")
+            (ir.CompilerIrInstr.Gep 1 (String "abcd") (I64 0) (U8)))))
+      ""
+      "%4 = mov 1684234849 : u32"
+      "direct literal descriptor")
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "direct_word")
+          (opt-test-instrs-with-tail
+            (irt.instrs "%4 = load %1 : i64\nreturn")
+            (ir.CompilerIrInstr.Gep 1 (String "abcdefgh") (I64 0) (U8)))))
+      ""
+      "%4 = load %1 : i64"
+      "descriptor word is not literal data")
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "sl_data_entry")
+          (opt-test-instrs-with-tail
+            (irt.instrs
+              "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\njump sl_data_next")
+            (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "sl_data_next")
+          (irt.instrs "%3 = gep %2, 1 : u8\n%4 = load %3 : u16\nreturn")))
+      ""
+      "%4 = mov 25442 : u16"
+      "cross block")))
 
 (define (compiler-optimize-latch-sink-self-test) : i64
   (let
@@ -62141,6 +62676,582 @@
 
 (define (opt-og-any? [obj : (& obj opt.OptGlobalModRef)] [name : i64]) : bool
   (opt.opt-global-mod-ref-any? (opt.opt-global-mod-ref-call-mask obj name)))
+
+;; Snapshots can move to one same-block use only while their cell is unchanged.
+(define (opt-snapshot-test-function [text : String]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "snapshot_fixture")
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    32
+    (irt.blocks text)
+    Ordinary))
+
+(define (opt-snapshot-test-ok?
+  [before : String]
+  [after : String]
+  [address-taken : bool]) : bool
+  (let
+    [symbols (opt-mr-test-symbols)]
+    [fixture (opt-snapshot-test-function before)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (if address-taken
+            (opt-mr-addr-functions symbols)
+            (opt-mr-test-functions symbols))))]
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [summaries
+      (opt.opt-build-program-summaries
+        bases
+        (& (opt-mr-test-globals symbols))
+        (& (ir.compiler-ir-extern-seq-empty))
+        functions
+        2)]
+    [optimized
+      (opt.opt-global-snapshot-function
+        (& summaries)
+        (& summaries.global-cell.call-memory)
+        (opt.OptGlobalSnapshotPolicy false false)
+        fixture)]
+    [expected (opt-snapshot-test-function after)]
+    (opt.opt-function-eq bases (& optimized) (& expected))))
+
+(defstruct OptSnapshotTestCase
+  (before String)
+  (after String)
+  (address-taken bool))
+
+(test
+  global-snapshot-rematerialization
+  (let
+    [cases
+      (array
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = call mr_write_b() : i64
+             return %0"
+          "entry:
+             %1 = call mr_write_b() : i64
+             return @mr_a"
+          false)
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             store @mr_b, 9 : i64
+             return %0"
+          "entry:
+             store @mr_b, 9 : i64
+             return @mr_a"
+          false)
+        (OptSnapshotTestCase
+          "entry:
+             %0 = mov @mr_a : i64
+             %1 = add 2, 3 : i64
+             return %0"
+          "entry:
+             %1 = add 2, 3 : i64
+             return @mr_a"
+          false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok?
+            (clone case.before)
+            case.after
+            case.address-taken)
+          case.before)))))
+
+(test
+  global-snapshot-barriers
+  (let
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call unknown_writer(%0) : i64
+           return %1"
+        "entry:
+           %0 = mov @mr_a : i64
+           tailcall unknown_writer(%0) : i64"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_b() : i64
+           %2 = call unknown_writer(%0) : i64
+           return %2"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_b() : i64
+           tailcall unknown_writer(%0) : i64"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_a() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_write_via() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           store @mr_a, 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call mr_opaque() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call unknown_writer() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = mov 0 : u64
+           %2 = call* %1() : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = mov 0 : u64
+           store_ptr %1, 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = add %0, %0 : i64
+           return %1"
+        "entry:
+           %0 = mov @mr_a : i64
+           %0 = mov 9 : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = addr_of %0
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           jump exit
+         exit:
+           return %0"
+        "entry:
+           %0 = mov @mr_a : i64
+           jump exit
+         exit:
+           %1 = phi [%0, entry] : i64
+           return %1")]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [text (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok? (clone text) (clone text) false)
+          text))))
+  (let
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_c : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_c : i64
+           %1 = call mr_write_b() : i64
+           return %0")]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [text (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok? (clone text) text true)
+          "an address-taken global preserves its snapshot")))))
+
+(define (opt-snapshot-early-test-ok? [before : String] [after : String]) : bool
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture (opt-snapshot-test-function before)]
+    [reader : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "snapshot_reader")
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        0
+        (irt.blocks "entry:
+  return 0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [out (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [expected (opt-snapshot-test-function after)]
+    [actual (ir.compiler-ir-function-seq-ref (& out) 0)]
+    [ok (opt.opt-function-eq bases (& actual) (& expected))]
+    (opt.opt-pure-call-inline-memory-reset!)
+    ok))
+
+(test
+  global-snapshot-before-inlining
+  (let
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add %0, %1 : i64
+           return %2"
+        "entry:
+           %1 = call snapshot_reader() : i64
+           %2 = add @mr_a, %1 : i64
+           return %2"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep %0, 0 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %1 = call snapshot_reader() : i64
+           %2 = gep @mr_a, 0 : i64
+           %3 = gep @mr_a, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep %0, 0 : i64
+           store @mr_a, 9 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6"
+        "entry:
+           %0 = mov @mr_a : u64
+           %1 = call snapshot_reader() : i64
+           %2 = gep @mr_a, 0 : i64
+           store @mr_a, 9 : i64
+           %3 = gep %0, 1 : i64
+           %4 = load %2 : i64
+           %5 = load %3 : i64
+           %6 = add %4, %5 : i64
+           return %6")]
+    (for [index (iterator.range 0 (/ (array-length cases) 2))]
+      (test.assert-true
+        (opt-snapshot-early-test-ok?
+          (clone (array-ref cases (* index 2)))
+          (clone (array-ref cases (+ (* index 2) 1))))
+        "read-only call facts apply before inlining; address uses stop forwarding at writes"))))
+
+(test
+  global-snapshot-input-lifetime
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture
+      (opt-snapshot-test-function
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           return %0")]
+    [reader
+      (irt.func
+        "function @snapshot_reader() -> i64 vars 0 {
+           entry:
+             return 0
+         }")]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (& (ir.compiler-ir-function-seq1 (& reader))))]
+    [scratch (arena.tl_arena_make_small)]
+    [_normalize : unit
+      (in-arena
+        (arena.Arena scratch)
+        (opt.opt-pure-call-inline-memory-install! bases (& functions))
+        unit)]
+    [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
+    [_destroy : unit
+      (unsafe
+        (arena.tl_arena_destroy scratch))]
+    [retained (ir.compiler-ir-function-seq-ref (& functions) 0)]
+    (test.assert-true
+      (opt.opt-function-eq bases (& retained) (& fixture))
+      "normalization leaves the borrowed input in its original arena")))
+
+(define (opt-snapshot-length-fold
+  [bases : i64]
+  [summaries : (& opt.OptProgramSummaries)]
+  [fixture : (& fixture ir.CompilerIrFunction)]) : ir.CompilerIrFunction
+  (opt.opt-function-with-frame-blocks
+    fixture
+    (opt.opt-function-frame fixture)
+    (opt.opt-const-length-rewrite-summary-blocks
+      bases
+      (opt.opt-function-name fixture)
+      summaries
+      (& (opt.opt-function-params fixture))
+      (opt.opt-function-frame fixture)
+      (opt.opt-function-blocks fixture))))
+
+(test
+  global-snapshot-constant-length
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [symbols (opt-cl-test-symbols)]
+    [globals (opt-cl-test-globals symbols)]
+    [fixture
+      (opt-snapshot-test-function
+        "entry:
+           %0 = mov @cl_array : (__tl_dyn-array i64)
+           %1 = gep %0, 1 : i64
+           %2 = load %1 : i64
+           return %2")]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (& (opt-cl-test-functions symbols)))]
+    [before-inline (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
+    [summaries
+      (opt.opt-build-program-summaries
+        bases
+        (& globals)
+        (& (ir.compiler-ir-extern-seq-empty))
+        (& before-inline)
+        2)]
+    [normalized
+      (opt.opt-global-snapshot-normalize-functions
+        (& summaries)
+        (& summaries.global-cell.call-memory)
+        (opt.OptGlobalSnapshotPolicy false false)
+        (& before-inline))]
+    [expected
+      (opt-snapshot-test-function
+        "entry:
+           %1 = gep @cl_array, 1 : i64
+           %2 = load %1 : i64
+           return %2")]
+    [actual (ir.compiler-ir-function-seq-ref (& normalized) 0)]
+    (test.assert-true
+      (opt.opt-function-eq bases (& actual) (& expected))
+      "a descriptor capture rematerializes before its read and leaves no escape")
+    (let
+      [retained (ir.compiler-ir-function-seq-ref (& before-inline) 0)]
+      (test.assert-true
+        (opt.opt-function-eq bases (& retained) (& fixture))
+        "the released constant-length analysis leaves its input body intact"))
+    (test.assert-true
+      (=
+        (match (opt_i64_i64_map.get (& summaries.const-lengths) symbols.array)
+          [(LookupFound length) length]
+          [(LookupMissing) -1])
+        16)
+      "a captured immutable descriptor retains its proven literal length")
+    (let
+      [folded (opt-snapshot-length-fold bases (& summaries) (& fixture))]
+      [expected-fold
+        (opt-snapshot-test-function
+          "entry:
+             %0 = mov @cl_array : (__tl_dyn-array i64)
+             %1 = gep %0, 1 : i64
+             %2 = mov 16 : i64
+             return %2")]
+      (test.assert-true
+        (opt.opt-function-eq bases (& folded) (& expected-fold))
+        "length folding follows a stable capture without changing inline bodies"))
+    (for [text
+      (array
+        "entry:
+           %0 = mov @cl_array : (__tl_dyn-array i64)
+           %0 = mov @cl_stored : (__tl_dyn-array i64)
+           %1 = gep %0, 1 : i64
+           %2 = load %1 : i64
+           return %2"
+        "entry:
+           %0 = mov @cl_array : (__tl_dyn-array i64)
+           %3 = addr_of %0
+           %4 = call snapshot_pointer_writer(%3) : i64
+           %1 = gep %0, 1 : i64
+           %2 = load %1 : i64
+           return %2")]
+      (let
+        [unstable (opt-snapshot-test-function text)]
+        [folded-unstable
+          (opt-snapshot-length-fold bases (& summaries) (& unstable))]
+        (test.assert-true
+          (opt.opt-function-eq bases (& folded-unstable) (& unstable))
+          "redefined or address-taken descriptor captures retain their loads")))
+    (opt_i64_i64_map.insert-ref!
+      (&mut summaries.init-functions)
+      (opt.opt-function-name (& fixture))
+      1)
+    (let
+      [folded-init (opt-snapshot-length-fold bases (& summaries) (& fixture))]
+      (test.assert-true
+        (opt.opt-function-eq bases (& folded-init) (& fixture))
+        "an initializer cannot assume a captured global has its final length"))
+    (for [name (array symbols.stored symbols.escaped symbols.header)]
+      (test.assert-false
+        (opt_i64_i64_map.contains? (& summaries.const-lengths) name)
+        "rebound, escaping and header-written arrays retain their checks"))))
+
+(define (opt-snapshot-guard-unchanged? [priced? : bool] [body : String]) : bool
+  (let
+    [input (irt.func body)]
+    [output
+      (opt.opt-global-cell-function
+        (opt.opt-program-summaries-empty-for priced?)
+        (clone input))]
+    (opt.opt-function-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& input)
+      (& output))))
+
+(test
+  global-snapshot-frozen-price
+  (test.assert-true
+    (opt-snapshot-guard-unchanged?
+      true
+      "function @guard() -> i64 vars 8 {
+         entry:
+           %0 = mov @sample : i64
+           store @other, 9 : i64
+           return %0
+       }")
+    "a live normalization cannot change the frozen price pipeline"))
+
+(test
+  global-snapshot-complete-projections
+  (let
+    [cases
+      (array
+        "function @guard(p=%7:u64) -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             store @other, 9 : i64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             store_ptr %7, 9 : i64
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }"
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             store @other, 9 : i64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             jump exit
+           exit:
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    (for [text cases]
+      (test.assert-true
+        (opt-snapshot-guard-unchanged? false text)
+        "a retained capture must not acquire duplicate descriptor roots")))
+  (let
+    [before
+      (irt.func
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %0 = mov @sample : u64
+             %1 = gep %0, 0 : i64
+             %2 = load %1 : i64
+             %3 = gep %0, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    [after
+      (opt.opt-global-cell-function (opt.opt-program-summaries-empty) before)]
+    [expected
+      (irt.func
+        "function @guard() -> i64 vars 16 {
+           entry:
+             %1 = gep @sample, 0 : i64
+             %2 = load %1 : i64
+             %3 = gep @sample, 1 : i64
+             %4 = load %3 : i64
+             %5 = add %2, %4 : i64
+             return %5
+         }")]
+    (test.assert-true
+      (opt.opt-function-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& after)
+        (& expected))
+      "all local projections can replace their capture")))
+
+(test
+  global-snapshot-scalar-canonical
+  (let
+    [cases
+      (array
+        (OptSnapshotTestCase
+          "function @guard(position=%0:i64) -> i64 vars 8 {
+             entry:
+               %1 = mov @sample : i64
+               %2 = mul %0, 2 : i64
+               %3 = add %1, %2 : i64
+               return %3
+           }"
+          "function @guard(position=%0:i64) -> i64 vars 8 {
+             entry:
+               %2 = mul %0, 2 : i64
+               %3 = add %2, @sample : i64
+               return %3
+           }"
+          false)
+        (OptSnapshotTestCase
+          "function @guard(value=%0:i64) -> i64 vars 8 {
+             entry:
+               %1 = mov @sample : i64
+               %2 = add %1, %0 : i64
+               store @sample, %2 : i64
+               return %2
+           }"
+          "function @guard(value=%0:i64) -> i64 vars 8 {
+             entry:
+               %2 = add @sample, %0 : i64
+               store @sample, %2 : i64
+               return %2
+           }"
+          false)
+        (OptSnapshotTestCase
+          "function @guard(value=%0:f64) -> f64 vars 8 {
+             entry:
+               %1 = mov @sample : f64
+               %2 = add %1, %0 : f64
+               return %2
+           }"
+          "function @guard(value=%0:f64) -> f64 vars 8 {
+             entry:
+               %2 = add @sample, %0 : f64
+               return %2
+           }"
+          false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        [input (irt.func (clone case.before))]
+        [expected (irt.func case.after)]
+        [actual
+          (opt.opt-global-cell-function (opt.opt-program-summaries-empty) input)]
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& actual)
+            (& expected))
+          case.before)))))
 
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;
@@ -71362,8 +72473,24 @@
     (ir.CompilerIrInstr.Load 6 (Var 5) (I64))
     (irt.instr "return %6")))
 
-(define (opt-t22-cell-row-loads [symbols : OptT22CellSymbols] [callee : i64]) : i64
+;; The whole-program builder must refuse its no-write table when the reader
+;; takes g's address. The callees-only form separately tests the load-CSE
+;; consumer with an oracle table: these fixed callees write named cells only.
+(define (opt-t22-cell-row-loads
+  [symbols : OptT22CellSymbols]
+  [callee : i64]
+  [whole-program? : bool]) : i64
   (let
+    [callees : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-t22-store-function symbols.writer symbols.g))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-t22-store-function symbols.clean symbols.h))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-t22-opaque-function symbols.opaque))
+                (& (ir.compiler-ir-function-seq-empty)))))))]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
         (&
@@ -71371,16 +72498,7 @@
             symbols.caller
             (ir.compiler-ir-param-seq-empty)
             (opt-t22-cell-row-instrs symbols callee)))
-        (&
-          (ir.compiler-ir-function-seq-prepend
-            (& (opt-t22-store-function symbols.writer symbols.g))
-            (&
-              (ir.compiler-ir-function-seq-prepend
-                (& (opt-t22-store-function symbols.clean symbols.h))
-                (&
-                  (ir.compiler-ir-function-seq-prepend
-                    (& (opt-t22-opaque-function symbols.opaque))
-                    (& (ir.compiler-ir-function-seq-empty)))))))))]
+        (& callees))]
     [blocks
       (opt-t22-run
         (ir.compiler-ir-param-seq-empty)
@@ -71388,7 +72506,9 @@
         (opt.opt-global-cell-summary-build
           (opt-t22-type-bases)
           (& (opt-t22-cell-globals symbols))
-          (& functions))
+          (if whole-program?
+            (& functions)
+            (& callees)))
         (opt-t22-blocks (opt-t22-cell-row-instrs symbols callee)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
 
@@ -71654,10 +72774,12 @@
       ;; has no class and drops the entry.
       [(not (= (opt-t22-element-call-loads (I64)) 1)) 11]
       [(not (= (opt-t22-element-call-loads (U8)) 2)) 12]
-      ;; (e) a cell word survives a call whose row excludes it, and does not
-      ;; survive a callee that may write any cell.
-      [(not (= (opt-t22-cell-row-loads cells cells.clean) 1)) 13]
-      [(not (= (opt-t22-cell-row-loads cells cells.opaque) 2)) 14]
+      ;; (e) the consumer honors a proven callee row, while the whole-program
+      ;; builder refuses that table when the reader takes a stored cell's address.
+      [(not (= (opt-t22-cell-row-loads cells cells.clean false) 1)) 13]
+      [(not (= (opt-t22-cell-row-loads cells cells.opaque false) 2)) 14]
+      [(not (= (opt-t22-cell-row-loads cells cells.clean true) 2)) 20]
+      [(not (= (opt-t22-cell-row-loads cells cells.opaque true) 2)) 21]
       ;; (c) wide constants still do not substitute into ordinary operands.
       [(not
           (opt_i64_i64_map.contains?
@@ -76682,3 +77804,102 @@
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
       "an addition cannot fault")))
+
+(test
+  global-snapshot-inline-census
+  (test.assert-true
+    (opt-snapshot-early-test-ok?
+      "entry:
+         %0 = mov fn@snapshot_reader : (-> i64)
+         %1 = mov @mr_a : i64
+         %2 = call snapshot_reader() : i64
+         %3 = add %1, %2 : i64
+         return %3"
+      "entry:
+         %0 = mov fn@snapshot_reader : (-> i64)
+         %2 = call snapshot_reader() : i64
+         %3 = add @mr_a, %2 : i64
+         return %3")
+    "snapshot cleanup leaves unrelated pre-inline definitions intact"))
+
+(define (opt-global-address-facts-case?
+  [text : String]
+  [stored? : bool]
+  [address? : bool]) : bool
+  (let
+    [name : i64 (opt-test-symbol "address_fact")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-spans-function (irt.instrs text)))
+        (& (ir.compiler-ir-function-seq-empty)))]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build (& functions))]
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    [_decl : unit
+      (opt-test-global-builder-push! (&mut builder) name (I64) (I64 10))]
+    [globals : ir.CompilerIrGlobalSeq
+      (ir.compiler-ir-global-builder-to-seq builder)]
+    [cells : opt.OptGlobalCellSummary
+      (opt.opt-global-cell-summary-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& globals)
+        (& functions))]
+    (and
+      (= cells.mod-ref.built? (not address?))
+      (= (opt_i64_i64_map.contains? (& cells.addr-taken) name) address?)
+      (= (opt_i64_i64_map.contains? (& facts.disq) name) (or stored? address?))
+      (= (opt_i64_i64_map.contains? (& facts.cells.stores) name) stored?)
+      (= (opt_i64_i64_map.contains? (& facts.addr-taken) name) address?))))
+
+(test
+  global-address-facts-preserve-store-borrow-overlap
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       return 0"
+      true
+      false)
+    "a direct store disqualifies constants without taking an address")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = mov &@address_fact : i64
+       return %0"
+      false
+      true)
+    "an address operand marks the global independently")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       %0 = call opaque(&@address_fact) : i64
+       return %0"
+      true
+      true)
+    "a store before a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = call opaque(&@address_fact) : i64
+       store @address_fact, 1 : i64
+       return %0"
+      true
+      true)
+    "a store after a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_other, 1 : i64
+       return @address_fact"
+      false
+      false)
+    "reads and stores of other globals do not imply address-taking")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "tailcall opaque(&@address_fact) : i64"
+      false
+      true)
+    "tailcall arguments include address operands")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = pack [&@address_fact] : i64
+       return %0"
+      false
+      true)
+    "aggregate words include address operands"))

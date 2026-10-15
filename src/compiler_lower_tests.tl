@@ -1275,26 +1275,39 @@
         [(Err _) false])]
     [(Err _) false]))
 
-;; #8433: a call argument read from a variable is copied before the later
-;; arguments only when one of them can write it. The counts are each
-;; function's var copies: `unrelated` and `assigned` hold their `set!`'s own
-;; copy, and `assigned` adds the snapshot.
-(define (compiler-lower-call-arg-snapshot-source) : String
+;; Call and operator operands copy storage only when later evaluation can
+;; write it. Unrelated writes retain only their assignment copy; a write to
+;; the operand also needs its snapshot.
+(define (compiler-lower-operand-snapshot-source) : String
   "(define (first [a : i64] [_b : i64]) : i64 a)
 (define (plain [x : i64] [y : i64]) : i64 (first x (+ y 1)))
 (define (unrelated [x : i64] [y : i64]) : i64 (first x (begin (set! y 2) y)))
 (define (assigned [x : i64]) : i64 (first x (begin (set! x 2) 0)))
-(define (main) : i64 (+ (plain 1 2) (+ (unrelated 1 2) (assigned 1))))")
+(define (plain-op [x : i64] [y : i64]) : i64 (+ x (+ y 1)))
+(define (unrelated-op [x : i64] [y : i64]) : i64 (+ x (begin (set! y 2) y)))
+(define (assigned-op [x : i64]) : i64 (+ x (begin (set! x 2) 0)))
+(define (main) : i64
+  (+ (plain 1 2) (unrelated 1 2) (assigned 1)
+     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)))")
 
-(define (compiler-lower-call-arg-snapshot-shape-ok?) : bool
+(define (compiler-lower-operand-snapshot-shape-ok?) : bool
   (match (lower-test-functions
-    (lower.lower-compiler-source (compiler-lower-call-arg-snapshot-source)))
+    (lower.lower-compiler-source (compiler-lower-operand-snapshot-source)))
     [(Some functions)
       (and
         (= (lower-test-count functions "plain" (CopyMov)) 0)
         (= (lower-test-count functions "unrelated" (CopyMov)) 1)
-        (= (lower-test-count functions "assigned" (CopyMov)) 2))]
+        (= (lower-test-count functions "assigned" (CopyMov)) 2)
+        (= (lower-test-count functions "plain-op" (CopyMov)) 0)
+        (= (lower-test-count functions "unrelated-op" (CopyMov)) 1)
+        (= (lower-test-count functions "assigned-op" (CopyMov)) 2))]
     [_ false]))
+
+(test
+  compiler-lower-operand-snapshot-shape
+  (test.assert-true
+    (compiler-lower-operand-snapshot-shape-ok?)
+    "snapshot only storage that later evaluation can write"))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.

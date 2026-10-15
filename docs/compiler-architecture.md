@@ -1215,6 +1215,62 @@ previous run's successful queries as one immutable graph (#7322).
 - **Out of scope.** Payloads, the result store and replanning stay with their
   owners (#7187, #7023, #7188).
 
+[`compiler_incremental_plan.tl`](../src/compiler_incremental_plan.tl) supplies
+the serial, resumable planner (#7188). Its named integration consumer is the
+open #7025; it does not yet enable a CLI cache. Execution, payload admission,
+current-input production and result-before-graph publication belong to that
+coordinator and its producer prerequisites.
+
+The planner consumes prior graph bytes or a bounded cold reason (1 missing,
+2 incompatible, 3 rejected), typed roots, and one owned current-input table.
+It decodes prior bytes through the graph codec; rejected bytes become an
+explicit cold event. Facts are scoped by full query transcript and typed
+logical key. Equal duplicate answers collapse; conflicting answers reject the
+table before actions. Taking ownership freezes the answers, including negative
+observations, `Missing`, and stable resolver failures.
+
+Canonical root names and child keys determine traversal. Full-byte AVL indexes
+share queries across roots and parents and index direct facts and execution
+ledgers. Each stack frame has a cursor; no transition scans a waiting set.
+Prior validation reads the canonical trace adjacency, whose semantic ordinals
+and observed outputs are absent from the graph's deduplicated CSR rows. The
+shared graph child-key decoder and query lookup preserve the graph's exact
+identity rules. Direct mismatch stops validation before obsolete children run.
+Otherwise children resolve first, and only their semantic outputs decide
+parent reuse. A child's new result key alone cannot invalidate a parent.
+
+Only one executor leaf is active. `next-action!` returns `Reuse` or `Recompute`
+with a monotonic planner-local ticket. `admit!` acknowledges exact prior
+query/output/key metadata after successful payload admission; `unavailable!`
+instead schedules one recomputation. Recomputations call `register-input!` for
+each consumed direct key and `request-children!` for each semantic child batch.
+The parent suspends while the canonical batch resolves, then `Resume` returns
+the same ticket. `child-results!` copies only that batch's new results, avoiding
+an accumulated ledger copy on every resume. Tickets must be routed to their
+own planner instance by the coordinator.
+
+`success!` checks query, output/key schemas, the complete trace and exact
+ledger equality. Every requested child must occur with its resolved output;
+every direct record must equal its registered frozen fact. Unregistered,
+omitted, unresolved or changed observations fail. Cancellation, uncacheable
+work, query failure, cycles, stale feedback and exhausted budgets expose no
+complete graph. `finalize!` walks successful current reachability and uses the
+shared graph builder/finalizer, omitting obsolete prior nodes even if validation
+resolved them earlier. Reuse retains the old record; recomputation retains the
+new record even when output is stable.
+
+Limits bound nodes, trace/graph bytes, roots, requests, depth, events, cumulative
+metadata allocation charges and byte-comparison work. AVL recursion is bounded
+by tree height; query traversal uses an explicit bounded stack. The shared
+graph merge sort orders integer indexes without cloning keys per comparison.
+Retained planner metadata is proportional to reachable queries, encoded edges,
+frozen facts, request ledgers and suspension depth; no hydrated payload is
+retained. Decision events contain only schema codes and local scalar positions.
+The last event slot is reserved for a virtual terminal failure record, so even
+allocation/work exhaustion can report an error without allocating. The
+[planner tests](../src/TESTING.md#incremental-query-planner) exercise these
+invariants against clean recomputation and resource bounds.
+
 Aggregate declaration markers live in `AstDeclMeta` in
 [`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime
 layout. Parsing and surface hydration share its runtime metadata constructor;

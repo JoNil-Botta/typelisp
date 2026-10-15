@@ -7,6 +7,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.byte_reader)
+(import stdlib.clone as clone_gen)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 (import stdlib.vector)
@@ -1391,3 +1392,7 @@
                         index))]
                   (Miss (compiler-trace-kind-miss record.kind) index))
                 (Hit))))])]))
+
+(clone_gen.gen-clone CompilerIncrementalTraceRecord)
+
+(clone_gen.gen-clone CompilerIncrementalTrace)

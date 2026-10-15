@@ -11,6 +11,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.byte_reader)
+(import stdlib.clone as clone_gen)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 
@@ -2025,3 +2026,9 @@
                   (& left-query)
                   (& right-query)
                   limits)]))])]))
+
+(clone_gen.gen-clone CompilerIncrementalChildIdentity)
+
+(clone_gen.gen-clone CompilerIncrementalSemanticOutputIdentity)
+
+(clone_gen.gen-clone CompilerIncrementalIdentity)

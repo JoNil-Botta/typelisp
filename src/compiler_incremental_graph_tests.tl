@@ -1153,3 +1153,78 @@
 (test
   compiler-incremental-graph-hostile-transcripts
   (unless (graph-test-hostile?) (string.tl_oob_abort)))
+
+(test
+  compiler-incremental-graph-child-key-decoder-rejects-hostile-records
+  (let
+    [parent : identity.CompilerIncrementalIdentity (graph-test-query 2 3)]
+    [child : identity.CompilerIncrementalIdentity (graph-test-query 0 1)]
+    [limits : graph.CompilerIncrementalGraphLimits
+      (graph.compiler-graph-default-limits)]
+    [edge : trace.CompilerIncrementalTraceEdge
+      (graph-test-child-edge 0 (clone child) (graph-test-output 11))]
+    [record : trace.CompilerIncrementalTraceRecord
+      (match (trace.compiler-trace-record (& edge) (& parent) (& limits.trace))
+        [(Ok value) value]
+        [_ (string.tl_oob_abort)])]
+    [i : i64 0]
+    (match (graph.compiler-graph-trace-child-query
+      (& record)
+      (& parent)
+      (& limits))
+      [(Ok query)
+        (unless
+          (binary.compiler-incremental-binary-bytes-eq?
+            (& query.transcript)
+            (& child.transcript))
+          (string.tl_oob_abort))]
+      [_ (string.tl_oob_abort)])
+    (while (< i 5)
+      (let
+        [bad : trace.CompilerIncrementalTraceRecord
+          (trace.clone-compiler-incremental-trace-record (& record))]
+        (cond
+          [(= i 0) (set! bad.kind 1)]
+          [(= i 1) (set! bad.key "")]
+          [(= i 2)
+            (set!
+              bad.key
+              (string.substring-copy-checked
+                (& bad.key)
+                0
+                (- (string.string-length bad.key) 1)))]
+          [(= i 3) (set! bad.observation "")]
+          [else (set! bad.observation "invalid")])
+        (match (graph.compiler-graph-trace-child-query
+          (& bad)
+          (& parent)
+          (& limits))
+          [(Err error)
+            (unless
+              (= error.code graph.compiler-graph-error-trace)
+              (string.tl_oob_abort))]
+          [_ (string.tl_oob_abort)]))
+      (set! i (+ i 1)))))
+
+(test
+  compiler-incremental-graph-owned-clones-isolate-metadata-buffers
+  (let
+    [original : graph.CompilerIncrementalGraphNode (graph-test-load)]
+    [copy : graph.CompilerIncrementalGraphNode
+      (graph.clone-compiler-incremental-graph-node (& original))]
+    [digest : sha256.Sha256Digest
+      (sha256.clone-sha256-digest (& original.output.identity.fingerprint))]
+    (set! (array-ref copy.query.transcript 0) 255)
+    (set! (array-ref copy.stored-key.bytes 0) 255)
+    (set! (array-ref copy.trace.transcript 0) 255)
+    (set! (array-ref digest.octets 0) 255)
+    (unless
+      (and
+        (!= (array-ref original.query.transcript 0) 255)
+        (!= (array-ref original.stored-key.bytes 0) 255)
+        (!= (array-ref original.trace.transcript 0) 255)
+        (!= (array-ref original.output.identity.fingerprint.octets 0) 255)
+        (binary.compiler-incremental-binary-bytes-eq?
+          (& copy.trace.parent.transcript)
+          (& original.query.transcript)))
+      (string.tl_oob_abort))))

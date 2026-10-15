@@ -564,9 +564,45 @@ The package follows the standard layout: `typelisp build` resolves the default
 - modules only a tool imports (`compiler_embedded_stdlib_tlci_encoder.tl`,
   `doc_site_doc_bridge.tl`);
 - groundwork that an open issue chain builds on and that, until then, only its
-  own tests reach: the incremental identity/trace modules, the SFrame v3 codec,
+  own tests reach: the incremental identity/trace/graph/planner modules (#7025), the SFrame v3 codec,
   the COFF import-member writer, the x64 executable template selection
   modules, the git client cores and `lint_fix_plan_core.tl`.
+
+### Incremental query planner
+
+`compiler_incremental_plan_tests.tl` drives a synthetic serial executor and a
+clean recomputation oracle. It checks exact graph bytes, stable outputs with new
+result keys, changed outputs, added/removed children, admission misses, diamonds,
+multiple roots, reordered frozen tables and fresh arenas. Its mutation table
+includes source, imported surface/resolution, target/cfg/profile, compiler build,
+stdlib/package provenance, macro implementation/generated output/declarations,
+source fallback and negative lookup observations. Hostile feedback and budget
+tables verify that errors expose no complete graph and retain a bounded scalar
+terminal event.
+
+`compiler_incremental_plan_stress_tests.tl` checks unchanged, sparse stable,
+output-changing, dynamic and all-changing star graphs. Every batch is submitted
+in reverse order. The synthetic executor uses indexed node lookup and one direct
+registration per recomputation, so fixture work does not add a quadratic scan.
+Its reusable stress driver reports planning/finalization milliseconds, scheduler
+steps, actions, index comparisons, child requests, suspension peak, allocator
+total/peak byte deltas, conservative owned-byte charges, and encoded/event bytes.
+Large schema-bound experiments retain the same edge/node schema limits with
+explicit finite trace sorting and metadata budgets; all process trees also use
+the OS memory cap. Allocator instrumentation uses the existing `compile-profile`
+cfg when compiling a standalone stress driver.
+
+Run the companions with a freshly built compiler and the standard roots:
+
+```sh
+typelisp test src/compiler_incremental_plan_tests.tl --stdlib-root stdlib --stdlib-root src
+typelisp test src/compiler_incremental_plan_stress_tests.tl --stdlib-root stdlib --stdlib-root src
+```
+
+Imported test companions supply fixture helpers; their test declarations do not
+join an importing module's harness. The normal inline gate discovers both files.
+The pure planner's next production consumer is #7025; these tests do not claim
+CLI cache, store hydration, diagnostic parity or publication integration.
 
 ### Inline tests
 

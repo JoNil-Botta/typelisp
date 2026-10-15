@@ -62363,6 +62363,13 @@
       (array
         "entry:
            %0 = mov @mr_a : i64
+           %1 = call unknown_writer(%0) : i64
+           return %1"
+        "entry:
+           %0 = mov @mr_a : i64
+           tailcall unknown_writer(%0) : i64"
+        "entry:
+           %0 = mov @mr_a : i64
            %1 = call mr_write_b() : i64
            %2 = call unknown_writer(%0) : i64
            return %2"
@@ -62430,14 +62437,21 @@
           (opt-snapshot-test-ok? (clone text) (clone text) false)
           text))))
   (let
-    [text
-      "entry:
-         %0 = mov @mr_c : i64
-         %1 = call mr_write_b() : i64
-         return %0"]
-    (test.assert-true
-      (opt-snapshot-test-ok? (clone text) text true)
-      "an address-taken global preserves its snapshot")))
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_c : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_c : i64
+           %1 = call mr_write_b() : i64
+           return %0")]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [text (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok? (clone text) text true)
+          "an address-taken global preserves its snapshot")))))
 
 (define (opt-snapshot-early-test-ok? [before : String] [after : String]) : bool
   (let
@@ -77387,3 +77401,85 @@
          %3 = add @mr_a, %2 : i64
          return %3")
     "snapshot cleanup leaves unrelated pre-inline definitions intact"))
+
+(define (opt-global-address-facts-case?
+  [text : String]
+  [stored? : bool]
+  [address? : bool]) : bool
+  (let
+    [name : i64 (opt-test-symbol "address_fact")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-spans-function (irt.instrs text)))
+        (& (ir.compiler-ir-function-seq-empty)))]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build (& functions))]
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    [_decl : unit
+      (opt-test-global-builder-push! (&mut builder) name (I64) (I64 10))]
+    [globals : ir.CompilerIrGlobalSeq
+      (ir.compiler-ir-global-builder-to-seq builder)]
+    [cells : opt.OptGlobalCellSummary
+      (opt.opt-global-cell-summary-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& globals)
+        (& functions))]
+    (and
+      (= cells.mod-ref.built? (not address?))
+      (= (opt_i64_i64_map.contains? (& cells.addr-taken) name) address?)
+      (= (opt_i64_i64_map.contains? (& facts.disq) name) (or stored? address?))
+      (= (opt_i64_i64_map.contains? (& facts.cells.stores) name) stored?)
+      (= (opt_i64_i64_map.contains? (& facts.addr-taken) name) address?))))
+
+(test
+  global-address-facts-preserve-store-borrow-overlap
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       return 0"
+      true
+      false)
+    "a direct store disqualifies constants without taking an address")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = mov &@address_fact : i64
+       return %0"
+      false
+      true)
+    "an address operand marks the global independently")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_fact, 1 : i64
+       %0 = call opaque(&@address_fact) : i64
+       return %0"
+      true
+      true)
+    "a store before a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = call opaque(&@address_fact) : i64
+       store @address_fact, 1 : i64
+       return %0"
+      true
+      true)
+    "a store after a borrow cannot erase the address fact")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "store @address_other, 1 : i64
+       return @address_fact"
+      false
+      false)
+    "reads and stores of other globals do not imply address-taking")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "tailcall opaque(&@address_fact) : i64"
+      false
+      true)
+    "tailcall arguments include address operands")
+  (test.assert-true
+    (opt-global-address-facts-case?
+      "%0 = pack [&@address_fact] : i64
+       return %0"
+      false
+      true)
+    "aggregate words include address operands"))

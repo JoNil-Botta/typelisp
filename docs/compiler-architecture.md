@@ -972,6 +972,15 @@ first and preserve local IDs, negative global keys and pack-word keys. The copy
 environment smoke covers growth, wide entries, forks, zeroed storage, clears,
 source invalidation and retained snapshots.
 
+Program-wide global facts record direct stores and address-taking independently.
+The constant-substitution disqualification walk records every `GlobalAddr`
+operand through the shared IR operand visitor, including call arguments and
+aggregate words. A direct store can also disqualify a constant, but cannot
+remove an address fact. Both global-cell summaries and aggregate live-in
+analysis consume this same address set. Any address-taken global prevents the
+per-global no-write table from being built: a pointer-writing call may reach
+that cell even when it has no direct `Store` instruction naming the global.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before

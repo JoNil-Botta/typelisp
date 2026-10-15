@@ -1409,23 +1409,6 @@
       (LowerSpmdOrigin (clone location) location false false)]
     (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
 
-;; The prepared pool contains every source child before lowering starts.
-;; Scanning all rows is conservative: quoted or unreachable sites keep the
-;; ordinary enumeration path. A negative result is local to this prepared job;
-;; standalone function callers retain the constructor's conservative default.
-(define (lower-spmd-pools-have-sites?
-  [pools : (& pools ast.AstNodePoolContext)]) : bool
-  (let
-    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
-    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
-    (for [index (iterator.range 0 count)]
-      (match (ast.ast-expr-segment-bases-shared-view bases index ast.AstExpr)
-        [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-             (SpmdBroadcast _ _) (SpmdShuffle _ _))
-          (return true)]
-        [_ unit]))
-    false))
-
 (define (lower-spmd-origin-id
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
@@ -70588,7 +70571,7 @@
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (compiler-lower-state-set-spmd-source-present!
     lower-state
-    (lower-spmd-pools-have-sites? (& (tc_core.tc-context-pools ctx))))
+    (ast.ast-node-pool-context-has-spmd? (& (tc_core.tc-context-pools ctx))))
   (compiler-lower-state-set-active-symbols!
     lower-state
     (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))

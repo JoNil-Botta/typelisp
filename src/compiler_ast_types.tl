@@ -3,6 +3,7 @@
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
 (import stdlib.iterator)
+(import stdlib.comptime)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
@@ -4834,7 +4835,7 @@
 ;; exact row still end the view's lifetime. Keeping this as a macro lets
 ;; aggregate call lowering hand the stable row directly to the callee instead
 ;; of returning it through a second 32-byte value slot. The caller supplies
-;; AstExpr in its own namespace so imported callers retain the canonical type.
+;; AstExpr in its own namespace, or i64 for the enum's tag prefix.
 (defmacro (ast-expr-segment-bases-shared-view
   [segment-bases : Expr]
   [id : Expr]
@@ -4862,6 +4863,50 @@
     (unsafe
       (ptr-read (ast-expr-pool-cell-ptr pools.expr-pool)))
     segment-bases))
+
+;; Tag order is reflected from the canonical enum rather than duplicated in
+;; lowering. This immutable table remains correct when variants are reordered.
+(defmacro (ast-define-spmd-tags [table-name : Expr] [node-type : type]) : Decls
+  (let
+    [count : i64 (enum-variant-count node-type)]
+    [tags : comptime.ExprList (comptime.expr-list-empty)]
+    [index : i64 (- count 1)]
+    (while (>= index 0)
+      (let
+        [name : String (enum-variant-name node-type index)]
+        (set!
+          tags
+          (comptime.expr-list-cons
+            (comptime.expr-bool
+              (match name
+                ["Foreach" true]
+                ["SpmdReduce" true]
+                ["SpmdScan" true]
+                ["SpmdCompact" true]
+                ["SpmdBroadcast" true]
+                ["SpmdShuffle" true]
+                [_ false]))
+            tags)))
+      (set! index (- index 1)))
+    `(define ,table-name : (Array bool ,(comptime.expr-int count))
+      (array ,@tags))))
+
+(ast-define-spmd-tags ast-expr-spmd-tags AstExpr)
+
+;; The prepared owner's rows are stable throughout this read-only scan. Only
+;; the enum tag is needed; no row value or view survives a pool mutation.
+(define (ast-node-pool-context-has-spmd? [pools : (& pools AstNodePoolContext)]) : bool
+  (let
+    [bases : i64 (ast-node-pool-context-expr-segment-bases pools)]
+    [count : i64 (ast-node-pool-context-expr-len pools)]
+    [tag-count : i64 (array-length ast-expr-spmd-tags)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [tag : i64 (ast-expr-segment-bases-shared-view bases index i64)]
+        (when
+          (and (>= tag 0) (< tag tag-count) (array-ref ast-expr-spmd-tags tag))
+          (return true))))
+    false))
 
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
 ;; one `ast-node-get` reads.

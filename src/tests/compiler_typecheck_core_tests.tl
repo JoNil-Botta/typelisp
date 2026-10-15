@@ -11513,3 +11513,69 @@
             (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
           [_ false])
         "an observed string operand's marker wraps a spanned copy"))))
+
+(cfg
+  test
+  ;; The node under OUT's caller-origin marker when OUT is
+  ;; Spanned(MacroExpansion(node, caller, -1), _), or -1.
+  (define (tc-initializer-marker-test-inner
+    [pools : ast.AstNodePoolContext]
+    [out : i64]) : i64
+    (match (ast.ast-node-pool-context-expr-get pools out)
+      [(Spanned marker _)
+        (match (ast.ast-node-pool-context-expr-get pools marker)
+          [(MacroExpansion node _ name)
+            (if (= name -1)
+              node
+              -1)]
+          [_ -1])]
+      [_ -1])))
+
+;; The CTFE route marks a binding clause's initializer with a -1 caller-origin
+;; marker over the inner node of the initializer's Spanned row. Over a compact
+;; marker (#8884) it keeps that Spanned row, the compact operand's view.
+(test
+  ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 9)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "initializer-operand")))]
+    [plain : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [compact : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ctfe_support.ctfe-compact-caller-origin-name)))
+        span)]
+    [ty : ast.AstType
+      (Region
+        (ctfe_support.ctfe-caller-origin-expr-type-id)
+        (ci.intern-composite-pair-id
+          (ci.intern "initializer-path")
+          (ast.ast-node-pool-context-type-push pools (I64))))]
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          plain
+          (& ty)))
+      var
+      "an initializer's marker goes over its Spanned row's inner node")
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          compact
+          (& ty)))
+      compact
+      "over a compact marker, it keeps the marker's Spanned view")))

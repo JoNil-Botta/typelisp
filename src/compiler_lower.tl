@@ -1484,7 +1484,7 @@
 ;;
 ;; optimizer and liveness data model stay unchanged.
 (defenum ResultCompilerLower
-  (Ok ir.CompilerIrProgram ir.CompilerSourceSpans)
+  (Ok ir.CompilerIrProgram ir.CompilerSourceSpans CompilerLowerState)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defstruct CompilerLowerRequest
@@ -1497,7 +1497,8 @@
   (Ok
     ir.CompilerIrProgram
     ir.CompilerSourceSpans
-    pointer_proof.PointerProofInput)
+    pointer_proof.PointerProofInput
+    CompilerLowerState)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (compiler-lower-state-use-request!
@@ -1510,7 +1511,7 @@
   [result : ResultCompilerLower]) : ResultCompilerLowerPointerProof
   (match result
     [(Err diagnostic) (Err diagnostic)]
-    [(Ok program spans)
+    [(Ok program spans lower-state)
       (match request.pointer-proof
         [(Disabled)
           (Err
@@ -1525,7 +1526,7 @@
                 (lower-global-shared-view program)
                 (lower-global-shared-view spans))]
             (if (= (string.string-length (& error)) 0)
-              (Ok program spans input)
+              (Ok program spans input lower-state)
               (Err
                 (box (pointer_proof.pointer-proof-input-diagnostic input error)))))])]))
 
@@ -2465,10 +2466,15 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-ir-arena [point : String]) : unit
+  (define (compiler-lower-profile-ir-arena
+    [lower-state : CompilerLowerState]
+    [point : String]) : unit
     (compiler-lower-profile-counter
       (str_cat.str-cat "ir_arena." point ".active")
-      (if (= lower-ir-arena 0)
+      (if (=
+        (compiler-lower-arena-state-ir-arena
+          (& (compiler-lower-state-arenas lower-state)))
+        0)
         0
         1))))
 
@@ -13543,7 +13549,9 @@
         ;; safe to keep in the persistent arena after the rewind (mirrors the
         ;; scratch+escape pattern in lower-function-escaping).
         [prev-arena : i64 (arena.tl_arena_current)]
-        [scratch : i64 (lower-scratch-arena-get)]
+        [scratch : i64
+          (compiler-lower-arena-state-ensure-scratch!
+            (& (compiler-lower-state-arenas lower-state)))]
         (unsafe
           (arena.tl_arena_set scratch))
         (let
@@ -57561,9 +57569,9 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [package-name : String
-      (compiler-lower-state-spmd-package-name
-        (compiler-lower-state-from-name-cache names))]
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
+    [package-name : String (compiler-lower-state-spmd-package-name lower-state)]
     (match callable
       [(No) (Ok (ir.compiler-ir-function-seq-empty) spans)]
       [(Callable specializations)
@@ -57607,7 +57615,9 @@
                   ;; Their parameters, blocks and instructions need the same
                   ;; retained IR owner before checked frontend retirement.
                   (Ok
-                    (lower-function-seq-escape-to-ir-arena functions)
+                    (lower-function-seq-escape-to-ir-arena
+                      lower-state
+                      functions)
                     next-spans)]))))])))
 
 (define (lower-avx512-emit-spmd-call
@@ -67633,24 +67643,6 @@
 ;; (`module/name` from `alias.name`). Any new intern entry made from those
 ;; strings must survive the scratch rewind, so the scope mirrors
 ;; `tc-check-fn-decl-scoped` and forces persistent intern storage while active.
-(define lower-scratch-arena : i64
-  0)
-
-(define (lower-scratch-arena-get) : i64
-  (if (= lower-scratch-arena 0)
-    (let
-      [scratch : i64 (arena.tl_arena_make)]
-      (set! lower-scratch-arena scratch)
-      scratch)
-    lower-scratch-arena))
-
-(define (lower-scratch-arena-release!) : unit
-  (unless
-    (= lower-scratch-arena 0)
-    (unsafe
-      (arena.tl_arena_destroy lower-scratch-arena))
-    (set! lower-scratch-arena 0)))
-
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
@@ -67662,28 +67654,6 @@
 ;; the whole compile (the driver only releases it for levels >= 1; batch
 ;; compiles release it between entries). Globals, externs, and the spans
 ;; side-table are NOT allocated here -- they outlive optimization.
-(define lower-ir-arena : i64
-  0)
-
-(define (lower-ir-arena-get) : i64
-  (if (= lower-ir-arena 0)
-    (let
-      [arena : i64 (arena.tl_arena_make)]
-      (set! lower-ir-arena arena)
-      arena)
-    lower-ir-arena))
-
-(define (lower-ir-arena-release!) : unit
-  (unless
-    (= lower-ir-arena 0)
-    (unsafe
-      (arena.tl_arena_destroy lower-ir-arena))
-    (set! lower-ir-arena 0)))
-
-(define (lower-arenas-release!) : unit
-  (lower-scratch-arena-release!)
-  (lower-ir-arena-release!))
-
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -67707,23 +67677,32 @@
   (set! (array-ref state.scratch-arena 0) scratch)
   (set! (array-ref state.ir-arena 0) ir))
 
-(define (compiler-lower-arena-state-capture-from-globals!
-  [state : CompilerLowerArenaState]) : unit
-  (compiler-lower-arena-state-set! state lower-scratch-arena lower-ir-arena))
+;; Lazy creation immediately publishes the stable arena root in this job's
+;; cell. Growth does not require capture; releasing another job cannot select
+;; or mutate this owner.
+(define (compiler-lower-arena-state-ensure-scratch!
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (let
+    [current : i64 (compiler-lower-arena-state-scratch-arena state)]
+    (if (= current 0)
+      (let
+        [created : i64 (arena.tl_arena_make)]
+        (set! (array-ref state.scratch-arena 0) created)
+        created)
+      current)))
 
-(define (compiler-lower-arena-state-install! [state : CompilerLowerArenaState]) : unit
-  (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
-  (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state)))
+(define (compiler-lower-arena-state-ensure-ir!
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (let
+    [current : i64 (compiler-lower-arena-state-ir-arena state)]
+    (if (= current 0)
+      (let
+        [created : i64 (arena.tl_arena_make)]
+        (set! (array-ref state.ir-arena 0) created)
+        created)
+      current)))
 
-;; State-owned release: destroy the arenas named by the state's own cells and
-;; zero them. The compatibility-global selectors are zeroed only when they
-;; still name this state's handles (the state is the installed owner);
-;; releasing an uninstalled state must not disturb another state's installed
-;; arenas. Destroying an older head still reclaims the whole chain -- the
-;; runtime root tracks the newest live segment -- but callers must refresh the
-;; state's cells from the globals after any phase that can grow a chain
-;; (post-emission session-floor capture), so a stored head never trails the
-;; installed selector by the time a release runs.
+;; Clear the exact owner's cell before destruction; later cleanup is idempotent.
 (define (compiler-lower-arena-state-release-scratch!
   [state : (& state CompilerLowerArenaState)]) : unit
   (let
@@ -67731,9 +67710,6 @@
     (unless
       (= scratch 0)
       (set! (array-ref state.scratch-arena 0) 0)
-      (if (= lower-scratch-arena scratch)
-        (set! lower-scratch-arena 0)
-        unit)
       (unsafe
         (arena.tl_arena_destroy scratch)))))
 
@@ -67744,9 +67720,6 @@
     (unless
       (= ir 0)
       (set! (array-ref state.ir-arena 0) 0)
-      (if (= lower-ir-arena ir)
-        (set! lower-ir-arena 0)
-        unit)
       (unsafe
         (arena.tl_arena_destroy ir)))))
 
@@ -67755,9 +67728,12 @@
   (compiler-lower-arena-state-release-ir! state))
 
 (define (lower-function-seq-escape-to-ir-arena
+  [lower-state : CompilerLowerState]
   [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (in-arena
-    (arena.Arena (lower-ir-arena-get))
+    (arena.Arena
+      (compiler-lower-arena-state-ensure-ir!
+        (& (compiler-lower-state-arenas lower-state))))
     (ir.compiler-ir-clone-function-seq
       (ast.ast-node-pool-reader-context-current)
       (& functions))))
@@ -67775,8 +67751,12 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache names)]
     [enclosing : i64 (arena.tl_arena_current)]
-    [scratch : i64 (lower-scratch-arena-get)]
+    [scratch : i64
+      (compiler-lower-arena-state-ensure-scratch!
+        (& (compiler-lower-state-arenas lower-state)))]
     [job-state : tc_core.TcJobState (tc_core.tc-context-job-state ctx)]
     ;; Type-name/owner caches may contain keys allocated by earlier
     ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
@@ -67787,8 +67767,7 @@
     (let
       [mark : i64 (arena.tl_region_mark)]
       [function-state : CompilerLowerFunctionState
-        (compiler-lower-function-state-new
-          (compiler-lower-state-from-name-cache names))]
+        (compiler-lower-function-state-new lower-state)]
       (match (lower-function
         ctx
         top-env
@@ -67805,7 +67784,7 @@
         [(Ok fns function-spans)
           (let
             [escaped-fns : ir.CompilerIrFunctionSeq
-              (lower-function-seq-escape-to-ir-arena fns)]
+              (lower-function-seq-escape-to-ir-arena lower-state fns)]
             ;; The IR function clones go to the dedicated lowered-IR
             ;; arena (released by the driver after optimization); the
             ;; spans side-table is rebuilt in the enclosing arena since
@@ -69517,6 +69496,8 @@
   [logical-module : String]
   [logical-module-id : i64]) : ResultLowerDispatchDecl
   (let
+    [lower-state : CompilerLowerState
+      (compiler-lower-state-from-name-cache name-cache)]
     [name : String
       (tc_core.tc-env-key-name-text-for-session
         (tc_core.tc-context-structural-session ctx)
@@ -69535,8 +69516,7 @@
     [logical-symbol : i64
       (lower-name-cache-ir-symbol name-cache logical-id name-id logical-name)]
     [intern-state : ci.InternCompatState
-      (compiler-lower-state-interns
-        (compiler-lower-state-from-name-cache name-cache))]
+      (compiler-lower-state-interns lower-state)]
     [cache-id : i64
       (ci.intern-compat-state-generated-role-symbol-id
         (&mut intern-state)
@@ -69576,7 +69556,9 @@
                     ;; source arena, so give it the same lifetime as variants
                     ;; lowered through lower-function-escaping.
                     [escaped-thunk-functions : ir.CompilerIrFunctionSeq
-                      (lower-function-seq-escape-to-ir-arena thunk-functions)]
+                      (lower-function-seq-escape-to-ir-arena
+                        lower-state
+                        thunk-functions)]
                     [functions : ir.CompilerIrFunctionBuilder
                       (ir.compiler-ir-function-builder-with-capacity
                         (+
@@ -71218,7 +71200,7 @@
                     input
                     (lower-global-shared-view program)
                     (lower-global-shared-view success.spans))])
-              (Ok program success.spans))]
+              (Ok program success.spans lower-state))]
           [(Err message)
             (match (compiler-lower-state-pointer-proof-request lower-state)
               [(Requested input)
@@ -71300,7 +71282,7 @@
   [program : ast.AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (lower-compiler-program-unlocated-mode lower-state program mode)
-    [(Ok ir spans) (Ok ir spans)]
+    [(Ok ir spans owner) (Ok ir spans owner)]
     [(Err diag)
       (Err (box (lower-diagnostic-with-fallback-path (deref diag) path)))]))
 
@@ -71508,7 +71490,7 @@
                           lower-names
                           clone-roots
                           mode)
-                          [(Ok ir spans)
+                          [(Ok ir spans owner)
                             (begin
                               (cfg
                                 compile-profile
@@ -71529,8 +71511,10 @@
                                   (lower-global-shared-view ir)))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-ir-arena "after_decls"))
-                              (Ok ir spans))]
+                                (compiler-lower-profile-ir-arena
+                                  lower-state
+                                  "after_decls"))
+                              (Ok ir spans owner))]
                           [(Err diag)
                             (begin
                               (cfg

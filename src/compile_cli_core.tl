@@ -582,7 +582,8 @@
         (compiler_driver_core.compiler-driver-state-profile state)
         (compiler_driver_core.compiler-driver-state-typecheck state)
         result
-        output-path))))
+        output-path
+        (compiler_driver_core.compiler-driver-state-owned-lower-state state)))))
 
 (define (compile-cli-write-pic-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
@@ -806,7 +807,9 @@
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
               (compiler_driver_core.compiler-driver-state-typecheck _state)
-              "write")
+              "write"
+              (compiler_driver_core.compiler-driver-state-owned-lower-state
+                _state))
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
@@ -842,7 +845,9 @@
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
               (compiler_driver_core.compiler-driver-state-typecheck _state)
-              "write")
+              "write"
+              (compiler_driver_core.compiler-driver-state-owned-lower-state
+                _state))
             (cfg
               compile-profile
               (compiler_driver_core.compiler-driver-profile-finish-total
@@ -865,7 +870,9 @@
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             (compiler_driver_core.compiler-driver-state-typecheck _state)
-            "write-error")
+            "write-error"
+            (compiler_driver_core.compiler-driver-state-owned-lower-state
+              _state))
           (cfg
             compile-profile
             (compiler_driver_core.compiler-driver-profile-finish-total
@@ -1373,7 +1380,8 @@
             (arena.tl_arena_destroy previous-compat-arena)))
         (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
           (compiler_driver_core.compiler-driver-state-typecheck state)
-          "batch-steady")
+          "batch-steady"
+          (compiler_driver_core.compiler-driver-state-owned-lower-state state))
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-steady"
@@ -1571,7 +1579,8 @@
             (arena.tl_arena_destroy previous-compat-arena)))
         (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
           (compiler_driver_core.compiler-driver-state-typecheck state)
-          "batch-steady")
+          "batch-steady"
+          (compiler_driver_core.compiler-driver-state-owned-lower-state state))
         (allocation_profile.compiler-allocation-profile-control!
           2
           "batch-steady"

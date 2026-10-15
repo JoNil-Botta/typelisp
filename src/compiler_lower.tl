@@ -1405,8 +1405,7 @@
       (ir.CompilerSourceLocation
         (lower-state-current-source-path-id state)
         (ast.ast-source-span 0 0 0 0))]
-    [origin : LowerSpmdOrigin
-      (LowerSpmdOrigin (clone location) location false false)]
+    [origin : LowerSpmdOrigin (LowerSpmdOrigin location location false false)]
     (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
 
 ;; The prepared pool contains every source child before lowering starts.
@@ -1495,7 +1494,7 @@
         1
         (Rejected)
         (UnsupportedSource)
-        (clone location)
+        location
         location
         0
         0
@@ -1521,7 +1520,7 @@
       (set! item.selected true))
     (set! item.entered true)
     (set! item.finished true)
-    (set! (array-ref sites.items.slots site) (clone item))
+    (set! (array-ref sites.items.slots site) item)
     ;; Source preorder makes every subtree contiguous. Skip an already-final
     ;; child subtree, including scalar-tail revisits, rather than scanning the
     ;; remainder of the function for each source form.
@@ -1539,10 +1538,10 @@
             (match child.decision.form
               [(or (Broadcast) (Shuffle))
                 (set! child.selected true)
-                (set! child.decision.route (clone item.decision.route))
-                (set! child.decision.reason (clone item.decision.reason))
+                (set! child.decision.route item.decision.route)
+                (set! child.decision.reason item.decision.reason)
                 (set! child.decision.lanes item.decision.lanes)
-                (set! (array-ref sites.items.slots index) (clone child))
+                (set! (array-ref sites.items.slots index) child)
                 (lower-spmd-finish-site! state index failed)]
               [_ unit]))
           (set!

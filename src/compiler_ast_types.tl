@@ -1169,12 +1169,10 @@
   (semantic-node i32)
   (span AstSourceSpan))
 
-;; Two 28-bit expression ids leave the upper byte for a line delta below 255;
-;; 255 points at an exact logical record. The coordinate word retains a signed
-;; start line and two u16 columns.
+;; Compact slots retain both complete i32 ids. The coordinate word holds a
+;; signed start line, two u12 columns and an eight-bit line delta below 255.
+;; Tag 255 instead keeps an exact logical-record pointer in the first word.
 ;; Overflow slots are table-owned and recycled when a record becomes compact.
-(define ast-expr-span-packed-node-mask : i64
-  268435455)
 (define ast-expr-span-packed-escape-tag : i64
   255)
 
@@ -1274,24 +1272,20 @@
   [offset : Expr]) : Expr
   `(let
     [address : i64 (ast-expr-packed-span-record-address ,table ,index)]
-    [ids : i64
+    [tag : u8
       (unsafe
-        (ptr-read (int->ptr address : (Ptr i64))))]
-    (if (= (bit-and (shr ids 56) 255) ast-expr-span-packed-escape-tag)
-      (let
-        [overflow : i64
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
-        (cast
-          (unsafe
-            (ptr-read (ptr-offset (int->ptr overflow : (Ptr i32)) ,offset)))
-          : i64))
-      (bit-and (shr ids (* ,offset 28)) ast-expr-span-packed-node-mask))))
+        (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))]
+    [data : i64
+      (if (= tag (cast ast-expr-span-packed-escape-tag : u8))
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        address)]
+    (cast
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr data : (Ptr i32)) ,offset)))
+      : i64)))
 
-;; Logical setter wrappers own their value while these private byte writers run;
-;; the span pointer is consumed synchronously and is never stored or returned.
-;: Decode by value. The two physical words are loaded once; neither an
-;: overflow pointer nor a borrowed physical row is returned to the caller.
+;: Decode by value; no packed row or overflow pointer escapes the accessor.
 (define (ast-expr-canonical-record-get [table : i64] [index : i64]) : AstExprCanonicalSpanRecord
   (let
     [address : i64 (ast-expr-packed-span-record-address table index)]
@@ -1301,20 +1295,20 @@
     [coordinates : i64
       (unsafe
         (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
-    [tag : i64 (bit-and (shr ids 56) 255)]
+    [tag : i64 (bit-and coordinates 255)]
     (if (= tag ast-expr-span-packed-escape-tag)
       (unsafe
-        (ptr-read (int->ptr coordinates : (Ptr AstExprCanonicalSpanRecord))))
+        (ptr-read (int->ptr ids : (Ptr AstExprCanonicalSpanRecord))))
       (let
         [start-line : i64 (shr coordinates 32)]
         (AstExprCanonicalSpanRecord
-          (cast (bit-and ids ast-expr-span-packed-node-mask) : i32)
-          (cast (bit-and (shr ids 28) ast-expr-span-packed-node-mask) : i32)
+          (cast ids : i32)
+          (cast (shr ids 32) : i32)
           (AstSourceSpan
             (cast start-line : i32)
-            (cast (bit-and (shr coordinates 16) 65535) : i32)
+            (cast (bit-and (shr coordinates 20) 4095) : i32)
             (cast (+ start-line tag) : i32)
-            (cast (bit-and coordinates 65535) : i32)))))))
+            (cast (bit-and (shr coordinates 8) 4095) : i32)))))))
 
 (defmacro (ast-expr-canonical-record-set!
   [table : Expr]
@@ -1325,10 +1319,8 @@
     (ast-expr-packed-span-record-set!
       ,table
       ,index
-      record-value.semantic-node
-      record-value.owner-node
       (unsafe
-        (ptr-cast (ptr-addr-of record-value.span) : (Ptr AstSourceSpan))))))
+        (ptr-cast (ptr-addr-of record-value) : (Ptr AstExprCanonicalSpanRecord))))))
 
 (define (ast-expr-respan-record-get [table : i64] [index : i64]) : AstExprReSpan
   (let
@@ -1348,98 +1340,82 @@
     (ast-expr-packed-span-record-set!
       ,table
       ,index
-      record-value.view-node
-      record-value.semantic-node
       (unsafe
-        (ptr-cast (ptr-addr-of record-value.span) : (Ptr AstSourceSpan))))))
+        (ptr-cast (ptr-addr-of record-value) : (Ptr AstExprCanonicalSpanRecord))))))
 
+;; Logical setters own the complete 24-byte record while these private writers
+;; consume its bytes synchronously. Neither writer retains the input pointer.
 (define (ast-expr-packed-span-record-set!
   [table : i64]
   [index : i64]
-  [first-node : i32]
-  [second-node : i32]
-  [span-data : (Ptr AstSourceSpan)]) : unit
+  [record-data : (Ptr AstExprCanonicalSpanRecord)]) : unit
   (let
     [address : i64 (ast-expr-packed-span-record-address table index)]
     [data : (Ptr i32)
       (unsafe
-        (ptr-cast span-data : (Ptr i32)))]
+        (ptr-cast record-data : (Ptr i32)))]
     [start-line : i64
-      (cast
-        (unsafe
-          (ptr-read data))
-        : i64)]
-    [start-col : i64
-      (cast
-        (unsafe
-          (ptr-read (ptr-offset data 1)))
-        : i64)]
-    [end-line : i64
       (cast
         (unsafe
           (ptr-read (ptr-offset data 2)))
         : i64)]
-    [end-col : i64
+    [start-col : i64
       (cast
         (unsafe
           (ptr-read (ptr-offset data 3)))
         : i64)]
+    [end-line : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 4)))
+        : i64)]
+    [end-col : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 5)))
+        : i64)]
     [delta : i64 (- end-line start-line)]
     [compact? : bool
       (and
-        (=
-          (bit-or
-            (shr (bit-or first-node second-node) 28)
-            (shr (bit-or (cast start-col : i32) (cast end-col : i32)) 16))
-          0)
+        (= (shr (bit-or start-col end-col) 12) 0)
         (< (cast delta : u64) (cast 255 : u64)))]
     [old-tag : i64
       (cast
         (unsafe
-          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 7)))
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))
         : i64)]
     (if (or (not compact?) (= old-tag ast-expr-span-packed-escape-tag))
-      (ast-expr-span-record-overflow-write!
-        table
-        index
-        first-node
-        second-node
-        span-data
-        compact?)
+      (ast-expr-span-record-overflow-write! table index record-data compact?)
       (unsafe
         (ptr-write!
           (int->ptr address : (MutPtr i64))
-          (bit-or
-            (cast first-node : i64)
-            (bit-or (shl (cast second-node : i64) 28) (shl delta 56))))
+          (ptr-read (ptr-cast record-data : (Ptr i64))))
         (ptr-write!
           (ptr-offset (int->ptr address : (MutPtr i64)) 1)
-          (bit-or (shl start-line 32) (bit-or (shl start-col 16) end-col)))))))
+          (bit-or
+            (shl start-line 32)
+            (bit-or (shl start-col 20) (bit-or (shl end-col 8) delta))))))))
 
-;; Ordinary compact writes never call an allocator or retain values over a
-;; call. Only wide records and transitions out of wide storage reach here.
+;; Wide writes reuse their existing slot. On a compact transition, recycle it
+;; and clear the tag before retrying: the valid input then takes the hot path,
+;; so the retry cannot allocate or recurse again.
 (define (ast-expr-span-record-overflow-write!
   [table : i64]
   [index : i64]
-  [first-node : i32]
-  [second-node : i32]
-  [span-data : (Ptr AstSourceSpan)]
+  [record-data : (Ptr AstExprCanonicalSpanRecord)]
   [compact? : bool]) : unit
   (let
-    [span : AstSourceSpan
-      (unsafe
-        (ptr-read span-data))]
     [address : i64 (ast-expr-packed-span-record-address table index)]
     [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
     [old-tag : i64
       (cast
         (unsafe
-          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 7)))
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))
         : i64)]
     [old-slot : i64
       (if (= old-tag ast-expr-span-packed-escape-tag)
         (unsafe
-          (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))
+          (ptr-read (int->ptr address : (Ptr i64))))
         0)]
     (if compact?
       (begin
@@ -1449,22 +1425,8 @@
             (ast-expr-span-table-word table free-index)))
         (ast-expr-span-table-word-set! table free-index old-slot)
         (unsafe
-          (ptr-write!
-            (int->ptr address : (MutPtr i64))
-            (bit-or
-              (cast first-node : i64)
-              (bit-or
-                (shl (cast second-node : i64) 28)
-                (shl
-                  (- (cast span.end-line : i64) (cast span.start-line : i64))
-                  56))))
-          (ptr-write!
-            (ptr-offset (int->ptr address : (MutPtr i64)) 1)
-            (bit-or
-              (shl (cast span.start-line : i64) 32)
-              (bit-or
-                (shl (cast span.start-col : i64) 16)
-                (cast span.end-col : i64))))))
+          (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) 0))
+        (ast-expr-packed-span-record-set! table index record-data))
       (let
         [free : i64 (ast-expr-span-table-word table free-index)]
         [slot : i64
@@ -1495,11 +1457,11 @@
         (unsafe
           (ptr-write!
             (int->ptr slot : (MutPtr AstExprCanonicalSpanRecord))
-            (AstExprCanonicalSpanRecord first-node second-node span))
+            (ptr-read record-data))
+          (ptr-write! (int->ptr address : (MutPtr i64)) slot)
           (ptr-write!
-            (int->ptr address : (MutPtr i64))
-            (shl ast-expr-span-packed-escape-tag 56))
-          (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) slot))))))
+            (ptr-offset (int->ptr address : (MutPtr i64)) 1)
+            ast-expr-span-packed-escape-tag))))))
 
 ;; make-array zero-fills even reused arenas. Unused slots start with tag zero;
 ;; table segment addresses and the overflow free-list head also start at zero.

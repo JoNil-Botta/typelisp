@@ -1274,7 +1274,7 @@ query/output/key metadata after successful payload admission; `unavailable!`
 instead schedules one recomputation. Recomputations call `register-input!` for
 each consumed direct key and `request-children!` for each semantic child batch.
 The parent suspends while the canonical batch resolves, then `Resume` returns
-the same ticket. `child-results!` copies only that batch's new results, avoiding
+the same ticket. `child-results!` copies only that batch's requested rows, avoiding
 an accumulated ledger copy on every resume. Tickets must be routed to their
 own planner instance by the coordinator.
 

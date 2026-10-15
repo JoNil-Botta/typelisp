@@ -584,6 +584,8 @@ terminal event.
 output-changing, dynamic and all-changing star graphs. Every batch is submitted
 in reverse order. The synthetic executor uses indexed node lookup and one direct
 registration per recomputation, so fixture work does not add a quadratic scan.
+The chain fixture checks success at the configured suspension-depth limit and
+a typed resource failure one node beyond it, with no complete graph exposed.
 Its reusable stress driver reports planning/finalization milliseconds, scheduler
 steps, actions, index comparisons, child requests, suspension peak, allocator
 total/peak byte deltas, conservative owned-byte charges, and encoded/event bytes.

@@ -8,6 +8,8 @@
 (import compiler_incremental_identity as identity)
 (import compiler_incremental_trace as trace)
 (import compiler_incremental_binary as binary)
+(import stdlib.vector)
+(import (stdlib.vector.vector trace.CompilerIncrementalTraceRecord) as record_vec)
 (import stdlib.profile)
 
 (define (plan-stress-trace-limits) : trace.CompilerIncrementalTraceLimits
@@ -291,3 +293,181 @@
         [report : CompilerPlanStressReport (compiler-plan-stress-run 256 mode)]
         (pt.plan-test-require (> report.encoded-bytes 0)))
       (set! mode (+ mode 1)))))
+
+(define (plan-depth-graph [count : i64] [current? : bool]) : graph.CompilerIncrementalGraph
+  (let
+    [builder : graph.CompilerIncrementalGraphBuilder (fixture.graph-test-begin)]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [query : identity.CompilerIncrementalIdentity
+          (plan-stress-query i false)]
+        [trace : trace.CompilerIncrementalTraceBuilder
+          (fixture.graph-test-trace-begin (clone query))]
+        (fixture.graph-test-note!
+          (&mut trace)
+          (pt.plan-test-source
+            (if current?
+              13
+              12)))
+        (when
+          (> i 0)
+          (fixture.graph-test-note!
+            (&mut trace)
+            (fixture.graph-test-child-edge
+              0
+              (plan-stress-query (- i 1) false)
+              (fixture.graph-test-output (+ i 99)))))
+        (fixture.graph-test-add-node!
+          (&mut builder)
+          (graph.CompilerIncrementalGraphNode
+            query
+            (fixture.graph-test-output (+ i 100))
+            (fixture.graph-test-key
+              (+
+                i
+                (if current?
+                  1000
+                  1)))
+            (fixture.graph-test-trace-finish trace))))
+      (set! i (+ i 1)))
+    (fixture.graph-test-add-root!
+      (&mut builder)
+      (graph.CompilerIncrementalGraphRoot
+        (graph.CompilerIncrementalGraphRootName "typelisp.root.check" "chain")
+        (plan-stress-query (- count 1) false)))
+    (fixture.graph-test-unwrap (graph.compiler-graph-finalize builder))))
+
+;; A deep recomputation suspends every parent. The last legal depth succeeds;
+;; one more frame fails with a typed resource error and no partial graph.
+(define (compiler-plan-depth-stress-run [count : i64] [depth-limit : i64]) : CompilerPlanStressReport
+  (let
+    [previous : graph.CompilerIncrementalGraph (plan-depth-graph count false)]
+    [expected : graph.CompilerIncrementalGraph (plan-depth-graph count true)]
+    [inputs : (__tl_dyn-array plan.CompilerIncrementalPlanInput)
+      (__tl_make-array plan.CompilerIncrementalPlanInput count)]
+    [roots : (__tl_dyn-array graph.CompilerIncrementalGraphRoot)
+      (pt.plan-test-roots (& expected))]
+    [snapshot : (__tl_dyn-array u8) (graph.compiler-graph-encode (& previous))]
+    [limits : plan.CompilerIncrementalPlanLimits
+      (plan.compiler-plan-default-limits)]
+    [tickets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [i : i64 0]
+    (while (< i count)
+      (set!
+        (array-ref inputs i)
+        (pt.plan-test-input 0 (+ i 1) (pt.plan-test-source 13)))
+      (set! i (+ i 1)))
+    (set! limits.max-depth depth-limit)
+    (let
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
+      [start-ms : i64 (profile.now-ms)]
+      [_reset : unit (profile.alloc-reset-peak)]
+      [state : plan.CompilerIncrementalPlan
+        (pt.plan-test-unwrap
+          (plan.compiler-plan-begin (Snapshot snapshot) roots inputs limits))]
+      [done? : bool false]
+      [resumes : i64 0]
+      [encoded-bytes : i64 0]
+      (while (not done?)
+        (match (plan.compiler-plan-next-action! (&mut state))
+          [(Recompute ticket query _)
+            (let
+              [at : i64 (graph.compiler-graph-find-node (& expected) (& query))]
+              [value : (& expected graph.CompilerIncrementalGraphNode)
+                (& expected (array-ref expected.nodes at))]
+              [records : record_vec.Vec
+                (match (trace.compiler-trace-decode
+                  (& value.trace)
+                  (& state.limits.graph.trace))
+                  [(Ok rows) rows]
+                  [_ (pt.plan-test-stop)])]
+              (set! (array-ref tickets ticket) at)
+              (pt.plan-test-register-source! (&mut state) ticket (& query))
+              (if (= records.len 1)
+                (pt.plan-test-require
+                  (plan.compiler-plan-success!
+                    (&mut state)
+                    ticket
+                    (graph.clone-compiler-incremental-graph-node value)))
+                (match (graph.compiler-graph-trace-child-query
+                  (& (array-ref records.slots 1))
+                  (& query)
+                  (& state.limits.graph))
+                  [(Ok child)
+                    (pt.plan-test-require
+                      (plan.compiler-plan-request-children!
+                        (&mut state)
+                        ticket
+                        (& query)
+                        (pt.plan-test-children child false)))]
+                  [_ (pt.plan-test-stop)])))]
+          [(Resume ticket)
+            (set! resumes (+ resumes 1))
+            (let
+              [value : (& expected graph.CompilerIncrementalGraphNode)
+                (&
+                  expected
+                  (array-ref expected.nodes (array-ref tickets ticket)))]
+              (match (plan.compiler-plan-child-results!
+                (&mut state)
+                ticket
+                (& value.query))
+                [(Ok children) (pt.plan-test-require (= children.len 1))]
+                [_ (pt.plan-test-stop)])
+              (pt.plan-test-require
+                (plan.compiler-plan-success!
+                  (&mut state)
+                  ticket
+                  (graph.clone-compiler-incremental-graph-node value))))]
+          [Complete (set! done? true)]
+          [(Err code)
+            (pt.plan-test-require
+              (and
+                (> count depth-limit)
+                (= code plan.compiler-plan-error-limit)))
+            (set! done? true)]
+          [_ (pt.plan-test-stop)]))
+      (if (> count depth-limit)
+        (pt.plan-test-closed (&mut state) plan.compiler-plan-error-limit)
+        (let
+          [result : graph.CompilerIncrementalGraph
+            (fixture.graph-test-unwrap
+              (plan.compiler-plan-finalize! (&mut state)))]
+          (pt.plan-test-require
+            (binary.compiler-incremental-binary-bytes-eq?
+              (& result.transcript)
+              (& expected.transcript)))
+          (set! encoded-bytes (array-length result.transcript))
+          (pt.plan-test-require (= state.budget.actions count))
+          (pt.plan-test-require (= resumes (- count 1)))))
+      (pt.plan-test-require
+        (=
+          state.budget.suspension-peak
+          (if (> count depth-limit)
+            depth-limit
+            count)))
+      (pt.plan-test-require (< state.budget.transitions (* 16 count)))
+      (CompilerPlanStressReport
+        count
+        (- count 1)
+        (- (profile.now-ms) start-ms)
+        state.budget.transitions
+        state.budget.actions
+        state.budget.comparisons
+        state.budget.child-requests
+        state.budget.suspension-peak
+        (- (profile.alloc-total) start-total)
+        (- (profile.alloc-peak) start-live)
+        state.budget.owned
+        encoded-bytes
+        (* 32 (plan.compiler-plan-event-count (& state)))))))
+
+(test
+  compiler-incremental-plan-chain-suspension-boundary
+  (let
+    [valid : CompilerPlanStressReport (compiler-plan-depth-stress-run 64 64)]
+    [limited : CompilerPlanStressReport (compiler-plan-depth-stress-run 65 64)]
+    (pt.plan-test-require (> valid.encoded-bytes 0))
+    (pt.plan-test-require (= limited.encoded-bytes 0))))

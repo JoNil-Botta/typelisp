@@ -58,6 +58,13 @@
   (node i64)
   (edge i64))
 
+;; Event codes: 2..9 recomputation reasons from the trace vocabulary;
+;; 10 candidate issued; 11 changed, 12 missing, 13 failed direct fact;
+;; 14 changed child output; 15 admitted hit; 16 new result; 17 consumed fact;
+;; 20 cold, 21 absent query, 22 absent root, 23 unavailable payload;
+;; 30 suspend, 31 existing child requested, 32 resume, 33 child removed,
+;; 34 child added, 35 ledger mismatch, 38 executor abort, 40 roots resolved.
+;; The terminal code is 100 + the first planner error.
 (defstruct PlanBudget
   (work i64)
   (owned i64)
@@ -461,7 +468,7 @@
   ;; Query transcripts are self-framed, so the concatenation is unambiguous.
   (let
     [prefix : String (graph.compiler-graph-bytes-string (& query.transcript))]
-    (string.append (& prefix) key)))
+    (str-cat prefix key)))
 
 (define (plan-fact-equal?
   [left : (& left PlanFactAnswer)]
@@ -627,6 +634,15 @@
         (& root.query.transcript)
         (& (array-ref prior.nodes at).query.transcript)))))
 
+(define (plan-root-size [root : (& root graph.CompilerIncrementalGraphRoot)]) : i64
+  (+
+    512
+    (+
+      (array-length root.query.transcript)
+      (+
+        (string.string-length root.name.purpose)
+        (string.string-length root.name.name)))))
+
 (define (compiler-plan-begin
   [prior : CompilerIncrementalPlanPrior]
   [roots : (__tl_dyn-array graph.CompilerIncrementalGraphRoot)]
@@ -771,7 +787,13 @@
                             (PlanFact scope answer)))))))])))
         (set! i (+ i 1)))
       (set! i 0)
-      (while (and (= plan.budget.error 0) (< i (array-length roots)))
+      (while (and
+        (= plan.budget.error 0)
+        (< i (array-length roots))
+        (plan-charge!
+          (&mut plan.budget)
+          (* 128 (plan-root-size (& (array-ref roots i))))
+          (* 8 (plan-root-size (& (array-ref roots i))))))
         (let
           [root : (& roots graph.CompilerIncrementalGraphRoot)
             (& roots (array-ref roots i))]
@@ -865,7 +887,6 @@
           (set! (array-ref plan.roots.slots i).node node)
           (when
             (and (>= node 0) absent?)
-            (set! (array-ref plan.nodes.slots node).prior -1)
             (set!
               (array-ref plan.nodes.slots node).reason
               compiler-plan-reason-absent-root)))
@@ -962,7 +983,13 @@
                   [(Err _) (plan-fail! plan compiler-plan-error-input)]
                   [(Ok records)
                     (set! (array-ref plan.nodes.slots node).records records)
-                    (set! (array-ref plan.nodes.slots node).state 1)]))))))]))
+                    (set!
+                      (array-ref plan.nodes.slots node).state
+                      (if (=
+                        (array-ref plan.nodes.slots node).reason
+                        compiler-plan-reason-absent-root)
+                        7
+                        1))]))))))]))
 
 (define (plan-recompute!
   [plan : (&mut plan CompilerIncrementalPlan)]
@@ -1558,15 +1585,21 @@
                 [ledger : i64
                   (plan-ledger-add! plan node (PlanLedger key 9 "" child))]
                 (when
-                  (and (>= ledger 0) (< old 0))
-                  (ivec.push-ref! (&mut batch) ledger)
-                  (plan-event!
-                    plan
-                    (if (< prior 0)
-                      34
-                      31)
-                    node
-                    ledger)))))
+                  (>= ledger 0)
+                  (when
+                    (or
+                      (= batch.len 0)
+                      (!= (array-ref batch.slots (- batch.len 1)) ledger))
+                    (ivec.push-ref! (&mut batch) ledger))
+                  (when
+                    (< old 0)
+                    (plan-event!
+                      plan
+                      (if (< prior 0)
+                        34
+                        31)
+                      node
+                      ledger))))))
           (set! i (+ i 1)))
         (when
           (= plan.budget.error 0)
@@ -1588,8 +1621,8 @@
   (Ok child_result_vec.Vec)
   (Err i64))
 
-;; Only this suspension's new children are returned, avoiding a growing ledger
-;; copy after each resume. Prior batches remain in the validation ledger.
+;; Return this batch's distinct rows, including children resolved in a prior
+;; batch. Never copy the accumulated ledger on every resume.
 (define (compiler-plan-child-results!
   [plan : (&mut plan CompilerIncrementalPlan)]
   [ticket : i64]

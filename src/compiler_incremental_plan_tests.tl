@@ -1577,3 +1577,199 @@
             [_ (plan-test-stop)])
           (plan-test-closed (&mut state) plan.compiler-plan-error-executor)))
       (set! mode (+ mode 1)))))
+
+(test
+  compiler-incremental-plan-multiple-suspensions-and-repeated-batch-results
+  (let
+    [expected : graph.CompilerIncrementalGraph (plan-test-graph 3 false)]
+    [state : plan.CompilerIncrementalPlan
+      (plan-test-unwrap
+        (plan.compiler-plan-begin
+          (Cold 1)
+          (plan-test-roots (& expected))
+          (plan-test-inputs 3)
+          (plan.compiler-plan-default-limits)))]
+    [parent : identity.CompilerIncrementalIdentity
+      (fixture.graph-test-query 2 3)]
+    [parent-ticket : i64 0]
+    [i : i64 0]
+    (match (plan.compiler-plan-next-action! (&mut state))
+      [(Recompute ticket query _)
+        (set! parent-ticket ticket)
+        (plan-test-register-source! (&mut state) ticket (& query))]
+      [_ (plan-test-stop)])
+    (while (< i 3)
+      (let
+        [kind : i64
+          (if (= i 1)
+            1
+            0)]
+        [child : identity.CompilerIncrementalIdentity
+          (fixture.graph-test-query kind (+ kind 1))]
+        [keys : (__tl_dyn-array trace.CompilerIncrementalTraceKey)
+          (__tl_make-array
+            (trace.CompilerIncrementalTraceKey.Child "deps" kind (clone child)))]
+        (plan-test-require
+          (plan.compiler-plan-request-children!
+            (&mut state)
+            parent-ticket
+            (& parent)
+            keys))
+        (unless
+          (= i 2)
+          (match (plan.compiler-plan-next-action! (&mut state))
+            [(Recompute ticket query _)
+              (let
+                [at : i64
+                  (graph.compiler-graph-find-node (& expected) (& query))]
+                (plan-test-register-source! (&mut state) ticket (& query))
+                (plan-test-require
+                  (plan.compiler-plan-success!
+                    (&mut state)
+                    ticket
+                    (graph.clone-compiler-incremental-graph-node
+                      (& (array-ref expected.nodes at))))))]
+            [_ (plan-test-stop)]))
+        (match (plan.compiler-plan-next-action! (&mut state))
+          [(Resume ticket) (plan-test-require (= ticket parent-ticket))]
+          [_ (plan-test-stop)])
+        (match (plan.compiler-plan-child-results!
+          (&mut state)
+          parent-ticket
+          (& parent))
+          [(Ok results)
+            (plan-test-require (= results.len 1))
+            (let
+              [wanted : graph.CompilerIncrementalStoredResultKey
+                (fixture.graph-test-key (+ kind 1))]
+              (plan-test-require
+                (binary.compiler-incremental-binary-bytes-eq?
+                  (& wanted.bytes)
+                  (& (array-ref results.slots 0).stored-key.bytes))))]
+          [_ (plan-test-stop)]))
+      (set! i (+ i 1)))
+    (let
+      [at : i64 (graph.compiler-graph-find-node (& expected) (& parent))]
+      (plan-test-require
+        (plan.compiler-plan-success!
+          (&mut state)
+          parent-ticket
+          (graph.clone-compiler-incremental-graph-node
+            (& (array-ref expected.nodes at))))))
+    (match (plan.compiler-plan-next-action! (&mut state))
+      [Complete unit]
+      [_ (plan-test-stop)])
+    (let
+      [result : graph.CompilerIncrementalGraph
+        (fixture.graph-test-unwrap (plan.compiler-plan-finalize! (&mut state)))]
+      (plan-test-require (= state.budget.actions 3))
+      (plan-test-require
+        (binary.compiler-incremental-binary-bytes-eq?
+          (& result.transcript)
+          (& expected.transcript))))))
+
+(test
+  compiler-incremental-plan-unconsumed-presentation-fact-does-not-invalidate
+  (let
+    [expected : graph.CompilerIncrementalGraph (plan-test-graph 0 false)]
+    [first-events : String ""]
+    [seed : i64 10]
+    (while (<= seed 20)
+      (let
+        [inputs : (__tl_dyn-array plan.CompilerIncrementalPlanInput)
+          (plan-test-inputs 0)]
+        (set!
+          (array-ref inputs 2)
+          (plan-test-input
+            2
+            3
+            (trace.CompilerIncrementalTraceEdge
+              (Configuration "typelisp.presentation")
+              (Configuration
+                (fixture.graph-test-child "typelisp.presentation" seed)))))
+        (let
+          [result : PlanTestRun
+            (plan-test-execute
+              (Snapshot (graph.compiler-graph-encode (& expected)))
+              (& expected)
+              inputs
+              false)]
+          (plan-test-require (= result.hits 2))
+          (plan-test-require (= result.recomputes 0))
+          (if (= seed 10)
+            (set! first-events (string.copy (& result.events)))
+            (plan-test-require
+              (=
+                (graph.compiler-graph-string-compare
+                  (& first-events)
+                  (& result.events))
+                0)))))
+      (set! seed (+ seed 10)))))
+
+(test
+  compiler-incremental-plan-root-validation-is-charged-before-copying
+  (let
+    [limits : plan.CompilerIncrementalPlanLimits
+      (plan.compiler-plan-default-limits)]
+    [roots : (__tl_dyn-array graph.CompilerIncrementalGraphRoot)
+      (__tl_make-array
+        (fixture.graph-test-root "typelisp.root.check" "app" 2 3))]
+    (set! limits.max-work 1)
+    (set! (array-ref roots 0).query.schema 2)
+    (match (plan.compiler-plan-begin
+      (Cold 1)
+      roots
+      (__tl_make-array plan.CompilerIncrementalPlanInput 0)
+      limits)
+      [(Err code) (plan-test-require (= code plan.compiler-plan-error-limit))]
+      [_ (plan-test-stop)])))
+
+(test
+  compiler-incremental-plan-renamed-root-retains-prior-edge-difference-evidence
+  (let
+    [previous : graph.CompilerIncrementalGraph (plan-test-graph 0 false)]
+    [builder : graph.CompilerIncrementalGraphBuilder (fixture.graph-test-begin)]
+    (fixture.graph-test-add-root!
+      (&mut builder)
+      (fixture.graph-test-root "typelisp.root.check" "renamed" 2 3))
+    (fixture.graph-test-add-node!
+      (&mut builder)
+      (fixture.graph-test-node 2 3 13 23 (plan-test-trace 2 3 13 0 0)))
+    (let
+      [expected : graph.CompilerIncrementalGraph
+        (fixture.graph-test-unwrap (graph.compiler-graph-finalize builder))]
+      [state : plan.CompilerIncrementalPlan
+        (plan-test-unwrap
+          (plan.compiler-plan-begin
+            (Snapshot (graph.compiler-graph-encode (& previous)))
+            (plan-test-roots (& expected))
+            (plan-test-inputs 4)
+            (plan.compiler-plan-default-limits)))]
+      [removed : i64 0]
+      [i : i64 0]
+      (match (plan.compiler-plan-next-action! (&mut state))
+        [(Recompute ticket query reason)
+          (plan-test-require (= reason plan.compiler-plan-reason-absent-root))
+          (plan-test-register-source! (&mut state) ticket (& query))
+          (plan-test-require
+            (plan.compiler-plan-success!
+              (&mut state)
+              ticket
+              (graph.clone-compiler-incremental-graph-node
+                (& (array-ref expected.nodes 0)))))]
+        [_ (plan-test-stop)])
+      (match (plan.compiler-plan-next-action! (&mut state))
+        [Complete unit]
+        [_ (plan-test-stop)])
+      (while (< i (plan.compiler-plan-event-count (& state)))
+        (match (plan.compiler-plan-event (& state) i)
+          [(Ok event) (when (= event.kind 33) (set! removed (+ removed 1)))]
+          [_ (plan-test-stop)])
+        (set! i (+ i 1)))
+      (plan-test-require (= removed 1))
+      (let
+        [result : graph.CompilerIncrementalGraph
+          (fixture.graph-test-unwrap
+            (plan.compiler-plan-finalize! (&mut state)))]
+        (plan-test-require (= (array-length result.nodes) 1))
+        (plan-test-require (= state.budget.actions 1))))))

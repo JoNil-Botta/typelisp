@@ -9,6 +9,7 @@
 (import compiler_driver_core as driver)
 (import compiler_lower_tests as lower_tests)
 (import compiler_lower as lower)
+(import compiler_owned_view as owned_view)
 (import compiler_diagnostic as diagnostic)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -450,6 +451,8 @@
 ;; every source function, since no `main` roots reachability.
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
+    [previous-load : load.CompilerLoadSessionState
+      (load.compiler-load-active-session-state-shared-view)]
     [state : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [path : String "target/lower_direct_no_main_symbols.tl"]
@@ -484,6 +487,7 @@
             (io.panic
               (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
       (driver.compiler-driver-state-release-file-state! state)
+      (load.compiler-load-session-state-restore! previous-load)
       ok)))
 
 ;; P4/C4.3 per-instantiation typecheck-completeness regression.

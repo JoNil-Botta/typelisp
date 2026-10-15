@@ -319,14 +319,14 @@ the prelude `for` body does; it composes nested macros, list inspection, begin
 bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
-## Boxed-list clone helpers
+## Late clone helper syntax
 
-`tests/integration/clone_boxed_list.tl` pins both list-variant orders at opt0/1/2.
-It checks empty, single and 30,000-element lists, original/copy isolation,
-owned string heads after retiring the source arena, and mutable boxed heads.
-The late stdlib clone producer must emit ordinary dereference syntax; macro
-calls introduced after expansion otherwise become unresolved native calls.
-Keep the long cases so the accumulator/reverse helpers retain bounded stack use.
+`compiler-clone-late-tail-template` evaluates the stdlib producer's actual
+self-tail template with both boxing choices and requires ordinary syntax.
+Synthesized clone helpers are installed after macro expansion, so a macro call
+in their body otherwise reaches the native linker as an unresolved function.
+The test uses the shared AST child traversal and adds no list-shaped schema to
+the repository's zero-cons corpus.
 
 ## Compiler arena ownership
 

@@ -13560,7 +13560,7 @@
           [(Remap remap slots)
             (and
               (= assignment-count 0)
-              (= ineligible-count 0)
+              (= ineligible-count 4)
               (= interval-count vars)
               (< slots vars)
               (= (array-ref remap 0) 0)
@@ -13569,6 +13569,90 @@
               (= (array-ref remap 3) (array-ref remap 7))
               (= (array-ref remap 4) (array-ref remap 8)))]
           [(None) false])])))
+
+(define (compiler-reg-stack-only-address-slot-ok?
+  [source : String]
+  [storage : i64]) : bool
+  (let
+    [func : ir.CompilerIrFunction (irt.func source)]
+    [plan : reg.CompilerRegPlan
+      (compiler-reg-plan-function-stack-only (clone func))]
+    [ineligible : live.CompilerLiveI64Set
+      (reg.compiler-reg-plan-ineligible
+        (reg.compiler-reg-global-shared-view plan))]
+    (match func
+      [(Function _ params _ vars blocks _)
+        (match (reg.compiler-reg-color-stack-slots-with-stack-only
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& plan)
+          (& (live.compiler-live-set-empty))
+          (& params)
+          (& blocks)
+          vars
+          vars
+          (& (live.compiler-live-set-empty))
+          true)
+          [(Remap remap slots)
+            (let
+              [private? : bool true]
+              (for [var (iterator.range 0 vars)]
+                (when
+                  (and
+                    (not (= var storage))
+                    (= (array-ref remap var) (array-ref remap storage)))
+                  (set! private? false)))
+              (and
+                private?
+                (> slots 0)
+                (live.compiler-live-set-contains? ineligible storage)))]
+          [(None) false])])))
+
+(test
+  regalloc-stack-only-address-slots
+  (test.assert-true
+    (and
+      (compiler-reg-stack-only-address-slot-ok?
+        "function @address_slot(seed=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = mov %0 : i64
+           %2 = addr_of %1
+           %3 = mov %2 : (MutPtr i64)
+           %4 = mov 1 : i64
+           %5 = load %3 : i64
+           return %5
+         }"
+        1)
+      (compiler-reg-stack-only-address-slot-ok?
+        "function @address_join(flag=%0:bool) -> i64 vars 8 {
+         entry:
+           %1 = mov 1 : i64
+           %2 = addr_of %1
+           branch %0, left, right
+         left:
+           %3 = load %2 : i64
+           %1 = mov 3 : i64
+           jump join
+         right:
+           %4 = load %2 : i64
+           %1 = mov 3 : i64
+           jump join
+         join:
+           %5 = phi [%3, left], [%4, right] : i64
+           %6 = load %2 : i64
+           %7 = add %5, %6 : i64
+           return %7
+         }"
+        1)
+      (compiler-reg-stack-only-address-slot-ok?
+        "function @address_param(value=%0:i64) -> i64 vars 4 {
+         entry:
+           %1 = addr_of %0
+           %2 = mov 1 : i64
+           %3 = load %1 : i64
+           return %3
+         }"
+        0))
+    "address-taken locals and parameters retain private slots through copies and joins"))
 
 (define (compiler-reg-stack-only-storage-escape-ok?) : bool
   (let

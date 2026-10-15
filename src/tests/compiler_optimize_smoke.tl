@@ -4034,3 +4034,7 @@
 (test
   disjoint-store-forward
   (smoke-require-42 (ot.compiler-optimize-disjoint-store-forward-self-test)))
+
+(test
+  licm-disjoint-field
+  (smoke-require-42 (ot.compiler-optimize-licm-field-self-test)))

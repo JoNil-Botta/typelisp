@@ -78092,3 +78092,120 @@
       [(not (= escape.calls 1)) 13]
       [(= escape.result-lhs escape.result-rhs) 14]
       [else 42])))
+
+;; --- LICM: a store to one field of a root, a load of another (#8941) --------
+;;
+;; One loop, run through LICM alone, that sums `p.x` (bytes [0, 8) of the
+;; root `p`) and whose only other memory traffic is the WRITE spelled by
+;; `write`. The load leaves the loop exactly when every write provably misses
+;; those bytes. `q` is a second checked root, `n` the trip bound, `v`/`w` the
+;; stored values.
+(define (opt-licm-field-function [write : String]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @licm_field(p=%0:(&mut r i64), v=%1:i64, n=%2:i64, q=%3:(&mut s i64), w=%4:i32) -> i64 vars 20 {
+         entry:
+           %5 = mov 0 : i64
+           jump loop
+         loop:
+           %6 = phi [%5, entry], [%12, body] : i64
+           %14 = phi [%5, entry], [%15, body] : i64
+           "
+      write
+      "
+           %8 = gep %0, 0 : u8
+           %9 = load %8 : i64
+           %10 = lt %6, %2 : i64
+           branch %10, body, exit
+         body:
+           %12 = add %6, 1 : i64
+           %15 = add %14, %9 : i64
+           jump loop
+         exit:
+           return %14
+       }")))
+
+;; How many `store_ptr`s the block labelled `label` holds.
+(define (opt-licm-field-label-stores
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [label : i64]) : i64
+  (match blocks
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
+        [(Block block-label instrs)
+          (if (= block-label label)
+            (opt-count-storeptr-instrs instrs)
+            (opt-licm-field-label-stores rest label))])]))
+
+;; The function's shape after LICM alone, as three decimal digits: the loads
+;; left in the loop, the loads in the whole function, and the stores left in
+;; the loop. 11 is the hoist (the one load sits in the preheader, the store
+;; stays); 111 is the load kept in the loop.
+(define (opt-licm-field-shape [write : String]) : i64
+  (let
+    [func
+      (opt.opt-licm-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt-licm-field-function write)))]
+    [blocks (opt.opt-function-blocks func)]
+    [view (ir.compiler-ir-block-list-view blocks)]
+    [loop-label : i64 (ir.compiler-ir-label "loop")]
+    (+
+      (* 100 (opt-count-load-label-blocks view loop-label))
+      (* 10 (opt-count-load-blocks view))
+      (opt-licm-field-label-stores view loop-label))))
+
+(define (compiler-optimize-licm-field-self-test) : i64
+  (cond
+    ;; A store to `p.y` (bytes [8, 16)) misses `p.x`: the load leaves.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 8 : u8
+             store_ptr %7, %1 : i64")
+          11))
+      1]
+    ;; The same field: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 0 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      2]
+    ;; A narrower store overlapping bytes [4, 8) of `p.x`: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 4 : u8
+             store_ptr %7, %4 : i32")
+          111))
+      3]
+    ;; The same field offset through a second checked root: two reference
+    ;; parameters never prove disjoint (#6693), so the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %3, 8 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      4]
+    ;; A store at an offset that is not a constant: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, %2 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      5]
+    ;; `p` escapes to an unknown callee in the loop: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 8 : u8
+             store_ptr %7, %1 : i64
+             %13 = call licm_field_opaque(%0) : unit")
+          111))
+      6]
+    [else 42]))

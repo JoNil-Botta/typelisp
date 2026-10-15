@@ -525,7 +525,7 @@
               (if (and
                 (< product-block 0)
                 (lower-test-product-instr?
-                  (ir.compiler-ir-instr-seq-ref instrs index)))
+                  (ir.compiler-ir-instr-seq-shared-view instrs index)))
                 (set! product-block block-index)
                 unit))
             (lower-test-product-shape-blocks
@@ -4254,7 +4254,7 @@
   [index : i64]) : String
   (if (or (< index 0) (>= index params.len))
     ""
-    (match (ir.compiler-ir-param-seq-ref params index)
+    (match (ir.compiler-ir-param-seq-shared-view params index)
       [(Param name _ _) name])))
 
 (define (lower-test-function-param-name
@@ -5504,7 +5504,7 @@
         [(Program _ _ externs)
           (and
             (= externs.len 1)
-            (match (ir.compiler-ir-extern-seq-ref externs 0)
+            (match (ir.compiler-ir-extern-seq-shared-view externs 0)
               [(Extern name-id name-id name _ abi symbol-id link-inputs _)
                 (and
                   (string.eq (ci.intern-str name-id) "ffi-add")
@@ -6624,7 +6624,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [global-name : String]) : String
   (for [index (iterator.range 0 globals.len)]
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-shared-view globals index)
       [(Global name _ initial)
         (when
           (string.eq (ir.compiler-ir-symbol-text name) global-name)

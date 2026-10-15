@@ -3066,8 +3066,8 @@
             [index : i64 0]
             (while (and same (< index a-inputs.len))
               (let
-                [a-input (compiler-ir-phi-input-seq-ref a-inputs index)]
-                [b-input (compiler-ir-phi-input-seq-ref b-inputs index)]
+                [a-input (compiler-ir-phi-input-seq-shared-view a-inputs index)]
+                [b-input (compiler-ir-phi-input-seq-shared-view b-inputs index)]
                 (set!
                   same
                   (and
@@ -4355,7 +4355,7 @@
             (string.int->string params.len)))]
       [else
         (while (and (= (string.string-length problem) 0) (< index params.len))
-          (match (compiler-ir-param-seq-ref params index)
+          (match (compiler-ir-param-seq-shared-view params index)
             [(Param _ param-ty _)
               (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
                 [(Param _ _ abi-ty)
@@ -5033,6 +5033,13 @@
 
 (define (compiler-ir-value-seq-ref
   [values : (& values CompilerIrValueSeq)]
+  [index : i64]) : (& values CompilerIrValue)
+  (& (array-ref values.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-value-seq-shared-view
+  [values : (& values CompilerIrValueSeq)]
   [index : i64]) : CompilerIrValue
   (compiler-ir-array-shared-view values.slots index))
 
@@ -5051,7 +5058,7 @@
     (for [index (iterator.range 0 rest.len)]
       (set!
         (array-ref slots (+ index 1))
-        (compiler-ir-phi-input-seq-ref rest index)))
+        (compiler-ir-phi-input-seq-shared-view rest index)))
     (CompilerIrPhiInputSeq slots 0 count)))
 
 (define (compiler-ir-phi-input-seq-count
@@ -5059,6 +5066,13 @@
   inputs.len)
 
 (define (compiler-ir-phi-input-seq-ref
+  [inputs : (& inputs CompilerIrPhiInputSeq)]
+  [index : i64]) : (& inputs CompilerIrPhiInput)
+  (& (array-ref inputs.slots (+ inputs.start index))))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-phi-input-seq-shared-view
   [inputs : (& inputs CompilerIrPhiInputSeq)]
   [index : i64]) : CompilerIrPhiInput
   (compiler-ir-array-shared-view inputs.slots (+ inputs.start index)))
@@ -5076,8 +5090,7 @@
         (__tl_make-array CompilerIrPhiInput inputs.len)]
       (for [index (iterator.range 0 inputs.len)]
         (let
-          [input : CompilerIrPhiInput
-            (compiler-ir-phi-input-seq-ref inputs index)]
+          [input (compiler-ir-phi-input-seq-shared-view inputs index)]
           (set!
             (array-ref slots index)
             (CompilerIrPhiInput
@@ -5121,6 +5134,13 @@
   cases.len)
 
 (define (compiler-ir-switch-case-seq-ref
+  [cases : (& cases CompilerIrSwitchCaseSeq)]
+  [index : i64]) : (& cases CompilerIrSwitchCase)
+  (& (array-ref cases.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-switch-case-seq-shared-view
   [cases : (& cases CompilerIrSwitchCaseSeq)]
   [index : i64]) : CompilerIrSwitchCase
   (compiler-ir-array-shared-view cases.slots index))
@@ -5205,7 +5225,12 @@
 ;; compiler-ir-array-shared-view does not perform a bounds check. Preserve its
 ;; inferred inline-enum element type/stride rather than rebuilding pointer casts
 ;; at each consumer.
-(defmacro (compiler-ir-instr-seq-ref [instrs : Expr] [index : i64]) : CompilerIrInstr
+(defmacro (compiler-ir-instr-seq-ref [instrs : Expr] [index : i64]) : Expr
+  `(& (array-ref (__tl-project-field-name ,instrs "slots") ,index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(defmacro (compiler-ir-instr-seq-shared-view [instrs : Expr] [index : i64]) : CompilerIrInstr
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,instrs "slots")
     ,index))
@@ -5230,7 +5255,7 @@
   [index : i64]
   [fallback : i64]) : i64
   (compiler-ir-instr-loop-dst-or
-    (& (compiler-ir-instr-seq-ref instrs index))
+    (compiler-ir-instr-seq-ref instrs index)
     fallback))
 
 (define (compiler-ir-instr-return? [instr : (& CompilerIrInstr)]) : bool
@@ -5287,6 +5312,11 @@
 
 ;; Same shallow-read and logical-len precondition as compiler-ir-instr-seq-ref.
 (defmacro (compiler-ir-block-seq-ref [blocks : Expr] [index : Expr]) : Expr
+  `(& (array-ref (__tl-project-field-name ,blocks "slots") ,index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(defmacro (compiler-ir-block-seq-shared-view [blocks : Expr] [index : Expr]) : Expr
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,blocks "slots")
     ,index))
@@ -5338,6 +5368,13 @@
 ;; Keep the checked aggregate-array path used by the other dense IR families.
 (define (compiler-ir-param-seq-ref
   [params : (& params CompilerIrParamSeq)]
+  [index : i64]) : (& params CompilerIrParam)
+  (& (array-ref params.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-param-seq-shared-view
+  [params : (& params CompilerIrParamSeq)]
   [index : i64]) : CompilerIrParam
   (compiler-ir-array-shared-view params.slots index))
 
@@ -5351,6 +5388,13 @@
 ;; Keep the checked array-ref path; aggregate enum array elements need the array macro,
 ;; as with instruction and block sequences.
 (define (compiler-ir-function-seq-ref
+  [functions : (& functions CompilerIrFunctionSeq)]
+  [index : i64]) : (& functions CompilerIrFunction)
+  (& (array-ref functions.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-function-seq-shared-view
   [functions : (& functions CompilerIrFunctionSeq)]
   [index : i64]) : CompilerIrFunction
   (compiler-ir-array-shared-view functions.slots index))
@@ -5408,7 +5452,7 @@
     (while (< index values.len)
       (compiler-ir-value-builder-push!
         builder
-        (compiler-ir-value-seq-ref values index))
+        (compiler-ir-value-seq-shared-view values index))
       (set! index (+ index 1)))))
 
 (define (compiler-ir-value-seq-prepend
@@ -5459,7 +5503,7 @@
   (for [index (iterator.range 0 inputs.len)]
     (compiler-ir-phi-input-builder-push!
       builder
-      (compiler-ir-phi-input-seq-ref inputs index))))
+      (compiler-ir-phi-input-seq-shared-view inputs index))))
 
 (compiler-ir-dense-builder
   CompilerIrInstr
@@ -5484,7 +5528,7 @@
   (for [index (iterator.range start end)]
     (compiler-ir-instr-builder-push!
       builder
-      (compiler-ir-instr-seq-ref instrs index))))
+      (compiler-ir-instr-seq-shared-view instrs index))))
 
 (compiler-ir-dense-builder
   CompilerIrBlock
@@ -5696,6 +5740,13 @@
 
 (define (compiler-ir-global-seq-ref
   [globals : (& globals CompilerIrGlobalSeq)]
+  [index : i64]) : (& globals CompilerIrGlobal)
+  (& (array-ref globals.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-global-seq-shared-view
+  [globals : (& globals CompilerIrGlobalSeq)]
   [index : i64]) : CompilerIrGlobal
   (compiler-ir-array-shared-view globals.slots index))
 
@@ -5724,6 +5775,13 @@
   externs.len)
 
 (define (compiler-ir-extern-seq-ref
+  [externs : (& externs CompilerIrExternSeq)]
+  [index : i64]) : (& externs CompilerIrExtern)
+  (& (array-ref externs.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
+(define (compiler-ir-extern-seq-shared-view
   [externs : (& externs CompilerIrExternSeq)]
   [index : i64]) : CompilerIrExtern
   (compiler-ir-array-shared-view externs.slots index))
@@ -5828,7 +5886,7 @@
     (while (>= index 0)
       (compiler-ir-phi-input-builder-push!
         (&mut builder)
-        (compiler-ir-phi-input-seq-ref inputs index))
+        (compiler-ir-phi-input-seq-shared-view inputs index))
       (-= index 1))
     (compiler-ir-phi-input-builder-append-seq! (&mut builder) acc)
     (compiler-ir-phi-input-builder-to-seq builder)))
@@ -6047,7 +6105,7 @@
             (&mut out)
             (compiler-ir-clone-block
               pools
-              (& (compiler-ir-block-seq-ref seq index)))))
+              (compiler-ir-block-seq-ref seq index))))
         (compiler-ir-block-builder-to-list out))]))
 
 (define (compiler-ir-clone-param
@@ -6066,9 +6124,7 @@
     (for [index (iterator.range 0 params.len)]
       (compiler-ir-param-builder-push!
         (&mut builder)
-        (compiler-ir-clone-param
-          pools
-          (& (compiler-ir-param-seq-ref params index)))))
+        (compiler-ir-clone-param pools (compiler-ir-param-seq-ref params index))))
     (compiler-ir-param-builder-to-seq builder)))
 
 (define (compiler-ir-clone-function
@@ -6117,7 +6173,7 @@
         (array-ref slots index)
         (compiler-ir-clone-global
           pools
-          (& (compiler-ir-global-seq-ref globals index)))))
+          (compiler-ir-global-seq-ref globals index))))
     (CompilerIrGlobalSeq slots globals.len)))
 
 (define (compiler-ir-clone-extern
@@ -6146,7 +6202,7 @@
         (array-ref slots index)
         (compiler-ir-clone-extern
           pools
-          (& (compiler-ir-extern-seq-ref externs index)))))
+          (compiler-ir-extern-seq-ref externs index))))
     (CompilerIrExternSeq slots externs.len)))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
@@ -6454,13 +6510,14 @@
       (if (= index 0)
         ""
         ", ")
-      (compiler-ir-value-render (compiler-ir-value-seq-ref values index))
+      (compiler-ir-value-render
+        (compiler-ir-value-seq-shared-view values index))
       (compiler-ir-value-seq-render-from values (+ index 1)))))
 
 (define (compiler-ir-value-seq-render [values : (& CompilerIrValueSeq)]) : String
   (compiler-ir-value-seq-render-from values 0))
 
-(define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
+(define (compiler-ir-switch-case-render [case : (& CompilerIrSwitchCase)]) : String
   (match case
     [(Case tag label)
       (str_cat.str-cat
@@ -6496,11 +6553,11 @@
 (define (compiler-ir-call-args-from-seq [values : (& CompilerIrValueSeq)]) : CompilerIrCallArgs
   (cond
     [(= values.len 0) (Nil)]
-    [(= values.len 1) (One (compiler-ir-value-seq-ref values 0))]
+    [(= values.len 1) (One (compiler-ir-value-seq-shared-view values 0))]
     [(= values.len 2)
       (Two
-        (compiler-ir-value-seq-ref values 0)
-        (compiler-ir-value-seq-ref values 1))]
+        (compiler-ir-value-seq-shared-view values 0)
+        (compiler-ir-value-seq-shared-view values 1))]
     [else (compiler-ir-call-args-array values)]))
 
 (define (compiler-ir-call-args-sret-from-seq
@@ -6789,7 +6846,7 @@
   (if (>= index inputs.len)
     ""
     (let
-      [input : CompilerIrPhiInput (compiler-ir-phi-input-seq-ref inputs index)]
+      [input (compiler-ir-phi-input-seq-shared-view inputs index)]
       (str_cat.str-cat
         (if (= index 0)
           ""
@@ -7341,7 +7398,7 @@
           (compiler-ir-instr-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-instr-seq-ref instrs index))))
+            (compiler-ir-instr-seq-ref instrs index)))
         "\n")
       instrs
       (+ index 1))))
@@ -7432,7 +7489,7 @@
   (if (>= index params.len)
     ""
     (let
-      [param : CompilerIrParam (compiler-ir-param-seq-ref params index)]
+      [param (compiler-ir-param-seq-shared-view params index)]
       (str_cat.str-cat
         (compiler-ir-param-render
           structural-session
@@ -7559,7 +7616,7 @@
           (compiler-ir-global-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-global-seq-ref globals index))))))
+            (compiler-ir-global-seq-ref globals index)))))
     out))
 
 (define (compiler-ir-extern-abi-render
@@ -7613,7 +7670,7 @@
           (compiler-ir-extern-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-extern-seq-ref externs index))))))
+            (compiler-ir-extern-seq-ref externs index)))))
     out))
 
 (define (compiler-ir-program-render
@@ -9233,7 +9290,7 @@
   [params : (& CompilerIrParamSeq)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (for [position (iterator.range 0 params.len)]
-    (match (compiler-ir-param-seq-ref params position)
+    (match (compiler-ir-param-seq-shared-view params position)
       [(Param _ ty var) (compiler-ir-representation-var-type-set! types var ty)])))
 
 (define (compiler-ir-representation-instr-def-type!
@@ -9257,7 +9314,7 @@
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (for [i (iterator.range 0 (compiler-ir-instr-seq-count instrs))]
     (compiler-ir-representation-instr-def-type!
-      (& (compiler-ir-instr-seq-ref instrs i))
+      (compiler-ir-instr-seq-ref instrs i)
       types)))
 
 (define (compiler-ir-representation-block-types!
@@ -9266,7 +9323,7 @@
   (match (owned_view.compiler-owned-reference-shared-view blocks)
     [(Array seq)
       (for [i (iterator.range 0 (compiler-ir-block-seq-count seq))]
-        (match (compiler-ir-block-seq-ref seq i)
+        (match (compiler-ir-block-seq-shared-view seq i)
           [(Block _ instrs)
             (compiler-ir-representation-instr-types! instrs types)]))]))
 
@@ -9314,7 +9371,7 @@
       (+ position 1)
       (if (compiler-ir-representation-pack-word-sse?
         types
-        (& (compiler-ir-value-seq-ref words position)))
+        (compiler-ir-value-seq-ref words position))
         (bit-or
           mask
           (if (= position 0)
@@ -9389,7 +9446,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-instr-seq-count instrs))
     index
-    (match (compiler-ir-instr-seq-ref instrs position)
+    (match (compiler-ir-instr-seq-shared-view instrs position)
       [(Pack _ words ty)
         (compiler-ir-representation-collect-group-instrs-from
           type-segment-bases
@@ -9430,7 +9487,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-block-seq-count blocks))
     index
-    (match (compiler-ir-block-seq-ref blocks position)
+    (match (compiler-ir-block-seq-shared-view blocks position)
       [(Block _ instrs)
         (compiler-ir-representation-collect-group-block-seq-from
           type-segment-bases
@@ -9642,7 +9699,7 @@
       (compiler-ir-representation-collect-one-instr
         type-segment-bases
         index
-        (& (compiler-ir-instr-seq-ref instrs position)))
+        (compiler-ir-instr-seq-ref instrs position))
       instrs
       (+ position 1))))
 
@@ -9663,7 +9720,7 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-block-seq-count blocks))
     index
-    (match (compiler-ir-block-seq-ref blocks position)
+    (match (compiler-ir-block-seq-shared-view blocks position)
       [(Block _ instrs)
         (compiler-ir-representation-collect-one-block-seq-from
           type-segment-bases

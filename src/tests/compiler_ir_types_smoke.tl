@@ -1153,7 +1153,7 @@
       (compiler-ir-instr-seq-return?
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         3)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (match (compiler_ir_types.compiler-ir-instr-seq-shared-view
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         2)
         [(BinOp dst _ (Var lhs) _ _) (and (= dst 8) (= lhs 7))]
@@ -3234,7 +3234,8 @@
       (compiler_ir_types.compiler-ir-instr-seq-set!
         (&mut instrs)
         index
-        (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
+        (rewrite
+          (compiler_ir_types.compiler-ir-instr-seq-shared-view instrs index)))
       (set! index (+ index 1)))))
 
 (define (compiler-ir-instr-seq-compact!
@@ -4416,7 +4417,7 @@
     false
     (let
       [input : compiler_ir_types.CompilerIrPhiInput
-        (compiler_ir_types.compiler-ir-phi-input-seq-ref seq index)]
+        (compiler_ir_types.compiler-ir-phi-input-seq-shared-view seq index)]
       (and
         (string.eq
           (compiler_ir_types.compiler-ir-label-text input.label)

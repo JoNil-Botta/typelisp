@@ -103,8 +103,7 @@
   (if (>= index functions.len)
     ""
     (let
-      [function : ir.CompilerIrFunction
-        (ir.compiler-ir-function-seq-ref functions index)]
+      [function (ir.compiler-ir-function-seq-ref functions index)]
       (match (ir.compiler-ir-global-shared-view function)
         [(Function name _ _ _ _ _)
           (if (lower.lower-string-prefix-at?

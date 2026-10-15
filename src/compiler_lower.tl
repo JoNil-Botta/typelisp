@@ -15687,7 +15687,7 @@
                 ctx
                 state
                 acc
-                (ir.compiler-ir-value-seq-ref values field-index)
+                (ir.compiler-ir-value-seq-shared-view values field-index)
                 offset
                 resolved)
                 [(Expr packed-state packed-acc packed-ty)
@@ -15994,7 +15994,7 @@
                   ctx
                   state
                   acc
-                  (ir.compiler-ir-value-seq-ref values field-index)
+                  (ir.compiler-ir-value-seq-shared-view values field-index)
                   (- offset (* word-index 8))
                   resolved)
                   [(Expr packed-state packed-acc packed-ty)
@@ -16112,7 +16112,7 @@
           ctx
           state
           acc
-          (ir.compiler-ir-value-seq-ref values index)
+          (ir.compiler-ir-value-seq-shared-view values index)
           offset
           (lower-global-shared-view resolved))
           [(Expr packed-state packed-acc packed-ty)
@@ -18221,7 +18221,9 @@
                           state
                           (lower-global-shared-view base)
                           offset
-                          (ir.compiler-ir-value-seq-ref values field-index)
+                          (ir.compiler-ir-value-seq-shared-view
+                            values
+                            field-index)
                           resolved
                           (tc_core.tc-layout-info-size info)))]
                     (lower-store-inline-struct-values-at
@@ -18302,7 +18304,7 @@
                     state
                     (lower-global-shared-view base)
                     offset
-                    (ir.compiler-ir-value-seq-ref values index)
+                    (ir.compiler-ir-value-seq-shared-view values index)
                     resolved
                     (tc_core.tc-layout-info-size info)))
                 base
@@ -33418,8 +33420,8 @@
         (match (lower-emit-pack
           slot-state
           (ir.compiler-ir-value-seq2
-            (ir.compiler-ir-value-seq-ref slot-values 0)
-            (ir.compiler-ir-value-seq-ref slot-values 1))
+            (ir.compiler-ir-value-seq-shared-view slot-values 0)
+            (ir.compiler-ir-value-seq-shared-view slot-values 1))
           (lower-internal-transport-type ctx source-ty classification))
           [(Expr packed-state packed-value _)
             (Ok packed-state (ir.compiler-ir-value-seq1 packed-value))])
@@ -33509,7 +33511,7 @@
         (match (lower-internal-call-arg-one
           ctx
           state
-          (ir.compiler-ir-value-seq-ref values index)
+          (ir.compiler-ir-value-seq-shared-view values index)
           (lower-global-shared-view source-ty)
           (lower-internal-param-class ctx mode source-ty)
           (lower-global-shared-view origin))
@@ -33737,8 +33739,8 @@
       (if (= values.len 3)
         (lower-bytes-view-from-parts-result
           args-state
-          (ir.compiler-ir-value-seq-ref values 0)
-          (ir.compiler-ir-value-seq-ref values 1)
+          (ir.compiler-ir-value-seq-shared-view values 0)
+          (ir.compiler-ir-value-seq-shared-view values 1)
           result-ty)
         (Err
           (box
@@ -35664,7 +35666,7 @@
               (lower-spmd-ir-value-class
                 (lower-global-shared-view resolved-ty)
                 varying)
-              (ir.compiler-ir-value-seq-ref values arg-index)
+              (ir.compiler-ir-value-seq-shared-view values arg-index)
               resolved-ty))
           (lower-spmd-call-args-from-values-at
             ctx
@@ -56870,7 +56872,7 @@
         [(Appended _) true]
         [_ false])]
     (for [ordinal (iterator.range 0 physical-params.len)]
-      (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
+      (match (ir.compiler-ir-param-seq-shared-view physical-params ordinal)
         [(Param _ ty _)
           (ir.compiler-ir-spmd-private-param-seq-push!
             (&mut params)
@@ -56910,7 +56912,7 @@
     [index : i64 (- functions.len 1)]
     [found : ir.CompilerIrFunctionAbi Ordinary]
     (while (>= index 0)
-      (match (ir.compiler-ir-function-seq-ref functions index)
+      (match (ir.compiler-ir-function-seq-shared-view functions index)
         [(Function name _ _ _ _ function-abi)
           (if (ir.compiler-ir-symbol-eq? name helper)
             (begin

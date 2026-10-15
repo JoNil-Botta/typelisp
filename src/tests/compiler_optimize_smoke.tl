@@ -126,7 +126,7 @@
       (match block
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-shared-view instrs 0)
               [(Switch _ _ cases _) (opt-switch-case-seq-count cases)]
               [(TotalEnumSwitch _ _ cases _ _)
                 (opt-switch-case-seq-count cases)]
@@ -230,7 +230,7 @@
   [block : (& block ir.CompilerIrBlock)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-shared-view
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ _ cases _) (opt-switch-case-seq-count cases)]
@@ -283,7 +283,7 @@
   [label : i64]) : bool
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-shared-view
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ _ cases _) (opt-switch-test-cases-have? cases tag label)]
@@ -1583,7 +1583,7 @@
   [to-ty : ast.AstType]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-shared-view instrs index)
       [(Cast d (Var s) cast-from cast-to)
         (if (= d dst)
           (and
@@ -2133,7 +2133,7 @@
     [(Some header)
       (match header
         [(Block _ instrs)
-          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          (match (ir.compiler-ir-instr-seq-shared-view instrs 0)
             [(Phi _ inputs _)
               (if (opt.opt-phi-input-seq-eq
                 inputs
@@ -2148,7 +2148,9 @@
                   [(Some exit)
                     (match exit
                       [(Block _ exit-instrs)
-                        (match (ir.compiler-ir-instr-seq-ref exit-instrs 0)
+                        (match (ir.compiler-ir-instr-seq-shared-view
+                          exit-instrs
+                          0)
                           [(Phi _ exit-inputs _)
                             (opt.opt-phi-input-seq-eq
                               exit-inputs
@@ -2391,7 +2393,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     0
     (+
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-shared-view instrs index)
         [(Select payload-box)
           (let
             [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
@@ -2419,7 +2421,7 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     0
     (+
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-shared-view instrs index)
         [(BinOp _ op _ _ _)
           (if (= (opt.opt-binop-tag op) (opt.opt-binop-tag wanted))
             1

@@ -179,7 +179,7 @@
               rewritten
               (begin
                 (test.assert-true
-                  (match (ir.compiler-ir-instr-seq-ref
+                  (match (ir.compiler-ir-instr-seq-shared-view
                     (view.compiler-owned-shared-view instrs)
                     0)
                     [(BinOp 7 (Shl (I64)) (Var 1) (I64 5) (I64)) true]

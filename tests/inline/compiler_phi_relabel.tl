@@ -43,10 +43,8 @@
       (set! index 0)
       (while (< index count)
         (let
-          [original : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref inputs index)]
-          [actual : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref result index)]
+          [original (ir.compiler-ir-phi-input-seq-ref inputs index)]
+          [actual (ir.compiler-ir-phi-input-seq-ref result index)]
           [label : i64
             (if (= (% (+ start index) 2) 0)
               -7
@@ -97,8 +95,7 @@
           7
           99)]
       [allocated : i64 (- (profile.alloc-total) before)]
-      [last : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref result (- count 1))]
+      [last (ir.compiler-ir-phi-input-seq-ref result (- count 1))]
       ;; Leave room for record-layout changes while rejecting quadratic copies.
       (test.assert-true
         (<= allocated (+ (* count 128) 128))

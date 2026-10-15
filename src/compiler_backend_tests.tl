@@ -33832,7 +33832,7 @@ f:
                   [(Block label instrs)
                     (and
                       (= label (ir.compiler-ir-label "loop"))
-                      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                      (match (ir.compiler-ir-instr-seq-shared-view instrs 0)
                         [(Phi _ inputs _)
                           (let
                             [phi-inputs-at-49077-29 : ir.CompilerIrPhiInputSeq
@@ -33840,7 +33840,7 @@ f:
                             (if (<= phi-inputs-at-49077-29.len 0)
                               false
                               (let
-                                [phi-input-at-49077-29 : ir.CompilerIrPhiInput
+                                [phi-input-at-49077-29
                                   (ir.compiler-ir-phi-input-seq-ref
                                     phi-inputs-at-49077-29
                                     0)]

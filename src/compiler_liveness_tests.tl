@@ -223,7 +223,7 @@
     true
     (and
       (compiler-live-instr-ids-match-set?
-        (ir.compiler-ir-instr-seq-ref instrs index))
+        (ir.compiler-ir-instr-seq-shared-view instrs index))
       (compiler-live-instr-ids-seq-match-set-from? instrs (+ index 1)))))
 
 (define (compiler-live-instr-ids-seq-match-set?
@@ -796,8 +796,7 @@
     [out-defs : live.CompilerLiveI64Set defs]
     (while (< cursor count)
       (let
-        [instr : ir.CompilerIrInstr
-          (ir.compiler-ir-instr-seq-ref instrs cursor)]
+        [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
         [instr-uses : live.CompilerLiveI64Set
           (live.compiler-live-instr-uses instr)]
         [instr-defs : live.CompilerLiveI64Set
@@ -822,7 +821,7 @@
                 (live.compiler-live-set-union
                   out-defs
                   (live.compiler-live-instr-defs
-                    (& (ir.compiler-ir-instr-seq-ref instrs j)))))
+                    (ir.compiler-ir-instr-seq-ref instrs j))))
               (set! j (+ j 1)))))
         (set! cursor (+ cursor 1))))
     (live.CompilerLiveUseDef out-uses out-defs)))

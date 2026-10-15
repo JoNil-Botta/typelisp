@@ -206,7 +206,7 @@
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [body : ir.CompilerIrInstrSeq
-            (match (ir.compiler-ir-block-seq-ref seq 5)
+            (match (ir.compiler-ir-block-seq-shared-view seq 5)
               [(Block _ instrs) instrs])]
           (and
             (= (ir.compiler-ir-param-seq-count params) 2)
@@ -308,7 +308,7 @@
 (cfg
   test
   (define (compiler-reg-cold-call-test-mov?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]
     [src : i64]) : bool
     (match instr
@@ -335,7 +335,7 @@
             [seq : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq (& blocks))]
             [instrs : ir.CompilerIrInstrSeq
-              (match (ir.compiler-ir-block-seq-ref seq 1)
+              (match (ir.compiler-ir-block-seq-shared-view seq 1)
                 [(Block _ found) found])]
             [plan : reg.CompilerRegPlan
               (reg.compiler-reg-plan-function-scalar-cold-for-abi
@@ -986,7 +986,7 @@
   (define (compiler-reg-call-hole-test-block
     [seq : ir.CompilerIrBlockSeq]
     [index : i64]) : ir.CompilerIrInstrSeq
-    (match (ir.compiler-ir-block-seq-ref seq index)
+    (match (ir.compiler-ir-block-seq-shared-view seq index)
       [(Block _ found) found])))
 
 (cfg
@@ -1374,7 +1374,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-branch? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-branch? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Branch _ _ _) true]
       [_ false])))
@@ -1382,7 +1382,7 @@
 (cfg
   test
   (define (compiler-reg-call-hole-mov-const?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]) : bool
     (match instr
       [(Mov found-dst (I64 _) _) (= found-dst dst)]
@@ -1390,7 +1390,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-call? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-call? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Call _ _ _ _) true]
       [_ false])))
@@ -1398,7 +1398,7 @@
 (cfg
   test
   (define (compiler-reg-call-hole-binop?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]) : bool
     (match instr
       [(BinOp found-dst _ _ _ _) (= found-dst dst)]
@@ -1406,7 +1406,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-return? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-return? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Return _) true]
       [_ false])))
@@ -2403,7 +2403,7 @@
 (cfg
   test
   (define (compiler-reg-loop-park-mov?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]
     [src : i64]) : bool
     (match instr
@@ -2418,7 +2418,7 @@
 (cfg
   test
   (define (compiler-reg-loop-park-phi-keyed-on?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [var : i64]
     [label : i64]) : bool
     (match instr
@@ -2428,7 +2428,7 @@
 
 (cfg
   test
-  (define (compiler-reg-loop-park-branch-false [instr : ir.CompilerIrInstr]) : i64
+  (define (compiler-reg-loop-park-branch-false [instr : (& ir.CompilerIrInstr)]) : i64
     (match instr
       [(Branch _ _ f) f]
       [_ (- 0 1)])))
@@ -2490,9 +2490,10 @@
               ;; values defined below it
               (= (array-ref pk.park-store-at 0) 0)
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out pre)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0))
                 vars
                 1)
               (=
@@ -2501,9 +2502,10 @@
                 3)
               ;; the reload is the exit target first instruction
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 1
                 vars)
               (=
@@ -2576,16 +2578,18 @@
               (= spliced count)
               ;; store in the preheader
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out pre)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0))
                 vars
                 1)
               ;; the spliced block reloads, then jumps to the original target
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out spliced)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out spliced)
+                    0))
                 1
                 vars)
               (=
@@ -2595,30 +2599,34 @@
               ;; the loop exit edge now goes through it ...
               (=
                 (compiler-reg-loop-park-branch-false
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out header)
-                    2))
+                  (&
+                    (ir.compiler-ir-instr-seq-shared-view
+                      (reg.compiler-reg-loop-park-block-instrs out header)
+                      2)))
                 splice-label)
               ;; ... and the merge phi loop-side input is re-keyed to it, so
               ;; it reads the value the reload has just restored
               (compiler-reg-loop-park-phi-keyed-on?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 3
                 splice-label)
               (not
                 (compiler-reg-loop-park-phi-keyed-on?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out exit)
-                    0)
+                  (&
+                    (ir.compiler-ir-instr-seq-shared-view
+                      (reg.compiler-reg-loop-park-block-instrs out exit)
+                      0))
                   3
                   (reg.compiler-reg-loop-park-block-label seq header)))
               ;; the other predecessor input is untouched
               (compiler-reg-loop-park-phi-keyed-on?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-shared-view
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 8
                 (ir.compiler-ir-label "other")))))])))
 
@@ -14993,7 +15001,7 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
         (for [i (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-ref seq i)
+          (match (ir.compiler-ir-block-seq-shared-view seq i)
             [(Block label instrs)
               (set!
                 out
@@ -15434,7 +15442,7 @@
         [out-point : i64 point]
         [out-set : live.CompilerLiveI64Set set]
         (for [i (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-ref seq i)
+          (match (ir.compiler-ir-block-seq-shared-view seq i)
             [(Block _ instrs)
               (match (compiler-reg-direct-call-points-seq
                 instrs
@@ -15478,7 +15486,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         (for [i (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-ref seq i)
+          (match (ir.compiler-ir-block-seq-shared-view seq i)
             [(Block _ instrs)
               (compiler-reg-ref-counts-seq! (&mut counts) instrs)])))]))
 
@@ -15506,7 +15514,7 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [index : i64 block-index]
         (for [i (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-ref seq i)
+          (match (ir.compiler-ir-block-seq-shared-view seq i)
             [(Block _ instrs)
               (compiler-reg-foldable-rebate-seq!
                 rebates

@@ -1048,9 +1048,8 @@
   (cbi.compiler-builtin-reset!)
   (compiler_ctfe.ctfe-builtin-reset!)
   (compiler_typecheck_core.compiler-typecheck-reset-file-state!)
-  (compiler_lower.lower-reset-file-state!)
   ;; Lowered results and driver jobs retain their own arena authority.
-  unit)
+  (compiler_lower.lower-reset-file-state!))
 
 (define (compiler-driver-reset-analysis-state!) : unit
   (cbi.compiler-builtin-reset!)

@@ -4911,7 +4911,6 @@
                 (owned_view.compiler-owned-shared-view object-text)))]
           (if (and (not runtime-dirty) (not tlci-dirty))
             (begin
-              unit
               (compiler_driver_core.compiler-driver-reset-file-state!)
               (build-package-announce-freshness
                 artifact-path
@@ -4966,9 +4965,6 @@
                             (io.print-error message)
                             1]
                           [(Ok)
-                            (if runtime-dirty
-                              unit
-                              unit)
                             (compiler_driver_core.compiler-driver-reset-file-state!)
                             (build-package-commit-generated-artifacts
                               stage

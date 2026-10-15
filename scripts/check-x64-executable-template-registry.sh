@@ -30,15 +30,15 @@ count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
 # catalog remains authoritative; these counts make newly concatenated assembly
 # visible even if its owner forgot to add a render gate.
 count_matches 9 '\.globl' src/compiler_backend_runtime_common.tl
-count_matches 14 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 16 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 2 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 7 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 34 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 45 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 7 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 27 '\.globl' src/compiler_backend_runtime_windows.tl
-count_matches 39 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 38 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 count_matches 93 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 count_matches 41 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 

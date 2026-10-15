@@ -81938,9 +81938,8 @@ tl_shared_object_init:
 ;; First index of `target` in [start, end), or `end` when the byte is absent.
 ;;
 ;; Every pass over emitted assembly asks this question of the same bytes: where
-;; is the next line end, token end, `%` or `(`? `tl_memchr` compares ONE byte
-;; per iteration; this reads the text a 64-bit word at a time instead, so a
-;; whole word of text costs about what a single byte costs there.
+;; is the next line end, token end, `%` or `(`? Keep this scan inline so the
+;; assembly walks need no runtime call for each delimiter.
 ;;
 ;; `end` is the not-found answer (not -1) because that is what the line walk
 ;; wants -- an unterminated last line ends at the text end -- and every other

@@ -1217,25 +1217,13 @@ tl_mem_copy8_fwd:
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String
-  "    .globl tl_memchr
+  (str_cat.str-cat
+    "    .globl tl_memchr
     .type tl_memchr,@function
-tl_memchr:
-    testq %rsi, %rsi
-    jle .Ltl_memchr_not_found
-    movzbl %dl, %edx
-    xorq %rax, %rax
-.Ltl_memchr_loop:
-    cmpb %dl, (%rdi,%rax)
-    je .Ltl_memchr_found
-    incq %rax
-    cmpq %rsi, %rax
-    jl .Ltl_memchr_loop
-.Ltl_memchr_not_found:
-    movq $-1, %rax
-.Ltl_memchr_found:
-    ret
-    .size tl_memchr, . - tl_memchr
-")
+"
+    (runtime_common.compiler-backend-runtime-memchr-body "%rdi" "%rsi" "%dl")
+    "    .size tl_memchr, . - tl_memchr
+"))
 
 ;; Fill `count` pointer-sized slots at `buf` with `value`, one instruction per
 ;; slot under the deterministic instruction-count gate (a `rep stosq` is one Ir

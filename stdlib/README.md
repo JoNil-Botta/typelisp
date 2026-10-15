@@ -94,6 +94,8 @@ so this section only maps the modules by area. Import a module with
 - Files, processes and the host: `io`, `io_core`, `io_caller_result`, `fs`,
   `fs_rooted_linux`, `env`, `args`, `process`, `process_borrowed`,
   `process_runtime`, `local_ipc`, `local_ipc_fake`, `local_ipc_linux`, `msvc`.
+- Unicode protocol data: `idna_unicode12`, with immutable tables in
+  `generated/idna_unicode12_data` ([offline generation and profile contract](../tools/idna-unicode12-data/README.md)).
 - Networking and security: `net/http_types`, `net/http_head_codec`,
   `net/http_trailer`, `net/http_trailer_policy`, `net/ip`, `net/tls_wire`,
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,

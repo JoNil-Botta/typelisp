@@ -5,6 +5,7 @@
 (import compiler_incremental_trace as trace)
 (import compiler_incremental_binary as binary)
 (import stdlib.string)
+(import stdlib.str_cat as str_cat)
 (import stdlib.vector)
 (import (stdlib.vector.vector trace.CompilerIncrementalTraceRecord) as record_vec)
 
@@ -468,7 +469,7 @@
   ;; Query transcripts are self-framed, so the concatenation is unambiguous.
   (let
     [prefix : String (graph.compiler-graph-bytes-string (& query.transcript))]
-    (str-cat prefix key)))
+    (str_cat.str-cat prefix key)))
 
 (define (plan-fact-equal?
   [left : (& left PlanFactAnswer)]

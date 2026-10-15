@@ -293,6 +293,23 @@ the operand-count guard and puts rejecting arms before and after the selected
 arms on the dependency route, which `verify-package-native-tlci.sh` runs
 natively and through forced-source CTFE.
 
+## SPMD decision provenance
+
+The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
+facts, including native and scalar routes, explicit scalar operations, rejected
+maps, empty/tail ranges, cross-lane parent identities and deterministic order.
+Control-flow cases retain inactive source sites after returns and inside empty
+regions without hiding later live or rejected sites. Terminal completion is
+separate from provisional plan selection. Lambda cases pin distinct typed
+function identities with independent source ordinals.
+Macro cases distinguish primary generated spans from actionable invocation or
+argument spans, keep frame context local to the generated subtree, and enforce
+the frame bound. Preserve those checks when changing macro transparency or
+expected-type/tail lowering: either boundary can lose a source-node link even
+while emitted programs remain correct. The IR source-span escape smoke checks
+owned records after destroying the producing arena. Optimizer and backend
+span rewrites must preserve source IDs independently of instruction remapping.
+
 ## Vector reduction source ownership
 
 The backend self-test checks AVX2 i64 min/max with register and spilled

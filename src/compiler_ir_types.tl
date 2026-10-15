@@ -7998,8 +7998,194 @@
   (slots (__tl_dyn-array CompilerSourceSpansInstrEntry))
   (len i64))
 
+;; Source SPMD identities are independent of instruction numbering and survive
+;; optimization, register remapping and backend specialization unchanged.
+(defstruct CompilerSpmdSiteId
+  (function CompilerIrSymbolId)
+  (ordinal i64))
+
+(defenum CompilerSpmdForm
+  (Foreach)
+  (Reduce)
+  (Scan)
+  (Compact)
+  (Broadcast)
+  (Shuffle))
+
+(defenum CompilerSpmdBackend
+  (Scalar)
+  (Avx2)
+  (Avx512))
+
+(defenum CompilerSpmdRoute
+  (NativeGangs)
+  (CompilerFallback)
+  (SpecifiedScalar)
+  (ScalarBackend)
+  (Inactive)
+  (Rejected))
+
+;; Codes describe the first structural condition at the selected route. They
+;; are facts; warning severity and rendered text belong to consumers.
+(defenum CompilerSpmdReason
+  (DirectMap)
+  (MaskedMap)
+  (ContiguousReduction)
+  (FusedReduction)
+  (ContiguousScan)
+  (ScalarBackendSelected)
+  (OrderedCompact)
+  (ExplicitAtomic)
+  (ScalarCrossLane)
+  (IndexType)
+  (MapShape)
+  (DuplicateDestination)
+  (DependentStores)
+  (MixedLaneShape)
+  (ReductionValueShape)
+  (ScanInputShape)
+  (ScanOutputShape)
+  (LaneType)
+  (Operator)
+  (NumericPolicy)
+  (VaryingWhile)
+  (VaryingIf)
+  (VaryingEnumMatch)
+  (VaryingMatch)
+  (ShuffleShape)
+  (UnsupportedShift)
+  (UnsupportedMap)
+  (ForeachActive)
+  (PrivateHelper)
+  (NotLowered)
+  (UnsupportedSource))
+
+;; POD snapshots use the same canonical path IDs and spans as instruction
+;; locations. No AST node, provenance composite, or frontend arena is retained.
+(defstruct CompilerSpmdMacroFrame
+  (name-id i64)
+  (invocation CompilerSourceLocation)
+  (origin-path-id i64))
+
+(defstruct CompilerSpmdDecision
+  (site CompilerSpmdSiteId)
+  (parent-ordinal i64)
+  (form CompilerSpmdForm)
+  (backend CompilerSpmdBackend)
+  (lanes i64)
+  (route CompilerSpmdRoute)
+  (reason CompilerSpmdReason)
+  (primary CompilerSourceLocation)
+  (actionable CompilerSourceLocation)
+  (frame-start i64)
+  (frame-count i64)
+  (frames-truncated bool))
+
+(define compiler-spmd-max-macro-frames : i64
+  8)
+
+(defstruct CompilerSpmdDecisionList
+  (slots (__tl_dyn-array CompilerSpmdDecision))
+  (len i64))
+
+(define (compiler-spmd-decision-list-empty) : CompilerSpmdDecisionList
+  (CompilerSpmdDecisionList (__tl_make-array CompilerSpmdDecision 0) 0))
+
+(define (compiler-spmd-decision-list-append!
+  [items : (&mut items CompilerSpmdDecisionList)]
+  [item : CompilerSpmdDecision]) : unit
+  (let
+    [len : i64 items.len]
+    (when
+      (>= len (array-length items.slots))
+      (let
+        [grown : (__tl_dyn-array CompilerSpmdDecision)
+          (__tl_make-array
+            CompilerSpmdDecision
+            (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref grown index) (clone (array-ref items.slots index))))
+        (set! items.slots grown)))
+    (set! (array-ref items.slots len) item)
+    (set! items.len (+ len 1))))
+
+(define (compiler-spmd-decision-list-escape
+  [items : (& items CompilerSpmdDecisionList)]) : CompilerSpmdDecisionList
+  (let
+    [copy : (__tl_dyn-array CompilerSpmdDecision)
+      (__tl_make-array CompilerSpmdDecision items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (set! (array-ref copy index) (clone (array-ref items.slots index))))
+    (CompilerSpmdDecisionList copy items.len)))
+
+(defstruct CompilerSpmdMacroFrameList
+  (slots (__tl_dyn-array CompilerSpmdMacroFrame))
+  (len i64))
+
+(define (compiler-spmd-macro-frame-list-empty) : CompilerSpmdMacroFrameList
+  (CompilerSpmdMacroFrameList (__tl_make-array CompilerSpmdMacroFrame 0) 0))
+
+(define (compiler-spmd-macro-frame-list-append!
+  [items : (&mut items CompilerSpmdMacroFrameList)]
+  [item : CompilerSpmdMacroFrame]) : unit
+  (let
+    [len : i64 items.len]
+    (when
+      (>= len (array-length items.slots))
+      (let
+        [grown : (__tl_dyn-array CompilerSpmdMacroFrame)
+          (__tl_make-array
+            CompilerSpmdMacroFrame
+            (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref grown index) (clone (array-ref items.slots index))))
+        (set! items.slots grown)))
+    (set! (array-ref items.slots len) item)
+    (set! items.len (+ len 1))))
+
+(define (compiler-spmd-macro-frame-list-escape
+  [items : (& items CompilerSpmdMacroFrameList)]) : CompilerSpmdMacroFrameList
+  (let
+    [copy : (__tl_dyn-array CompilerSpmdMacroFrame)
+      (__tl_make-array CompilerSpmdMacroFrame items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (set! (array-ref copy index) (clone (array-ref items.slots index))))
+    (CompilerSpmdMacroFrameList copy items.len)))
+
+(defstruct CompilerSpmdDecisions
+  (decisions CompilerSpmdDecisionList)
+  (frames CompilerSpmdMacroFrameList))
+
+(define (compiler-spmd-decisions-empty) : CompilerSpmdDecisions
+  (CompilerSpmdDecisions
+    (compiler-spmd-decision-list-empty)
+    (compiler-spmd-macro-frame-list-empty)))
+
+(define (compiler-spmd-decisions-escape
+  [facts : (& facts CompilerSpmdDecisions)]) : CompilerSpmdDecisions
+  (CompilerSpmdDecisions
+    (compiler-spmd-decision-list-escape (& facts.decisions))
+    (compiler-spmd-macro-frame-list-escape (& facts.frames))))
+
+(define (compiler-source-spans-spmd [spans : (& spans CompilerSourceSpans)]) : (&
+    spans
+    CompilerSpmdDecisions)
+  (match spans
+    [(Spans _ _ _ facts) facts]))
+
+(define (compiler-source-spans-set-spmd
+  [spans : CompilerSourceSpans]
+  [facts : CompilerSpmdDecisions]) : CompilerSourceSpans
+  (match spans
+    [(Spans entries instructions count _)
+      (Spans entries instructions count facts)]))
+
 (defenum CompilerSourceSpans
-  (Spans CompilerSourceSpansEntryList CompilerSourceSpansInstrEntryList i64))
+  (Spans
+    CompilerSourceSpansEntryList
+    CompilerSourceSpansInstrEntryList
+    i64
+    CompilerSpmdDecisions))
 
 (defenum CompilerMaybeSourceSpan
   (No)
@@ -8023,12 +8209,13 @@
   (Spans
     (compiler-source-spans-entry-list-empty)
     (compiler-source-spans-instr-entry-list-empty)
-    0))
+    0
+    (compiler-spmd-decisions-empty)))
 
 (define (compiler-source-spans-clear-instrs [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans
-    [(Spans entries _ _)
-      (Spans entries (compiler-source-spans-instr-entry-list-empty) 0)]))
+    [(Spans entries _ _ spmd)
+      (Spans entries (compiler-source-spans-instr-entry-list-empty) 0 spmd)]))
 
 (define (compiler-source-spans-entry-list-count
   [entries : (& entries CompilerSourceSpansEntryList)]) : i64
@@ -8120,43 +8307,38 @@
 ;; is handed to consumers that clear or rebuild the instruction side, never to
 ;; one that appends onto the retained spare capacity.
 (define (compiler-source-spans-entry-list-escape
-  [entries : CompilerSourceSpansEntryList]) : CompilerSourceSpansEntryList
+  [entries : (& entries CompilerSourceSpansEntryList)]) : CompilerSourceSpansEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansEntry) entries.slots]
-    [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansEntry)
-      (__tl_make-array CompilerSourceSpansEntry len)]
+      (__tl_make-array CompilerSourceSpansEntry entries.len)]
     (compiler-source-spans-entry-list-copy-array-range!
       (&mut copy)
-      (& slots)
+      (& entries.slots)
       0
-      len)
-    (CompilerSourceSpansEntryList copy len)))
+      entries.len)
+    (CompilerSourceSpansEntryList copy entries.len)))
 
 (define (compiler-source-spans-instr-entry-list-escape
-  [entries : CompilerSourceSpansInstrEntryList]) : CompilerSourceSpansInstrEntryList
+  [entries : (& entries CompilerSourceSpansInstrEntryList)]) : CompilerSourceSpansInstrEntryList
   (let
-    [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
-    [len : i64 entries.len]
     [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-      (__tl_make-array CompilerSourceSpansInstrEntry len)]
+      (__tl_make-array CompilerSourceSpansInstrEntry entries.len)]
     (compiler-source-spans-instr-entry-list-copy-array-range!
       (&mut copy)
-      (& slots)
+      (& entries.slots)
       0
-      len)
-    (CompilerSourceSpansInstrEntryList copy len)))
+      entries.len)
+    (CompilerSourceSpansInstrEntryList copy entries.len)))
 
-(define (compiler-source-spans-escape [spans : (& CompilerSourceSpans)]) : CompilerSourceSpans
-  (match (owned_view.compiler-owned-reference-shared-view spans)
-    [(Spans entries instr-entries instr-count)
+(define (compiler-source-spans-escape [spans : (& spans CompilerSourceSpans)]) : CompilerSourceSpans
+  (match spans
+    [(Spans entries instr-entries instr-count spmd)
       (Spans
         (compiler-source-spans-entry-list-escape entries)
         (compiler-source-spans-instr-entry-list-escape instr-entries)
-        instr-count)]))
+        instr-count
+        (compiler-spmd-decisions-escape spmd))]))
 
-;; The newest entry in `slots[0, index]` whose flat key is `function`, `id`
-;; and `kind`.
 (define (compiler-source-spans-instr-entry-array-lookup-location
   [slots : (& (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [index : i64]
@@ -8201,13 +8383,14 @@
   [name : CompilerIrSymbolId]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(Spans entries instr-entries instr-count)
+    [(Spans entries instr-entries instr-count spmd)
       (Spans
         (compiler-source-spans-entry-list-append
           entries
           (CompilerSourceSpansEntry name 0 span))
         instr-entries
-        instr-count)]))
+        instr-count
+        spmd)]))
 
 (define (compiler-source-spans-insert-located
   [spans : CompilerSourceSpans]
@@ -8215,13 +8398,14 @@
   [path-id : i64]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(Spans entries instr-entries instr-count)
+    [(Spans entries instr-entries instr-count spmd)
       (Spans
         (compiler-source-spans-entry-list-append
           entries
           (CompilerSourceSpansEntry name path-id span))
         instr-entries
-        instr-count)]))
+        instr-count
+        spmd)]))
 
 (define (compiler-source-spans-entry-array-lookup
   [slots : (& (__tl_dyn-array CompilerSourceSpansEntry))]
@@ -8273,7 +8457,7 @@
   [spans : (& CompilerSourceSpans)]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
   (match (owned_view.compiler-owned-reference-shared-view spans)
-    [(Spans entries _ _)
+    [(Spans entries _ _ spmd)
       (compiler-source-spans-entry-array-lookup-location
         (& entries.slots)
         (- entries.len 1)
@@ -8283,7 +8467,7 @@
   [spans : (& CompilerSourceSpans)]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (match (owned_view.compiler-owned-reference-shared-view spans)
-    [(Spans entries _ _)
+    [(Spans entries _ _ spmd)
       (compiler-source-spans-entry-list-lookup (& entries) name)]))
 
 (define (compiler-source-spans-insert-instr-entry
@@ -8291,13 +8475,14 @@
   [key : CompilerSourceSpansInstrKey]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(Spans entries instr-entries instr-count)
+    [(Spans entries instr-entries instr-count spmd)
       (Spans
         entries
         (compiler-source-spans-instr-entry-list-append
           instr-entries
           (compiler-source-spans-instr-entry key 0 span))
-        (+ instr-count 1))]))
+        (+ instr-count 1)
+        spmd)]))
 
 (define (compiler-source-spans-insert-instr-entry-located
   [spans : CompilerSourceSpans]
@@ -8305,13 +8490,14 @@
   [path-id : i64]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(Spans entries instr-entries instr-count)
+    [(Spans entries instr-entries instr-count spmd)
       (Spans
         entries
         (compiler-source-spans-instr-entry-list-append
           instr-entries
           (compiler-source-spans-instr-entry key path-id span))
-        (+ instr-count 1))]))
+        (+ instr-count 1)
+        spmd)]))
 
 (define (compiler-source-spans-insert-instr
   [spans : CompilerSourceSpans]
@@ -8479,7 +8665,7 @@
   [function : CompilerIrSymbolId]
   [instr : (& CompilerIrInstr)]) : CompilerMaybeSourceLocation
   (match (owned_view.compiler-owned-reference-shared-view spans)
-    [(Spans _ instr-entries _)
+    [(Spans _ instr-entries _ _)
       (match (compiler-source-spans-instr-key function instr)
         [(No) (No)]
         [(Some key)
@@ -8503,64 +8689,69 @@
 
 (define (compiler-source-spans-count [spans : (& CompilerSourceSpans)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view spans)
-    [(Spans entries _ _) (compiler-source-spans-entry-list-count entries)]))
+    [(Spans entries _ _ spmd) (compiler-source-spans-entry-list-count entries)]))
 
 (define (compiler-source-spans-instr-count [spans : (& CompilerSourceSpans)]) : i64
   (match spans
-    [(Spans _ _ instr-count) instr-count]))
+    [(Spans _ _ instr-count _) instr-count]))
 
 (define (compiler-source-spans-instr-count-at-least?
   [spans : (& CompilerSourceSpans)]
   [minimum : i64]) : bool
   (match spans
-    [(Spans _ _ instr-count) (>= instr-count minimum)]))
+    [(Spans _ _ instr-count _) (>= instr-count minimum)]))
 
 (define (compiler-source-spans-append-new
   [base : CompilerSourceSpans]
-  [complete : (& CompilerSourceSpans)]) : CompilerSourceSpans
-  (match (compiler-ir-global-shared-view base)
-    [(Spans base-entries base-instr-entries _)
-      (match (owned_view.compiler-owned-reference-shared-view complete)
-        [(Spans complete-entries complete-instr-entries _)
-          (let
-            [out : CompilerSourceSpans base]
-            [complete-entry-slots : (__tl_dyn-array CompilerSourceSpansEntry)
-              complete-entries.slots]
-            [complete-instr-slots : (__tl_dyn-array
-              CompilerSourceSpansInstrEntry)
-              complete-instr-entries.slots]
-            (for [entry-index
-              (iterator.range base-entries.len complete-entries.len)]
+  [complete : (& complete CompilerSourceSpans)]) : CompilerSourceSpans
+  (match base
+    [(Spans base-entries base-instructions base-count base-facts)
+      (let
+        [entry-start : i64 base-entries.len]
+        [instruction-start : i64 base-instructions.len]
+        [decision-start : i64 base-facts.decisions.len]
+        [frame-start : i64 base-facts.frames.len]
+        [out : CompilerSourceSpans
+          (Spans base-entries base-instructions base-count base-facts)]
+        (match complete
+          [(Spans entries instructions _ facts)
+            (for [index (iterator.range entry-start entries.len)]
               (let
-                [span-entry : CompilerSourceSpansEntry
-                  (array-ref complete-entry-slots entry-index)]
-                [name : CompilerIrSymbolId span-entry.name]
-                [path-id : i64 span-entry.path-id]
-                [span : ast.AstSourceSpan span-entry.span]
+                [entry : CompilerSourceSpansEntry
+                  (clone (array-ref entries.slots index))]
                 (set!
                   out
-                  (if (> path-id 0)
-                    (compiler-source-spans-insert-located out name path-id span)
-                    (compiler-source-spans-insert out name span)))))
-            (for [instr-index
-              (iterator.range base-instr-entries.len complete-instr-entries.len)]
+                  (compiler-source-spans-insert-located
+                    out
+                    entry.name
+                    entry.path-id
+                    entry.span))))
+            (for [index (iterator.range instruction-start instructions.len)]
               (let
-                [span-entry : CompilerSourceSpansInstrEntry
-                  (array-ref complete-instr-slots instr-index)]
-                [key : CompilerSourceSpansInstrKey
-                  (compiler-source-spans-instr-entry-key (& span-entry))]
-                [path-id : i64 span-entry.path-id]
-                [span : ast.AstSourceSpan span-entry.span]
+                [entry : CompilerSourceSpansInstrEntry
+                  (clone (array-ref instructions.slots index))]
                 (set!
                   out
-                  (if (> path-id 0)
-                    (compiler-source-spans-insert-instr-entry-located
-                      out
-                      key
-                      path-id
-                      span)
-                    (compiler-source-spans-insert-instr-entry out key span)))))
-            out)])]))
+                  (compiler-source-spans-insert-instr-entry-located
+                    out
+                    (compiler-source-spans-instr-entry-key (& entry))
+                    entry.path-id
+                    entry.span))))
+            (set!
+              out
+              (match out
+                [(Spans output-entries output-instructions output-count output)
+                  (for [index
+                    (iterator.range decision-start facts.decisions.len)]
+                    (compiler-spmd-decision-list-append!
+                      (&mut output.decisions)
+                      (clone (array-ref facts.decisions.slots index))))
+                  (for [index (iterator.range frame-start facts.frames.len)]
+                    (compiler-spmd-macro-frame-list-append!
+                      (&mut output.frames)
+                      (clone (array-ref facts.frames.slots index))))
+                  (Spans output-entries output-instructions output-count output)]))])
+        out)]))
 
 (defenum CompilerIrSummary
   (Summary i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64))

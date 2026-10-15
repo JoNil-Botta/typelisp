@@ -595,6 +595,10 @@
     : lower_i64_i64_map.Map
     (lower_i64_i64_map.with-capacity 8)]
   [current-source-path-id : i64 0]
+  [spmd-source-present : bool true]
+  [spmd-rejected-spans
+    : ir.CompilerSourceSpans
+    (unobserved (ir.compiler-source-spans-empty))]
   [current-decl-generated : bool false]
   [active-symbols : csym.CompilerSymbols (csym.compiler-symbols-empty)]
   [active-symbols-ready : bool false]
@@ -1024,6 +1028,556 @@
   (No)
   (Some (Box LowerMaskedPreheaderCacheData)))
 
+;; A function's source sites are enumerated before any planner can consume or
+;; duplicate an expression. AST IDs index lowering scratch only; the durable
+;; identity is the typed function symbol and source-order ordinal.
+(defstruct LowerSpmdSite
+  (subtree-end i64)
+  (selected bool)
+  (entered bool)
+  (finished bool)
+  (decision ir.CompilerSpmdDecision))
+
+(import (vector.vector LowerSpmdSite core) as lower_spmd_sites)
+
+(defstruct LowerSpmdSites
+  (items lower_spmd_sites.Vec)
+  (by-source lower_i64_i64_map.Map)
+  (frames ir.CompilerSpmdMacroFrameList)
+  (active i64)
+  (source-hint i64)
+  (flushed i64)
+  (flushed-frames i64)
+  (frame-base i64))
+
+(defenum LowerMaybeSpmdSites
+  (No)
+  (Some (Box LowerSpmdSites)))
+
+(defstruct LowerSpmdOrigin
+  (primary ir.CompilerSourceLocation)
+  (actionable ir.CompilerSourceLocation)
+  (has-actionable bool)
+  (truncated bool))
+
+(define (lower-spmd-sites-empty) : LowerSpmdSites
+  (LowerSpmdSites
+    (lower_spmd_sites.with-capacity 1)
+    (lower_i64_i64_map.with-capacity 1)
+    (ir.compiler-spmd-macro-frame-list-empty)
+    -1
+    -1
+    0
+    0
+    -1))
+
+(define (lower-state-spmd-sites [state : LowerState]) : (Box LowerSpmdSites)
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (match (lower-box-field-shared-view data spmd-sites)
+      [(Some sites) sites]
+      [(No)
+        (let
+          [sites : (Box LowerSpmdSites) (box (lower-spmd-sites-empty))]
+          (__tl-project-set-field
+            (__tl-box-place data)
+            spmd-sites
+            (Some (lower-global-shared-view sites)))
+          sites)])))
+
+(define (lower-spmd-backend [mode : CompilerLowerMode]) : ir.CompilerSpmdBackend
+  (match (lower-mode-simd mode)
+    [(Scalar) (Scalar)]
+    [(Avx2) (Avx2)]
+    [(Avx512) (Avx512)]))
+
+(define (lower-spmd-snapshot-frames!
+  [frames : (& frames ir.CompilerSpmdMacroFrameList)]
+  [out : (&mut out ir.CompilerSpmdMacroFrameList)]) : unit
+  (for [index (iterator.range 0 frames.len)]
+    (ir.compiler-spmd-macro-frame-list-append!
+      out
+      (clone (array-ref frames.slots index)))))
+
+(define (lower-spmd-add-site!
+  [state : LowerState]
+  [id : i64]
+  [parent : i64]
+  [form : ir.CompilerSpmdForm]
+  [origin : LowerSpmdOrigin]
+  [frames : (& frames ir.CompilerSpmdMacroFrameList)]) : i64
+  (let
+    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
+    [ordinal : i64 (lower_spmd_sites.len (& sites.items))]
+    [frame-start : i64 sites.frames.len]
+    (lower-spmd-snapshot-frames! frames (&mut sites.frames))
+    (lower_spmd_sites.push!
+      sites.items
+      (LowerSpmdSite
+        (+ ordinal 1)
+        false
+        false
+        false
+        (ir.CompilerSpmdDecision
+          (ir.CompilerSpmdSiteId
+            (ir.compiler-ir-symbol-typed-id
+              (lower-state-current-function-id state))
+            ordinal)
+          parent
+          form
+          (lower-spmd-backend (lower-state-mode state))
+          1
+          (Rejected)
+          (UnsupportedSource)
+          origin.primary
+          (if origin.has-actionable
+            origin.actionable
+            origin.primary)
+          frame-start
+          frames.len
+          origin.truncated)))
+    ;; An unspanned root has the function-local sentinel ID; child IDs remain
+    ;; ordinary pool indices. Keeping that root key avoids dropping API ASTs.
+    (lower_i64_i64_map.insert-ref! (&mut sites.by-source) id ordinal)
+    ordinal))
+
+;; Span and expansion wrappers update provenance. Lambdas have their own
+;; function identity and enumeration; quoted/compile-time syntax is not a
+;; runtime SPMD site. All other expression children use the shared traversal.
+(define (lower-spmd-origin-copy [source : (& source LowerSpmdOrigin)]) : LowerSpmdOrigin
+  (LowerSpmdOrigin
+    (ir.CompilerSourceLocation
+      source.primary.path-id
+      (ast.ast-source-span
+        (cast source.primary.span.start-line : i64)
+        (cast source.primary.span.start-col : i64)
+        (cast source.primary.span.end-line : i64)
+        (cast source.primary.span.end-col : i64)))
+    (ir.CompilerSourceLocation
+      source.actionable.path-id
+      (ast.ast-source-span
+        (cast source.actionable.span.start-line : i64)
+        (cast source.actionable.span.start-col : i64)
+        (cast source.actionable.span.end-line : i64)
+        (cast source.actionable.span.end-col : i64)))
+    source.has-actionable
+    source.truncated))
+
+;; Only provenance wrappers change the borrowed origin. They restore their
+;; incoming state; ordinary children share it and sites own copied snapshots.
+(define (lower-spmd-enumerate!
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [expr : ast.AstExpr]
+  [id : i64]
+  [parent : i64]
+  [origin : (&mut origin LowerSpmdOrigin)]
+  [frames : (&mut frames ir.CompilerSpmdMacroFrameList)]) : unit
+  (let
+    [next-parent : i64 parent]
+    (match (& expr)
+      [(Spanned inner span)
+        (let
+          [prior-span : ast.AstSourceSpan (clone origin.primary.span)]
+          (set! origin.primary.span span)
+          (lower-spmd-enumerate!
+            ctx
+            state
+            (tc_core.tc-context-expr-get ctx inner)
+            inner
+            parent
+            origin
+            frames)
+          (set! origin.primary.span prior-span)
+          (return unit))]
+      [(MacroExpansion inner provenance name-id)
+        (let
+          [prior-origin : LowerSpmdOrigin
+            (lower-spmd-origin-copy (& (deref origin)))]
+          [frame-mark : i64 frames.len]
+          ;; The current span belongs to this origin. Nested template calls
+          ;; can retain the outer caller in the provenance's invocation path.
+          [invocation : i64 origin.primary.path-id]
+          [origin-path : i64
+            (tc_core.macro-expansion-origin-path-id provenance)]
+          (when
+            (>= name-id 0)
+            (unless
+              origin.has-actionable
+              (set!
+                origin.actionable
+                (ir.CompilerSourceLocation
+                  invocation
+                  (clone origin.primary.span)))
+              (set! origin.has-actionable true))
+            (if (< frames.len ir.compiler-spmd-max-macro-frames)
+              (ir.compiler-spmd-macro-frame-list-append!
+                frames
+                (ir.CompilerSpmdMacroFrame
+                  name-id
+                  (ir.CompilerSourceLocation
+                    invocation
+                    (clone origin.primary.span))
+                  origin-path))
+              (set! origin.truncated true)))
+          (when
+            (>= origin-path 0)
+            (set! origin.primary.path-id origin-path)
+            (when
+              (< name-id 0)
+              (set! origin.actionable (clone origin.primary))
+              (set! origin.has-actionable true)))
+          (lower-spmd-enumerate!
+            ctx
+            state
+            (tc_core.tc-context-expr-get ctx inner)
+            inner
+            parent
+            origin
+            frames)
+          (set! (deref origin) prior-origin)
+          (set! frames.len frame-mark)
+          (return unit))]
+      [(Foreach _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Foreach)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(SpmdReduce _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Reduce)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(SpmdScan _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Scan)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(SpmdCompact _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Compact)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(SpmdBroadcast _ _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Broadcast)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(SpmdShuffle _ _)
+        (set!
+          next-parent
+          (lower-spmd-add-site!
+            state
+            id
+            parent
+            (Shuffle)
+            (lower-spmd-origin-copy (& (deref origin)))
+            (& (deref frames))))]
+      [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) (return unit)]
+      [_ unit])
+    (let
+      [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+      (for [index (iterator.range 0 children.len)]
+        (let
+          [child : i64 (ast.ast-expr-list-get (& children) index -1)]
+          (lower-spmd-enumerate!
+            ctx
+            state
+            (tc_core.tc-context-expr-get ctx child)
+            child
+            next-parent
+            origin
+            frames))))
+    (when
+      (> next-parent parent)
+      (let
+        [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+        [sites : (&mut sites-box LowerSpmdSites)
+          (&mut (__tl-box-place sites-box))]
+        [item : LowerSpmdSite
+          (lower_spmd_sites.get
+            (& sites.items)
+            next-parent
+            (lower-spmd-site-fallback))]
+        (set! item.subtree-end (lower_spmd_sites.len (& sites.items)))
+        (lower_spmd_sites.set! sites.items next-parent item)))))
+
+(define (lower-spmd-enumerate-function!
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [body : ast.AstExpr]) : unit
+  (unless
+    (compiler-lower-state-spmd-source-present (lower-state-owner state))
+    (return unit))
+  (let
+    [frames : ir.CompilerSpmdMacroFrameList
+      (ir.compiler-spmd-macro-frame-list-empty)]
+    [location : ir.CompilerSourceLocation
+      (ir.CompilerSourceLocation
+        (lower-state-current-source-path-id state)
+        (ast.ast-source-span 0 0 0 0))]
+    [origin : LowerSpmdOrigin
+      (LowerSpmdOrigin (clone location) location false false)]
+    (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
+
+;; The prepared pool contains every source child before lowering starts.
+;; Scanning all rows is conservative: quoted or unreachable sites keep the
+;; ordinary enumeration path. A negative result is local to this prepared job;
+;; standalone function callers retain the constructor's conservative default.
+(define (lower-spmd-pools-have-sites?
+  [pools : (& pools ast.AstNodePoolContext)]) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
+    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+    (for [index (iterator.range 0 count)]
+      (match (ast.ast-expr-segment-bases-get bases index)
+        [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+             (SpmdBroadcast _ _) (SpmdShuffle _ _))
+          (return true)]
+        [_ unit]))
+    false))
+
+(define (lower-spmd-origin-id
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [id : i64]) : i64
+  (match expr
+    [(or (Spanned inner _) (MacroExpansion inner _ _) (Ann inner _))
+      (lower-spmd-origin-id ctx (tc_core.tc-context-expr-get ctx inner) inner)]
+    [_ id]))
+
+(define (lower-spmd-select!
+  [state : LowerState]
+  [route : ir.CompilerSpmdRoute]
+  [reason : ir.CompilerSpmdReason]
+  [lanes : i64]) : unit
+  (let
+    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
+    (when
+      (>= sites.active 0)
+      (let
+        [item : LowerSpmdSite
+          (lower_spmd_sites.get
+            (& sites.items)
+            sites.active
+            (lower-spmd-site-fallback))]
+        (unless
+          item.selected
+          (set! item.selected true)
+          (set!
+            item.decision.route
+            (if (and
+              (not (lower-mode-simd? (lower-state-mode state)))
+              (match (& route)
+                [(Rejected) false]
+                [_ true]))
+              (ScalarBackend)
+              route))
+          (set!
+            item.decision.reason
+            (if (and
+              (not (lower-mode-simd? (lower-state-mode state)))
+              (match (& item.decision.route)
+                [(Rejected) false]
+                [_ true]))
+              (ScalarBackendSelected)
+              reason))
+          (set! item.decision.lanes lanes)
+          (lower_spmd_sites.set! sites.items sites.active item))))))
+
+(define (lower-spmd-site-fallback) : LowerSpmdSite
+  (let
+    [location : ir.CompilerSourceLocation
+      (ir.CompilerSourceLocation 0 (ast.ast-source-span 0 0 0 0))]
+    (LowerSpmdSite
+      0
+      false
+      false
+      false
+      (ir.CompilerSpmdDecision
+        (ir.CompilerSpmdSiteId (ir.compiler-ir-symbol-typed-id -1) -1)
+        -1
+        (Foreach)
+        (Scalar)
+        1
+        (Rejected)
+        (UnsupportedSource)
+        (clone location)
+        location
+        0
+        0
+        false))))
+
+(define (lower-spmd-finish-site!
+  [state : LowerState]
+  [site : i64]
+  [failed : bool]) : unit
+  (let
+    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
+    [item : LowerSpmdSite
+      (lower_spmd_sites.get (& sites.items) site (lower-spmd-site-fallback))]
+    (when
+      failed
+      (unless
+        (match (& item.decision.route)
+          [(Rejected) item.selected]
+          [_ false])
+        (set! item.decision.reason (UnsupportedSource)))
+      (set! item.decision.route (Rejected))
+      (set! item.selected true))
+    (set! item.entered true)
+    (set! item.finished true)
+    (lower_spmd_sites.set! sites.items site (clone item))
+    ;; Source preorder makes every subtree contiguous. Skip an already-final
+    ;; child subtree, including scalar-tail revisits, rather than scanning the
+    ;; remainder of the function for each source form.
+    (let
+      [index : i64 (+ site 1)]
+      (while (< index item.subtree-end)
+        (let
+          [child : LowerSpmdSite
+            (lower_spmd_sites.get
+              (& sites.items)
+              index
+              (lower-spmd-site-fallback))]
+          (when
+            (and (not child.selected) (= child.decision.parent-ordinal site))
+            (match child.decision.form
+              [(or (Broadcast) (Shuffle))
+                (set! child.selected true)
+                (set! child.decision.route (clone item.decision.route))
+                (set! child.decision.reason (clone item.decision.reason))
+                (set! child.decision.lanes item.decision.lanes)
+                (lower_spmd_sites.set! sites.items index (clone child))
+                (lower-spmd-finish-site! state index failed)]
+              [_ unit]))
+          (set!
+            index
+            (if (> child.subtree-end index)
+              child.subtree-end
+              (+ index 1))))))))
+
+(define (lower-spmd-publish-spans [state : LowerState]) : ir.CompilerSourceSpans
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [_no-sites : unit
+      (when
+        (match (& (__tl-project-field (__tl-box-place data) spmd-sites))
+          [(No) true]
+          [_ false])
+        (return (lower-boxed-box-field-shared-view data spans)))]
+    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
+    [spans : ir.CompilerSourceSpans
+      (lower-boxed-box-field-shared-view data spans)]
+    [out : ir.CompilerSourceSpans
+      (match spans
+        [(Spans entries instructions count facts)
+          (let
+            [offset : i64
+              (if (>= sites.frame-base 0)
+                sites.frame-base
+                facts.frames.len)]
+            (set! sites.frame-base offset)
+            (for [index (iterator.range sites.flushed-frames sites.frames.len)]
+              (ir.compiler-spmd-macro-frame-list-append!
+                (&mut facts.frames)
+                (clone (array-ref sites.frames.slots index))))
+            (for [index
+              (iterator.range
+                sites.flushed
+                (lower_spmd_sites.len (& sites.items)))]
+              (let
+                [site : LowerSpmdSite
+                  (lower_spmd_sites.get
+                    (& sites.items)
+                    index
+                    (lower-spmd-site-fallback))]
+                (unless site.finished (break))
+                (+= site.decision.frame-start offset)
+                (ir.compiler-spmd-decision-list-append!
+                  (&mut facts.decisions)
+                  site.decision)
+                (set! sites.flushed (+ index 1))))
+            (set! sites.flushed-frames sites.frames.len)
+            (ir.CompilerSourceSpans.Spans entries instructions count facts))])]
+    (__tl-project-set-field
+      (__tl-box-place data)
+      spans
+      (box (lower-global-shared-view out)))
+    out))
+
+;; Source sites omitted by control flow or an earlier lowering error still
+;; own identities. They have no selected lanes or scalar fallback to report.
+(define (lower-spmd-finalize-unvisited! [state : LowerState]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (unless
+      (match (& (__tl-project-field (__tl-box-place data) spmd-sites))
+        [(No) true]
+        [_ false])
+      (let
+        [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+        [sites : (&mut sites-box LowerSpmdSites)
+          (&mut (__tl-box-place sites-box))]
+        (for [index (iterator.range 0 (lower_spmd_sites.len (& sites.items)))]
+          (let
+            [item : LowerSpmdSite
+              (lower_spmd_sites.get
+                (& sites.items)
+                index
+                (lower-spmd-site-fallback))]
+            (unless
+              item.entered
+              (set! item.selected true)
+              (set! item.finished true)
+              (set! item.decision.route (Inactive))
+              (set! item.decision.reason (NotLowered))
+              (set! item.decision.lanes 0)
+              (lower_spmd_sites.set! sites.items index item))))))))
+
+(define (lower-spmd-complete-function
+  [state : LowerState]
+  [result : ResultLowerState]) : ResultLowerState
+  (match result
+    [(Ok final-state)
+      (lower-spmd-finalize-unvisited! final-state)
+      (Ok final-state)]
+    [(Err diagnostic)
+      (lower-spmd-finalize-unvisited! state)
+      (compiler-lower-state-set-spmd-rejected-spans!
+        (lower-state-owner state)
+        (lower-spmd-publish-spans state))
+      (Err diagnostic)]))
+
 ;; Lowering threads one state through every expression in a function. Keep the
 ;; public carrier to one word and mutate its function-owned cell in place:
 ;; returning the former wide value from every variable allocation, emission,
@@ -1062,7 +1616,8 @@
   (deferred-arm-body i64)
   ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
   ;; (every root) until lower-bind-source-params sets it.
-  (mut-borrow-scope i64))
+  (mut-borrow-scope i64)
+  (spmd-sites LowerMaybeSpmdSites))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1122,7 +1677,8 @@
         (No)
         (lower_i64_i64_map.with-capacity 1)
         -1
-        -1))))
+        -1
+        (No)))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -1225,11 +1781,11 @@
   (Predicated ir.CompilerIrValue ir.CompilerIrValue))
 
 (defenum LowerMaybeVectorMap
-  (No)
+  (No ir.CompilerSpmdReason)
   (Some LowerVectorMapStoreList ast.AstType i64))
 
 (defenum LowerMaybeMaskedVectorMap
-  (No)
+  (No ir.CompilerSpmdReason)
   (Some i64))
 
 (defenum LowerMaybeMaskedLoad
@@ -1256,12 +1812,12 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerMaybeVectorReduce
-  (No)
+  (No ir.CompilerSpmdReason)
   (Array i64 ir.CompilerIrVectorReduceOp ast.AstType i64)
   (Value LowerVectorMapValue ir.CompilerIrVectorReduceOp ast.AstType i64))
 
 (defenum LowerMaybeVectorScan
-  (No)
+  (No ir.CompilerSpmdReason)
   (Scan i64 i64 ir.CompilerIrVectorPrefixOp ast.AstType i64))
 
 ;; Reduction addend split plan for scalar `sum` lowering: `Split x-id u-id`
@@ -7823,6 +8379,10 @@
   (comptime (size-of (type LowerVariantArmResolution))))
 
 (define (compiler-lower-state-reset! [lower-state : CompilerLowerState]) : unit
+  (compiler-lower-state-set-spmd-source-present! lower-state true)
+  (compiler-lower-state-set-spmd-rejected-spans!
+    lower-state
+    (ir.compiler-source-spans-empty))
   (compiler-lower-state-clear-spmd-package! lower-state)
   (lower-canonical-path-memo-reset! lower-state)
   (lower-entry-main-selection-restore!
@@ -13747,9 +14307,7 @@
     (__tl-project-field (__tl-box-place data) function)))
 
 (define (lower-state-spans [state : LowerState]) : ir.CompilerSourceSpans
-  (let
-    [data : (Box LowerStateData) (lower-state-box state)]
-    (__tl-box-place (__tl-project-field (__tl-box-place data) spans))))
+  (lower-spmd-publish-spans state))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (let
@@ -21864,6 +22422,7 @@
           (lower_i64_i64_map.with-capacity 8)
           source-start
           (+ source-start param-count))]
+      (lower-spmd-enumerate-function! ctx state (clone body))
       (match ret-class
         [(Unsupported message)
           (Err (box (lower-diagnostic-at-expr ctx body message)))]
@@ -21904,14 +22463,16 @@
                     (let
                       [final-state
                         (try
-                          (lower-tail-expr
-                            ctx
+                          (lower-spmd-complete-function
                             bound-state
-                            bound-env
-                            bound-type-env
-                            body
-                            ret-ty
-                            sret-var))]
+                            (lower-tail-expr
+                              ctx
+                              bound-state
+                              bound-env
+                              bound-type-env
+                              body
+                              ret-ty
+                              sret-var)))]
                       [source-params : ir.CompilerIrParamSeq
                         (if structural-params?
                           (lower-captured-internal-param-list
@@ -28408,6 +28969,245 @@
           [(Err message)
             (Err (box (lower-diagnostic-at-expr ctx origin message)))])])))
 
+(defmacro (lower-spmd-with-source-id
+  [ctx : Expr]
+  [state : Expr]
+  [id : Expr]
+  [body : Expr]) : Expr
+  `(let
+    [sites : (Box LowerSpmdSites) (lower-state-spmd-sites ,state)]
+    [prior : i64 (__tl-project-field (__tl-box-place sites) source-hint)]
+    (__tl-project-set-field
+      (__tl-box-place sites)
+      source-hint
+      (lower-spmd-origin-id ,ctx (tc_core.tc-context-expr-get ,ctx ,id) ,id))
+    (let
+      [result ,body]
+      (__tl-project-set-field (__tl-box-place sites) source-hint prior)
+      result)))
+
+(define (lower-spmd-expr-with-type
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match (& expr)
+    [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+         (SpmdBroadcast _ _) (SpmdShuffle _ _))
+      (let
+        [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+        [sites : (&mut sites-box LowerSpmdSites)
+          (&mut (__tl-box-place sites-box))]
+        [prior : i64 sites.active]
+        [site : i64
+          (lower_i64_i64_map.get-value-or
+            (& sites.by-source)
+            (lower-spmd-origin-id ctx (clone origin) sites.source-hint)
+            -1)]
+        (set! sites.active site)
+        (when
+          (>= site 0)
+          (let
+            [item : LowerSpmdSite
+              (lower_spmd_sites.get
+                (& sites.items)
+                site
+                (lower-spmd-site-fallback))]
+            (set! item.entered true)
+            (lower_spmd_sites.set! sites.items site (clone item))
+            (when
+              (>= item.decision.parent-ordinal 0)
+              (match item.decision.form
+                [(or (Broadcast) (Shuffle))
+                  (let
+                    [parent : LowerSpmdSite
+                      (lower_spmd_sites.get
+                        (& sites.items)
+                        item.decision.parent-ordinal
+                        (lower-spmd-site-fallback))]
+                    (when
+                      parent.selected
+                      (lower-spmd-select!
+                        state
+                        parent.decision.route
+                        parent.decision.reason
+                        parent.decision.lanes)))]
+                [_ unit]))))
+        (let
+          [result : ResultLowerExpr
+            (lower-spmd-expr-with-type-inner
+              ctx
+              state
+              env
+              type-env
+              expr
+              origin
+              expr-ty)]
+          (when
+            (>= site 0)
+            (let
+              [failed : bool
+                (match (& result)
+                  [(Err _) true]
+                  [_ false])]
+              (lower-spmd-finish-site! state site failed)
+              (when
+                failed
+                (compiler-lower-state-set-spmd-rejected-spans!
+                  (lower-state-owner state)
+                  (lower-spmd-publish-spans state)))))
+          (set! sites.active prior)
+          result))]
+    [_
+      (lower-spmd-expr-with-type-inner
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expr-ty)]))
+
+(define (lower-spmd-expr-with-type-inner
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (match expr
+    [(Foreach fe-box)
+      (match (__tl-box-place fe-box)
+        [(Foreach index index-ty start-box end-box body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-foreach
+              ctx
+              state
+              env
+              type-env
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              body))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (lower-foreach2
+            ctx
+            state
+            env
+            type-env
+            outer
+            a-box
+            b-box
+            inner
+            c-box
+            d-box
+            body-box)])]
+    [(SpmdReduce reduce-box)
+      (match (__tl-box-place reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            (lower-spmd-reduce
+              ctx
+              state
+              env
+              type-env
+              expr-ty
+              op
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              init
+              value))])]
+    [(SpmdScan scan-box)
+      (match (__tl-box-place scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-spmd-scan
+              ctx
+              state
+              env
+              type-env
+              op
+              index
+              (tc_core.tc-env-key-name-text index)
+              index-ty
+              start
+              end
+              prefix
+              (tc_core.tc-env-key-name-text prefix)
+              prefix-ty
+              init
+              value
+              body))])]
+    [(SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(Compact index _ start-box end-box slot _ init-box keep-box body-box)
+          (let
+            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+            [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-spmd-compact
+              ctx
+              state
+              env
+              type-env
+              index
+              start
+              end
+              slot
+              init
+              keep
+              body))])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+        (lower-spmd-broadcast ctx state env type-env value lane))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+        (lower-spmd-shuffle ctx state env type-env value lane))]
+    [_
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: expected source SPMD form")))]))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -28707,125 +29507,59 @@
         (ast.ast-for-owned-step-done-name (& payload))
         (ast.ast-for-owned-step-body (& payload)))]
     [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-foreach
-              ctx
-              state
-              env
-              type-env
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              body))]
-        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
-          (lower-foreach2
-            ctx
-            state
-            env
-            type-env
-            outer
-            a-box
-            b-box
-            inner
-            c-box
-            d-box
-            body-box)])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.Foreach fe-box)
+        origin
+        expr-ty)]
     [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(Reduce op index index-ty start-box end-box init-box value-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-            (lower-spmd-reduce
-              ctx
-              state
-              env
-              type-env
-              expr-ty
-              op
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              init
-              value))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdReduce reduce-box)
+        origin
+        expr-ty)]
     [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-spmd-scan
-              ctx
-              state
-              env
-              type-env
-              op
-              index
-              (tc_core.tc-env-key-name-text index)
-              index-ty
-              start
-              end
-              prefix
-              (tc_core.tc-env-key-name-text prefix)
-              prefix-ty
-              init
-              value
-              body))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdScan scan-box)
+        origin
+        expr-ty)]
     [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(Compact index _ start-box end-box slot _ init-box keep-box body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-spmd-compact
-              ctx
-              state
-              env
-              type-env
-              index
-              start
-              end
-              slot
-              init
-              keep
-              body))])]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdCompact compact-box)
+        origin
+        expr-ty)]
     [(SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (lower-spmd-broadcast ctx state env type-env value lane))]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdBroadcast value-box lane-box)
+        origin
+        expr-ty)]
     [(SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (lower-spmd-shuffle ctx state env type-env value lane))]
+      (lower-spmd-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        (ast.AstExpr.SpmdShuffle value-box lane-box)
+        origin
+        expr-ty)]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)
@@ -29475,7 +30209,30 @@
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-expr-expected ctx state env type-env inner expected-ty origin))]
+        (match (& inner)
+          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+               (SpmdBroadcast _ _) (SpmdShuffle _ _))
+            (lower-spmd-with-source-id
+              ctx
+              state
+              inner-box
+              (lower-expr-expected
+                ctx
+                state
+                env
+                type-env
+                inner
+                expected-ty
+                origin))]
+          [_
+            (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              inner
+              expected-ty
+              origin)]))]
     [(Literal lit)
       (lower-materialize-at-expr
         ctx
@@ -42527,6 +43284,7 @@
   [acc-ty : ast.AstType]
   [acc-update : i64]
   [split : LowerMaybeReduceSplit]) : ResultLowerExpr
+  (lower-spmd-select! state (CompilerFallback) (ReductionValueShape) 1)
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [acc-name-id : i64
@@ -42696,6 +43454,11 @@
   [end : ast.AstExpr]
   [init : ast.AstExpr]
   [value : ast.AstExpr]) : ResultLowerExpr
+  (unless
+    (match (& index-ty)
+      [(I64) true]
+      [_ false])
+    (lower-spmd-select! state (CompilerFallback) (IndexType) 1))
   (match (tc_core.tc-expr
     ctx
     (tc_core.tc-bind-id type-env index-id (lower-global-shared-view index-ty))
@@ -42752,7 +43515,7 @@
                   init
                   op
                   plan)]
-              [(No)
+              [(No reason)
                 (match (lower-spmd-numeric-failure
                   ctx
                   (lower-state-function-state state)
@@ -42765,6 +43528,7 @@
                   (FusedReduction)
                   value)
                   [(Some origin decision)
+                    (lower-spmd-select! state (Rejected) (NumericPolicy) 1)
                     (Err
                       (box
                         (lower-diagnostic-at-expr
@@ -42772,6 +43536,7 @@
                           origin
                           (lower-spmd-numeric-failure-message decision))))]
                   [(No)
+                    (lower-spmd-select! state (CompilerFallback) reason 1)
                     (lower-spmd-reduce-scaffold
                       ctx
                       state
@@ -42871,6 +43636,7 @@
   [init : ast.AstExpr]
   [prefix-value : i64]
   [body : ast.AstExpr]) : ResultLowerExpr
+  (lower-spmd-select! state (CompilerFallback) (ScanInputShape) 1)
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [acc-name-id : i64
@@ -42976,6 +43742,11 @@
   [init : ast.AstExpr]
   [value : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
+  (unless
+    (match (& index-ty)
+      [(I64) true]
+      [_ false])
+    (lower-spmd-select! state (CompilerFallback) (IndexType) 1))
   (let
     [scalar-prefix : i64
       (spmd-scan-prefix-expr
@@ -43016,7 +43787,8 @@
             value
             body
             vector-plan)]
-        [(No)
+        [(No reason)
+          (lower-spmd-select! state (CompilerFallback) reason 1)
           (lower-spmd-scan-scaffold
             ctx
             state
@@ -43066,6 +43838,7 @@
   [init : ast.AstExpr]
   [keep : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
+  (lower-spmd-select! state (SpecifiedScalar) (OrderedCompact) 1)
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [cursor-id : i64
@@ -43513,6 +44286,7 @@
   [type-env : tc_core.TcTypeEnv]
   [value : ast.AstExpr]
   [lane : ast.AstExpr]) : ResultLowerExpr
+  (lower-spmd-select! state (SpecifiedScalar) (ScalarCrossLane) 1)
   (let
     [lane-lowered
       (try
@@ -43543,6 +44317,15 @@
   [type-env : tc_core.TcTypeEnv]
   [value : ast.AstExpr]
   [lane : ast.AstExpr]) : ResultLowerExpr
+  (lower-spmd-select!
+    state
+    (if (lower-mode-simd? (lower-state-mode state))
+      (Rejected)
+      (ScalarBackend))
+    (if (lower-mode-simd? (lower-state-mode state))
+      (ShuffleShape)
+      (ScalarBackendSelected))
+    1)
   (if (lower-mode-simd? (lower-state-mode state))
     (Err (box (lower-diagnostic (lower-spmd-shuffle-diagnostic))))
     (let
@@ -46482,8 +47265,8 @@
           body)]
       (if (> lanes 0)
         (Some lanes)
-        (No)))
-    (No)))
+        (No (LaneType))))
+    (No (MapShape))))
 
 (define (lower-masked-vector-array-vars
   [ctx : tc_core.TcContext]
@@ -48339,7 +49122,10 @@
           (lower-vector-map-store-list-input-uses-destination?
             (lower-global-shared-view stores)))))
       (Some stores elem-ty lanes)
-      (No))
+      (No
+        (if (= stores.count 0)
+          (MapShape)
+          (DependentStores))))
     (match (lower-simple-vector-map-store
       ctx
       mode
@@ -48362,7 +49148,12 @@
                       elem-ty
                       (lower-global-shared-view store-elem)))
                   (not (= lanes store-lanes)))))
-              (No)
+              (No
+                (if (lower-vector-map-store-list-has-destination?
+                  (lower-global-shared-view stores)
+                  dst-array)
+                  (DuplicateDestination)
+                  (MixedLaneShape)))
               (lower-simple-vector-map-expr-list-at
                 ctx
                 mode
@@ -48374,7 +49165,7 @@
                 (lower-vector-map-store-list-add stores store)
                 store-elem
                 store-lanes))])]
-      [(No) (No)])))
+      [(No) (No (MapShape))])))
 
 (define (lower-simple-vector-map
   [ctx : tc_core.TcContext]
@@ -48399,8 +49190,8 @@
               store)
             elem-ty
             lanes)]
-        [(No) (No)])]
-    [_ (No)]))
+        [(No) (No (MapShape))])]
+    [_ (No (MapShape))]))
 
 (define (lower-simple-vector-reduce-op-supported?
   [_mode : CompilerLowerMode]
@@ -48481,7 +49272,7 @@
   [value : ast.AstExpr]
   [body : ast.AstExpr]) : LowerMaybeVectorScan
   (if (not (lower-mode-simd? mode))
-    (No)
+    (No (ScalarBackendSelected))
     (match (lower-array-ref-var-for-index ctx env type-env value index)
       [(Some input-var input-ty)
         (match (lower-simple-vector-scan-output
@@ -48500,26 +49291,31 @@
                   (lower-simd-lanes-for-elem
                     mode
                     (lower-global-shared-view elem-ty)))]
-              (if (and
-                (> lanes 0)
-                (tc_core.tc-type-eq
-                  (lower-global-shared-view elem-ty)
-                  (tc_core.tc-type-without-regions output-ty))
-                (tc_core.tc-type-eq
-                  (lower-global-shared-view elem-ty)
-                  (tc_core.tc-type-without-regions prefix-ty))
-                (lower-simple-vector-scan-op-supported?
-                  op
-                  (lower-global-shared-view elem-ty)))
-                (Scan
-                  input-var
-                  output-var
-                  (lower-simple-vector-scan-op op)
-                  elem-ty
-                  lanes)
-                (No)))]
-          [(No) (No)])]
-      [(No) (No)])))
+              (cond
+                [(<= lanes 0) (No (LaneType))]
+                [(not
+                    (and
+                      (tc_core.tc-type-eq
+                        (lower-global-shared-view elem-ty)
+                        (tc_core.tc-type-without-regions output-ty))
+                      (tc_core.tc-type-eq
+                        (lower-global-shared-view elem-ty)
+                        (tc_core.tc-type-without-regions prefix-ty))))
+                  (No (MixedLaneShape))]
+                [(not
+                    (lower-simple-vector-scan-op-supported?
+                      op
+                      (lower-global-shared-view elem-ty)))
+                  (No (Operator))]
+                [else
+                  (Scan
+                    input-var
+                    output-var
+                    (lower-simple-vector-scan-op op)
+                    elem-ty
+                    lanes)]))]
+          [(No) (No (ScanOutputShape))])]
+      [(No) (No (ScanInputShape))])))
 
 (define (lower-simple-vector-reduce-op [op : ast.AstReduceOp]) : ir.CompilerIrVectorReduceOp
   (match op
@@ -48573,7 +49369,10 @@
                   op
                   (lower-global-shared-view elem)))
                 (Array array-var (lower-simple-vector-reduce-op op) elem lanes)
-                (No)))]
+                (No
+                  (if (<= lanes 0)
+                    (LaneType)
+                    (Operator)))))]
           [(No)
             (let
               [elem : ast.AstType (tc_core.tc-type-without-regions value-ty)]
@@ -48605,9 +49404,12 @@
                       (lower-simple-vector-reduce-op op)
                       elem
                       lanes)]
-                  [(No) (No)])
-                (No)))])])
-    (No)))
+                  [(No) (No (ReductionValueShape))])
+                (No
+                  (if (<= lanes 0)
+                    (LaneType)
+                    (Operator)))))])])
+    (No (ScalarBackendSelected))))
 
 (define (lower-array-len-value
   [state : LowerState]
@@ -50183,6 +50985,7 @@
   [plan : LowerMaybeVectorScan]) : ResultLowerExpr
   (match plan
     [(Scan input-var output-var prefix-op elem-ty lanes)
+      (lower-spmd-select! state (NativeGangs) (ContiguousScan) lanes)
       (let
         [init-lowered
           (try
@@ -50225,7 +51028,7 @@
                           prefix-op
                           elem-ty
                           lanes)]))]))]))]
-    [(No) (Err (box (lower-diagnostic "lower: missing vector scan plan")))]))
+    [(No _) (Err (box (lower-diagnostic "lower: missing vector scan plan")))]))
 
 (define (lower-avx2-spmd-reduce-build
   [ctx : tc_core.TcContext]
@@ -50723,6 +51526,7 @@
   [plan : LowerMaybeVectorReduce]) : ResultLowerExpr
   (match plan
     [(Array array-var vector-op elem-ty lanes)
+      (lower-spmd-select! state (NativeGangs) (ContiguousReduction) lanes)
       (let
         [init-lowered
           (try
@@ -50761,6 +51565,7 @@
                           elem-ty
                           lanes)]))]))]))]
     [(Value value-plan vector-op elem-ty lanes)
+      (lower-spmd-select! state (NativeGangs) (FusedReduction) lanes)
       (let
         [init-lowered
           (try
@@ -50798,7 +51603,7 @@
                           vector-op
                           elem-ty
                           lanes)]))]))]))]
-    [(No) (Err (box (lower-diagnostic "lower: missing vector reduce plan")))]))
+    [(No _) (Err (box (lower-diagnostic "lower: missing vector reduce plan")))]))
 
 (define (lower-emit-tail-mask
   [state : LowerState]
@@ -52106,17 +52911,17 @@
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(Some stores _ _) (lower-vector-map-store-list-needs-scalar-tail? stores)]
-    [(No) false]))
+    [(No _) false]))
 
 (define (lower-maybe-vector-map-has-gather? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(Some stores _ _) (lower-vector-map-store-list-has-gather? stores)]
-    [(No) false]))
+    [(No _) false]))
 
 (define (lower-maybe-vector-map-has-shuffle? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(Some stores _ _) (lower-vector-map-store-list-has-shuffle? stores)]
-    [(No) false]))
+    [(No _) false]))
 
 (define (lower-emit-scalar-vector-map-value
   [ctx : tc_core.TcContext]
@@ -52527,7 +53332,7 @@
                       (lower-global-shared-view elem-ty)))])
               unit]))
         (lower-state-emit s (Mov index-var next-index (I64))))]
-    [(No) state]))
+    [(No _) state]))
 
 (define (lower-predicated-index-plus-offset
   [state : LowerState]
@@ -58760,7 +59565,7 @@
                   (lower-global-shared-view elem-ty)))
               unit]))
         s)]
-    [(No) state]))
+    [(No _) state]))
 
 (define (lower-masked-preheader-cache-array-data
   [state : LowerState]
@@ -58819,6 +59624,7 @@
   [plan : LowerMaybeMaskedVectorMap]) : ResultLowerExpr
   (match plan
     [(Some lanes)
+      (lower-spmd-select! state (NativeGangs) (MaskedMap) lanes)
       (match (lower-state-alloc-var state)
         [(Alloc index-alloc index-var)
           (let
@@ -59079,7 +59885,7 @@
                             exit-label)
                           Unit
                           (Unit)))])])))])]
-    [(No)
+    [(No _)
       (lower-scalar-foreach-lowered
         ctx
         state
@@ -59131,6 +59937,7 @@
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]) : ResultLowerExpr
+  (lower-spmd-select! state (CompilerFallback) (MapShape) 1)
   (match (lower-state-alloc-var state)
     [(Alloc index-alloc index-var)
       (match (lower-state-fresh-label
@@ -59213,6 +60020,7 @@
   [plan : LowerMaybeVectorMap]) : ResultLowerExpr
   (match (lower-global-shared-view plan)
     [(Some stores elem-ty lanes)
+      (lower-spmd-select! state (NativeGangs) (DirectMap) lanes)
       (match (lower-state-alloc-var state)
         [(Alloc index-alloc index-var)
           (let
@@ -59420,7 +60228,7 @@
                     elem-ty
                     store-lanes
                     exit-label)]
-                [(No)
+                [(No _)
                   (Err
                     (box (lower-diagnostic "lower: missing vector map plan")))])
               (let
@@ -59457,7 +60265,7 @@
                               exit-label)
                             Unit
                             (Unit)))])]))))])]
-    [(No)
+    [(No _)
       (lower-scalar-foreach-lowered
         ctx
         state
@@ -59469,6 +60277,177 @@
         start-value
         end-value
         body)]))
+
+(defenum LowerForeachPlan
+  (NativeMap LowerVectorMapStoreList ast.AstType i64)
+  (NativeMasked i64)
+  (Scalar ir.CompilerSpmdReason)
+  (Rejected ir.CompilerSpmdReason (Box cdiag.CompilerDiagnostic)))
+
+(define (lower-foreach-plan-rejected
+  [ctx : tc_core.TcContext]
+  [origin : ast.AstExpr]
+  [reason : ir.CompilerSpmdReason]
+  [message : String]) : LowerForeachPlan
+  (Rejected reason (box (lower-diagnostic-at-expr ctx origin message))))
+
+;; Admission and failure precedence are decided once. Emitters consume this
+;; plan and never scan source again to reconstruct why a route was selected.
+(define (lower-plan-foreach
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [index : String]
+  [index-ty : ast.AstType]
+  [diagnostic-body : ast.AstExpr]
+  [body : ast.AstExpr]
+  [row? : bool]) : LowerForeachPlan
+  (if (and
+    (lower-mode-simd? (lower-state-mode state))
+    (lower-type-i64? (clone index-ty)))
+    (match (lower-simple-vector-map
+      ctx
+      (lower-state-mode state)
+      env
+      type-env
+      (clone index)
+      (clone body))
+      [(Some stores elem-ty lanes) (NativeMap stores elem-ty lanes)]
+      [(No first-reason)
+        (if (lower-spmd-expr-has-call?
+          ctx
+          (lower-state-function-state state)
+          env
+          type-env
+          (Atomic)
+          (clone body))
+          (Scalar (ExplicitAtomic))
+          (let
+            [facts : LowerMaskedVectorFacts
+              (lower-masked-vector-facts
+                ctx
+                (lower-state-function-state state)
+                (lower-state-mode state)
+                env
+                type-env
+                (clone index)
+                (clone body))]
+            (match (lower-masked-vector-map
+              ctx
+              (lower-state-function-state state)
+              (lower-state-mode state)
+              env
+              type-env
+              (clone index)
+              (clone body)
+              facts)
+              [(Some lanes) (NativeMasked lanes)]
+              [(No _)
+                (if row?
+                  (Scalar first-reason)
+                  (match (lower-spmd-numeric-failure
+                    ctx
+                    (lower-state-function-state state)
+                    (lower-state-mode state)
+                    env
+                    (tc_core.tc-bind-id type-env index-id (clone index-ty))
+                    (DirectMap)
+                    diagnostic-body)
+                    [(Some origin decision)
+                      (lower-foreach-plan-rejected
+                        ctx
+                        origin
+                        (NumericPolicy)
+                        (lower-spmd-numeric-failure-message decision))]
+                    [(No)
+                      (cond
+                        [facts.varying-while
+                          (lower-foreach-plan-rejected
+                            ctx
+                            (clone body)
+                            (VaryingWhile)
+                            (if (lower-mode-avx2? (lower-state-mode state))
+                              (lower-avx2-varying-while-diagnostic)
+                              "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))]
+                        [facts.varying-if
+                          (lower-foreach-plan-rejected
+                            ctx
+                            (clone body)
+                            (VaryingIf)
+                            (if (lower-mode-avx2? (lower-state-mode state))
+                              (lower-avx2-masked-if-diagnostic)
+                              "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))]
+                        [facts.varying-enum-match
+                          (lower-foreach-plan-rejected
+                            ctx
+                            (clone body)
+                            (VaryingEnumMatch)
+                            (if (lower-mode-avx2? (lower-state-mode state))
+                              "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
+                              "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))]
+                        [facts.varying-match
+                          (lower-foreach-plan-rejected
+                            ctx
+                            (clone body)
+                            (VaryingMatch)
+                            (if (lower-mode-avx2? (lower-state-mode state))
+                              "lower: SPMD varying match AVX2 lowering is not available for this match shape"
+                              "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))]
+                        [(lower-vector-body-has? ctx (Shuffle) (clone body))
+                          (lower-foreach-plan-rejected
+                            ctx
+                            (clone body)
+                            (ShuffleShape)
+                            (lower-spmd-shuffle-diagnostic))]
+                        [(lower-vector-body-has? ctx (ArrayRead) (clone body))
+                          (match (lower-simple-vector-map-unsupported-shift-lane
+                            ctx
+                            (lower-state-mode state)
+                            env
+                            type-env
+                            (clone index)
+                            true
+                            (clone body))
+                            [(Some lane-ty)
+                              (lower-foreach-plan-rejected
+                                ctx
+                                (clone body)
+                                (UnsupportedShift)
+                                (lower-spmd-map-shift-diagnostic
+                                  "shl"
+                                  lane-ty
+                                  (lower-state-mode state)))]
+                            [(No)
+                              (match (lower-simple-vector-map-unsupported-shift-lane
+                                ctx
+                                (lower-state-mode state)
+                                env
+                                type-env
+                                index
+                                false
+                                (clone body))
+                                [(Some lane-ty)
+                                  (lower-foreach-plan-rejected
+                                    ctx
+                                    body
+                                    (UnsupportedShift)
+                                    (lower-spmd-map-shift-diagnostic
+                                      "shr"
+                                      lane-ty
+                                      (lower-state-mode state)))]
+                                [(No)
+                                  (lower-foreach-plan-rejected
+                                    ctx
+                                    body
+                                    (UnsupportedMap)
+                                    (lower-simd-foreach-fallback-diagnostic))])])]
+                        [else (Scalar first-reason)])]))])))])
+    (Scalar
+      (if (lower-mode-simd? (lower-state-mode state))
+        (IndexType)
+        (ScalarBackendSelected)))))
 
 (define (lower-foreach-lowered-inlined
   [ctx : tc_core.TcContext]
@@ -59483,232 +60462,65 @@
   [diagnostic-body : ast.AstExpr]
   [body : ast.AstExpr]
   [row? : bool]) : ResultLowerExpr
-  (if (and
-    (lower-mode-simd? (lower-state-mode state))
-    (lower-type-i64? (lower-global-shared-view index-ty)))
-    (match (lower-simple-vector-map
-      ctx
-      (lower-state-mode state)
-      env
-      type-env
-      index
-      (lower-global-shared-view body))
-      [(Some stores elem-ty lanes)
-        (lower-avx2-foreach-lowered
-          ctx
-          state
-          env
-          type-env
-          index-id
-          index
-          index-ty
-          start-value
-          end-value
-          body
-          (Some stores elem-ty lanes))]
-      [(No)
-        (if (lower-spmd-expr-has-call?
-          ctx
-          (lower-state-function-state state)
-          env
-          type-env
-          (Atomic)
-          (lower-global-shared-view body))
-          (lower-scalar-foreach-lowered
-            ctx
-            state
-            env
-            type-env
-            index-id
-            index
-            index-ty
-            start-value
-            end-value
-            body)
-          (let
-            [facts : LowerMaskedVectorFacts
-              (lower-masked-vector-facts
-                ctx
-                (lower-state-function-state state)
-                (lower-state-mode state)
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view body))]
-            (match (lower-masked-vector-map
-              ctx
-              (lower-state-function-state state)
-              (lower-state-mode state)
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view body)
-              facts)
-              [(Some lanes)
-                (lower-avx512-masked-foreach-lowered
-                  ctx
-                  state
-                  env
-                  type-env
-                  index-id
-                  index
-                  index-ty
-                  start-value
-                  end-value
-                  body
-                  (Some lanes))]
-              [(No)
-                (if row?
-                  ;; A rank-2 row no plan matches runs as the scalar row, as
-                  ;; every rank-2 body did before #7191.
-                  (lower-scalar-foreach-lowered
-                    ctx
-                    state
-                    env
-                    type-env
-                    index-id
-                    index
-                    index-ty
-                    start-value
-                    end-value
-                    body)
-                  (match (lower-spmd-numeric-failure
-                    ctx
-                    (lower-state-function-state state)
-                    (lower-state-mode state)
-                    env
-                    (tc_core.tc-bind-id
-                      type-env
-                      index-id
-                      (lower-global-shared-view index-ty))
-                    (DirectMap)
-                    diagnostic-body)
-                    [(Some origin decision)
-                      (Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            origin
-                            (lower-spmd-numeric-failure-message decision))))]
-                    [(No)
-                      (cond
-                        [facts.varying-while
-                          (Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (if (lower-mode-avx2? (lower-state-mode state))
-                                  (lower-avx2-varying-while-diagnostic)
-                                  "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
-                        [facts.varying-if
-                          (Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (if (lower-mode-avx2? (lower-state-mode state))
-                                  (lower-avx2-masked-if-diagnostic)
-                                  "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
-                        [facts.varying-enum-match
-                          (Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (if (lower-mode-avx2? (lower-state-mode state))
-                                  "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
-                                  "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
-                        [facts.varying-match
-                          (Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (if (lower-mode-avx2? (lower-state-mode state))
-                                  "lower: SPMD varying match AVX2 lowering is not available for this match shape"
-                                  "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                        [(lower-vector-body-has?
-                            ctx
-                            (Shuffle)
-                            (lower-global-shared-view body))
-                          (Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (lower-spmd-shuffle-diagnostic))))]
-                        [(lower-vector-body-has?
-                            ctx
-                            (ArrayRead)
-                            (lower-global-shared-view body))
-                          (match (lower-simple-vector-map-unsupported-shift-lane
-                            ctx
-                            (lower-state-mode state)
-                            env
-                            type-env
-                            index
-                            true
-                            (lower-global-shared-view body))
-                            [(Some lane-ty)
-                              (Err
-                                (box
-                                  (lower-diagnostic-at-expr
-                                    ctx
-                                    body
-                                    (lower-spmd-map-shift-diagnostic
-                                      "shl"
-                                      lane-ty
-                                      (lower-state-mode state)))))]
-                            [(No)
-                              (match (lower-simple-vector-map-unsupported-shift-lane
-                                ctx
-                                (lower-state-mode state)
-                                env
-                                type-env
-                                index
-                                false
-                                (lower-global-shared-view body))
-                                [(Some lane-ty)
-                                  (Err
-                                    (box
-                                      (lower-diagnostic-at-expr
-                                        ctx
-                                        body
-                                        (lower-spmd-map-shift-diagnostic
-                                          "shr"
-                                          lane-ty
-                                          (lower-state-mode state)))))]
-                                [(No)
-                                  (Err
-                                    (box
-                                      (lower-diagnostic-at-expr
-                                        ctx
-                                        body
-                                        (lower-simd-foreach-fallback-diagnostic))))])])]
-                        [else
-                          (lower-scalar-foreach-lowered
-                            ctx
-                            state
-                            env
-                            type-env
-                            index-id
-                            index
-                            index-ty
-                            start-value
-                            end-value
-                            body)])]))])))])
-    (lower-scalar-foreach-lowered
-      ctx
-      state
-      env
-      type-env
-      index-id
-      index
-      index-ty
-      start-value
-      end-value
-      body)))
+  (match (lower-plan-foreach
+    ctx
+    state
+    env
+    type-env
+    index-id
+    (clone index)
+    (clone index-ty)
+    diagnostic-body
+    (clone body)
+    row?)
+    [(NativeMap stores elem-ty lanes)
+      (lower-avx2-foreach-lowered
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start-value
+        end-value
+        body
+        (Some stores elem-ty lanes))]
+    [(NativeMasked lanes)
+      (lower-avx512-masked-foreach-lowered
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start-value
+        end-value
+        body
+        (Some lanes))]
+    [(Scalar reason)
+      (lower-spmd-select!
+        state
+        (match (& reason)
+          [(ExplicitAtomic) (SpecifiedScalar)]
+          [_ (CompilerFallback)])
+        reason
+        1)
+      (lower-scalar-foreach-lowered
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start-value
+        end-value
+        body)]
+    [(Rejected reason diagnostic)
+      (lower-spmd-select! state (Rejected) reason 1)
+      (Err diagnostic)]))
 
 ;; Fixed-array SPMD operands (#8346). A fixed array, and a reference to one,
 ;; lowers to a raw pointer to its inline storage, so a foreach body reads and
@@ -61022,6 +61834,13 @@
       [(Some origin decision)
         (match decision.context
           [(PrivateHelper)
+            (lower-spmd-select!
+              state
+              (if row?
+                (CompilerFallback)
+                (Rejected))
+              (PrivateHelper)
+              1)
             (if row?
               (lower-scalar-foreach-lowered
                 ctx
@@ -61164,6 +61983,7 @@
       (lower-global-shared-view body))
     LowerMaybeAstExpr.No)
     [(Some origin)
+      (lower-spmd-select! state (Rejected) (ForeachActive) 1)
       (Err
         (box
           (lower-diagnostic-at-expr
@@ -66291,7 +67111,15 @@
     [(or (Spanned inner-box _) (Ann inner-box _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
+        (match (& inner)
+          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+               (SpmdBroadcast _ _) (SpmdShuffle _ _))
+            (lower-spmd-with-source-id
+              ctx
+              state
+              inner-box
+              (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
+          [_ (lower-tail-expr ctx state env type-env inner ret-ty sret-var)]))]
     [(Cast inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -67305,6 +68133,7 @@
           ctx
           (lower-global-shared-view params)
           (lower-global-shared-view ret-ty))]
+      (lower-spmd-enumerate-function! ctx state (clone body))
       (match ret-class
         [(Unsupported message)
           (Err (box (lower-diagnostic-at-expr ctx body message)))]
@@ -67336,14 +68165,16 @@
                   (let
                     [final-state
                       (try
-                        (lower-tail-expr
-                          ctx
+                        (lower-spmd-complete-function
                           bound-state
-                          bound-env
-                          bound-type-env
-                          body
-                          ret-ty
-                          sret-var))]
+                          (lower-tail-expr
+                            ctx
+                            bound-state
+                            bound-env
+                            bound-type-env
+                            body
+                            ret-ty
+                            sret-var)))]
                     [source-params : ir.CompilerIrParamSeq
                       (if structural-params?
                         (lower-internal-param-list
@@ -67827,6 +68658,13 @@
             (arena.tl_arena_set enclosing))
           (let
             [escaped-message : (Box cdiag.CompilerDiagnostic) (clone message)]
+            [owner : CompilerLowerState
+              (compiler-lower-function-state-owner function-state)]
+            [rejected : ir.CompilerSourceSpans
+              (compiler-lower-state-spmd-rejected-spans owner)]
+            (compiler-lower-state-set-spmd-rejected-spans!
+              owner
+              (ir.compiler-source-spans-escape (& rejected)))
             (unsafe
               (arena.tl_arena_set scratch)
               (arena.tl_region_reset mark)
@@ -69683,6 +70521,9 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
+  (compiler-lower-state-set-spmd-source-present!
+    lower-state
+    (lower-spmd-pools-have-sites? (& (tc_core.tc-context-pools ctx))))
   (compiler-lower-state-set-active-symbols!
     lower-state
     (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))

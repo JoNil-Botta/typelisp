@@ -72,6 +72,7 @@ case string-literal-eq-width
 source tests/integration/string_literal_eq.tl
 in fn _tl_string_literal_eq_is_4
 match ^[[:space:]]+cmpq \$4, %r
+match ^[[:space:]]+cmpl \$2019652133, %r
 not-match ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r
 not-match ^[[:space:]]+cmpq \$8, %r
 not-match ^[[:space:]]+sarq \$3, %r

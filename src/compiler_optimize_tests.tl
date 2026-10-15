@@ -59337,6 +59337,370 @@
       [(not (= (opt-sl-test-folded (& rewritten) 37) -1)) 150]
       [else (opt-sl-test-unpublish)])))
 
+(defstruct OptSlDataCase
+  (label String)
+  (text String)
+  (body String)
+  (params String)
+  (expected String))
+
+(define (opt-sl-data-test-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [params : String]
+  [expected-text : String]
+  [label : String]) : unit
+  (let
+    [summaries : opt.OptProgramSummaries
+      (opt.opt-program-summaries-empty-for false)]
+    [rewritten : ir.CompilerIrBlockList
+      (opt.opt-const-length-rewrite-summary-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-test-symbol "sl_data_fn")
+        (& summaries)
+        (& (irt.params params))
+        96
+        blocks)]
+    [expected : ir.CompilerIrInstr (irt.instr expected-text)]
+    (test.assert-true
+      (=
+        (opt-count-exact-instr-blocks
+          (ir.compiler-ir-block-list-view (& rewritten))
+          (& expected))
+        1)
+      (str_cat.str-cat "literal-data: " label))))
+
+(define (opt-sl-data-test-case! [case : (& case OptSlDataCase)]) : unit
+  (opt-sl-data-test-blocks!
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "sl_data")
+        (opt-test-instrs-with-tail
+          (irt.instrs (string.copy (& case.body)))
+          (ir.CompilerIrInstr.Mov 0 (String (string.copy (& case.text))) (Str)))))
+    (string.copy (& case.params))
+    (string.copy (& case.expected))
+    (string.copy (& case.label))))
+
+(define (opt-sl-data-test-chain [moves : i64]) : String
+  (let
+    [body : String "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n"]
+    [previous : i64 2]
+    (for [index (iterator.range 0 moves)]
+      (let
+        [next : i64 (+ 7 index)]
+        (set!
+          body
+          (str_cat.str-cat
+            body
+            "%"
+            (string.int->string next)
+            " = mov %"
+            (string.int->string previous)
+            " : u64\n"))
+        (set! previous next)))
+    (str_cat.str-cat
+      body
+      "%3 = gep %"
+      (string.int->string previous)
+      ", 0 : u8\n%4 = load %3 : u32\nreturn")))
+
+(test
+  string-literal-data-fold
+  (let
+    [cases
+      (array
+        (OptSlDataCase
+          "four-byte little endian"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "signed utf8 byte"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i8\nreturn"
+          ""
+          "%4 = mov -61 : i8")
+        (OptSlDataCase
+          "unsigned utf8 byte"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 195 : u8")
+        (OptSlDataCase
+          "signed word"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i16\nreturn"
+          ""
+          "%4 = mov -23101 : i16")
+        (OptSlDataCase
+          "unsigned word"
+          "å"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u16\nreturn"
+          ""
+          "%4 = mov 42435 : u16")
+        (OptSlDataCase
+          "signed full word"
+          "abcdefé"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov -6214010475179187615 : i64")
+        (OptSlDataCase
+          "unsigned full word"
+          "abcdefé"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u64\nreturn"
+          ""
+          "%4 = mov -6214010475179187615 : u64")
+        (OptSlDataCase
+          "boundary-ending offset"
+          "abcdefghi"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u8\n\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov 7595434461045744482 : i64")
+        (OptSlDataCase
+          "scaled offset"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u32\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1751606885 : u32")
+        (OptSlDataCase
+          "length 0"
+          ""
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = load %3 : u8")
+        (OptSlDataCase
+          "length 1"
+          "a"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 2"
+          "ab"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 3"
+          "abc"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 4"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 7"
+          "abcdefg"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 8"
+          "abcdefgh"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 9"
+          "abcdefghi"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "length 17"
+          "abcdefghijklmnopq"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u8\nreturn"
+          ""
+          "%4 = mov 97 : u8")
+        (OptSlDataCase
+          "short literal"
+          "abc"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "past end"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 1 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "negative offset"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, -1 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "overflowed scale"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 9223372036854775807 : i64\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "unknown offset"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, %5 : u8\n\n%4 = load %3 : u32\nreturn"
+          "index=%5:i64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "parameter overlaps literal"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          "overlap=%0:str"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "descriptor address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %0\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "pointer address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %2\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "load destination address taken"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%6 = addr_of %4\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "duplicate data pointer"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%2 = mov %5 : u64\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "descriptor move"
+          "abcd"
+          "%7 = mov %0 : str\n%1 = gep %7, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "unsupported float load"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : f32\nreturn"
+          ""
+          "%4 = load %3 : f32")
+        (OptSlDataCase
+          "unsupported bool load"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n\n%4 = load %3 : bool\nreturn"
+          ""
+          "%4 = load %3 : bool")
+        (OptSlDataCase
+          "i32 high bit"
+          "🙂"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : i32\nreturn"
+          ""
+          "%4 = mov -2103861264 : i32")
+        (OptSlDataCase
+          "u32 high bit"
+          "🙂"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 2191106032 : u32")
+        (OptSlDataCase
+          "one byte cannot supply word"
+          "a"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u16\nreturn"
+          ""
+          "%4 = load %3 : u16")
+        (OptSlDataCase
+          "seven bytes cannot supply full word"
+          "abcdefg"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = load %3 : i64")
+        (OptSlDataCase
+          "later full-word boundary"
+          "abcdefghijklmnopq"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 9 : u8\n%4 = load %3 : i64\nreturn"
+          ""
+          "%4 = mov 8174155843750357866 : i64")
+        (OptSlDataCase
+          "descriptor alias write"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%6 = addr_of %0\nstore_ptr %6, %5 : u64\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "data pointer alias write"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%6 = addr_of %2\nstore_ptr %6, %5 : u64\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "other=%5:u64"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "nonliteral parameter"
+          "abcd"
+          "%1 = gep %5, 0 : u8\n%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn"
+          "runtime=%5:str"
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "word preserving casts"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = cast %2 : (Ptr u8) to u64\n%8 = bitcast %7 : u64 to (Ptr u32)\n%3 = gep %8, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "float cast stays unknown"
+          "abcd"
+          "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\n%7 = bitcast %2 : (Ptr u8) to f64\n%8 = bitcast %7 : f64 to (Ptr u32)\n%3 = gep %8, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "cycle stops proof walk"
+          "abcd"
+          "%1 = mov %2 : u64\n%2 = mov %1 : u64\n%6 = load %1 : (Ptr u8)\n%3 = gep %6, 0 : u8\n%4 = load %3 : u32\nreturn"
+          ""
+          "%4 = load %3 : u32")
+        (OptSlDataCase
+          "deep chain admitted"
+          "abcd"
+          (opt-sl-data-test-chain 59)
+          ""
+          "%4 = mov 1684234849 : u32")
+        (OptSlDataCase
+          "deep chain stays memory"
+          "abcd"
+          (opt-sl-data-test-chain 60)
+          ""
+          "%4 = load %3 : u32"))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (opt-sl-data-test-case! (& (array-ref cases index))))
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "direct")
+          (opt-test-instrs-with-tail
+            (irt.instrs
+              "%2 = load %1 : (Ptr u8)\n%3 = gep %2, 0 : u8\n%4 = load %3 : u32\nreturn")
+            (ir.CompilerIrInstr.Gep 1 (String "abcd") (I64 0) (U8)))))
+      ""
+      "%4 = mov 1684234849 : u32"
+      "direct literal descriptor")
+    (opt-sl-data-test-blocks!
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "sl_data_entry")
+          (opt-test-instrs-with-tail
+            (irt.instrs
+              "%1 = gep %0, 0 : u8\n%2 = load %1 : (Ptr u8)\njump sl_data_next")
+            (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "sl_data_next")
+          (irt.instrs "%3 = gep %2, 1 : u8\n%4 = load %3 : u16\nreturn")))
+      ""
+      "%4 = mov 25442 : u16"
+      "cross block")))
+
 (define (compiler-optimize-latch-sink-self-test) : i64
   (let
     [l1 : ir.CompilerIrFunction (opt-ls-test-l1)]

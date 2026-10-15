@@ -1107,12 +1107,19 @@ Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
 
-The constant-length rewrite also recognizes literal String descriptors. Their
+The constant-load rewrite recognizes literal String descriptors. Their
 read-only length word contains the byte length, including for empty and UTF-8
-text. It folds only i64 loads from that slot. Both a literal-backed variable
-and the GEP destination must have one definition, counting parameters, and
-neither may have its address taken. Other fields, offsets and load types retain
-their memory operations. Literal lengths do not depend on global initialization.
+text, and their data word names the same read-only bytes throughout the program.
+Length-slot loads fold only at i64 type. Integer data loads fold at their exact
+1/2/4/8-byte width and signedness when the entire access is within the literal.
+The existing definition index traces descriptor copies, data-slot pointer loads,
+word-preserving casts and constant GEP offsets. Every traced variable has one
+definition, counting parameters, and no address-taking alias. The proof walk is
+bounded; cycles, unknown/negative/overflowed offsets, out-of-bounds accesses and
+unsupported load types retain memory operations. Facts and checked block
+borrows live only for the current fold; block storage keeps its input IR owner.
+Literal facts do not depend on global initialization or infer constancy for
+writable runtime strings.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),

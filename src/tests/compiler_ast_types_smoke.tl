@@ -3358,7 +3358,7 @@
     [owner : arena.Arena (arena.make)]
     [owner-handle : i64 (arena.raw-handle owner)]
     [scratch : arena.Arena (arena.make)]
-    [cases : (Array ast.AstExprCanonicalSpanRecord 14)
+    [cases : (Array ast.AstExprCanonicalSpanRecord 17)
       (array
         (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 0 0 0 0))
         (ast.AstExprCanonicalSpanRecord
@@ -3366,7 +3366,7 @@
           31
           (ast.AstSourceSpan 1 65535 15 65535))
         (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 65536 16 0))
-        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 16 65535))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 256 65535))
         (ast.AstExprCanonicalSpanRecord
           17
           31
@@ -3394,7 +3394,16 @@
         (ast.AstExprCanonicalSpanRecord
           2147483647
           -1
-          (ast.AstSourceSpan -1 0 14 1)))]
+          (ast.AstSourceSpan -1 0 14 1))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 1 16 1))
+        (ast.AstExprCanonicalSpanRecord
+          268435455
+          268435455
+          (ast.AstSourceSpan 1 65535 255 65535))
+        (ast.AstExprCanonicalSpanRecord
+          17
+          31
+          (ast.AstSourceSpan -2147483648 0 -2147483648 65535)))]
     [tables : (Array i64 2)
       (array
         (ast.ast-expr-span-table-new owner-handle 0 64)
@@ -3406,7 +3415,7 @@
       (for [kind (iterator.range 0 2)]
         (let
           [table : i64 (array-ref tables kind)]
-          (for [index (iterator.range 0 14)]
+          (for [index (iterator.range 0 17)]
             (compiler-ast-packed-record-write!
               table
               kind
@@ -3435,7 +3444,7 @@
                     kind
                     index
                     (array-ref cases 5))))))
-          (for [index (iterator.range 0 14)]
+          (for [index (iterator.range 0 17)]
             (set!
               ok
               (and
@@ -3472,7 +3481,7 @@
     (arena.destroy-safe! scratch)
     ;; Validate all exceptional values again after the decoy arena retires.
     (for [kind (iterator.range 0 2)]
-      (for [index (iterator.range 0 14)]
+      (for [index (iterator.range 0 17)]
         (set!
           ok
           (and

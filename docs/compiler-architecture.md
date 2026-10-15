@@ -597,10 +597,10 @@ interned spelling. A consumer that keeps a spelling past an intern reset copies
 it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
 
 Canonical and ReSpan records expose their full logical node IDs and four i32
-coordinates. Physical slots use 16 bytes: the second ID occupies 28 bits,
-matching the expression-pool ceiling, and its upper four bits encode line
-deltas 0–14. The coordinate word retains the start line and two u16 columns.
-Other IDs or coordinates use tag 15 and an exact logical record in the table's
+coordinates. Physical slots use 16 bytes: two 28-bit IDs match the
+expression-pool ceiling, leaving a byte for line deltas 0–254. The coordinate
+word retains the signed start line and two u16 columns. Other IDs or
+coordinates use tag 255 and an exact logical record in the table's
 owning arena. Accessors decode by value; packed and overflow pointers never
 escape. Shared table headers retain that owner and recycle overflow slots
 across wide-to-compact rewrites. Segment-zero growth copies physical slots

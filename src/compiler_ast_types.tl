@@ -1170,17 +1170,17 @@
   (span AstSourceSpan))
 
 (defstruct AstExprPackedSpanRecord
-  (first-node i32)
-  (tagged-node i32)
+  (ids i64)
   (coordinates i64))
 
-;; Expression ids occupy 28 bits (4096 segments of 65536 rows). The upper
-;; four bits carry a line delta below 15; 15 points at an exact logical record.
+;; Two 28-bit expression ids leave the upper byte for a line delta below 255;
+;; 255 points at an exact logical record. The coordinate word retains a signed
+;; start line and two u16 columns.
 ;; Overflow slots are table-owned and recycled when a record becomes compact.
 (define ast-expr-span-packed-node-mask : i64
   268435455)
 (define ast-expr-span-packed-escape-tag : i64
-  15)
+  255)
 
 (defenum AstMaybeSourceSpan
   (No)
@@ -1282,15 +1282,15 @@
     [coordinates : i64
       (unsafe
         (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
-    [tag : i64 (bit-and (shr ids 60) 15)]
+    [tag : i64 (bit-and (shr ids 56) 255)]
     (if (= tag ast-expr-span-packed-escape-tag)
       (unsafe
         (ptr-read (int->ptr coordinates : (Ptr AstExprCanonicalSpanRecord))))
       (let
         [start-line : i64 (shr coordinates 32)]
         (AstExprCanonicalSpanRecord
-          (cast ids : i32)
-          (cast (bit-and (shr ids 32) ast-expr-span-packed-node-mask) : i32)
+          (cast (bit-and ids ast-expr-span-packed-node-mask) : i32)
+          (cast (bit-and (shr ids 28) ast-expr-span-packed-node-mask) : i32)
           (AstSourceSpan
             (cast start-line : i32)
             (cast (bit-and (shr coordinates 16) 65535) : i32)
@@ -1367,25 +1367,20 @@
     [compact? : bool
       (and
         (= (shr (bit-or (cast first-node : i64) (cast second-node : i64)) 28) 0)
-        (>= start-line 0)
-        (< (cast delta : u64) (cast 15 : u64))
+        (< (cast delta : u64) (cast 255 : u64))
         (= (shr (bit-or start-col end-col) 16) 0))]
     [old-tag : i64
-      (bit-and
-        (shr
-          (cast
-            (unsafe
-              (ptr-read (ptr-offset (int->ptr address : (Ptr i32)) 1)))
-            : i64)
-          28)
-        15)]
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 7)))
+        : i64)]
     (if (and compact? (not (= old-tag ast-expr-span-packed-escape-tag)))
       (unsafe
         (ptr-write!
           (int->ptr address : (MutPtr i64))
           (bit-or
             (cast first-node : i64)
-            (shl (bit-or (cast second-node : i64) (shl delta 28)) 32)))
+            (bit-or (shl (cast second-node : i64) 28) (shl delta 56))))
         (ptr-write!
           (ptr-offset (int->ptr address : (MutPtr i64)) 1)
           (bit-or (shl start-line 32) (bit-or (shl start-col 16) end-col))))
@@ -1410,14 +1405,10 @@
     [address : i64 (ast-expr-packed-span-record-address table index)]
     [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
     [old-tag : i64
-      (bit-and
-        (shr
-          (cast
-            (unsafe
-              (ptr-read (ptr-offset (int->ptr address : (Ptr i32)) 1)))
-            : i64)
-          28)
-        15)]
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 7)))
+        : i64)]
     [old-slot : i64
       (if (= old-tag ast-expr-span-packed-escape-tag)
         (unsafe
@@ -1435,13 +1426,11 @@
             (int->ptr address : (MutPtr i64))
             (bit-or
               (cast first-node : i64)
-              (shl
-                (bit-or
-                  (cast second-node : i64)
-                  (shl
-                    (- (cast span.end-line : i64) (cast span.start-line : i64))
-                    28))
-                32)))
+              (bit-or
+                (shl (cast second-node : i64) 28)
+                (shl
+                  (- (cast span.end-line : i64) (cast span.start-line : i64))
+                  56))))
           (ptr-write!
             (ptr-offset (int->ptr address : (MutPtr i64)) 1)
             (bit-or
@@ -1485,9 +1474,7 @@
               (clone (deref span))))
           (ptr-write!
             (int->ptr address : (MutPtr i64))
-            (bit-or
-              (bit-and (cast first-node : i64) 4294967295)
-              (shl ast-expr-span-packed-escape-tag 60)))
+            (shl ast-expr-span-packed-escape-tag 56))
           (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) slot))))))
 
 ;; make-array zero-fills even reused arenas, so each unused slot starts with

@@ -1,0 +1,30 @@
+name: Worker 2 Windows atomic-replace evidence 8831
+on:
+  push:
+    branches: [worker-2-issue-8831-windows-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture native status under controlled file sharing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/run-package-lock-windows-probe.sh
+      - name: Preserve raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-8831-native-windows-probe
+          path: |
+            target/exp/w2-8831-probe/*.tl
+            target/exp/w2-8831-probe/*.txt
+            target/exp/w2-8831-probe/*.stdout
+            target/exp/w2-8831-probe/*.stderr
+            target/exp/w2-8831-probe/*.memory
+            target/exp/w2-8831-probe/*.exit
+          if-no-files-found: error

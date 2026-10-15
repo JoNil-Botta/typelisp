@@ -255,8 +255,6 @@
           (!= data.pool-count 3085)
           (!= composition-rows 940))
         (parse.fail "generated" 0 "IDNA encoding changed audited range count"))
-      (count (&mut out) "idna-range-count" idna-rows)
-      (count (&mut out) "support-range-count" support-rows)
       (count (&mut out) "decomposition-count" decomposition-rows)
       (count (&mut out) "pool-count" data.pool-count)
       (count (&mut out) "composition-count" composition-rows)

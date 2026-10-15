@@ -23,14 +23,11 @@
 (import (vector.vector String) as doc_site_manifest_names)
 (import (sort.vec String) as doc_site_manifest_sort)
 
-(define doc-site-stdlib-dir : String
+(define (doc-site-stdlib-dir) : String
   "stdlib")
+
 (define doc-site-stdlib-module-suffix : String
   ".tl")
-
-(define (doc-site-stdlib-dir-shared-view) : String
-  (unsafe
-    (ptr-read (ptr-addr-of doc-site-stdlib-dir))))
 
 (define (doc-site-stdlib-module-file? [name : (& name str)]) : bool
   (let
@@ -46,7 +43,7 @@
 
 (define (doc-site-stdlib-module-names) : doc_site_manifest_names.Vec
   (let
-    [dir : String (doc-site-stdlib-dir-shared-view)]
+    [dir : String (doc-site-stdlib-dir)]
     (match (fs.try-read-dir (& dir))
       [(OkIoStringVector entries)
         (let

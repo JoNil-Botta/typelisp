@@ -50,23 +50,26 @@
 ;; Unpublished addresses can still read correct records once the kernel maps
 ;; a later generation at a retired one's address, so check them directly.
 (define (active-columns-published? [state : (& state ci.InternCompatState)]) : bool
-  (let
-    [table : ci.InternStructuralTable
-      (ci.intern-array-shared-view state.structural-table-cell 0)]
-    (and
-      (= ci.intern-active-structural-owner table.owner)
-      (=
-        ci.intern-active-structural-kinds-address
-        (ci.intern-i64-array-address table.kinds))
-      (=
-        ci.intern-active-structural-lefts-address
-        (ci.intern-i64-array-address table.lefts))
-      (=
-        ci.intern-active-structural-middles-address
-        (ci.intern-i64-array-address table.middles))
-      (=
-        ci.intern-active-structural-rights-address
-        (ci.intern-i64-array-address table.rights)))))
+  (and
+    (=
+      ci.intern-active-structural-owner
+      (array-ref state.structural-table-cell 0).owner)
+    (=
+      ci.intern-active-structural-kinds-address
+      (ci.intern-i64-array-address
+        (array-ref state.structural-table-cell 0).kinds))
+    (=
+      ci.intern-active-structural-lefts-address
+      (ci.intern-i64-array-address
+        (array-ref state.structural-table-cell 0).lefts))
+    (=
+      ci.intern-active-structural-middles-address
+      (ci.intern-i64-array-address
+        (array-ref state.structural-table-cell 0).middles))
+    (=
+      ci.intern-active-structural-rights-address
+      (ci.intern-i64-array-address
+        (array-ref state.structural-table-cell 0).rights))))
 
 (define (main) : i64
   (tl_arena_poison_enable)

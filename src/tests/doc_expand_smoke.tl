@@ -144,11 +144,11 @@
           "5")
         (string.eq
           (doc_render.doc-module-path
-            (doc_render.doc-module-list-ref (clone modules) 0))
+            (doc_render.doc-module-list-ref (& modules) 0))
           "0")
         (string.eq
           (doc_render.doc-module-path
-            (doc_render.doc-module-list-ref (clone modules) 5))
+            (doc_render.doc-module-list-ref (& modules) 5))
           "5"))
       (io.panic "doc-expand: generated vector growth/order mismatch"))))
 

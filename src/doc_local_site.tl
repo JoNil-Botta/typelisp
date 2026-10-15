@@ -37,7 +37,7 @@
         ",")
       (doc_html.doc-html-search-records-for-module
         "index.html"
-        (doc_module_vec.get modules index (doc_render.doc-module-fallback)))
+        (doc_render.doc-module-list-ref modules index))
       (doc-local-site-search-records-from modules (+ index 1) count))))
 
 (define (doc-local-site-search-records [modules : doc_module_vec.Vec]) : String

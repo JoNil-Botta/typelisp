@@ -77905,3 +77905,190 @@
       false
       true)
     "aggregate words include address operands"))
+
+;; --- loads across a disjoint store (#8914) -----------------------------------
+;;
+;; The transform `benchmark/typelisp/borrowed_disjoint_store` measures: a load
+;; is forwarded across a store that provably misses it. Pinned here on the
+;; whole opt-2 pipeline with every value a formal input, so no constant or
+;; dead-code fold can satisfy it. `p` is one checked-reference root; field `x`
+;; is its first word (offset 0) and `y` its second (offset 8).
+;;
+;; Positive: read `p.x`, store the formal `v` to `p.y`, read `p.x` again. The
+;; byte ranges [0, 8) and [8, 16) of one root are disjoint, so the second read
+;; is the first one: one load survives, the store stays, and the result adds
+;; the saved value to itself.
+(define (opt-dsf-field-text) : String
+  "function @dsf_field(p=%0:(&mut r i64), v=%1:i64) -> i64 vars 8 {
+     entry:
+       %2 = gep %0, 0 : u8
+       %3 = load %2 : i64
+       %4 = gep %0, 8 : u8
+       store_ptr %4, %1 : i64
+       %5 = gep %0, 0 : u8
+       %6 = load %5 : i64
+       %7 = add %3, %6 : i64
+       return %7
+   }")
+
+;; Control: the store writes the field the first read came from. The second
+;; read must not be the stale first load; forwarding the stored `v` is fine.
+(define (opt-dsf-same-field-text) : String
+  "function @dsf_same(p=%0:(&mut r i64), v=%1:i64) -> i64 vars 8 {
+     entry:
+       %2 = gep %0, 0 : u8
+       %3 = load %2 : i64
+       %4 = gep %0, 0 : u8
+       store_ptr %4, %1 : i64
+       %5 = gep %0, 0 : u8
+       %6 = load %5 : i64
+       %7 = add %3, %6 : i64
+       return %7
+   }")
+
+;; Control: a narrower store overlaps the read field (bytes [4, 8) of `p.x`),
+;; so it neither misses the first read nor names the same location to forward
+;; from. `p.x` is read again.
+(define (opt-dsf-overlap-text) : String
+  "function @dsf_overlap(p=%0:(&mut r i64), v=%1:i32) -> i64 vars 8 {
+     entry:
+       %2 = gep %0, 0 : u8
+       %3 = load %2 : i64
+       %4 = gep %0, 4 : u8
+       store_ptr %4, %1 : i32
+       %5 = gep %0, 0 : u8
+       %6 = load %5 : i64
+       %7 = add %3, %6 : i64
+       return %7
+   }")
+
+;; Control: the store goes through a second root. Two checked-reference
+;; parameters never prove disjoint (a caller can pass two representation copies
+;; of one handle; see opt-licm-root-disjoint-store?), so `p.x` is read again.
+(define (opt-dsf-other-root-text) : String
+  "function @dsf_other(p=%0:(&mut r i64), q=%1:(&mut s i64), v=%2:i64) -> i64 vars 9 {
+     entry:
+       %3 = gep %0, 0 : u8
+       %4 = load %3 : i64
+       %5 = gep %1, 0 : u8
+       store_ptr %5, %2 : i64
+       %6 = gep %0, 0 : u8
+       %7 = load %6 : i64
+       %8 = add %4, %7 : i64
+       return %8
+   }")
+
+;; Control: `p` escapes to an unknown callee between the reads, which may write
+;; any field through it, so `p.x` is read again.
+(define (opt-dsf-escape-text) : String
+  "function @dsf_escape(p=%0:(&mut r i64), v=%1:i64) -> i64 vars 8 {
+     entry:
+       %2 = gep %0, 0 : u8
+       %3 = load %2 : i64
+       %4 = call dsf_opaque(%0, %1) : unit
+       %5 = gep %0, 0 : u8
+       %6 = load %5 : i64
+       %7 = add %3, %6 : i64
+       return %7
+   }")
+
+(define (opt-dsf-run [text : String]) : ir.CompilerIrBlockList
+  (let
+    [func
+      (opt-test-optimize-function
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (irt.func text))]
+    (opt.opt-function-blocks func)))
+
+;; What the checks read off an optimized function: its loads, stores and calls,
+;; the dst of its first load, and the operands of the BinOp its result comes
+;; from (-1 for an operand that is not a var).
+(defstruct OptDsfShape
+  (loads i64)
+  (stores i64)
+  (calls i64)
+  (first-load i64)
+  (result-lhs i64)
+  (result-rhs i64))
+
+(define (opt-dsf-value-var [value : (& ir.CompilerIrValue)]) : i64
+  (match value
+    [(Var id) id]
+    [_ (- 0 1)]))
+
+(define (opt-dsf-shape [blocks : (& blocks ir.CompilerIrBlockList)]) : OptDsfShape
+  (let
+    [result : i64
+      (opt-blocks-return-var (ir.compiler-ir-block-list-view blocks) (- 0 1))]
+    [shape : OptDsfShape (OptDsfShape 0 0 0 (- 0 1) (- 0 1) (- 0 1))]
+    (match blocks
+      [(Array seq)
+        (for [block-index
+          (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-ref seq block-index)
+            [(Block _ instrs)
+              (for [index
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (match (ir.compiler-ir-instr-seq-ref instrs index)
+                  [(Load dst _ _)
+                    (when (< shape.first-load 0) (set! shape.first-load dst))
+                    (+= shape.loads 1)]
+                  [(StorePtr _ _ _) (+= shape.stores 1)]
+                  [(Call _ _ _ _) (+= shape.calls 1)]
+                  [(BinOp dst _ lhs rhs _)
+                    (when
+                      (= dst result)
+                      (set! shape.result-lhs (opt-dsf-value-var (& lhs)))
+                      (set! shape.result-rhs (opt-dsf-value-var (& rhs))))]
+                  [_ unit]))]))])
+    shape))
+
+(define (compiler-optimize-disjoint-store-forward-self-test) : i64
+  (let
+    [field : OptDsfShape
+      (let
+        [blocks (opt-dsf-run (opt-dsf-field-text))]
+        (opt-dsf-shape (& blocks)))]
+    [same : OptDsfShape
+      (let
+        [blocks (opt-dsf-run (opt-dsf-same-field-text))]
+        (opt-dsf-shape (& blocks)))]
+    [overlap : OptDsfShape
+      (let
+        [blocks (opt-dsf-run (opt-dsf-overlap-text))]
+        (opt-dsf-shape (& blocks)))]
+    [other : OptDsfShape
+      (let
+        [blocks (opt-dsf-run (opt-dsf-other-root-text))]
+        (opt-dsf-shape (& blocks)))]
+    [escape : OptDsfShape
+      (let
+        [blocks (opt-dsf-run (opt-dsf-escape-text))]
+        (opt-dsf-shape (& blocks)))]
+    (cond
+      ;; Disjoint field store: one load, the store kept, both result operands
+      ;; the saved first read.
+      [(not (= field.loads 1)) 1]
+      [(not (= field.stores 1)) 2]
+      [(not (>= field.first-load 0)) 3]
+      [(not (= field.result-lhs field.first-load)) 4]
+      [(not (= field.result-rhs field.first-load)) 5]
+      ;; Same field: the second read is the stored `v`, never the stale load.
+      [(not (= same.stores 1)) 6]
+      [(not (= same.result-lhs same.first-load)) 7]
+      [(not (= same.result-rhs 1)) 8]
+      ;; An overlapping narrower store: `p.x` is read twice.
+      [(not (= overlap.loads 2)) 15]
+      [(not (= overlap.stores 1)) 16]
+      [(= overlap.result-lhs overlap.result-rhs) 17]
+      ;; A second checked root: `p.x` is read twice, and the result adds the
+      ;; two reads.
+      [(not (= other.loads 2)) 9]
+      [(not (= other.stores 1)) 10]
+      [(= other.result-lhs other.result-rhs) 11]
+      ;; An escape to an unknown callee: `p.x` is read twice around the call.
+      [(not (= escape.loads 2)) 12]
+      [(not (= escape.calls 1)) 13]
+      [(= escape.result-lhs escape.result-rhs) 14]
+      [else 42])))

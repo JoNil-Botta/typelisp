@@ -62363,6 +62363,13 @@
       (array
         "entry:
            %0 = mov @mr_a : i64
+           %1 = call unknown_writer(%0) : i64
+           return %1"
+        "entry:
+           %0 = mov @mr_a : i64
+           tailcall unknown_writer(%0) : i64"
+        "entry:
+           %0 = mov @mr_a : i64
            %1 = call mr_write_b() : i64
            %2 = call unknown_writer(%0) : i64
            return %2"
@@ -62430,14 +62437,21 @@
           (opt-snapshot-test-ok? (clone text) (clone text) false)
           text))))
   (let
-    [text
-      "entry:
-         %0 = mov @mr_c : i64
-         %1 = call mr_write_b() : i64
-         return %0"]
-    (test.assert-true
-      (opt-snapshot-test-ok? (clone text) text true)
-      "an address-taken global preserves its snapshot")))
+    [cases
+      (array
+        "entry:
+           %0 = mov @mr_c : i64
+           return %0"
+        "entry:
+           %0 = mov @mr_c : i64
+           %1 = call mr_write_b() : i64
+           return %0")]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [text (clone (array-ref cases index))]
+        (test.assert-true
+          (opt-snapshot-test-ok? (clone text) text true)
+          "an address-taken global preserves its snapshot")))))
 
 (define (opt-snapshot-early-test-ok? [before : String] [after : String]) : bool
   (let
@@ -77387,6 +77401,7 @@
          %3 = add @mr_a, %2 : i64
          return %3")
     "snapshot cleanup leaves unrelated pre-inline definitions intact"))
+
 (define (opt-global-address-facts-case?
   [text : String]
   [stored? : bool]

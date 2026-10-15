@@ -426,8 +426,7 @@ beside the diagnostic before scratch retirement; entry reset clears them.
 Optimizer instruction-span rebuilding and backend register remapping retain the
 source decisions unchanged. Functions without SPMD allocate no site collection.
 A prepared job scans its owned expression pool once for the six source forms.
-The AST owner reads row tags through the common accessor and an immutable,
-reflected source-form lookup; no row view survives a pool change or handoff.
+It consumes each common pool-row view before any pool change or handoff.
 If no row contains one, function provenance enumeration can be skipped. The
 scan is conservative over quoted, inactive and retained rows; any such site
 keeps normal enumeration. Entry reset restores the conservative default, and

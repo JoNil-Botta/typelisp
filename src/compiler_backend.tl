@@ -63272,7 +63272,7 @@
           (compiler_optimize.opt-label-tail labels)))]))
 
 (define (compiler-backend-block-seq-label-or-empty
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]) : i64
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (compiler_ir_types.compiler-ir-label-none)
@@ -63297,8 +63297,8 @@
       (compiler-backend-peephole-predcount-bump
         counts
         (compiler_optimize.opt-cfg-block-successors-with-next
-          (& (compiler_ir_types.compiler-ir-block-seq-shared-view blocks index))
-          (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
+          (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+          (compiler-backend-block-seq-label-or-empty (& blocks) (+ index 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
 ;; blocks. SOUNDNESS-CRITICAL: such a branch does NOT lower to a clean

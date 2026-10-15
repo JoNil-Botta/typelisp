@@ -1291,11 +1291,11 @@
         : i32)
       (cast (bit-and packed-record.coordinates 65535) : i32))))
 
-;: Logical canonical record; packed storage and overflow pointers never escape.
-(defmacro (ast-expr-canonical-record-get [table : Expr] [index : Expr]) : Expr
-  `(let
+;: Decode one logical record by value; no packed or overflow pointer escapes.
+(define (ast-expr-canonical-record-get [table : i64] [index : i64]) : AstExprCanonicalSpanRecord
+  (let
     [packed-record : AstExprPackedSpanRecord
-      (ast-expr-packed-span-record-at ,table ,index)]
+      (ast-expr-packed-span-record-at table index)]
     (if (=
       (ast-expr-packed-span-record-tag packed-record)
       ast-expr-span-packed-escape-tag)
@@ -1326,10 +1326,10 @@
       record-value.owner-node
       record-value.span)))
 
-(defmacro (ast-expr-respan-record-get [table : Expr] [index : Expr]) : Expr
-  `(let
+(define (ast-expr-respan-record-get [table : i64] [index : i64]) : AstExprReSpan
+  (let
     [record-value : AstExprCanonicalSpanRecord
-      (ast-expr-canonical-record-get ,table ,index)]
+      (ast-expr-canonical-record-get table index)]
     (AstExprReSpan
       record-value.semantic-node
       record-value.owner-node

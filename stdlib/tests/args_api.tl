@@ -5,7 +5,7 @@
 (import (vector.vector String) as svec)
 (import stdlib.test)
 
-(define args-api-specs : args.ArgsOptionSpecList
+(define (args-api-specs) : args.ArgsOptionSpecList
   (args.option-spec-cons
     (args.value-option "output" "output" "o")
     (args.option-spec-cons
@@ -13,10 +13,6 @@
       (args.option-spec-cons
         (args.flag-option "verbose" "verbose" "v")
         (args.option-spec-empty)))))
-
-(define (args-api-specs-shared-view) : args.ArgsOptionSpecList
-  (unsafe
-    (ptr-read (ptr-addr-of args-api-specs))))
 
 (define (args-api-vec0) : svec.Vec
   (svec.new))
@@ -121,7 +117,7 @@
   (let
     [parsed : args.ArgsParsed
       (args-api-expect-ok
-        (args-api-parse-vec (args-api-specs-shared-view) (args-api-vec0))
+        (args-api-parse-vec (args-api-specs) (args-api-vec0))
         "empty argv should parse")]
     (args-api-assert-vec-empty
       (args.parsed-positionals (& parsed))
@@ -137,7 +133,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args-api-parse-vec
-          (args-api-specs-shared-view)
+          (args-api-specs)
           (args-api-vec3 "src.tl" "out.s" "-"))
         "positional-only argv should parse")]
     (args-api-assert-vec3
@@ -153,7 +149,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args-api-parse-vec
-          (args-api-specs-shared-view)
+          (args-api-specs)
           (args-api-vec5 "input.tl" "--verbose" "-o" "out.s" "rest"))
         "flags around positionals should parse")]
     (test.assert-true
@@ -179,7 +175,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args-api-parse-vec
-          (args-api-specs-shared-view)
+          (args-api-specs)
           (args-api-vec3 "--" "--verbose" "-o"))
         "end-of-options should parse")]
     (test.assert-i64-eq
@@ -197,9 +193,7 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args-api-parse-vec
-          (args-api-specs-shared-view)
-          (args-api-vec1 "--output"))
+        (args-api-parse-vec (args-api-specs) (args-api-vec1 "--output"))
         "missing value should fail")]
     (test.assert-true
       (args.error-missing-value? error)
@@ -214,9 +208,7 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args-api-parse-vec
-          (args-api-specs-shared-view)
-          (args-api-vec1 "--missing"))
+        (args-api-parse-vec (args-api-specs) (args-api-vec1 "--missing"))
         "unknown option should fail")]
     (test.assert-true
       (args.error-unknown-option? error)
@@ -232,7 +224,7 @@
     [parsed : args.ArgsParsed
       (args-api-expect-ok
         (args-api-parse-vec
-          (args-api-specs-shared-view)
+          (args-api-specs)
           (args-api-vec6 "-I" "inc1" "--include" "inc2" "-v" "-v"))
         "repeated options should parse")]
     (test.assert-i64-eq
@@ -253,9 +245,7 @@
   (let
     [error : args.ArgsError
       (args-api-expect-error
-        (args-api-parse-vec
-          (args-api-specs-shared-view)
-          (args-api-vec1 "--output=file"))
+        (args-api-parse-vec (args-api-specs) (args-api-vec1 "--output=file"))
         "equals spelling should be rejected in v1")]
     (test.assert-true
       (args.error-unknown-option? error)

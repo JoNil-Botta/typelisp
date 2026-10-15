@@ -36,8 +36,9 @@
           (syscall
             61
             -1
-            (process_runtime.array-i32-addr
-              (process_runtime.process-runtime-place-shared-view status))
+            (cast
+              (ptr->int (ptr-cast (__tl_array-data status) : (Ptr u8)))
+              : i64)
             1
             0))))
     (= result -10)))

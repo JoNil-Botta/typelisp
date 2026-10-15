@@ -26,7 +26,7 @@
   (search_asset.doc-site-search-client))
 
 (define (doc-local-site-search-records-from
-  [modules : doc_module_vec.Vec]
+  [modules : (& modules doc_module_vec.Vec)]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -37,16 +37,14 @@
         ",")
       (doc_html.doc-html-search-records-for-module
         "index.html"
-        (doc_render.doc-module-list-ref
-          (owned_view.compiler-owned-shared-view modules)
-          index))
+        (doc_render.doc-module-list-ref modules index))
       (doc-local-site-search-records-from modules (+ index 1) count))))
 
 (define (doc-local-site-search-records [modules : doc_module_vec.Vec]) : String
   (doc-local-site-search-records-from
-    (owned_view.compiler-owned-shared-view modules)
+    (& modules)
     0
-    (doc_render.doc-module-list-count modules)))
+    (doc_module_vec.len (& modules))))
 
 (define (doc-local-site-search-index
   [compiler-identity : (& compiler-identity str)]
@@ -74,10 +72,10 @@
     [title : String (str_cat.str-cat package-name " API")]
     (str_cat.str-cat
       (doc_html.doc-html-page-open-with-metadata
-        (owned_view.compiler-owned-shared-view title)
-        (owned_view.compiler-owned-shared-view compiler-identity)
-        (owned_view.compiler-owned-shared-view source-identity)
-        (owned_view.compiler-owned-shared-view package-identity))
+        (string.copy (& title))
+        (string.copy (& compiler-identity))
+        (string.copy (& source-identity))
+        (string.copy (& package-identity)))
       (doc_html.doc-html-header title "package documentation")
       "<p class=\"tl-doc-build-identity\">Package <code>"
       (doc_html.doc-html-escape package-identity)

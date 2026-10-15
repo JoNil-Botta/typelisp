@@ -149,18 +149,6 @@
     text)
   (ProcessBorrowedStringNil _text))
 
-;: Count a typed borrowed argv spine, saturating one past the implementation
-;: cap so validation never recurses or allocates from an unbounded count.
-(define (args-count-from
-  [args : (ProcessBorrowedStringList text)]
-  [count : i64]) : i64
-  (if (>= count process-borrowed-storage-max-count)
-    (+ process-borrowed-storage-max-count 1)
-    (match args
-      [(ProcessBorrowedStringNil _) count]
-      [(ProcessBorrowedStringCons _ rest)
-        (args-count-from (deref rest) (+ count 1))])))
-
 ;: Return the number of borrowed argv entries in `args`, saturated at one past
 ;: the implementation cap for oversized externally constructed spines.
 (define (args-count [args : (& args (ProcessBorrowedStringList text))]) : i64
@@ -179,14 +167,6 @@
             (set! cursor rest)
             (set! count (+ count 1))])))
     count))
-
-;: Walk to one borrowed argv entry without erasing its declared lifetime.
-(define (args-ref-from [args : (ProcessBorrowedStringList text)] [index : i64]) : (&
-    text
-    str)
-  (if (< index 0)
-    (io.panic "process: borrowed argument index out of bounds")
-    (args-ref (& args) index)))
 
 ;: Return the borrowed argv entry at a valid `index`. Callers must validate
 ;: indexes against `args-count`; no owned string is created.
@@ -226,15 +206,6 @@
 (define (env-empty-like [_text : (& text str)]) : (ProcessBorrowedEnvList text)
   (ProcessBorrowedEnvNil _text))
 
-;: Count a typed borrowed environment spine, saturating one past the cap.
-(define (env-count-from [env : (ProcessBorrowedEnvList text)] [count : i64]) : i64
-  (if (>= count process-borrowed-storage-max-count)
-    (+ process-borrowed-storage-max-count 1)
-    (match env
-      [(ProcessBorrowedEnvNil _) count]
-      [(ProcessBorrowedEnvCons _ _ rest)
-        (env-count-from (deref rest) (+ count 1))])))
-
 ;: Return the number of borrowed env overrides in `env`, saturated at one past
 ;: the implementation cap for oversized externally constructed spines.
 (define (env-count [env : (& env (ProcessBorrowedEnvList text))]) : i64
@@ -253,13 +224,6 @@
             (set! cursor rest)
             (set! count (+ count 1))])))
     count))
-
-;: Walk to one typed environment node.
-(define (env-entry-ref-from [env : (ProcessBorrowedEnvList text)] [index : i64]) : (ProcessBorrowedEnvEntry
-    text)
-  (if (< index 0)
-    (io.panic "process: borrowed environment index out of bounds")
-    (env-entry-ref (& env) index)))
 
 ;: Return a borrowed environment entry at a valid `index`.
 (define (env-entry-ref
@@ -376,17 +340,6 @@
 (define (string-owned [value : (& value str)]) : String
   (string.substring value 0 (string-length value)))
 
-;: Copy one typed borrowed argv spine into right-sized owned storage.
-(define (args-owned-fill
-  [args : (ProcessBorrowedStringList text)]
-  [slots : (&mut slots (__tl_dyn-array String))]
-  [index : i64]) : unit
-  (match args
-    [(ProcessBorrowedStringNil _) unit]
-    [(ProcessBorrowedStringCons value rest)
-      (set! (array-ref slots index) (string-owned value))
-      (args-owned-fill (deref rest) slots (+ index 1))]))
-
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (args-owned [args : (& args (ProcessBorrowedStringList text))]) : process.ProcessStringList
   (let
@@ -406,19 +359,6 @@
               (set! cursor rest)
               (set! index (+ index 1))]))
         (process.ProcessStringList slots)))))
-
-;: Copy one typed borrowed environment spine into parallel owned storage.
-(define (env-owned-fill
-  [env : (ProcessBorrowedEnvList text)]
-  [names : (&mut names (__tl_dyn-array String))]
-  [values : (&mut values (__tl_dyn-array String))]
-  [index : i64]) : unit
-  (match env
-    [(ProcessBorrowedEnvNil _) unit]
-    [(ProcessBorrowedEnvCons name value rest)
-      (set! (array-ref names index) (string-owned name))
-      (set! (array-ref values index) (string-owned value))
-      (env-owned-fill (deref rest) names values (+ index 1))]))
 
 ;: Copy borrowed env storage to the owned process env representation.
 (define (env-owned [env : (& env (ProcessBorrowedEnvList text))]) : process.ProcessEnvList

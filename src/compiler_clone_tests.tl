@@ -11,7 +11,7 @@
 (import compiler_ctfe as ctfe)
 (import stdlib.iterator)
 (import stdlib.io)
-(import stdlib.byte_buf as byte_buf)
+(import stdlib.byte_buf)
 (import stdlib.test)
 
 (define (clone-root-entries-empty) : clone_support.CloneRootEntries

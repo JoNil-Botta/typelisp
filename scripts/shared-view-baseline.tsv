@@ -1,4 +1,4 @@
 # Call uses of `*-shared-view*` identifiers in src/ and stdlib/ (definitions
 # excluded) that scripts/check-shared-view-count.sh allows. A change that
 # removes views lowers max_uses to the new count; never raise it.
-max_uses	20398
+max_uses	20187

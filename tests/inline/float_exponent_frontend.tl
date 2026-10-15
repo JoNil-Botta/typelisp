@@ -24,51 +24,44 @@
 (define (fe-lex-float-token-ok? [src : String] [expected : String]) : bool
   (match (lx.result src)
     [(Ok toks)
-      (let
-        [value : tk.Token (lx.array-shared-view toks 0)]
-        [end : tk.Token (lx.array-shared-view toks 1)]
-        (and
-          (= (tk.tag (lx.global-shared-view value)) (tk.tag-float))
-          (string.eq (tk.float value) expected)
-          (= (tk.tag end) (tk.tag-end))))]
+      (and
+        (= (tk.tag-ref (& (array-ref toks 0))) (tk.tag-float))
+        (string.eq (tk.float (& (array-ref toks 0))) expected)
+        (= (tk.tag-ref (& (array-ref toks 1))) (tk.tag-end)))]
     [(Err _) false]))
 
 (define (fe-lex-spanned-float-token-ok? [src : String] [expected : String]) : bool
   (match (lx.spanned-result (& src))
     [(Ok toks)
-      (let
-        [value : tk.Token (tk.spanned-token-tok (lx.array-shared-view toks 0))]
-        [end : tk.Token (tk.spanned-token-tok (lx.array-shared-view toks 1))]
-        (and
-          (= (tk.tag (lx.global-shared-view value)) (tk.tag-float))
-          (string.eq (tk.float value) expected)
-          (= (tk.tag end) (tk.tag-end))))]
+      (and
+        (=
+          (tk.tag-ref (tk.spanned-token-token-ref (& (array-ref toks 0))))
+          (tk.tag-float))
+        (string.eq
+          (tk.float (tk.spanned-token-token-ref (& (array-ref toks 0))))
+          expected)
+        (=
+          (tk.tag-ref (tk.spanned-token-token-ref (& (array-ref toks 1))))
+          (tk.tag-end)))]
     [(Err _) false]))
 
 (define (fe-lex-prefix-and-symbol-ok?) : bool
   (and
     (match (lx.result "0x1e5")
       [(Ok toks)
-        (let
-          [value : tk.Token (lx.array-shared-view toks 0)]
-          [end : tk.Token (lx.array-shared-view toks 1)]
-          (and
-            (= (tk.tag (lx.global-shared-view value)) (tk.tag-int))
-            (= (tk.int value) 485)
-            (= (tk.tag end) (tk.tag-end))))]
+        (and
+          (= (tk.tag-ref (& (array-ref toks 0))) (tk.tag-int))
+          (= (tk.int (& (array-ref toks 0))) 485)
+          (= (tk.tag-ref (& (array-ref toks 1))) (tk.tag-end)))]
       [(Err _) false])
     (match (lx.result "example value")
       [(Ok toks)
-        (let
-          [first : tk.Token (lx.array-shared-view toks 0)]
-          [second : tk.Token (lx.array-shared-view toks 1)]
-          [end : tk.Token (lx.array-shared-view toks 2)]
-          (and
-            (= (tk.tag (lx.global-shared-view first)) (tk.tag-sym))
-            (string.eq (tk.sym first) "example")
-            (= (tk.tag (lx.global-shared-view second)) (tk.tag-sym))
-            (string.eq (tk.sym second) "value")
-            (= (tk.tag end) (tk.tag-end))))]
+        (and
+          (= (tk.tag-ref (& (array-ref toks 0))) (tk.tag-sym))
+          (reader_tests.token-sym-eq? (& toks) 0 "example")
+          (= (tk.tag-ref (& (array-ref toks 1))) (tk.tag-sym))
+          (reader_tests.token-sym-eq? (& toks) 1 "value")
+          (= (tk.tag-ref (& (array-ref toks 2))) (tk.tag-end)))]
       [(Err _) false])))
 
 (define (fe-lex-malformed-exponents-ok?) : bool
@@ -167,9 +160,7 @@
     [(Ok _) false]
     [(Err err)
       (and
-        (string.eq
-          (ft.format-source-error-message (lx.global-shared-view err))
-          expected)
+        (string.eq (& err.message) expected)
         (format_tests.format-source-span-eq?
           (ft.format-source-error-span err)
           line
@@ -214,9 +205,7 @@
     [(Ok _) false]
     [(Err err)
       (and
-        (string.eq
-          (ft.format-source-error-message (lx.global-shared-view err))
-          "format lexer: malformed number literal")
+        (string.eq (& err.message) "format lexer: malformed number literal")
         (let
           [span : ft.FormatSourceSpan (ft.format-source-error-span err)]
           (format_tests.format-source-span-eq? span line col line col)))]))
@@ -292,7 +281,7 @@
       (format_tests.format-rules-render-source-width source 80)]
     [fixpoint : String
       (format_tests.format-rules-render-source-width
-        (lx.global-shared-view formatted)
+        (string.copy (& formatted))
         80)]
     (fe-assert
       (string.eq formatted expected)

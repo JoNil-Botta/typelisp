@@ -14,6 +14,12 @@
 ;# benchmark was written for, and its checked C rows stay as measured (#8234).
 ;# The TypeLisp/C ratio of this row therefore compares an inlined loop against
 ;# a call-crossing one.
+;#
+;# The read field is a runtime input on both sides (#8914), so no pass can fold
+;# the reads to a constant. Inlined, the reads are forwarded from the store
+;# that initializes the pair, across the writes to the disjoint pair, into one
+;# register; if that disjointness proof were lost, the loop would reload the
+;# field after every write.
 (import stdlib.io)
 
 (defstruct BorrowedPair
@@ -60,7 +66,9 @@
 
 (define (main) : i64
   (let
-    [left : BorrowedPair (BorrowedPair 17 0)]
+    ;; The read field is a runtime input: 16 plus the argument count, 17 for
+    ;; the benchmark's bare run, so no pass can fold the reads to a constant.
+    [left : BorrowedPair (BorrowedPair (+ 16 (io.arg-count)) 0)]
     [right : BorrowedPair (BorrowedPair 23 0)]
     [iterations : i64
       (+ borrowed-disjoint-store-base-iterations (io.arg-count))]

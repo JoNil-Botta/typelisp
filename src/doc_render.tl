@@ -21,8 +21,10 @@
 (define (doc-module-list-count [modules : doc_module_vec.Vec]) : i64
   (doc_module_vec.len (& modules)))
 
-(define (doc-module-list-ref [modules : doc_module_vec.Vec] [index : i64]) : DocModule
-  (doc_module_vec.get (& modules) index (doc-module-fallback)))
+(define (doc-module-list-ref
+  [modules : (& modules doc_module_vec.Vec)]
+  [index : i64]) : DocModule
+  (doc_module_vec.get modules index (doc-module-fallback)))
 
 (define (doc-module-list-append-from
   [out : (&mut out doc_module_vec.Vec)]
@@ -31,9 +33,7 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (doc_module_vec.push-ref!
-      out
-      (doc-module-list-ref (owned_view.compiler-owned-shared-view src) index))
+    (doc_module_vec.push-ref! out (doc-module-list-ref (& src) index))
     (doc-module-list-append-from out src (+ index 1) count)))
 
 (define (doc-module-list-append
@@ -299,10 +299,7 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-module-nav-item
-        (doc-module-list-ref
-          (owned_view.compiler-owned-shared-view modules)
-          index))
+      (doc-render-module-nav-item (doc-module-list-ref (& modules) index))
       (doc-render-module-nav-from modules (+ index 1) count))))
 
 (define (doc-render-module-nav [modules : doc_module_vec.Vec]) : String
@@ -336,10 +333,7 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-module-section
-        (doc-module-list-ref
-          (owned_view.compiler-owned-shared-view modules)
-          index))
+      (doc-render-module-section (doc-module-list-ref (& modules) index))
       (doc-render-module-sections-from modules (+ index 1) count))))
 
 (define (doc-render-module-sections [modules : doc_module_vec.Vec]) : String

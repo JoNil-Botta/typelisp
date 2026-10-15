@@ -828,9 +828,7 @@
     ""
     (str_cat.str-cat
       (doc-html-module-nav-entry
-        (doc_render.doc-module-list-ref
-          (owned_view.compiler-owned-shared-view modules)
-          index))
+        (doc_render.doc-module-list-ref (& modules) index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
 (define (doc-html-module-nav-entries [modules : doc_module_vec.Vec]) : String
@@ -904,9 +902,7 @@
     ""
     (str_cat.str-cat
       (doc-html-module-section
-        (doc_render.doc-module-list-ref
-          (owned_view.compiler-owned-shared-view modules)
-          index))
+        (doc_render.doc-module-list-ref (& modules) index))
       (doc-html-module-sections-from modules (+ index 1) count))))
 
 (define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String

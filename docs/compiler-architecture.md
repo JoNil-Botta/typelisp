@@ -1303,7 +1303,10 @@ inner source view as a temporary `AstExpr` value, so the operand keeps its
 whole-expression diagnostic span without another pooled row. Every other
 caller-origin marker keeps -1 and is checked as before, including the markers
 the CTFE route builds over a binding clause's initializer, which also sit over
-a bare node. Capture retains the inner `Spanned` row, under a -1 marker, above
+a bare node. When that initializer is a compact marker's `Spanned` view (a
+captured operand spliced into another macro's binding clause), the initializer
+marker wraps the view rather than the compact marker under it, so the operand
+is still checked through its view. Capture retains the inner `Spanned` row, under a -1 marker, above
 calls, nested source views and expansion markers, where its immediate position
 identifies a call frame or distinct source span. Jobs with a semantic observer
 (only the semantic lint facts collector, `compiler_semantic_lint_facts.tl`,

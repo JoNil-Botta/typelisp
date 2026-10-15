@@ -3154,13 +3154,23 @@
               backend-state
               typecheck-state
               lower-state))]
+        ;; Object data records can borrow string headers from opt0 lower IR.
+        ;; Detach the returned image before retiring that exact source owner.
+        [owned-out : ResultCompilerDriverObject
+          (if (= opt-level 0)
+            (match out
+              [(Ok image advisories) (Ok (clone image) advisories)]
+              [(Unavailable category advisories)
+                (Unavailable category advisories)]
+              [(Err diag advisories) (Err diag advisories)])
+            out)]
         (if (= opt-level 0)
           (compiler-driver-retire-lowered-source-arena!)
           unit)
         (compiler-driver-release-lower-arenas-after-emit! lower-state)
         (compiler_ast_types.ast-node-pool-reader-clear!)
         (compiler-driver-restore-frontend-return-arena!)
-        out)]
+        owned-out)]
     [(Err diag advisories)
       (compiler-driver-restore-frontend-return-arena!)
       (Err diag advisories)]))
@@ -3213,13 +3223,24 @@
               backend-state
               typecheck-state
               lower-state))]
+        ;; Object data records can borrow string headers from opt0 lower IR.
+        ;; Detach the returned image before retiring that exact source owner.
+        [owned-out : ResultCompilerDriverPackageRuntime
+          (if (= opt-level 0)
+            (match out
+              [(Object image assembly advisories)
+                (Object (clone image) assembly advisories)]
+              [(Assembly assembly category advisories)
+                (Assembly assembly category advisories)]
+              [(Err diag advisories) (Err diag advisories)])
+            out)]
         (if (= opt-level 0)
           (compiler-driver-retire-lowered-source-arena!)
           unit)
         (compiler-driver-release-lower-arenas-after-emit! lower-state)
         (compiler_ast_types.ast-node-pool-reader-clear!)
         (compiler-driver-restore-frontend-return-arena!)
-        out)]
+        owned-out)]
     [(Err diag advisories)
       (compiler-driver-restore-frontend-return-arena!)
       (Err diag advisories)]))

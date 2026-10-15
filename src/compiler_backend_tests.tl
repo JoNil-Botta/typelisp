@@ -38670,10 +38670,46 @@ b_keep:
           (backend.compiler-backend-emit-program-object-image-linux
             program
             spans)]
+        [owned-result : backend.ResultCompilerBackendObject
+          (match result
+            [(Ok image) (Ok (clone image))]
+            [(Err diag) (Err diag)])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))
-        result)]
+        owned-result)]
     [(Err diag) (Err diag)]))
+
+(define (compiler-backend-owned-object-string-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-source-object-image-for-target
+    "(extern (sink [value : String]) : i64)
+(define (main) : i64 (sink \"lower-owned-object-payload\"))"
+    target)
+    [(Ok image)
+      (let
+        [_next-job : backend.ResultCompilerBackend
+          (backend.compiler-backend-emit-source "(define (main) : i64 42)")]
+        (and
+          (compiler-object-section-contains-string?
+            image.sections
+            Rodata
+            "lower-owned-object-payload")
+          (match (object_asm.compiler-object-asm-render image)
+            [(Ok assembly)
+              (string.contains
+                (& assembly)
+                "    .byte 0x6c,0x6f,0x77,0x65,0x72,0x2d,0x6f,0x77,0x6e,0x65,0x64,0x2d,0x6f,0x62,0x6a,0x65\n    .byte 0x63,0x74,0x2d,0x70,0x61,0x79,0x6c,0x6f,0x61,0x64\n    .byte 0\n")]
+            [(Err _) false])))]
+    [(Err _) false]))
+
+(test
+  backend-owned-object-string-lifetime
+  (unless
+    (and
+      (compiler-backend-owned-object-string-ok? Linux)
+      (compiler-backend-owned-object-string-ok? Windows))
+    (io.panic
+      "object strings must survive lower retirement and a later source job")))
 
 (define (compiler-backend-test-symbol [name : String]) : i64
   (ir.compiler-ir-test-symbol name))

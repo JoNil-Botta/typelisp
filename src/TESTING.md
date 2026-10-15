@@ -330,6 +330,10 @@ stays live. Run these at opt0/1/2. Lower-test helpers that keep function IR copy
 it into their test arena before releasing the source lower owner; an extracted
 sequence must not outlive its arena. Keep buffered output alive through its
 final render/write and preserve the mainless-module opt0 symbol check.
+`backend-owned-object-string-lifetime` checks that returned Linux and Windows
+object images retain their exact string data and rendered bytes after lower IR
+retirement and a subsequent source compilation. Package build/run fixtures also
+consume opt0 object images after that retirement boundary.
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`
 checks explicit type-index growth with an installed decoy, colliding hashes,

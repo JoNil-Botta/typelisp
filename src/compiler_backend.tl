@@ -91924,9 +91924,13 @@ tl_shared_object_init:
             target
             spans
             true)]
+        [owned-result : ResultCompilerBackendObject
+          (match result
+            [(Ok image) (Ok (clone image))]
+            [(Err diag) (Err diag)])]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
-        result)]
+        owned-result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-string-prefix-at?

@@ -434,6 +434,8 @@ Lower scratch ends after lowering. At opt1/2 the original function IR can end
 after optimizer copy-out; at opt0 it lasts through the final IR consumer.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
+Owned object-result adapters detach the image before retiring opt0 lower IR:
+data records can retain string headers allocated with the original functions.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to

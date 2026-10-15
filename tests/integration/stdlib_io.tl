@@ -8,18 +8,17 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 
-(define io-smoke-path : String
+(define (io-smoke-path) : String
   "target/stdlib_io_smoke_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
-(define io-absent-path : String
-  "target/stdlib_io_absent_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
-(define io-missing-parent-path : String
-  "target/stdlib_io_missing_parent_long_path_copy_helper_payload/out.txt")
-(define io-binary-path : String
-  "target/stdlib_io_binary_round_trip.bin")
 
-(defmacro (io-smoke-global-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
+(define (io-absent-path) : String
+  "target/stdlib_io_absent_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
+
+(define (io-missing-parent-path) : String
+  "target/stdlib_io_missing_parent_long_path_copy_helper_payload/out.txt")
+
+(define (io-binary-path) : String
+  "target/stdlib_io_binary_round_trip.bin")
 
 (define (read-result-score [result : ResultIoBytes]) : i64
   (match result
@@ -80,12 +79,9 @@
             (make-u8 0))
           (make-u8 128))
         (make-u8 255))]
-    (io.write-file
-      (io-smoke-global-shared-view io-binary-path)
-      (byte_buf.as-bytes (& payload)))
+    (io.write-file (io-binary-path) (byte_buf.as-bytes (& payload)))
     (let
-      [readback : byte_buf.ByteBuf
-        (io.read-file (io-smoke-global-shared-view io-binary-path))]
+      [readback : byte_buf.ByteBuf (io.read-file (io-binary-path))]
       (and
         (= (byte_buf.len readback) 4)
         (= (byte_buf.ref readback 0) (make-u8 65))
@@ -94,62 +90,36 @@
         (= (byte_buf.ref readback 3) (make-u8 255))))))
 
 (define (main) : i64
-  (test-try-write-file (io-smoke-global-shared-view io-smoke-path) "alpha")
+  (test-try-write-file (io-smoke-path) "alpha")
   (unless
-    (=
-      (read-result-score
-        (test-try-read-file (io-smoke-global-shared-view io-smoke-path)))
-      1)
+    (= (read-result-score (test-try-read-file (io-smoke-path))) 1)
     (return 80))
   (unless
-    (=
-      (read-result-score
-        (test-try-read-file (io-smoke-global-shared-view io-absent-path)))
-      2)
+    (= (read-result-score (test-try-read-file (io-absent-path))) 2)
     (return 70))
   (unless (= (write-result-score (test-try-write-file "" "bad")) 4) (return 60))
   (unless
     (=
-      (write-result-score
-        (test-try-write-file
-          (io-smoke-global-shared-view io-missing-parent-path)
-          "bad"))
+      (write-result-score (test-try-write-file (io-missing-parent-path) "bad"))
       5)
     (return 57))
   (unless
-    (=
-      (bool-result-score
-        (test-try-file-exists? (io-smoke-global-shared-view io-smoke-path)))
-      6)
+    (= (bool-result-score (test-try-file-exists? (io-smoke-path))) 6)
     (return 56))
   (unless
-    (=
-      (bool-result-score
-        (test-try-file-exists? (io-smoke-global-shared-view io-absent-path)))
-      7)
+    (= (bool-result-score (test-try-file-exists? (io-absent-path))) 7)
     (return 55))
   (unless
-    (string.eq
-      (test-read-file-or (io-smoke-global-shared-view io-smoke-path) "MISS")
-      "alpha")
+    (string.eq (test-read-file-or (io-smoke-path) "MISS") "alpha")
     (return 50))
   (unless
-    (string.eq
-      (test-read-file-or (io-smoke-global-shared-view io-absent-path) "MISS")
-      "MISS")
+    (string.eq (test-read-file-or (io-absent-path) "MISS") "MISS")
     (return 40))
-  (test-append-file (io-smoke-global-shared-view io-smoke-path) "-beta")
+  (test-append-file (io-smoke-path) "-beta")
   (unless
-    (string.eq
-      (byte_buf.to-string
-        (io.read-file (io-smoke-global-shared-view io-smoke-path)))
-      "alpha-beta")
+    (string.eq (byte_buf.to-string (io.read-file (io-smoke-path))) "alpha-beta")
     (return 30))
-  (unless
-    (test-file-nonempty? (io-smoke-global-shared-view io-smoke-path))
-    (return 20))
-  (when
-    (test-file-nonempty? (io-smoke-global-shared-view io-absent-path))
-    (return 10))
+  (unless (test-file-nonempty? (io-smoke-path)) (return 20))
+  (when (test-file-nonempty? (io-absent-path)) (return 10))
   (unless (binary-round-trip-ok?) (return 9))
   42)

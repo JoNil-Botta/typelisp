@@ -154,12 +154,12 @@
 (define (serialize-home-value-ok? [value : toy.Value]) : bool
   (serialize-address-value-city-ok? value "London"))
 
-(define (serialize-scores-value-ok? [value : toy.Value]) : bool
+(define (serialize-scores-value-ok? [value : (& value toy.Value)]) : bool
   (match value
     [(Sequence items)
       (and
-        (= (toy.value-list-count (__tl-box-place items)) 3)
-        (match (toy.value-list-get (__tl-box-place items) 2)
+        (= (toy.value-list-count items) 3)
+        (match (toy.value-list-get items 2)
           [(Found item)
             (match item
               [(Int found) (= found 6)]
@@ -167,12 +167,12 @@
           [(Missing) false]))]
     [_ false]))
 
-(define (serialize-samples-value-ok? [value : toy.Value]) : bool
+(define (serialize-samples-value-ok? [value : (& value toy.Value)]) : bool
   (match value
     [(Sequence items)
       (and
-        (= (toy.value-list-count (__tl-box-place items)) 2)
-        (match (toy.value-list-get (__tl-box-place items) 1)
+        (= (toy.value-list-count items) 2)
+        (match (toy.value-list-get items 1)
           [(Found item)
             (match item
               [(Int found) (= found 8)]
@@ -180,12 +180,12 @@
           [(Missing) false]))]
     [_ false]))
 
-(define (serialize-previous-value-ok? [value : toy.Value]) : bool
+(define (serialize-previous-value-ok? [value : (& value toy.Value)]) : bool
   (match value
     [(Sequence items)
       (and
-        (= (toy.value-list-count (__tl-box-place items)) 2)
-        (match (toy.value-list-get (__tl-box-place items) 1)
+        (= (toy.value-list-count items) 2)
+        (match (toy.value-list-get items 1)
           [(Found item) (serialize-address-value-city-ok? item "Paris")]
           [(Missing) false]))]
     [_ false]))
@@ -271,19 +271,19 @@
     (box (toy.field-list-prepend "tag" (Text "Idle") (toy.field-list-empty)))))
 
 (define (serialize-enum-object-tag-and-payload-count-ok?
-  [value : toy.Value]
+  [value : (& value toy.Value)]
   [expected-tag : String]
   [expected-count : i64]) : bool
   (match value
     [(Object fields)
       (and
-        (match (toy.field-list-get (__tl-box-place fields) "tag")
+        (match (toy.field-list-get fields "tag")
           [(Found tag-value)
             (match tag-value
               [(Text found) (string.eq found expected-tag)]
               [_ false])]
           [(Missing) false])
-        (match (toy.field-list-get (__tl-box-place fields) "payload")
+        (match (toy.field-list-get fields "payload")
           [(Found payload-value)
             (match payload-value
               [(Sequence items)
@@ -327,12 +327,12 @@
           [(Missing) false]))]
     [_ false]))
 
-(define (serialize-status-value-ok? [value : toy.Value]) : bool
-  (match (toy.toy-shared-view value)
+(define (serialize-status-value-ok? [value : (& value toy.Value)]) : bool
+  (match value
     [(Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Moved" 2)
-        (match (toy.field-list-get (__tl-box-place fields) "payload")
+        (match (toy.field-list-get fields "payload")
           [(Found payload) (serialize-status-payload-value-ok? payload)]
           [(Missing) false]))]
     [_ false]))
@@ -347,12 +347,12 @@
         [_ false])]
     [(Missing) false]))
 
-(define (serialize-status-wide-value-ok? [value : toy.Value]) : bool
-  (match (toy.toy-shared-view value)
+(define (serialize-status-wide-value-ok? [value : (& value toy.Value)]) : bool
+  (match value
     [(Object fields)
       (and
         (serialize-enum-object-tag-and-payload-count-ok? value "Wide" 9)
-        (match (toy.field-list-get (__tl-box-place fields) "payload")
+        (match (toy.field-list-get fields "payload")
           [(Found payload)
             (match payload
               [(Sequence items)
@@ -455,10 +455,12 @@
 (define (serialize-i64-root-roundtrip-ok?) : bool
   (let
     [encoded : toy.Value (i64_ser.encode 42)]
-    (and
-      (match (toy.toy-shared-view encoded)
+    [shape-ok : bool
+      (match (& encoded)
         [(Int found) (= found 42)]
-        [_ false])
+        [_ false])]
+    (and
+      shape-ok
       (match (i64_ser.decode encoded)
         [(Ok parsed) (= parsed 42)]
         [(Err _) false]))))
@@ -467,8 +469,9 @@
   (let
     [scores : (Array i64 3) (array 4 5 6)]
     [encoded : toy.Value (fixed_i64_ser.encode scores)]
+    [shape-ok : bool (serialize-scores-value-ok? (& encoded))]
     (and
-      (serialize-scores-value-ok? (toy.toy-shared-view encoded))
+      shape-ok
       (match (fixed_i64_ser.decode encoded)
         [(Ok parsed) (serialize-scores-ok? parsed)]
         [(Err _) false]))))
@@ -477,8 +480,9 @@
   (let
     [samples : (__tl_dyn-array i64) (serialize-make-samples)]
     [encoded : toy.Value (dyn_i64_ser.encode samples)]
+    [shape-ok : bool (serialize-samples-value-ok? (& encoded))]
     (and
-      (serialize-samples-value-ok? (toy.toy-shared-view encoded))
+      shape-ok
       (match (dyn_i64_ser.decode encoded)
         [(Ok parsed) (serialize-samples-ok? parsed)]
         [(Err _) false]))))
@@ -487,8 +491,9 @@
   (let
     [previous : (Array Address 2) (serialize-previous-addresses)]
     [encoded : toy.Value (address_array_ser.encode previous)]
+    [shape-ok : bool (serialize-previous-value-ok? (& encoded))]
     (and
-      (serialize-previous-value-ok? (toy.toy-shared-view encoded))
+      shape-ok
       (match (address_array_ser.decode encoded)
         [(Ok parsed) (serialize-previous-ok? parsed)]
         [(Err _) false]))))
@@ -496,18 +501,20 @@
 (define (serialize-tuple-i64-root-roundtrip-ok?) : bool
   (let
     [encoded : toy.Value (tuple_i64_i64_ser.encode (tuple 11 12))]
-    (and
-      (match (toy.toy-shared-view encoded)
+    [shape-ok : bool
+      (match (& encoded)
         [(Sequence items)
           (and
-            (= (toy.value-list-count (& (__tl-box-place items))) 2)
-            (match (toy.value-list-get (& (__tl-box-place items)) 0)
+            (= (toy.value-list-count items) 2)
+            (match (toy.value-list-get items 0)
               [(Found first)
                 (match first
                   [(Int value) (= value 11)]
                   [_ false])]
               [(Missing) false]))]
-        [_ false])
+        [_ false])]
+    (and
+      shape-ok
       (match (tuple_i64_i64_ser_again.decode encoded)
         [(Ok parsed) (serialize-tuple-pair-ok? parsed 11 12)]
         [(Err _) false]))))
@@ -575,8 +582,9 @@
   (let
     [status : enum_fixture.Status (enum_fixture.moved)]
     [encoded : toy.Value (status_ser.encode status)]
+    [shape-ok : bool (serialize-status-value-ok? (& encoded))]
     (and
-      (serialize-status-value-ok? (toy.toy-shared-view encoded))
+      shape-ok
       (match (status_ser.decode encoded)
         [(Ok parsed) (enum_fixture.moved? parsed)]
         [(Err _) false]))))
@@ -585,8 +593,9 @@
   (let
     [status : enum_fixture.Status (enum_fixture.wide)]
     [encoded : toy.Value (status_ser.encode status)]
+    [shape-ok : bool (serialize-status-wide-value-ok? (& encoded))]
     (and
-      (serialize-status-wide-value-ok? (toy.toy-shared-view encoded))
+      shape-ok
       (match (status_ser.decode encoded)
         [(Ok parsed) (enum_fixture.wide? parsed)]
         [(Err _) false]))))

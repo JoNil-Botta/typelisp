@@ -323,8 +323,8 @@ opt0/1/2.
 
 `compiler_driver_base_transients_smoke.tl` checks lazy lower scratch/IR roots,
 fresh-driver isolation while another job has live arenas, growth beyond the
-initial chunk, release while a different arena is current, repeated release
-and reuse. The post-lower owner fixture preserves both jobs' alias facts,
+initial chunk, controlled-error cleanup, release while a different arena is
+current, opt-level retirement, repeated release and reuse. The post-lower owner fixture preserves both jobs' alias facts,
 releases only A's scratch, and reads B's scratch afterward while A's escaped IR
 stays live. Run these at opt0/1/2. Lower-test helpers that keep function IR copy
 it into their test arena before releasing the source lower owner; an extracted

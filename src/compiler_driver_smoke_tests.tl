@@ -988,8 +988,8 @@
                 [pools-b : ast.AstNodePoolContext
                   (ast.ast-node-pool-context-clone-types-only pools-a)]
                 [arenas-b : lower.CompilerLowerArenaState
-                  (driver.compiler-driver-state-owned-lower-arenas
-                    (owned_view.compiler-owned-shared-view state-b))]
+                  (lower.compiler-lower-state-arenas
+                    (driver.compiler-driver-state-owned-lower-state state-b))]
                 [program-b : compiler_ir_types.CompilerIrProgram
                   (match (compiler_ir_types.compiler-ir-clone-program-shell
                     pools-b
@@ -1185,8 +1185,8 @@
     [arenas-a : lower.CompilerLowerArenaState
       (lower.compiler-lower-state-arenas lower-owner-a)]
     [arenas-b : lower.CompilerLowerArenaState
-      (driver.compiler-driver-state-owned-lower-arenas
-        (owned_view.compiler-owned-shared-view state-b))]
+      (lower.compiler-lower-state-arenas
+        (driver.compiler-driver-state-owned-lower-state state-b))]
     [macro-a : tc.TcMacroState (tc.tc-job-state-macro-state job-a)]
     [macro-b : tc.TcMacroState (tc.tc-job-state-macro-state job-b)]
     (driver.compiler-driver-state-install-pools! state-a)
@@ -1322,11 +1322,11 @@
     [restore-load : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-active-session-state-shared-view)]
     [lower-a : lower.CompilerLowerArenaState
-      (driver.compiler-driver-state-owned-lower-arenas
-        (owned_view.compiler-owned-shared-view state-a))]
+      (lower.compiler-lower-state-arenas
+        (driver.compiler-driver-state-owned-lower-state state-a))]
     [lower-b : lower.CompilerLowerArenaState
-      (driver.compiler-driver-state-owned-lower-arenas
-        (owned_view.compiler-owned-shared-view state-b))]
+      (lower.compiler-lower-state-arenas
+        (driver.compiler-driver-state-owned-lower-state state-b))]
     [empty? : bool
       (and
         (= (lower.compiler-lower-arena-state-scratch-arena lower-a) 0)
@@ -1338,8 +1338,8 @@
     [fresh : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [fresh-arenas : lower.CompilerLowerArenaState
-      (driver.compiler-driver-state-owned-lower-arenas
-        (owned_view.compiler-owned-shared-view fresh))]
+      (lower.compiler-lower-state-arenas
+        (driver.compiler-driver-state-owned-lower-state fresh))]
     [fresh? : bool
       (and
         (= (lower.compiler-lower-arena-state-scratch-arena fresh-arenas) 0)
@@ -1379,6 +1379,43 @@
             (unsafe
               (ptr-read (int->ptr a-word : (Ptr i64))))
             71))]
+      [failure-cleaned? : bool
+        (begin
+          (lower.compiler-lower-arena-state-ensure-scratch! fresh-arenas)
+          (lower.compiler-lower-arena-state-ensure-ir! fresh-arenas)
+          (match (lower.lower-standalone-result
+            (driver.compiler-driver-state-owned-lower-state fresh)
+            (Err
+              (box
+                (cdiag.compiler-diagnostic-at-start
+                  "<controlled-lower-error>"
+                  "lower: controlled failure"))))
+            [(Err diag)
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (deref diag))
+                  "lower: controlled failure")
+                (=
+                  (lower.compiler-lower-arena-state-scratch-arena fresh-arenas)
+                  0)
+                (= (lower.compiler-lower-arena-state-ir-arena fresh-arenas) 0)
+                (=
+                  (lower.compiler-lower-arena-state-scratch-arena lower-a)
+                  a-scratch)
+                (= (lower.compiler-lower-arena-state-ir-arena lower-a) a-ir)
+                (=
+                  (lower.compiler-lower-arena-state-scratch-arena lower-b)
+                  b-scratch)
+                (= (lower.compiler-lower-arena-state-ir-arena lower-b) b-ir)
+                (=
+                  (unsafe
+                    (ptr-read (int->ptr a-word : (Ptr i64))))
+                  71)
+                (=
+                  (unsafe
+                    (ptr-read (int->ptr b-word : (Ptr i64))))
+                  93))]
+            [_ false]))]
       [opt0-kept? : bool
         (begin
           (driver.compiler-driver-release-lowered-ir!
@@ -1458,6 +1495,7 @@
           (compiler_load.compiler-load-session-state-restore! restore-load)
           (and
             grown?
+            failure-cleaned?
             opt0-kept?
             opt1-isolated?
             opt2-isolated?

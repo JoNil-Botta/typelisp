@@ -283,11 +283,7 @@
       [front : TextBufChunkList]
       [back : TextBufChunkList]) : TextBufChunkList
       (let
-        [front-count : i64
-          (stdlib.text_buf.chunk-count
-            (unsafe
-              (ptr-read (ptr-addr-of front)))
-            0)]
+        [front-count : i64 (stdlib.text_buf.chunk-count (& front) 0)]
         [items : (__tl_dyn-array String) (__tl_make-array String front-count)]
         [result : TextBufChunkList back]
         [index : i64 0]
@@ -315,7 +311,7 @@
             (TextBuf
               (stdlib.text_buf.chunk-list-concat right.chunks left.chunks)
               (+ left-len right-len))))))
-    (define (chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
+    (define (chunk-count [chunks : (& chunks TextBufChunkList)] [count : i64]) : i64
       (match chunks
         [(TextBufChunkNil) count]
         [(TextBufChunkInline _) (+ count 1)]
@@ -844,11 +840,7 @@
       [tail-text : String]
       [tail-borrowed? : bool]) : (TextBufBorrowedChunkList text)
       (let
-        [count : i64
-          (match (& prefix)
-            [(text_buf.TextBufChunkNil) 0]
-            [(text_buf.TextBufChunkInline _) 1]
-            [(text_buf.TextBufChunkDense _ visible-count) visible-count])]
+        [count : i64 (text_buf.chunk-count (& prefix) 0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
@@ -943,11 +935,7 @@
       (string.substring (& text) 0 (string-length text)))
     (define (text-buf-borrowed-copy-prefix [prefix : text_buf.TextBufChunkList]) : text_buf.TextBufChunkList
       (let
-        [count : i64
-          (match (& prefix)
-            [(text_buf.TextBufChunkNil) 0]
-            [(text_buf.TextBufChunkInline _) 1]
-            [(text_buf.TextBufChunkDense _ visible-count) visible-count])]
+        [count : i64 (text_buf.chunk-count (& prefix) 0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]

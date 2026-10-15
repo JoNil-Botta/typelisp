@@ -315,7 +315,7 @@
   [boxed-self : bool]) : bool
   (match (ast.ast-node-pool-context-expr-get pools id)
     [(Spanned inner _) (clone-test-tail-operation? pools inner boxed-self)]
-    [(BoxGet inner)
+    [(or (BoxGet inner) (BoxTake inner))
       (and boxed-self (clone-test-tail-operation? pools inner false))]
     [(Var name) (and (not boxed-self) (string.eq (ci.intern-str name) "tail"))]
     [_ false]))

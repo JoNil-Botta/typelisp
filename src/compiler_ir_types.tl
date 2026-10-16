@@ -4125,7 +4125,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [param : (& CompilerIrSpmdPrivateParam)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view param)
+  (match param
     [(Param ordinal role ty)
       (str_cat.str-cat
         (string.int->string ordinal)
@@ -4357,7 +4357,7 @@
 
 (define (compiler-ir-spmd-private-result-shape-error
   [result : (& CompilerIrSpmdPrivateResult)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view result)
+  (match result
     [(Unit) ""]
     [(Value class ty)
       (cond
@@ -4700,7 +4700,7 @@
   [private-index : (& private-index ir_i64_i64_map.Map)]
   [caller : i64]
   [blocks : (& CompilerIrBlockList)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
+  (match blocks
     [(Array seq)
       (let
         [problem : String ""]
@@ -5291,7 +5291,7 @@
               bases
               (ast.ast-type-segment-bases-get bases result-id)
               (compiler-ir-global-shared-view abi.output))
-              (if (match (compiler-ir-global-shared-view abi.physical-result)
+              (if (match (& abi.physical-result)
                 [(ast.AstType.U64) true]
                 [_
                   (and
@@ -7194,7 +7194,7 @@
 (define (compiler-ir-clone-block-list
   [pools : ast.AstNodePoolContext]
   [blocks : (& CompilerIrBlockList)]) : CompilerIrBlockList
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
+  (match blocks
     [(Array seq)
       (let
         [count : i64 (compiler-ir-block-seq-count seq)]
@@ -7447,7 +7447,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view ty)
+  (match ty
     [(I64) "i64"]
     [(I32) "i32"]
     [(I16) "i16"]
@@ -7810,7 +7810,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [result : (& CompilerIrSpmdCallResult)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view result)
+  (match result
     [(Unit) "unit"]
     [(Value _ class ty)
       (str_cat.str-cat
@@ -7910,7 +7910,7 @@
     (compiler-ir-type-render structural-session type-segment-bases ty)))
 
 (define (compiler-ir-bin-op-render [op : (& CompilerIrBinOp)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view op)
+  (match op
     [(BitAnd) "bit_and"]
     [(BitOr) "bit_or"]
     [(BitXor) "bit_xor"]
@@ -8550,7 +8550,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [block : (& CompilerIrBlock)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view block)
+  (match block
     [(Block label instrs)
       (str_cat.str-cat
         (compiler-ir-label-text label)
@@ -8790,7 +8790,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [abi : (& ast.AstExternAbi)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view abi)
+  (match abi
     [(C) "c"]
     [(CVarargsOpen) "c-varargs"]
     [(CVarargsTyped ty)
@@ -8853,7 +8853,7 @@
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [program : (& CompilerIrProgram)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view program)
+  (match program
     [(Program globals functions externs _authority)
       (let
         [globals-buf : text_buf.TextBuf
@@ -9034,7 +9034,7 @@
     [_ true]))
 
 (define (compiler-ir-instr-fault [instr : (& CompilerIrInstr)]) : CompilerIrFault
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(BinOp _ op _ _ _) (compiler-ir-binop-fault (& op))]
     [(VectorBinOp payload-box)
       (compiler-ir-binop-fault (& (deref payload-box).op))]
@@ -9505,7 +9505,7 @@
 (define (compiler-source-spans-lookup-location
   [spans : (& CompilerSourceSpans)]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
-  (match (owned_view.compiler-owned-reference-shared-view spans)
+  (match spans
     [(Spans entries _ _)
       (compiler-source-spans-entry-array-lookup-location
         (& entries.slots)
@@ -9515,7 +9515,7 @@
 (define (compiler-source-spans-lookup
   [spans : (& CompilerSourceSpans)]
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
-  (match (owned_view.compiler-owned-reference-shared-view spans)
+  (match spans
     [(Spans entries _ _)
       (compiler-source-spans-entry-list-lookup (& entries) name)]))
 
@@ -9711,7 +9711,7 @@
   [spans : (& CompilerSourceSpans)]
   [function : CompilerIrSymbolId]
   [instr : (& CompilerIrInstr)]) : CompilerMaybeSourceLocation
-  (match (owned_view.compiler-owned-reference-shared-view spans)
+  (match spans
     [(Spans _ instr-entries _)
       (match (compiler-source-spans-instr-key function instr)
         [(No) (No)]
@@ -9939,7 +9939,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (+
             (compiler-ir-instr-seq-call-arg-count (& instrs))
@@ -9950,7 +9950,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (+
             (compiler-ir-instr-seq-phi-input-count (& instrs))
@@ -9958,7 +9958,7 @@
 
 (define (compiler-ir-block-list-instruction-count
   [blocks : (& CompilerIrBlockList)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
+  (match blocks
     [(Array seq)
       (let
         [count : i64 (compiler-ir-block-seq-count seq)]
@@ -10125,7 +10125,7 @@
     [(Function _ _ _ _ blocks _) (compiler-ir-block-list-count blocks)]))
 
 (define (compiler-ir-function-instruction-count [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-instruction-count (& blocks))]))
 
@@ -10136,7 +10136,7 @@
 
 (define (compiler-ir-function-max-instruction-count
   [func : (& CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ _ _ _ blocks _)
       (compiler-ir-block-list-instruction-count (& blocks))]))
 
@@ -10301,7 +10301,7 @@
 (define (compiler-ir-type-name
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : String
-  (match (owned_view.compiler-owned-reference-shared-view ty)
+  (match ty
     [(I64) "i64"]
     [(I32) "i32"]
     [(I16) "i16"]
@@ -10638,7 +10638,7 @@
 (define (compiler-ir-representation-instr-def-type!
   [instr : (& CompilerIrInstr)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     ;; The index does not type indirect-call results or a scalar Select.
     [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (Select _)) unit]
     [_
@@ -10662,7 +10662,7 @@
 (define (compiler-ir-representation-block-types!
   [blocks : (& CompilerIrBlockList)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
+  (match blocks
     [(Array seq)
       (for [i (iterator.range 0 (compiler-ir-block-seq-count seq))]
         (match (compiler-ir-block-seq-ref seq i)
@@ -10860,7 +10860,7 @@
   [type-segment-bases : i64]
   [index : (& CompilerIrRepresentationIndex)]
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationIndex
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ params ret-ty _ blocks _)
       (let
         [types : CompilerIrRepresentationVarTypes
@@ -10949,7 +10949,7 @@
               (owned_view.compiler-owned-reference-shared-view index)
               key))]
         [(None) (owned_view.compiler-owned-reference-shared-view index)])]
-    (match (owned_view.compiler-owned-reference-shared-view ty)
+    (match ty
       [(Func args ret)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
@@ -11089,7 +11089,7 @@
   [type-segment-bases : i64]
   [index : (& CompilerIrRepresentationIndex)]
   [func : (& CompilerIrFunction)]) : CompilerIrRepresentationIndex
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function _ params ret-ty _ blocks _)
       (compiler-ir-representation-collect-one-blocks
         type-segment-bases
@@ -11189,7 +11189,7 @@
 (define (compiler-ir-representation-index-build
   [type-segment-bases : i64]
   [program : (& CompilerIrProgram)]) : CompilerIrRepresentationIndex
-  (match (owned_view.compiler-owned-reference-shared-view program)
+  (match program
     [(Program globals functions externs _authority)
       (let
         ;; Group evidence is complete before positive one-word evidence is
@@ -11230,7 +11230,7 @@
   [interns : (& interns ci.InternCompatState)]
   [target : i64]
   [program : (& program CompilerIrProgram)]) : CompilerIrRepresentationIndex
-  (match (owned_view.compiler-owned-reference-shared-view program)
+  (match program
     [(CompilerIrProgram.Program _ functions externs authority)
       (let
         ;; Establish owner validity before the nominal representation walk can

@@ -4346,7 +4346,7 @@
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots index)]
-        (match (compiler-reg-global-shared-view instr)
+        (match (& instr)
           [(Phi _ _ _) unit]
           [_
             (if (let
@@ -17147,7 +17147,7 @@
             (& (ir.compiler-ir-block-seq-ref seq b)))]
         [more : bool true]
         (while more
-          (match (compiler-reg-global-shared-view succs)
+          (match (& succs)
             [(Nil) (set! more false)]
             [(Dense _ _)
               (let
@@ -17582,7 +17582,7 @@
           (compiler-reg-global-array-element-shared-view slots index)]
         (when
           phis
-          (match (compiler-reg-global-shared-view instr)
+          (match (& instr)
             [(Phi _ _ _) (set! floor (+ index 1))]
             [_ (set! phis false)]))
         (when (= (ir.compiler-ir-instr-dst instr) var) (set! floor (+ index 1))))
@@ -18813,7 +18813,7 @@
                   type-segment-bases
                   (& instr))
                   (set! rid (+ rid 1))
-                  (match (compiler-reg-global-shared-view instr)
+                  (match (& instr)
                     [(Phi _ _ _) unit]
                     [_
                       (let
@@ -20118,7 +20118,7 @@
           (live.compiler-live-block-successors (& (array-ref bslots b)))]
         [more : bool true]
         (while more
-          (match (compiler-reg-global-shared-view succs)
+          (match (& succs)
             [(Nil) (set! more false)]
             [(Dense _ _)
               (match (reg_label_i64_map.get
@@ -27941,7 +27941,7 @@
         [elem-ty (compiler-reg-box-field-shared-view payload-box ty)]
         (if (= lanes 0)
           unit
-          (match (compiler-reg-global-shared-view elem-ty)
+          (match (& elem-ty)
             [(Bool) (compiler-reg-vector-stack-words-set-mask! words dst)]
             [_
               (compiler-reg-vector-stack-words-set! words dst lanes (& elem-ty))])))]
@@ -27956,7 +27956,7 @@
         [dst (deref payload-box).dst]
         [lanes (deref payload-box).lanes]
         [elem-ty (compiler-reg-box-field-shared-view payload-box ty)]
-        (match (compiler-reg-global-shared-view elem-ty)
+        (match (& elem-ty)
           [(Bool) (compiler-reg-vector-stack-words-set-mask! words dst)]
           [_ (compiler-reg-vector-stack-words-set! words dst lanes (& elem-ty))]))]
     [(GatherLoad payload-box)
@@ -29426,7 +29426,7 @@
         (let
           [location : CompilerRegLocation
             (compiler-reg-global-array-element-shared-view source-items var)]
-          (match (compiler-reg-global-shared-view location)
+          (match (& location)
             [(Spill _) unit]
             [_
               (let

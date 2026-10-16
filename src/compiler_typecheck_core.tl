@@ -3446,7 +3446,7 @@
                     (tc-castable-type? (tc-global-shared-view ty)))]
                 [same? : bool
                   (or
-                    (match (tc-global-shared-view actual)
+                    (match (& actual)
                       [(ast.AstType.Never) true]
                       [_ false])
                     (tc-selected-same-type? actual (tc-global-shared-view ty)))]
@@ -3938,7 +3938,7 @@
         ;; adjustment rather than the expression's type. Record only
         ;; unadjusted results, as the legacy expected-type path does.
         [intrinsic? : bool
-          (match (tc-global-shared-view expected)
+          (match (& expected)
             [(ast.AstMaybeType.No) true]
             [(ast.AstMaybeType.Some _) false])]
         [observed? : bool (tc-semantic-capture-observed? ctx (& sink))]
@@ -6167,7 +6167,7 @@
     [place : ast.AstType
       (tc-type-strip-region (tc-resolve-type ctx place-type))]
     [result : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
-    (match (tc-global-shared-view place)
+    (match (& place)
       [(ast.AstType.Ref _ _)
         (tc-selected-borrow-of-referent?
           ctx
@@ -8099,7 +8099,7 @@
 (define (tc-selected-borrowed-top [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (let
     [stripped : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
-    (match (tc-global-shared-view stripped)
+    (match (& stripped)
       [(ast.AstType.Ref _ _)
         (tc-resolve-type ctx (tc-selected-referent ctx stripped))]
       [(ast.AstType.MutRef _ _)
@@ -8914,10 +8914,16 @@
                                     (& arms)
                                     index
                                     (ast.ast-match-arm-fallback))
-                                    [(ast.AstMatchArm.Arm _ body-id)
+                                    [(ast.AstMatchArm.Arm pattern body-id)
                                       (tc-selected-view-move-out-error
                                         ctx
-                                        body-id)]))))
+                                        env
+                                        body-id
+                                        (tc-global-shared-view merged)
+                                        0
+                                        (tc-pattern-add-bound-name-ids
+                                          pattern
+                                          TcNameIdList.Nil))]))))
                             (set! index (+ index 1)))
                           (if (> (string.string-length (& move-out)) 0)
                             (TcSelectedResult.Err move-out after)
@@ -14318,8 +14324,10 @@
                       (TcSelectedCallTarget.Err message)]
                     [(ResultTcType.Ok _)
                       (TcSelectedCallTarget.Err
+                        ;; A missing lifetime declaration (E0210), not an
+                        ;; escape.
                         (tc-kind-message
-                          (cdiag.CompilerTypecheckKind.RegionEscape)
+                          (cdiag.CompilerTypecheckKind.LifetimeMismatch)
                           (str_cat.str-cat
                             "typecheck: `"
                             (tc-type-render
@@ -14904,7 +14912,7 @@
                       [(> (array-length indices) 0)
                         (if (or
                           (tc-type-copyable? ctx (tc-global-shared-view ty))
-                          (match (tc-global-shared-view ty)
+                          (match (& ty)
                             [(ast.AstType.Region _ _) true]
                             [_ false]))
                           (tc-selected-place-acquire
@@ -15295,7 +15303,7 @@
                         (ast.ast-type-id-fallback))))]
                 [_ ast.AstType.Never])]
             [(ResultTcType.Err _) ast.AstType.Never])]
-        (match (tc-global-shared-view task)
+        (match (& task)
           [(ast.AstType.Func _ _)
             (match (tc-infer-selected-direct-closure
               ctx
@@ -15384,7 +15392,7 @@
               [(ResultTcUnit.Ok) false])
             ast.AstMaybeType.No]
           [else
-            (match (tc-global-shared-view signature-type)
+            (match (& signature-type)
               [(ast.AstType.Func _ _) (ast.AstMaybeType.Some signature-type)]
               [_ ast.AstMaybeType.No])]))]
     [_ ast.AstMaybeType.No]))
@@ -15809,7 +15817,7 @@
                         (tc-global-shared-view source)
                         sink)
                       (if (and
-                        (match (tc-global-shared-view constructor)
+                        (match (& constructor)
                           [(ast.AstMaybeType.No) true]
                           [(ast.AstMaybeType.Some _) false])
                         (tc-arena-type? ctx (tc-global-shared-view want))
@@ -17150,7 +17158,7 @@
         [resolved : ast.AstType
           (tc-selected-layout-type ctx (tc-global-shared-view container))]
         [through? : bool
-          (match (tc-global-shared-view resolved)
+          (match (& resolved)
             [(ast.AstType.Ref _ _) true]
             [(ast.AstType.MutRef _ _) true]
             [_ false])]
@@ -17225,7 +17233,7 @@
               (tc-type-strip-region
                 (tc-resolve-type ctx (tc-global-shared-view container)))]
             ;; Through a reference, the referent's representation is read.
-            (match (tc-global-shared-view resolved)
+            (match (& resolved)
               [(ast.AstType.Ref _ _)
                 (tc-type-strip-region
                   (tc-resolve-type
@@ -17265,7 +17273,7 @@
                     ctx
                     (tc-global-shared-view container))]
                 [through? : bool
-                  (match (tc-global-shared-view resolved)
+                  (match (& resolved)
                     [(ast.AstType.Ref _ _) true]
                     [(ast.AstType.MutRef _ _) true]
                     [_ false])]
@@ -17366,7 +17374,7 @@
         [(ResultTcUnit.Ok)
           (let
             [rewritten : ast.AstExpr (tc-context-expr-get ctx id)]
-            (match (tc-global-shared-view rewritten)
+            (match (& rewritten)
               [(ast.AstExpr.StructGet _ _) (TcSelectedDotted.Field rewritten)]
               [_ TcSelectedDotted.No]))])]))
 
@@ -18430,7 +18438,7 @@
           ;; used; a Copy one is copied out.
           [(TcSelectedPlace.Selected id indices)
             (if (and
-              (match (tc-global-shared-view type)
+              (match (& type)
                 [(ast.AstType.Region _ _) true]
                 [_ false])
               (not (tc-type-copyable? ctx (tc-global-shared-view type))))
@@ -41236,7 +41244,7 @@
   ;; Concrete leaves return directly from this match. Keep that hot path free
   ;; of pool selection, and consult the recursive job-owned predicate only for
   ;; composite shapes, so they are rebuilt only when they need resolution.
-  (match (tc-global-shared-view ty)
+  (match (& ty)
     [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
          (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
          (Invalidate _ _))
@@ -47630,7 +47638,7 @@
                         (tc-context-symbols symbols-ctx)
                         (csym.compiler-symbol-handle-index handle)))]
                   [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
-                  (match (tc-global-shared-view ty)
+                  (match (& ty)
                     [(Func _ _) (Ok ty)]
                     [_
                       (Err
@@ -49348,7 +49356,7 @@
               (tc-global-array-element-shared-view
                 decls.slots
                 (+ decls.offset (array-ref tc-module-decl-index-positions j)))]
-            (match (tc-global-shared-view decl)
+            (match (& decl)
               [(Module _) unit]
               [_
                 (match (tc-module-local-env-add-decl
@@ -50777,7 +50785,7 @@
   (match joined
     [(ResultTcType.Ok ty)
       (or
-        (match (tc-global-shared-view branch)
+        (match (& branch)
           [(ast.AstType.Never) true]
           [_ false])
         (tc-selected-aligned-type? ctx branch ty))]
@@ -50948,7 +50956,13 @@
                         (& joined))
                       (return
                         (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error ctx then-branch-id)
+                          (tc-selected-view-move-out-error
+                            ctx
+                            env
+                            then-branch-id
+                            (tc-global-shared-view then-ty)
+                            0
+                            TcNameIdList.Nil)
                           done)))
                     (when
                       (tc-selected-branch-move-out?
@@ -50958,7 +50972,13 @@
                         (& joined))
                       (return
                         (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error ctx else-branch-id)
+                          (tc-selected-view-move-out-error
+                            ctx
+                            env
+                            else-branch-id
+                            (tc-global-shared-view else-ty)
+                            0
+                            TcNameIdList.Nil)
                           done)))
                     (tc-selected-publish-if
                       joined
@@ -51251,7 +51271,7 @@
             (cond
               [(and
                   unit-each?
-                  (match (tc-global-shared-view ty)
+                  (match (& ty)
                     [(ast.AstType.Unit) false]
                     [(ast.AstType.Never) false]
                     [_ true]))
@@ -53541,7 +53561,7 @@
           (tc-message-text-prefix? (& message) "typecheck: ambiguous `")
           (tc-message-text-prefix? (& message) "typecheck: ambiguous variant `"))
         (not (tc-encoded-error? message)))
-      (match (tc-global-shared-view inner)
+      (match (& inner)
         [(or (Var _) (Call _ _)) (Err (tc-located-error span message))]
         [_
           (tc-locate-spanned-error
@@ -53574,7 +53594,7 @@
             (& message)
             "typecheck: cannot assign to function `"))
         (not (tc-encoded-error? message)))
-      (match (tc-global-shared-view inner)
+      (match (& inner)
         [(or (Set _ _) (StructSet _ _ _) (StructGet _ _))
           (Err (tc-located-error span message))]
         [_
@@ -57418,6 +57438,30 @@
             " cannot spawn from scoped arena; closure storage would not outlive the worker")))]
     [(No) (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
+;; A spawned lambda capturing a value that carries a scoped region or
+;; lifetime parameters cannot cross the thread boundary (E0217). When the
+;; innermost capture that cannot cross fails for that reason, the verdict is
+;; taken before the arguments are typed, so the lambda's generic capture
+;; escape check (E0205) does not pre-empt it; a lone plain reference capture
+;; still reports E0205, as on main. Any other first failure leaves the order
+;; as it was, so with several such captures the first diagnostic can differ
+;; from main's (both reject the program).
+(define (tc-thread-safe-spawn-region-capture-precheck
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]) : ResultTcUnit
+  (match (tc-check-thread-safe-spawn-call ctx env func args params ret)
+    [(ResultTcNameIdList.Err message)
+      (if (string.contains
+        (& message)
+        "scoped-region and lifetime-parameterized values cannot cross thread boundaries")
+        (ResultTcUnit.Err message)
+        ResultTcUnit.Ok)]
+    [_ ResultTcUnit.Ok]))
+
 (define (tc-check-thread-safe-spawn-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -57606,7 +57650,7 @@
             (tc-global-shared-view func)
             (tc-global-shared-view params)
             (tc-global-shared-view ret))]
-        (match (tc-global-shared-view constructor-target)
+        (match (& constructor-target)
           [(Some _)
             (let
               [_
@@ -57636,6 +57680,17 @@
                   (tc-global-shared-view params))]
               (if (ast.ast-lifetime-list-empty? (& lifetimes))
                 (let
+                  [_
+                    (try
+                      (if thread-spawn-args
+                        (tc-thread-safe-spawn-region-capture-precheck
+                          ctx
+                          env
+                          (tc-global-shared-view func)
+                          (tc-global-shared-view args)
+                          (tc-global-shared-view params)
+                          (tc-global-shared-view ret))
+                        ResultTcUnit.Ok))]
                   [_
                     (try
                       (if thread-spawn-args
@@ -60267,7 +60322,7 @@
       (tc-slice-view-source-element ctx (tc-global-shared-view source-info))]
     (when
       (or
-        (match (tc-global-shared-view source-info)
+        (match (& source-info)
           [(Invalid) true]
           [_ false])
         (not
@@ -62191,7 +62246,13 @@
       (tc-global-shared-view init))
       [(ResultTcUnit.Err message) (return (ResultTcLetBinding.Err message))]
       [(ResultTcUnit.Ok) unit])
-    (match (tc-ensure-reference-value-can-bind env init-ty)
+    ;; A non-Copy value read through a reference is reported as the move it
+    ;; would be (E0208), as main's let paths do (#8554).
+    (match (tc-ensure-let-value-can-bind
+      ctx
+      env
+      (tc-global-shared-view init)
+      (tc-global-shared-view init-ty))
       [(ResultTcUnit.Err message) (return (ResultTcLetBinding.Err message))]
       [(ResultTcUnit.Ok) unit])
     (let
@@ -62292,7 +62353,15 @@
       (tc-global-shared-view binding-ty)
       (tc-global-shared-view init-ty))
     (return
-      (TcSelectedResult.Err (tc-selected-view-move-out-error ctx init-id) sink)))
+      (TcSelectedResult.Err
+        (tc-selected-view-move-out-error
+          ctx
+          env
+          init-id
+          (tc-global-shared-view init-ty)
+          1
+          TcNameIdList.Nil)
+        sink)))
   (match init
     [(TcSelectedOccurrence.Unrepresented)
       (TcSelectedResult.Ok
@@ -65115,7 +65184,7 @@
               ;; Lane-uniform is insufficient: every offset must stay constant
               ;; across the domain. Closed scalar operations preserve that
               ;; invariant; memory reads and calls require a captured outer value.
-              (if (match (tc-global-shared-view node)
+              (if (match (& node)
                 [(or (Unary _ _) (Binary _ _ _) (Cast _ _) (Ann _ _)
                      (MacroExpansion _ _ _))
                   true]
@@ -67205,7 +67274,7 @@
     [unspanned : ast.AstExpr
       (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     [reads-only : bool
-      (match (tc-global-shared-view unspanned)
+      (match (& unspanned)
         [(or (Literal _) (Var _) (SpmdProgramIndex) (SpmdProgramCount)
              (Binary _ _ _) (Unary _ _) (Ann _ _) (Cast _ _) (If _ _ _) (Let _)
              (ArrayRef _ _) (StructGet _ _) (TupleRef _ _) (SpmdBroadcast _ _)
@@ -69963,7 +70032,7 @@
   [expr : ast.AstExpr]) : bool
   (let
     [owners : TcStringList (tc-active-cleanup-owners env)]
-    (match (tc-global-shared-view owners)
+    (match (& owners)
       [(Nil) false]
       [_
         (tc-expr-result-uses-cleanup-owner?
@@ -69978,7 +70047,7 @@
   [exprs : ast.AstExprList]) : bool
   (let
     [owners : TcStringList (tc-active-cleanup-owners env)]
-    (match (tc-global-shared-view owners)
+    (match (& owners)
       [(Nil) false]
       [_
         (tc-expr-list-any-result-uses-cleanup-owner?
@@ -73497,7 +73566,7 @@
         (and
           (not
             (tc-type-contains-mut-reference? (tc-global-shared-view elem-ty)))
-          (match (tc-global-shared-view elem-ty)
+          (match (& elem-ty)
             [(Ref _ _) true]
             [_ (tc-reference-containing-place-borrow-ok? elem-ty)])))]
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
@@ -74358,7 +74427,7 @@
 ;; Whether evaluating `expr` can leave an enclosing argument list early through
 ;; `return`, `try`, `break`, or `continue`. A nested lambda body runs later.
 (define (tc-expr-may-exit-early? [ctx : TcContext] [expr : ast.AstExpr]) : bool
-  (match (tc-global-shared-view expr)
+  (match (& expr)
     [(or (ast.AstExpr.Return _) (ast.AstExpr.Try _) (ast.AstExpr.Break)
          (ast.AstExpr.Continue))
       true]
@@ -79083,7 +79152,7 @@
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern _)
-        (match (tc-global-shared-view pattern)
+        (match (& pattern)
           [(or (Wildcard) (Binding _) (Var _ _)) true]
           ;; A typed binding, such as `for`'s annotated item (#8581).
           [(Or _)
@@ -79555,7 +79624,7 @@
             [(ast.AstMatchArm.Arm pattern _)
               (let
                 [or-arm? : bool
-                  (match (tc-global-shared-view pattern)
+                  (match (& pattern)
                     [(ast.AstPattern.Or _) true]
                     [_ false])]
                 [alternatives : ast.AstMatchArmList
@@ -80590,7 +80659,7 @@
           (let
             [resolved : ast.AstType
               (tc-type-strip-region (tc-resolve-type ctx pointer-ty))]
-            (match (tc-global-shared-view resolved)
+            (match (& resolved)
               [(or (Ptr _) (MutPtr _)) (Some resolved)]
               [_ No]))]
         [(Err _) No])]
@@ -82546,7 +82615,7 @@
             [(TcMaybeString.No) (TcSelectedResult.Err message sink)]))]
       [(ResultTcBinding.Ok var-ty _ origin)
         (if (and
-          (match (tc-global-shared-view var-ty)
+          (match (& var-ty)
             [(ast.AstType.Func _ _) true]
             [_ false])
           (tc-set-function-declaration? ctx env name))
@@ -83857,7 +83926,7 @@
   [ty : ast.AstType]) : ResultTcUnit
   (let
     [resolved : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
-    (match (tc-global-shared-view resolved)
+    (match (& resolved)
       [(Func _ _) (Err (tc-raw-c-function-pointer-type-message))]
       [_ (tc-check-extern-native-value-type ctx resolved)])))
 
@@ -104603,7 +104672,7 @@
           symbols
           cbi.compiler-builtin-id-core-macros-module
           lookup-id))]
-    (match (tc-global-shared-view maybe-decl)
+    (match (& maybe-decl)
       [(No)
         ;; Compatibility fallback for sources loaded with the old module
         ;; identity before the core_macros spelling migration.
@@ -104923,7 +104992,7 @@
                   module-id
                   lookup-name-id
                   (tc-global-shared-view call-expr)))]
-            (match (tc-global-shared-view imported-decl)
+            (match (& imported-decl)
               [(No)
                 (macro-prelude-call-decl
                   (tc-context-with-module-id ctx module module-id)
@@ -105153,7 +105222,7 @@
     (tc-global-shared-view decls)
     (tc-global-shared-view call-expr))
     [(Ok maybe-decl)
-      (match (tc-global-shared-view maybe-decl)
+      (match (& maybe-decl)
         [(No)
           (match context
             [(Some context-module-id)
@@ -105172,7 +105241,7 @@
                           func
                           decls
                           call-expr))]
-                    (match (tc-global-shared-view context-decl)
+                    (match (& context-decl)
                       [(No) (Ok maybe-decl module module-id)]
                       [_ (Ok context-decl context-module context-module-id)]))))]
             [(No) (Ok maybe-decl module module-id)])]
@@ -105193,7 +105262,7 @@
                 decls
                 call-expr)
                 [(Ok context-decl)
-                  (match (tc-global-shared-view context-decl)
+                  (match (& context-decl)
                     [(No) (Err primary-diag)]
                     [_ (Ok context-decl context-module context-module-id)])]
                 [(Err _) (Err primary-diag)])))]
@@ -106238,7 +106307,7 @@
                             (ast.ast-decl-list-box-shared-view decls-box)
                             (tc-global-shared-view call))
                             [(Ok maybe-decl)
-                              (match (tc-global-shared-view maybe-decl)
+                              (match (& maybe-decl)
                                 [(No) true]
                                 [_ false])]
                             [(Err _) false])]))
@@ -106488,7 +106557,7 @@
   [current : ctfe_support.CtfeMaybeSyntaxPools]
   [value : ctfe_support.CompilerCtfeValue]
   [rebase-binding-clauses? : bool]) : ctfe_support.CtfeMaybeSyntaxPools
-  (match (tc-global-shared-view value)
+  (match (& value)
     [(ExprBindingClauseList _)
       (if rebase-binding-clauses?
         (Some (ast.ast-node-pool-context-capture-active))
@@ -109487,7 +109556,7 @@
                   source-id
                   call-expr)
                   [(Ok maybe-decl)
-                    (match (tc-global-shared-view maybe-decl)
+                    (match (& maybe-decl)
                       [(Some _ _ _ _ _ _)
                         (macro-rewrite-generated-import-call-with-decl
                           pools
@@ -109540,7 +109609,7 @@
               (Some definition-module-id)
               (tc-global-shared-view call-expr))
               [(Ok maybe-decl _ _)
-                (match (tc-global-shared-view maybe-decl)
+                (match (& maybe-decl)
                   [(Some _ _ _ _ _ _)
                     (macro-rewrite-generated-import-call-with-decl
                       pools
@@ -117605,7 +117674,7 @@
     ;; closure reaching a function type has no reference captures (legacy
     ;; rejects any flow that erases them), and references in its signature are
     ;; per call.
-    (match (tc-global-shared-view resolved)
+    (match (& resolved)
       [(ast.AstType.Func _ _) true]
       [_ false])
     (tc-selected-value-type-supported-core? ctx resolved)))
@@ -117685,7 +117754,7 @@
       [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
       [erased : ast.AstType (tc-selected-arena-erase ctx (& none) resolved)]
       (and
-        (match (tc-global-shared-view erased)
+        (match (& erased)
           [(ast.AstType.Var _) false]
           [(ast.AstType.VarArgs _ _) false]
           [(ast.AstType.Str) false]
@@ -117759,7 +117828,7 @@
             (>
               (tc-selected-reference-kind ctx (tc-global-shared-view target))
               0))
-            (match (tc-global-shared-view resolved)
+            (match (& resolved)
               [(ast.AstType.Ref _ _) 1]
               [_ 2])
             0))])))
@@ -117844,7 +117913,7 @@
 (define (tc-selected-loan-element? [ctx : TcContext] [resolved : ast.AstType]) : bool
   (or
     (tc-selected-holding-type? ctx (tc-global-shared-view resolved))
-    (match (tc-global-shared-view resolved)
+    (match (& resolved)
       [(ast.AstType.Array _ _) (tc-selected-loan-array? ctx resolved)]
       [(ast.AstType.DynArray _) (tc-selected-loan-array? ctx resolved)]
       [_ false])))
@@ -117856,7 +117925,7 @@
 ;; reborrowed through its own referent, so it needs no single parent loan.
 (define (tc-selected-holding-type? [_ctx : TcContext] [resolved : ast.AstType]) : bool
   (and
-    (match (tc-global-shared-view resolved)
+    (match (& resolved)
       [(ast.AstType.StructArgs _ _)
         (tc-type-contains-reference? (tc-global-shared-view resolved))]
       [(ast.AstType.EnumArgs _ _)
@@ -118055,7 +118124,7 @@
     (cond
       ;; A raw pointer carries no loan, whatever it points to: using it is
       ;; unsafe, and the borrow graph does not track it.
-      [(match (tc-global-shared-view resolved)
+      [(match (& resolved)
           [(ast.AstType.Ptr _) true]
           [(ast.AstType.MutPtr _) true]
           [_ false])
@@ -118149,7 +118218,7 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [erased : ast.AstType (tc-selected-arena-erase ctx regions ty)]
-    (match (tc-global-shared-view erased)
+    (match (& erased)
       [(ast.AstType.Region _ _)
         (let
           [stripped : ast.AstType
@@ -118520,7 +118589,7 @@
     (match (tc-global-shared-view resolved)
       [(ast.AstType.Region region _)
         (and
-          (match (tc-global-shared-view want)
+          (match (& want)
             [(ast.AstType.Region _ _) false]
             [(ast.AstType.Never) false]
             [_ true])
@@ -118531,52 +118600,87 @@
           (not (tc-type-copyable? ctx (tc-global-shared-view want))))]
       [_ false])))
 
-;; The move-out rejection for a view operand `expr-id` (see
-;; `tc-selected-view-move-out?`), worded as the place-based check words it.
-(define (tc-selected-view-move-out-error [ctx : TcContext] [expr-id : i64]) : String
-  (let
-    [expr : ast.AstExpr
-      (ast.ast-expr-unspan (& (tc-context-expr-get ctx expr-id)))]
-    [element? : bool
-      (match (& expr)
-        [(ast.AstExpr.ArrayRef _ _) true]
-        [_ false])]
-    [name : String
-      (tc-selected-expr-path-text ctx (tc-global-shared-view expr))]
-    [message : String
-      (if element?
-        (tc-move-dynamic-array-element-message)
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.MoveViolation)
-          "typecheck: cannot move non-Copy value through shared reference"))]
-    [help : String
-      (str_cat.str-cat
-        (if (or element? (= (string.string-length (& name)) 0))
-          ""
-          (str_cat.str-cat "`" name "` is behind a reference; "))
-        (if element?
-          "borrow the element with `(& ...)`, read its `Copy` fields, or take it with `replace!`"
-          "borrow the value with `(& ...)` or read its `Copy` fields"))]
-    (match (tc-expr-id-maybe-span (tc-context-expr-bases ctx) expr-id)
-      [(TcMaybeAstSourceSpan.Some span)
-        (tc-rich-error-with-help span message help)]
-      [(TcMaybeAstSourceSpan.No) message])))
+;; BOUND plus the names the `let`s bind on the way from `expr` to its value
+;; through `let` bodies and `begin` tails: names that may shadow the ones the
+;; value reads.
+(define (tc-selected-tail-let-bound-name-ids
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [bound : TcNameIdList]) : TcNameIdList
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body-box)
+          (tc-selected-tail-let-bound-name-ids
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body-box)
+            (tc-let-binding-list-add-bound-name-ids-at (& bindings) bound 0))])]
+    [(Begin items)
+      (if (> (ast.ast-expr-list-len (& items)) 0)
+        (tc-selected-tail-let-bound-name-ids
+          expr-bases
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get
+              (& items)
+              (- (ast.ast-expr-list-len (& items)) 1)
+              0))
+          bound)
+        bound)]
+    [_ bound]))
 
-;; A variable or field path as source spells it (`v.items`), or "".
-(define (tc-selected-expr-path-text [ctx : TcContext] [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var name)
-      (tc-hygiene-name-text-id-for-session
-        (tc-context-structural-session ctx)
-        name)]
-    [(ast.AstExpr.StructGet receiver field)
+;; The move-out rejection for a view operand `expr-id` of type `ty` (see
+;; `tc-selected-view-move-out?`). A view is read through a reference, so this
+;; is always a move out of borrowed content (E0208, Rust E0507), worded as
+;; typing words it (#8554) whatever holds the value; `context` is the use
+;; (`tc-selected-move-out-reference-help`). The reference's kind is looked up
+;; in `env`, so that wording is used only when the read's root name is not
+;; rebound inside the operand: by a `let` on the way to its value, or by
+;; `shadowing` (an arm's pattern binders). Otherwise the generic E0208 is
+;; reported.
+(define (tc-selected-view-move-out-error
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [ty : ast.AstType]
+  [context : i64]
+  [shadowing : TcNameIdList]) : String
+  (let
+    [help : String (tc-selected-move-out-reference-help context)]
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [rebound : TcNameIdList
+      (tc-selected-tail-let-bound-name-ids
+        expr-bases
+        (tc-context-expr-get ctx expr-id)
+        shadowing)]
+    [env-names-read? : bool
+      (match (tc-move-root-projection-var-id
+        expr-bases
+        (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id)))
+        [(TcMaybeNameId.Some name)
+          (not (tc-name-id-list-contains rebound name))]
+        [(TcMaybeNameId.No) true])]
+    [moved : String
+      (if env-names-read?
+        (tc-move-out-of-reference-error
+          ctx
+          expr-bases
+          env
+          (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id))
+          ty
+          (string.copy (& help)))
+        "")]
+    (if (> (string.string-length (& moved)) 0)
+      moved
       (let
-        [base : String
-          (tc-selected-expr-path-text ctx (tc-context-expr-get ctx receiver))]
-        (if (= (string.string-length (& base)) 0)
-          ""
-          (str_cat.str-cat base "." (ci.intern-str field))))]
-    [_ ""]))
+        [message : String
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.MoveViolation)
+            "typecheck: cannot move non-Copy value through shared reference")]
+        (match (tc-expr-id-maybe-span expr-bases expr-id)
+          [(TcMaybeAstSourceSpan.Some span)
+            (tc-rich-error-with-help span message help)]
+          [(TcMaybeAstSourceSpan.No) message])))))
 
 ;; Type identity for the ownership graph. `tc-type-eq` ignores region tags,
 ;; but a region-tagged view and an owned value are different occurrences;
@@ -118802,7 +118906,7 @@
                 (tc-global-shared-view left)
                 (tc-global-shared-view right))])))]
     [_
-      (match (tc-global-shared-view right)
+      (match (& right)
         [(ast.AstType.Ref _ _) false]
         [(ast.AstType.MutRef _ _) false]
         [(ast.AstType.Region _ _) false]
@@ -119055,7 +119159,7 @@
         [_view-part : unit
           (when
             (and
-              (match (tc-global-shared-view container)
+              (match (& container)
                 [(ast.AstType.Region _ _) true]
                 [_ false])
               (not (tc-type-copyable? ctx (tc-global-shared-view field-ty)))
@@ -120951,7 +121055,13 @@
                   (tc-global-shared-view resolved-ret)
                   (tc-global-shared-view got))
                   (ResultTcUnit.Err
-                    (tc-selected-view-move-out-error ctx body-box))
+                    (tc-selected-view-move-out-error
+                      ctx
+                      comparison-env
+                      body-box
+                      (tc-global-shared-view got)
+                      4
+                      TcNameIdList.Nil))
                   (match (tc-selected-prepare-named-body
                     ctx
                     name

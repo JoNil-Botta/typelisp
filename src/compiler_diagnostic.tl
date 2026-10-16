@@ -839,7 +839,7 @@
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : (& CompilerDiagnosticMaybeString)]) : CompilerDiagnosticMaybeString
-  (match (owned_view.compiler-owned-reference-shared-view value)
+  (match value
     [CompilerDiagnosticNoString CompilerDiagnosticNoString]
     [(CompilerDiagnosticSomeString text)
       (CompilerDiagnosticSomeString (string.copy (& text)))]))
@@ -1575,13 +1575,13 @@
 (define (compiler-diagnostic-maybe-string-eq?
   [left : (& CompilerDiagnosticMaybeString)]
   [right : (& CompilerDiagnosticMaybeString)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view left)
+  (match left
     [CompilerDiagnosticNoString
       (match right
         [CompilerDiagnosticNoString true]
         [(CompilerDiagnosticSomeString _) false])]
     [(CompilerDiagnosticSomeString left-text)
-      (match (owned_view.compiler-owned-reference-shared-view right)
+      (match right
         [(CompilerDiagnosticSomeString right-text)
           (string.eq left-text right-text)]
         [CompilerDiagnosticNoString false])]))

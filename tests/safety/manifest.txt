@@ -951,7 +951,7 @@ arena_branded_control_flow_join_reject|check-fail|tests/safety/arena_branded_con
 arena_bare_cannot_rebrand_reject|check-fail|tests/safety/arena_bare_cannot_rebrand_reject.tl|-|expected (stdlib.arena/Arena owner), found stdlib.arena/Arena
 arena_branded_arity_reject|check-fail|tests/safety/arena_branded_arity_reject.tl|-|nominal lifetime argument arity mismatch
 arena_branded_return_only_reject|check-fail|tests/safety/arena_branded_return_only_reject.tl|-|returned reference lifetime must be tied to a parameter
-arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|lambda cannot capture immutable reference; reference value would escape lexical scope
+arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|scoped-region and lifetime-parameterized values cannot cross thread boundaries
 arena_branded_in_arena_wrong_assignment_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_assignment_reject.tl|-|cannot store region-tagged value into struct field
 arena_branded_in_arena_wrong_storage_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_storage_reject.tl|-|cannot store region-tagged value into constructor result
 arena_branded_in_arena_wrong_return_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_return_reject.tl|-|cannot store region-tagged value into return value
@@ -1613,9 +1613,9 @@ mir_global_assign_borrowed_reject|check-fail|tests/safety/mir_global_assign_borr
 mir_reference_element_shift_ok|check-ok|tests/safety/mir_reference_element_shift_ok.tl|-|-
 mir_in_arena_bare_ok|run-exit|tests/safety/mir_in_arena_bare_ok.tl|42|-
 mir_in_arena_borrow_conflict_reject|check-fail|tests/safety/mir_in_arena_borrow_conflict_reject.tl|tests/safety/mir_in_arena_borrow_conflict_reject.tl:13:26|cannot assign to borrowed place `items[0]`
-mir_element_move_through_ref_reject|check-fail|tests/safety/mir_element_move_through_ref_reject.tl|tests/safety/mir_element_move_through_ref_reject.tl:10:3|cannot move owner-consuming value out of dynamic array element
+mir_element_move_through_ref_reject|check-fail|tests/safety/mir_element_move_through_ref_reject.tl|tests/safety/mir_element_move_through_ref_reject.tl:10:3|cannot move a `Item` out of a shared reference
 mir_element_move_owned_param_reject|check-fail|tests/safety/mir_element_move_owned_param_reject.tl|tests/safety/mir_element_move_owned_param_reject.tl:10:3|cannot move owner-consuming value out of dynamic array element
-mir_element_match_reject|check-fail|tests/safety/mir_element_match_reject.tl|tests/safety/mir_element_match_reject.tl:10:10|cannot move owner-consuming value out of dynamic array element
+mir_element_match_reject|check-fail|tests/safety/mir_element_match_reject.tl|tests/safety/mir_element_match_reject.tl:10:10|cannot move a `Shape` out of a shared reference
 mir_element_field_read_ok|run-exit|tests/safety/mir_element_field_read_ok.tl|42|-
 mir_move_out_of_reference_reject|check-fail|tests/safety/mir_move_out_of_reference_reject.tl|tests/safety/mir_move_out_of_reference_reject.tl:9:3|out of a shared reference; `Item` is not Copy
 mir_slice_view_ok|run-exit|tests/safety/mir_slice_view_ok.tl|42|-
@@ -1629,8 +1629,8 @@ mir_struct_pattern_ok|run-exit|tests/safety/mir_struct_pattern_ok.tl|42|-
 mir_struct_pattern_moved_reject|check-fail|tests/safety/mir_struct_pattern_moved_reject.tl|tests/safety/mir_struct_pattern_moved_reject.tl:18:13|use of moved value `pair.name`
 mir_view_scrutinee_ok|run-exit|tests/safety/mir_view_scrutinee_ok.tl|42|-
 mir_view_scrutinee_conflict_reject|check-fail|tests/safety/mir_view_scrutinee_conflict_reject.tl|tests/safety/mir_view_scrutinee_conflict_reject.tl:17:15|cannot assign to borrowed place `decl.kind`
-mir_view_if_move_out_reject|check-fail|tests/safety/mir_view_if_move_out_reject.tl|tests/safety/mir_view_if_move_out_reject.tl:9:5|cannot move non-Copy value through shared reference
-mir_view_return_move_out_reject|check-fail|tests/safety/mir_view_return_move_out_reject.tl|tests/safety/mir_view_return_move_out_reject.tl:7:3|cannot move non-Copy value through shared reference
+mir_view_if_move_out_reject|check-fail|tests/safety/mir_view_if_move_out_reject.tl|tests/safety/mir_view_if_move_out_reject.tl:9:5|cannot move a `String` out of a shared reference
+mir_view_return_move_out_reject|check-fail|tests/safety/mir_view_return_move_out_reject.tl|tests/safety/mir_view_return_move_out_reject.tl:7:3|cannot move a `String` out of a shared reference
 mir_view_binder_write_reject|check-fail|tests/safety/mir_view_binder_write_reject.tl|tests/safety/mir_view_binder_write_reject.tl:11:24|cannot mutably borrow `counts.items` behind a shared reference
 mir_view_binder_mut_borrow_reject|check-fail|tests/safety/mir_view_binder_mut_borrow_reject.tl|tests/safety/mir_view_binder_mut_borrow_reject.tl:13:14|cannot mutably borrow `counts.items` behind a shared reference
 mir_view_copy_read_ok|run-exit|tests/safety/mir_view_copy_read_ok.tl|42|-
@@ -1753,7 +1753,7 @@ mir_reference_scalar_match_move_reject|check-fail|tests/safety/mir_reference_sca
 mir_match_literal_arithmetic_arm_ok|run-exit|tests/safety/mir_match_literal_arithmetic_arm_ok.tl|42|-
 mir_nested_reference_read_ok|check-ok|tests/safety/mir_nested_reference_read_ok.tl|-|-
 mir_nested_reference_move_out_reject|check-fail|tests/safety/mir_nested_reference_move_out_reject.tl|tests/safety/mir_nested_reference_move_out_reject.tl:5:31|cannot move a `(&mut inner i64)` out of a shared reference
-mir_accessor_element_move_reject|check-fail|tests/safety/mir_accessor_element_move_reject.tl|tests/safety/mir_accessor_element_move_reject.tl:14:3|cannot move owner-consuming value out of dynamic array element
+mir_accessor_element_move_reject|check-fail|tests/safety/mir_accessor_element_move_reject.tl|tests/safety/mir_accessor_element_move_reject.tl:14:3|cannot move a `String` out of a shared reference
 mir_varargs_extern_call_ok|check-ok|tests/safety/mir_varargs_extern_call_ok.tl|-|-
 mir_runtime_quasiquote_ok|check-ok|tests/safety/mir_runtime_quasiquote_ok.tl|-|-
 mir_tuple_ref_call_result_ok|run-exit|tests/safety/mir_tuple_ref_call_result_ok.tl|42|-

@@ -4766,7 +4766,7 @@
               (match (spec-ctfe-eval state (& arg) (ctfe.ctfe-fuel-limit))
                 [(Ok value _)
                   (if (spec-type-kind? (& param-ty))
-                    (match (spec-place-shared-view value)
+                    (match (& value)
                       [(Type _)
                         (match (spec-rewrite-specialized-args-at
                           params

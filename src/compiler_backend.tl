@@ -1470,7 +1470,7 @@
       (in-arena
         owner
         (if reuse?
-          (match (owned_view.compiler-owned-reference-shared-view program)
+          (match program
             [(compiler_ir_types.CompilerIrProgram.Program
                 _
                 functions
@@ -6642,7 +6642,7 @@
             0
             "%xmm2"
             backend-state)]
-        (match (compiler-backend-global-shared-view elem-ty)
+        (match (& elem-ty)
           [(F64)
             (let
               [asm
@@ -8415,7 +8415,7 @@
   [rhs-reg : String]
   [dst-reg : String]
   [elem-ty : compiler_ast_types.AstType]) : String
-  (match (compiler-backend-global-shared-view op)
+  (match (& op)
     [(or (Eq) (Ne))
       (compiler-backend-avx2-emit-signed-int-compare-asm
         op
@@ -10218,7 +10218,7 @@
       "backend: unsupported AVX2 vector prefix shape")
     (let
       [register-ty : compiler_ast_types.AstType
-        (match (compiler-backend-global-shared-view elem-ty)
+        (match (& elem-ty)
           [(Bool) (I8)]
           [_ (owned_view.compiler-owned-shared-view elem-ty)])]
       [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
@@ -10261,7 +10261,7 @@
                           dst-reg
                           "\n"))]
                     [prefix-asm : String
-                      (match (compiler-backend-global-shared-view elem-ty)
+                      (match (& elem-ty)
                         [(Bool)
                           (compiler-backend-avx2-vector-prefix-bool-body
                             op
@@ -10275,7 +10275,7 @@
                             (compiler-backend-global-shared-view dst-reg)
                             (compiler-backend-global-shared-view work0-xmm)
                             (compiler-backend-global-shared-view work1-xmm))])]
-                    (match (compiler-backend-global-shared-view elem-ty)
+                    (match (& elem-ty)
                       [(Bool)
                         (match (compiler-backend-avx2-vector-prefix-bool-carry
                           assignments
@@ -10457,7 +10457,7 @@
       ", "
       work1
       "\n"
-      (match (compiler-backend-global-shared-view elem-ty)
+      (match (& elem-ty)
         [(I32)
           (str_cat.str-cat
             (compiler-backend-avx512-vector-prefix-numeric-stage
@@ -10821,7 +10821,7 @@
     (compiler-backend-instr-error
       instr-diag
       "backend: unsupported AVX-512 vector prefix shape")
-    (match (compiler-backend-global-shared-view elem-ty)
+    (match (& elem-ty)
       [(Bool)
         (compiler-backend-emit-avx512-vector-prefix-bool
           assignments
@@ -11191,9 +11191,9 @@
       (compiler-backend-mask-spill-scratch 0)
       backend-state)
       [(Ok dst-reg)
-        (match (compiler-backend-global-shared-view index)
+        (match (& index)
           [(I64 index-imm)
-            (match (compiler-backend-global-shared-view end-value)
+            (match (& end-value)
               [(I64 end-imm)
                 (Ok
                   (str_cat.str-cat
@@ -11271,7 +11271,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (match (compiler-backend-global-shared-view elem-ty)
+  (if (match (& elem-ty)
     [(Bool) true]
     [_ false])
     (compiler-backend-emit-avx512-mask-load
@@ -11356,7 +11356,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (match (compiler-backend-global-shared-view elem-ty)
+  (if (match (& elem-ty)
     [(Bool) true]
     [_ false])
     (compiler-backend-emit-avx512-mask-store
@@ -12708,7 +12708,7 @@
             (compiler-backend-global-shared-view conditional-reg)
             backend-state))]
       [var-test : String
-        (match (compiler-backend-global-shared-view condition)
+        (match (& condition)
           [(Var var)
             (compiler-backend-branch-test-var-asm assignments var backend-state)]
           [_ ""])]
@@ -13412,7 +13412,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (if (match (compiler-backend-global-shared-view elem-ty)
+  (if (if (match (& elem-ty)
     [(Bool) true]
     [_ false])
     (compiler-backend-avx2-mask-shape-ok? lanes)
@@ -13537,7 +13537,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (if (match (compiler-backend-global-shared-view elem-ty)
+  (if (if (match (& elem-ty)
     [(Bool) true]
     [_ false])
     (compiler-backend-avx2-mask-shape-ok? lanes)
@@ -13567,7 +13567,7 @@
                   [addr-asm : String addr-plan.asm]
                   [addr : String addr-plan.addr]
                   [bool-store? : bool
-                    (match (compiler-backend-global-shared-view elem-ty)
+                    (match (& elem-ty)
                       [(Bool) true]
                       [_ false])]
                   (if bool-store?
@@ -19230,7 +19230,7 @@
   [value : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]
   [backend-state : CompilerBackendState]) : String
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(Var _)
       (compiler-backend-float-value-stack-address
         assignments
@@ -22118,7 +22118,7 @@
   [program-index : CompilerBackendProgramIndex]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
-    (match (compiler-backend-global-shared-view value)
+    (match (& value)
       [(Global name)
         (Ok
           (str_cat.str-cat
@@ -22136,7 +22136,7 @@
           ty
           "%xmm0"
           backend-state)])
-    (match (compiler-backend-global-shared-view value)
+    (match (& value)
       [(Var id)
         (Ok
           (compiler-backend-emit-load-typed-var-to-reg
@@ -22187,7 +22187,7 @@
   [reg : String]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
-    (match (compiler-backend-global-shared-view value)
+    (match (& value)
       [(Global name)
         (Ok
           (str_cat.str-cat
@@ -22205,7 +22205,7 @@
           ty
           reg
           program-index.backend-state)])
-    (match (compiler-backend-global-shared-view value)
+    (match (& value)
       [(Var id)
         (Ok
           (compiler-backend-emit-load-typed-var-to-reg
@@ -22366,7 +22366,7 @@
     ;; New comparison IR records the operand type directly. Keep the old Bool
     ;; inference fallback for hand-authored optimizer/backend fixtures while
     ;; they migrate; production lowering must never depend on it.
-    (if (match (compiler-backend-global-shared-view result-ty)
+    (if (match (& result-ty)
       [(Bool) true]
       [_ false])
       (match (compiler-backend-value-type
@@ -23480,7 +23480,7 @@
   [succs : compiler_liveness.CompilerLiveLabelSet]
   [h : i64]
   [le : i64]) : bool
-  (match (compiler-backend-global-shared-view succs)
+  (match (& succs)
     [(Nil) false]
     [(Dense _ _)
       (match (backend_label_i64_map.get
@@ -23530,7 +23530,7 @@
   [succs : compiler_liveness.CompilerLiveLabelSet]
   [lo : i64]
   [le : i64]) : bool
-  (match (compiler-backend-global-shared-view succs)
+  (match (& succs)
     [(Nil) false]
     [(Dense _ _)
       (match (backend_label_i64_map.get
@@ -26854,7 +26854,7 @@
     ;; MOV preserves those flags and its 32-bit destination clears the
     ;; upper half. Only the result register is written: no hidden
     ;; byte scratch, operand reload, or second operand evaluation is needed.
-    (if (match (compiler-backend-global-shared-view op)
+    (if (match (& op)
       [(or (Gt) (Ge)) true]
       [_ false])
       (str_cat.str-cat
@@ -26872,7 +26872,7 @@
           (mx.MachineInstr.MovRI
             (W32)
             (compiler-backend-machine-register (string.copy dst-home))
-            (match (compiler-backend-global-shared-view op)
+            (match (& op)
               [(Ne) 1]
               [_ 0])))
         "    jp 1f\n    "
@@ -27418,7 +27418,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : String
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(Var id)
       (match (compiler-backend-emit-assignment-lookup
         backend-state
@@ -27857,7 +27857,7 @@
     (if (and
       (not (string.eq lhs-reg ""))
       (= (compiler-backend-type-size type-segment-bases ty) 8)
-      (match (compiler-backend-global-shared-view op)
+      (match (& op)
         [(Mul) true]
         [_ false]))
       (Ok (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
@@ -27891,7 +27891,7 @@
             [op-asm : String
               (if (and
                 (string.eq imm "$0")
-                (match (compiler-backend-global-shared-view op)
+                (match (& op)
                   [(or (Add) (Sub)) true]
                   [_ false]))
                 ""
@@ -30469,7 +30469,7 @@
   [false-label : i64]
   [fallthrough : CompilerBackendMaybeLabel]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-global-shared-view cond)
+  (match (& cond)
     [(Bool b)
       (let
         [taken : i64
@@ -30551,7 +30551,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : bool
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(Var id)
       (not
         (string.eq
@@ -35694,7 +35694,7 @@
                 (compiler-backend-intlike-scalar-type? to-ty)
                 (< from-size to-size)
                 (< from-size 8)))
-              (match (compiler-backend-global-shared-view src)
+              (match (& src)
                 [(Var src-id)
                   ;; Widening int/char/bool casts can extend straight
                   ;; into the destination register home. This preserves the
@@ -36493,7 +36493,7 @@
     [c-abi? : bool (compiler_ast_types.ast-extern-abi-c? (& abi))]
     [aggregate-params? : bool
       (if c-abi?
-        (match (compiler-backend-global-shared-view ty)
+        (match (& ty)
           [(Func args _)
             (compiler-backend-type-list-has-aggregate?
               type-segment-bases
@@ -36975,7 +36975,7 @@
   [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
-  (match (compiler-backend-global-shared-view ty)
+  (match (& ty)
     [(or (Ref _ inner) (MutRef _ inner))
       (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
         type-segment-bases
@@ -37247,7 +37247,7 @@
   [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]) : i64
-  (match (compiler-backend-global-shared-view ty)
+  (match (& ty)
     [(or (Ref _ _) (MutRef _ _)) 0]
     [_
       (let
@@ -42189,7 +42189,7 @@
   [source : CompilerBackendPhiSource]
   [dst : i64]
   [loc : i64]) : CompilerBackendPhiSource
-  (match (compiler-backend-global-shared-view source)
+  (match (& source)
     [(Value value)
       (match value
         [(Var found)
@@ -42285,7 +42285,7 @@
       (let
         [phi-copy : CompilerBackendPhiCopy
           (compiler-backend-global-array-element-shared-view copies.slots i)]
-        (match (compiler-backend-global-shared-view phi-copy)
+        (match (& phi-copy)
           [(Copy dst _ _)
             (if (compiler-backend-phi-copy-source-uses-home?
               backend-state
@@ -43365,7 +43365,7 @@
       ty
       program-index
       backend-state)
-    (match (compiler-backend-global-shared-view value)
+    (match (& value)
       [(Var src-id)
         (match (compiler-backend-emit-phi-var-source-direct
           assignments
@@ -43441,7 +43441,7 @@
           (compiler-backend-global-shared-view ty)
           dst
           (compiler-backend-global-shared-view value))
-          (match (compiler-backend-global-shared-view value)
+          (match (& value)
             [(Var src-id)
               (match (compiler-backend-emit-phi-var-source-direct
                 assignments
@@ -43549,7 +43549,7 @@
         (compiler-backend-global-shared-view copies)
         copy-id)
         [(Some phi-copy)
-          (match (compiler-backend-global-shared-view phi-copy)
+          (match (& phi-copy)
             [(Copy dst _ _)
               (let
                 [head
@@ -45980,7 +45980,7 @@
             ;; still require the typed narrowing path unless they are 8 bytes.
             (if (if (string.eq dst-home "")
               false
-              (match (compiler-backend-global-shared-view src)
+              (match (& src)
                 [(Var _) true]
                 [_ (= (compiler-backend-type-size type-segment-bases ty) 8)]))
               (compiler-backend-emit-load-value
@@ -46700,7 +46700,7 @@
           ;; that this is our allocator, including its shared-arena slow path.
           (or
             (cbi.compiler-builtin-backend-tl-alloc-id? name)
-            (match (compiler-backend-global-shared-view ty)
+            (match (& ty)
               [(MutPtr _) true]
               [_ false]))
           (compiler-backend-plan-provides-id?
@@ -50221,7 +50221,7 @@
 (define (compiler-backend-count-instr-uses
   [counts : (__tl_dyn-array i64)]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
-  (match (compiler-backend-global-shared-view instr)
+  (match (& instr)
     [(AddrOf _ src _storage-words)
       (compiler-backend-use-count-inc (&mut counts) src)]
     [_
@@ -55393,7 +55393,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
-  (match (compiler-backend-global-shared-view func)
+  (match (& func)
     [(Function name)
       (match (compiler-backend-index-signature program-index name)
         [(Some param-types _) param-types]
@@ -55616,7 +55616,7 @@
               vars
               program-index)
               [(Ok result-store)
-                (match (compiler-backend-global-shared-view func)
+                (match (& func)
                   [(Function name)
                     (Ok
                       (str_cat.str-cat
@@ -56256,7 +56256,7 @@
   [backend-state : CompilerBackendState]) : bool
   (and
     (compiler-backend-divmod-producer-op? op)
-    (match (compiler-backend-global-shared-view ty)
+    (match (& ty)
       [(I64) true]
       [_ false])
     (compiler-backend-divmod-fixed-home?
@@ -60646,7 +60646,7 @@
       [block : compiler_ir_types.CompilerIrBlock
         (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
       [mark : i64 (compiler-backend-asm-buf-len (& out))]
-      (match (compiler-backend-global-shared-view block)
+      (match (& block)
         [(Block _ instrs)
           (let
             [function-state : CompilerBackendFunctionState
@@ -63759,7 +63759,7 @@
     (let
       [block : compiler_ir_types.CompilerIrBlock
         (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
-      (match (compiler-backend-global-shared-view block)
+      (match (& block)
         [(Block cur-label _)
           (if (and
             (not (= cur-label entry-label))
@@ -63809,7 +63809,7 @@
         (let
           [entry : compiler_ir_types.CompilerIrBlock
             (compiler_ir_types.compiler-ir-block-seq-ref seq 0)]
-          (match (compiler-backend-global-shared-view entry)
+          (match (& entry)
             [(Block entry-label _)
               (compiler-backend-peephole-carry-safe-scan-seq
                 backend-state
@@ -64993,7 +64993,7 @@
   (match blocks
     [(slice) false]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
             (& instrs))
@@ -67341,7 +67341,7 @@
 (define (compiler-backend-gep-fold-block-array
   [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array
     compiler_ir_types.CompilerIrBlock)
-  (match (compiler-backend-global-shared-view blocks)
+  (match (& blocks)
     [(Array seq)
       (let
         [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
@@ -67654,7 +67654,7 @@
           (let
             [scale : i64
               (compiler-backend-type-size type-segment-bases elem-ty)]
-            (match (compiler-backend-global-shared-view offset)
+            (match (& offset)
               [(Var ov)
                 (if (and
                   (>= ov 0)
@@ -68322,7 +68322,7 @@
 ;; -1: defines no variable. -2: defines one this pass cannot name.
 (define (compiler-backend-placement-instr-dst
   [instr : compiler_ir_types.CompilerIrInstr]) : i64
-  (match (compiler-backend-global-shared-view instr)
+  (match (& instr)
     ;; A TailCall's callee and a Store's global are symbol ids; this pass reads
     ;; them as destinations.
     [(or (TailCall name _ _) (Store name _ _)) name]
@@ -78353,7 +78353,7 @@ tl_shared_object_init:
   [value : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(F64 bits)
       (let
         [symbol : String (compiler-backend-float-label ty bits)]
@@ -78817,7 +78817,7 @@ tl_shared_object_init:
   [value : compiler_ir_types.CompilerIrValue]
   [reg : String]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(Var id)
       (compiler-backend-object-add-nonempty-bytes
         parts
@@ -78859,7 +78859,7 @@ tl_shared_object_init:
   [ty : compiler_ast_types.AstType]
   [reg : String]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     [(F64 _)
       (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref-with-type
@@ -78959,7 +78959,7 @@ tl_shared_object_init:
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler-backend-global-shared-view src)
+  (match (& src)
     [(Var src-var)
       (compiler-backend-object-store-reg-to-group-word
         program-index.backend-state
@@ -79021,7 +79021,7 @@ tl_shared_object_init:
   [src : compiler_ir_types.CompilerIrValue]
   [word-index : i64]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler-backend-global-shared-view src)
+  (match (& src)
     [(Var src-var)
       (compiler-backend-object-store-reg-to-var
         (compiler-backend-object-load-group-word-to-reg
@@ -79101,7 +79101,7 @@ tl_shared_object_init:
         "%rax"
         program-index)]
     [with-offset : object_target.CompilerBackendObjectTargetParts
-      (match (compiler-backend-global-shared-view offset)
+      (match (& offset)
         [(I64 n)
           (let
             [disp : i64 (* n elem-size)]
@@ -79387,7 +79387,7 @@ tl_shared_object_init:
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (let
     [zero-test? : bool
-      (match (compiler-backend-global-shared-view rhs)
+      (match (& rhs)
         [(I64 value)
           (and (= value 0) (compiler-backend-compare-uses-zero-test? op))]
         [_ false])]
@@ -82015,7 +82015,7 @@ tl_shared_object_init:
   [global-types : CompilerBackendGlobalTypeTable]
   [value : compiler_ir_types.CompilerIrValue]
   [expected : compiler_ast_types.AstType]) : bool
-  (match (compiler-backend-global-shared-view value)
+  (match (& value)
     ;; Integer constants retain one raw IR variant after contextual checking.
     ;; Their declared integer width is recovered from the callee signature.
     [(I64 _) (compiler-backend-object-abi-integer-type? expected)]
@@ -92804,7 +92804,7 @@ tl_shared_object_init:
       (let
         [record : cobj.CompilerObjectDataRecord
           (cobj.compiler-object-data-record-list-ref records index)]
-        (match (compiler-backend-global-shared-view record)
+        (match (& record)
           [(Label found)
             (if (string.eq found label)
               (begin

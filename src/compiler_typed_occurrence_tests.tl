@@ -1729,10 +1729,11 @@
     [_changed : symbols.CompilerSymbols
       (symbols.compiler-symbols-index-decl
         (symbols.compiler-symbols-shared-view (& declarations))
-        (ast.ast-decl-def-id
-          (ci.intern "resolver-replaced")
-          ast.AstMaybeType.No
-          0)
+        (&
+          (ast.ast-decl-def-id
+            (ci.intern "resolver-replaced")
+            ast.AstMaybeType.No
+            0))
         0
         0
         0)]

@@ -50,6 +50,30 @@ for operation in invalid-null invalid-address invalid-atomic retire-unprotected 
 done
 echo "compiler arena debug native matrix passed (15 cases, $HOST_OS)"
 
+# Exercise the private global allocator with all instrumentation enabled. The
+# fixtures check arena restoration, payload identity, and concurrent first use.
+for source in global_aggregate_storage_lifetime global_aggregate_storage_threads; do
+    for opt in 0 1 2; do
+        asm="$WORKDIR/$source-opt$opt.s"
+        binary="$WORKDIR/$source-opt$opt$BIN_EXT"
+        "$SUPPORT" compile "tests/integration/$source.tl" \
+            --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
+            --cfg compiler-arena-debug --cfg compile-profile --backtrace -o "$asm"
+        for symbol in tl_alloc_global: tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:; do
+            grep -F "$symbol" "$asm" >/dev/null ||
+                fail "global storage $source opt$opt omitted $symbol"
+        done
+        assemble_and_link "global storage $source opt$opt" "$asm" \
+            "$WORKDIR/$source-opt$opt.$OBJ_EXT" "$binary"
+        status=0
+        "$binary" > "$binary.stdout" 2> "$binary.stderr" || status=$?
+        [ "$status" -eq 42 ] || fail "global storage $source opt$opt: exit $status"
+        [ ! -s "$binary.stdout" ] && [ ! -s "$binary.stderr" ] ||
+            fail "global storage $source opt$opt: unexpected output"
+    done
+done
+echo "global storage debug/profile/backtrace matrix passed (6 cases, $HOST_OS)"
+
 # Linux's private TLS word must also work with the debug renderer enabled in
 # this emitter. Ordinary compilers deliberately omit that renderer.
 if [ "$HOST_OS" = linux ]; then

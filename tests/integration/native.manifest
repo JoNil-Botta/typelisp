@@ -941,3 +941,5 @@ replayed_loop_call_lagged_65|all|0,1,2|tests/integration/replayed_loop_call_lagg
 linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl|stage-stdlib
 
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
+global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
+global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-

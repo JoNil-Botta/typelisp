@@ -26,6 +26,19 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+`global_aggregate_storage_lifetime.tl` checks shallow global container storage
+after scratch and explicit arena destruction, nested scopes, repeated writes,
+large arrays, MoveOnly Box payloads, and a receiver retained across replacement.
+It also checks that the allocator restores the caller's arena and remains
+visible to allocation profiling. `global_aggregate_storage_threads.tl` races
+first use from two workers writing distinct globals and reads the results only
+after join. Both fixtures run at opt0/1/2 on both hosts. The existing
+`scratch_body_global_store_reject.tl` keeps source allocation escape illegal.
+The arena-debug gate repeats both fixtures with debug, profile, and backtrace
+instrumentation together, using a test-enabled emitter and checking that each
+runtime feature is present. The shared-object backend test pins both TLS
+switches and their scratch register, which must preserve the allocation result.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

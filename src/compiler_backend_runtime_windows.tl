@@ -2082,7 +2082,13 @@ tl_tlci_call_macro_entry:
             debug-text)
           (compiler-backend-runtime-windows-aligned-alloc-functions-base
             profile
-            debug-text)))
+            debug-text)
+          (runtime_common.compiler-backend-runtime-global-alloc-functions
+            "%rcx"
+            (compiler-backend-current-arena-load "%r13")
+            (compiler-backend-current-arena-store "%rbx")
+            (compiler-backend-current-arena-store "%r13")
+            false)))
       (compiler-backend-runtime-windows-render
         features.region-mark
         (WindowsRuntimeRegionMark)

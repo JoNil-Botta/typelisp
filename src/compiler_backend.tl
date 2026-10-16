@@ -75632,7 +75632,10 @@
           cbi.compiler-builtin-id-tl-alloc)
         (compiler-backend-runtime-index-defines?
           index
-          cbi.compiler-builtin-id-tl-alloc-aligned))]
+          cbi.compiler-builtin-id-tl-alloc-aligned)
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-alloc-global))]
     [defines-substring : bool
       (compiler-backend-runtime-index-defines?
         index
@@ -75747,7 +75750,10 @@
           cbi.compiler-builtin-id-tl-alloc)
         (compiler-backend-runtime-index-calls?
           index
-          cbi.compiler-builtin-id-tl-alloc-aligned))]
+          cbi.compiler-builtin-id-tl-alloc-aligned)
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-alloc-global))]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls?
         index
@@ -76328,6 +76334,7 @@ tl_shared_object_init:
         (string.eq function "tl_arena_set")
         (string.eq function "tl_backtrace_stack_set"))
       "%rax"]
+    [(string.eq function "tl_alloc_global") "%r11"]
     [(string.eq function "tl_region_reset") "%rbx"]
     [(string.eq function "tl_thread_init") "%rdi"]
     [(string.is-string-prefix-at function "tl_" 0) ""]

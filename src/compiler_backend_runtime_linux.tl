@@ -1464,7 +1464,13 @@ tl_backtrace_stack_set:
             debug-text)
           (compiler-backend-runtime-linux-aligned-alloc-functions-base
             profile
-            debug-text)))
+            debug-text)
+          (runtime_common.compiler-backend-runtime-global-alloc-functions
+            "%rdi"
+            (compiler-backend-current-arena-load "%r13")
+            (compiler-backend-current-arena-store "%rbx")
+            (compiler-backend-current-arena-store "%r13")
+            true)))
       (compiler-backend-runtime-linux-render
         features.region-mark
         (LinuxRuntimeRegionMark)

@@ -2,9 +2,35 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 (import stdlib.hash)
 (import stdlib.string)
 (import stdlib.test)
+
+(test
+  compiler-builtin-global-allocator-lifecycle
+  (ci.intern-reset!)
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (cbi.compiler-builtin-refresh!)
+  (let
+    [snapshot : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [global-id : i64 cbi.compiler-builtin-id-tl-alloc-global]
+    (cbi.compiler-builtin-reset!)
+    (cbi.state-install! snapshot)
+    (test.assert-true
+      (and
+        (= cbi.compiler-builtin-id-tl-alloc-global global-id)
+        (= (cbi.state-ref snapshot 324) global-id)
+        (!= global-id cbi.compiler-builtin-id-tl-alloc)
+        (!= global-id cbi.compiler-builtin-id-c-fn-check)
+        (!= global-id cbi.compiler-builtin-id-tl-c-fn-null-abort)
+        (!= global-id cbi.compiler-builtin-id-tl-thread-local-word-addr)
+        (cbi.compiler-builtin-backend-runtime-core-id? global-id)
+        (cbi.compiler-builtin-backend-tl-alloc-id? global-id)
+        (string.eq (ci.intern-str global-id) "tl_alloc_global"))
+      "global allocator identity survives capture/reset/install without collision")))
 
 (define (compiler-backend-runtime-test-contains?
   [text : (& text str)]

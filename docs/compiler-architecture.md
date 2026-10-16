@@ -909,6 +909,17 @@ Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
 default, for one, is a live allocation.
 
 Memory-class aggregate expressions carry addresses into inline storage.
+Whole-global assignment copies the shallow container through the private
+`tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
+store preserves the backend's global-writer and inline-storage eligibility
+analysis; mutating one permanent home would incorrectly retarget a receiver
+captured before the replacement. The runtime lazily publishes a private atomic
+arena with program lifetime, selects it only for the allocation, and restores
+the caller's current arena before returning. This arena is never exposed to
+source reset or destruction. Payloads retain their checked source lifetimes;
+this transport does not clone them. Global initialization and ordinary heap
+allocation continue to use `tl_alloc`.
+
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,
 enum payload, fixed-array projection, conditional merge, or nested loop; the

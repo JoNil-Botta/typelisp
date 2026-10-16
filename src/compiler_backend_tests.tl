@@ -40959,6 +40959,8 @@ user_fn:
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    movq %r12, %rdi\n    call tl_alloc\n"
+        "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $32, %rsp\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
         "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
@@ -40969,8 +40971,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          7
-          5))
+          9
+          7))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

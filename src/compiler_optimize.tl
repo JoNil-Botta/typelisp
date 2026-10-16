@@ -123831,7 +123831,8 @@
   [spans : ir.CompilerSourceSpans]
   [level : i64]
   [profile-state : profile_state.CompilerProfileState]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
+  [representations : ir.CompilerIrRepresentationIndex]
+  [input-retirement : OptInputRetirement]) : CompilerOptimizedProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs)
       (if (= level 0)
@@ -123923,8 +123924,8 @@
                     ;; Gather the survivors, already resident in the
                     ;; optimizer-input arena, and release the inline arena
                     ;; before the loop; see `opt-optimizer-input-carrier`.
-                    ;; `pruned-globals` names the driver's globals, which live in
-                    ;; the lower-IR arena and are untouched by this release.
+                    ;; The driver's globals, externs and spans live outside
+                    ;; the lower-IR arena; only its function bodies retire.
                     [optimizer-functions : ir.CompilerIrFunctionSeq
                       (opt-optimizer-input-carry
                         pools
@@ -123936,6 +123937,15 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena))]
+                    ;; Every surviving body is now independent of the source
+                    ;; owner. The synchronous authority and its owner must
+                    ;; themselves remain outside the retired storage.
+                    [_retire-source-input : unit
+                      (when
+                        (= level 2)
+                        (match input-retirement
+                          [(Retain) unit]
+                          [(Retire owner release-input) (release-input owner)]))]
                     [summaries : OptProgramSummaries
                       (opt-build-program-summaries
                         type-segment-bases
@@ -124040,6 +124050,12 @@
                               (& inline-spans)
                               (& optimized))))))))]))))]))
 
+;; Optional authority to retire source function storage after the level-2
+;; carrier handoff. The callback is synchronous and does not own its context.
+(defenum OptInputRetirement
+  (Retain)
+  (Retire i64 (-> i64 unit)))
+
 ;; One optimizer run: the pools the program's types live in, the level, the
 ;; job's compile-profile state, and the program's representation index when the
 ;; caller already has one (`representations?`); without it the run builds the
@@ -124049,7 +124065,8 @@
   (level i64)
   (profile-state profile_state.CompilerProfileState)
   (representations? bool)
-  (representations ir.CompilerIrRepresentationIndex))
+  (representations ir.CompilerIrRepresentationIndex)
+  (input-retirement OptInputRetirement))
 
 ;; A run with a fresh profile state and the program's own representation index.
 (define (optimize-request [pools : ast.AstNodePoolContext] [level : i64]) : OptimizeRequest
@@ -124058,7 +124075,8 @@
     level
     (profile_state.compiler-profile-state-new)
     false
-    (ir.compiler-ir-representation-index-empty)))
+    (ir.compiler-ir-representation-index-empty)
+    (OptInputRetirement.Retain)))
 
 (define (optimize-program
   [program : ir.CompilerIrProgram]
@@ -124079,7 +124097,8 @@
         request.representations
         (ir.compiler-ir-representation-index-build
           type-segment-bases
-          (& program))))))
+          (& program)))
+      request.input-retirement)))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools
 ;; call it.

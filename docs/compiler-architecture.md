@@ -432,6 +432,23 @@ tests compare. A call site cannot pair a slot with the wrong type, and adding
 or reordering a field updates every derived item. The safety fixtures
 `compiler_state_schema_*` check the generator on a small synthetic schema.
 
+The same job directory owns `CompilerLowerArenaState`'s scratch and escaped-IR
+cells. Lazy creation stores the stable arena root immediately; allocation,
+profiling and release read that exact owner without install/capture selectors.
+Release clears a cell before destruction and is idempotent. Creating or
+releasing another job cannot change those cells, even while its arena is
+current. Successful raw lower, pointer-proof and driver-lowered results carry
+the one-word lower owner through their consumers. A fresh standalone lowering
+failure releases its otherwise unreturned arenas after its diagnostic escapes.
+
+Lower scratch ends after lowering. At opt1/2 the original function IR can end
+after optimizer copy-out; at opt0 it lasts through the final IR consumer.
+Buffered emission retains its job through the write, and lowered link requests
+retain their owner through direct-object and assembly-fallback consumption.
+Object emission copies literal string/byte payloads into its destination;
+those headers and bytes can belong to lower IR, which retires after emission.
+Globals, externs and source spans live outside the dedicated function-IR arena.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

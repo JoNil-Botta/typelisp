@@ -8484,12 +8484,17 @@
   (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
     source
     target)
-    [(Ok program spans)
+    [(Ok program spans lower-state)
+      (compiler_lower.compiler-lower-arena-state-release-scratch!
+        (& (compiler_lower.compiler-lower-state-arenas lower-state)))
       (match (compiler_optimize.optimize-program-with-spans-and-level
         (& program)
         spans
         (embedded-native-opt-level))
-        [(Program optimized optimized-spans) (Ok optimized optimized-spans)])]
+        [(Program optimized optimized-spans)
+          (compiler_lower.compiler-lower-arena-state-release-ir!
+            (& (compiler_lower.compiler-lower-state-arenas lower-state)))
+          (Ok optimized optimized-spans lower-state)])]
     [(Err diag) (Err diag)]))
 
 ;; The source string is the complete transformer input. Callers may capture it
@@ -8512,7 +8517,7 @@
           (str_cat.str-cat
             "generated source rejected: "
             (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
-      [(ResultCompilerLower.Ok program spans)
+      [(ResultCompilerLower.Ok program spans _lower-state)
         (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
           target

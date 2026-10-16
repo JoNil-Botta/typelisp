@@ -3,6 +3,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_driver_core)
+(import compiler_lower)
 (import compiler_backend as backend)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg_core)
@@ -1572,7 +1573,10 @@
 ;; assembly the caller already emitted (doctests).
 (defenum SourceToolProgram
   (Source cli_svec.Vec sym_i64_env.SymI64Env)
-  (Lowered ir.CompilerIrProgram ir.CompilerSourceSpans)
+  (Lowered
+    ir.CompilerIrProgram
+    ir.CompilerSourceSpans
+    compiler_lower.CompilerLowerState)
   (Assembly String))
 
 ;; The artifact paths of one program built in a temp dir.
@@ -1618,7 +1622,7 @@
 
 (define (source-tool-program-lowered? [program : (& program SourceToolProgram)]) : bool
   (match program
-    [(Lowered _ _) true]
+    [(Lowered _ _ _) true]
     [_ false]))
 
 (define (source-tool-program-assembly?
@@ -1674,7 +1678,7 @@
                 mode
                 cfgs
                 crt-entry))])]
-      [(Lowered lowered spans)
+      [(Lowered lowered spans lower-state)
         (source-tool-render-object-result
           target
           (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
@@ -1687,7 +1691,8 @@
             (Scalar)
             opt-level
             true
-            crt-entry))]
+            crt-entry
+            lower-state))]
       [(Assembly _) (Err "assembly has no direct object route")])))
 
 ;; The direct object route, taken only when TYPELISP_{LINUX,WINDOWS}_DIRECT_OBJECT
@@ -1744,7 +1749,7 @@
         mode
         cfgs
         link-inputs)]
-    [(Lowered lowered spans)
+    [(Lowered lowered spans lower-state)
       (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
         source
         lowered
@@ -1752,7 +1757,8 @@
         target
         true
         mode
-        opt-level)
+        opt-level
+        lower-state)
         [(Ok asm advisories)
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (Ok (source-tool-augment-assembly-for-target asm target))]
@@ -1767,30 +1773,45 @@
 ;; direct object when that route is enabled and the object is linkable, else
 ;; through assembly and the external assembler.
 (define (source-tool-link-program [request : SourceToolLinkRequest]) : SourceToolCommandStatus
-  (match (source-tool-try-direct-object-and-link
-    (owned_view.compiler-owned-shared-view request))
-    [(Ok) Ok]
-    [(Err message) (Err message)]
-    [(Unavailable _)
-      (let
-        [asm
-          (try
-            (source-tool-emit-program-assembly
-              request.source
-              request.program
-              request.target
-              request.opt-level
-              request.mode
-              request.link-inputs))]
-        [_
-          (try
-            (source-tool-write-file request.files.asm asm request.write-context))]
-        (source-tool-assemble-and-link
-          request.target
-          request.files.asm
-          request.files.obj
-          request.files.bin
-          request.link-inputs))]))
+  (let
+    [lower-owner : i64
+      (match (& request.program)
+        [(Lowered _ _ owner) owner.address]
+        [_ 0])]
+    [result : SourceToolCommandStatus
+      (match (source-tool-try-direct-object-and-link
+        (owned_view.compiler-owned-shared-view request))
+        [(Ok) Ok]
+        [(Err message) (Err message)]
+        [(Unavailable _)
+          (match (source-tool-emit-program-assembly
+            request.source
+            request.program
+            request.target
+            request.opt-level
+            request.mode
+            request.link-inputs)
+            [(Err message) (Err message)]
+            [(Ok asm)
+              (match (source-tool-write-file
+                request.files.asm
+                asm
+                request.write-context)
+                [(Err message) (Err message)]
+                [(Ok)
+                  (source-tool-assemble-and-link
+                    request.target
+                    request.files.asm
+                    request.files.obj
+                    request.files.bin
+                    request.link-inputs)])])])]
+    ;; Both direct output and every assembly fallback/error have finished
+    ;; reading lowered IR before its exact owner can be retired.
+    (unless
+      (= lower-owner 0)
+      (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!
+        (compiler_lower.compiler-lower-state-from-address lower-owner)))
+    result))
 
 ;; Link `request` and run the executable with `args` and the env overrides
 ;; `env`, streaming its output when `inherit` and capturing it otherwise. The

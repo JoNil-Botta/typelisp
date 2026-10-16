@@ -1,11 +1,20 @@
 ;; compiler_clone_tests.tl - White-box tests for the clone name sets and
-;; root-entry tables.
+;; root-entry tables and late stdlib helper syntax.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
 (import compiler_clone as clone_support)
+(import compiler_ast_types as ast)
+(import compiler_parse_core as parser)
+(import compiler_ctfe as ctfe)
+(import stdlib.iterator)
+(import stdlib.io)
+(import stdlib.byte_buf)
+(import stdlib.test)
+(cfg test (import compiler_optimize as opt))
+(cfg test (import stdlib.arena))
 
 (define (clone-root-entries-empty) : clone_support.CloneRootEntries
   Empty)
@@ -269,3 +278,162 @@
           unique-base
           -1)
         unique-qualified))))
+
+;; Inspect the producer's real template without adding a boxed-list schema to
+;; repository fixtures. Only let bindings are special; children use the schema.
+(define (clone-test-tail-template-id
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]) : i64
+  (let
+    [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools id)]
+    (match (& expr)
+      [(Let payload)
+        (match (& (deref payload))
+          [(Let bindings _)
+            (for [index (iterator.range 0 bindings.len)]
+              (match (ast.ast-let-binding-list-get
+                bindings
+                index
+                (ast.ast-let-binding-fallback))
+                [(Binding name _ init)
+                  (when
+                    (string.eq (ci.intern-str name) "next-tail")
+                    (return init))]))])]
+      [_ unit])
+    (let
+      [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+      (for [index (iterator.range 0 children.len)]
+        (let
+          [found : i64
+            (clone-test-tail-template-id
+              pools
+              (ast.ast-expr-list-get (& children) index -1))]
+          (when (>= found 0) (return found)))))
+    -1))
+
+(define (clone-test-tail-operation?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]
+  [boxed-self : bool]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools id)
+    [(Spanned inner _) (clone-test-tail-operation? pools inner boxed-self)]
+    [(or (BoxGet inner) (BoxTake inner))
+      (and boxed-self (clone-test-tail-operation? pools inner false))]
+    [(Var name) (and (not boxed-self) (string.eq (ci.intern-str name) "tail"))]
+    [_ false]))
+
+(define (clone-test-evaluate-tail?
+  [pools : ast.AstNodePoolContext]
+  [id : i64]
+  [boxed-self : bool]) : bool
+  (let
+    [env : ctfe.CtfeEnv
+      (ctfe.ctfe-env-extend-id
+        (ctfe.ctfe-env-empty-with-pools pools)
+        (ci.intern "boxed-self")
+        (& (ctfe.CompilerCtfeValue.Bool boxed-self)))]
+    [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get (& pools) id)]
+    (match (ctfe.compiler-ctfe-eval (& expr) env (ctfe.ctfe-fuel-limit))
+      [(Ok value _)
+        (match value
+          [(Expr node _) (clone-test-tail-operation? (& pools) node boxed-self)]
+          [(CapturedExpr node _ produced)
+            (clone-test-tail-operation? (& produced) node boxed-self)]
+          [_ false])]
+      [(Err _) false])))
+
+(define (compiler-clone-late-tail-template-ok?) : bool
+  (let
+    [source : String (byte_buf.to-string (io.read-file "stdlib/clone.tl"))]
+    (match (parser.parse-ast-source (& source))
+      [(Ok program)
+        (let
+          [pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
+          (match program
+            [(Program declarations)
+              (let
+                [decls : ast.AstDeclList (deref declarations)]
+                (for [index (iterator.range 0 decls.len)]
+                  (match (ast.ast-decl-list-get
+                    (& decls)
+                    index
+                    (ast.ast-decl-fallback))
+                    [(DefMacro _ name _ _ body)
+                      (when
+                        (string.eq (ci.intern-str name) "synthesize-helpers")
+                        (let
+                          [tail : i64
+                            (clone-test-tail-template-id (& pools) body)]
+                          (return
+                            (and
+                              (>= tail 0)
+                              (clone-test-evaluate-tail? pools tail true)
+                              (clone-test-evaluate-tail? pools tail false)))))]
+                    [_ unit]))
+                false)]))]
+      [(Err _) false])))
+
+(test
+  compiler-clone-late-tail-template
+  (test.assert-true
+    (compiler-clone-late-tail-template-ok?)
+    "late boxed and direct clone tails contain ordinary syntax"))
+
+(cfg
+  test
+  (define (clone-test-production-tail-valid?
+    [value : (& value opt.OptNonnegPhis)]
+    [count : i64]) : bool
+    (match value
+      [(Nil) (= count 0)]
+      [(Cons head tail)
+        (and
+          (= head (- count 1))
+          (clone-test-production-tail-valid? tail (- count 1)))])))
+
+;; Reuse the optimizer's existing boxed-tail type rather than introducing a
+;; list schema into the fixture corpus. The clone crosses a real arena boundary.
+(cfg
+  test
+  (test
+    compiler-clone-boxed-production-tail
+    (let
+      [home : arena.Arena (arena.current)]
+      (for [case-index (iterator.range 0 3)]
+        (let
+          [count : i64
+            (cond [(= case-index 0) 0] [(= case-index 1) 1] [else 30000])]
+          [scratch : arena.Arena (arena.make)]
+          (unsafe
+            (arena.set! scratch))
+          (let
+            [source : opt.OptNonnegPhis (opt.OptNonnegPhis.Nil)]
+            (for [index (iterator.range 0 count)]
+              (set! source (opt.OptNonnegPhis.Cons index (box source))))
+            (unsafe
+              (arena.set! home))
+            (let
+              [copied : opt.OptNonnegPhis (clone source)]
+              (test.assert-true
+                (clone-test-production-tail-valid? (& source) count)
+                "cloning preserves every source element")
+              (unsafe
+                (arena.destroy scratch))
+              (test.assert-true
+                (clone-test-production-tail-valid? (& copied) count)
+                "the clone retains every element after source retirement")))))
+      (let
+        [source : opt.OptNonnegPhis
+          (opt.OptNonnegPhis.Cons
+            7
+            (box (opt.OptNonnegPhis.Cons 8 (box (opt.OptNonnegPhis.Nil)))))]
+        [copied : opt.OptNonnegPhis (clone source)]
+        (match copied
+          [(Cons head tail)
+            (test.assert-i64-eq head 7 "clone keeps the head")
+            (set! (deref tail) (opt.OptNonnegPhis.Nil))
+            (test.assert-true
+              (opt.opt-nonneg-phis-member? (& source) 8)
+              "mutating the clone leaves the source tail intact")]
+          [_ (test.assert-true false "clone keeps the nonempty variant")])))))

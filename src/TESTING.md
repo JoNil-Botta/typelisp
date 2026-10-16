@@ -329,6 +329,21 @@ the prelude `for` body does; it composes nested macros, list inspection, begin
 bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
+## Late clone helper syntax
+
+`compiler-clone-late-tail-template` evaluates the stdlib producer's actual
+self-tail template with both boxing choices and requires ordinary syntax.
+Synthesized clone helpers are installed after macro expansion, so a macro call
+in their body otherwise reaches the native linker as an unresolved function.
+The test uses the shared AST child traversal and adds no list-shaped schema to
+the repository's zero-cons corpus.
+
+`compiler-clone-boxed-production-tail` reuses the optimizer's existing
+`OptNonnegPhis` type for empty, single and 30,000-element clones. It validates
+every element after source-arena retirement and checks tail mutation isolation.
+The three `clone-boxed-production-tail-opt{0,1,2}` public-tool cases compile,
+link and execute both clone tests on Linux and Windows without a test filter.
+
 ## Compiler arena ownership
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`

@@ -14031,14 +14031,14 @@
     [b : i64 0]
     [position : i64 0]
     (while (< position params.len)
-      (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      (match (compiler_ir_types.compiler-ir-param-seq-borrow params position)
         [(Param _ _ var-id)
           (set!
             out
             (compiler-backend-plan-body-reg-mask-var assignments var-id out))])
       (set! position (+ position 1)))
     (while (< b count)
-      (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
         [(Block _ instrs)
           (let
             [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
@@ -15266,7 +15266,7 @@
   [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]) : CompilerBackendMaybeLabel
   (if (< (+ index 1) (compiler_ir_types.compiler-ir-block-seq-count seq))
-    (match (compiler_ir_types.compiler-ir-block-seq-ref seq (+ index 1))
+    (match (compiler_ir_types.compiler-ir-block-seq-borrow seq (+ index 1))
       [(Block next-label _) (Some next-label)])
     (No)))
 
@@ -15343,7 +15343,7 @@
         false)
       unit)
     (while (and ready (< index prefix-count))
-      (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow seq index)
         [(Block label instrs)
           (let
             [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
@@ -21015,10 +21015,8 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (= words.len 2)
     (let
-      [w0 : compiler_ir_types.CompilerIrValue
-        (compiler_ir_types.compiler-ir-value-seq-ref words 0)]
-      [w1 : compiler_ir_types.CompilerIrValue
-        (compiler_ir_types.compiler-ir-value-seq-ref words 1)]
+      [w0 (compiler_ir_types.compiler-ir-value-seq-ref words 0)]
+      [w1 (compiler_ir_types.compiler-ir-value-seq-ref words 1)]
       [w0-sse : bool
         (compiler-backend-group-word-sse? type-segment-bases program-index ty 0)]
       [w1-sse : bool
@@ -23446,7 +23444,10 @@
                   (compiler-backend-const-hoist-jump-target
                     (compiler-backend-global-array-element-shared-view orig p))
                   (compiler-backend-const-hoist-block-label
-                    (compiler-backend-global-array-element-shared-view orig lo))))
+                    (&
+                      (compiler-backend-global-array-element-shared-view
+                        orig
+                        lo)))))
                 (begin
                   (set! found p)
                   (set! done true))
@@ -23503,12 +23504,12 @@
         [c : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
         (if (<= c 0)
           (compiler_ir_types.compiler-ir-label-none)
-          (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (- c 1))
+          (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs (- c 1))
             [(Jump label) label]
             [_ (compiler_ir_types.compiler-ir-label-none)])))]))
 
 (define (compiler-backend-const-hoist-block-label
-  [block : compiler_ir_types.CompilerIrBlock]) : i64
+  [block : (& compiler_ir_types.CompilerIrBlock)]) : i64
   (match block
     [(Block label _) label]))
 
@@ -23813,9 +23814,10 @@
                   (let
                     [h-label : i64
                       (compiler-backend-const-hoist-block-label
-                        (compiler-backend-global-array-element-shared-view
-                          orig
-                          h))]
+                        (&
+                          (compiler-backend-global-array-element-shared-view
+                            orig
+                            h)))]
                     [p : i64
                       (compiler_regalloc.compiler-reg-loop-nest-outside-pred
                         nest
@@ -23907,9 +23909,10 @@
                           (if (= h 0)
                             h-label
                             (compiler-backend-const-hoist-block-label
-                              (compiler-backend-global-array-element-shared-view
-                                orig
-                                site)))]
+                              (&
+                                (compiler-backend-global-array-element-shared-view
+                                  orig
+                                  site))))]
                         [inject-pre : bool (= h 0)]
                         (while (<= b le)
                           (if (compiler_regalloc.compiler-reg-loop-nest-member?
@@ -25566,7 +25569,7 @@
     [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
     [b : i64 0]
     (while (< position params.len)
-      (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      (match (compiler_ir_types.compiler-ir-param-seq-borrow params position)
         [(Param _ _ id)
           (compiler-backend-shift-count-bounds-note! (&mut bounds) id -1)])
       (set! position (+ position 1)))
@@ -25581,7 +25584,7 @@
 ;; count is a var the table bounds has one.
 (define (compiler-backend-instr-shift-count-bound
   [function-state : CompilerBackendFunctionState]
-  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  [instr : (& compiler_ir_types.CompilerIrInstr)]) : i64
   (match instr
     [(BinOp _ op _ (Var count) _)
       (if (compiler-backend-binop-shift-op? op)
@@ -32636,7 +32639,7 @@
   [position : i64]) : i64
   (if (>= position params.len)
     0
-    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+    (match (compiler_ir_types.compiler-ir-param-seq-borrow params position)
       [(Param _ _ var-id)
         (+
           (match (compiler-backend-emit-assignment-lookup
@@ -32691,7 +32694,7 @@
   [position : i64]) : i64
   (if (>= position params.len)
     index
-    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+    (match (compiler_ir_types.compiler-ir-param-seq-borrow params position)
       [(Param _ _ var-id)
         (compiler-backend-param-register-exclude-fill-from
           backend-state
@@ -33205,8 +33208,7 @@
   [index : i64]) : i64
   (if (< cursor instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [rest : i64 (+ cursor 1)]
       (match instr
         [(or (CopyBytes dst src _) (Gep _ dst src _) (StorePtr dst src _))
@@ -36391,7 +36393,7 @@
   [seq-index : i64]) : backend_i64_i64_map.Map
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     link-references
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern _ _ _ _ _ link-symbol _ provided)
         (let
           [next-link-references : backend_i64_i64_map.Map link-references]
@@ -36427,7 +36429,7 @@
   [seq-index : i64]) : backend_i64_i64_map.Map
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     reference-ids
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern extern-name-id source-name-id _ _ _ _ _ _)
         (compiler-backend-program-index-extern-reference-name-seq-into
           externs
@@ -36975,7 +36977,7 @@
   [type-segment-bases : i64]
   [index : CompilerBackendProgramIndex]
   [groups : compiler_liveness.CompilerLiveI64Set]
-  [instr : compiler_ir_types.CompilerIrInstr]) : compiler_liveness.CompilerLiveI64Set
+  [instr : (& compiler_ir_types.CompilerIrInstr)]) : compiler_liveness.CompilerLiveI64Set
   (match instr
     [(Mov dst src ty)
       (if (compiler-backend-group-type? type-segment-bases index ty)
@@ -37004,7 +37006,7 @@
           type-segment-bases
           index
           out
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)))
       (set! i (+ i 1)))
     out))
 
@@ -37277,7 +37279,7 @@
   [index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= index globals.len)
     (Ok seen)
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
       [(Global name _ _)
         (let
           [symbol : String
@@ -37415,7 +37417,7 @@
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     (Ok seen)
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern name-id _ _ _ _ link-symbol-id _ provided)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
@@ -38721,7 +38723,7 @@
   [target : CompilerBackendTarget]
   [source-function : i64]
   [params : compiler_ir_types.CompilerIrParamSeq]
-  [block : compiler_ir_types.CompilerIrBlock]
+  [block : (& compiler_ir_types.CompilerIrBlock)]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match block
     [(Block _ instrs)
@@ -38754,7 +38756,7 @@
           target
           source-function
           params
-          (compiler_ir_types.compiler-ir-block-seq-ref seq 0)
+          (compiler_ir_types.compiler-ir-block-seq-borrow seq 0)
           program-index)
         false)]))
 
@@ -41556,7 +41558,7 @@
           "backend: missing phi input from "
           (compiler_ir_types.compiler-ir-label-text from-label)))
       (let
-        [phi-input-at-45535-3 : compiler_ir_types.CompilerIrPhiInput
+        [phi-input-at-45535-3
           (compiler_ir_types.compiler-ir-phi-input-seq-ref
             phi-inputs-at-45535-3
             0)]
@@ -42504,7 +42506,7 @@
     [i : i64 index]
     [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     (while (< i n)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
         [(Phi dst _ _)
           (set!
             mask
@@ -43535,7 +43537,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (if (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
     false
-    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 0)
       [(Phi _ _ _) true]
       [_ false])))
 
@@ -43596,7 +43598,7 @@
     [i : i64 0]
     [ok : bool true]
     (while (< i limit)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
         [(Phi _ _ _) unit]
         [_
           (set! ok false)
@@ -43642,7 +43644,7 @@
     [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     (if (< count 1)
       false
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (- count 1))
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs (- count 1))
         [(Return _) true]
         [_ false]))))
 
@@ -43756,7 +43758,7 @@
       (let
         [label : i64
           (compiler-backend-const-hoist-block-label
-            (compiler_ir_types.compiler-ir-block-seq-ref seq i))]
+            (compiler_ir_types.compiler-ir-block-seq-borrow seq i))]
         [target : i64
           (if (or (= label saving-label) (= label swb-saving-label))
             (compiler_ir_types.compiler-ir-label-none)
@@ -44497,7 +44499,7 @@
     (set! (array-ref index 1) count)
     (set! (array-ref index 2) capacity)
     (while (< i count)
-      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks i)
         [(Block label instrs)
           (set! (array-ref index (+ points-at i)) point)
           (set! point (+ point (* 2 instrs.len)))
@@ -45098,8 +45100,7 @@
     (let
       [last-index : i64
         (- (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)]
-      [last : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs last-index)]
+      [last (compiler_ir_types.compiler-ir-instr-seq-ref instrs last-index)]
       (match last
         [(Return maybe)
           (match maybe
@@ -45213,8 +45214,7 @@
     (let
       [last-index : i64
         (- (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)]
-      [last : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs last-index)]
+      [last (compiler_ir_types.compiler-ir-instr-seq-ref instrs last-index)]
       (match last
         [(Return maybe)
           (match maybe
@@ -47754,7 +47754,7 @@
   (let
     [index : i64 0]
     (while (< index cases.len)
-      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag _) (unless (= tag (+ expected index)) (return false))])
       (set! index (+ index 1)))
     true))
@@ -47764,10 +47764,10 @@
   [label : i64]) : bool
   (and
     (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 2)
-    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 0)
       [(Call _ name _ _) (cbi.compiler-builtin-backend-tl-oob-abort-id? name)]
       [_ false])
-    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 1)
       [(Jump target) (= target label)]
       [_ false])))
 
@@ -47792,7 +47792,9 @@
                 ;; the authority; display text is never consulted.
                 (and
                   (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
-                  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+                  (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                    instrs
+                    0)
                     [(Jump target)
                       (and
                         (not (= target label))
@@ -47854,7 +47856,7 @@
   (let
     [index : i64 0]
     (while (< index cases.len)
-      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case _ label)
           (when
             (compiler-backend-symbol-list-contains-id? targets label)
@@ -47937,7 +47939,7 @@
       [targets : BackendSymbolSeq
         (compiler-backend-function-state-phi-targets
           (compiler-backend-state-function-state program-index.backend-state))]
-      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label)
           (if (compiler-backend-symbol-list-contains-id? targets label)
             (let
@@ -48025,7 +48027,7 @@
     [index : i64 0]
     [out : text_buf.TextBuf buf]
     (while (< index cases.len)
-      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label)
           (set!
             out
@@ -48842,7 +48844,7 @@
         ctx.function-state
         (compiler-backend-instr-shift-count-bound
           ctx.function-state
-          (compiler-backend-global-shared-view instr)))]
+          (& (compiler-backend-global-shared-view instr))))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-instr-with-bound
         (compiler-backend-global-shared-view ctx)
@@ -50372,8 +50374,7 @@
   [use-counts : (& use-counts (__tl_dyn-array i64))]) : bool
   (if (< index instrs.len)
     (let
-      [maybe-cmp : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [maybe-cmp (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-cmp : i64 (+ index 1)]
       (match maybe-cmp
         [(BinOp cmp-dst op lhs rhs cmp-ty)
@@ -50387,7 +50388,7 @@
               (compiler-backend-binop-f64? types global-types lhs rhs cmp-ty)))
             (if (< after-cmp instrs.len)
               (let
-                [branch : compiler_ir_types.CompilerIrInstr
+                [branch
                   (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-cmp)]
                 (match (compiler_ir_types.compiler-ir-instr-scalar-fact branch)
                   [(Branch cond _ _)
@@ -50664,8 +50665,7 @@
   [index : i64]) : bool
   (if (< index instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       (compiler-backend-rax-forwardable-consumer?
         types
         global-types
@@ -50701,8 +50701,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [rest : i64 (+ index 1)]
       (match (compiler-backend-global-shared-view instr)
         [(BinOp dst op lhs rhs ty)
@@ -50843,8 +50842,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [rest : i64 (+ index 1)]
       (if (compiler-backend-call-rax-forwardable-instr?
         ctx.type-segment-bases
@@ -51123,8 +51121,7 @@
   [index : i64]) : CompilerBackendGepLoadPairAluFold
   (if (< index instrs.len)
     (let
-      [maybe-binop : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [maybe-binop (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-binop : i64 (+ index 1)]
       (match maybe-binop
         [(BinOp dst op lhs rhs ty)
@@ -51263,15 +51260,14 @@
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
     (if (< index instrs.len)
       (let
-        [maybe-gep : compiler_ir_types.CompilerIrInstr
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+        [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
         [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
               (if (< after-gep instrs.len)
                 (let
-                  [maybe-store : compiler_ir_types.CompilerIrInstr
+                  [maybe-store
                     (compiler_ir_types.compiler-ir-instr-seq-ref
                       instrs
                       after-gep)]
@@ -51379,8 +51375,7 @@
   ;; producer-home -> dividend-home copy before the magic-mod sequence.
   (if (< index instrs.len)
     (let
-      [div-instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [div-instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-div : i64 (+ index 1)]
       (match (compiler-backend-global-shared-view div-instr)
         [(BinOp div-dst div-op div-lhs div-rhs div-ty)
@@ -51598,8 +51593,7 @@
     [(None)
       (if (< index instrs.len)
         (let
-          [maybe-gep : compiler_ir_types.CompilerIrInstr
-            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-gep : i64 (+ index 1)]
           (match maybe-gep
             [(Gep gep-dst2 base2 offset2 elem-ty2)
@@ -51611,7 +51605,7 @@
                   [(None)
                     (if (< after-gep instrs.len)
                       (let
-                        [maybe-load : compiler_ir_types.CompilerIrInstr
+                        [maybe-load
                           (compiler_ir_types.compiler-ir-instr-seq-ref
                             instrs
                             after-gep)]
@@ -51762,8 +51756,7 @@
     (No)
     (if (< index instrs.len)
       (let
-        [maybe-binop : compiler_ir_types.CompilerIrInstr
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+        [maybe-binop (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
         [after-binop : i64 (+ index 1)]
         (match maybe-binop
           [(BinOp dst op lhs rhs ty)
@@ -52370,10 +52363,8 @@
   (if (>= (+ index 1) instrs.len)
     false
     (let
-      [here : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
-      [next : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ index 1))]
+      [here (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ index 1))]
       (if (compiler-backend-gep-load-cmp-staging-compare-here?
         load-dst
         (compiler-backend-global-shared-view here))
@@ -52552,8 +52543,7 @@
       [(No) (No)]
       [(Some length-var stop)
         (let
-          [next : compiler_ir_types.CompilerIrInstr
-            (compiler_ir_types.compiler-ir-instr-seq-ref instrs stop)]
+          [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs stop)]
           (match next
             [(BoundsCheck bc-index bc-length ok-label)
               (let
@@ -53164,8 +53154,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
-    [maybe-cast : compiler_ir_types.CompilerIrInstr
-      (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+    [maybe-cast (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
     [narrow? : bool
       (match (compiler-backend-global-shared-view maybe-cast)
         [(Cast cast-dst cast-src _ _)
@@ -53927,7 +53916,7 @@
   [index : i64]) : i64
   (if (>= (+ index 1) instrs.len)
     (- 0 1)
-    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
       [(Gep gep-dst2 base2 offset2 elem-ty2)
         (if (and
           (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
@@ -54450,8 +54439,7 @@
     [(Some _)
       (if (< index instrs.len)
         (let
-          [maybe-gep : compiler_ir_types.CompilerIrInstr
-            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-gep : i64 (+ index 1)]
           (match maybe-gep
             [(Gep gep-dst2 base2 offset2 elem-ty2)
@@ -54462,7 +54450,7 @@
                   [(Some _)
                     (if (< after-gep instrs.len)
                       (let
-                        [maybe-load : compiler_ir_types.CompilerIrInstr
+                        [maybe-load
                           (compiler_ir_types.compiler-ir-instr-seq-ref
                             instrs
                             after-gep)]
@@ -56771,15 +56759,14 @@
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
     (if (< index instrs.len)
       (let
-        [maybe-gep : compiler_ir_types.CompilerIrInstr
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+        [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
         [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
               (if (< after-gep instrs.len)
                 (let
-                  [maybe-store : compiler_ir_types.CompilerIrInstr
+                  [maybe-store
                     (compiler_ir_types.compiler-ir-instr-seq-ref
                       instrs
                       after-gep)]
@@ -56916,15 +56903,14 @@
       (compiler-backend-global-shared-view div-ty)))
     (if (< index instrs.len)
       (let
-        [maybe-gep : compiler_ir_types.CompilerIrInstr
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+        [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
         [after-gep : i64 (+ index 1)]
         (match maybe-gep
           [(Gep gep-dst base offset elem-ty)
             (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
               (if (< after-gep instrs.len)
                 (let
-                  [maybe-store : compiler_ir_types.CompilerIrInstr
+                  [maybe-store
                     (compiler_ir_types.compiler-ir-instr-seq-ref
                       instrs
                       after-gep)]
@@ -57016,8 +57002,7 @@
     [(BinOp producer-dst producer-op producer-lhs producer-rhs producer-ty)
       (if (< index instrs.len)
         (let
-          [next : compiler_ir_types.CompilerIrInstr
-            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-div : i64 (+ index 1)]
           (match (compiler-backend-global-shared-view next)
             [(BinOp div-dst div-op div-lhs div-rhs div-ty)
@@ -57132,8 +57117,7 @@
     (compiler-backend-var-single-use? ctx.use-counts load-dst))
     (if (< index instrs.len)
       (let
-        [next : compiler_ir_types.CompilerIrInstr
-          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+        [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
         [after-cmp : i64 (+ index 1)]
         (match next
           [(Load second-dst second-src second-ty)
@@ -57176,7 +57160,7 @@
                   cmp-ty)))
               (if (< after-cmp instrs.len)
                 (let
-                  [branch : compiler_ir_types.CompilerIrInstr
+                  [branch
                     (compiler_ir_types.compiler-ir-instr-seq-ref
                       instrs
                       after-cmp)]
@@ -57258,8 +57242,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [maybe-gep : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-gep : i64 (+ index 1)]
       (match maybe-gep
         [(Gep gep-dst base offset elem-ty)
@@ -57278,7 +57261,7 @@
                   (if (compiler-backend-imm32? disp)
                     (if (< after-gep instrs.len)
                       (let
-                        [maybe-store : compiler_ir_types.CompilerIrInstr
+                        [maybe-store
                           (compiler_ir_types.compiler-ir-instr-seq-ref
                             instrs
                             after-gep)]
@@ -57384,8 +57367,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< cursor instrs.len)
     (let
-      [next : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [after-binop : i64 (+ cursor 1)]
       (match (compiler-backend-global-shared-view next)
         [(VectorBinOp
@@ -57694,14 +57676,13 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [next : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-jump : i64 (+ index 1)]
       (match next
         [(Cast cast-dst cast-src _ _)
           (if (< after-jump instrs.len)
             (let
-              [after-cast : compiler_ir_types.CompilerIrInstr
+              [after-cast
                 (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-jump)]
               [after-binop : i64 (+ after-jump 1)]
               (match after-cast
@@ -57905,8 +57886,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [next : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [after-return : i64 (+ index 1)]
       (match next
         [(Return maybe)
@@ -58089,8 +58069,7 @@
       [(Some n)
         (if (< index instrs.len)
           (let
-            [next : compiler_ir_types.CompilerIrInstr
-              (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+            [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
             [after-load : i64 (+ index 1)]
             (match next
               [(Load load-dst src load-ty)
@@ -58106,7 +58085,7 @@
                     ;; same fallback the non-compare shapes take.
                     (< after-load instrs.len))
                     (let
-                      [maybe-cmp : compiler_ir_types.CompilerIrInstr
+                      [maybe-cmp
                         (compiler_ir_types.compiler-ir-instr-seq-ref
                           instrs
                           after-load)]
@@ -58131,7 +58110,7 @@
                                 cmp-ty)))
                             (if (< after-cmp instrs.len)
                               (let
-                                [branch : compiler_ir_types.CompilerIrInstr
+                                [branch
                                   (compiler_ir_types.compiler-ir-instr-seq-ref
                                     instrs
                                     after-cmp)]
@@ -58392,8 +58371,7 @@
       [(None)
         (if (< index instrs.len)
           (let
-            [next : compiler_ir_types.CompilerIrInstr
-              (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+            [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
             [after-gep : i64 (+ index 1)]
             (match next
               [(Gep _ load-base load-offset _)
@@ -58446,7 +58424,7 @@
                   (compiler-backend-var-single-use? ctx.use-counts ptr-var))
                   (if (< after-gep instrs.len)
                     (let
-                      [maybe-store : compiler_ir_types.CompilerIrInstr
+                      [maybe-store
                         (compiler_ir_types.compiler-ir-instr-seq-ref
                           instrs
                           after-gep)]
@@ -59211,8 +59189,7 @@
   (if (>= index instrs.len)
     (No)
     (let
-      [next : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       (match (compiler_ir_types.compiler-ir-instr-scalar-fact
         (compiler-backend-global-shared-view next))
         [(Branch cond true-label false-label)
@@ -59450,8 +59427,7 @@
           ty)))
       (if (< index instrs.len)
         (let
-          [next : compiler_ir_types.CompilerIrInstr
-            (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+          [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-branch : i64 (+ index 1)]
           (match next
             [(Return maybe)
@@ -59585,7 +59561,7 @@
                 (compiler-backend-branch-uses-var? not-src dst))
                 (if (< after-branch instrs.len)
                   (let
-                    [branch : compiler_ir_types.CompilerIrInstr
+                    [branch
                       (compiler_ir_types.compiler-ir-instr-seq-ref
                         instrs
                         after-branch)]
@@ -59676,8 +59652,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< cursor instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [rest : i64 (+ cursor 1)]
       (match (compiler-backend-global-shared-view instr)
         [(Mov dst src ty)
@@ -59779,7 +59754,7 @@
             (compiler-backend-var-fuse-safe? ctx.backend-state dst))
             (if (< rest instrs.len)
               (let
-                [branch : compiler_ir_types.CompilerIrInstr
+                [branch
                   (compiler_ir_types.compiler-ir-instr-seq-ref instrs rest)]
                 [after-branch : i64 (+ rest 1)]
                 (match (compiler_ir_types.compiler-ir-instr-scalar-fact branch)
@@ -59848,8 +59823,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
   (if (< index instrs.len)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [rest : i64 (+ index 1)]
       (match (compiler-backend-try-divmod-polish
         (compiler-backend-global-shared-view ctx)
@@ -59954,7 +59928,7 @@
               (if (< current-index current-count)
                 (compiler-backend-instr-shift-count-bound
                   ctx.function-state
-                  (compiler_ir_types.compiler-ir-instr-seq-ref
+                  (compiler_ir_types.compiler-ir-instr-seq-borrow
                     current-instrs
                     current-index))
                 0))
@@ -60193,7 +60167,7 @@
       (+ index 1)
       (+
         acc
-        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks index)
           [(Block _ instrs) instrs.len])))))
 
 (define (compiler-backend-blocks-instr-count
@@ -60206,7 +60180,7 @@
   [index : i64]) : CompilerBackendMaybeLabel
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (No)
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+    (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks index)
       [(Block label _) (Some label)])))
 
 (define (compiler-backend-emit-block-seq-into
@@ -60233,8 +60207,7 @@
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (Ok "")
     (let
-      [block : compiler_ir_types.CompilerIrBlock
-        (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
+      [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
       [mark : i64 (compiler-backend-asm-buf-len (& out))]
       (match (compiler-backend-global-shared-view block)
         [(Block _ instrs)
@@ -60809,7 +60782,7 @@
     [param-index : i64 0]
     [mask-index : i64 0]
     (while (< param-index params.len)
-      (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
+      (match (compiler_ir_types.compiler-ir-param-seq-borrow params param-index)
         [(Param name _ var-id)
           (let
             [active? : bool (compiler-backend-spmd-active-mask-param? name)]
@@ -63250,11 +63223,11 @@
           (compiler_optimize.opt-label-tail labels)))]))
 
 (define (compiler-backend-block-seq-label-or-empty
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]) : i64
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     (compiler_ir_types.compiler-ir-label-none)
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+    (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks index)
       [(Block label _) label])))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
@@ -63275,8 +63248,8 @@
       (compiler-backend-peephole-predcount-bump
         counts
         (compiler_optimize.opt-cfg-block-successors-with-next
-          (& (compiler_ir_types.compiler-ir-block-seq-ref blocks index))
-          (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
+          (compiler_ir_types.compiler-ir-block-seq-borrow blocks index)
+          (compiler-backend-block-seq-label-or-empty (& blocks) (+ index 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
 ;; blocks. SOUNDNESS-CRITICAL: such a branch does NOT lower to a clean
@@ -63344,8 +63317,7 @@
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     unit
     (let
-      [block : compiler_ir_types.CompilerIrBlock
-        (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
+      [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
       (match (compiler-backend-global-shared-view block)
         [(Block cur-label _)
           (if (and
@@ -63394,8 +63366,7 @@
       (if (= (compiler_ir_types.compiler-ir-block-seq-count seq) 0)
         unit
         (let
-          [entry : compiler_ir_types.CompilerIrBlock
-            (compiler_ir_types.compiler-ir-block-seq-ref seq 0)]
+          [entry (compiler_ir_types.compiler-ir-block-seq-ref seq 0)]
           (match (compiler-backend-global-shared-view entry)
             [(Block entry-label _)
               (compiler-backend-peephole-carry-safe-scan-seq
@@ -67613,7 +67584,7 @@
     [i : i64 0]
     [total : i64 0]
     (while (< i n)
-      (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
         [(Block _ instrs)
           (if (= instrs.len 0)
             unit
@@ -67647,7 +67618,7 @@
     [i : i64 0]
     [w : i64 write]
     (while (< i cases.len)
-      (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases i)
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases i)
         [(Case _ label)
           (set!
             w
@@ -67921,7 +67892,7 @@
           (compiler_regalloc.compiler-reg-bits-map-capacity n))
         0)]
     (while (< i n)
-      (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
         [(Block _ instrs)
           (let
             [k : i64 0]
@@ -68035,7 +68006,7 @@
     [i : i64 0]
     [ok : bool true]
     (while (< i total)
-      (match (compiler_ir_types.compiler-ir-block-seq-ref
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow
         seq
         (array-ref st.members i))
         [(Block _ instrs)
@@ -68164,7 +68135,7 @@
   [generation : i64]) : unit
   (let
     [round : i64 0]
-    (match (compiler_ir_types.compiler-ir-block-seq-ref seq header)
+    (match (compiler_ir_types.compiler-ir-block-seq-borrow seq header)
       [(Block _ instrs)
         (let
           [k : i64 0]
@@ -70109,7 +70080,7 @@
     [b : i64 0]
     [found : i64 -1]
     (while (and (< found 0) (< b block-count))
-      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks b)
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks b)
         [(Block block-label _instrs)
           (if (= block-label label)
             (set! found (array-ref block-index b))
@@ -70305,7 +70276,9 @@
                     [b : i64 0]
                     [scan : i64 0]
                     (while (< b block-count)
-                      (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+                      (match (compiler_ir_types.compiler-ir-block-seq-borrow
+                        seq
+                        b)
                         [(Block label _)
                           (let
                             [asm : String
@@ -70440,7 +70413,7 @@
                     (let
                       [b : i64 0]
                       (while (< b block-count)
-                        (match (compiler_ir_types.compiler-ir-block-seq-ref
+                        (match (compiler_ir_types.compiler-ir-block-seq-borrow
                           seq
                           b)
                           [(Block label _instrs)
@@ -73498,7 +73471,7 @@
     (if (<= phi-inputs-at-80548-3.len 0)
       collections
       (let
-        [phi-input-at-80548-3 : compiler_ir_types.CompilerIrPhiInput
+        [phi-input-at-80548-3
           (compiler_ir_types.compiler-ir-phi-input-seq-ref
             phi-inputs-at-80548-3
             0)]
@@ -74191,8 +74164,7 @@
       -1
       0)
     (let
-      [instr : compiler_ir_types.CompilerIrInstr
-        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [instr (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
       [found : i64
         (if (= kind 0)
           (match instr
@@ -75466,7 +75438,7 @@
   [seq-index : i64]) : CompilerBackendRuntimeIndex
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern name-id source-name-id _ _ _ link-symbol _ provided)
         (let
           [with-startup-role : CompilerBackendRuntimeIndex
@@ -75502,7 +75474,7 @@
   [seq-index : i64]) : CompilerBackendRuntimeIndex
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern name-id source-name-id _ _ _ link-symbol _ _)
         (compiler-backend-runtime-index-arena-debug-call-link-seq
           (if (and
@@ -75960,7 +75932,7 @@
   [seq-index : i64]) : text_buf.TextBuf
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern name-id source-name-id _ _ _ link-symbol-id _ provided)
         (compiler-backend-emit-extern-seq-into
           backend-state
@@ -76066,7 +76038,7 @@
       (set! i (+ i 1)))
     (set! i 0)
     (while (< i (compiler_ir_types.compiler-ir-extern-seq-count externs))
-      (match (compiler_ir_types.compiler-ir-extern-seq-ref externs i)
+      (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
         [(Extern name source _ _ _ link _ _)
           (let
             [bit : i64 (compiler-backend-runtime-leaf-bit backend-state link)]
@@ -77809,7 +77781,7 @@ tl_shared_object_init:
 (define (compiler-backend-object-value-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
-  [value : compiler_ir_types.CompilerIrValue]
+  [value : (& compiler_ir_types.CompilerIrValue)]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match value
     [(Global name)
@@ -77908,7 +77880,7 @@ tl_shared_object_init:
             (RipValue)
             (compiler-backend-global-shared-view symbol))
           (LoadRip symbol)))]
-    [_ (compiler-backend-object-value-ref parts site value program-index)]))
+    [_ (compiler-backend-object-value-ref parts site (& value) program-index)]))
 
 (define (compiler-backend-object-value-seq-ref-from
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -77922,7 +77894,7 @@ tl_shared_object_init:
       (compiler-backend-object-value-ref
         parts
         (compiler-backend-global-shared-view site)
-        (compiler_ir_types.compiler-ir-value-seq-ref values index)
+        (compiler_ir_types.compiler-ir-value-seq-borrow values index)
         program-index)
       site
       values
@@ -78343,7 +78315,7 @@ tl_shared_object_init:
     [(Unit) (compiler-backend-object-add-mov-imm32 parts 0 reg)]
     [(or (Global _) (GlobalAddr _) (String _) (Bytes _) (Function _) (F64 _))
       (compiler-backend-object-add-mov-from-rax
-        (compiler-backend-object-value-ref parts site value program-index)
+        (compiler-backend-object-value-ref parts site (& value) program-index)
         reg)]
     [_ parts]))
 
@@ -78477,7 +78449,7 @@ tl_shared_object_init:
         dst
         1
         "%rdx")]
-    [_ (compiler-backend-object-value-ref parts site src program-index)]))
+    [_ (compiler-backend-object-value-ref parts site (& src) program-index)]))
 
 (define (compiler-backend-object-pack-to-var
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -78527,7 +78499,7 @@ tl_shared_object_init:
           "%rax")
         dst
         "%rax")]
-    [_ (compiler-backend-object-value-ref parts site src program-index)]))
+    [_ (compiler-backend-object-value-ref parts site (& src) program-index)]))
 
 (define (compiler-backend-object-load-ptr-to-var
   [type-segment-bases : i64]
@@ -78649,7 +78621,7 @@ tl_shared_object_init:
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index cases.len)
     parts
-    (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases index)
+    (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
       [(Case _ label)
         (let
           [entry-label : String
@@ -79357,7 +79329,8 @@ tl_shared_object_init:
         value
         use-ty
         program-index)]
-    [(No) (compiler-backend-object-value-ref parts site value program-index)]))
+    [(No)
+      (compiler-backend-object-value-ref parts site (& value) program-index)]))
 
 ;; The references of an instruction the object emitter only discovers
 ;; references for: each use, in operand order, references the symbol it names,
@@ -79643,7 +79616,7 @@ tl_shared_object_init:
           (compiler-backend-object-value-ref
             parts
             (compiler-backend-global-shared-view function)
-            base
+            (& base)
             program-index)
           target
           (compiler-backend-global-shared-view function)
@@ -79933,7 +79906,7 @@ tl_shared_object_init:
         (compiler-backend-object-value-ref
           parts
           (compiler-backend-global-shared-view function)
-          dst
+          (& dst)
           program-index)
         (compiler-backend-global-shared-view function)
         src
@@ -79997,7 +79970,7 @@ tl_shared_object_init:
               (compiler-backend-object-value-ref
                 parts
                 (compiler-backend-global-shared-view function)
-                mask
+                (& mask)
                 program-index)
               (compiler-backend-global-shared-view function)
               on-true
@@ -80013,10 +79986,10 @@ tl_shared_object_init:
           (compiler-backend-object-value-ref
             parts
             (compiler-backend-global-shared-view function)
-            base
+            (& base)
             program-index)
           (compiler-backend-global-shared-view function)
-          index
+          (& index)
           program-index)
         (compiler-backend-global-shared-view function)
         value
@@ -80029,17 +80002,17 @@ tl_shared_object_init:
             (compiler-backend-object-value-ref
               parts
               (compiler-backend-global-shared-view function)
-              base
+              (& base)
               program-index)
             (compiler-backend-global-shared-view function)
-            index
+            (& index)
             program-index)
           (compiler-backend-global-shared-view function)
           value
           elem-ty
           program-index)
         (compiler-backend-global-shared-view function)
-        mask
+        (& mask)
         program-index)]
     [(VectorShuffle
         (box
@@ -80054,7 +80027,7 @@ tl_shared_object_init:
               elem-ty
               program-index)
             (compiler-backend-global-shared-view function)
-            selector-low
+            (& selector-low)
             program-index)]
         [with-high : object_target.CompilerBackendObjectTargetParts
           (match selector-high
@@ -80062,13 +80035,13 @@ tl_shared_object_init:
               (compiler-backend-object-value-ref
                 with-low
                 (compiler-backend-global-shared-view function)
-                value
+                (& value)
                 program-index)]
             [(No) with-low])]
         (compiler-backend-object-value-ref
           with-high
           function
-          active-lanes
+          (& active-lanes)
           program-index))]
     [(Pack dst words _)
       (compiler-backend-object-pack-to-var
@@ -80199,7 +80172,7 @@ tl_shared_object_init:
               (if (<
                 (+ index 1)
                 (compiler_ir_types.compiler-ir-block-seq-count blocks))
-                (match (compiler_ir_types.compiler-ir-block-seq-ref
+                (match (compiler_ir_types.compiler-ir-block-seq-borrow
                   blocks
                   (+ index 1))
                   [(Block next _) next])
@@ -80705,7 +80678,7 @@ tl_shared_object_init:
   [seq-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
       [(Extern name-id source-name-id _ _ _ link-symbol-id _ provided)
         (let
           [link-symbol : String
@@ -81334,7 +81307,7 @@ tl_shared_object_init:
       false
       (begin
         (while (< index count)
-          (match (compiler_ir_types.compiler-ir-param-seq-ref params index)
+          (match (compiler_ir_types.compiler-ir-param-seq-borrow params index)
             [(Param _ ty _)
               (let
                 [indexed-ty : compiler_ast_types.AstType

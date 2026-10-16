@@ -141,7 +141,7 @@
   [want : String]) : bool
   (if (= functions.len 0)
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions 0)
+    (match (compiler_ir_types.compiler-ir-function-seq-borrow functions 0)
       [(Function name _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-function-seq-name-at?
@@ -150,7 +150,7 @@
   [want : String]) : bool
   (if (or (< index 0) (>= index functions.len))
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (compiler_ir_types.compiler-ir-function-seq-borrow functions index)
       [(Function name _ _ _ _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
@@ -162,7 +162,7 @@
       (and
         (>= index 0)
         (< index (compiler_ir_types.compiler-ir-block-seq-count seq))
-        (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow seq index)
           [(Block label _) (= label want)]))]))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
@@ -174,7 +174,7 @@
     (< index 0)
     (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
+    (match (compiler_ir_types.compiler-ir-param-seq-borrow seq index)
       [(Param name ty var)
         (and
           (string.eq name want-name)
@@ -192,7 +192,7 @@
     (< index 0)
     (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
+    (match (compiler_ir_types.compiler-ir-param-seq-borrow seq index)
       [(Param name ty var)
         (and
           (string.eq name want-name)
@@ -263,7 +263,7 @@
   [want : String]) : bool
   (if (or (< index 0) (>= index globals.len))
     false
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
       [(Global name _ _) (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-global-seq-two
@@ -282,7 +282,7 @@
   [want : String]) : bool
   (if (or (< index 0) (>= index externs.len))
     false
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
       [(Extern _ _ name _ _ _ _ _) (string.eq name want)])))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
@@ -3928,7 +3928,7 @@
   [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
   [index : i64]
   [want : i64]) : bool
-  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+  (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
     [(Mov dst _ _) (= dst want)]
     [_ false]))
 
@@ -3936,7 +3936,7 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [want : i64]) : bool
-  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+  (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
     [(Return (Some (Var var))) (= var want)]
     [_ false]))
 
@@ -4546,7 +4546,7 @@
     (and
       (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
       (not (compiler_ir_types.compiler-ir-instr-seq-empty? seq))
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref seq 2)
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow seq 2)
         [(Return _) true]
         [_ false])
       (=

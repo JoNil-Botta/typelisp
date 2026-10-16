@@ -4038,3 +4038,7 @@
 (test
   licm-disjoint-field
   (smoke-require-42 (ot.compiler-optimize-licm-field-self-test)))
+
+(test
+  licm-disjoint-field-pipeline
+  (smoke-require-42 (ot.compiler-optimize-licm-field-pipeline-self-test)))

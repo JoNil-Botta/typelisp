@@ -21634,7 +21634,7 @@
               (LookupFound 0)
               (LookupMissing))]
           [_ (LookupMissing)]))]
-    [(or (Mov dst base _) (Cast dst base _ _) (Bitcast dst base _ _))
+    [(Mov dst base _)
       (opt-licm-root-env-set-offset!
         env
         dst
@@ -21666,6 +21666,9 @@
           (match (opt-licm-root-env-return-alias-value env name (& args))
             [(Some value) (opt-licm-root-env-offset env (& value))]
             [(No) (LookupMissing)])))]
+    ;; Casts can change an address, and their result does not carry a known
+    ;; displacement from the original root. Keep that proof conservative for
+    ;; bitcasts too; copies and constant-offset geps are the supported edges.
     [_
       (match (opt-instr-def-var instr)
         [(Some dst) (opt-licm-root-env-set-offset! env dst (LookupMissing))]

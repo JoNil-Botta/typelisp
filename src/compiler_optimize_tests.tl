@@ -78208,4 +78208,52 @@
              %13 = call licm_field_opaque(%0) : unit")
           111))
       6]
+    ;; A narrowing cast can change the pointer's address. Its displacement
+    ;; cannot be measured from the original checked root.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%16 = cast %0 : (&mut r i64) to u64
+             %17 = cast %16 : u64 to u32
+             %18 = cast %17 : u32 to u64
+             %7 = gep %18, 4294967292 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      7]
+    ;; Constant byte displacements must not wrap during scaled arithmetic.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 9223372036854775807 : i64
+             store_ptr %7, %1 : i64")
+          111))
+      8]
+    ;; A copy and an element-scaled constant retain the same coordinate.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%16 = mov %0 : (&mut r i64)
+             %7 = gep %16, 1 : i64
+             store_ptr %7, %1 : i64")
+          11))
+      9]
     [else 42]))
+
+(define (compiler-optimize-licm-field-pipeline-self-test) : i64
+  (let
+    [func
+      (optimize-function-with-level
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-licm-field-function
+          "%7 = gep %0, 8 : u8
+           store_ptr %7, %1 : i64")
+        2)]
+    [blocks (opt.opt-function-blocks func)]
+    [view (ir.compiler-ir-block-list-view blocks)]
+    (cond
+      [(not (= (opt-count-load-blocks view) 1)) 1]
+      [(not
+          (= (opt-count-load-label-blocks view (ir.compiler-ir-label "loop")) 0))
+        2]
+      [else 42])))

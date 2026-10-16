@@ -998,6 +998,9 @@ shared load-CSE range predicate. Copies and constant-offset geps retain a root
 coordinate; unknown offsets, casts and bitcasts discard that range proof.
 An `AddrOf` keeps the coordinate only for an original frame allocation. The
 home of a scalar heap-result variable is separate from the returned object.
+Coordinate insertion is restricted to parameters and supported SSA definitions.
+Other destinations stay unknown across both scans; entry verification rejects
+duplicate definitions.
 Distinct checked-reference parameter roots still do not imply disjointness.
 
 LICM moves a load only with evidence that its word is readable at the

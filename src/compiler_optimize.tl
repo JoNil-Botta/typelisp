@@ -21612,19 +21612,20 @@
 (define (opt-licm-offset-small? [offset : i64]) : bool
   (and (> offset -4294967296) (< offset 4294967296)))
 
-;; #8941. The byte offset of the address `instr` defines from its root's var,
-;; following opt-licm-root-env-update-instr!'s root rules: a root's own var
-;; starts at 0, copies keep the offset, a constant-offset gep adds its
-;; displacement, and everything else forgets it.
-(define (opt-licm-root-env-offset-update-instr!
+;; Roots and byte coordinates follow the same definition in the verified SSA
+;; function. Parameters and the supported definitions below are the only
+;; offset insertions. Every other destination is distinct from those vars,
+;; so casts, bitcasts, loads and phis stay absent across both provenance scans.
+(define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Alloc dst _) (opt-licm-root-env-set-offset! env dst (LookupFound 0))]
-    ;; `addr_of` is the address of `src`'s own storage. For an `alloc`ed var
-    ;; that storage IS the root's object, at offset 0; for any other var it is
-    ;; a slot the root rules merely file under `src`'s root, so no offset.
+    [(Alloc dst _)
+      (opt-licm-root-env-set-offset! env dst (LookupFound 0))
+      (opt-licm-root-env-bind! env dst (Fresh dst))]
+    ;; Only an original frame allocation's address shares its coordinate.
+    ;; A scalar heap-result pointer's frame home is a separate storage object.
     [(AddrOf dst src)
       (opt-licm-root-env-set-offset!
         env
@@ -21634,12 +21635,14 @@
             (if (= id src)
               (LookupFound 0)
               (LookupMissing))]
-          [_ (LookupMissing)]))]
+          [_ (LookupMissing)]))
+      (opt-licm-root-env-copy! env dst (& (Var src)))]
     [(Mov dst base _)
       (opt-licm-root-env-set-offset!
         env
         dst
-        (opt-licm-root-env-offset env (& base)))]
+        (opt-licm-root-env-offset env (& base)))
+      (opt-licm-root-env-copy! env dst (& base))]
     [(Gep dst base offset ty)
       (opt-licm-root-env-set-offset!
         env
@@ -21657,40 +21660,11 @@
                     (LookupFound (+ from (* k scale)))
                     (LookupMissing)))]
               [_ (LookupMissing)])]
-          [(LookupMissing) (LookupMissing)]))]
-    [(Call dst name args _)
-      (opt-licm-root-env-set-offset!
-        env
-        dst
-        (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-          (LookupFound 0)
-          (match (opt-licm-root-env-return-alias-value env name (& args))
-            [(Some value) (opt-licm-root-env-offset env (& value))]
-            [(No) (LookupMissing)])))]
-    ;; Casts can change an address, and their result does not carry a known
-    ;; displacement from the original root. Keep that proof conservative for
-    ;; bitcasts too; copies and constant-offset geps are the supported edges.
-    [_
-      (match (opt-instr-def-var instr)
-        [(Some dst) (opt-licm-root-env-set-offset! env dst (LookupMissing))]
-        [(None) unit])]))
-
-(define (opt-licm-root-env-update-instr!
-  [env : (&mut env OptLicmRootEnv)]
-  [ptrs : (& ptrs OptLicmPtrEnv)]
-  [instr : (& ir.CompilerIrInstr)]) : unit
-  (opt-licm-root-env-offset-update-instr! env ptrs instr)
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Alloc dst _) (opt-licm-root-env-bind! env dst (Fresh dst))]
-    ;; The address of an allocated object designates that object. Without this
-    ;; arm every address-taken local was unrooted, so a write through one fell
-    ;; into the unrooted store summary (killing every descriptor proof in the
-    ;; loop) and a read through one could never use the disjointness its
-    ;; `Alloc` already establishes. `addr_of` of anything unrooted stays
-    ;; unrooted, exactly as the copy arms below behave.
-    [(AddrOf dst src) (opt-licm-root-env-copy! env dst (& (Var src)))]
-    [(or (Gep dst base _ _) (Mov dst base _) (Cast dst base _ _)
-         (Bitcast dst base _ _))
+          [(LookupMissing) (LookupMissing)]))
+      (opt-licm-root-env-copy! env dst (& base))]
+    ;; The existing coarse root rule remains; neither conversion defines a
+    ;; coordinate, even when it happens to preserve the address bits.
+    [(or (Cast dst base _ _) (Bitcast dst base _ _))
       (opt-licm-root-env-copy! env dst (& base))]
     [(Phi dst inputs _)
       (match (opt-licm-phi-root env inputs (No))
@@ -21701,15 +21675,21 @@
     [(Load dst _ _) (opt-licm-root-env-remove! env dst)]
     [(Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-        (opt-licm-root-env-bind! env dst (Fresh dst))
-        ;; A callee that returns one of its arguments returns that object, so
-        ;; the result inherits the argument's root -- most often the caller's
-        ;; own sret buffer, whose root is the `Alloc` two instructions up.
-        ;; Binding a fresh id here instead would be unsound: the result and the
-        ;; argument would then read as two disjoint objects.
+        (begin
+          (opt-licm-root-env-set-offset! env dst (LookupFound 0))
+          (opt-licm-root-env-bind! env dst (Fresh dst)))
+        ;; Returning an argument preserves its root and coordinate. A fresh
+        ;; id here would incorrectly separate the result from that argument.
         (match (opt-licm-root-env-return-alias-value env name (& args))
-          [(Some value) (opt-licm-root-env-copy! env dst (& value))]
-          [(No) (opt-licm-root-env-remove! env dst)]))]
+          [(Some value)
+            (opt-licm-root-env-set-offset!
+              env
+              dst
+              (opt-licm-root-env-offset env (& value)))
+            (opt-licm-root-env-copy! env dst (& value))]
+          [(No)
+            (opt-licm-root-env-set-offset! env dst (LookupMissing))
+            (opt-licm-root-env-remove! env dst)]))]
     [_ unit]))
 
 (define (opt-licm-array-header-type?

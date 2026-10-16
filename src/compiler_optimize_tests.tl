@@ -78239,6 +78239,8 @@
       9]
     [(not (opt-licm-field-storage-home-known? false)) 10]
     [(opt-licm-field-storage-home-known? true) 11]
+    [(not (opt-licm-field-unsupported-offsets-missing?)) 12]
+    [(not (opt-licm-field-invalid-definition-refused?)) 13]
     [else 42]))
 
 (define (compiler-optimize-licm-field-pipeline-self-test) : i64
@@ -78289,3 +78291,71 @@
     (match (opt.opt-licm-root-env-offset (& state.roots) (& (Var 1)))
       [(LookupFound offset) (= offset 0)]
       [(LookupMissing) false])))
+
+(define (opt-licm-field-unsupported-offsets-missing?) : bool
+  (let
+    [func
+      (irt.func
+        "function @unknown_coords(p=%0:(&mut r i64)) -> i64 vars 4 {
+      entry:
+        %1 = cast %0 : (&mut r i64) to u64
+        %2 = bitcast %1 : u64 to u64
+        %3 = load %0 : i64
+        return %3
+    }")]
+    [params (opt.opt-function-params (& func))]
+    [blocks (opt.opt-function-blocks func)]
+    [types (opt.opt-licm-type-env-from-function (& params) (& blocks))]
+    [state
+      (opt.opt-licm-provenance-state-from-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& params)
+        (& types)
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& blocks))]
+    (and
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 0)))
+        [(LookupFound k) (= k 0)]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 1)))
+        [(LookupMissing) true]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 2)))
+        [(LookupMissing) true]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 3)))
+        [(LookupMissing) true]
+        [_ false]))))
+
+(define (opt-licm-field-invalid-definition-refused?) : bool
+  (let
+    [write
+      "%7 = gep %0, 8 : u8
+            %7 = cast %0 : (&mut r i64) to u64
+            store_ptr %7, %1 : i64"]
+    [func (opt-licm-field-function write)]
+    [invalid?
+      (opt-verify-error-ok?
+        (opt.opt-verify-function (& func))
+        "optimizer verify: duplicate var definition")]
+    [next
+      (opt.opt-licm-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& func))]
+    [blocks (opt.opt-function-blocks next)]
+    (and
+      invalid?
+      (=
+        (opt-count-load-label-blocks
+          (ir.compiler-ir-block-list-view (& blocks))
+          (ir.compiler-ir-label "loop"))
+        1))))

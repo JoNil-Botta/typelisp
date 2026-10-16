@@ -81682,6 +81682,30 @@
                   (ir.compiler-ir-value-seq-empty)
                   false)))))))))
 
+;; With nonnegative ordered initial ends, wrap(2*hi0) >= 0 is equivalent
+;; to hi0 <= MAX/2. Emit this sign test first in the guard chain so the
+;; existing cold-arm layout recognizes the shared slow successor.
+(define (opt-bce-mb-interval-guard
+  [bound : (& ir.CompilerIrValue)]
+  [cell : (&mut cell (__tl_dyn-array i64))]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(No) (No)]
+    [(Some instrs values counter-seen)
+      (let
+        [twice
+          (opt-bce-version-synth-add
+            cell
+            instrs
+            (owned_view.compiler-owned-reference-shared-view bound)
+            (owned_view.compiler-owned-reference-shared-view bound))]
+        (opt-bce-version-cond
+          cell
+          (& (Ge))
+          (& twice.value)
+          (& (I64 0))
+          (& (Some twice.instrs values counter-seen))))]))
+
 (define (opt-bce-mb-guard-conds
   [doms : (& doms OptDomInfo)]
   [descriptor : (& descriptor OptBceMbDescriptor)]
@@ -81703,27 +81727,7 @@
         shape.wrap-step
         shape.interval?
         cell
-        (&
-          (if shape.interval?
-            ;; With 0 <= first <= limit, wrap(2*limit) >= limit is equivalent
-            ;; to limit <= MAX/2. The same fact makes limit + 1 representable.
-            (match prelude
-              [(No) (No)]
-              [(Some instrs values counter-seen)
-                (let
-                  [twice
-                    (opt-bce-version-synth-add
-                      cell
-                      instrs
-                      (compiler-opt-global-shared-view limit)
-                      (compiler-opt-global-shared-view limit))]
-                  (opt-bce-version-cond
-                    cell
-                    (& (Ge))
-                    (& twice.value)
-                    (& limit)
-                    (& (Some twice.instrs values counter-seen))))])
-            prelude)))
+        (& prelude))
         [(No) (opt-bce-trace-refuse-mb-guard (opt-bce-reason-bound-range))]
         [(Some first range-limit range-step seeded)
           (opt-bce-mb-guard-conds-ranged
@@ -81917,21 +81921,26 @@
         cell
         ;; The fan's extremal conditions join the accumulator only here,
         ;; once per loop, instead of twice per fan member.
-        (opt-bce-version-fan-flush
-          (opt-bce-mb-descriptor-type-segment-bases descriptor)
-          (& all-blocks)
-          (& fan)
-          0
-          first
-          limit
-          cell
-          (opt-bce-mb-upper-conds
-            cell
-            limit
-            (&
-              (opt-bce-mb-uppers-for-shape
-                (compiler-opt-global-shared-view shape)))
-            (& dr.guard))))
+        (let
+          [ranged : OptBceVersionGuardAcc
+            (opt-bce-version-fan-flush
+              (opt-bce-mb-descriptor-type-segment-bases descriptor)
+              (& all-blocks)
+              (& fan)
+              0
+              first
+              limit
+              cell
+              (opt-bce-mb-upper-conds
+                cell
+                limit
+                (&
+                  (opt-bce-mb-uppers-for-shape
+                    (compiler-opt-global-shared-view shape)))
+                (& dr.guard)))]
+          (if shape.interval?
+            (opt-bce-mb-interval-guard (& shape.bound) cell ranged)
+            ranged)))
         [(No) (opt-bce-trace-refuse-mb-guard (opt-bce-reason-unsatisfiable))]
         [(Some guard-instrs guard-value)
           ;; COUNTER-FREE ECONOMICS: one conjunct per removed check, at most.

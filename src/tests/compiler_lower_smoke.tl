@@ -59,7 +59,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (and
             (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 2)
             (=
@@ -122,7 +122,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (and
             (= (lower_tests.lower-test-count functions "fill" (TailMask)) 1)
             (= (lower_tests.lower-test-count functions "fill" (VectorLoad)) 1)
@@ -164,7 +164,7 @@
     (Scalar))
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (and
             (=
               (lower_tests.lower-test-function-binop-op-count
@@ -533,7 +533,7 @@
         (ast.ast-decl-path-list-new))
         [(Ok lowered _)
           (match lowered
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (unless
                 (lower_tests.lower-test-function-defined? functions "main")
                 (io.panic "lower: module entry main function missing"))
@@ -630,7 +630,7 @@
         (compiler-lower-smoke-stdlib-string-public-substring-paths))
         [(Ok lowered _)
           (match lowered
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (and
                 (not
                   (compiler-lower-smoke-stdlib-runtime-substring-defined?

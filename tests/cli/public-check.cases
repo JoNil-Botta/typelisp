@@ -561,7 +561,8 @@ cwd {{dir}}/tree
 exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 2560 --timeout-seconds 600 --report "{{dir}}/memory.txt" -- "{{compiler}}" check src/main.tl --stdlib-root "{{root}}/stdlib" --stdlib-root src
 exit 1
 stderr count = 4 ^error\[
-stderr count = 3 ^error\[E0208\]
+stderr count = 3 ^error\[E0211\]
+stderr count = 1 ^error\[E0205\]
 case check-global-call-borrow-diagnostic
 file main.tl
 (defstruct Big (a i64) (b i64) (c i64) (d i64))
@@ -737,3 +738,54 @@ run run "{{root}}/stdlib/tests/wire_byte_buf_live_extent.tl" --target {{host-tar
 exit 134
 stdout empty
 stderr contains tl: array index out of bounds
+
+
+case check-compiler-box-view-excess-fields
+target linux-x86_64 windows-x86_64
+opt -
+each value borrowed
+file -x general.tl
+(import compiler_owned_view as views)
+(defstruct Payload (number i64) (other i64))
+(define (main) : i64
+  (let
+    [value : (Box Payload) (box (Payload 42 7))]
+    [plain : Payload (Payload 42 7)]
+    [borrowed (& plain)]
+    (views.compiler-owned-box-shared-view {{each}} number other)))
+end-file
+file -x typed.tl
+(import compiler_owned_view as views)
+(defstruct Payload (number i64) (other i64))
+(define (main) : i64
+  (let
+    [value : (Box Payload) (box (Payload 42 7))]
+    [plain : Payload (Payload 42 7)]
+    [borrowed (& plain)]
+    (views.compiler-owned-typed-box-shared-view {{each}} Payload number other)))
+end-file
+step source-general
+run check "{{dir}}/general.tl" --target {{target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+exit 1
+stdout empty
+stderr contains box view accepts at most one field selector
+stderr contains general.tl:8:
+step source-typed
+run check "{{dir}}/typed.tl" --target {{target}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+exit 1
+stdout empty
+stderr contains box view accepts at most one field selector
+stderr contains typed.tl:8:
+cwd {{dir}}
+step embedded-general
+run check "{{dir}}/general.tl" --target {{target}} --stdlib-root "{{root}}/src"
+exit 1
+stdout empty
+stderr contains box view accepts at most one field selector
+stderr contains general.tl:8:
+step embedded-typed
+run check "{{dir}}/typed.tl" --target {{target}} --stdlib-root "{{root}}/src"
+exit 1
+stdout empty
+stderr contains box view accepts at most one field selector
+stderr contains typed.tl:8:

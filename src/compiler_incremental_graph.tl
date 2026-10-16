@@ -318,7 +318,8 @@
         (> (array-length transcript) limits.trace.max-edge-bytes))
         -1
         (with-escape
-          (arena.Arena scratch)
+          (unsafe
+            (arena.Arena scratch))
           (compiler-graph-query-shape (& transcript) limits)))]
     (if (< shape 0)
       (Err
@@ -328,7 +329,8 @@
           node
           "query identity does not decode with an admitted compiler-build identity"))
       (match (with-escape
-        (arena.Arena scratch)
+        (unsafe
+          (arena.Arena scratch))
         (identity.compiler-incremental-digest-array (& transcript)))
         [(Sha256FinalizeErr _)
           (Err
@@ -1210,7 +1212,8 @@
             "node trace belongs to another query"))]
       [else
         (match (with-escape
-          (arena.Arena scratch)
+          (unsafe
+            (arena.Arena scratch))
           (compiler-graph-transcript-digest (& transcript)))
           [(Sha256FinalizeErr _)
             (Err
@@ -1239,7 +1242,8 @@
               (cond
                 [(not
                     (with-escape
-                      (arena.Arena scratch)
+                      (unsafe
+                        (arena.Arena scratch))
                       (compiler-graph-trace-valid? (& value) limits)))
                   (Err
                     (compiler-graph-error

@@ -57,7 +57,8 @@
                     (ir.compiler-ir-instr-seq-empty))))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (main) : i64
   (cbi.compiler-builtin-initialize-for-parse!)

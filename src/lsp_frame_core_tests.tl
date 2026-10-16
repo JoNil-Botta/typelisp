@@ -246,7 +246,8 @@
         (let
           [doc : lvf.LspDocument
             (lsp_document_vec.get docs doc-index (lsp.lsp-document-fallback))]
-          [index : sem.CompilerSemanticSourceIndex doc.semantic.index]
+          [index : sem.CompilerSemanticSourceIndex
+            (owned_view.compiler-owned-shared-view doc.semantic.index)]
           [use-index : i64
             (sem_tests.compiler-semantic-source-index-find-record
               (& index)

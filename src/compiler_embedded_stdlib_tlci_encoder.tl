@@ -329,7 +329,7 @@
     (CompilerEmbeddedStdlibTlciEncoderCodes lengths codes)))
 
 (define (compiler-embedded-stdlib-tlci-encoder-build-codes
-  [frequencies : (__tl_dyn-array i64)]) : ResultCompilerEmbeddedStdlibTlciEncoderCodes
+  [frequencies : (& frequencies (__tl_dyn-array i64))]) : ResultCompilerEmbeddedStdlibTlciEncoderCodes
   (let
     [alphabet-size : i64 (array-length frequencies)]
     [node-capacity : i64 (* alphabet-size 2)]

@@ -3,6 +3,7 @@
 (import compiler_optimize as opt)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
+(import compiler_ir_return_storage as return_storage)
 (import compiler_ir_text as irt)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types as ast)
@@ -30,6 +31,329 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+
+;; Storage adoption consumes a private completed value at the original copy.
+;; Each refusal changes one proof obligation; expectations compare the complete
+;; instruction sequence, preserving initialization, unrelated effects and uses.
+(define (opt-ctor-adopt-test-instrs [mode : i64] [adopted? : bool]) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    (str_cat.str-cat
+      "%1 = alloc i64\n%2 = alloc i64\n%3 = addr_of %2\n"
+      (str_cat.str-cat
+        (cond
+          [(= mode 1) "copy_bytes %3, %0, 8\n"]
+          [(= mode 2) "store_owned %12 -> %3 : String\n"]
+          [else "store_ptr %3, 11 : i64\n"])
+        (str_cat.str-cat
+          "%4 = gep %3, 8 : u8\n"
+          (str_cat.str-cat
+            (if (= mode 18)
+              "%4 = mov %0 : u64\n"
+              "")
+            (str_cat.str-cat
+              (cond
+                [(= mode 8) "store_ptr %4, %3 : u64\n"]
+                [(= mode 12) ""]
+                [(= mode 16) "store_ptr %4, 31 : i32\n"]
+                [else "store_ptr %4, 31 : i64\n"])
+              (str_cat.str-cat
+                (cond
+                  [(= mode 4) "%11 = call unrelated() : i64\n"]
+                  [(= mode 5) "%11 = call observe(%3) : i64\n"]
+                  [(= mode 7) "%11 = call observe(%4) : i64\n"]
+                  [(= mode 9) "%11 = addr_of %2\n"]
+                  [(= mode 10) "%11 = addr_of %1\n"]
+                  [(= mode 11) "%3 = mov %0 : u64\n"]
+                  [(= mode 17) "%11 = mov %3 : u64\n"]
+                  [else ""])
+                (str_cat.str-cat
+                  (cond
+                    [adopted? ""]
+                    [(= mode 15) "%5 = alloc u64\n%6 = alloc u64\n"]
+                    [else "%5 = alloc i64\n%6 = alloc i64\n"])
+                  (str_cat.str-cat
+                    (if adopted?
+                      ""
+                      "%7 = addr_of %6\n")
+                    (str_cat.str-cat
+                      (if (= mode 14)
+                        "%11 = call observe(%7) : i64\n"
+                        "")
+                      (str_cat.str-cat
+                        (cond
+                          [adopted? "%7 = mov %3 : u64\n"]
+                          [(= mode 3) "%9 = call tl_memcpy(%7, %3, 16) : u64\n"]
+                          [(= mode 13) "copy_bytes %7, %3, 8\n"]
+                          [else "copy_bytes %7, %3, 16\n"])
+                        (str_cat.str-cat
+                          (cond
+                            [(= mode 6) "%10 = load %3 : i64\n"]
+                            [(= mode 19) "%7 = mov %0 : u64\n"]
+                            [else ""])
+                          "%8 = call observe(%7) : i64\nreturn %8")))))))))))))
+
+(define (opt-ctor-adopt-test-blocks [mode : i64] [adopted? : bool]) : ir.CompilerIrBlockList
+  (let
+    [cons-builder (ir.compiler-ir-block-builder-new)]
+    (ir.compiler-ir-block-builder-push!
+      (&mut cons-builder)
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-ctor-adopt-test-instrs mode adopted?)))
+    (ir.compiler-ir-block-builder-append-list!
+      (&mut cons-builder)
+      (if (= mode 20)
+        (irt.blocks "other:\nreturn %3")
+        (ir.compiler-ir-block-list-empty)))
+    (ir.compiler-ir-block-builder-to-list cons-builder)))
+
+(define (opt-ctor-adopt-loop-test-blocks [mode : i64] [adopted? : bool]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      "entry:\n"
+      (if (= mode 2)
+        "branch %13, body, latch\n"
+        "jump body\n")
+      (if (= mode 4)
+        "exit:\nreturn 0\n"
+        "")
+      "body:\n%1 = alloc i64\n%2 = alloc i64\n%3 = addr_of %2\nstore_ptr %3, 11 : i64\n%4 = gep %3, 8 : u8\nstore_ptr %4, 31 : i64\n"
+      (if adopted?
+        "%7 = mov %3 : u64\n"
+        "%5 = alloc i64\n%6 = alloc i64\n%7 = addr_of %6\ncopy_bytes %7, %3, 16\n")
+      "%8 = call observe(%7) : i64\n"
+      (cond
+        [(= mode 0) "branch %13, body, exit\n"]
+        [(or (= mode 1) (= mode 2))
+          "jump latch\nlatch:\nbranch %13, body, exit\n"]
+        [else "jump exit\n"])
+      (if (= mode 4)
+        ""
+        "exit:\nreturn 0\n"))))
+
+(define (compiler-optimize-ctor-adopt-loop-self-test) : i64
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params "source=%0:u64, owner=%12:String, cond=%13:bool")]
+    [mode : i64 0]
+    (while (< mode 5)
+      (let
+        [fixture : ir.CompilerIrFunction
+          (ir.CompilerIrFunction.Function
+            (opt-test-symbol "adoption_loop_fixture")
+            (opt.compiler-opt-global-shared-view params)
+            (ast.AstType.I64)
+            14
+            (opt-ctor-adopt-loop-test-blocks mode false)
+            (ir.CompilerIrFunctionAbi.Ordinary))]
+        [out : ir.CompilerIrBlockList
+          (opt.opt-ctor-adopt-function-blocks
+            (ast.ast-node-pool-reader-type-segment-bases)
+            14
+            (opt.compiler-opt-global-shared-view params)
+            (opt-ctor-adopt-loop-test-blocks mode false))]
+        [expected : ir.CompilerIrBlockList
+          (opt-ctor-adopt-loop-test-blocks mode (>= mode 3))]
+        (unless
+          (opt.opt-verify-ok? (& (opt.opt-verify-function fixture)))
+          (return (+ 301 mode)))
+        (unless
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            out
+            expected)
+          (return (+ 401 mode)))
+        (set! mode (+ mode 1))))
+    42))
+
+(define (compiler-optimize-ctor-adopt-self-test) : i64
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params "source=%0:u64, owner=%12:String")]
+    [mode : i64 0]
+    (while (<= mode 20)
+      (let
+        [out : ir.CompilerIrBlockList
+          (opt.opt-ctor-adopt-function-blocks
+            (ast.ast-node-pool-reader-type-segment-bases)
+            13
+            (opt.compiler-opt-global-shared-view params)
+            (opt-ctor-adopt-test-blocks mode false))]
+        [expected : ir.CompilerIrBlockList
+          (opt-ctor-adopt-test-blocks mode (< mode 5))]
+        [again : ir.CompilerIrBlockList
+          (opt.opt-ctor-adopt-function-blocks
+            (ast.ast-node-pool-reader-type-segment-bases)
+            13
+            (opt.compiler-opt-global-shared-view params)
+            (opt.compiler-opt-global-shared-view out))]
+        (when
+          (< mode 5)
+          (let
+            [fixture : ir.CompilerIrFunction
+              (ir.CompilerIrFunction.Function
+                (opt-test-symbol "adoption_fixture")
+                (opt.compiler-opt-global-shared-view params)
+                (ast.AstType.I64)
+                13
+                (opt-ctor-adopt-test-blocks mode false)
+                (ir.CompilerIrFunctionAbi.Ordinary))]
+            (unless
+              (opt.opt-verify-ok? (& (opt.opt-verify-function fixture)))
+              (return (+ mode 201)))))
+        (unless
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            out
+            expected)
+          (return (+ mode 1)))
+        ;; Reapplying a proved consumption cannot consume its source again.
+        (unless
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            out
+            again)
+          (return (+ mode 101)))
+        (set! mode (+ mode 1))))
+    (compiler-optimize-ctor-adopt-loop-self-test)))
+
+(test
+  ctor-adopt-private-storage
+  (test.assert-i64-eq
+    (compiler-optimize-ctor-adopt-self-test)
+    42
+    "complete private same-layout storage is consumed once; escaped, aliased, redefined, partial, narrow, differently typed and already observed storage keeps its copy"))
+
+;; Call-slot forwarding hands a call the destination field of this function's
+;; own result as its slot. `%1` is the hidden result slot; each refusal mode
+;; breaks one clause of the guard, and expectations compare the complete
+;; instruction sequence.
+(define (opt-slot-fwd-test-instrs [mode : i64] [forwarded? : bool]) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    (str_cat.str-cat
+      "%20 = alloc i64\n%21 = alloc i64\n%22 = alloc i64\n%3 = addr_of %22 storage 3\n"
+      (if (= mode 5)
+        "%7 = gep %1, 0 : u8\n"
+        "")
+      (if (or forwarded? (= mode 11))
+        "%6 = gep %1, 8 : u8\n"
+        "")
+      (cond
+        [forwarded? "%4 = call make(%0, %6) : u64\n"]
+        [(= mode 5) "%4 = call make([sret arg 1] %7, %3) : u64\n"]
+        [else "%4 = call make([sret arg 1] %0, %3) : u64\n"])
+      (cond
+        [(= mode 2) "%9 = gep %1, 16 : u8\n%10 = load %9 : i64\n"]
+        [(= mode 3) "%11 = call observe(%1) : i64\n"]
+        [(= mode 8) "%11 = call unrelated() : i64\n"]
+        [(= mode 9) "store_ptr %0, 5 : i64\n"]
+        [else ""])
+      (if (= mode 1)
+        "%5 = gep %1, 8 : u8\n"
+        "%5 = gep %1, 0 : u8\n")
+      "store_ptr %5, 1 : i64\n"
+      (if forwarded?
+        ""
+        (str_cat.str-cat
+          (if (= mode 11)
+            ""
+            "%6 = gep %1, 8 : u8\n")
+          (if (= mode 4)
+            "copy_bytes %6, %4, 16\n"
+            "copy_bytes %6, %4, 24\n")))
+      (cond
+        [(= mode 6) "%12 = load %4 : i64\n"]
+        [(= mode 7) "store_ptr %0, %1 : u64\n"]
+        [(= mode 10) "%12 = load %6 : i64\n"]
+        [(= mode 12) "%13 = mov %3 : u64\n"]
+        [else ""])
+      "return %1")))
+
+(define (opt-slot-fwd-test-blocks [mode : i64] [forwarded? : bool]) : ir.CompilerIrBlockList
+  (let
+    [cons-builder (ir.compiler-ir-block-builder-new)]
+    (ir.compiler-ir-block-builder-push!
+      (&mut cons-builder)
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-slot-fwd-test-instrs mode forwarded?)))
+    (ir.compiler-ir-block-builder-append-list!
+      (&mut cons-builder)
+      (ir.compiler-ir-block-list-empty))
+    (ir.compiler-ir-block-builder-to-list cons-builder)))
+
+(define (opt-slot-fwd-test-function
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (opt-test-symbol "slot_forwarding_fixture")
+    params
+    (ast.AstType.U64)
+    23
+    blocks
+    (ir.CompilerIrFunctionAbi.Ordinary)))
+
+;; Modes 0, 8, 9 and 11 forward (a plain site, a call that cannot reach the
+;; slot, a store that cannot reach it, a destination computed before the call).
+;; The rest keep their copy: 1 a window store into the destination, 2 a window
+;; load from it, 3 the slot passed as an ordinary argument, 4 a copy narrower
+;; than the reserved words, 5 an argument derived from the slot, 6 a second use
+;; of the call result, 7 the slot stored to memory, 10 a second use of the
+;; destination address (moving its definition must not change what reaches
+;; another use), 12 a second use of the temp's address.
+(define (compiler-optimize-slot-fwd-self-test) : i64
+  (let
+    [mode : i64 0]
+    (while (<= mode 12)
+      (let
+        [forwards? : bool (or (= mode 0) (= mode 8) (= mode 9) (= mode 11))]
+        [params : ir.CompilerIrParamSeq
+          (ir.compiler-ir-param-seq-append-one
+            (irt.params "x=%0:u64")
+            (ir.CompilerIrParam.Param
+              (ir.compiler-ir-hidden-sret-param-name)
+              (ast.AstType.U64)
+              1))]
+        [out : ir.CompilerIrBlockList
+          (opt.opt-slot-fwd-function-blocks
+            23
+            (opt.compiler-opt-global-shared-view params)
+            (opt-slot-fwd-test-blocks mode false))]
+        [expected : ir.CompilerIrBlockList
+          (opt-slot-fwd-test-blocks mode forwards?)]
+        (unless
+          (opt.opt-verify-ok?
+            (&
+              (opt.opt-verify-function
+                (&
+                  (opt-slot-fwd-test-function
+                    (opt.compiler-opt-global-shared-view params)
+                    (opt-slot-fwd-test-blocks mode false))))))
+          (return (+ mode 201)))
+        (unless
+          (opt.opt-verify-ok?
+            (&
+              (opt.opt-verify-function
+                (&
+                  (opt-slot-fwd-test-function
+                    (opt.compiler-opt-global-shared-view params)
+                    (opt.compiler-opt-global-shared-view out))))))
+          (return (+ mode 301)))
+        (unless
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            out
+            expected)
+          (return (+ mode 1)))
+        (set! mode (+ mode 1))))
+    42))
+
+(test
+  slot-fwd-result-field
+  (test.assert-i64-eq
+    (compiler-optimize-slot-fwd-self-test)
+    42
+    "a call result copied into this function's own result is built there; window accesses to the field, slot escapes, derived arguments, narrow copies and second uses keep the copy"))
 
 ;; Dense fixture literals expand to one right-sized builder and forward pushes.
 ;; Each expansion owns its backing array, so separate tests cannot accidentally
@@ -260,7 +584,7 @@
   [set : (& set opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(or (Mov dst _ _) (AddrOf dst _) (Gep dst _ _ _) (Cast dst _ _ _)
+    [(or (Mov dst _ _) (AddrOf dst _ _) (Gep dst _ _ _) (Cast dst _ _ _)
          (Load dst _ _) (UnOp dst _ _ _) (Phi dst _ _) (LaneId dst _ _)
          (Splat dst _ _ _) (VectorReduce dst _ _ _ _) (MaskBinOp dst _ _ _ _)
          (MaskNot dst _ _) (MaskReduce dst _ _ _) (TailMask dst _ _ _)
@@ -524,7 +848,7 @@
     [bound : i64 0]
     (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(AddrOf _ src)
+        [(AddrOf _ src _)
           (if (> (+ src 1) bound)
             (set! bound (+ src 1))
             unit)]
@@ -2084,7 +2408,7 @@
     [program : ir.CompilerIrProgram
       (owned_view.compiler-owned-reference-shared-view program)]
     (match program
-      [(Program _ functions _)
+      [(Program _ functions _ _authority)
         (opt-count-exact-instr-functions functions needle)])))
 
 (define (opt-sum-mov-i64-from [instrs : ir.CompilerIrInstrSeq] [index : i64]) : i64
@@ -2112,7 +2436,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Mov _ (I64 n) _)
             (if (= n needle)
               1
@@ -2187,7 +2511,7 @@
   [dst : i64]
   [fallback : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(Mov d (I64 n) _) (when (= d dst) (return n))]
       [_ unit]))
   fallback)
@@ -2516,7 +2840,8 @@
     (ir.compiler-ir-function-seq-prepend
       (& (opt-spans-function-with-frame instrs frame))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (opt-spans-program [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrProgram
   (opt-spans-program-with-frame instrs 4))
@@ -2628,13 +2953,13 @@
             61
             11)
           (= (opt-count-exact-instr-program optimized rewritten) 1)
-          (= (opt-count-exact-instr-program optimized (AddrOf 4 3)) 1)
-          (= (opt-count-exact-instr-program optimized (AddrOf 4 2)) 0))])))
+          (= (opt-count-exact-instr-program optimized (AddrOf 4 3 0)) 1)
+          (= (opt-count-exact-instr-program optimized (AddrOf 4 2 0)) 0))])))
 
 (define (compiler-optimize-dead-addrof-ok?) : bool
   (let
     [producer : ir.CompilerIrInstr (irt.instr "%2 = add %0, %1 : i64")]
-    [addr : ir.CompilerIrInstr (AddrOf 3 2)]
+    [addr : ir.CompilerIrInstr (AddrOf 3 2 0)]
     [instrs : ir.CompilerIrInstrSeq
       (opt-test-instrs (clone producer) (clone addr) (irt.instr "return 42"))]
     (match (opt.optimize-program-with-spans-and-level
@@ -2700,7 +3025,8 @@
         (ir.compiler-ir-function-seq-prepend
           (& (opt-inline-span-callee symbols))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-optimize-spans-inline-callee-ok?) : bool
   (let
@@ -2819,7 +3145,7 @@
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [count : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(BoundsCheck _ _ ok-label) (return ok-label)]
       [_ unit]))
   (- 0 1))
@@ -3101,7 +3427,7 @@
        %1 = call input_leaf(%0) : i64
        return %1
      }")
-    [(Program _ functions _) functions]))
+    [(Program _ functions _ _) functions]))
 
 (define (opt-input-arena-leaf-calls
   [functions : (& functions ir.CompilerIrFunctionSeq)]
@@ -3193,7 +3519,10 @@
     [source : i64 (arena.tl_arena_make)]
     [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new bodies 4)]
     [functions : ir.CompilerIrFunctionSeq
-      (in-arena (arena.Arena source) (opt-input-arena-functions))]
+      (in-arena
+        (unsafe
+          (arena.Arena source))
+        (opt-input-arena-functions))]
     [placed-before? : bool
       (opt-input-arena-all-placed? (& input) (& functions))]
     [carried : ir.CompilerIrFunctionSeq
@@ -3300,62 +3629,75 @@
         (ir.compiler-ir-function-builder-to-seq builder))]
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry pools (&mut input) survivors)]
-    [release : opt.OptOptimizerInputRelease input.release]
     [copy : ir.CompilerIrFunction
       (ir.compiler-ir-function-seq-ref (& carried) 3)]
+    [copy-placed? : bool (opt.opt-optimizer-input-placed? (& input) (& copy))]
     (test.assert-true dead-placed? "a placed body matches its record")
     (test.assert-false
-      (opt.opt-optimizer-input-placed? (& input) (& copy))
+      copy-placed?
       "a different body under a placed name is not the placed one")
-    (test.assert-i64-eq (array-length release.chunks) 32 "one entry per chunk")
-    (test.assert-true (> (array-ref release.chunks 0) 0) "chunk 0 is open")
-    (test.assert-true (> (array-ref release.chunks 1) 0) "chunk 1 is open")
     (test.assert-i64-eq
-      (array-ref release.chunks 4)
+      (array-length input.release.chunks)
+      32
+      "one entry per chunk")
+    (test.assert-true
+      (> (array-ref input.release.chunks 0) 0)
+      "chunk 0 is open")
+    (test.assert-true
+      (> (array-ref input.release.chunks 1) 0)
+      "chunk 1 is open")
+    (test.assert-i64-eq
+      (array-ref input.release.chunks 4)
       0
       "the chunk no survivor is in is released at the carry")
     (test.assert-i64-eq
-      (array-ref release.chunks 2)
+      (array-ref input.release.chunks 2)
       0
       "an unused chunk is never opened")
     (test.assert-i64-eq
-      (array-ref release.last 0)
+      (array-ref input.release.last 0)
       1
       "chunk 0 is last read by input_loop")
     (test.assert-i64-eq
-      (array-ref release.last 1)
+      (array-ref input.release.last 1)
       2
       "chunk 1 is last read by input_leaf")
-    (test.assert-i64-eq (array-ref release.last 4) -1 "chunk 4 has no reader")
     (test.assert-i64-eq
-      (array-length release.order)
+      (array-ref input.release.last 4)
+      -1
+      "chunk 4 has no reader")
+    (test.assert-i64-eq
+      (array-length input.release.order)
       2
       "two chunks wait for the loop")
     (let
       [cursor : i64
-        (opt.opt-optimizer-input-release-passed! (&mut release) 0 0)]
+        (opt.opt-optimizer-input-release-passed! (&mut input.release) 0 0)]
       (test.assert-i64-eq cursor 0 "after main, chunk 0 still has a reader")
       (test.assert-true
-        (> (array-ref release.chunks 0) 0)
+        (> (array-ref input.release.chunks 0) 0)
         "chunk 0 stays open while input_loop is ahead")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (&mut release) 1 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut input.release) 1 cursor))
       (test.assert-i64-eq cursor 1 "chunk 0 goes after input_loop")
-      (test.assert-i64-eq (array-ref release.chunks 0) 0 "chunk 0 is released")
+      (test.assert-i64-eq
+        (array-ref input.release.chunks 0)
+        0
+        "chunk 0 is released")
       (test.assert-true
-        (> (array-ref release.chunks 1) 0)
+        (> (array-ref input.release.chunks 1) 0)
         "chunk 1 stays open while input_leaf is ahead")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (&mut release) 2 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut input.release) 2 cursor))
       (test.assert-i64-eq
-        (array-ref release.chunks 1)
+        (array-ref input.release.chunks 1)
         0
         "chunk 1 goes after input_leaf")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (&mut release) 3 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut input.release) 3 cursor))
       (test.assert-i64-eq cursor 2 "the copy releases no chunk")
       (let
         [copy-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks copy)]
@@ -3376,9 +3718,10 @@
     (Program
       (ir.compiler-ir-global-seq-empty)
       (opt-input-arena-functions)
-      (ir.compiler-ir-extern-seq-empty))
+      (ir.compiler-ir-extern-seq-empty)
+      ir.CompilerIrReturnStorageAuthority.None)
     2)
-    [(Program _ functions _)
+    [(Program _ functions _ _)
       (test.assert-i64-eq
         (opt-input-arena-leaf-calls (& functions) "input_loop")
         0
@@ -3823,7 +4166,8 @@
                   (opt-aggregate-phi-flowed-blocks)
                   Ordinary))
               (& (ir.compiler-ir-function-seq-empty)))
-            (ir.compiler-ir-extern-seq-empty)))]
+            (ir.compiler-ir-extern-seq-empty)
+            (ir.CompilerIrReturnStorageAuthority.None)))]
       (opt-aggregate-candidate-list-count candidates))
     0))
 
@@ -3836,7 +4180,9 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-spans-program instrs))]
     (if (= (opt-aggregate-candidate-list-count candidates) 1)
-      (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 0)
+      (match (owned_view.compiler-owned-element-view
+        (opt_aggregate_candidate_vec.slots (& candidates))
+        0)
         [(Candidate base ty size ptrs accesses)
           (and
             (= base 1)
@@ -4001,9 +4347,13 @@
       (match (opt.opt-aggregate-pointer-list-lookup ptrs 10)
         [(Some offset) (= offset 32)]
         [(None) false])
-      (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 0)
+      (match (owned_view.compiler-owned-element-view
+        (opt_aggregate_candidate_vec.slots (& candidates))
+        0)
         [(Candidate base _ size _ _) (and (= base 0) (= size 1))])
-      (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 4)
+      (match (owned_view.compiler-owned-element-view
+        (opt_aggregate_candidate_vec.slots (& candidates))
+        4)
         [(Candidate base _ size _ _) (and (= base 4) (= size 5))])
       (match (opt.opt-aggregate-promote-lookup promote-slots 4)
         [(Some storage) (= storage 104)]
@@ -4098,7 +4448,7 @@
     0
     (+
       (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(AddrOf _ _) 1]
+        [(AddrOf _ _ _storage-words) 1]
         [_ 0])
       (opt-count-addr-of-instrs-from instrs (+ index 1)))))
 
@@ -4113,7 +4463,7 @@
         (match (ir.compiler-ir-instr-seq-ref instrs 1)
           [(Alloc second-dst second-ty)
             (match (ir.compiler-ir-instr-seq-ref instrs 2)
-              [(AddrOf base storage)
+              [(AddrOf base storage _storage-words)
                 (and
                   (= first-dst 4)
                   (= second-dst 5)
@@ -4234,7 +4584,8 @@
               blocks
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))
-        (ir.compiler-ir-extern-seq-empty))]
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None))]
     [candidates : opt_aggregate_candidate_vec.Vec
       (opt-aggregate-allocation-candidates
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -4415,9 +4766,10 @@
       (ir.compiler-ir-function-seq-prepend
         (& (opt-agsplit-function blocks frame))
         (& (ir.compiler-ir-function-seq-empty)))
-      (ir.compiler-ir-extern-seq-empty))
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))
     2)
-    [(Program _ funcs _) (ir.compiler-ir-function-seq-ref funcs 0)]))
+    [(Program _ funcs _ _authority) (ir.compiler-ir-function-seq-ref funcs 0)]))
 
 (define (opt-agsplit-alloc [dst : i64] [size : i64]) : ir.CompilerIrInstr
   (Call
@@ -4916,7 +5268,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Cast _ _ _ _) 1]
           [_ 0]))))
   acc)
@@ -5237,13 +5589,16 @@
   [result-ty : ast.AstType]) : ir.CompilerIrFunction
   (Function
     (opt-test-symbol "sret_role_verify")
-    (irt.params "storage=%0:u64")
+    (ir.compiler-ir-param-seq-empty)
     (Unit)
-    2
+    4
     (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (opt-test-instrs
+          (irt.instr "%2 = alloc SretVerify")
+          (irt.instr "%3 = alloc SretVerify")
+          (irt.instr "%0 = addr_of %3")
           (ir.CompilerIrInstr.Call
             1
             (opt-test-symbol "sret_callee")
@@ -6044,6 +6399,76 @@
        %1 = mov %0 : i64
        return"))
 
+;; A dead instruction after the rewritten survivor forces backward compaction
+;; to move that survivor. The sweep must reread its updated source slot, since
+;; the local instruction captured before the rewrite is an independent value.
+(define (opt-dce-rewrite-instrs [bit-test? : bool]) : ir.CompilerIrInstrSeq
+  (if bit-test?
+    (irt.instrs
+      "%2 = bit_and %0, 8 : i64
+       %3 = eq %2, 0 : i64
+       %4 = mov 0 : i64
+       return %3")
+    (irt.instrs
+      "%2 = eq %0, %1 : i64
+       %3 = not %2 : bool
+       %4 = mov 0 : i64
+       return %3")))
+
+(define (opt-dce-rewrite-mode-ok? [mode : i64] [bit-test? : bool]) : bool
+  (let
+    ;; Every sweep owns fresh slots: an earlier mode must not pre-rewrite the
+    ;; fixture and hide a stale-value consumer in a later mode.
+    [instrs : ir.CompilerIrInstrSeq (opt-dce-rewrite-instrs bit-test?)]
+    [blocks : ir.CompilerIrBlockList
+      (let
+        [cons-builder (ir.compiler-ir-block-builder-new)]
+        (ir.compiler-ir-block-builder-push!
+          (&mut cons-builder)
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "entry")
+            (opt.compiler-opt-global-shared-view instrs)))
+        (ir.compiler-ir-block-builder-append-list!
+          (&mut cons-builder)
+          (ir.compiler-ir-block-list-empty))
+        (ir.compiler-ir-block-builder-to-list cons-builder))]
+    [used : (__tl_dyn-array i64) (opt.opt-collect-blocks-uses-array 5 blocks)]
+    [cleaned : ir.CompilerIrInstrSeq
+      (cond
+        [(= mode 0) (opt.opt-dce-instr-seq-array used instrs)]
+        [(= mode 1) (opt.opt-dce-instr-seq-array-in-place! used instrs)]
+        [else
+          (opt.opt-dce-instr-seq-array-escape
+            (ast.ast-node-pool-reader-context-current)
+            used
+            instrs)])]
+    [expected : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq2
+        (ir.CompilerIrInstr.BinOp
+          3
+          (if bit-test?
+            (ir.CompilerIrBinOp.BitTestEq)
+            (ir.CompilerIrBinOp.Ne))
+          (ir.CompilerIrValue.Var 0)
+          (if bit-test?
+            (ir.CompilerIrValue.I64 8)
+            (ir.CompilerIrValue.Var 1))
+          (ast.AstType.I64))
+        (irt.instr "return %3"))]
+    (opt-test-instr-seq-eq
+      (ast.ast-node-pool-reader-type-segment-bases)
+      cleaned
+      expected)))
+
+(define (compiler-optimize-dce-rewrite-self-test) : i64
+  (let
+    [mode : i64 0]
+    (while (< mode 3)
+      (unless (opt-dce-rewrite-mode-ok? mode false) (return (+ (* mode 2) 1)))
+      (unless (opt-dce-rewrite-mode-ok? mode true) (return (+ (* mode 2) 2)))
+      (set! mode (+ mode 1)))
+    42))
+
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
 (define (compiler-optimize-dce-self-test) : i64
@@ -6111,6 +6536,7 @@
         10]
       [(not (= (ir.compiler-ir-block-list-instruction-count (& cross-fixed)) 2))
         11]
+      [(not (= (compiler-optimize-dce-rewrite-self-test) 42)) 12]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -8271,6 +8697,120 @@
             (& expected))
           "stores, calls, redefinitions, multiple uses and dynamic offsets keep their order")))))
 
+;; --- store address sinking ----------------------------------------------------
+;; `(set! (array-ref out i) (+ (array-ref a i) r))` with the destination
+;; captured first: the store's single-use address gep must land right before
+;; the store, past the value's gep, load and add.
+(define (opt-store-addr-sink-move-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "loop:
+       %10 = gep %0, %3 : i64
+       %11 = gep %1, %3 : i64
+       %12 = load %11 : i64
+       %13 = add %12, %5 : i64
+       store_ptr %10, %13 : i64
+       return %13"))
+
+;; The address is also loaded after the store: a second use, so the backend
+;; could not fold it into the store alone and it stays.
+(define (opt-store-addr-sink-double-use-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "loop:
+       %10 = gep %0, %3 : i64
+       %11 = gep %1, %3 : i64
+       %12 = load %11 : i64
+       store_ptr %10, %12 : i64
+       %14 = load %10 : i64
+       return %14"))
+
+;; The gep's base is redefined before the store (not SSA; the guard is what
+;; makes the move safe without a dominance query).
+(define (opt-store-addr-sink-rebase-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "loop:
+       %10 = gep %0, %3 : i64
+       %0 = mov 7 : i64
+       store_ptr %10, %5 : i64
+       return %5"))
+
+;; The gep is the stored VALUE, not the address: nothing to fold.
+(define (opt-store-addr-sink-value-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "loop:
+       %10 = gep %0, %3 : i64
+       %11 = gep %1, %3 : i64
+       %12 = load %11 : i64
+       store_ptr %2, %10 : i64
+       return %12"))
+
+(define (opt-store-addr-sink-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlock
+  (let
+    [sunk : ir.CompilerIrBlockList (opt.opt-store-addr-sink-blocks 32 blocks)]
+    (match (ir.compiler-ir-block-list-view sunk)
+      [(slice block & _)
+        (owned_view.compiler-owned-reference-shared-view block)]
+      [_
+        (Block (ir.compiler-ir-label "empty") (ir.compiler-ir-instr-seq-empty))])))
+
+(define (opt-store-addr-sink-order?
+  [blocks : ir.CompilerIrBlockList]
+  [dsts : (& dsts (__tl_dyn-array i64))]) : bool
+  (let
+    [block : ir.CompilerIrBlock (opt-store-addr-sink-run blocks)]
+    (opt-load-sink-order? block dsts)))
+
+;; Returns 42 when the destination gep moves next to its store, every refusal
+;; keeps its order, and a second run changes nothing.
+(define (compiler-optimize-store-addr-sink-self-test) : i64
+  (let
+    [moved : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [double : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [rebase : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [value : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    (set! (array-ref moved 0) 11)
+    (set! (array-ref moved 1) 12)
+    (set! (array-ref moved 2) 13)
+    (set! (array-ref moved 3) 10)
+    (set! (array-ref moved 4) (- 0 1))
+    (set! (array-ref moved 5) (- 0 1))
+    (unless
+      (opt-store-addr-sink-order? (opt-store-addr-sink-move-blocks) (& moved))
+      (return 1))
+    (unless
+      (let
+        [block (opt-store-addr-sink-run (opt-store-addr-sink-move-blocks))]
+        (opt-store-addr-sink-order? (ir.compiler-ir-blocks block) (& moved)))
+      (return 2))
+    (set! (array-ref double 0) 10)
+    (set! (array-ref double 1) 11)
+    (set! (array-ref double 2) 12)
+    (set! (array-ref double 3) (- 0 1))
+    (set! (array-ref double 4) 14)
+    (set! (array-ref double 5) (- 0 1))
+    (unless
+      (opt-store-addr-sink-order?
+        (opt-store-addr-sink-double-use-blocks)
+        (& double))
+      (return 3))
+    (set! (array-ref rebase 0) 10)
+    (set! (array-ref rebase 1) 0)
+    (set! (array-ref rebase 2) (- 0 1))
+    (set! (array-ref rebase 3) (- 0 1))
+    (unless
+      (opt-store-addr-sink-order?
+        (opt-store-addr-sink-rebase-blocks)
+        (& rebase))
+      (return 4))
+    (set! (array-ref value 0) 10)
+    (set! (array-ref value 1) 11)
+    (set! (array-ref value 2) 12)
+    (set! (array-ref value 3) (- 0 1))
+    (set! (array-ref value 4) (- 0 1))
+    (unless
+      (opt-store-addr-sink-order? (opt-store-addr-sink-value-blocks) (& value))
+      (return 5))
+    42))
+
 ;; --- late compare duplication ----------------------------------------------
 ;;
 ;; Fixtures share two i64 parameters (vars 0 and 1) plus a spare var 2 that
@@ -9648,7 +10188,7 @@
   [count : i64]
   [dst : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(BinOp actual _ lhs _ _)
         (when
           (= actual dst)
@@ -10041,7 +10581,7 @@
          bounds_check %2, %4 message \"slice_entry_ok\"
          jump mid")]
     (if address-taken?
-      (opt-test-instrs-with-tail tail (ir.CompilerIrInstr.AddrOf 10 0))
+      (opt-test-instrs-with-tail tail (ir.CompilerIrInstr.AddrOf 10 0 0))
       tail)))
 
 (define (opt-bounds-dom-slice-mid-instrs) : ir.CompilerIrInstrSeq
@@ -12064,7 +12604,8 @@
     (ir.compiler-ir-function-seq-prepend
       (& (opt-test-function instrs))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 ;; Self-test helper: exposes the first optimized block as a list for existing
 ;; instruction-count assertions; not used by production passes.
@@ -12079,7 +12620,7 @@
 
 (define (opt-program-first-instrs [program : (& program ir.CompilerIrProgram)]) : ir.CompilerIrInstrSeq
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program _ funcs _)
+    [(Program _ funcs _ _authority)
       (if (> funcs.len 0)
         (let
           [func (ir.compiler-ir-function-seq-ref funcs 0)]
@@ -12088,11 +12629,11 @@
 
 (define (opt-program-functions [program : (& program ir.CompilerIrProgram)]) : ir.CompilerIrFunctionSeq
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program _ funcs _) funcs]))
+    [(Program _ funcs _ _authority) funcs]))
 
 (define (opt-program-globals [program : ir.CompilerIrProgram]) : ir.CompilerIrGlobalSeq
   (match program
-    [(Program globals _ _) globals]))
+    [(Program globals _ _ _authority) globals]))
 
 (define (opt-global-list-defines?
   [globals : (& globals ir.CompilerIrGlobalSeq)]
@@ -12146,9 +12687,9 @@
   [a : ir.CompilerIrProgram]
   [b : ir.CompilerIrProgram]) : bool
   (match a
-    [(Program aglobals afunctions aexterns)
+    [(Program aglobals afunctions aexterns _authority)
       (match b
-        [(Program bglobals bfunctions bexterns)
+        [(Program bglobals bfunctions bexterns _authority)
           (and
             (= aglobals.len bglobals.len)
             (= afunctions.len bfunctions.len)
@@ -12186,7 +12727,16 @@
               (set! index 0)
               (while (and same? (< index aexterns.len))
                 (match (ir.compiler-ir-extern-seq-ref aexterns index)
-                  [(Extern aid asource aname aty aabi asymbol alinks aprovided)
+                  [(Extern
+                      aid
+                      asource
+                      aname
+                      aty
+                      aabi
+                      asymbol
+                      alinks
+                      aprovided
+                      astorage)
                     (match (ir.compiler-ir-extern-seq-ref bexterns index)
                       [(Extern
                           bid
@@ -12196,7 +12746,8 @@
                           babi
                           bsymbol
                           blinks
-                          bprovided)
+                          bprovided
+                          bstorage)
                         (set!
                           same?
                           (and
@@ -12209,7 +12760,11 @@
                             (ast.ast-extern-link-input-list-eq?
                               (& alinks)
                               (& blinks))
-                            (= aprovided bprovided)))])])
+                            (= aprovided bprovided)
+                            (return_storage.storage-equal?
+                              type-segment-bases
+                              astorage
+                              bstorage)))])])
                 (+= index 1))
               same?))])]))
 
@@ -12434,7 +12989,8 @@
                               "C:/repo/stdlib/runtime.tl::int-to-string"
                               (opt-global-dce-return-instrs 17)))
                           (& (ir.compiler-ir-function-seq-empty)))))))))))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (opt-global-dce-no-main-program) : ir.CompilerIrProgram
   (Program
@@ -12445,7 +13001,8 @@
         (ir.compiler-ir-function-seq-prepend
           (& (opt-test-function-named "dead" (opt-global-dce-return-instrs 9)))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-optimize-global-dce-ok?) : bool
   (let
@@ -12791,7 +13348,8 @@
     [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
     [graph : opt.OptCallGraph (opt.opt-callgraph-build index)]
     [result : opt.OptSccResult (opt.opt-scc-compute graph)]
-    [order : (__tl_dyn-array i64) result.order]
+    [order : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view result.order)]
     [main-scc : i64
       (opt-scc-result-component
         result
@@ -13686,7 +14244,8 @@
                   "dead"
                   (opt-global-dce-return-instrs 9)))
               (& (ir.compiler-ir-function-seq-empty)))))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (opt-inline-count-binop-dst-from
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -13718,7 +14277,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Call _ call-name _ _)
             (if (string.eq (ir.compiler-ir-symbol-text call-name) name)
               1
@@ -24568,7 +25127,7 @@
         (ir.CompilerIrInstr.Alloc 3 (I64))
         (ir.CompilerIrInstr.Alloc 4 (I64))
         (ir.CompilerIrInstr.Alloc 5 (I64))
-        (ir.CompilerIrInstr.AddrOf 6 addr-src)
+        (ir.CompilerIrInstr.AddrOf 6 addr-src 0)
         (irt.instr "branch %0, alloc_sret.then, alloc_sret.else")))))
 
 ;; The same aggregate build as one straight-line block: refused as `structure`
@@ -24594,7 +25153,7 @@
       (ir.compiler-ir-label "alloc_store.entry")
       (opt-test-instrs
         (ir.CompilerIrInstr.Alloc 2 (I64))
-        (ir.CompilerIrInstr.AddrOf 6 2)
+        (ir.CompilerIrInstr.AddrOf 6 2 0)
         (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "alloc_store.cont"))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "alloc_store.cont")
@@ -24801,7 +25360,7 @@
               (set! run-first dst)
               (set! run-last dst)
               (set! run-count 1)))]
-        [(AddrOf _ src)
+        [(AddrOf _ src _storage-words)
           (if (and
             (> run-count 0)
             (= src run-last)
@@ -25313,7 +25872,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Branch _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25342,7 +25901,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Jump label)
             (if (= label target)
               1
@@ -25376,7 +25935,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(TailCall _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25405,7 +25964,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(TailCall target _ _)
             (if (string.eq (ir.compiler-ir-symbol-text target) name)
               1
@@ -25458,7 +26017,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(TailCallIndirect _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25486,7 +26045,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Return _) 1]
           [_ 0]))))
   acc)
@@ -25582,6 +26141,64 @@
                return 0")))
         function-abi)]))
 
+(define (opt-tailrec-frame-test-function [address? : bool]) : ir.CompilerIrFunction
+  (let
+    [name : i64 (opt-test-symbol "tail_frame")]
+    [instrs : ir.CompilerIrInstrSeq
+      (if address?
+        (irt.instrs
+          "%2 = addr_of %0
+           %3 = mov %2 : u64
+           %4 = gep %3, 0 : i64
+           %5 = cast %4 : u64 to i64
+           tailcall tail_frame(%5, %1) : i64")
+        (irt.instrs
+          "%2 = alloc i64
+           tailcall tail_frame(%1, %0) : i64"))]
+    (ir.CompilerIrFunction.Function
+      name
+      (opt-tailrec-test-params)
+      (ast.AstType.I64)
+      6
+      (let
+        [cons-builder (ir.compiler-ir-block-builder-new)]
+        (ir.compiler-ir-block-builder-push!
+          (&mut cons-builder)
+          (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs))
+        (ir.compiler-ir-block-builder-append-list!
+          (&mut cons-builder)
+          (ir.compiler-ir-block-list-empty))
+        (ir.compiler-ir-block-builder-to-list cons-builder))
+      ir.CompilerIrFunctionAbi.Ordinary)))
+
+;; Test the optimizer consumer directly: source lowering can already refuse a
+;; frame-retaining tail call, which would hide an unsound tailrec rewrite.
+;; The address case carries the frame pointer through an alias, Gep and cast;
+;; the allocation-only case checks the deliberately conservative admission.
+(define (compiler-optimize-tailrec-frame-self-test) : i64
+  (let
+    [address : ir.CompilerIrFunction (opt-tailrec-frame-test-function true)]
+    [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function false)]
+    [address-out : ir.CompilerIrFunction
+      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view address))]
+    [allocation-out : ir.CompilerIrFunction
+      (opt.opt-tailrec-function
+        (opt.compiler-opt-global-shared-view allocation))]
+    (cond
+      [(not
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            address
+            address-out))
+        1]
+      [(not
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            allocation
+            allocation-out))
+        2]
+      [else 42])))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : ir.CompilerIrFunction
@@ -25626,6 +26243,7 @@
             collision
             collision-out))
         10]
+      [(not (= (compiler-optimize-tailrec-frame-self-test) 42)) 11]
       [else 42])))
 
 (define (opt-count-phi-instr-seq-from
@@ -25637,7 +26255,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Phi _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25692,7 +26310,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Mov mov-dst _ _)
             (if (= mov-dst dst)
               1
@@ -25747,7 +26365,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(BinOp _ op _ _ _)
             (match op
               [(Mul) 1]
@@ -25802,7 +26420,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Gep _ _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25853,7 +26471,7 @@
       acc
       (+
         acc
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(Load _ _ _) 1]
           [_ 0]))))
   acc)
@@ -25917,7 +26535,7 @@
   [dst : i64]
   [fallback : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(Mov mov-dst (Var src) _) (when (= mov-dst dst) (return src))]
       [_ unit]))
   fallback)
@@ -25935,7 +26553,7 @@
   [count : i64]
   [fallback : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(Return (Some (Var var))) (return var)]
       [_ unit]))
   fallback)
@@ -25945,7 +26563,7 @@
   [count : i64]
   [fallback : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (match (array-ref slots index)
+    (match (owned_view.compiler-owned-element-view slots index)
       [(Return (Some (I64 value))) (return value)]
       [_ unit]))
   fallback)
@@ -30302,7 +30920,7 @@
         (ir.compiler-ir-label "entry")
         (opt-test-instrs
           (ir.CompilerIrInstr.Mov 1 (Var 0) (ast.ast-global-shared-view ty))
-          (ir.CompilerIrInstr.AddrOf 2 1)
+          (ir.CompilerIrInstr.AddrOf 2 1 0)
           (ir.CompilerIrInstr.Mov 1 (Var 0) ty)
           (irt.instr "return %1"))))
     Ordinary))
@@ -30420,7 +31038,8 @@
         (Program
           (ir.compiler-ir-global-seq-empty)
           functions
-          (ir.compiler-ir-extern-seq-empty))))))
+          (ir.compiler-ir-extern-seq-empty)
+          (ir.CompilerIrReturnStorageAuthority.None))))))
 
 (define (opt-ssa-representation-index-for-function
   [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrRepresentationIndex
@@ -32483,7 +33102,7 @@
         (irt.instr "%6 = phi [%5, entry], [%7, body] : i64")
         (irt.instr "%8 = gep %1, 0 : i64")
         (irt.instr "%9 = load %8 : i64")
-        (ir.CompilerIrInstr.AddrOf 13 12)
+        (ir.CompilerIrInstr.AddrOf 13 12 0)
         ;; mode 0: the call; 1 and 2: a store into the frame object
         ;; instead (FRAME-STORE); 2 also reads that word back below
         (if (= mode 0)
@@ -33918,7 +34537,7 @@
     (opt-test-instr-seq-prepend
       (Alloc 20 (opt-licm-ls-local-object-type))
       (opt-test-instr-seq-prepend
-        (AddrOf 21 20)
+        (AddrOf 21 20 0)
         (opt-test-instr-seq-prepend
           (Call
             22
@@ -47997,6 +48616,11 @@
           0
           (DynArray 0)
           (opt-ec-cell-store (opt-test-symbol "ec_cell"))))]
+    ;; negative 6: an i64 word against an i32 element store. The classes
+    ;; differ, but a register-resident aggregate's i64 word holds i32 fields.
+    [register-word : ir.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks 8 (I64) (irt.instr "store_ptr %10, 100 : i32")))]
     (cond
       ;; the candidate moved to the preheader...
       [(not (opt-ec-hoisted? moved)) 1]
@@ -48020,6 +48644,8 @@
       [(not (= (opt-fz-preheader-loads raw) 0)) 13]
       [(not (= (opt-fz-preheader-loads indirect) 0)) 14]
       [(not (= (opt-fz-preheader-loads cell) 0)) 15]
+      [(opt-ec-hoisted? register-word) 16]
+      [(not (opt-ec-kept? register-word)) 17]
       [else 42])))
 
 (test
@@ -48027,7 +48653,7 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-element-class-self-test)
     42
-    "a load of a descriptor-handle word off a `(&mut ...)` parameter leaves a loop whose only write is an i64 element store, and the descriptor's data slot and buffer leave with it; a same-class i64 word off that same parameter, an element store of the candidate's own class, a store through a pointer of unknown provenance, an indirect call in the loop, and a whole-cell global write each keep the chain inside"))
+    "a load of a descriptor-handle word off a `(&mut ...)` parameter leaves a loop whose only write is an i64 element store, and the descriptor's data slot and buffer leave with it; a same-class i64 word off that same parameter, an element store of the candidate's own class, a store through a pointer of unknown provenance, an indirect call in the loop, a whole-cell global write, and an i32 element store against an i64 register word each keep the chain inside"))
 
 (test
   licm-root-disjointness
@@ -52933,7 +53559,8 @@
     (ir.compiler-ir-function-seq-prepend
       (& (opt-scratch-reset-level-function))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (opt-scratch-reset-call-blocked-blocks) : ir.CompilerIrBlockList
   (opt-scratch-reset-blocks-with-body
@@ -52982,6 +53609,40 @@
       (ir.compiler-ir-label "exit")
       (opt-test-instrs (opt-scratch-test-return-zero)))))
 
+;; The scan once cleared its facts at every store, so a candidate stored into
+;; another candidate and then into outer memory escaped unnoticed (a loop that
+;; filled an array with fresh arrays freed them each iteration), as did an
+;; address read back out of candidate memory.
+(define (opt-scratch-inner-store-escape-instrs) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-scratch-test-alloc)
+    (Call 2 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+    (irt.instr "store_ptr %2, %1 : u64")
+    (irt.instr "store_ptr %99, %2 : u64")
+    (opt-scratch-test-return-zero)))
+
+(define (opt-scratch-load-back-escape-instrs) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-scratch-test-alloc)
+    (Call 2 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+    (irt.instr "store_ptr %1, %2 : u64")
+    (ir.CompilerIrInstr.Load 3 (Var 1) (U64))
+    (irt.instr "store_ptr %99, %3 : u64")
+    (opt-scratch-test-return-zero)))
+
+;; A self loop whose exit reads its candidate: the reset would free it first.
+(define (opt-scratch-reset-self-loop-blocks [exit : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (irt.block "entry:
+         jump preheader")
+    (irt.block "preheader:
+           jump loop")
+    (irt.block
+      "loop:
+           %1 = alloc i64
+           branch true, loop, exit")
+    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "exit") exit)))
+
 (define (opt-scratch-reset-rewrite [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (opt-scratch-reset-function
     (ast.ast-node-pool-reader-type-segment-bases)
@@ -53002,7 +53663,7 @@
   (match (opt-test-optimize-program-with-level
     (opt-scratch-reset-level-program)
     level)
-    [(Program _ functions _)
+    [(Program _ functions _ _authority)
       (match (opt-function-seq-find functions "main")
         [(No) (- 0 1)]
         [(Some func) (opt-scratch-reset-call-count func name)])]))
@@ -53064,7 +53725,7 @@
     [raw-blocked : opt.OptScratchScopeReport
       (opt-scratch-scope-report-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-scratch-test-one-block (AddrOf 2 1)))]
+        (opt-scratch-test-one-block (AddrOf 2 1 0)))]
     ;; The scratch analysis records its roots with `opt-alias-mark-unique`, so
     ;; the fixture builds the fact the same way instead of hand-encoding it.
     [store-blocked : opt.OptScratchScopeReport
@@ -53104,6 +53765,22 @@
               (& roots)
               (& facts)
               instr))))]
+    [inner-store-escape : opt.OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-scratch-inner-store-escape-instrs))]
+    [load-back-escape : opt.OptScratchScopeReport
+      (opt-scratch-scope-report-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-scratch-load-back-escape-instrs))]
+    [reset-live-out : ir.CompilerIrFunction
+      (opt-scratch-reset-rewrite
+        (opt-scratch-reset-self-loop-blocks
+          (irt.instrs "%5 = load %1 : i64
+             return %5")))]
+    [reset-self-loop : ir.CompilerIrFunction
+      (opt-scratch-reset-rewrite
+        (opt-scratch-reset-self-loop-blocks (irt.instrs "return 0")))]
     [reset-positive : ir.CompilerIrFunction
       (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
     [reset-call-blocked : ir.CompilerIrFunction
@@ -53194,6 +53871,187 @@
       [(not (= level2-mark-count 1)) 19]
       [(not (= level2-reset-count 1)) 20]
       [(not (opt-scratch-reset-runtime-ids-canonical?)) 21]
+      [(not
+          (opt-scratch-report-blocked?
+            (ast.ast-node-pool-reader-type-segment-bases)
+            inner-store-escape
+            2
+            48
+            "store_outer"))
+        22]
+      [(not
+          (opt-scratch-report-blocked?
+            (ast.ast-node-pool-reader-type-segment-bases)
+            load-back-escape
+            2
+            48
+            "store_outer"))
+        23]
+      [(not (opt-scratch-reset-not-emitted? reset-live-out)) 24]
+      [(not (opt-scratch-reset-emitted? reset-self-loop)) 25]
+      [else 42])))
+
+;; --- identical function merging self-test ----------------------------------
+(define (opt-merge-test-seq [texts : (__tl_dyn-array String)]) : ir.CompilerIrFunctionSeq
+  (let
+    [out : (__tl_dyn-array ir.CompilerIrFunction)
+      (__tl_make-array ir.CompilerIrFunction (array-length texts))]
+    [i : i64 0]
+    (while (< i (array-length texts))
+      (set! (array-ref out i) (irt.func (string.copy (& (array-ref texts i)))))
+      (set! i (+ i 1)))
+    (ir.CompilerIrFunctionSeq out (array-length texts))))
+
+(define (opt-merge-test-twin [name : String] [body : String]) : String
+  (str_cat.str-cat
+    "function @"
+    name
+    "(n=%0:i64) -> i64 vars 2 {\nentry:\n"
+    body
+    "}\n"))
+
+(define (opt-merge-test-main [extra : String]) : String
+  (str_cat.str-cat
+    "function @main() -> i64 vars 4 {\nentry:\n"
+    "%0 = call a(5) : i64\n%1 = call b(5) : i64\n"
+    extra
+    "%2 = add %0, %1 : i64\nreturn %2\n}\n"))
+
+;; The program after merging: its function names in order, and the callee of
+;; each `Call` in `main`, all space separated, then the runtime initializer of
+;; each global.
+(define (opt-merge-test-render [merged : opt.OptMergedProgram]) : String
+  (match merged
+    [(Merged globals functions)
+      (let
+        [out : String ""]
+        [i : i64 0]
+        (while (< i functions.len)
+          (match (opt.compiler-opt-global-array-element-shared-view
+            functions.slots
+            i)
+            [(Function name _ _ _ blocks _)
+              (set!
+                out
+                (str_cat.str-cat out (ir.compiler-ir-symbol-text name) " "))
+              (when
+                (string.eq (ir.compiler-ir-symbol-text name) "main")
+                (let
+                  [seq : ir.CompilerIrBlockSeq
+                    (ir.compiler-ir-block-list-seq blocks)]
+                  [b : i64 0]
+                  (while (< b (ir.compiler-ir-block-seq-count seq))
+                    (match (ir.compiler-ir-block-seq-ref seq b)
+                      [(Block _ instrs)
+                        (let
+                          [k : i64 0]
+                          (while (< k (ir.compiler-ir-instr-seq-count instrs))
+                            (match (ir.compiler-ir-instr-seq-ref instrs k)
+                              [(Call _ callee _ _)
+                                (set!
+                                  out
+                                  (str_cat.str-cat
+                                    out
+                                    "call:"
+                                    (ir.compiler-ir-symbol-text callee)
+                                    " "))]
+                              [_ unit])
+                            (set! k (+ k 1))))])
+                    (set! b (+ b 1)))))])
+          (set! i (+ i 1)))
+        (set! i 0)
+        (while (< i globals.len)
+          (match (opt.compiler-opt-global-array-element-shared-view
+            globals.slots
+            i)
+            [(Global _ _ (ir.CompilerIrValue.RuntimeGlobal init))
+              (set!
+                out
+                (str_cat.str-cat
+                  out
+                  "init:"
+                  (ir.compiler-ir-symbol-text init)
+                  " "))]
+            [_ unit])
+          (set! i (+ i 1)))
+        out)]))
+
+(define (opt-merge-test-run [texts : (__tl_dyn-array String)] [init : String]) : String
+  (let
+    [globals : (__tl_dyn-array ir.CompilerIrGlobal)
+      (__tl_make-array ir.CompilerIrGlobal 1)]
+    (set!
+      (array-ref globals 0)
+      (ir.CompilerIrGlobal.Global
+        (opt-test-symbol "cell")
+        (I64)
+        (ir.CompilerIrValue.RuntimeGlobal (opt-test-symbol init))))
+    (opt-merge-test-render
+      (opt.opt-merge-identical-functions
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.CompilerIrGlobalSeq globals 1)
+        (opt-merge-test-seq texts)
+        (& (ir.compiler-ir-extern-seq-empty))))))
+
+(define (compiler-optimize-merge-functions-self-test) : i64
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [body : String "%1 = add %0, 1 : i64\nreturn %1\n"]
+    [plain : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [taken : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [checked : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [differ : (__tl_dyn-array String) (__tl_make-array String 3)]
+    (set! (array-ref plain 0) (opt-merge-test-twin "a" (string.copy (& body))))
+    (set! (array-ref plain 1) (opt-merge-test-twin "b" (string.copy (& body))))
+    (set! (array-ref plain 2) (opt-merge-test-main ""))
+    (set! (array-ref taken 0) (opt-merge-test-twin "a" (string.copy (& body))))
+    (set! (array-ref taken 1) (opt-merge-test-twin "b" (string.copy (& body))))
+    (set! (array-ref taken 2) (opt-merge-test-main "%3 = mov fn@b : u64\n"))
+    (set!
+      (array-ref checked 0)
+      (opt-merge-test-twin
+        "a"
+        (str_cat.str-cat
+          "bounds_check 0, %0 message \"ok\"\n"
+          (string.copy (& body)))))
+    (set!
+      (array-ref checked 1)
+      (opt-merge-test-twin
+        "b"
+        (str_cat.str-cat
+          "bounds_check 0, %0 message \"ok\"\n"
+          (string.copy (& body)))))
+    (set! (array-ref checked 2) (opt-merge-test-main ""))
+    (set! (array-ref differ 0) (opt-merge-test-twin "a" (string.copy (& body))))
+    (set!
+      (array-ref differ 1)
+      (opt-merge-test-twin "b" "%1 = add %0, 2 : i64\nreturn %1\n"))
+    (set! (array-ref differ 2) (opt-merge-test-main ""))
+    (cond
+      ;; The twin `b` folds into `a`: main's call and the initializer follow it.
+      [(not
+          (string.eq
+            (opt-merge-test-run plain "b")
+            "a main call:a call:a init:a "))
+        1]
+      ;; `fn@b` observes b's identity: nothing merges.
+      [(not
+          (string.eq
+            (opt-merge-test-run taken "b")
+            "a b main call:a call:b init:b "))
+        2]
+      ;; A located abort site names its own function: nothing merges.
+      [(not
+          (string.eq
+            (opt-merge-test-run checked "b")
+            "a b main call:a call:b init:b "))
+        3]
+      ;; Different bodies stay apart.
+      [(not
+          (string.eq
+            (opt-merge-test-run differ "b")
+            "a b main call:a call:b init:b "))
+        4]
       [else 42])))
 
 ;; --- noalias fact model self-test -------------------------------------------
@@ -57948,7 +58806,7 @@
   (Block
     pred
     (opt-test-instrs
-      (irt.instr "%2 = lt 0, %1 : bool")
+      (irt.instr "%2 = lt 0, %1 : i64")
       (ir.CompilerIrInstr.Branch (Var 2) loop exit))))
 
 (define (opt-fc-test-loop-tail
@@ -57964,7 +58822,7 @@
       (irt.instr "%4 = gep %0, %3 : i64")
       (ir.CompilerIrInstr.StorePtr (Var 4) value (opt-fc-test-i64))
       (ir.CompilerIrInstr.BinOp 5 (Add) (Var 3) (I64 step) (opt-fc-test-i64))
-      (ir.CompilerIrInstr.BinOp 6 (Lt) (Var 5) bound (Bool))
+      (ir.CompilerIrInstr.BinOp 6 (Lt) (Var 5) bound (I64))
       (ir.CompilerIrInstr.Branch (Var 6) loop exit))))
 
 ;; F7's block-local bound: `%7 = mov %1` inside the loop, compared against
@@ -58088,7 +58946,7 @@
                   12
                   (Var 5)
                   (opt-test-instrs
-                    (irt.instr "%6 = lt %12, %1 : bool")
+                    (irt.instr "%6 = lt %12, %1 : i64")
                     (ir.CompilerIrInstr.Branch (Var 6) loop exit)))
                 (irt.instr "%5 = add %3, 1 : i64")))
             (irt.instr "%4 = gep %0, %3 : i64")
@@ -58337,11 +59195,12 @@
 ;; C16 negative : an i64 store fed by a u8 load. The store fixes the width, and
 ;;                a load that disagrees means the body does not move eight bytes
 ;;                per iteration -- the wide-element twin of C8.
-;; C17 positive : the counter is bumped BEFORE the body, so both geps are
-;;                indexed by its `next` (`%8 = add %4, 1`). The rewrite redefines
-;;                `%8` as `bound`, so the geps must read a fresh copy of the
-;;                increment instead, the index the FIRST iteration used; left on
-;;                `%8` the call would start `bound` elements past it.
+;; C17 negative : the counter is bumped BEFORE the body, so both geps are
+;;                indexed by its `next` (`%8 = add %4, 1`). A rewrite would
+;;                redefine `%8` as `bound`, so the geps would have to read a
+;;                fresh copy of the increment. `opt-loop-call-exit-suffix?`
+;;                declines any loop whose step precedes its store (#8449), so
+;;                the loop stays as it is, both geps on `%8`.
 ;;
 ;; These negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
@@ -58357,8 +59216,6 @@
 ;;     and 130 (C13): with no width there is nothing for the scan's own tests to
 ;;     disagree with, so every one of them compares 0 against 0 and passes.
 ;;   * `opt-copy-call-scan-body`'s Load-width arm dropped -> code 160 (C16).
-;;   * `opt-copy-call-kept-instr` made to return its instruction unchanged ->
-;;     code 172 (C17's source gep still reads `%8`).
 ;;   * `opt-copy-call-escape-ok?`'s Load arm dropped (i.e. reverting to
 ;;     `opt-fill-call-escape-ok?`, which never sees a Load) -> code 120 (C12).
 ;; C12 is why this pass has its own escape check at all. Its fixture carries the
@@ -58366,6 +59223,10 @@
 ;; would be invalid SSA here (the loop does not dominate the exit), so the
 ;; pass's output verification would reject the rewrite for the wrong reason and
 ;; the fixture would pass against a broken check.
+;;
+;; `opt-copy-call-kept-instr`'s seed rewrite (#8740) is not mutation-checked:
+;; it only runs for a step that precedes the store, a loop the exit-suffix proof
+;; declines first, so no fixture reaches it.
 ;;
 ;; C2, C4, C5 and C9 are structural rather than mutation-checked: C2/C4 turn on
 ;; the label and predecessor gates this pass shares verbatim with fill_call
@@ -58397,7 +59258,7 @@
   (Block
     pred
     (opt-test-instrs
-      (ir.CompilerIrInstr.BinOp 3 (Lt) (I64 0) bound (Bool))
+      (ir.CompilerIrInstr.BinOp 3 (Lt) (I64 0) bound (I64))
       (ir.CompilerIrInstr.Branch (Var 3) loop exit))))
 
 ;; The loop's bound: the `bound` parameter for the dynamic-trip fixtures, a
@@ -58535,7 +59396,7 @@
               (Var 4)
               (I64 step)
               (opt-cc-test-i64))
-            (ir.CompilerIrInstr.BinOp 9 (Lt) (Var 8) bound (Bool))
+            (ir.CompilerIrInstr.BinOp 9 (Lt) (Var 8) bound (I64))
             (ir.CompilerIrInstr.Branch (Var 9) loop exit)))
         (ir.CompilerIrInstr.Gep
           7
@@ -58666,7 +59527,7 @@
 (define (opt-cc-test-arg-const
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : i64
-  (match (array-ref values index)
+  (match (owned_view.compiler-owned-element-view values index)
     [(I64 k) k]
     [_ (- 0 1)]))
 
@@ -58687,7 +59548,7 @@
 (define (opt-cc-test-arg-var
   [values : (& values (__tl_dyn-array ir.CompilerIrValue))]
   [index : i64]) : i64
-  (match (array-ref values index)
+  (match (owned_view.compiler-owned-element-view values index)
     [(Var id) id]
     [_ (- 0 1)]))
 
@@ -58794,6 +59655,236 @@
 (define (opt-cc-test-loaded) : ir.CompilerIrValue
   (Var 6))
 
+;; mode 1 shares the step directly with both address offsets, exactly as GVN
+;; does for `dst[i + 1] = src[i + 1]`. The other refused suffixes pin the
+;; retained Gep, arithmetic and Load boundaries independently. Every fixture
+;; is verified before matching, so an invalid input cannot make refusal pass.
+(define (opt-loop-call-suffix-test-function [fill? : bool] [mode : i64]) : ir.CompilerIrFunction
+  (let
+    [early? : bool (= mode 1)]
+    [step : String "%8 = add %4, 1 : i64\n"]
+    [prefix : String
+      "entry:
+         jump loop__bce_guard
+       loop__bce_guard:
+         %3 = lt 0, %1 : i64
+         branch %3, loop__bce_fast, exit
+       loop__bce_fast:
+         %4 = phi [0, loop__bce_guard], [%8, loop__bce_fast] : i64\n"]
+    [memory : String
+      (if fill?
+        "%7 = gep %2, %4 : i64\nstore_ptr %7, 17 : i64\n"
+        (if early?
+          "%5 = gep %0, %8 : i64\n%6 = load %5 : i64\n%7 = gep %2, %8 : i64\nstore_ptr %7, %6 : i64\n"
+          "%5 = gep %0, %4 : i64\n%6 = load %5 : i64\n%7 = gep %2, %4 : i64\nstore_ptr %7, %6 : i64\n"))]
+    [extra : String
+      (cond
+        [(= mode 2) "%10 = gep %0, %8 : i64\n"]
+        [(= mode 3) "%10 = add %8, 7 : i64\n"]
+        [(= mode 4) "%10 = load %0 : i64\n"]
+        [else ""])]
+    [suffix : String
+      "%11 = mov %8 : i64
+       %9 = lt %11, %1 : i64
+       branch %9, loop__bce_fast, exit
+       exit:
+         %12 = phi [0, loop__bce_guard], [%11, loop__bce_fast] : i64
+         return %12"]
+    (ir.CompilerIrFunction.Function
+      (opt-test-symbol "loop_call_suffix")
+      (irt.params "src=%0:u64, bound=%1:i64, dst=%2:u64")
+      (ast.AstType.I64)
+      13
+      (irt.blocks
+        (str_cat.str-cat
+          prefix
+          (str_cat.str-cat
+            (if early?
+              (string.copy step)
+              "")
+            (str_cat.str-cat
+              memory
+              (str_cat.str-cat
+                (if early?
+                  ""
+                  step)
+                (str_cat.str-cat extra suffix))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
+
+(define (compiler-optimize-loop-call-suffix-self-test) : i64
+  (let
+    [pass : i64 0]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (while (< pass 2)
+      (let
+        [mode : i64 0]
+        [fill? : bool (= pass 1)]
+        (while (<
+          mode
+          (if fill?
+            4
+            5))
+          (let
+            [source : ir.CompilerIrFunction
+              (opt-loop-call-suffix-test-function fill? mode)]
+            (unless
+              (opt.opt-verify-ok? (& (opt.opt-verify-function (& source))))
+              (return (+ 10 (+ (* pass 10) mode))))
+            (let
+              [out : ir.CompilerIrFunction
+                (if fill?
+                  (opt-fill-call-function
+                    (ir.compiler-ir-global-shared-view source))
+                  (opt-copy-call-function
+                    (ir.compiler-ir-global-shared-view source)))]
+              (if (= mode 0)
+                (unless
+                  (and
+                    (= (opt.opt-function-frame out) 14)
+                    (opt-cc-test-loop-ends-in-jump? out)
+                    (if fill?
+                      (opt-fc-test-loop-has-call? out 2)
+                      (opt-cc-test-loop-has-call8? out 4)))
+                  (return (+ 30 pass)))
+                (unless
+                  (opt.opt-function-eq bases source out)
+                  (return (+ 50 (+ (* pass 10) mode))))))
+            (set! mode (+ mode 1))))
+        (set! pass (+ pass 1))))
+    42))
+
+;; A generated-looking label is not an entry fact. These are verified CFGs,
+;; including a bypass that rejoins before the loop's sole external predecessor,
+;; so the loop recognizer cannot reject it merely for an extra phi input.
+(define (opt-loop-call-entry-test-function [fill? : bool] [mode : i64]) : ir.CompilerIrFunction
+  (let
+    [bound : String
+      (cond [(= mode 7) "0"] [(= mode 8) "-1"] [(= mode 9) "4"] [else "%1"])]
+    [counter-type : String
+      (if (= mode 12)
+        "u64"
+        "i64")]
+    [phi-type : String
+      (if (= mode 15)
+        "u64"
+        (string.copy counter-type))]
+    [latch-type : String
+      (if (= mode 16)
+        "u64"
+        (string.copy counter-type))]
+    [pred : String
+      (if (= mode 11)
+        "loop__bce_fast__preheader"
+        "loop__bce_guard")]
+    [entry : String
+      (if (= mode 5)
+        "entry:
+           branch %14, proof, bypass
+         proof:
+           %3 = lt 0, %1 : i64
+           branch %3, loop__bce_guard, exit
+         bypass:
+           jump loop__bce_guard
+         loop__bce_guard:
+           jump loop__bce_fast\n"
+        (str_cat.str-cat
+          "entry:\njump loop__bce_guard\nloop__bce_guard:\n"
+          (cond
+            [(or (= mode 1) (and (>= mode 7) (<= mode 9)))
+              "jump loop__bce_fast\n"]
+            [(= mode 2)
+              "%3 = le %1, 0 : i64\nbranch %3, exit, loop__bce_fast\n"]
+            [(= mode 3)
+              "%15 = lt 0, %1 : i64\n%3 = and %15, %14 : bool\nbranch %3, loop__bce_fast, exit\n"]
+            [(= mode 4)
+              "%15 = lt 0, %1 : i64\n%3 = and %15, %14 : bool\nbranch %3, exit, loop__bce_fast\n"]
+            [(= mode 6)
+              "%3 = lt 0, %13 : i64\nbranch %3, loop__bce_fast, exit\n"]
+            [(= mode 10)
+              "%3 = lt 0, %1 : i64\nbranch %3, loop__bce_fast, loop__bce_fast\n"]
+            [(= mode 11)
+              "%3 = lt 0, %1 : i64\nbranch %3, loop__bce_fast__preheader, exit\nloop__bce_fast__preheader:\njump loop__bce_fast\n"]
+            [(or (= mode 12) (= mode 13))
+              "%3 = lt 0, %1 : u64\nbranch %3, loop__bce_fast, exit\n"]
+            [(= mode 14)
+              "%15 = and %14, %14 : bool\n%16 = and %15, %15 : bool\n%17 = and %16, %16 : bool\n%18 = and %17, %17 : bool\n%19 = and %18, %18 : bool\n%20 = and %19, %19 : bool\n%21 = and %20, %20 : bool\n%22 = lt 0, %1 : i64\n%3 = and %21, %22 : bool\nbranch %3, loop__bce_fast, exit\n"]
+            [else "%3 = lt 0, %1 : i64\nbranch %3, loop__bce_fast, exit\n"])))]
+    [body : String
+      (if fill?
+        "%7 = gep %2, %4 : i64\nstore_ptr %7, 17 : i64\n"
+        "%5 = gep %0, %4 : u8\n%6 = load %5 : u8\n%7 = gep %2, %4 : u8\nstore_ptr %7, %6 : u8\n")]
+    (ir.CompilerIrFunction.Function
+      (opt-test-symbol "loop_call_entry")
+      (irt.params
+        (if (= mode 12)
+          "src=%0:u64, bound=%1:u64, dst=%2:u64, other=%13:i64, flag=%14:bool"
+          "src=%0:u64, bound=%1:i64, dst=%2:u64, other=%13:i64, flag=%14:bool"))
+      (ast.AstType.I64)
+      24
+      (irt.blocks
+        (str_cat.str-cat
+          entry
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "loop__bce_fast:\n%4 = phi [0, "
+              (str_cat.str-cat
+                pred
+                (str_cat.str-cat
+                  "], [%8, loop__bce_fast] : "
+                  (str_cat.str-cat phi-type "\n"))))
+            (str_cat.str-cat
+              body
+              (str_cat.str-cat
+                (str_cat.str-cat
+                  "%8 = add %4, 1 : "
+                  (str_cat.str-cat (string.copy counter-type) "\n%9 = lt %8, "))
+                (str_cat.str-cat
+                  bound
+                  (str_cat.str-cat
+                    " : "
+                    (str_cat.str-cat
+                      latch-type
+                      "\nbranch %9, loop__bce_fast, exit\nexit:\nreturn 0"))))))))
+      ir.CompilerIrFunctionAbi.Ordinary)))
+
+(define (compiler-optimize-loop-call-entry-proof-self-test) : i64
+  (let
+    [pass : i64 0]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (while (< pass 2)
+      (let
+        [mode : i64 0]
+        [fill? : bool (= pass 1)]
+        (while (< mode 17)
+          (let
+            [source : ir.CompilerIrFunction
+              (opt-loop-call-entry-test-function fill? mode)]
+            [positive? : bool
+              (or (= mode 0) (= mode 2) (= mode 3) (= mode 9) (= mode 11))]
+            (unless
+              (opt.opt-verify-ok? (& (opt.opt-verify-function (& source))))
+              (return (+ 100 (+ (* pass 20) mode))))
+            (let
+              [out : ir.CompilerIrFunction
+                (if fill?
+                  (opt-fill-call-function
+                    (ir.compiler-ir-global-shared-view source))
+                  (opt-copy-call-function
+                    (ir.compiler-ir-global-shared-view source)))]
+              (if positive?
+                (unless
+                  (and
+                    (= (opt.opt-function-frame out) 25)
+                    (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+                    (not (opt.opt-function-eq bases source out)))
+                  (return (+ 200 (+ (* pass 20) mode))))
+                (unless
+                  (opt.opt-function-eq bases source out)
+                  (return (+ 300 (+ (* pass 20) mode))))))
+            (set! mode (+ mode 1))))
+        (set! pass (+ pass 1))))
+    42))
+
 ;; C17: the bump-first copy loop, `i = i + 1` then `dst[i] = src[i]`.
 (define (opt-cc-test-next-index) : ir.CompilerIrFunction
   (opt-copy-call-function
@@ -58826,17 +59917,6 @@
     (opt-gc-test-instr-at blocks 2 index))
     [(Gep _ _ (Var offset) _) offset]
     [_ -1]))
-
-;; Whether the loop block's instruction at `index` is `%dst = add %4, 1`.
-(define (opt-cc-test-seed-add?
-  [out : (& out ir.CompilerIrFunction)]
-  [index : i64]
-  [dst : i64]) : bool
-  (match (let
-    [blocks (opt.opt-function-blocks out)]
-    (opt-gc-test-instr-at blocks 2 index))
-    [(BinOp d (Add) (Var 4) (I64 1) _) (= d dst)]
-    [_ false]))
 
 (define (compiler-optimize-copy-call-self-test) : i64
   (let
@@ -59052,15 +60132,17 @@
       [(not (opt-cc-test-loop-has-call8-const? c15 4 4)) 151]
       [(not (= (opt-cc-test-loop-store-count c15 0 8) 0)) 152]
       [(not (opt-cc-test-unchanged? c16)) 160]
-      ;; C17: phi, add(seed copy), mov(inext), gep(src), load, gep(dst), call,
-      ;; lt, jump. The seed copy is %13 and the call %14.
-      [(not (= (opt-cc-test-loop-instr-count c17) 9)) 170]
-      [(not (opt-cc-test-seed-add? c17 1 13)) 171]
-      [(not (= (opt-cc-test-gep-offset c17 3) 13)) 172]
-      [(not (= (opt-cc-test-gep-offset c17 5) 13)) 173]
-      [(not (opt-cc-test-loop-has-call8? c17 6)) 174]
-      [(not (= (opt.opt-function-frame c17) 15)) 175]
-      [else 42])))
+      ;; C17: a loop that bumps its counter before the body indexes both
+      ;; geps by the counter's `next`, which the rewrite would redefine as the
+      ;; bound (#8740). `opt-loop-call-exit-suffix?` declines any loop whose
+      ;; step precedes its store, so the block stays the loop with both geps
+      ;; on `next` (#8449 baseline; main rewrites it around a copy of the
+      ;; increment).
+      [(not (opt-cc-test-unchanged? c17)) 170]
+      [(not (= (opt-cc-test-gep-offset c17 2) 8)) 171]
+      [(not (= (opt-cc-test-gep-offset c17 4) 8)) 172]
+      [(not (= (compiler-optimize-loop-call-suffix-self-test) 42)) 170]
+      [else (compiler-optimize-loop-call-entry-proof-self-test)])))
 
 ;; --- latch increment sinking -------------------------------------------------
 ;;
@@ -62055,7 +63137,7 @@
   (opt-test-instr-seq-prepend
     (Alloc first (I64))
     (opt-test-instr-seq-prepend
-      (AddrOf (+ first 1) first)
+      (AddrOf (+ first 1) first 0)
       (opt-test-instr-seq-prepend
         (Call (+ first 2) ctor (Two length (Var (+ first 1))) (I64))
         (opt-test-instr-seq-prepend
@@ -65825,7 +66907,7 @@
   (test.assert-i64-eq
     (compiler-optimize-copy-call-self-test)
     42
-    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop (geps on the counter's next) left a loop; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
 
 (test
   string-literal-length-fold
@@ -69369,6 +70451,176 @@
     (compiler-optimize-load-cse-typed-store-self-test)
     42
     "an i64 element or field store keeps a differently typed handle entry alive, while same-class, byte, CopyBytes and same-object stores still drop it"))
+
+;; --- register words and object-relative scaled stores ------------------------
+;;
+;; The write-back shape of `(f (&mut x))` for a register-resident
+;; `Small (a i32) (b i32)` once f is inlined: x's packed word is stored into
+;; its slot as ONE i64, f writes `.b` as an i32 at slot+4, and the write-back
+;; reloads the i64 word. The i32 store must kill the i64 entry, whether f's
+;; address reaches the slot through another base var (a copied reference) or
+;; through lowering's var-offset field projection `gep (gep slot 0) (add 0 4)`
+;; -- the latter is no data-buffer element address and must not inherit the
+;; element layer's typed-word exemption.
+(define (opt-load-cse-register-word-other-base-instrs
+  [word-ty : ast.AstType]
+  [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (irt.instr "%2 = gep %0, 0 : u8")
+    (ir.CompilerIrInstr.StorePtr
+      (Var 2)
+      (Var 9)
+      (opt.compiler-opt-global-shared-view word-ty))
+    (irt.instr "%3 = gep %1, 4 : u8")
+    (ir.CompilerIrInstr.StorePtr
+      (Var 3)
+      (Var 10)
+      (opt.compiler-opt-global-shared-view store-ty))
+    (irt.instr "%4 = gep %0, 0 : u8")
+    (ir.CompilerIrInstr.Load
+      6
+      (Var 4)
+      (opt.compiler-opt-global-shared-view word-ty))))
+
+;; The same write-back with the field store through a var-offset projection of
+;; the SAME base var, typed `store-ty`.
+(define (opt-load-cse-object-scaled-store-instrs [store-ty : ast.AstType]) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (irt.instr "%2 = gep %0, 0 : u8")
+    (irt.instr "store_ptr %2, 4294967297 : i64")
+    (irt.instr "%3 = gep %0, 0 : u8")
+    (irt.instr "%4 = add 0, 4 : i64")
+    (irt.instr "%5 = gep %3, %4 : u8")
+    (irt.instr "%7 = gep %5, 0 : u8")
+    (ir.CompilerIrInstr.StorePtr
+      (Var 7)
+      (I64 39)
+      (opt.compiler-opt-global-shared-view store-ty))
+    (irt.instr "%8 = gep %0, 0 : u8")
+    (irt.instr "%6 = load %8 : i64")))
+
+;; An object-relative scaled store on base %0 between two reads of a handle
+;; word through base %1, followed by a re-read of the stored i32 word itself:
+;; the other-base handle entry and the store's own key both survive.
+(define (opt-load-cse-object-scaled-keep-instrs) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%2 = gep %1, 0 : (__tl_dyn-array i64)
+     %3 = load %2 : (__tl_dyn-array i64)
+     %4 = gep %0, 0 : u8
+     %5 = add 0, 4 : i64
+     %7 = gep %4, %5 : u8
+     %8 = gep %7, 0 : u8
+     store_ptr %8, 39 : i32
+     %9 = gep %1, 0 : (__tl_dyn-array i64)
+     %10 = load %9 : (__tl_dyn-array i64)
+     %11 = gep %7, 0 : u8
+     %6 = load %11 : i32"))
+
+;; Was the final i64 reload of slot+0 (var 6) kept as a load?
+(define (opt-load-cse-register-word-reloaded? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [out : ir.CompilerIrInstrSeq (opt-load-cse-typed-run instrs)]
+    (and
+      (= (opt-count-load-instr-seq out) 1)
+      (= (opt-count-mov-dst-instr-seq out 6) 0))))
+
+;; Returns 42 only when every register-word and object-store case holds.
+(define (compiler-optimize-load-cse-register-word-self-test) : i64
+  (let
+    [keep : ir.CompilerIrInstrSeq
+      (opt-load-cse-typed-run (opt-load-cse-object-scaled-keep-instrs))]
+    (cond
+      ;; (a) a different base var: i32 and i64 are not distinct classes when
+      ;; the i64 may be a register word over the i32 field.
+      [(not
+          (opt-load-cse-register-word-reloaded?
+            (opt-load-cse-register-word-other-base-instrs (I64) (I32))))
+        1]
+      ;; (b) f32 inside an f64 SSE word, likewise.
+      [(not
+          (opt-load-cse-register-word-reloaded?
+            (opt-load-cse-register-word-other-base-instrs (F64) (F32))))
+        2]
+      ;; (c) the inlined write-back shape itself: an i32 store through a
+      ;; var-offset projection of the slot's own base.
+      [(not
+          (opt-load-cse-register-word-reloaded?
+            (opt-load-cse-object-scaled-store-instrs (I32))))
+        3]
+      ;; (d) same base, a class pair the typed-word rule WOULD separate (f32
+      ;; vs i64): only the object fence drops it, as it must for one object.
+      [(not
+          (opt-load-cse-register-word-reloaded?
+            (opt-load-cse-object-scaled-store-instrs (F32))))
+        4]
+      ;; (e) an object store keeps a different base's handle entry, and
+      ;; forwards its own value to a re-read of the same address.
+      [(not (= (opt-count-load-instr-seq keep) 1)) 5]
+      [(not (= (opt-count-mov-dst-instr-seq keep 10) 1)) 6]
+      [(not (= (opt-count-mov-dst-instr-seq keep 6) 1)) 7]
+      [else 42])))
+
+(test
+  load-cse-register-word-store-filter
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-register-word-self-test)
+    42
+    "an i64 register word dies at a narrower field store through another base or a var-offset projection of its own base, while an object store keeps other-base handle entries and forwards its own word"))
+
+;; --- the index scale is part of a ScaledField location -----------------------
+;;
+;; One element buffer (var 3, the data pointer of the header-typed param 0)
+;; indexed by ONE index var at two scales: `gep %3, %9 : i64` is %3 + 8*%9,
+;; `gep %3, %9 : u8` is %3 + %9 -- the word-index and byte-index views unsafe
+;; code takes of one buffer. Both are read as an i64, so only the scale tells
+;; the two locations apart. A same-scale reread still hits.
+(define (opt-load-cse-scaled-load-instrs) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%2 = gep %0, 0 : i64
+     %3 = load %2 : u64
+     %4 = gep %3, %9 : i64
+     %5 = load %4 : i64
+     %6 = gep %3, %9 : u8
+     %7 = load %6 : i64
+     %8 = gep %3, %9 : i64
+     %10 = load %8 : i64"))
+
+;; The same two views with a word STORE through the scale-8 address: the byte
+;; view must not be forwarded the stored value.
+(define (opt-load-cse-scaled-store-instrs) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%2 = gep %0, 0 : i64
+     %3 = load %2 : u64
+     %4 = gep %3, %9 : i64
+     store_ptr %4, 7 : i64
+     %6 = gep %3, %9 : u8
+     %7 = load %6 : i64"))
+
+;; Returns 42 only when differently scaled index geps never share a location.
+(define (compiler-optimize-load-cse-scaled-key-self-test) : i64
+  (let
+    [loads : ir.CompilerIrInstrSeq
+      (opt-load-cse-run-with-array-param (opt-load-cse-scaled-load-instrs))]
+    [stores : ir.CompilerIrInstrSeq
+      (opt-load-cse-run-with-array-param (opt-load-cse-scaled-store-instrs))]
+    (cond
+      ;; the byte-index read stays a load...
+      [(not (= (opt-count-mov-dst-instr-seq loads 7) 0)) 1]
+      ;; ...the scale-8 reread is still the first read's value...
+      [(not (= (opt-count-mov-dst-instr-seq loads 10) 1)) 2]
+      ;; ...so the data pointer and the two distinct words are the loads left
+      [(not (= (opt-count-load-instr-seq loads) 3)) 3]
+      ;; and a scale-8 store forwards nothing to the byte-index read
+      [(not (= (opt-count-mov-dst-instr-seq stores 7) 0)) 4]
+      [(not (= (opt-count-load-instr-seq stores) 2)) 5]
+      [else 42])))
+
+(test
+  load-cse-scaled-field-scale-key
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-scaled-key-self-test)
+    42
+    "a byte-index and a word-index gep of one buffer with one index var are two locations: neither a load nor a store through one reaches a load through the other, while a same-scale reread still hits"))
 
 ;; --- T1-2: compare-of-sentinel-phi fold (phi_cmp_fold) ----------------------
 ;;
@@ -75936,7 +77188,7 @@
       (= (array-length out.slots) count)
       "only logical slots are copied")
     (for [index (iterator.range 0 count)]
-      (match (array-ref out.slots index)
+      (match (owned_view.compiler-owned-element-view out.slots index)
         [(Arg class value ty)
           (test.assert-true
             (match class
@@ -75964,7 +77216,7 @@
             "copy keeps mask-safe values; SSA renames; unknown SCCP stays unchanged")]))
     (for [index (iterator.range 0 4)]
       (test.assert-true
-        (match (array-ref args.slots index)
+        (match (owned_view.compiler-owned-element-view args.slots index)
           [(Arg _ (Var id) _) (= id 0)]
           [_ false])
         "mapping preserves input and unused capacity"))))
@@ -77227,7 +78479,7 @@
   [type-segment-bases : i64]
   [program : ir.CompilerIrProgram]) : opt_aggregate_candidate_vec.Vec
   (match program
-    [(Program _ functions _)
+    [(Program _ functions _ _authority)
       (opt-aggregate-allocation-candidates-functions
         type-segment-bases
         functions)]))

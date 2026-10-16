@@ -4657,7 +4657,7 @@
           (ir.compiler-ir-label "entry")
           (ir.compiler-ir-instr-seq3
             (irt.instr "%0 = mov 7 : i64")
-            (AddrOf 1 0)
+            (AddrOf 1 0 0)
             (Return No))))
       Ordinary)))
 
@@ -5533,7 +5533,7 @@
               1
               vars
               (reg.compiler-reg-global-shared-view buckets)))
-          (array-ref buckets 0))])))
+          (owned_view.compiler-owned-element-view buckets 0))])))
 
 ;; (a) A read-only loop invariant gets ONE loop row anchored in the preheader.
 (cfg
@@ -8348,10 +8348,13 @@
   (let
     [model : reg.CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model-for-test)]
-    [assignments : reg.CompilerRegAssignmentTable model.assignments]
+    [assignments : reg.CompilerRegAssignmentTable
+      (owned_view.compiler-owned-shared-view model.assignments)]
     [base : i64 model.scratch-base]
-    [weights : (__tl_dyn-array i64) model.scratch-weights]
-    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq) model.scratch-excluded]
+    [weights : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view model.scratch-weights)]
+    [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
+      (owned_view.compiler-owned-shared-view model.scratch-excluded)]
     (and
       (= base 2)
       (= model.scratch-count 5)
@@ -8933,7 +8936,7 @@
                 (compiler-reg-test-instr-seq-prepend
                   (Mov 5 (I64 5) (compiler-reg-i64-ty))
                   (compiler-reg-test-instr-seq-prepend
-                    (AddrOf 6 3)
+                    (AddrOf 6 3 0)
                     (compiler-reg-test-instr-seq-prepend
                       (TailMask 7 (Var 5) (Var 5) 4)
                       (compiler-reg-test-instr-seq-prepend
@@ -10079,8 +10082,10 @@
         (Spill 24))]
     [interval-index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build (& intervals) 5)]
-    [starts : (__tl_dyn-array i64) interval-index.starts]
-    [ends : (__tl_dyn-array i64) interval-index.ends]
+    [starts : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view interval-index.starts)]
+    [ends : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view interval-index.ends)]
     [assignment-hit-ok : bool
       (match (reg.compiler-reg-assignment-table-lookup assignment-index 1)
         [(Some location)
@@ -11718,11 +11723,11 @@
      entry:
        %0 = alloc BigStorage
        %1 = alloc BigStorage
-       %2 = addr_of %1
+       %2 = addr_of %1 storage 2
        store_ptr %2, 11 : i64
        %3 = alloc BigStorage
        %4 = alloc BigStorage
-       %5 = addr_of %4
+       %5 = addr_of %4 storage 2
        store_ptr %5, 22 : i64
        return
      }"))
@@ -11740,14 +11745,14 @@
      left:
        %1 = alloc StackOnlyStorage
        %2 = alloc StackOnlyStorage
-       %3 = addr_of %2
+       %3 = addr_of %2 storage 2
        %4 = add 10, 1 : i64
        store_ptr %3, %4 : i64
        jump join
      right:
        %5 = alloc StackOnlyStorage
        %6 = alloc StackOnlyStorage
-       %7 = addr_of %6
+       %7 = addr_of %6 storage 2
        %8 = add 20, 2 : i64
        store_ptr %7, %8 : i64
        jump join
@@ -11764,11 +11769,11 @@
      entry:
        %0 = alloc StackOnlyEscape
        %1 = alloc StackOnlyEscape
-       %2 = addr_of %1
+       %2 = addr_of %1 storage 2
        store_ptr %2, 11 : i64
        %3 = alloc StackOnlyEscape
        %4 = alloc StackOnlyEscape
-       %5 = addr_of %4
+       %5 = addr_of %4 storage 2
        store_ptr %5, 22 : i64
        %6 = call escape(%2) : unit
        return
@@ -12394,6 +12399,41 @@
 ;; The hidden output pointer is borrowed only across the call. Its result is
 ;; another alias of the same two-word range; an ordinary pointer call must
 ;; still invalidate the range even when it has the same physical ABI.
+(define (compiler-reg-sret-color-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @sret_one(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
+       entry:
+         return %0
+       }
+       function @sret_two(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 16 output SretColor result u64 params (u64) source (-> SretColor) {
+       entry:
+         return %0
+       }"))
+
+(define (compiler-reg-sret-color-representations) : ir.CompilerIrRepresentationIndex
+  (let
+    [canonical : ir.CompilerIrProgram (compiler-reg-sret-color-program)]
+    [current : ir.CompilerIrProgram (compiler-reg-sret-color-program)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [evidence : ir.CompilerIrReturnStorageIndex
+      (match canonical
+        [(ir.CompilerIrProgram.Program _ functions externs _)
+          (ir.compiler-ir-return-storage-index-claims
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (ir.compiler-ir-type-pool-count pools)
+            functions
+            externs)])]
+    [authority : ir.CompilerIrReturnStorageAuthority
+      (ir.compiler-ir-return-storage-authority-capture pools interns 0 evidence)]
+    (match current
+      [(ir.CompilerIrProgram.Program globals functions externs _)
+        (ir.compiler-ir-representation-index-with-authority
+          pools
+          interns
+          0
+          (& (ir.CompilerIrProgram.Program globals functions externs authority)))])))
+
 (define (compiler-reg-sret-color-blocks
   [ordinary? : bool]
   [overlap? : bool]
@@ -12411,7 +12451,7 @@
       (ir.CompilerIrInstr.Alloc 1 (clone big)))
     (ir.compiler-ir-instr-builder-push!
       (&mut builder)
-      (ir.CompilerIrInstr.AddrOf 2 1))
+      (ir.CompilerIrInstr.AddrOf 2 1 2))
     (if structural?
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -12463,7 +12503,7 @@
       (ir.CompilerIrInstr.Alloc 6 big))
     (ir.compiler-ir-instr-builder-push!
       (&mut builder)
-      (ir.CompilerIrInstr.AddrOf 7 6))
+      (ir.CompilerIrInstr.AddrOf 7 6 2))
     (if structural?
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -12567,6 +12607,19 @@
   [overlap? : bool]
   [derived-escape? : bool]
   [structural? : bool]) : bool
+  (compiler-reg-sret-color-case-with-authority
+    ordinary?
+    overlap?
+    derived-escape?
+    structural?
+    true))
+
+(define (compiler-reg-sret-color-case-with-authority
+  [ordinary? : bool]
+  [overlap? : bool]
+  [derived-escape? : bool]
+  [structural? : bool]
+  [available? : bool]) : bool
   (let
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 32)]
     [remap : (__tl_dyn-array i64) (__tl_make-array i64 14)]
@@ -12575,6 +12628,11 @@
     (for [index (iterator.range 0 14)]
       (set! (array-ref remap index) -1))
     (reg.compiler-reg-color-inline-storage
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (ir.compiler-ir-param-seq-empty)
+      (if available?
+        (compiler-reg-sret-color-representations)
+        (ir.compiler-ir-representation-index-empty))
       (&
         (compiler-reg-sret-color-blocks
           ordinary?
@@ -12587,9 +12645,16 @@
       (&mut remap)
       14
       0)
-    (if (or ordinary? overlap? derived-escape?)
-      (not (= (array-ref remap 0) (array-ref remap 5)))
+    (if (or ordinary? overlap? derived-escape? (not available?))
+      (if (not available?)
+        (and (< (array-ref remap 0) 0) (< (array-ref remap 5) 0))
+        (or
+          (< (array-ref remap 0) 0)
+          (< (array-ref remap 5) 0)
+          (not (= (array-ref remap 0) (array-ref remap 5)))))
       (and
+        (>= (array-ref remap 0) 0)
+        (>= (array-ref remap 1) 0)
         (= (array-ref remap 0) (array-ref remap 5))
         (= (array-ref remap 1) (array-ref remap 6))))))
 
@@ -12602,7 +12667,14 @@
       (compiler-reg-sret-color-case false true false false)
       (compiler-reg-sret-color-case false false true false)
       (compiler-reg-sret-color-case false false false true)
-      (compiler-reg-sret-color-case true false false true))
+      (compiler-reg-sret-color-case true false false true)
+      (compiler-reg-sret-color-case-with-authority
+        false
+        false
+        false
+        false
+        false)
+      (compiler-reg-sret-color-case-with-authority false false false true false))
     "sret calls reuse disjoint ranges; ordinary, derived and overlapping uses do not"))
 
 ;; Coalescing class chains (#7874). The coalescer enumerates a class by
@@ -14972,7 +15044,7 @@
     (for [index (iterator.range 0 count)]
       (set!
         out
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(or (Call _ _ _ _) (CallCAbiStoreResult _)
                (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
                (TailCallIndirect _ _ _))
@@ -15237,7 +15309,8 @@
   [intervals : reg.CompilerRegIntervalIndex]
   [var : i64]) : reg.CompilerRegMaybeLocation
   (let
-    [parents : (__tl_dyn-array i64) coalesce.parents]
+    [parents : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view coalesce.parents)]
     [root : i64 (reg.compiler-reg-coalesce-map-root-from-parents parents var)]
     (if (< root 0)
       No
@@ -15260,7 +15333,7 @@
     (for [index (iterator.range 0 (array-length present))]
       (if (= (array-ref present index) 0)
         unit
-        (match (array-ref items index)
+        (match (owned_view.compiler-owned-element-view items index)
           [(Spill _) (+= count 1)]
           [_ unit])))
     count))
@@ -15416,7 +15489,7 @@
     (for [index (iterator.range 0 count)]
       (set!
         out
-        (match (array-ref slots index)
+        (match (owned_view.compiler-owned-element-view slots index)
           [(or (Call _ _ _ _) (SpmdCall _))
             (live.compiler-live-set-insert out p)]
           [_ out]))

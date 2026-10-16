@@ -568,7 +568,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (lint-findings-copy-range dst src (+ index 1) count)))
 
 (define (lint-findings-grow [items : LintFindings]) : LintFindings
@@ -601,7 +603,9 @@
   (let
     [items : LintFindings
       (owned_view.compiler-owned-reference-shared-view items)]
-    (array-ref (lint-findings-slots items) index)))
+    (owned_view.compiler-owned-element-view
+      (lint-findings-slots (owned_view.compiler-owned-shared-view items))
+      index)))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).
@@ -3050,7 +3054,7 @@
         (while (< index n)
           (set!
             (array-ref bigger index)
-            (array-ref
+            (owned_view.compiler-owned-element-view
               (__tl-project-field lint-unused-unsafe-exact-names slots)
               index))
           (set! index (+ index 1)))
@@ -3085,7 +3089,7 @@
         (while (< index n)
           (set!
             (array-ref bigger index)
-            (array-ref
+            (owned_view.compiler-owned-element-view
               (__tl-project-field lint-unused-unsafe-unknown-roots slots)
               index))
           (set! index (+ index 1)))
@@ -3565,7 +3569,9 @@
             (__tl_make-array String (lint-grown-capacity (array-length slots)))]
           [index : i64 0]
           (while (< index n)
-            (set! (array-ref bigger index) (array-ref slots index))
+            (set!
+              (array-ref bigger index)
+              (owned_view.compiler-owned-element-view slots index))
             (set! index (+ index 1)))
           (set! slots bigger)))
       (set! (array-ref slots n) name)
@@ -3575,7 +3581,7 @@
   items.len)
 
 (define (lint-name-set-get [items : LintNameSet] [index : i64]) : String
-  (array-ref items.slots index))
+  (owned_view.compiler-owned-element-view items.slots index))
 
 (define (lint-param-list-add-locals
   [params : ast.AstParamList]
@@ -4271,7 +4277,7 @@
         (while (< index n)
           (set!
             (array-ref slots index)
-            (array-ref
+            (owned_view.compiler-owned-element-view
               locals.slots
               (if (< index found)
                 index
@@ -4296,7 +4302,9 @@
           (__tl_make-array LintCopyOnUpdateLocal (+ n 1))]
         [index : i64 0]
         (while (< index n)
-          (set! (array-ref slots index) (array-ref without.slots index))
+          (set!
+            (array-ref slots index)
+            (owned_view.compiler-owned-element-view without.slots index))
           (set! index (+ index 1)))
         (set! (array-ref slots n) (LintCopyOnUpdateLocal name type-name))
         (LintCopyOnUpdateLocalList slots (+ n 1))))))
@@ -4308,7 +4316,9 @@
     [found : i64 (lint-copy-on-update-local-index locals name 0)]
     (if (< found 0)
       ""
-      (__tl-project-field (array-ref locals.slots found) type-name))))
+      (__tl-project-field
+        (owned_view.compiler-owned-element-view (& locals.slots) found)
+        type-name))))
 
 (define (lint-copy-on-update-param-locals
   [params : ast.AstParamList]
@@ -4869,7 +4879,9 @@
             (lint-grown-capacity (array-length slots)))]
         [index : i64 0]
         (while (< index n)
-          (set! (array-ref bigger index) (array-ref slots index))
+          (set!
+            (array-ref bigger index)
+            (owned_view.compiler-owned-element-view slots index))
           (set! index (+ index 1)))
         (set! slots bigger)))
     (set!
@@ -5019,7 +5031,7 @@
         (while (< index n)
           (set!
             (array-ref slots index)
-            (array-ref
+            (owned_view.compiler-owned-element-view
               items.slots
               (if (< index found)
                 index
@@ -5041,7 +5053,9 @@
       (__tl_make-array LintSingleElementArrayCandidate (+ n 1))]
     [index : i64 0]
     (while (< index n)
-      (set! (array-ref slots index) (array-ref without.slots index))
+      (set!
+        (array-ref slots index)
+        (owned_view.compiler-owned-element-view without.slots index))
       (set! index (+ index 1)))
     (set!
       (array-ref slots n)
@@ -5058,7 +5072,9 @@
       (__tl_make-array LintSingleElementArrayCandidate n)]
     [index : i64 0]
     (while (< index n)
-      (set! (array-ref slots index) (array-ref items.slots index))
+      (set!
+        (array-ref slots index)
+        (owned_view.compiler-owned-element-view items.slots index))
       (set! index (+ index 1)))
     (set! (array-ref slots found) item)
     (LintSingleElementArrayCandidateList slots n)))
@@ -5842,7 +5858,7 @@
         (while (< index n)
           (set!
             (array-ref slots index)
-            (array-ref
+            (owned_view.compiler-owned-element-view
               items.slots
               (if (< index found)
                 index
@@ -5864,7 +5880,9 @@
       (__tl_make-array LintPendingAssignment (+ n 1))]
     [index : i64 0]
     (while (< index n)
-      (set! (array-ref slots index) (array-ref without.slots index))
+      (set!
+        (array-ref slots index)
+        (owned_view.compiler-owned-element-view without.slots index))
       (set! index (+ index 1)))
     (set! (array-ref slots n) (LintPendingAssignment name span))
     (LintPendingAssignmentList slots (+ n 1))))
@@ -7068,7 +7086,7 @@
   [name : String]
   [fallback : ast.AstSourceSpan]) : LintRedundantFunctionNameState
   (let
-    [module-name : String state.module-name]
+    [module-name : String (string.copy (& state.module-name))]
     (if (lint-redundant-function-name? module-name name)
       (let
         [found : LintSourceNameSpan
@@ -7365,7 +7383,9 @@
             (lint-grown-capacity (array-length slots)))]
         [index : i64 0]
         (while (< index n)
-          (set! (array-ref bigger index) (array-ref slots index))
+          (set!
+            (array-ref bigger index)
+            (owned_view.compiler-owned-element-view slots index))
           (set! index (+ index 1)))
         (set! slots bigger)))
     (set! (array-ref slots n) binding)
@@ -7386,7 +7406,9 @@
             (lint-grown-capacity (array-length slots)))]
         [index : i64 0]
         (while (< index n)
-          (set! (array-ref bigger index) (array-ref slots index))
+          (set!
+            (array-ref bigger index)
+            (owned_view.compiler-owned-element-view slots index))
           (set! index (+ index 1)))
         (set! slots bigger)))
     (set! (array-ref slots n) bindings)
@@ -7579,7 +7601,8 @@
   [state : LintUnusedVariableState]
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
   (let
-    [frames : LintUnusedVariableFrameList state.frames]
+    [frames : LintUnusedVariableFrameList
+      (owned_view.compiler-owned-shared-view state.frames)]
     [top : i64 (- frames.len 1)]
     (if (< top 0)
       (lint-unused-variable-push-frame

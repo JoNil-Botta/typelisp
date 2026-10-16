@@ -13,6 +13,7 @@
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.arena)
 (import stdlib.byte_buf_core)
+(import compiler_lzss as lzss)
 (import compiler_ast_types as ast)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import compiler_builtin_ids as cbi)
@@ -118,9 +119,10 @@
   [map : (&mut map ctfe_key_map.Map)]) : unit
   (if (ctfe_key_map.needs-grow? map)
     (in-arena
-      (arena.Arena
-        (unsafe
-          (deref (compiler-ctfe-macro-state-view state)).map-storage-arena))
+      (unsafe
+        (arena.Arena
+          (unsafe
+            (deref (compiler-ctfe-macro-state-view state)).map-storage-arena)))
       (ctfe_key_map.grow! map))
     unit))
 
@@ -205,7 +207,8 @@
   (let
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
     (in-arena
-      (arena.Arena data.map-storage-arena)
+      (unsafe
+        (arena.Arena data.map-storage-arena))
       (if (< (ctfe_key_map.capacity (& data.visible-macro-name-set)) 128)
         (set! data.visible-macro-name-set (ctfe_key_map.with-capacity 128))
         (ctfe_key_map.clear-ref! (&mut data.visible-macro-name-set))))
@@ -1409,7 +1412,9 @@
   [src : (& src (__tl_dyn-array (__tl_dyn-array CtfeEnvBinding)))]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (ctfe-env-arena-add-segment! [store : (&mut store CtfeEnvArena)]) : unit
   (let
@@ -1417,7 +1422,8 @@
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.owner-arena]
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (if (< count capacity)
         unit
         (let
@@ -1599,7 +1605,8 @@
   [items : CtfeLayoutInfoList]
   [required : i64]) : CtfeLayoutInfoList
   (let
-    [slots : (__tl_dyn-array CtfeLayoutInfo) items.slots]
+    [slots : (__tl_dyn-array CtfeLayoutInfo)
+      (owned_view.compiler-owned-shared-view items.slots)]
     [capacity : i64 (array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
@@ -1610,7 +1617,9 @@
             CtfeLayoutInfo
             (ctfe-metadata-grown-capacity capacity required))]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref grown index) (array-ref slots index)))
+          (set!
+            (array-ref grown index)
+            (owned_view.compiler-owned-element-view slots index)))
         ;; The id map grows independently on insert. Preserve it so the
         ;; copied vector retains every first-wins slot without rebuilding a
         ;; second key list solely for capacity changes.
@@ -1622,7 +1631,7 @@
   (ctfe_key_map.contains? (& items.index) key-id))
 
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
-  (array-ref items.slots index))
+  (owned_view.compiler-owned-element-view items.slots index))
 
 (define (ctfe-layout-info-list-push-id
   [items : CtfeLayoutInfoList]
@@ -1642,7 +1651,7 @@
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
-  (array-ref items.slots index))
+  (owned_view.compiler-owned-element-view items.slots index))
 
 (define (ctfe-reflect-field-list-push
   [items : CtfeReflectFieldList]
@@ -1659,7 +1668,7 @@
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
   [index : i64]) : CtfeReflectVariant
-  (array-ref items.slots index))
+  (owned_view.compiler-owned-element-view items.slots index))
 
 (define (ctfe-reflect-variant-list-push
   [items : CtfeReflectVariantList]
@@ -1745,7 +1754,8 @@
   [items : CtfeReflectInfoList]
   [required : i64]) : CtfeReflectInfoList
   (let
-    [slots : (__tl_dyn-array CtfeReflectInfo) items.slots]
+    [slots : (__tl_dyn-array CtfeReflectInfo)
+      (owned_view.compiler-owned-shared-view items.slots)]
     [capacity : i64 (array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
@@ -1756,7 +1766,7 @@
             CtfeReflectInfo
             (ctfe-metadata-grown-capacity capacity required))]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref grown index) (array-ref slots index)))
+          (set! (array-ref grown index) (owned_view.compiler-owned-element-view slots index)))
         (set! items.slots grown)
         (set! items.len len)
         items))))
@@ -2245,24 +2255,28 @@
     [store : (Box CtfeEnvArena) (ctfe-env-arena-box env.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
-    [updated? : bool false]
+    [found : i64 -1]
     (while (and searching? (>= index 0))
       (let
         [binding : CtfeEnvBinding
           (ctfe-env-arena-binding-at (__tl-box-place store) index)]
         (if (= binding.key name-id)
           (begin
-            (when
-              binding.mutable-local
-              (set! binding.value value)
-              (ctfe-env-arena-write-index!
-                (&mut (__tl-box-place store))
-                index
-                binding)
-              (set! updated? true))
+            (when binding.mutable-local (set! found index))
             (set! searching? false))
           (set! index binding.parent))))
-    updated?))
+    ;; The new value moves into the found binding once, after the search.
+    (if (< found 0)
+      false
+      (let
+        [binding : CtfeEnvBinding
+          (ctfe-env-arena-binding-at (__tl-box-place store) found)]
+        (set! binding.value value)
+        (ctfe-env-arena-write-index!
+          (&mut (__tl-box-place store))
+          found
+          binding)
+        true))))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -2439,7 +2453,8 @@
   (let
     [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
     (in-arena
-      (arena.Arena data.map-storage-arena)
+      (unsafe
+        (arena.Arena data.map-storage-arena))
       (if (< (ctfe_key_map.capacity (& data.module-macro-export-keys)) 256)
         (set! data.module-macro-export-keys (ctfe_key_map.with-capacity 256))
         (ctfe_key_map.clear-ref! (&mut data.module-macro-export-keys))))
@@ -2503,7 +2518,8 @@
         1024
         1)]
     (in-arena
-      (arena.Arena data.map-storage-arena)
+      (unsafe
+        (arena.Arena data.map-storage-arena))
       (if (<
         (ctfe_key_map.capacity (& data.module-value-type-ids))
         minimum-capacity)
@@ -2792,7 +2808,9 @@
       (owned_view.compiler-owned-reference-shared-view (& decls.slots))]
     [decl-offset : i64 decls.offset]
     (for [index (iterator.range 0 count)]
-      (match (array-ref decl-slots (+ decl-offset index))
+      (match (owned_view.compiler-owned-element-view
+        decl-slots
+        (+ decl-offset index))
         [(Module next-module)
           (set!
             current-module
@@ -6341,6 +6359,104 @@
     (string.int->string (string.string-length source))
     "\n"
     (ctfe-embedded-stdlib-lzss-compress source)))
+
+;; A v2 bit writer: whole bytes go to `out`; `pending` holds `used` bits not
+;; yet a byte, most significant first.
+(defstruct CtfeLzssBitWriter
+  (out byte_buf_core.ByteBufBuilder)
+  (pending i64)
+  (used i64))
+
+(define (ctfe-lzss-write-bits!
+  [writer : (&mut writer CtfeLzssBitWriter)]
+  [value : i64]
+  [count : i64]) : unit
+  (let
+    [left : i64 count]
+    (while (> left 0)
+      (set! left (- left 1))
+      (set!
+        writer.pending
+        (bit-or (shl writer.pending 1) (bit-and (shr value left) 1)))
+      (set! writer.used (+ writer.used 1))
+      (when
+        (= writer.used 8)
+        (byte_buf_core.byte-buf-builder-push
+          (&mut writer.out)
+          (cast writer.pending : u8))
+        (set! writer.pending 0)
+        (set! writer.used 0)))))
+
+(define (ctfe-lzss-write-symbol!
+  [writer : (&mut writer CtfeLzssBitWriter)]
+  [code : (& code lzss.CompilerLzssCanonical)]
+  [symbol : i64]) : unit
+  (ctfe-lzss-write-bits!
+    writer
+    (array-ref code.codes symbol)
+    (array-ref code.lengths symbol)))
+
+;; The v1 tokens of `source` re-coded under the fixed v2 model of
+;; compiler_lzss: the payload carries no code tables, so even a small include
+;; gains from the entropy coding.
+(define (ctfe-embedded-stdlib-binary-data-bytes-v2 [source : (& str)]) : String
+  (let
+    [raw-len : i64 (string.string-length source)]
+    [tokens : String (ctfe-embedded-stdlib-lzss-compress source)]
+    [main : lzss.CompilerLzssCanonical (lzss.compiler-lzss-v2-main)]
+    [distance : lzss.CompilerLzssCanonical (lzss.compiler-lzss-v2-distance)]
+    [length-code : lzss.CompilerLzssCanonical (lzss.compiler-lzss-v2-length)]
+    [writer : CtfeLzssBitWriter
+      (CtfeLzssBitWriter
+        (byte_buf_core.byte-buf-builder-with-capacity (+ (/ raw-len 2) 16))
+        0
+        0)]
+    [index : i64 0]
+    [produced : i64 0]
+    (while (< produced raw-len)
+      (let
+        [flags : i64 (cast (string.string-ref (& tokens) index) : i64)]
+        [bit : i64 0]
+        (set! index (+ index 1))
+        (while (and (< bit 8) (< produced raw-len))
+          (if (!= (bit-and flags (shl 1 bit)) 0)
+            (begin
+              (ctfe-lzss-write-symbol!
+                (&mut writer)
+                (& main)
+                (cast (string.string-ref (& tokens) index) : i64))
+              (set! index (+ index 1))
+              (set! produced (+ produced 1)))
+            (let
+              [packed : i64
+                (bit-or
+                  (shl (cast (string.string-ref (& tokens) index) : i64) 8)
+                  (cast (string.string-ref (& tokens) (+ index 1)) : i64))]
+              [d : i64 (shr packed 4)]
+              [length : i64 (+ (bit-and packed 15) 3)]
+              [bucket : i64 (lzss.compiler-lzss-v2-bucket d)]
+              [extra-count : i64 (lzss.compiler-lzss-v2-extra-bits bucket)]
+              (set! index (+ index 2))
+              (ctfe-lzss-write-symbol! (&mut writer) (& main) 256)
+              (ctfe-lzss-write-symbol! (&mut writer) (& distance) bucket)
+              (ctfe-lzss-write-bits!
+                (&mut writer)
+                (bit-and d (- (shl 1 extra-count) 1))
+                extra-count)
+              (ctfe-lzss-write-symbol!
+                (&mut writer)
+                (& length-code)
+                (- length 3))
+              (set! produced (+ produced length))))
+          (set! bit (+ bit 1)))))
+    (when
+      (> writer.used 0)
+      (ctfe-lzss-write-bits! (&mut writer) 0 (- 8 writer.used)))
+    (str_cat.str-cat
+      (lzss.compiler-lzss-v2-prefix)
+      (string.int->string raw-len)
+      "\n"
+      (byte_buf_core.byte-buf-builder-to-string (& writer.out)))))
 
 ;; `(expr-binary-data bytes)` builds an opaque static private
 ;; `(__tl_dyn-array u8)` payload.

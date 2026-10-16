@@ -36,7 +36,7 @@
   (match result
     [(Ok program _)
       (match program
-        [(Program _ functions _) (Some functions)])]
+        [(Program _ functions _ _authority) (Some functions)])]
     [(Err _) (No)]))
 
 ;; --- fixtures moved from production compiler_lower.tl -------------------------
@@ -155,18 +155,16 @@
         1)]
     [merged : lower.LowerArrayVarSet
       (lower.lower-array-var-set-merge left right)]
-    [vars : (__tl_dyn-array i64) merged.vars]
-    [offsets : (__tl_dyn-array i64) merged.offsets]
     (and
       (= merged.count 3)
-      (= (array-length vars) 3)
-      (= (array-length offsets) 3)
-      (= (array-ref vars 0) 10)
-      (= (array-ref offsets 0) 4)
-      (= (array-ref vars 1) 20)
-      (= (array-ref offsets 1) 2)
-      (= (array-ref vars 2) 30)
-      (= (array-ref offsets 2) 3)
+      (= (array-length merged.vars) 3)
+      (= (array-length merged.offsets) 3)
+      (= (array-ref merged.vars 0) 10)
+      (= (array-ref merged.offsets 0) 4)
+      (= (array-ref merged.vars 1) 20)
+      (= (array-ref merged.offsets 1) 2)
+      (= (array-ref merged.vars 2) 30)
+      (= (array-ref merged.offsets 2) 3)
       (= (lower.lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-skip-runtime-until-next-module [decls : ast.AstDeclList]) : ast.AstDeclList
@@ -323,18 +321,18 @@
       w.inner.value)))")
 
 (define (compiler-lower-reference-return-source) : String
-  "(define (ref-return [n : i64]) : (& n i64) (& n))
-(define (ref-id [r : (& n i64)]) : (& n i64) r)
-(define (make-ref-tuple [n : i64]) : (Tuple (& n i64) i64)
-  (tuple (& n) 7))
-(define (make-ref-array [n : i64]) : (Array (& n i64) 1)
-  (array (& n)))
+  "(define (ref-id [r : (& n i64)]) : (& n i64) r)
+(define (ref-return [n : i64]) : i64 (deref (ref-id (& n))))
+(define (make-ref-tuple [n : i64]) : i64
+  (let [pair : (Tuple (& n i64) i64) (tuple (& n) 7)] (tuple-ref pair 1)))
+(define (make-ref-array [n : i64]) : i64
+  (let [items : (Array (& n i64) 1) (array (& n))] (deref (array-ref items 0))))
 (define (main [n : i64]) : i64
   (let
     [pair : (Tuple (& n i64) i64) (tuple (& n) 7)]
     [items : (Array (& n i64) 1) (array (& n))]
     (begin
-      (ref-id (ref-return n))
+      (ref-return n)
       (make-ref-tuple n)
       (make-ref-array n)
       (tuple-ref pair 1)
@@ -343,12 +341,14 @@
 
 (define (compiler-lower-reference-place-source) : String
   "(defstruct Pair (left i64) (right i64))
-(define (borrow-pair [p : Pair]) : (& p i64)
-  (& p.left))
-(define (borrow-tuple [t : (Tuple i64 bool)]) : (& t i64)
-  (& (tuple-ref t 0)))
-(define (borrow-array [items : (Array i64 2)]) : (& items i64)
-  (& (array-ref items 0)))
+(define (read-ref [r : (& a i64)]) : i64
+  (deref r))
+(define (borrow-pair [p : Pair]) : i64
+  (read-ref (& p.left)))
+(define (borrow-tuple [t : (Tuple i64 bool)]) : i64
+  (read-ref (& (tuple-ref t 0))))
+(define (borrow-array [items : (Array i64 2)]) : i64
+  (read-ref (& (array-ref items 0))))
 (define (main) : i64
   (let
     [p : Pair (Pair 40 2)]
@@ -544,7 +544,7 @@
         spans
         2)
         [(Program optimized _) optimized])
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (match (lower-test-function-seq-find functions name)
             [(Some func)
               (match func
@@ -1366,7 +1366,7 @@
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         (match program
-          [(Program _ functions _)
+          [(Program _ functions _ _authority)
             (and
               (= (lower-test-count functions "main" (Pack)) 1)
               (=
@@ -2559,7 +2559,9 @@
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (>= (lower-test-count functions "main" (Alloc)) 3)
+        ;; The binding adopts the constructor's storage as its only home.
         (= (lower-test-count functions "main" (AddrOf)) 1)
+        (= (lower-test-count functions "main" (LowerTestInstr.CopyBytes)) 0)
         (>= (lower-test-count functions "main" (StorePtr)) 3)
         (> (lower-test-count functions "main" (GepOffset 16)) 0))]
     [_ false]))
@@ -2571,7 +2573,9 @@
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (>= (lower-test-count functions "main" (Alloc)) 3)
+        ;; The binding adopts the constructor's storage as its only home.
         (= (lower-test-count functions "main" (AddrOf)) 1)
+        (= (lower-test-count functions "main" (LowerTestInstr.CopyBytes)) 0)
         (>= (lower-test-count functions "main" (StorePtr)) 3)
         (> (lower-test-count functions "main" (GepOffset 16)) 0)
         (> (lower-test-count functions "main" (Branch)) 0))]
@@ -2603,9 +2607,9 @@
 ;; `id-pair` is the identity on a 16-byte all-integer struct, which is
 ;; register-resident -- it is carried in a register pair end-to-end, so the
 ;; passthrough needs NO memory traffic at all: zero byte-copies and zero stores
-;; (before register-residency this copied the 16 bytes through a slot). The
-;; A mixed int/float 16-byte aggregate stays memory-backed, so its identity
-;; return exercises the lower-copy-bytes 16-byte CopyBytes threshold.
+;; (before register-residency this copied the 16 bytes through a slot).
+;; A mixed int/float 16-byte aggregate stays memory-backed. Its private
+;; parameter home and its return slot each require a shallow byte transfer.
 (define (compiler-lower-inline-aggregate-copy-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-inline-aggregate-copy-source)))
@@ -2622,7 +2626,15 @@
             (and
               (= pair-copy-count 0)
               (= pair-store-count 0)
-              (= (lower-test-count mixed-functions "id-mixed" (CopyBytes)) 1))]
+              ;; The unwritten parameter is read in place (no private home);
+              ;; the only copy fills the caller's result slot.
+              (= (lower-test-count mixed-functions "id-mixed" (CopyBytes)) 1)
+              (=
+                (lower-test-count
+                  mixed-functions
+                  "id-mixed"
+                  (LowerTestInstr.AddrOf))
+                0))]
           [_ false]))]
     [_ false]))
 
@@ -2633,6 +2645,12 @@
     [(Some functions)
       (and
         (= (lower-test-count functions "return216-id" (CopyBytes)) 1)
+        ;; The unwritten parameter is read in place from the caller's storage:
+        ;; no private home and no >176-byte runtime copy. The one copy writes
+        ;; the caller-provided result slot under the inline return-slot policy.
+        (=
+          (lower-test-count functions "return216-id" (LowerTestInstr.AddrOf))
+          0)
         (=
           (lower-test-function-call-count functions "return216-id" "tl_memcpy")
           0))]
@@ -2698,9 +2716,14 @@
     (lower.lower-compiler-source (compiler-lower-inline-direct-store-source)))
     [(Some functions)
       (and
+        ;; Constructing a field through a reference needs no temporary
+        ;; transfer. A dynamic-array destination materializes its constructor
+        ;; first and transfers once: evaluating the operands may relocate the
+        ;; buffer, so the element address is resolved only afterwards. The
+        ;; fixed structural ABI destination still permits direct construction.
         (= (lower-test-count functions "direct-field" (CopyBytes)) 0)
         (= (lower-test-count functions "direct-init" (CopyBytes)) 0)
-        (= (lower-test-count functions "direct-dyn-array" (CopyBytes)) 0)
+        (= (lower-test-count functions "direct-dyn-array" (CopyBytes)) 1)
         (= (lower-test-count functions "direct-fixed-array" (CopyBytes)) 0)
         (> (lower-test-count functions "direct-fixed-literal" (CopyBytes)) 0))]
     [_ false]))
@@ -2711,6 +2734,96 @@
       (compiler-lower-inline-enum-layout-cache-order-source-a))
     (compiler-lower-ok?
       (compiler-lower-inline-enum-layout-cache-order-source-b))))
+
+(define (compiler-lower-never-aggregate-call-source) : String
+  "(defstruct NeverOutput (x i64) (y i64) (z i64))
+(extern (fail [message : String]) : never (:symbol \"tl_abort_string\"))
+(define (die [message : String]) : never (fail message))
+(define (foreign-direct) : NeverOutput (fail \"foreign direct\\n\"))
+(define (internal-direct) : NeverOutput (die \"internal direct\\n\"))
+(define (internal-indirect [f : (-> String never)]) : NeverOutput (f \"internal indirect\\n\"))
+(define (foreign-indirect [f : (CFunc non-null (-> String never))]) : NeverOutput (f \"foreign indirect\\n\"))
+(define (foreign-tuple) : (Tuple i64 i64 i64) (fail \"foreign tuple\\n\"))
+(define (main) : i64 0)")
+
+(define (compiler-lower-never-call-args-ok?
+  [args : ir.CompilerIrCallArgs]
+  [ty : ast.AstType]) : bool
+  (and
+    (=
+      (ir.compiler-ir-call-args-count (& (lower.lower-global-shared-view args)))
+      1)
+    (match args
+      [(ir.CompilerIrCallArgs.Sret _ _) false]
+      [_ true])
+    (match ty
+      [(ast.AstType.Never) true]
+      [_ false])))
+
+(define (compiler-lower-never-function-ok?
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find
+    (lower.lower-global-shared-view functions)
+    name)
+    [(LowerTestMaybeFunction.No) false]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (let
+            [dense : ir.CompilerIrBlockSeq
+              (ir.compiler-ir-block-list-seq blocks)]
+            [b : i64 0]
+            [seen : i64 0]
+            [ok? : bool true]
+            (while (< b dense.len)
+              (begin
+                (match (ir.compiler-ir-block-seq-ref dense b)
+                  [(ir.CompilerIrBlock.Block _ instructions)
+                    (let
+                      [i : i64 0]
+                      (while (< i (ir.compiler-ir-instr-seq-count instructions))
+                        (begin
+                          (match (ir.compiler-ir-instr-seq-ref instructions i)
+                            [(ir.CompilerIrInstr.Call _ _ args ty)
+                              (set! seen (+ seen 1))
+                              (set!
+                                ok?
+                                (and
+                                  ok?
+                                  (compiler-lower-never-call-args-ok? args ty)))]
+                            [(ir.CompilerIrInstr.CallIndirect _ _ args ty)
+                              (set! seen (+ seen 1))
+                              (set!
+                                ok?
+                                (and
+                                  ok?
+                                  (compiler-lower-never-call-args-ok? args ty)))]
+                            [(ir.CompilerIrInstr.CallIndirectC _ _ args ty)
+                              (set! seen (+ seen 1))
+                              (set!
+                                ok?
+                                (and
+                                  ok?
+                                  (compiler-lower-never-call-args-ok? args ty)))]
+                            [_ unit])
+                          (set! i (+ i 1)))))])
+                (set! b (+ b 1))))
+            (and ok? (= seen 1)))])]))
+
+(define (compiler-lower-never-aggregate-call-shape-ok?) : bool
+  (match (lower.lower-compiler-source
+    (compiler-lower-never-aggregate-call-source))
+    [(lower.ResultCompilerLower.Err _) false]
+    [(lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(ir.CompilerIrProgram.Program _ functions _ _)
+          (and
+            (compiler-lower-never-function-ok? functions "foreign-direct")
+            (compiler-lower-never-function-ok? functions "internal-direct")
+            (compiler-lower-never-function-ok? functions "internal-indirect")
+            (compiler-lower-never-function-ok? functions "foreign-indirect")
+            (compiler-lower-never-function-ok? functions "foreign-tuple"))])]))
 
 ;; #7901: a by-value parameter gets a private entry copy only when its body
 ;; writes it in place. A read-only callee reads the caller's storage and keeps
@@ -2766,6 +2879,7 @@
 
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
+    (compiler-lower-never-aggregate-call-shape-ok?)
     (compiler-lower-inline-struct-shape-ok?)
     (compiler-lower-inline-enum-shape-ok?)
     (compiler-lower-inline-boxed-recursive-shape-ok?)
@@ -3133,6 +3247,8 @@
           (= (ir.compiler-ir-summary-functions summary) 2)
           (= (ir.compiler-ir-summary-externs summary) 1)
           (= (ir.compiler-ir-summary-blocks summary) 7)
+          ;; No binary left operand is snapshotted: every right operand is a
+          ;; constant, which cannot write the left operand's storage.
           (= (ir.compiler-ir-summary-instructions summary) 20)
           (= (ir.compiler-ir-summary-vars summary) 13)
           (= (ir.compiler-ir-summary-empty-blocks summary) 0)
@@ -3362,7 +3478,7 @@
 
 (define (lower-test-instr-addr-of-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(AddrOf _ _) 1]
+    [(AddrOf _ _ _storage-words) 1]
     [_ 0]))
 
 (define (lower-test-instr-vector-load-count [instr : ir.CompilerIrInstr]) : i64
@@ -4739,7 +4855,7 @@
   (match (lower.lower-compiler-source (compiler-lower-defdispatch-source))
     [(Ok program _)
       (match program
-        [(Program globals functions _)
+        [(Program globals functions _ _authority)
           (let
             [cache-name : String "__tl_dispatch_cache_dot"]
             [scalar-name : String
@@ -4936,7 +5052,7 @@
         (compiler-lower-module-symbol-paths))
         [(Ok lowered _)
           (match lowered
-            [(Program globals functions _)
+            [(Program globals functions _ _authority)
               (and
                 (lower-test-global-list-has-name? globals "lib.tl::answer")
                 (>
@@ -5006,7 +5122,7 @@
   (match (lower.lower-compiler-source (compiler-lower-module-qualified-source))
     [(Ok lowered _)
       (match lowered
-        [(Program globals functions _)
+        [(Program globals functions _ _authority)
           (and
             (lower-test-global-list-has-name? globals "left/same")
             (lower-test-global-list-has-name? globals "right/same")
@@ -5226,7 +5342,7 @@
     (compiler-lower-module-macro-global-init-source))
     [(Ok lowered _)
       (match lowered
-        [(Program globals functions _)
+        [(Program globals functions _ _authority)
           (and
             (lower-test-global-list-has-name?
               globals
@@ -5514,11 +5630,11 @@
     (compiler-lower-extern-link-metadata-source))
     [(Ok program _)
       (match program
-        [(Program _ _ externs)
+        [(Program _ _ externs _authority)
           (and
             (= externs.len 1)
             (match (ir.compiler-ir-extern-seq-ref externs 0)
-              [(Extern name-id name-id name _ abi symbol-id link-inputs _)
+              [(Extern name-id name-id name _ abi symbol-id link-inputs _ _)
                 (and
                   (string.eq (ci.intern-str name-id) "ffi-add")
                   (string.eq name "ffi-add")
@@ -5726,7 +5842,7 @@
   (match (lower.lower-compiler-source (compiler-lower-global-source))
     [(Ok program _)
       (match program
-        [(Program globals functions externs)
+        [(Program globals functions externs _authority)
           (and
             (= globals.len 3)
             (= externs.len 1)
@@ -5942,6 +6058,8 @@
     (lower.lower-compiler-source (compiler-lower-tail-aggregate-param-source)))
     [(Some functions)
       (and
+        ;; `x` is never written, so it stays bound to the caller's storage,
+        ;; which outlives the frame: both calls forward it as tail calls.
         (= (lower-test-function-tail-call-count functions "step" "step") 1)
         (= (lower-test-function-call-count functions "step" "step") 0)
         (= (lower-test-function-tail-call-count functions "step" "finish") 1)
@@ -5982,6 +6100,7 @@
       (compiler-lower-tail-indirect-aggregate-param-source)))
     [(Some functions)
       (and
+        ;; The unwritten aggregate parameter is forwarded in place.
         (= (lower-test-count functions "step" (IndirectTailCall)) 1)
         (= (lower-test-count functions "step" (IndirectCall)) 0))]
     [_ false]))
@@ -6007,6 +6126,7 @@
 
 (define (compiler-lower-tail-call-shape-ok?) : bool
   (and
+    (compiler-lower-tail-reference-param-shape-ok?)
     (compiler-lower-tail-simple-shape-ok?)
     (compiler-lower-tail-context-shape-ok?)
     (compiler-lower-tail-operand-shape-ok?)
@@ -6020,6 +6140,32 @@
     (compiler-lower-tail-indirect-aggregate-param-shape-ok?)
     (compiler-lower-tail-indirect-aggregate-return-shape-ok?)
     (compiler-lower-tail-cleanup-shape-ok?)))
+
+(define (compiler-lower-tail-reference-param-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (finish [x : (& x Big)] [n : i64]) : i64 (+ x.a n))
+(define (step [x : (& x Big)] [n : i64]) : i64
+  (if (= n 0) (finish x n) (step x (- n 1))))
+(define (mut-step [x : (&mut x Big)] [n : i64]) : i64
+  (if (= n 0) x.a (mut-step x (- n 1))))
+(define (local [n : i64]) : i64
+  (let [x : Big (Big 42 0 0)] (finish (& x) n)))
+(define (main) : i64 42)")
+
+(define (compiler-lower-tail-reference-param-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-tail-reference-param-source)))
+    [(LowerTestFunctions.Some functions)
+      (and
+        (= (lower-test-function-tail-call-count functions "step" "step") 1)
+        (= (lower-test-function-tail-call-count functions "step" "finish") 1)
+        (= (lower-test-function-call-count functions "step" "step") 0)
+        (=
+          (lower-test-function-tail-call-count functions "mut-step" "mut-step")
+          1)
+        (= (lower-test-function-tail-call-count functions "local" "finish") 0)
+        (= (lower-test-function-call-count functions "local" "finish") 1))]
+    [_ false]))
 
 ;; CTFE fold verification: a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected literal and no
@@ -6319,6 +6465,30 @@
         (> (lower-test-count functions "put" (Bounds)) 0))]
     [_ false]))
 
+;; Dynamic writes retain a pre-RHS reservation check and a post-RHS live-extent
+;; check. Fixed storage needs only the reservation check. The native place
+;; fixture independently checks relocation and single evaluation semantics.
+(define (compiler-lower-store-place-checks-ok?) : bool
+  (and
+    (match (lower-test-functions
+      (lower.lower-compiler-source (compiler-lower-array-access-source)))
+      [(LowerTestFunctions.Some functions)
+        (and
+          (= (lower-test-count functions "get" (LowerTestInstr.Bounds)) 1)
+          (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 2))]
+      [_ false])
+    (match (lower-test-functions
+      (lower.lower-compiler-source (compiler-lower-fixed-array-access-source)))
+      [(LowerTestFunctions.Some functions)
+        (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 1)]
+      [_ false])))
+
+(test
+  compiler-lower-store-place-checks
+  (test.assert-true
+    (compiler-lower-store-place-checks-ok?)
+    "dynamic stores check reserved and current live extents; fixed stores check once"))
+
 (define (compiler-lower-array-take-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-array-take-source)))
@@ -6361,7 +6531,10 @@
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (>= (lower-test-count functions "main" (Alloc)) 3)
-        (= (lower-test-count functions "main" (AddrOf)) 1))]
+        ;; The literal's inline frame storage becomes the binding's home: no
+        ;; second slot and no copy.
+        (= (lower-test-count functions "main" (AddrOf)) 1)
+        (= (lower-test-count functions "main" (LowerTestInstr.CopyBytes)) 0))]
     [_ false]))
 
 (define (compiler-lower-fixed-array-aggregate-layout-shape-ok?) : bool
@@ -6372,6 +6545,8 @@
       (and
         (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
         (> (lower-test-count functions "main" (GepOffset 16)) 0)
+        ;; The local adopts the literal's complete inline array; nothing else
+        ;; can name that storage, so no copy is made.
         (= (lower-test-count functions "main" (CopyBytes)) 0))]
     [_ false]))
 
@@ -6589,14 +6764,74 @@
           1))]
     [_ false]))
 
+;; Capture a raw C callee before evaluating the argument that replaces it.
+(define (compiler-lower-c-callee-snapshot-instrs-ok?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [index : i64 0]
+    [captured : i64 -1]
+    [replaced : bool false]
+    [calls : i64 0]
+    (while (< index instrs.len)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
+          [(ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var src) _)
+            (when (and (= src 0) (> dst 1) (not replaced)) (set! captured dst))
+            (when
+              (and (= dst 0) (= src 1))
+              (when (< captured 0) (return false))
+              (set! replaced true))]
+          [(ir.CompilerIrInstr.CallIndirectC _ callee _ _)
+            (match callee
+              [(ir.CompilerIrValue.Var id)
+                (if (and replaced (= id captured))
+                  (set! calls (+ calls 1))
+                  (return false))]
+              [_ (return false)])]
+          [_ unit])
+        (set! index (+ index 1))))
+    (and replaced (= calls 1))))
+
+(define (compiler-lower-c-callee-snapshot-blocks-ok?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (= seq.len 1)
+        (match (ir.compiler-ir-block-seq-ref seq 0)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-lower-c-callee-snapshot-instrs-ok? instrs)])
+        false)]
+    [_ false]))
+
+(define (compiler-lower-c-callee-snapshot-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(define (probe
+          [f : (CFunc non-null (-> unit i64))]
+          [g : (CFunc non-null (-> unit i64))]) : i64
+         (f (set! f g)))
+       (define (main
+          [f : (CFunc non-null (-> unit i64))]
+          [g : (CFunc non-null (-> unit i64))]) : i64
+         (probe f g))"))
+    [(LowerTestFunctions.Some functions)
+      (match (lower-test-function-seq-find functions "probe")
+        [(LowerTestMaybeFunction.Some
+            (ir.CompilerIrFunction.Function _ _ _ _ blocks _))
+          (compiler-lower-c-callee-snapshot-blocks-ok? blocks)]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-lower-function-value-contextual-init-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source
       (compiler-lower-function-value-contextual-init-source)))
     [(Some functions)
       (and
-        (= (lower-test-count functions "main" (IndirectTailCall)) 1)
-        (= (lower-test-count functions "main" (IndirectCall)) 0))]
+        (= (lower-test-count functions "main" (IndirectTailCall)) 0)
+        ;; The speculative tail-risk query has no expected type for `(init)`.
+        ;; Keep the contextual lowering and conservatively retain its call.
+        (= (lower-test-count functions "main" (IndirectCall)) 1))]
     [_ false]))
 
 (define (compiler-lower-mutable-global-function-value-mode-shape-ok?
@@ -6606,7 +6841,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program globals functions _)
+        [(Program globals functions _ _authority)
           (and
             (lower-test-global-function-initializer?
               globals
@@ -6669,7 +6904,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program globals _ _)
+        [(Program globals _ _ _authority)
           (and
             (string.eq
               (lower-test-global-initializer-kind globals "base")
@@ -6711,7 +6946,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program globals _ _)
+        [(Program globals _ _ _)
           (and
             (string.eq
               (lower-test-global-initializer-kind globals "wide")
@@ -7036,8 +7271,8 @@
 (unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
 (defstruct Arena (handle i64))
 (defstruct ArenaMark (handle i64))
-(define (arena-make) : Arena (Arena (tl_arena_make)))
-(define (arena-current) : Arena (Arena (tl_arena_current)))
+(define (arena-make) : Arena (unsafe (Arena (tl_arena_make))))
+(define (arena-current) : Arena (unsafe (Arena (tl_arena_current))))
 (define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
 (define (arena-raw-handle [arena : Arena]) : i64 arena.handle)
 (define (arena-mark-raw-handle [mark : ArenaMark]) : i64 mark.handle)
@@ -8998,7 +9233,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (let
             [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I64))]
             [shl-count : i64
@@ -9042,7 +9277,7 @@
     mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (let
             [lanes : i64 (lower.lower-simd-lanes-for-elem mode (I16))]
             [shl-count : i64
@@ -9259,7 +9494,7 @@
   (match (lower.lower-compiler-source-with-mode src mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _)
+        [(Program _ functions _ _authority)
           (lower-test-function-spmd-call-count functions "fill")])]
     [(Err _) (- 0 1)]))
 
@@ -9269,7 +9504,8 @@
   (match (lower.lower-compiler-source-with-mode src mode)
     [(Ok program _)
       (match program
-        [(Program _ functions _) (ir.compiler-ir-function-seq-count functions)])]
+        [(Program _ functions _ _authority)
+          (ir.compiler-ir-function-seq-count functions)])]
     [(Err _) (- 0 1)]))
 
 (define (compiler-lower-spmd-scalar-call-shape-source) : String
@@ -9743,7 +9979,7 @@
       (let
         [before : String
           (match (ir.compiler-ir-global-shared-view program)
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
         [optimized : ir.CompilerIrProgram
           (match (optimize.optimize-program-with-spans-and-level
@@ -9752,7 +9988,7 @@
             level)
             [(Program optimized _) optimized])]
         (match optimized
-          [(Program _ functions _)
+          [(Program _ functions _ _authority)
             (and
               (> (string.string-length before) 0)
               (string.eq
@@ -11036,7 +11272,7 @@
 (define (main) : i64 0)")
     [(Ok program _)
       (match program
-        [(Program globals _ _)
+        [(Program globals _ _ _authority)
           (not
             (lower-test-global-list-has-name?
               globals
@@ -11721,7 +11957,7 @@
     (ast.ast-decl-path-list-new))
     [(Ok lowered _)
       (match lowered
-        [(Program _ functions externs)
+        [(Program _ functions externs _authority)
           (and
             (= (ir.compiler-ir-function-seq-count functions) 1)
             (= (ir.compiler-ir-extern-seq-count externs) 0)
@@ -12974,7 +13210,9 @@
       (array-ref storage.rtf-generations slot)
       (lower.compiler-lower-function-state-rtf-generation function-state))
     (set! (array-ref storage.rtf-ids slot) key)
-    (set! (array-ref storage.rtf-types slot) ty)
+    (set!
+      (array-ref storage.rtf-types slot)
+      (owned_view.compiler-owned-shared-view ty))
     (set!
       (array-ref storage.variant-stamps slot)
       (lower.compiler-lower-function-state-variant-generation function-state))
@@ -13581,7 +13819,9 @@
         (ast.ast-node-pool-context-type-push pools (Ref 1 slice-id))
         (& (ast.ast-type-list-new)))]
     [nested-id : i64
-      (ast.ast-node-pool-context-type-push pools (Tuple (box u8-u64-elements)))]
+      (ast.ast-node-pool-context-type-push
+        pools
+        (Tuple (box (owned_view.compiler-owned-shared-view u8-u64-elements))))]
     [array-u8-id : i64
       (ast.ast-node-pool-context-type-push pools (Array u8-id 3))]
     [nested-elements : ast.AstTypeList
@@ -14202,6 +14442,7 @@
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (and
+    (compiler-lower-store-place-checks-ok?)
     (compiler-lower-bounds-operand-shape-ok?)
     (compiler-lower-bounds-operand-width-predicate-ok?)
     (compiler-lower-bounds-operand-idempotent-ok?)
@@ -14277,6 +14518,7 @@
       "symbols: duplicate value declaration dup")
     (compiler-lower-numeric-shape-ok?)
     (compiler-lower-tail-call-shape-ok?)
+    (compiler-lower-c-callee-snapshot-ok?)
     (compiler-lower-foreach-tests-ok?)
     (compiler-lower-array-var-set-ok?)
     (compiler-lower-spmd-reduce-tests-ok?)

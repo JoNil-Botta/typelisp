@@ -20,6 +20,7 @@
 (import stdlib.arena)
 (import token)
 (import (option.option i64) as option_i64)
+(import compiler_owned_view as owned_view)
 
 ;; Parser dispatch environments and AST pool contexts are arena-backed shared
 ;; handles. Recursive parser calls borrow their backing storage; this explicit
@@ -754,7 +755,8 @@
         (* old-capacity 2))]
     [next : (__tl_dyn-array CompilerParseSemanticOriginLookupSlot)
       (in-arena
-        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (unsafe
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseSemanticOriginLookupSlot next-capacity))]
     (set! compiler-parse-semantic-origin-lookup-slots next)
     (set! compiler-parse-semantic-origin-lookup-len 0)
@@ -833,7 +835,8 @@
     (set!
       compiler-parse-origin-alias-heads
       (in-arena
-        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (unsafe
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasHead next-capacity)))
     (for [old-index (iterator.range 0 old-capacity)]
       (let
@@ -857,7 +860,8 @@
     (set!
       compiler-parse-origin-alias-runs
       (in-arena
-        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (unsafe
+          (arena.Arena compiler-parse-semantic-origin-lookup-arena))
         (__tl_make-array CompilerParseOriginAliasRun next-capacity)))
     (for [index (iterator.range 0 compiler-parse-origin-alias-run-len)]
       (set!
@@ -959,7 +963,8 @@
       (set!
         compiler-parse-origin-segments
         (in-arena
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (unsafe
+            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array CompilerParseOriginSegment capacity)))
       (for [index (iterator.range 0 compiler-parse-origin-segment-len)]
         (set!
@@ -1046,7 +1051,8 @@
       (set!
         compiler-parse-origin-paint
         (in-arena
-          (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+          (unsafe
+            (arena.Arena compiler-parse-semantic-origin-lookup-arena))
           (__tl_make-array
             i64
             (if (< (* (array-length compiler-parse-origin-paint) 2) (- hi lo))
@@ -2238,7 +2244,7 @@
 ;; Binding tokens are requested by the checked semantic-facts consumer. The
 ;; ordinary parser stores no extra token occurrences for this option.
 (define (compiler-parse-state-set-binding-origins!
-  [state : (& state CompilerParseState)]
+  [state : (&mut state CompilerParseState)]
   [enabled : bool]) : unit
   (set!
     (array-ref state.control compiler-parse-state-control-binding-origins)
@@ -4232,7 +4238,8 @@
     (compiler-parse-dispatch-cache-ref control)
     (let
       [persistent-arena : arena.Arena
-        (arena.Arena (compiler-parse-state-owner-persistent-arena control))]
+        (unsafe
+          (arena.Arena (compiler-parse-state-owner-persistent-arena control)))]
       (in-arena
         persistent-arena
         (let
@@ -12135,7 +12142,7 @@
   [index : i64]
   [fallback : ast.AstDecl]) : ast.AstDecl
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref v.slots index)
+    (owned_view.compiler-owned-element-view (& v.slots) index)
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
@@ -12145,7 +12152,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (parse-ast-decl-vec-copy-range dst src (+ index 1) count)))
 
 (define (parse-ast-decl-vec-span-copy-range

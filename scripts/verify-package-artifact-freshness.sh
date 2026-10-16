@@ -223,15 +223,33 @@ check_package_spmd_ir_owner() {
             active = ($0 ~ /\(lower-spmd-package-callable-functions$/)
             if (active) found += 1
         }
-        active && $0 ~ /\(lower-function-seq-escape-to-ir-arena functions\)/ { retained += 1 }
-        END { exit !(found == 1 && retained == 1) }
+        active && /^ +\[lower-state : CompilerLowerState$/ { owner_next = 1; next }
+        active && owner_next {
+            if ($0 ~ /^ +\(compiler-lower-state-from-name-cache names\)\]$/) owner += 1
+            owner_next = 0
+        }
+        active && /^ +\(lower-function-seq-escape-to-ir-arena$/ { retained_next = 1; next }
+        active && retained_next == 1 {
+            retained_next = ($0 ~ /^ +lower-state$/) ? 2 : 0
+            next
+        }
+        active && retained_next == 2 {
+            if ($0 ~ /^ +functions\)$/) retained += 1
+            retained_next = 0
+        }
+        END { exit !(found == 1 && owner == 1 && retained == 1) }
     ' "$1"
 }
 check_package_spmd_ir_owner src/compiler_lower.tl || fail "package SPMD functions bypass retained IR ownership"
-sed 's/(lower-function-seq-escape-to-ir-arena functions)/(unowned-package-functions functions)/' \
+sed 's/(lower-function-seq-escape-to-ir-arena$/(unowned-package-functions/' \
     src/compiler_lower.tl > "$WORK/unowned-spmd-functions.tl"
 if check_package_spmd_ir_owner "$WORK/unowned-spmd-functions.tl"; then
     fail "package SPMD guard accepted frontend-owned IR"
+fi
+sed 's/^ *lower-state$/                      foreign-owner/' \
+    src/compiler_lower.tl > "$WORK/foreign-spmd-owner.tl"
+if check_package_spmd_ir_owner "$WORK/foreign-spmd-owner.tl"; then
+    fail "package SPMD guard accepted a foreign lower owner"
 fi
 if [ "${1:-}" = --boundary-self-test ]; then
     echo "package and driver ownership boundaries: owner and mutation checks passed"

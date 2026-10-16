@@ -20,10 +20,12 @@
 (module main)
 (define (main) : i64 (helper))"
       (Scalar))
-      [(Ok _ _)
+      [(Ok _ _ owner)
         (compiler_lower.compiler-lower-state-set-active-global-name-cache!
           lower-state
           prev-name-cache)
+        (compiler_lower.compiler-lower-arena-state-release!
+          (compiler_lower.compiler-lower-state-arenas owner))
         42]
       [(Err diagnostic)
         (io.panic

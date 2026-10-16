@@ -359,6 +359,22 @@ link and execute both clone tests on Linux and Windows without a test filter.
 
 ## Compiler arena ownership
 
+`compiler_driver_base_transients_smoke.tl` checks lazy lower scratch/IR roots,
+fresh-driver isolation while another job has live arenas, growth beyond the
+initial chunk, controlled-error cleanup, release while a different arena is
+current, opt-level retirement, repeated release and reuse. The post-lower owner fixture preserves both jobs' alias facts,
+releases only A's scratch, and reads B's scratch afterward while A's escaped IR
+stays live. Run these at opt0/1/2. Lower-test helpers that keep function IR copy
+it into their test arena before releasing the source lower owner; an extracted
+sequence must not outlive its arena. Keep buffered output alive through its
+final render/write and preserve the mainless-module opt0 symbol check.
+`backend-owned-object-payload-lifetime` checks returned Linux and Windows
+object strings and rendered bytes after lower IR retirement and a subsequent
+source compilation. It also retires the input arena of both shared literal
+producers and checks exact String/Bytes records, including NUL/high-bit bytes
+and empty strings. Package build/run fixtures consume opt0 object images after
+that retirement boundary; the direct-object retention bound stays unchanged.
+
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`
 checks explicit type-index growth with an installed decoy, colliding hashes,
 caller-arena retirement and reset/reuse. Run it at opt0/1/2. The paired

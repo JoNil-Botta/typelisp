@@ -925,6 +925,23 @@ loop. `lower-make-array-zero-fill-supported?` decides which applies:
 Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
 default, for one, is a live allocation.
 
+Packed struct field assignment keeps the receiver selected before the RHS
+without restoring stale sibling fields afterward. When the existing operand
+write scan proves the RHS cannot mutate or alias the local, lowering keeps the
+packed temporary path. Otherwise it takes the local's real frame address, so
+RHS field writes and mutable-reference calls reach the same selected value.
+A compiler-side guard stack records that local's IR identity while lowering the
+RHS. Whole-local `set!` clears each active matching runtime flag; projected or
+reference writes leave it live. The final field store is conditional on that
+flag, and the current local value is reloaded from its home. Rebinding makes the
+old unaliased receiver dead, so omitting its unit-valued store preserves the new
+binding. Equal contents do not imply equal receiver identity, and shadowed
+locals have different IR identities. Guards allocate only compiler data and
+runtime scalar flags, not program heap objects. Control-flow state copies share
+the immutable guard links until the corresponding RHS finishes; nested guards
+are popped in lowering order. This rule is specific to unit-valued field stores;
+`replace!`, which returns the old value, retains its separate place lowering.
+
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,

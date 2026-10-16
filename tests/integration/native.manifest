@@ -942,3 +942,5 @@ replayed_loop_call_lagged_65|all|0,1,2|tests/integration/replayed_loop_call_lagg
 linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl|stage-stdlib
 
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
+
+packed_field_receiver|all|0,1,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-

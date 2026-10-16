@@ -1514,3 +1514,7 @@ set_intermediate_bounds_before_value_trap|run-trap|tests/safety/set_intermediate
 # A macro operand that fails to typecheck reports its own error when the macro
 # asks for its type (#8871).
 macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_type_reject.tl|-|typecheck: array elements must have same type: expected i32, found i64
+
+# Packed field receivers retain identity without bypassing borrow checks.
+packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
+packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access

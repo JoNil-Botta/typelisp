@@ -11899,9 +11899,16 @@
                       proof
                       (& source)
                       (- fuel 1)))]
-                [(Phi _ inputs _)
+                [(Phi _ inputs ty)
                   (let
-                    [valid : bool (> inputs.len 0)]
+                    [valid : bool
+                      (and
+                        (> inputs.len 0)
+                        (or
+                          (match (& ty)
+                            [(U64) true]
+                            [_ false])
+                          (opt-verify-inline-storage-type? (& ty))))]
                     (for [i (iterator.range 0 inputs.len)]
                       (let
                         [input : ir.CompilerIrPhiInput

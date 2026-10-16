@@ -5332,8 +5332,9 @@
 
 (test
   optimizer-sret-storage-joins
-  (for [valid (array true false)]
+  (for [case-id (iterator.range 0 3)]
     (let
+      [valid : bool (= case-id 0)]
       [function : ir.CompilerIrFunction
         (irt.func
           (str_cat.str-cat
@@ -5350,10 +5351,14 @@
                jump join
              join:
                %6 = phi [%3, left], ["
-            (if valid
-              "%5"
-              "%1")
-            ", right] : u64
+            (if (= case-id 1)
+              "%1"
+              "%5")
+            ", right] : "
+            (if (= case-id 2)
+              "u8"
+              "u64")
+            "
                %7 = call callee([sret arg 0] %6) : u64
                return
              }"))]

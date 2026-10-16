@@ -21159,8 +21159,212 @@ f:
     (compiler-backend-spmd-mask-entry-validation-ok?)
     (compiler-backend-spmd-mask-entry-spill-first-ok?)))
 
+;; The expected immediates are ISA fixtures, independent of the production
+;; predicate selector. Both ABIs exercise the instruction spine with explicit
+;; register and spill homes; integer predicates retain their original bytes.
+(define (compiler-backend-vector-compare-predicate-case?
+  [type-index : i64]
+  [op-index : i64]
+  [avx512 : bool]
+  [spill : bool]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [types : (Array String 10)
+      (array "f32" "f64" "i8" "u8" "i16" "u16" "i32" "u32" "i64" "u64")]
+    [ops : (Array String 6) (array "eq" "ne" "lt" "le" "gt" "ge")]
+    [predicates : (Array i64 6) (array 0 4 1 2 6 5)]
+    [bits : i64
+      (cond
+        [(= type-index 0) 32]
+        [(= type-index 1) 64]
+        [(< type-index 4) 8]
+        [(< type-index 6) 16]
+        [(< type-index 8) 32]
+        [else 64])]
+    [floating : bool (< type-index 2)]
+    [lanes : i64
+      (/
+        (if avx512
+          512
+          256)
+        bits)]
+    [predicate : i64
+      (+
+        (array-ref predicates op-index)
+        (if (and floating (>= op-index 4))
+          8
+          0))]
+    [mnemonic : String
+      (if floating
+        (if (= bits 32)
+          "vcmpps"
+          "vcmppd")
+        (str_cat.str-cat
+          "vpcmp"
+          (if (= (% type-index 2) 1)
+            "u"
+            "")
+          (match bits
+            [8 "b"]
+            [16 "w"]
+            [32 "d"]
+            [_ "q"])))]
+    [width : String
+      (if avx512
+        "zmm"
+        "ymm")]
+    [lhs : String
+      (str_cat.str-cat
+        "%"
+        width
+        (if spill
+          "14"
+          "6"))]
+    [rhs : String
+      (if (and avx512 spill)
+        "-128(%rbp)"
+        (str_cat.str-cat
+          "%"
+          width
+          (if spill
+            "15"
+            "7")))]
+    [dst : String
+      (if avx512
+        (if spill
+          "%k7"
+          "%k1")
+        (if spill
+          "%ymm14"
+          "%ymm8"))]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    [instrs : ir.CompilerIrInstrSeq
+      (irt.instrs
+        (str_cat.str-cat
+          "%2 = vector_compare_"
+          (string.copy (array-ref ops op-index))
+          " %0, %1 lanes "
+          (string.int->string lanes)
+          " : "
+          (string.copy (array-ref types type-index))))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        (if spill
+          "%0=spill:-64 %1=spill:-128 %2=spill:-192"
+          (if avx512
+            "%0=%vec6 %1=%vec7 %2=%k1"
+            "%0=%vec6 %1=%vec7 %2=%vec8")))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      instrs
+      homes
+      3
+      target
+      state)
+      [(Ok asm)
+        (let
+          [expected : String
+            (str_cat.str-cat
+              "    "
+              mnemonic
+              " $"
+              (string.int->string predicate)
+              ", "
+              rhs
+              ", "
+              lhs
+              ", "
+              dst
+              "\n")]
+          (and
+            (asm-has? asm expected)
+            (if spill
+              (asm-has? asm "-64(%rbp)" "-128(%rbp)" "-192(%rbp)")
+              (string.eq asm expected))))]
+      [(Err _) false])))
+
+(define (compiler-backend-vector-compare-invalid? [avx512 : bool]) : bool
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      (irt.instrs
+        (if avx512
+          "%2 = vector_compare_add %0, %1 lanes 8 : f64"
+          "%2 = vector_compare_add %0, %1 lanes 4 : f64"))
+      (reg-homes
+        (if avx512
+          "%0=%vec6 %1=%vec7 %2=%k1"
+          "%0=%vec6 %1=%vec7 %2=%vec8"))
+      3
+      (backend.CompilerBackendTarget.Linux)
+      state)
+      [(Err diag)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          (if avx512
+            "backend: unsupported AVX-512 vector compare"
+            "backend: unsupported AVX2 vector compare"))]
+      [(Ok _) false])))
+
+(define (compiler-backend-vector-compare-predicates-ok?) : bool
+  (let
+    [host : i64 0]
+    [ok : bool true]
+    (while (< host 2)
+      (let
+        [mode : i64 0]
+        (while (< mode 2)
+          (let
+            [type-index : i64 0]
+            (while (<
+              type-index
+              (if (= mode 0)
+                2
+                10))
+              (let
+                [op : i64 0]
+                (while (< op 6)
+                  (let
+                    [spill : i64 0]
+                    (while (< spill 2)
+                      (unless
+                        (compiler-backend-vector-compare-predicate-case?
+                          type-index
+                          op
+                          (= mode 1)
+                          (= spill 1)
+                          (if (= host 0)
+                            (backend.CompilerBackendTarget.Linux)
+                            (backend.CompilerBackendTarget.Windows)))
+                        (set! ok false))
+                      (set! spill (+ spill 1))))
+                  (set! op (+ op 1))))
+              (set! type-index (+ type-index 1))))
+          (set! mode (+ mode 1))))
+      (set! host (+ host 1)))
+    (and
+      ok
+      (compiler-backend-vector-compare-invalid? false)
+      (compiler-backend-vector-compare-invalid? true))))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
+    (compiler-backend-vector-compare-predicates-ok?)
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
     (compiler-backend-lane-id-rodata-ok?)

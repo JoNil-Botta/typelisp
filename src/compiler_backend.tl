@@ -7667,15 +7667,24 @@
     [(F32) "vcmpps"]
     [_ ""]))
 
-(define (compiler-backend-avx512-compare-predicate-separator
-  [op : (& op compiler_ir_types.CompilerIrBinOp)]) : String
+;; Integer NLT/NLE are GE/GT, but floating NLT/NLE also accept unordered
+;; operands. Floating GE/GT must use ordered predicates; NE stays unordered.
+(define (compiler-backend-vector-compare-predicate-separator
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match op
     [(Eq) " $0, "]
     [(Lt) " $1, "]
     [(Le) " $2, "]
     [(Ne) " $4, "]
-    [(Ge) " $5, "]
-    [(Gt) " $6, "]
+    [(Ge)
+      (if (compiler-backend-float-type? elem-ty)
+        " $13, "
+        " $5, ")]
+    [(Gt)
+      (if (compiler-backend-float-type? elem-ty)
+        " $14, "
+        " $6, ")]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
@@ -7933,7 +7942,7 @@
       [mnemonic : String
         (compiler-backend-avx512-vector-compare-mnemonic elem-ty)]
       [predicate-separator : String
-        (compiler-backend-avx512-compare-predicate-separator op)]
+        (compiler-backend-vector-compare-predicate-separator op elem-ty)]
       (if (or
         (= (string.string-length mnemonic) 0)
         (= (string.string-length predicate-separator) 0))
@@ -8291,8 +8300,9 @@
                             (compiler-backend-avx2-float-compare-mnemonic
                               elem-ty)]
                           [predicate-separator : String
-                            (compiler-backend-avx512-compare-predicate-separator
-                              op)]
+                            (compiler-backend-vector-compare-predicate-separator
+                              op
+                              elem-ty)]
                           [cmp-asm : String
                             (if (> (string.string-length float-mnemonic) 0)
                               (if (>

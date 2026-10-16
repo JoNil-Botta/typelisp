@@ -394,44 +394,46 @@
 
 ;; Reuse the optimizer's existing boxed-tail type rather than introducing a
 ;; list schema into the fixture corpus. The clone crosses a real arena boundary.
-(test
-  compiler-clone-boxed-production-tail
-  (let
-    [home : arena.Arena (arena.current)]
-    (for [case-index (iterator.range 0 3)]
-      (let
-        [count : i64
-          (cond [(= case-index 0) 0] [(= case-index 1) 1] [else 30000])]
-        [scratch : arena.Arena (arena.make)]
-        (unsafe
-          (arena.set! scratch))
-        (let
-          [source : opt.OptNonnegPhis (opt.OptNonnegPhis.Nil)]
-          (for [index (iterator.range 0 count)]
-            (set! source (opt.OptNonnegPhis.Cons index (box source))))
-          (unsafe
-            (arena.set! home))
-          (let
-            [copied : opt.OptNonnegPhis (clone source)]
-            (test.assert-true
-              (clone-test-production-tail-valid? (& source) count)
-              "cloning preserves every source element")
-            (unsafe
-              (arena.destroy scratch))
-            (test.assert-true
-              (clone-test-production-tail-valid? (& copied) count)
-              "the clone retains every element after source retirement")))))
+(cfg
+  test
+  (test
+    compiler-clone-boxed-production-tail
     (let
-      [source : opt.OptNonnegPhis
-        (opt.OptNonnegPhis.Cons
-          7
-          (box (opt.OptNonnegPhis.Cons 8 (box (opt.OptNonnegPhis.Nil)))))]
-      [copied : opt.OptNonnegPhis (clone source)]
-      (match copied
-        [(Cons head tail)
-          (test.assert-i64-eq head 7 "clone keeps the head")
-          (set! (deref tail) (opt.OptNonnegPhis.Nil))
-          (test.assert-true
-            (opt.opt-nonneg-phis-member? (& source) 8)
-            "mutating the clone leaves the source tail intact")]
-        [_ (test.assert-true false "clone keeps the nonempty variant")]))))
+      [home : arena.Arena (arena.current)]
+      (for [case-index (iterator.range 0 3)]
+        (let
+          [count : i64
+            (cond [(= case-index 0) 0] [(= case-index 1) 1] [else 30000])]
+          [scratch : arena.Arena (arena.make)]
+          (unsafe
+            (arena.set! scratch))
+          (let
+            [source : opt.OptNonnegPhis (opt.OptNonnegPhis.Nil)]
+            (for [index (iterator.range 0 count)]
+              (set! source (opt.OptNonnegPhis.Cons index (box source))))
+            (unsafe
+              (arena.set! home))
+            (let
+              [copied : opt.OptNonnegPhis (clone source)]
+              (test.assert-true
+                (clone-test-production-tail-valid? (& source) count)
+                "cloning preserves every source element")
+              (unsafe
+                (arena.destroy scratch))
+              (test.assert-true
+                (clone-test-production-tail-valid? (& copied) count)
+                "the clone retains every element after source retirement")))))
+      (let
+        [source : opt.OptNonnegPhis
+          (opt.OptNonnegPhis.Cons
+            7
+            (box (opt.OptNonnegPhis.Cons 8 (box (opt.OptNonnegPhis.Nil)))))]
+        [copied : opt.OptNonnegPhis (clone source)]
+        (match copied
+          [(Cons head tail)
+            (test.assert-i64-eq head 7 "clone keeps the head")
+            (set! (deref tail) (opt.OptNonnegPhis.Nil))
+            (test.assert-true
+              (opt.opt-nonneg-phis-member? (& source) 8)
+              "mutating the clone leaves the source tail intact")]
+          [_ (test.assert-true false "clone keeps the nonempty variant")])))))

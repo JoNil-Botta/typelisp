@@ -448,6 +448,11 @@ bce_affine_versioning|all|-|tests/integration/bce_affine_versioning.tl|42|-|0|st
 bce_monotone_cursor|all|-,2|tests/integration/bce_monotone_cursor.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
 bce_monotone_cursor_guard_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:54:35: array index out of bounds: index=24 length=24\n
 bce_monotone_cursor_stall_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:76:47: array index out of bounds: index=24 length=24\n
+bce_binary_interval|all|0,1,2|tests/integration/bce_binary_interval.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
+bce_binary_interval_extent_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=32 length=32\n
+bce_binary_interval_negative_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=-5 length=32\n
+bce_binary_interval_overflow_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=-1 length=32\n
+bce_binary_interval_base_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=32 length=32\n
 bce_affine_overflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:45: array index out of bounds: index=-9223372036854775807 length=8\n
 bce_affine_underflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:34:45: array index out of bounds: index=-2 length=8\n
 make_array_init|all|-|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl|-

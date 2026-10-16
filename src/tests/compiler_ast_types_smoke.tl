@@ -3235,7 +3235,50 @@
     (compiler-ast-installed-span-capture?)
     "global span changes reach installed cells and retained captures"))
 
+(define (compiler-ast-spmd-presence-segments?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [size : i64 ast.ast-expr-node-pool-segment-size]
+    [ok : bool (not (ast.ast-node-pool-context-has-spmd? (& pools)))]
+    (for [index (iterator.range 0 (+ size 1))]
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Literal (ast.ast-lit-int index))))
+    (set! ok (and ok (not (ast.ast-node-pool-context-has-spmd? (& pools)))))
+    (let
+      [positions : (Array i64 3) (array 0 (- size 1) size)]
+      (for [index (iterator.range 0 3)]
+        (let
+          [position : i64 (array-ref positions index)]
+          [site : ast.AstExpr (SpmdBroadcast 0 0)]
+          [ordinary : ast.AstExpr (Literal (ast.ast-lit-int position))]
+          (ast.ast-node-pool-context-expr-set! pools position (& site))
+          (set! ok (and ok (ast.ast-node-pool-context-has-spmd? (& pools))))
+          (ast.ast-node-pool-context-expr-set! pools position (& ordinary))
+          (set!
+            ok
+            (and ok (not (ast.ast-node-pool-context-has-spmd? (& pools))))))))
+    (let
+      [site : ast.AstExpr (SpmdShuffle 0 0)]
+      (ast.ast-node-pool-context-expr-set! pools size (& site)))
+    (ast.ast-node-pool-context-expr-truncate! pools size)
+    (ast.ast-node-pool-context-expr-push other (SpmdBroadcast 0 0))
+    (and
+      ok
+      (not (ast.ast-node-pool-context-has-spmd? (& pools)))
+      (ast.ast-node-pool-context-has-spmd? (& other)))))
+
+(test
+  compiler-ast-spmd-presence-segments
+  (tl_test.assert-true
+    (compiler-ast-spmd-presence-segments?)
+    "SPMD presence covers live segment boundaries, truncation and isolated owners"))
+
 (define (main) : i64
+  (unless (compiler-ast-spmd-presence-segments?) (return 32))
   (unless
     (compiler-ast-installed-span-capture?)
     (io.panic "compiler-ast-installed-span-capture failed"))

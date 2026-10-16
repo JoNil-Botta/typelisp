@@ -5787,7 +5787,11 @@
         [(MacroExpansion expanded provenance-id macro-name-id)
           (let
             [expanded-expr : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases expanded)]
+              (if (=
+                macro-name-id
+                (ctfe_support.ctfe-compact-caller-origin-name))
+                (Spanned expanded span)
+                (ast.ast-expr-segment-bases-get expr-bases expanded))]
             [path-id : i64 (macro-expansion-invocation-path-id provenance-id)]
             [origin-path-id : i64
               (macro-expansion-origin-path-id provenance-id)]
@@ -31803,9 +31807,14 @@
             (Ok (tc-contextual-result-type expected matched))]
           [(Mismatch _) (Ok actual)])])))
 
+;; An unlocated error from checking the expanded node EXPANDED takes that
+;; node's span, or the frame SPAN when it has none. The operand of a compact
+;; caller-origin marker (COMPACT?) is located at SPAN, the span of the Spanned
+;; view it is checked through as a temporary Spanned value.
 (define (tc-macro-expansion-result-with-frame
   [ctx : TcContext]
-  [inner : ast.AstExpr]
+  [expanded : i64]
+  [compact? : bool]
   [path-id : i64]
   [origin-path-id : i64]
   [macro-name-id : i64]
@@ -31818,9 +31827,16 @@
         [located : String
           (if (tc-encoded-error? message)
             message
-            (match (tc-expr-maybe-span (tc-context-expr-bases ctx) inner)
-              [(Some primary) (tc-located-error primary message)]
-              [(No) (tc-located-error span message)]))]
+            (let
+              [primary : ast.AstSourceSpan
+                (if compact?
+                  span
+                  (match (tc-expr-id-maybe-span
+                    (tc-context-expr-bases ctx)
+                    expanded)
+                    [(Some found) found]
+                    [(No) span]))]
+              (tc-located-error primary message)))]
         (Err
           (tc-macro-framed-error
             path-id
@@ -31828,6 +31844,104 @@
             origin-path-id
             macro-name-id
             (tc-unbound-finalize-located-error located))))]))
+
+;; Ordinary Spanned nodes and compact caller operands use the same transient
+;; view. No-view callers retain the ID entrypoint's normalization/observation.
+;; The view checks Unsafe with its span and locates errors with full context.
+(define (tc-check-operand-view
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [span : ast.AstSourceSpan]
+  [view? : bool]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (if view?
+    (let
+      [inner : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+      [result : ResultTcType
+        (match (tc-global-shared-view inner)
+          [(Unsafe exprs)
+            (tc-unsafe-begin-list-scoped
+              ctx
+              env
+              exprs
+              (if expected?
+                (Some expected)
+                (No))
+              (Some span))]
+          [_
+            (if expected?
+              (tc-expr-with-expected-or-actual-core-id
+                ctx
+                env
+                expr-id
+                expected
+                allow-mut-by-value-borrow)
+              (tc-expr-id ctx env expr-id))])]
+      (match result
+        [(Ok ty) (Ok ty)]
+        [(Err message)
+          (tc-locate-spanned-error-with-context ctx env inner span message)]))
+    (if expected?
+      (tc-expr-with-expected-or-actual-core-id
+        ctx
+        env
+        expr-id
+        expected
+        allow-mut-by-value-borrow)
+      (tc-expr-id ctx env expr-id))))
+
+;; Both checking modes share macro provenance and the operand's Spanned view.
+(define (tc-check-spanned-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner-box : i64]
+  [span : ast.AstSourceSpan]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (let
+    [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+    (match (tc-global-shared-view inner)
+      [(MacroExpansion expanded provenance-id macro-name-id)
+        (let
+          [compact? : bool
+            (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
+          (tc-macro-expansion-result-with-frame
+            ctx
+            expanded
+            compact?
+            (macro-expansion-invocation-path-id provenance-id)
+            (macro-expansion-origin-path-id provenance-id)
+            macro-name-id
+            span
+            (tc-semantic-expansion
+              ctx
+              env
+              (macro-expansion-origin-path-id provenance-id)
+              macro-name-id
+              span
+              (tc-check-operand-view
+                ctx
+                env
+                expanded
+                span
+                compact?
+                expected
+                expected?
+                allow-mut-by-value-borrow))))]
+      [_
+        (tc-check-operand-view
+          ctx
+          env
+          inner-box
+          span
+          true
+          expected
+          expected?
+          allow-mut-by-value-borrow)])))
 
 (define (tc-expr-with-expected-or-actual-core-inner
   [ctx : TcContext]
@@ -31837,56 +31951,14 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
-                ctx
-                env
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-expr-with-expected-or-actual-core-id
-                  ctx
-                  env
-                  expanded
-                  expected
-                  allow-mut-by-value-borrow)))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped
-                      ctx
-                      env
-                      exprs
-                      (Some expected)
-                      (Some span))]
-                  [_
-                    (tc-expr-with-expected-or-actual-core-id
-                      ctx
-                      env
-                      inner-box
-                      expected
-                      allow-mut-by-value-borrow)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
-                    ctx
-                    env
-                    inner
-                    span
-                    message)]))]))]
+      (tc-check-spanned-operand
+        ctx
+        env
+        inner-box
+        span
+        expected
+        true
+        allow-mut-by-value-borrow)]
     [(MacroExpansion inner _ _)
       (tc-expr-with-expected-or-actual-core-id
         ctx
@@ -60413,40 +60485,7 @@
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
-                ctx
-                env
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-expr-id ctx env expanded)))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped ctx env exprs No (Some span))]
-                  [_ (tc-expr-id ctx env inner-box)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
-                    ctx
-                    env
-                    inner
-                    span
-                    message)]))]))]
+      (tc-check-spanned-operand ctx env inner-box span (Unit) false false)]
     [(or (MacroExpansion inner _ _) (LaneValue inner))
       (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]
@@ -105277,6 +105316,20 @@
     (string.eq macro-name "stdlib.core_macros/__tl-project-set-field-name")
     (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
 
+;; A caller-origin marker over a spanned operand takes the place of the
+;; operand's own Spanned row: the compact marker (`ctfe-compact-caller-origin-name`)
+;; wraps the operand's semantic node and one Spanned view with the operand's
+;; span wraps the marker. Wrapping the operand's Spanned row instead would
+;; repeat that span in a second row for every captured operand. Checking and
+;; locating below the marker see the same view as a temporary Spanned value.
+;; The operand keeps its Spanned row, under an ordinary -1 marker, when that row
+;; is the only record of something below it: over a call, since the expansion
+;; walk frames a macro call with the Spanned row directly above it; over another
+;; Spanned view with a different span; and over a macro marker, whose frame is
+;; recognized by the Spanned row above it. A job with a semantic observer (the
+;; semantic lint facts collector, `compiler_semantic_lint_facts.tl`) keeps it
+;; too, since the observer records a fact for each Spanned row the check visits
+;; by id. A string literal operand is copied.
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [expr-cell-address : u64]
@@ -105285,47 +105338,66 @@
   [arg-expr : ast.AstExpr]
   [record-caller-origin : bool]) : i64
   (let
+    [compact? : bool false]
     [captured : i64
       (match (tc-global-shared-view arg-expr)
         [(Spanned inner span)
-          (match (tc-context-expr-get ctx inner)
-            [(Literal (String string-id))
-              (tc-context-expr-push-cell-addresses
-                expr-cell-address
-                type-cell-address
-                (Spanned
-                  (tc-context-expr-push-cell-addresses
-                    expr-cell-address
-                    type-cell-address
-                    (Literal (String string-id)))
-                  span))]
-            [_ arg-id])]
+          (let
+            [eligible? : bool
+              (and
+                record-caller-origin
+                (=
+                  (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
+                  0))]
+            [operand : i64
+              (match (tc-context-expr-get ctx inner)
+                [(Literal (String string-id))
+                  (let
+                    [literal : i64
+                      (tc-context-expr-push-cell-addresses
+                        expr-cell-address
+                        type-cell-address
+                        (Literal (String string-id)))]
+                    (if eligible?
+                      literal
+                      (tc-context-expr-push-cell-addresses
+                        expr-cell-address
+                        type-cell-address
+                        (Spanned literal span))))]
+                [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _)) arg-id]
+                [_
+                  (if eligible?
+                    inner
+                    arg-id)])]
+            (set! compact? (and eligible? (!= operand arg-id)))
+            operand)]
         [(Literal (String string-id))
           (tc-context-expr-push-cell-addresses
             expr-cell-address
             type-cell-address
             (Literal (String string-id)))]
         [_ arg-id])]
-    [path-id : i64 (macro-active-decl-path-id ctx)]
-    [out : i64
-      (if record-caller-origin
-        (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
-          [(Some span)
-            (tc-context-expr-push-cell-addresses
-              expr-cell-address
-              type-cell-address
-              (Spanned
-                (tc-context-expr-push-cell-addresses
-                  expr-cell-address
-                  type-cell-address
-                  (MacroExpansion
-                    captured
-                    (macro-expansion-provenance-id -1 path-id)
-                    -1))
-                span))]
-          [(No) captured])
-        captured)]
-    out))
+    (if record-caller-origin
+      (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
+        [(Some span)
+          (tc-context-expr-push-cell-addresses
+            expr-cell-address
+            type-cell-address
+            (Spanned
+              (tc-context-expr-push-cell-addresses
+                expr-cell-address
+                type-cell-address
+                (MacroExpansion
+                  captured
+                  (macro-expansion-provenance-id
+                    -1
+                    (macro-active-decl-path-id ctx))
+                  (if compact?
+                    (ctfe_support.ctfe-compact-caller-origin-name)
+                    -1)))
+              span))]
+        [(No) captured])
+      captured)))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]

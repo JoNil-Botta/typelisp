@@ -1044,6 +1044,13 @@ value representations are captured at program entry, before inlining, so the
 priced and final pipelines see the same roots. A block holding an
 always-failing literal bounds check hoists nothing.
 
+A direct call inherits an argument's provenance only when every return names
+that same parameter and the callee has no tail call. This summary is built
+before scalar SSA: the selected parameter must have no instruction defining
+it and no `addr_of` exposing its home. Rebinding another parameter or local,
+or writing through the returned pointer, does not change the selected
+argument's identity. A missing proof leaves the call result unknown.
+
 A checked pointer loaded from a root is a root in turn, because safe code writes
 every word outside an enum's payload only with its declared type. A payload
 word holds a pointer only under the tag the source tested, so a speculated

@@ -495,8 +495,15 @@ current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
-Lower scratch ends after lowering. At opt1/2 the original function IR can end
-after optimizer copy-out; at opt0 it lasts through the final IR consumer.
+Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
+synchronous retirement authority: the exact lower owner's stable address and a
+driver callback. After the surviving bodies reach the optimizer-input carrier
+and the inline arena is released, the callback retires that owner's original
+function IR before program summaries and function optimization. The optimizer
+does not import the lowerer or select an ambient job. Its callback context stays
+outside the retired arena; calls without authority retain their source storage.
+At opt1 the original IR ends after optimizer copy-out; at opt0 it lasts through
+the final IR consumer. Later driver cleanup remains idempotent.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;

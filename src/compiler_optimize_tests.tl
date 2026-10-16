@@ -5232,63 +5232,202 @@
           1)]
       [(Ok) 2])))
 
-(define (opt-sret-role-verify-function
-  [args : ir.CompilerIrCallArgs]
-  [result-ty : ast.AstType]) : ir.CompilerIrFunction
-  (Function
-    (opt-test-symbol "sret_role_verify")
-    (irt.params "storage=%0:u64")
-    (Unit)
-    2
-    (ir.compiler-ir-blocks
-      (ir.CompilerIrBlock.Block
-        (ir.compiler-ir-label "entry")
-        (opt-test-instrs
-          (ir.CompilerIrInstr.Call
-            1
-            (opt-test-symbol "sret_callee")
-            args
-            result-ty)
-          (ir.CompilerIrInstr.Return No))))
-    Ordinary))
+(define (opt-sret-role-verify-function [prefix : String] [call : String]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @sret_role_verify(scalar=%0:u64) -> unit vars 12 {\nentry:\n"
+      prefix
+      "\n"
+      call
+      "\nreturn\n}")))
 
 (define (opt-sret-role-rejected?
-  [args : ir.CompilerIrCallArgs]
-  [result-ty : ast.AstType]) : bool
+  [prefix : String]
+  [call : String]
+  [expected : String]) : bool
   (match (opt.opt-verify-function
-    (& (opt-sret-role-verify-function args result-ty)))
-    [(Err _) true]
+    (& (opt-sret-role-verify-function prefix call)))
+    [(Err message) (string.eq message expected)]
     [(Ok) false]))
 
 (test
   optimizer-sret-role-verifier
   (test.assert-true
     (and
+      (opt-sret-role-rejected?
+        ""
+        "%1 = call sret_callee([sret arg 1] %0) : u64"
+        "optimizer verify: sret argument index out of bounds")
+      (opt-sret-role-rejected?
+        ""
+        "%1 = call sret_callee([sret arg -1] %0) : u64"
+        "optimizer verify: sret argument index out of bounds")
+      (opt-sret-role-rejected?
+        ""
+        "%1 = call sret_callee([sret arg 0] 0) : u64"
+        "optimizer verify: sret argument must be a pointer variable")
+      (opt-sret-role-rejected?
+        ""
+        "%1 = call sret_callee([sret arg 0] %0) : f64"
+        "optimizer verify: sret call has incompatible result type"))
+    "sret role validates index, value form and result type"))
+
+(test
+  optimizer-sret-storage-origin
+  (let
+    [call : String "%10 = call sret_callee([sret arg 0] %2) : u64"]
+    [error : String
+      "optimizer verify: sret argument must address inline output storage"]
+    [valid : (Array String 5)
+      (array
+        "%1 = alloc (Array i64 2)\n%2 = addr_of %1"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = mov %3 : u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = cast %3 : (Array i64 2) to u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = gep %3, 0 : u8"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = select true, %3, %3 lanes 0 : u64")]
+    [invalid : (Array String 10)
+      (array
+        "%2 = mov %0 : u64"
+        "%1 = alloc u64\n%2 = addr_of %1"
+        "%2 = cast %0 : i64 to u64"
+        "%2 = load %0 : u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = gep %3, 1 : u8"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = select true, %0, %3 lanes 0 : u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = select true, %3, %0 lanes 0 : u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = select true, %3, %3 lanes 4 : u64"
+        "%1 = alloc (Array i64 2)\n%3 = addr_of %1\n%2 = select true, %3, %3 lanes 0 : u8"
+        "%1 = alloc (Array i64 2)\n%2 = addr_of %1\n%3 = addr_of %2\nstore_ptr %3, 0 : u64")]
+    (for [i (iterator.range 0 (array-length valid))]
+      (test.assert-true
+        (opt.opt-verify-ok?
+          (&
+            (opt.opt-verify-function
+              (&
+                (opt-sret-role-verify-function
+                  (clone (array-ref valid i))
+                  (clone call))))))
+        "inline storage survives address-preserving aliases"))
+    (for [i (iterator.range 0 (array-length invalid))]
+      (test.assert-true
+        (opt-sret-role-rejected?
+          (clone (array-ref invalid i))
+          (clone call)
+          (clone error))
+        "scalar, loaded, offset and mixed-origin values do not prove inline storage"))
+    (test.assert-true
+      (opt-sret-role-rejected?
+        ""
+        "%1 = call sret_callee([sret arg 0] %0) : u64"
+        (clone error))
+      "a scalar parameter is not an output pointer")
+    (test.assert-true
       (opt.opt-verify-ok?
         (&
           (opt.opt-verify-function
             (&
               (opt-sret-role-verify-function
-                (ir.compiler-ir-call-args-sret-from-seq
-                  (& (ir.compiler-ir-value-seq1 (Var 0)))
-                  0)
-                (U64))))))
-      (opt-sret-role-rejected?
-        (ir.compiler-ir-call-args-sret-from-seq
-          (& (ir.compiler-ir-value-seq1 (Var 0)))
-          1)
-        (U64))
-      (opt-sret-role-rejected?
-        (ir.compiler-ir-call-args-sret-from-seq
-          (& (ir.compiler-ir-value-seq1 (I64 0)))
-          0)
-        (U64))
-      (opt-sret-role-rejected?
-        (ir.compiler-ir-call-args-sret-from-seq
-          (& (ir.compiler-ir-value-seq1 (Var 0)))
-          0)
-        (F64)))
-    "sret role requires a live pointer variable, in-range index and pointer result"))
+                ""
+                "%1 = call ordinary_pointer(%0) : u64")))))
+      "unmarked pointer calls retain their ordinary contract")))
+
+(test
+  optimizer-sret-storage-joins
+  (for [valid (array true false)]
+    (let
+      [function : ir.CompilerIrFunction
+        (irt.func
+          (str_cat.str-cat
+            "function @sret_join(condition=%0:bool, scalar=%1:u64) -> unit vars 8 {
+             entry:
+               branch %0, left, right
+             left:
+               %2 = alloc (Array i64 2)
+               %3 = addr_of %2
+               jump join
+             right:
+               %4 = alloc (Array i64 2)
+               %5 = addr_of %4
+               jump join
+             join:
+               %6 = phi [%3, left], ["
+            (if valid
+              "%5"
+              "%1")
+            ", right] : u64
+               %7 = call callee([sret arg 0] %6) : u64
+               return
+             }"))]
+      (test.assert-true
+        (=
+          valid
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))))
+        "every phi edge must carry inline storage"))))
+
+(test
+  optimizer-sret-storage-current-body
+  (let
+    [call : String "%10 = call callee([sret arg 0] %2) : u64"]
+    [before : ir.CompilerIrFunction
+      (opt-sret-role-verify-function
+        "%1 = alloc (Array i64 2)\n%2 = addr_of %1"
+        (clone call))]
+    [after : ir.CompilerIrFunction
+      (opt-sret-role-verify-function
+        "%1 = alloc (Array i64 2)\n%2 = mov %0 : u64"
+        call)]
+    [context : opt.OptCfgContext
+      (match before
+        [(Function _ _ _ _ blocks _) (opt.opt-cfg-context-build blocks)])]
+    (test.assert-true
+      (not
+        (opt.opt-verify-ok?
+          (& (opt.opt-verify-function-with-context (& after) (& context)))))
+      "reusing CFG topology cannot reuse an old storage definition")))
+
+(test
+  optimizer-sret-storage-shared-provenance
+  (let
+    [source : String
+      "function @sret_dag() -> unit vars 40 {\nentry:\n%0 = alloc (Array i64 2)\n%1 = addr_of %0\n"]
+    (for [i (iterator.range 2 34)]
+      (let
+        [prior : String (string.int->string (- i 1))]
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "%"
+            (string.int->string i)
+            " = select true, %"
+            (clone prior)
+            ", %"
+            prior
+            " lanes 0 : u64\n"))))
+    (set!
+      source
+      (str_cat.str-cat
+        source
+        "%34 = call callee([sret arg 0] %33) : u64\nreturn\n}"))
+    (test.assert-true
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& (irt.func source)))))
+      "shared provenance is memoized rather than expanded exponentially"))
+  (test.assert-true
+    (not
+      (opt.opt-verify-ok?
+        (&
+          (opt.opt-verify-function
+            (&
+              (irt.func
+                "function @sret_cycle() -> unit vars 3 {
+           entry:
+             jump loop
+           loop:
+             %0 = phi [0, entry], [%1, loop] : u64
+             %1 = mov %0 : u64
+             %2 = call callee([sret arg 0] %1) : u64
+             jump loop
+           }"))))))
+    "a cyclic pointer claim without allocated storage is rejected"))
 
 (define (opt-indirect-call-def-is? [instr : ir.CompilerIrInstr] [want : i64]) : bool
   (match (opt.opt-instr-def-var (& instr))

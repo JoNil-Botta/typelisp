@@ -31825,15 +31825,18 @@
     [(Err message)
       (let
         [located : String
-          (cond
-            [(tc-encoded-error? message) message]
-            [compact? (tc-located-error span message)]
-            [else
-              (match (tc-expr-id-maybe-span
-                (tc-context-expr-bases ctx)
-                expanded)
-                [(Some primary) (tc-located-error primary message)]
-                [(No) (tc-located-error span message)])])]
+          (if (tc-encoded-error? message)
+            message
+            (let
+              [primary : ast.AstSourceSpan
+                (if compact?
+                  span
+                  (match (tc-expr-id-maybe-span
+                    (tc-context-expr-bases ctx)
+                    expanded)
+                    [(Some found) found]
+                    [(No) span]))]
+              (tc-located-error primary message)))]
         (Err
           (tc-macro-framed-error
             path-id

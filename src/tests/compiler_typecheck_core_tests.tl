@@ -11399,7 +11399,7 @@
           (MacroExpansion
             var
             (tc_core.macro-expansion-provenance-id -1 -1)
-            (tc_core.tc-compact-caller-origin-name)))
+            (ctfe_support.ctfe-compact-caller-origin-name)))
         span)]
     [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -11409,7 +11409,7 @@
       (tc-caller-marker-test-wrapped
         ctx
         (tc-caller-marker-test-capture ctx var-arg true)
-        (tc_core.tc-compact-caller-origin-name)
+        (ctfe_support.ctfe-compact-caller-origin-name)
         span)
       var
       "a plain operand's compact marker wraps its semantic node")
@@ -11456,7 +11456,7 @@
         (tc-caller-marker-test-wrapped
           ctx
           (tc-caller-marker-test-capture ctx text-arg true)
-          (tc_core.tc-compact-caller-origin-name)
+          (ctfe_support.ctfe-compact-caller-origin-name)
           span)]
       (test.assert-true
         (and (>= copy 0) (!= copy text))

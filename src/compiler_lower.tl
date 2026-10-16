@@ -1085,7 +1085,9 @@
   (storage-root-kinds lower_i64_i64_map.Map)
   (storage-root-names lower_i64_i64_map.Map)
   ;; Vars holding a `ptr-read` view of memory-class storage.
-  (storage-raw-views lower_i64_i64_map.Map))
+  (storage-raw-views lower_i64_i64_map.Map)
+  ;; An enclosing projected store retains its receiver while operands run.
+  (store-reservations ir.CompilerIrValueSeq))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1149,7 +1151,8 @@
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
-        (lower_i64_i64_map.with-capacity 4)))))
+        (lower_i64_i64_map.with-capacity 4)
+        (ir.compiler-ir-value-seq-empty)))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -14371,6 +14374,14 @@
               root))))]
     [_ unit]))
 
+(define (lower-state-storage-forget! [state : LowerState] [var-id : i64]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (lower_i64_i64_map.remove-ref!
+      (&mut (__tl-project-field (__tl-box-place data) storage-roots))
+      var-id)
+    unit))
+
 (define (lower-state-storage-root-name-note!
   [state : LowerState]
   [root : i64]
@@ -14420,6 +14431,45 @@
   (let
     [root : i64 (lower-state-storage-root state var-id)]
     (and (>= root 0) (= (lower-state-storage-root-name state root) name))))
+
+(define (lower-state-store-reservations [state : LowerState]) : ir.CompilerIrValueSeq
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [view : LowerStateData (deref data)]
+    view.store-reservations))
+
+(define (lower-state-store-reserved? [state : LowerState]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (> (deref data).store-reservations.len 0)))
+
+(define (lower-state-set-store-reservations!
+  [state : LowerState]
+  [reserved : ir.CompilerIrValueSeq]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (set! (deref data).store-reservations reserved)))
+
+(define (lower-state-reserve-store-base!
+  [state : LowerState]
+  [base : ir.CompilerIrValue]) : unit
+  (let
+    [reserved : ir.CompilerIrValueSeq (lower-state-store-reservations state)]
+    (lower-state-set-store-reservations!
+      state
+      (ir.compiler-ir-value-seq-prepend base reserved))))
+
+(define (lower-finish-store-reservation
+  [state : LowerState]
+  [reserved : ir.CompilerIrValueSeq]
+  [result : ResultLowerExpr]) : ResultLowerExpr
+  (match result
+    [(Ok (Expr finished value ty))
+      (lower-state-set-store-reservations! finished reserved)
+      (Ok (Expr finished value ty))]
+    [(Err error)
+      (lower-state-set-store-reservations! state reserved)
+      (Err error)]))
 
 (define (lower-state-address-taken-var? [state : LowerState] [var-id : i64]) : bool
   (let
@@ -16728,6 +16778,130 @@
       [(ir.CompilerIrValue.Var var-id)
         (not (lower-state-storage-raw-view? state var-id))]
       [_ false])))
+
+;; Each active receiver can occupy at most one candidate frame slot. With
+;; one more slot than receivers, a whole assignment can always select a home
+;; disjoint from every retained receiver, even on repeated loop iterations.
+;; Range checks include receivers projected inside a larger aggregate. The
+;; slots belong to the function frame and cannot escape a scratch-arena reset.
+(define (lower-reserved-assignment-slot
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [ty : ast.AstType]) : LowerExpr
+  (let
+    [reserved : ir.CompilerIrValueSeq (lower-state-store-reservations state)]
+    [size : i64 (lower-type-size ctx ty)]
+    [s : LowerState state]
+    [chosen : ir.CompilerIrValue (I64 0)]
+    [candidate : i64 0]
+    (while (<= candidate reserved.len)
+      (let
+        [slot : ir.CompilerIrValue Unit]
+        [end : ir.CompilerIrValue Unit]
+        [occupied : ir.CompilerIrValue (Bool false)]
+        [index : i64 0]
+        (match (lower-reserve-inline-storage s size ty)
+          [(Expr allocated address _)
+            (set! s allocated)
+            (set! slot address)])
+        (match (lower-gep-byte s (lower-global-shared-view slot) size)
+          [(Expr addressed limit _)
+            (set! s addressed)
+            (set! end limit)])
+        (while (< index reserved.len)
+          (let
+            [base : ir.CompilerIrValue
+              (ir.compiler-ir-value-seq-ref reserved index)]
+            [after-start : ir.CompilerIrValue Unit]
+            [before-end : ir.CompilerIrValue Unit]
+            [inside : ir.CompilerIrValue Unit]
+            (match (lower-emit-binop
+              s
+              (Ge)
+              (lower-global-shared-view base)
+              (lower-global-shared-view slot)
+              (U64))
+              [(Expr compared result _)
+                (set! s compared)
+                (set! after-start result)])
+            (match (lower-emit-binop
+              s
+              (Lt)
+              base
+              (lower-global-shared-view end)
+              (U64))
+              [(Expr compared result _)
+                (set! s compared)
+                (set! before-end result)])
+            (match (lower-emit-binop s (BitAnd) after-start before-end (Bool))
+              [(Expr combined result _)
+                (set! s combined)
+                (set! inside result)])
+            (match (lower-emit-binop
+              s
+              (BitOr)
+              (lower-global-shared-view occupied)
+              inside
+              (Bool))
+              [(Expr combined result _)
+                (set! s combined)
+                (set! occupied result)]))
+          (+= index 1))
+        (match (lower-word-select
+          s
+          occupied
+          (lower-global-shared-view chosen)
+          slot)
+          [(Expr selected address _)
+            (set! s selected)
+            (set! chosen address)]))
+      (+= candidate 1))
+    (Expr s chosen ty)))
+
+(define (lower-local-assignment-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ResultLowerExpr
+  (cond
+    [(and
+        (lower-state-store-reserved? state)
+        (lower-inline-aggregate-abi-copy-needed?
+          ctx
+          (lower-global-shared-view ty)))
+      (let
+        [source
+          (try
+            (lower-copy-inline-aggregate-to-inline
+              ctx
+              state
+              value
+              (lower-global-shared-view ty)))]
+        (match source
+          [(Expr copied source-value _)
+            (match (lower-reserved-assignment-slot
+              ctx
+              copied
+              (lower-global-shared-view ty))
+              [(Expr selected destination _)
+                (Ok
+                  (Expr
+                    (lower-copy-bytes-compact
+                      selected
+                      (lower-global-shared-view destination)
+                      0
+                      source-value
+                      0
+                      (lower-type-size ctx ty))
+                    destination
+                    ty))])]))]
+    [(lower-local-assignment-direct?
+        ctx
+        state
+        (lower-global-shared-view value)
+        (lower-global-shared-view ty))
+      (Ok (Expr state value ty))]
+    [else (lower-local-storage-value ctx state value ty)]))
 
 (define (lower-global-storage-assignment
   [ctx : tc_core.TcContext]
@@ -29842,6 +30016,62 @@
             (ResultLowerExpr.Err
               (box (lower-diagnostic-at-expr ctx origin message)))])])))
 
+;; A nested whole-binding assignment must leave the enclosing store's
+;; selected receiver alive. Restore the scope on both success and diagnostics;
+;; nested projected stores inherit the outer reservation.
+(define (lower-reserved-store-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [reserved : ir.CompilerIrValueSeq (lower-state-store-reservations state)]
+    [result : ResultLowerExpr
+      (match expr
+        [(StructSet receiver-box field value-box)
+          (let
+            [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            (lower-struct-set
+              ctx
+              state
+              env
+              type-env
+              receiver
+              field
+              value
+              origin))]
+        [(ArraySet arr-box index-box value-box)
+          (let
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            (lower-array-set
+              ctx
+              state
+              env
+              type-env
+              arr-box
+              index-box
+              value
+              value-box))]
+        [(BoxSet inner-box value-box)
+          (let
+            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+            (lower-box-set
+              ctx
+              state
+              env
+              type-env
+              inner-box
+              value
+              value-box
+              origin))]
+        [_
+          (abort.compiler-abort
+            "lower: reserved store requires a projected assignment\n")])]
+    (lower-finish-store-reservation state reserved result)))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -30039,25 +30269,11 @@
                               name-id
                               (csym.compiler-symbols-missing-handle))]
                           (if (csym.compiler-symbols-handle-found? id)
-                            (match (if (lower-local-assignment-direct?
+                            (match (lower-local-assignment-value
                               ctx
                               value-state
-                              (lower-global-shared-view value-ir)
+                              value-ir
                               (lower-global-shared-view target-ty))
-                              ;; Two complete values of one aggregate type
-                              ;; cannot partially overlap, and a
-                              ;; self-assignment copies each word onto itself,
-                              ;; so the value's bytes go straight to the home.
-                              (ResultLowerExpr.Ok
-                                (LowerExpr.Expr
-                                  value-state
-                                  value-ir
-                                  (lower-global-shared-view target-ty)))
-                              (lower-local-storage-value
-                                ctx
-                                value-state
-                                value-ir
-                                (lower-global-shared-view target-ty)))
                               [(ResultLowerExpr.Ok assignment)
                                 (match assignment
                                   [(LowerExpr.Expr
@@ -30085,28 +30301,37 @@
                                           (if (lower-inline-aggregate-abi-copy-needed?
                                             ctx
                                             (lower-global-shared-view target-ty))
-                                            (if (lower-local-assignment-rebind?
-                                              assign-state
-                                              value-box
-                                              (lower-global-shared-view
-                                                assign-ir)
-                                              rhs-mark)
+                                            (if (or
+                                              (lower-state-store-reserved?
+                                                assign-state)
+                                              (lower-local-assignment-rebind?
+                                                assign-state
+                                                value-box
+                                                (lower-global-shared-view
+                                                  assign-ir)
+                                                rhs-mark))
                                               ;; The value sits in fresh storage
                                               ;; this assignment produced; the
                                               ;; binding takes it as its new
                                               ;; home instead of copying it.
                                               (begin
-                                                (lower-state-storage-derive!
-                                                  assign-state
-                                                  id
-                                                  (lower-global-shared-view
-                                                    assign-ir))
-                                                (lower-state-storage-root-name-note!
-                                                  assign-state
-                                                  (lower-state-storage-root
+                                                (if (lower-state-store-reserved?
+                                                  assign-state)
+                                                  (lower-state-storage-forget!
                                                     assign-state
                                                     id)
-                                                  name-id)
+                                                  (begin
+                                                    (lower-state-storage-derive!
+                                                      assign-state
+                                                      id
+                                                      (lower-global-shared-view
+                                                        assign-ir))
+                                                    (lower-state-storage-root-name-note!
+                                                      assign-state
+                                                      (lower-state-storage-root
+                                                        assign-state
+                                                        id)
+                                                      name-id)))
                                                 (lower-state-emit-at-expr
                                                   ctx
                                                   assign-state
@@ -30321,11 +30546,30 @@
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         (lower-field-get ctx state env type-env receiver field expr-ty))]
-    [(StructSet receiver-box field value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-struct-set ctx state env type-env receiver field value origin))]
+    [(StructSet receiver field value)
+      (lower-reserved-store-expr
+        ctx
+        state
+        env
+        type-env
+        (StructSet receiver field value)
+        origin)]
+    [(ArraySet receiver index value)
+      (lower-reserved-store-expr
+        ctx
+        state
+        env
+        type-env
+        (ArraySet receiver index value)
+        origin)]
+    [(BoxSet receiver value)
+      (lower-reserved-store-expr
+        ctx
+        state
+        env
+        type-env
+        (BoxSet receiver value)
+        origin)]
     [(FixedMakeArray _ _)
       (lower-init-expr
         ctx
@@ -30355,18 +30599,6 @@
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-array-ref ctx state env type-env arr index))]
-    [(ArraySet arr-box index-box value-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-array-set
-          ctx
-          state
-          env
-          type-env
-          arr-box
-          index-box
-          value
-          value-box))]
     [(ArrayTake arr-box live-box index-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
@@ -30410,10 +30642,6 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expr-ty))]
-    [(BoxSet inner-box value-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-box-set ctx state env type-env inner-box value value-box origin))]
     [(Try inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -42032,28 +42260,34 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [index : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-index-result-type-or-check
-    ctx
-    env
-    type-env
-    (lower-state-type-cache state)
-    (lower-state-function-state state)
-    (lower-global-shared-view index))
-    [(tc_core.ResultTcType.Ok ty)
-      (match (lower-expr-expected
+  [index : ast.AstExpr]
+  [base : ir.CompilerIrValue]) : ResultLowerExpr
+  (let
+    [reserved : ir.CompilerIrValueSeq (lower-state-store-reservations state)]
+    [_enter : unit (lower-state-reserve-store-base! state base)]
+    [result : ResultLowerExpr
+      (match (lower-index-result-type-or-check
         ctx
-        state
         env
         type-env
-        (lower-global-shared-view index)
-        ty
-        index)
-        [(ResultLowerExpr.Ok (LowerExpr.Expr evaluated value value-ty))
-          (lower-snapshot-argument ctx evaluated value value-ty true)]
-        [(ResultLowerExpr.Err error) (ResultLowerExpr.Err error)])]
-    [(tc_core.ResultTcType.Err error)
-      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx index error)))]))
+        (lower-state-type-cache state)
+        (lower-state-function-state state)
+        (lower-global-shared-view index))
+        [(tc_core.ResultTcType.Ok ty)
+          (match (lower-expr-expected
+            ctx
+            state
+            env
+            type-env
+            (lower-global-shared-view index)
+            ty
+            index)
+            [(ResultLowerExpr.Ok (LowerExpr.Expr evaluated value value-ty))
+              (lower-snapshot-argument ctx evaluated value value-ty true)]
+            [(ResultLowerExpr.Err error) (ResultLowerExpr.Err error)])]
+        [(tc_core.ResultTcType.Err error)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx index error)))])]
+    (lower-finish-store-reservation state reserved result)))
 
 (define (lower-store-place-inline-root
   [ctx : tc_core.TcContext]
@@ -42108,7 +42342,13 @@
                   handle-ty
                   true)
                   [(ResultLowerExpr.Ok (LowerExpr.Expr captured descriptor _))
-                    (match (lower-store-index ctx captured env type-env index)
+                    (match (lower-store-index
+                      ctx
+                      captured
+                      env
+                      type-env
+                      index
+                      (lower-global-shared-view descriptor))
                       [(ResultLowerExpr.Ok (LowerExpr.Expr indexed idx idx-ty))
                         (let
                           [elem-ty : ast.AstType
@@ -42166,7 +42406,13 @@
                     (if (tc_core.tc-never-type?
                       (lower-global-shared-view place.ty))
                       (ResultLowerStorePlace.Ok rooted place)
-                      (match (lower-store-index ctx rooted env type-env index)
+                      (match (lower-store-index
+                        ctx
+                        rooted
+                        env
+                        type-env
+                        index
+                        (lower-global-shared-view place.base))
                         [(ResultLowerExpr.Ok
                             (LowerExpr.Expr indexed idx idx-ty))
                           (let
@@ -43274,6 +43520,9 @@
                   box-ptr
                   (U64))
                   [(Snapshot captured-state captured-ptr _)
+                    (lower-state-reserve-store-base!
+                      captured-state
+                      (lower-global-shared-view captured-ptr))
                     (if (lower-reference-type-handle-referent? ctx box-ty)
                       (lower-store-expr-into-handle-result
                         ctx
@@ -43511,6 +43760,7 @@
   [receiver : ast.AstExpr]
   [value : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
+  (lower-state-reserve-store-base! state (lower-global-shared-view place.base))
   (match (lower-store-expr-into-place-result
     ctx
     state
@@ -43865,6 +44115,11 @@
               (lower-global-shared-view container-ty))]
           (match captured-receiver
             [(ResultLowerStorePlace.Ok arr-state arr-value)
+              (when
+                (lower-type-inline-storage? ctx container-ty)
+                (lower-state-reserve-store-base!
+                  arr-state
+                  (lower-global-shared-view arr-value.base)))
               (if (tc_core.tc-never-type?
                 (lower-global-shared-view arr-value.ty))
                 (Ok (Expr arr-state Unit (Never)))
@@ -52812,7 +53067,7 @@
       ;; the operand width used by the backend comparison.
       (Expr (lower-state-emit s (BinOp v op left right (I64))) (Var v) (Bool))]))
 
-(define (lower-vector-loop-select
+(define (lower-word-select
   [state : LowerState]
   [condition : ir.CompilerIrValue]
   [on-true : ir.CompilerIrValue]
@@ -52856,7 +53111,7 @@
     (lower-global-shared-view left)
     (lower-global-shared-view right))
     [(Expr cmp-state take-left _)
-      (lower-vector-loop-select cmp-state take-left left right)]))
+      (lower-word-select cmp-state take-left left right)]))
 
 (define (lower-vector-loop-start-ok
   [state : LowerState]
@@ -52903,7 +53158,7 @@
               (set! candidate value)])
           ;; A too-short array cannot admit a vector gang. Avoid exposing the
           ;; wrapped subtraction as a large positive bound.
-          (lower-vector-loop-select s offset-valid candidate (I64 -1)))
+          (lower-word-select s offset-valid candidate (I64 -1)))
         (Expr len-state array-len (I64)))]))
 
 (define (lower-vector-loop-limit

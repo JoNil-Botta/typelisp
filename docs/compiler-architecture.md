@@ -303,8 +303,16 @@ Intermediate projections check bounds when selected, while the final element
 check follows the RHS. Direct constructors retain the same deferred destination
 until their existing argument collector evaluates every field; the builders then
 store those values without an aggregate copy. Box assignment captures its
-selected pointer before value effects. Zero-sized array values still run their
-effects before the final bounds check.
+selected pointer before value effects. Projected stores keep the selected base
+addresses in a scoped reservation list while their later operands run. A whole
+local aggregate assignment in that scope selects a frame home outside all the
+reserved address ranges. With N retained bases, N+1 candidate slots guarantee a
+free home even when a loop revisits the same assignment site. This preserves
+old receivers without allocating in a temporary arena; a selected address has
+no single static storage root, so rebinding clears the old root evidence.
+Reservations are restored after each store and intermediate index, including
+errors, and only addresses dominating the later operands enter the list.
+Zero-sized array values still run their effects before the final bounds check.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask

@@ -5217,20 +5217,6 @@ guards.
 - Aggregate mutation through place forms follows the receiver's ownership
   mode: array-element, tuple-element, and field assignment require an owned
   place or a mutable reference receiver; immutable references are rejected.
-- Evaluate the destination place exactly once before the right-hand side,
-  including each projection, index expression, and initial bounds check. Capture
-  its storage identity, evaluate the right-hand side once, then store its value
-  there. An initialized inline aggregate local, parameter, or global retains
-  its storage home when assigned a new value, so an already selected field
-  still names that field of the same binding.
-  For a dynamic-array element, capture the descriptor identity and index, then
-  resolve its current backing buffer after the right-hand side. Growth of that
-  descriptor preserves the selected element; rebinding the array variable does
-  not change the captured descriptor. Check the captured index against the
-  descriptor's current live extent again before storing; a removed element
-  traps. Nested inline projections retain that same selected element. A failing
-  initial bounds check prevents right-hand-side evaluation. Zero-size elements
-  retain these evaluations and checks.
 - `ByteBuf`/`bytes` mutation follows the same rule: byte writes require an
   owned `ByteBuf` place, a mutable reference to a `ByteBuf`, or an exclusive
   `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`

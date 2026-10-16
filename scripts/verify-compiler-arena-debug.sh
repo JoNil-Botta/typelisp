@@ -56,7 +56,10 @@ for source in global_aggregate_storage_lifetime global_aggregate_storage_threads
     for opt in 0 1 2; do
         asm="$WORKDIR/$source-opt$opt.s"
         binary="$WORKDIR/$source-opt$opt$BIN_EXT"
+        # Match the native assembler, including on Windows-hosted emitters.
+        # shellcheck disable=SC2046
         "$SUPPORT" compile "tests/integration/$source.tl" \
+            --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
             --cfg compiler-arena-debug --cfg compile-profile --backtrace -o "$asm"
         for symbol in tl_alloc_global: tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:; do

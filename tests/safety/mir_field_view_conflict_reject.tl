@@ -12,7 +12,7 @@
 
 (define (run [h : (&mut h Holder)]) : i64
   (let
-    [view : (__tl_dyn-array i64) h.items]
+    [view : (& h (__tl_dyn-array i64)) (& h.items)]
     [n : i64 (grow (&mut h.items))]
     (+ n (peek view))))
 

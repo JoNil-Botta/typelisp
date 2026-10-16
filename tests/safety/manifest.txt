@@ -1539,6 +1539,8 @@ mir_field_partial_whole_reject|check-fail|tests/safety/mir_field_partial_whole_r
 mir_field_branch_move_reject|check-fail|tests/safety/mir_field_branch_move_reject.tl|tests/safety/mir_field_branch_move_reject.tl:14:11|use of moved value `h.items`
 mir_field_mut_through_shared_reject|check-fail|tests/safety/mir_field_mut_through_shared_reject.tl|tests/safety/mir_field_mut_through_shared_reject.tl:10:9|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
 mir_field_view_conflict_reject|check-fail|tests/safety/mir_field_view_conflict_reject.tl|tests/safety/mir_field_view_conflict_reject.tl:16:20|cannot mutably borrow borrowed place `h.items`
+mir_field_view_move_reject|check-fail|tests/safety/mir_field_view_move_reject.tl|tests/safety/mir_field_view_move_reject.tl:15:34|cannot move a `(__tl_dyn-array i64)` out of a mutable reference
+mir_field_view_last_use_ok|run-exit|tests/safety/mir_field_view_last_use_ok.tl|42|-
 mir_match_ok|run-exit|tests/safety/mir_match_ok.tl|42|-
 mir_match_field_twice_reject|check-fail|tests/safety/mir_match_field_twice_reject.tl|tests/safety/mir_match_field_twice_reject.tl:18:5|use of moved value `h.slot`
 mir_match_payload_whole_reject|check-fail|tests/safety/mir_match_payload_whole_reject.tl|tests/safety/mir_match_payload_whole_reject.tl:17:11|use of moved value `s`

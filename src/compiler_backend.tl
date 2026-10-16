@@ -35946,12 +35946,14 @@
   (let
     [size-text : String (string.int->string size)]
     [retry-label : String
-      (compiler-backend-fast-alloc-site-label
-        (compiler-backend-global-shared-view function)
-        current-label
-        site
-        dst
-        "_retry")]
+      (if global-storage?
+        (compiler-backend-fast-alloc-site-label
+          (compiler-backend-global-shared-view function)
+          current-label
+          site
+          dst
+          "_retry")
+        "")]
     [slow-label : String
       (compiler-backend-fast-alloc-site-label
         (compiler-backend-global-shared-view function)

@@ -385,23 +385,21 @@
               (let
                 [larger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
                 (if (> sink.len 0)
-                  (string.str-copy-bytes-into
-                    (unsafe
-                      (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
-                    (unsafe
-                      (__tl_array-data larger))
-                    0
-                    sink.len)
+                  (unsafe
+                    (string.str-copy-bytes-into
+                      (ptr-cast (__tl_array-data sink.slots) : (Ptr u8))
+                      (__tl_array-data larger)
+                      0
+                      sink.len))
                   unit)
                 (set! sink.slots larger)))
             unit)
-          (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& data)))
-            (unsafe
-              (__tl_array-data sink.slots))
-            sink.len
-            count)
+          (unsafe
+            (string.str-copy-bytes-into
+              (string-data (& data))
+              (__tl_array-data sink.slots)
+              sink.len
+              count))
           (set! sink.len required)
           (unsafe
             (ptr-write! slot sink))
@@ -556,7 +554,8 @@
         [source : (Ptr u8)
           (unsafe
             (ptr-offset (string-data rendered) source-start))]
-        (string.str-copy-bytes-into source dst destination-start count)))))
+        (unsafe
+          (string.str-copy-bytes-into source dst destination-start count))))))
 
 ;: Resolve the byte length visible to shared Display padding.
 ;:

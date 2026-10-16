@@ -35,6 +35,13 @@
   [mode : lower.CompilerLowerMode]) : lower.CompilerLowerRequest
   (lower.CompilerLowerRequest mode (Requested input)))
 
+(define (proof-smoke-release-lower!
+  [result : (& result lower.ResultCompilerLower)]) : unit
+  (match result
+    [(Ok _ _ owner)
+      (driver.compiler-driver-release-lower-arenas-after-emit! owner)]
+    [_ unit]))
+
 (define (proof-smoke-lower
   [input : proof.PointerProofInput]
   [source : String]
@@ -49,15 +56,18 @@
           [message : diagnostic.CompilerDiagnostic (deref error)]
           (io.println "{}" (diagnostic.compiler-diagnostic-render (& message)))
           (io.panic "pointer-proof smoke: requested lowering failed"))]
-      [(Ok program _ _)
+      [(Ok program _ _ lower-owner)
         (let
           [pools : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
-          (ir.compiler-ir-program-render
-            (cis.intern-structural-session-handle-from-source-names
-              (ci.intern-source-name-session-capture-active-handle))
-            (ast.ast-node-pool-context-type-segment-bases pools)
-            (& program)))])))
+          [rendered : String
+            (ir.compiler-ir-program-render
+              (cis.intern-structural-session-handle-from-source-names
+                (ci.intern-source-name-session-capture-active-handle))
+              (ast.ast-node-pool-context-type-segment-bases pools)
+              (& program))]
+          (driver.compiler-driver-release-lower-arenas-after-emit! lower-owner)
+          rendered)])))
 
 (define (proof-smoke-has-conversion? [input : proof.PointerProofInput]) : bool
   (let
@@ -144,11 +154,14 @@
       (lower.lower-compiler-source-with-mode
         "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
         mode)]
-    (match (lower.lower-compiler-pointer-proof-result request plain)
+    (match (lower.lower-compiler-pointer-proof-result
+      request
+      (owned_view.compiler-owned-shared-view plain))
       [(Err _) unit]
       [_
         (io.panic
-          "pointer-proof smoke: ordinary lowering admitted missing input")])))
+          "pointer-proof smoke: ordinary lowering admitted missing input")])
+    (proof-smoke-release-lower! (& plain))))
 
 (define (proof-smoke-emit
   [input : proof.PointerProofInput]
@@ -171,15 +184,16 @@
           mode))]
     (match lowered
       [(Err _) (io.panic "pointer-proof smoke: parity source did not lower")]
-      [(Ok program spans)
+      [(Ok program spans lower-owner)
         (when
           requested?
           (match (lower.lower-compiler-pointer-proof-result
             request
             (Ok
               (owned_view.compiler-owned-shared-view program)
-              (owned_view.compiler-owned-shared-view spans)))
-            [(Ok _ _ _) unit]
+              (owned_view.compiler-owned-shared-view spans)
+              lower-owner))
+            [(Ok _ _ _ _lower-owner) unit]
             [_ (io.panic "pointer-proof smoke: parity proof is incomplete")]))
         (let
           [emitted : driver.ResultCompilerDriver
@@ -190,7 +204,9 @@
               target
               true
               Scalar
-              level)]
+              level
+              lower-owner)]
+          (driver.compiler-driver-release-lower-arenas-after-emit! lower-owner)
           (ast.ast-node-pool-reader-clear!)
           (match emitted
             [(Ok assembly _) assembly]
@@ -280,7 +296,9 @@
         "unsupported-proof.tl"
         source
         (owned_view.compiler-owned-shared-view request))]
-    (match (lower.lower-compiler-pointer-proof-result request lowered)
+    (match (lower.lower-compiler-pointer-proof-result
+      request
+      (owned_view.compiler-owned-shared-view lowered))
       [(Err error)
         (let
           [message : diagnostic.CompilerDiagnostic (deref error)]
@@ -301,6 +319,7 @@
       [_
         (io.panic
           "pointer-proof smoke: unclassified pointer producer was admitted")])
+    (proof-smoke-release-lower! (& lowered))
     (proof.pointer-proof-input-release! input)))
 
 (define (proof-smoke-bindings [mode : lower.CompilerLowerMode]) : unit
@@ -484,12 +503,12 @@
         (io.panic
           "pointer-proof smoke: another program reused the first job's evidence")])
     (match (owned_view.compiler-owned-shared-view first-result)
-      [(Ok program _)
+      [(Ok program _ first-owner)
         (match (owned_view.compiler-owned-shared-view second-result)
-          [(Ok _ spans)
+          [(Ok _ spans _lower-owner)
             (match (lower.lower-compiler-pointer-proof-result
               (owned_view.compiler-owned-shared-view request)
-              (Ok program spans))
+              (Ok program spans first-owner))
               [(Err _) unit]
               [_
                 (io.panic
@@ -521,6 +540,8 @@
       [_
         (io.panic
           "pointer-proof smoke: retired owner entered another lowering job")])
+    (proof-smoke-release-lower! (& first-result))
+    (proof-smoke-release-lower! (& second-result))
     (proof.pointer-proof-input-release! second)
     (proof.pointer-proof-input-release! missing)))
 
@@ -601,10 +622,10 @@
           [message : diagnostic.CompilerDiagnostic (deref error)]
           (io.println "{}" (diagnostic.compiler-diagnostic-render (& message)))
           (io.panic "pointer-proof smoke: driver lowering failed"))]
-      [(Ok program spans _ _ _ _)
+      [(Ok program spans _ _ _ _ lower-owner)
         (match (lower.lower-compiler-pointer-proof-result
           request
-          (Ok program spans))
+          (Ok program spans lower-owner))
           [(Err error)
             (let
               [message : diagnostic.CompilerDiagnostic (deref error)]

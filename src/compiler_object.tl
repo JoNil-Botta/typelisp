@@ -453,11 +453,10 @@
   [target : (& target str)]) : bool
   (let
     [count : i64 builder.count]
-    [slots : (__tl_dyn-array CompilerObjectRelocation) builder.slots]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (array-ref slots index)
+      (match (& (array-ref builder.slots index))
         [(Relocation _ _ _ found-target)
           (if (string.eq found-target target)
             (set! found true)

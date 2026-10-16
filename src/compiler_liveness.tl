@@ -318,15 +318,14 @@
   (if (< value 0)
     false
     (let
-      [words : (__tl_dyn-array i64) set.words]
       [word-index : i64 (compiler-live-set-word-index value)]
-      (if (>= word-index (array-length words))
+      (if (>= word-index (array-length set.words))
         false
         (not
           (=
             (bit-and
               (unsafe
-                (ptr-read (ptr-offset (__tl_array-data words) word-index)))
+                (ptr-read (ptr-offset (__tl_array-data set.words) word-index)))
               (compiler-live-set-bit-mask value))
             0))))))
 
@@ -564,11 +563,10 @@
       (unsafe
         (__tl_array-data
           (owned_view.compiler-owned-reference-shared-view words)))]
-    [src-words : (__tl_dyn-array i64) set.words]
     [src : (MutPtr i64)
       (unsafe
-        (__tl_array-data src-words))]
-    [src-count : i64 (array-length src-words)]
+        (__tl_array-data set.words))]
+    [src-count : i64 (array-length set.words)]
     [count : i64
       (array-length (owned_view.compiler-owned-reference-shared-view words))]
     [index : i64 0]
@@ -658,16 +656,14 @@
       (unsafe
         (__tl_array-data
           (owned_view.compiler-owned-reference-shared-view words)))]
-    [use-words : (__tl_dyn-array i64) uses.words]
-    [def-words : (__tl_dyn-array i64) defs.words]
     [use-data : (MutPtr i64)
       (unsafe
-        (__tl_array-data use-words))]
+        (__tl_array-data uses.words))]
     [def-data : (MutPtr i64)
       (unsafe
-        (__tl_array-data def-words))]
-    [use-count : i64 (array-length use-words)]
-    [def-count : i64 (array-length def-words)]
+        (__tl_array-data defs.words))]
+    [use-count : i64 (array-length uses.words)]
+    [def-count : i64 (array-length defs.words)]
     [count : i64
       (compiler-live-set-max
         active-count
@@ -1346,16 +1342,14 @@
     [def-data : (MutPtr i64)
       (unsafe
         (__tl_array-data (owned_view.compiler-owned-reference-shared-view defs)))]
-    [instr-use-words : (__tl_dyn-array i64) instr-uses.words]
-    [instr-def-words : (__tl_dyn-array i64) instr-defs.words]
     [instr-use-data : (MutPtr i64)
       (unsafe
-        (__tl_array-data instr-use-words))]
+        (__tl_array-data instr-uses.words))]
     [instr-def-data : (MutPtr i64)
       (unsafe
-        (__tl_array-data instr-def-words))]
-    [instr-use-count : i64 (array-length instr-use-words)]
-    [instr-def-count : i64 (array-length instr-def-words)]
+        (__tl_array-data instr-defs.words))]
+    [instr-use-count : i64 (array-length instr-uses.words)]
+    [instr-def-count : i64 (array-length instr-defs.words)]
     [count : i64 (compiler-live-set-max instr-use-count instr-def-count)]
     [index : i64 0]
     (while (< index count)

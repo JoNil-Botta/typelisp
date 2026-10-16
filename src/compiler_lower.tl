@@ -3722,9 +3722,8 @@
   [fallback : i64]) : i64
   (let
     [intern-state : ci.InternCompatState (lower-name-cache-interns cache)]
-    [paths : LowerModulePathIndex cache.module-paths]
-    [edges : lower_i64_i64_map.Map paths.edges]
-    [terminals : lower_i64_i64_map.Map paths.terminals]
+    [edges (& cache.module-paths.edges)]
+    [terminals (& cache.module-paths.terminals)]
     [current : i64 source-id]
     [node : i64 0]
     [result : i64 fallback]
@@ -6566,7 +6565,6 @@
       (let
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [decl-offset : i64 decls.offset]
-        [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
         (for [index
           (iterator.range
             (lower-global-array-element-shared-view starts slot)
@@ -6576,7 +6574,7 @@
               (lower-global-array-element-shared-view positions index)]
             [decl : ast.AstDecl
               (lower-global-array-element-shared-view
-                decl-slots
+                decls.slots
                 (+ decl-offset position))]
             [decl-path : String
               (ast.ast-decl-path-list-get
@@ -6659,7 +6657,7 @@
     (let
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+      [decl-slots (& decls.slots)]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       ;; The index outlives the transient scratch arenas active during
       ;; lowering, so its backing allocations live in a dedicated arena
@@ -6690,7 +6688,7 @@
           [running : i64 0]
           ;; Pass 1: assign a dense slot per module id and count its decls.
           (for [i (iterator.range 0 count)]
-            (match (array-ref decl-slots (+ decl-offset i))
+            (match (& (array-ref decl-slots (+ decl-offset i)))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
                 (let
@@ -6715,7 +6713,7 @@
           ;; Pass 2: fill program-order positions per module slot.
           (set! cur-module-id empty-module-id)
           (for [i (iterator.range 0 count)]
-            (match (array-ref decl-slots (+ decl-offset i))
+            (match (& (array-ref decl-slots (+ decl-offset i)))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
                 (match (lower_i64_i64_map.get (& modules) cur-module-id)
@@ -10310,7 +10308,7 @@
     [texts : (__tl_dyn-array String) (__tl_make-array String (+ root-count 1))]
     [root : i64 (- root-count 1)]
     [count : i64 (ast.ast-decl-list-len (& source-decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) source-decls.slots]
+    [decl-slots (& source-decls.slots)]
     [decl-offset : i64 source-decls.offset]
     [index : i64 0]
     [cur-module-id : i64 module-id]
@@ -13107,13 +13105,12 @@
   ;; the step would copy 104 B and write a 144 B result per declaration.
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
     [current-module : String module]
     [current-used : lower_i64_i64_map.Map used]
     (for [index (iterator.range 0 count)]
       (match (lower-global-array-element-shared-view
-        decl-slots
+        decls.slots
         (+ decl-offset index))
         [(Module next-module)
           (set!
@@ -13123,7 +13120,7 @@
           (if (and
             (lower-type-decl?
               (lower-global-array-element-shared-view
-                decl-slots
+                decls.slots
                 (+ decl-offset index)))
             (or
               (lower-comptime-runtime-skip-module? current-module)
@@ -13132,7 +13129,7 @@
                 current-module
                 current-used
                 (lower-global-array-element-shared-view
-                  decl-slots
+                  decls.slots
                   (+ decl-offset index)))))
             (set!
               current-used
@@ -13142,7 +13139,7 @@
                 current-used
                 (lower-global-shared-view current-module)
                 (lower-global-array-element-shared-view
-                  decl-slots
+                  decls.slots
                   (+ decl-offset index))))
             unit)]))
     current-used))
@@ -13477,7 +13474,7 @@
         [decls : ast.AstDeclList (deref decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [source-count : i64 plan.source-count]
-        [keep : (__tl_dyn-array i64) plan.keep]
+        [keep (& plan.keep)]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
         (for [index (iterator.range 0 count)]
           (if (or (>= index source-count) (not (= (array-ref keep index) 0)))
@@ -21316,12 +21313,12 @@
   [captures : (& captures LowerCaptureList)]
   [name-id : i64]) : bool
   (let
-    [items : (__tl_dyn-array LowerCapture) captures.items]
+    [items (& captures.items)]
     [count : i64 captures.count]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (array-ref items index)
+      (match (& (array-ref items index))
         [(Capture capture-name-id _ _ _)
           (if (= capture-name-id name-id)
             (set! found true)
@@ -27258,9 +27255,7 @@
                 field-ctx
                 (lower-global-shared-view enum-ty)
                 fields))]
-          (match (if (lower-store-destination-result-slot?
-            state
-            (& dst))
+          (match (if (lower-store-destination-result-slot? state (& dst))
             ;; Building straight into the result slot: no operand aliases it.
             (lower-fresh-constructor-args-as
               ctx
@@ -27487,9 +27482,7 @@
                 field-ctx
                 struct-ty
                 (lower-global-shared-view fields)))]
-          (match (if (lower-store-destination-result-slot?
-            state
-            (& dst))
+          (match (if (lower-store-destination-result-slot? state (& dst))
             ;; Building straight into the result slot: no operand aliases it.
             (lower-fresh-constructor-args-as
               ctx
@@ -43042,8 +43035,9 @@
     [(and
         array-slot?
         (lower-clone-scalar-type?
-          (& (tc_core.tc-type-strip-region
-            (tc_core.tc-resolve-type ctx (lower-global-shared-view place.ty))))))
+          (&
+            (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx (lower-global-shared-view place.ty))))))
       (match (lower-expr-expected
         ctx
         state
@@ -47430,7 +47424,7 @@
 
 (define (lower-array-var-set-max-offset [set : (& set LowerArrayVarSet)]) : i64
   (let
-    [offsets : (__tl_dyn-array i64) set.offsets]
+    [offsets (& set.offsets)]
     [count : i64 set.count]
     [max-offset : i64 0]
     (for [index (iterator.range 0 count)]
@@ -69343,7 +69337,8 @@
                 state
                 env
                 type-env
-                (LowerStoreDestination.FixedAddress (lower-global-shared-view dst))
+                (LowerStoreDestination.FixedAddress
+                  (lower-global-shared-view dst))
                 struct-name
                 struct-handle
                 args
@@ -73533,7 +73528,7 @@
     ;; local first would materialise a copy that `ast-decl-unwrapped` then
     ;; copies again; an aggregate argument is passed by reference, so the
     ;; projection costs nothing.
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-slots (& decls.slots)]
     [decl-offset : i64 decls.offset]
     (for [index (iterator.range 0 count)]
       (match (ast.ast-decl-unwrapped

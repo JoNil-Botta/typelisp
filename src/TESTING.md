@@ -545,7 +545,14 @@ return edges, binder read/write type agreement, unique local declaration
 initializers, duplicate executable edges, malformed child spans, stale owners,
 resource limits and unsupported dead forms. They use selected-occurrence
 fixtures; broader source producer coverage and lowering admission remain
-separate obligations.
+separate obligations. The Box-view rows require a region-qualified shared Box
+projection to retain its loan and both diagnostic origins, permit shared reads,
+and preserve writes through an owned Box. Removing the view/owner distinction
+makes the focused boolean verdict return 1. The `mir_copied_box_*` and
+`mir_box_view_*` safety rows pin illegal transfers and writes; the public CLI
+matrix compiles each for both targets at opt0/1/2. `box_view_access.tl` runs
+shared reads, explicit borrowing, exclusive writes, owned moves and independent
+clones at all three levels on both hosts.
 Isolated production mutations removing the repeated-occurrence guard or
 forcing an `and` RHS to execute are rejected by the focused expectations with
 normal exit 1; compilation failures or crashes are not mutation witnesses.

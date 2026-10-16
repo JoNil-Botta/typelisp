@@ -1031,3 +1031,6 @@ linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_ar
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
 selected_inference_dotted|all|0,1,2|tests/integration/selected_inference_dotted.tl|42|-|-|-|stage-stdlib
 ownership_certified_scalar_control|all|0,1,2|tests/integration/ownership_certified_scalar_control.tl|42|-|-|-|-
+
+# Shared Box views, exclusive access, owned moves, and independent deep clones.
+box_view_access|all|0,1,2|tests/integration/box_view_access.tl|42|-|-|-|-

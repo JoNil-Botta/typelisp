@@ -205,8 +205,7 @@
 (define (parse-semantic-origin-vec-grow!
   [items : (&mut items ParseSemanticOriginVec)]) : unit
   (let
-    [old : (__tl_dyn-array ParseSemanticOriginRecord) items.items]
-    [old-cap : i64 (array-length old)]
+    [old-cap : i64 (array-length items.items)]
     [next : (__tl_dyn-array ParseSemanticOriginRecord)
       (__tl_make-array
         ParseSemanticOriginRecord
@@ -217,7 +216,7 @@
       (unsafe
         (compiler-parse-runtime-copy-bytes!
           (ptr-cast (__tl_array-data next) : (MutPtr u8))
-          (ptr-cast (__tl_array-data old) : (Ptr u8))
+          (ptr-cast (__tl_array-data items.items) : (Ptr u8))
           (* items.len 56)))
       unit)
     (set! items.items next)))
@@ -1548,15 +1547,14 @@
 (define (compiler-parse-decl-origin-alias-vec-grow!
   [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerParseDeclOriginAlias) aliases.items]
     [len : i64 aliases.len]
     [next-items : (__tl_dyn-array CompilerParseDeclOriginAlias)
       (__tl_make-array
         CompilerParseDeclOriginAlias
-        (* (array-length old-items) 2))]
+        (* (array-length aliases.items) 2))]
     (for [index (iterator.range 0 len)]
       (let
-        [item : CompilerParseDeclOriginAlias (array-ref old-items index)]
+        [item : CompilerParseDeclOriginAlias (array-ref aliases.items index)]
         (set!
           (array-ref next-items index)
           (CompilerParseDeclOriginAlias

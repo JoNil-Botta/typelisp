@@ -1873,3 +1873,27 @@ global_call_before_other_error_reject|check-fail|tests/safety/global_call_before
 global_call_macro_late_twice_reject|check-fail|tests/safety/global_call_macro_late_twice_reject.tl|-|cannot call `read-after` while global `g` is borrowed
 cleanup_array_overwrite_reject|check-fail|tests/safety/cleanup_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place
 mir_cleanup_holder_array_overwrite_reject|check-fail|tests/safety/mir_cleanup_holder_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place
+
+# Borrowed Box handles retain their shared origin through locals and projections.
+mir_box_view_mut_borrow_reject|check-fail|tests/safety/mir_box_view_mut_borrow_reject.tl|tests/safety/mir_box_view_mut_borrow_reject.tl:11:12|cannot mutably borrow `r.b` behind a shared reference
+mir_box_view_mut_borrow_reject_windows|check-fail-windows|tests/safety/mir_box_view_mut_borrow_reject.tl|tests/safety/mir_box_view_mut_borrow_reject.tl:11:12|cannot mutably borrow `r.b` behind a shared reference
+mir_box_view_region_write_reject|check-fail|tests/safety/mir_box_view_region_write_reject.tl|tests/safety/mir_box_view_region_write_reject.tl:8:18|cannot mutably borrow `r.b` behind a shared reference
+mir_box_view_region_write_reject_windows|check-fail-windows|tests/safety/mir_box_view_region_write_reject.tl|tests/safety/mir_box_view_region_write_reject.tl:8:18|cannot mutably borrow `r.b` behind a shared reference
+mir_box_view_write_reject|check-fail|tests/safety/mir_box_view_write_reject.tl|tests/safety/mir_box_view_write_reject.tl:8:18|cannot mutably borrow `r.b` behind a shared reference
+mir_box_view_write_reject_windows|check-fail-windows|tests/safety/mir_box_view_write_reject.tl|tests/safety/mir_box_view_write_reject.tl:8:18|cannot mutably borrow `r.b` behind a shared reference
+mir_copied_box_alias_reject|check-fail|tests/safety/mir_copied_box_alias_reject.tl|tests/safety/mir_copied_box_alias_reject.tl:8:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_alias_reject_windows|check-fail-windows|tests/safety/mir_copied_box_alias_reject.tl|tests/safety/mir_copied_box_alias_reject.tl:8:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_branch_reject|check-fail|tests/safety/mir_copied_box_branch_reject.tl|tests/safety/mir_copied_box_branch_reject.tl:9:9|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_branch_reject_windows|check-fail-windows|tests/safety/mir_copied_box_branch_reject.tl|tests/safety/mir_copied_box_branch_reject.tl:9:9|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_call_reject|check-fail|tests/safety/mir_copied_box_call_reject.tl|tests/safety/mir_copied_box_call_reject.tl:9:12|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_call_reject_windows|check-fail-windows|tests/safety/mir_copied_box_call_reject.tl|tests/safety/mir_copied_box_call_reject.tl:9:12|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_field_reject|check-fail|tests/safety/mir_copied_box_field_reject.tl|tests/safety/mir_copied_box_field_reject.tl:7:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_field_reject_windows|check-fail-windows|tests/safety/mir_copied_box_field_reject.tl|tests/safety/mir_copied_box_field_reject.tl:7:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_macro_reject|check-fail|tests/safety/mir_copied_box_macro_reject.tl|tests/safety/mir_copied_box_macro_reject.tl:11:16|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_macro_reject_windows|check-fail-windows|tests/safety/mir_copied_box_macro_reject.tl|tests/safety/mir_copied_box_macro_reject.tl:11:16|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_nested_reject|check-fail|tests/safety/mir_copied_box_nested_reject.tl|tests/safety/mir_copied_box_nested_reject.tl:10:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_nested_reject_windows|check-fail-windows|tests/safety/mir_copied_box_nested_reject.tl|tests/safety/mir_copied_box_nested_reject.tl:10:20|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_return_reject|check-fail|tests/safety/mir_copied_box_return_reject.tl|tests/safety/mir_copied_box_return_reject.tl:6:3|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_return_reject_windows|check-fail-windows|tests/safety/mir_copied_box_return_reject.tl|tests/safety/mir_copied_box_return_reject.tl:6:3|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_store_reject|check-fail|tests/safety/mir_copied_box_store_reject.tl|tests/safety/mir_copied_box_store_reject.tl:6:11|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+mir_copied_box_store_reject_windows|check-fail-windows|tests/safety/mir_copied_box_store_reject.tl|tests/safety/mir_copied_box_store_reject.tl:6:11|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy

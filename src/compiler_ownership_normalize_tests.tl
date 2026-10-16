@@ -964,6 +964,160 @@
                   (= (array-ref diagnostic.fields 0) -1))))]
           [_ false])])))
 
+;; A region-qualified Box view retains the shared parameter's loan through
+;; dereference. The same projection on an owned Box remains writable.
+(define (normalize-test-box-view? [mode : i64]) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (fixture.typed-test-lease (& intern-state) (cast (+ 901 mode) : u64))]
+    [store : typed.TypedStore (fixture.typed-test-store (& lease))]
+    [origin : typed.TypedOriginId
+      (fixture.typed-test-origin! (&mut store) (& lease))]
+    [access : typed.TypedOriginId
+      (match (typed.typed-origin-add!
+        (&mut store)
+        (& lease)
+        (own.OwnershipSource "box-view.tl" 13 5 "expanded box write"))
+        [(typed.TypedOriginResult.Ok id) id]
+        [_ (io.panic "normalize fixture access origin")])]
+    [int-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [unit-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Unit)]
+    [box-type : typed.TypedTypeId
+      (fixture.typed-test-type!
+        (&mut store)
+        (& lease)
+        (ast.ast-ty-box (& (ast.AstType.I64))))]
+    [view-type : typed.TypedTypeId
+      (fixture.typed-test-type!
+        (&mut store)
+        (& lease)
+        (ast.ast-ty-region 1 (& (ast.ast-ty-box (& (ast.AstType.I64))))))]
+    [container : typed.TypedTypeId
+      (if (= mode 2)
+        box-type
+        view-type)]
+    [binder : typed.TypedBinderId
+      (match (typed.typed-binder-add!
+        (&mut store)
+        (& lease)
+        container
+        typed.TypedBinderKind.Parameter
+        origin
+        77)
+        [(typed.TypedBinderResult.Ok id) id]
+        [_ (io.panic "normalize fixture Box binder")])]
+    [root-place : typed.TypedPlaceId
+      (match (typed.typed-place-add!
+        (&mut store)
+        (& lease)
+        (typed.TypedPlaceKind.Root binder))
+        [(typed.TypedPlaceResult.Ok id) id]
+        [_ (io.panic "normalize fixture Box place")])]
+    [projection : typed.TypedProjectionId
+      (match (typed.typed-projection-add!
+        (&mut store)
+        (& lease)
+        container
+        int-type
+        typed.TypedProjectionKind.Deref
+        access)
+        [(typed.TypedProjectionResult.Ok id) id]
+        [_ (io.panic "normalize fixture Box projection")])]
+    [place : typed.TypedPlaceId
+      (match (typed.typed-place-add!
+        (&mut store)
+        (& lease)
+        (typed.TypedPlaceKind.Projection root-place projection))
+        [(typed.TypedPlaceResult.Ok id) id]
+        [_ (io.panic "normalize fixture Box contents")])]
+    [formation : typed.TypedOccurrenceId
+      (normalize-test-node!
+        (&mut store)
+        (& lease)
+        int-type
+        access
+        (typed.TypedOperation.FormPlace place)
+        (normalize-test-empty))]
+    [root : typed.TypedOccurrenceId
+      (if (= mode 0)
+        (normalize-test-node!
+          (&mut store)
+          (& lease)
+          int-type
+          access
+          (typed.TypedOperation.CopyPlace place)
+          (normalize-test-one formation))
+        (let
+          [value : typed.TypedOccurrenceId
+            (fixture.typed-test-literal!
+              (&mut store)
+              (& lease)
+              int-type
+              access
+              typed.TypedSyntax.Generated
+              42)]
+          (normalize-test-node!
+            (&mut store)
+            (& lease)
+            unit-type
+            access
+            (typed.TypedOperation.AssignPlace place)
+            (fixture.typed-test-children2 formation value))))]
+    [classes : (__tl_dyn-array norm.OwnershipNormalizeTypeClass)
+      (__tl_make-array norm.OwnershipNormalizeTypeClass 0)]
+    [index : i64 0]
+    (while (<= index view-type.handle.index)
+      (__tl_array-push!
+        classes
+        (cond
+          [(= index box-type.handle.index)
+            (norm.OwnershipNormalizeTypeClass
+              0
+              false
+              0
+              int-type.handle.index
+              false)]
+          [(= index view-type.handle.index)
+            (norm.OwnershipNormalizeTypeClass
+              1
+              true
+              1
+              box-type.handle.index
+              false)]
+          [else (norm.OwnershipNormalizeTypeClass -1 true 0 -1 false)]))
+      (+= index 1))
+    (match (norm.ownership-normalize!
+      (&mut store)
+      (& lease)
+      root
+      (if (= mode 0)
+        int-type
+        unit-type)
+      classes
+      (norm.ownership-normalize-default-limits))
+      [(norm.OwnershipNormalizeResult.Ok _) (!= mode 1)]
+      [(norm.OwnershipNormalizeResult.Err failure)
+        (match failure
+          [(norm.OwnershipNormalizeFailure.Borrowed core diagnostic)
+            (and
+              (= mode 1)
+              (= diagnostic.name 77)
+              (= diagnostic.access 5)
+              (>= core.conflicting-loan 0)
+              (string.eq core.source.path "box-view.tl")
+              (= core.source.line 13)
+              (= core.source.column 5)
+              (string.eq core.source.expansion "expanded box write")
+              (string.eq diagnostic.borrow.path "fixture.tl")
+              (= diagnostic.borrow.line 7)
+              (= diagnostic.borrow.column 11)
+              (string.eq diagnostic.borrow.expansion "macro expansion"))]
+          [_ false])])))
+
 (define (compiler-ownership-normalize-self-test) : i64
   (let
     [mode : i64 0]
@@ -975,6 +1129,12 @@
             "normalizer primitive/rejection mode "
             (string.int->string mode)))
         (set! mode (+ mode 1))))
+    (set! mode 0)
+    (while (< mode 3)
+      (test.assert-true
+        (normalize-test-box-view? mode)
+        (str_cat.str-cat "normalizer Box view mode " (string.int->string mode)))
+      (+= mode 1))
     (test.assert-true
       (normalize-test-short? true)
       "normalizer And conditional initialization and shadow identity")

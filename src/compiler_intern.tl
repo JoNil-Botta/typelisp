@@ -4957,9 +4957,9 @@
   [name : (& name str)]) : InternLookup
   (if (array-ref session.map-ready-cell 0)
     (let
-      [ids : (__tl_dyn-array InternSlotId) session.map-id-slots]
-      [hashes : (__tl_dyn-array i64) session.map-hash-slots]
-      [pool : (__tl_dyn-array String) session.pool-slots]
+      [ids (& session.map-id-slots)]
+      [hashes (& session.map-hash-slots)]
+      [pool (& session.pool-slots)]
       [capacity : i64 (array-length ids)]
       [hash : i64 (intern-hash name)]
       [cursor : i64 (intern-bucket hash capacity)]

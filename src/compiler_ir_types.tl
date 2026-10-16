@@ -10189,19 +10189,18 @@
 (define (compiler-ir-function-seq-empty-block-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
     [acc : i64 0]
     (for [index (iterator.range 0 count)]
       (+=
         acc
-        (compiler-ir-function-empty-block-count (& (array-ref slots index)))))
+        (compiler-ir-function-empty-block-count
+          (& (array-ref functions.slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-max-instruction-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
     [acc : i64 0]
     (for [index (iterator.range 0 count)]
@@ -10210,13 +10209,12 @@
         (compiler-ir-max-i64
           acc
           (compiler-ir-function-max-instruction-count
-            (& (array-ref slots index))))))
+            (& (array-ref functions.slots index))))))
     acc))
 
 (define (compiler-ir-function-seq-max-block-instruction-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
     [acc : i64 0]
     (for [index (iterator.range 0 count)]
@@ -10225,17 +10223,19 @@
         (compiler-ir-max-i64
           acc
           (compiler-ir-function-max-block-instruction-count
-            (& (array-ref slots index))))))
+            (& (array-ref functions.slots index))))))
     acc))
 
 (define (compiler-ir-function-seq-call-arg-count
   [functions : (& functions CompilerIrFunctionSeq)]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerIrFunction) functions.slots]
     [count : i64 functions.len]
     [acc : i64 0]
     (for [index (iterator.range 0 count)]
-      (+= acc (compiler-ir-function-call-arg-count (& (array-ref slots index)))))
+      (+=
+        acc
+        (compiler-ir-function-call-arg-count
+          (& (array-ref functions.slots index)))))
     acc))
 
 (define (compiler-ir-function-seq-phi-input-count

@@ -4244,21 +4244,18 @@
   [klen : i64]
   [hash : i64]) : bool
   (let
-    [offsets : (__tl_dyn-array i64) view.offsets]
-    [lengths : (__tl_dyn-array i64) view.lengths]
-    [bytes : (__tl_dyn-array u8) view.bytes]
-    [cap : i64 (array-length offsets)]
+    [cap : i64 (array-length view.offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
     (while (< walked cap)
       (let
-        [off : i64 (array-ref offsets slot)]
+        [off : i64 (array-ref view.offsets slot)]
         (if (< off 0)
           (return false)
           (if (compiler-backend-peephole-carry-safe-bytes-eq?
-            (& bytes)
+            (& view.bytes)
             off
-            (array-ref lengths slot)
+            (array-ref view.lengths slot)
             key-data
             kstart
             klen)
@@ -66274,7 +66271,7 @@
 ;; function/helper boundary); returns that record's index, or `count`. The probe
 ;; is a packed bit decided once, when the record was built.
 (define (compiler-backend-sweep-region-end-records
-  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [recs : (& recs (__tl_dyn-array CompilerBackendPeepholeLineRecord))]
   [start : i64]
   [count : i64]) : i64
   (let
@@ -66282,7 +66279,7 @@
     (while (< i count)
       (when
         (compiler-backend-peephole-record-globl?
-          (compiler-backend-global-array-element-shared-view recs i))
+          (owned_view.compiler-owned-element-view recs i))
         (return i))
       (set! i (+ i 1)))
     count))
@@ -66565,7 +66562,7 @@
 (define (compiler-backend-sweep-region-records!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
-  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [recs : (& recs (__tl_dyn-array CompilerBackendPeepholeLineRecord))]
   [live : (&mut live (__tl_dyn-array i64))]
   [rstart : i64]
   [rend : i64]
@@ -66593,7 +66590,7 @@
     (while (and sweepable (< i rend))
       (let
         [line : CompilerBackendPeepholeLineRecord
-          (compiler-backend-global-array-element-shared-view recs i)]
+          (owned_view.compiler-owned-element-view recs i)]
         [kind : i64 (compiler-backend-peephole-record-kind line)]
         (cond
           [(= kind compiler-backend-sweep-line-kind-skip) unit]
@@ -66992,7 +66989,6 @@
       (if (>= start-cursor (deref data).sweep-count)
         start-cursor
         (let
-          [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
           [live : (__tl_dyn-array i64)
             (owned_view.compiler-owned-reference-shared-view (& v.live))]
           [count : i64 v.len]
@@ -67001,7 +66997,7 @@
           (while (and (< i count) (< cursor (deref data).sweep-count))
             (let
               [line : CompilerBackendPeepholeLineRecord
-                (compiler-backend-global-array-element-shared-view recs i)]
+                (compiler-backend-global-array-element-shared-view v.lines i)]
               (if (compiler-backend-sweep-label-matches?
                 stream
                 (compiler-backend-peephole-record-data line)
@@ -67012,13 +67008,13 @@
                   [rstart : i64 (+ i 1)]
                   [rend : i64
                     (compiler-backend-sweep-region-end-records
-                      (compiler-backend-global-shared-view recs)
+                      (& v.lines)
                       rstart
                       count)]
                   (compiler-backend-sweep-region-records!
                     backend-state
                     stream
-                    (compiler-backend-global-shared-view recs)
+                    (& v.lines)
                     (&mut live)
                     rstart
                     rend
@@ -85763,18 +85759,17 @@ tl_shared_object_init:
 (define (compiler-backend-peephole-rmw-cands-grow!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]) : unit
   (let
-    [old : (__tl_dyn-array i64) walk.rmw-cands]
     [len : i64 walk.rmw-cand-len]
     [cap : i64
       (if (<
-        (array-length old)
+        (array-length walk.rmw-cands)
         compiler-backend-peephole-rmw-cands-initial-capacity)
         compiler-backend-peephole-rmw-cands-initial-capacity
-        (* (array-length old) 2))]
+        (* (array-length walk.rmw-cands) 2))]
     [grown : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [k : i64 0]
     (while (< k len)
-      (set! (array-ref grown k) (array-ref old k))
+      (set! (array-ref grown k) (array-ref walk.rmw-cands k))
       (set! k (+ k 1)))
     (set! walk.rmw-cands grown)))
 
@@ -86205,13 +86200,12 @@ tl_shared_object_init:
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (__tl_dyn-array String) chunks.items]
     [count : i64 chunks.count]
     [c : i64 chunk]
     [i : i64 start]
     [found : bool false]
     (while (and (not found) (< c count))
-      (if (< i (string.string-length (array-ref items c)))
+      (if (< i (string.string-length (array-ref chunks.items c)))
         (set! found true)
         (begin
           (set! c (+ c 1))
@@ -86227,7 +86221,6 @@ tl_shared_object_init:
   [chunk : i64]
   [start : i64]) : bool
   (let
-    [items : (__tl_dyn-array String) chunks.items]
     [count : i64 chunks.count]
     [c : i64 chunk]
     [i : i64 start]
@@ -86239,7 +86232,7 @@ tl_shared_object_init:
       (< k compiler-backend-peephole-r10-dead-scan-line-cap))
       (let
         [asm : String
-          (compiler-backend-global-array-element-shared-view items c)]
+          (compiler-backend-global-array-element-shared-view chunks.items c)]
         [n : i64 (string.string-length asm)]
         (if (>= i n)
           (begin
@@ -86709,17 +86702,15 @@ tl_shared_object_init:
 (define (compiler-backend-peephole-records-length
   [v : (& v CompilerBackendPeepholeLineVec)]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [count : i64 v.len]
     [total : i64 0]
     [i : i64 0]
     (while (< i count)
       (when
-        (= (array-ref live i) 1)
+        (= (array-ref v.live i) 1)
         (let
           [rec : CompilerBackendPeepholeLineRecord
-            (compiler-backend-global-array-element-shared-view recs i)]
+            (compiler-backend-global-array-element-shared-view v.lines i)]
           (set!
             total
             (+
@@ -86755,8 +86746,6 @@ tl_shared_object_init:
   [dst : (MutPtr u8)]
   [start-pos : i64]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [out-pos : i64 start-pos]
     [run-active : bool false]
     [run-data : (Ptr u8)
@@ -86770,10 +86759,10 @@ tl_shared_object_init:
     [i : i64 lo]
     (while (< i count)
       (when
-        (= (array-ref live i) 1)
+        (= (array-ref v.live i) 1)
         (let
           [rec : CompilerBackendPeepholeLineRecord
-            (compiler-backend-global-array-element-shared-view recs i)]
+            (compiler-backend-global-array-element-shared-view v.lines i)]
           [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
           [addr : u64
             (unsafe
@@ -87105,11 +87094,9 @@ tl_shared_object_init:
   [v : (& v CompilerBackendPeepholeLineVec)]
   [i : i64]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [count : i64 v.len]
     [jrec : CompilerBackendPeepholeLineRecord
-      (compiler-backend-global-array-element-shared-view recs i)]
+      (compiler-backend-global-array-element-shared-view v.lines i)]
     [jdata : (Ptr u8) (compiler-backend-peephole-record-data jrec)]
     [jstart : i64 (compiler-backend-peephole-record-start jrec)]
     [jend : i64 (compiler-backend-peephole-record-end jrec)]
@@ -87141,10 +87128,12 @@ tl_shared_object_init:
             (set! result (- 0 1))
             (begin
               (when
-                (= (array-ref live j) 1)
+                (= (array-ref v.live j) 1)
                 (let
                   [rec : CompilerBackendPeepholeLineRecord
-                    (compiler-backend-global-array-element-shared-view recs j)]
+                    (compiler-backend-global-array-element-shared-view
+                      v.lines
+                      j)]
                   [kind : i64 (compiler-backend-peephole-record-kind rec)]
                   [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
                   [start : i64 (compiler-backend-peephole-record-start rec)]
@@ -87286,10 +87275,8 @@ tl_shared_object_init:
   [i : i64]
   [t : i64]) : String
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [trec : CompilerBackendPeepholeLineRecord
-      (compiler-backend-global-array-element-shared-view recs t)]
+      (compiler-backend-global-array-element-shared-view v.lines t)]
     [tdata : (Ptr u8) (compiler-backend-peephole-record-data trec)]
     [tstart : i64 (compiler-backend-peephole-record-start trec)]
     [tend : i64 (compiler-backend-peephole-record-end trec)]
@@ -87301,10 +87288,10 @@ tl_shared_object_init:
         [name : String ""]
         (while (and (< j t) (= (string.string-length name) 0))
           (when
-            (= (array-ref live j) 1)
+            (= (array-ref v.live j) 1)
             (let
               [rec : CompilerBackendPeepholeLineRecord
-                (compiler-backend-global-array-element-shared-view recs j)]
+                (compiler-backend-global-array-element-shared-view v.lines j)]
               [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
               [start : i64 (compiler-backend-peephole-record-start rec)]
               [end : i64 (compiler-backend-peephole-record-end rec)]
@@ -87406,13 +87393,12 @@ tl_shared_object_init:
   (unless
     (< walk.abort-cand-len (array-length walk.abort-cands))
     (let
-      [old : (__tl_dyn-array i64) walk.abort-cands]
       [len : i64 walk.abort-cand-len]
       [grown : (__tl_dyn-array i64)
-        (__tl_make-array i64 (+ (* (array-length old) 2) 16))]
+        (__tl_make-array i64 (+ (* (array-length walk.abort-cands) 2) 16))]
       [k : i64 0]
       (while (< k len)
-        (set! (array-ref grown k) (array-ref old k))
+        (set! (array-ref grown k) (array-ref walk.abort-cands k))
         (set! k (+ k 1)))
       (set! walk.abort-cands grown)))
   (set! (array-ref walk.abort-cands walk.abort-cand-len) index)
@@ -87445,13 +87431,12 @@ tl_shared_object_init:
       (unless
         (< walk.close-cand-len (array-length walk.close-cands))
         (let
-          [old : (__tl_dyn-array i64) walk.close-cands]
           [len : i64 walk.close-cand-len]
           [grown : (__tl_dyn-array i64)
-            (__tl_make-array i64 (+ (* (array-length old) 2) 16))]
+            (__tl_make-array i64 (+ (* (array-length walk.close-cands) 2) 16))]
           [k : i64 0]
           (while (< k len)
-            (set! (array-ref grown k) (array-ref old k))
+            (set! (array-ref grown k) (array-ref walk.close-cands k))
             (set! k (+ k 1)))
           (set! walk.close-cands grown)))
       (set! (array-ref walk.close-cands walk.close-cand-len) index)
@@ -87465,19 +87450,17 @@ tl_shared_object_init:
   [v : (& v CompilerBackendPeepholeLineVec)]
   [call : i64]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [j : i64 (- call 1)]
     [setup : i64 0]
     [result : i64 (- 0 2)]
     (while (= result (- 0 2))
       (cond
         [(< j 0) (set! result (- 0 1))]
-        [(not (= (array-ref live j) 1)) (set! j (- j 1))]
+        [(not (= (array-ref v.live j) 1)) (set! j (- j 1))]
         [else
           (let
             [rec : CompilerBackendPeepholeLineRecord
-              (compiler-backend-global-array-element-shared-view recs j)]
+              (compiler-backend-global-array-element-shared-view v.lines j)]
             [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
             [start : i64 (compiler-backend-peephole-record-start rec)]
             [end : i64 (compiler-backend-peephole-record-end rec)]
@@ -87518,8 +87501,6 @@ tl_shared_object_init:
   [v : (& v CompilerBackendPeepholeLineVec)]
   [j : i64]) : i64
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-    [live : (__tl_dyn-array i64) v.live]
     [k : i64 (- j 1)]
     [stop : i64 (- j compiler-backend-cold-label-scan-limit)]
     [result : i64 (- 0 2)]
@@ -87528,10 +87509,10 @@ tl_shared_object_init:
         (set! result (- 0 1))
         (let
           [rec : CompilerBackendPeepholeLineRecord
-            (compiler-backend-global-array-element-shared-view recs k)]
+            (compiler-backend-global-array-element-shared-view v.lines k)]
           (when
             (and
-              (= (array-ref live k) 1)
+              (= (array-ref v.live k) 1)
               (=
                 (compiler-backend-peephole-record-kind rec)
                 compiler-backend-sweep-line-kind-label))
@@ -87560,8 +87541,6 @@ tl_shared_object_init:
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     (- 0 1)
     (let
-      [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-      [live : (__tl_dyn-array i64) v.live]
       [k : i64 (- j 1)]
       [stop : i64 (- j compiler-backend-cold-label-scan-limit)]
       [result : i64 (- 0 2)]
@@ -87570,10 +87549,10 @@ tl_shared_object_init:
           (set! result (- 0 1))
           (let
             [rec : CompilerBackendPeepholeLineRecord
-              (compiler-backend-global-array-element-shared-view recs k)]
+              (compiler-backend-global-array-element-shared-view v.lines k)]
             (when
               (and
-                (= (array-ref live k) 1)
+                (= (array-ref v.live k) 1)
                 (not
                   (=
                     (compiler-backend-peephole-record-kind rec)
@@ -87599,11 +87578,8 @@ tl_shared_object_init:
 ;; closing line after it. Nothing else in the group is examined.
 (define (compiler-backend-cold-plan [v : (& v CompilerBackendPeepholeLineVec)]) : CompilerBackendColdPlan
   (let
-    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
     [count : i64 v.len]
-    [aborts : (__tl_dyn-array i64) v.abort-cands]
     [abort-count : i64 v.abort-cand-len]
-    [closes : (__tl_dyn-array i64) v.close-cands]
     [close-count : i64 v.close-cand-len]
     [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
     [a : i64 0]
@@ -87614,7 +87590,7 @@ tl_shared_object_init:
     [fallback-ord : i64 0]
     (while (< a abort-count)
       (let
-        [call : i64 (array-ref aborts a)]
+        [call : i64 (array-ref v.abort-cands a)]
         (when
           (> call done-to)
           (let
@@ -87637,7 +87613,7 @@ tl_shared_object_init:
                     (let
                       [lrec : CompilerBackendPeepholeLineRecord
                         (compiler-backend-global-array-element-shared-view
-                          recs
+                          v.lines
                           label)]
                       [lstart : i64
                         (compiler-backend-peephole-record-start lrec)]
@@ -87662,7 +87638,9 @@ tl_shared_object_init:
                   (> (string.string-length name) 0)
                   (let
                     [rec : CompilerBackendPeepholeLineRecord
-                      (compiler-backend-global-array-element-shared-view recs j)]
+                      (compiler-backend-global-array-element-shared-view
+                        v.lines
+                        j)]
                     [data : (Ptr u8)
                       (compiler-backend-peephole-record-data rec)]
                     [start : i64 (compiler-backend-peephole-record-start rec)]
@@ -87687,7 +87665,7 @@ tl_shared_object_init:
                         0
                         (compiler-backend-cold-record-bytes
                           (compiler-backend-global-array-element-shared-view
-                            recs
+                            v.lines
                             loc)))]
                     [k : i64 plan.stubs]
                     [added : i64
@@ -87699,12 +87677,14 @@ tl_shared_object_init:
                     [flush-at : i64 count]
                     ;; This stub's flush point: the first closing line
                     ;; after its continuation.
-                    (while (and (< c close-count) (<= (array-ref closes c) t))
+                    (while (and
+                      (< c close-count)
+                      (<= (array-ref v.close-cands c) t))
                       (set! c (+ c 1)))
                     (set!
                       flush-at
                       (if (< c close-count)
-                        (array-ref closes c)
+                        (array-ref v.close-cands c)
                         count))
                     ;; Stubs still pending for an earlier function are
                     ;; flushed at that function's closing line.

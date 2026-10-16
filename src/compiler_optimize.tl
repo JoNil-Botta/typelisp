@@ -15392,12 +15392,12 @@
 ;; tail-recursion-to-loop back edge jumps to the function entry block).
 (define (opt-ssa-entry-has-preds? [context : (& context OptCfgContext)]) : bool
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     (match (opt-cfg-index-id index context.entry-label)
       [(Some id)
         (let
-          [preds : OptCfgCsr index.preds]
-          [offsets : (__tl_dyn-array i64) preds.offsets]
+          [preds (& index.preds)]
+          [offsets (& preds.offsets)]
           (> (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 0))]
       [(None) false])))
 
@@ -15992,14 +15992,16 @@
   [use-block-id : i64]
   [use-pos : i64]) : ir.CompilerIrMaybeValue
   (let
-    [buckets : (__tl_dyn-array OptGlobalFacts) table.buckets]
     [bucket : i64
-      (opt-global-fact-bucket type-segment-bases (array-length buckets) probe)]
+      (opt-global-fact-bucket
+        type-segment-bases
+        (array-length table.buckets)
+        probe)]
     [result : ir.CompilerIrMaybeValue (No)]
-    (if (and (>= bucket 0) (< bucket (array-length buckets)))
+    (if (and (>= bucket 0) (< bucket (array-length table.buckets)))
       (let
         [facts : OptGlobalFacts
-          (compiler-opt-global-array-element-shared-view buckets bucket)]
+          (compiler-opt-global-array-element-shared-view table.buckets bucket)]
         [items : opt_global_fact_vec.Vec facts.items]
         [slots : (& items (__tl_dyn-array OptGlobalFact))
           (opt_global_fact_vec.slots (& items))]
@@ -16725,14 +16727,15 @@
   [set : OptLabelSet]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : OptLabelSet
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : OptLabelSet set]
     (for [index (iterator.range 0 count)]
-      (match (compiler-opt-global-array-element-shared-view slots index)
+      (match (compiler-opt-global-array-element-shared-view instrs.slots index)
         [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Switch _ _ _ _)
              (TotalEnumSwitch _ _ _ _ _))
-          (set! out (opt-cfg-instr-successors out (& (array-ref slots index))))]
+          (set!
+            out
+            (opt-cfg-instr-successors out (& (array-ref instrs.slots index))))]
         [_ unit]))
     out))
 
@@ -23922,8 +23925,8 @@
     [(None) (- 0 1)]
     [(Some id)
       (let
-        [preds : OptCfgCsr index.preds]
-        [offsets : (__tl_dyn-array i64) preds.offsets]
+        [preds (& index.preds)]
+        [offsets (& preds.offsets)]
         (if (and
           (= (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 1)
           (= (array-ref preds.edges (array-ref offsets id)) from))
@@ -27501,8 +27504,8 @@
 ;; to report and the whole class collapses onto one reason.
 (define (opt-licm-refuse-obj-table? [ctx : (& ctx OptLicmRefuseCtx)]) : bool
   (let
-    [cells : OptGlobalCellSummary ctx.cells]
-    [obj : OptGlobalModRef cells.obj-mod-ref]
+    [cells (& ctx.cells)]
+    [obj (& cells.obj-mod-ref)]
     obj.built?))
 
 ;; Does the Gep/Load arm's `Global` operand disjunct HOLD for `name`? The two
@@ -34628,7 +34631,7 @@
   [exits : OptLabelSet]
   [folded : OptLabelSet]) : bool
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     (opt-flag-exit-exits-separate-from?
       blocks
       body
@@ -36615,9 +36618,9 @@
   [seen : (& seen (__tl_dyn-array i64))]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
   (let
-    [index : OptCfgIndex context.index]
-    [pred-map : OptPredMap context.pred-map]
-    [doms : OptDomInfo context.doms]
+    [index (& context.index)]
+    [pred-map (& context.pred-map)]
+    [doms (& context.doms)]
     (and
       (opt-dom-dominates? doms gate latch)
       (opt-flag-exit-clear-edges-ok?
@@ -50134,7 +50137,7 @@
   (match sum
     [(Var s)
       (let
-        [affine : OptGvnAffineDefs table.affine]
+        [affine (& table.affine)]
         [v : i64 (opt_i64_i64_map.get-value-or (& affine.base) s (- 0 1))]
         (if (< v 0)
           (No)
@@ -50324,14 +50327,13 @@
   [type-segment-bases : i64]
   [table : (& table OptGvnMap)]
   [key : (& OptExprKey)]) : i64
-  (let
-    [buckets : (__tl_dyn-array OptGvnBucket) table.buckets]
+  (begin
     (opt-gvn-lookup-bucket
       type-segment-bases
       (&
         (array-ref
-          buckets
-          (opt-gvn-bucket-index type-segment-bases buckets key)))
+          table.buckets
+          (opt-gvn-bucket-index type-segment-bases table.buckets key)))
       key)))
 
 ;; Rewriting an instruction allocates only when the rewrite fires: scanning a
@@ -50478,7 +50480,7 @@
   [out : (&mut out (__tl_dyn-array OptGvnBlockResult))]
   [id : i64]) : i64
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and (>= id 0) (< id count))
       (match (opt-cfg-index-block index id)
@@ -52664,21 +52666,18 @@
   [len : (& ir.CompilerIrValue)]) : bool
   (match value
     [(Var var)
-      (let
-        [offsets : (__tl_dyn-array i64) env.checks.offsets]
-        (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
+      (begin
+        (if (or (< var 0) (>= (+ var 1) (array-length env.checks.offsets)))
           false
           (let
-            [lens : (__tl_dyn-array ir.CompilerIrValue) env.checks.lens]
-            [rows : (__tl_dyn-array i64) env.checks.blocks]
-            [row : i64 (array-ref offsets var)]
-            [end : i64 (array-ref offsets (+ var 1))]
+            [row : i64 (array-ref env.checks.offsets var)]
+            [end : i64 (array-ref env.checks.offsets (+ var 1))]
             [found : bool false]
             (while (and (not found) (< row end))
               (let
-                [block : i64 (array-ref rows row)]
+                [block : i64 (array-ref env.checks.blocks row)]
                 (if (and
-                  (opt-value-eq (& (array-ref lens row)) len)
+                  (opt-value-eq (& (array-ref env.checks.lens row)) len)
                   (opt-dom-info-dominates-id? env.doms block at-id)
                   (or end? (not (= block at-id))))
                   (set! found true)
@@ -55267,9 +55266,9 @@
   [env : (& env OptBoundsDomEnv)]
   [id : i64]) : i64
   (let
-    [preds : OptCfgCsr env.index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& env.index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
       (- 0 1)
       (let
@@ -55360,9 +55359,9 @@
   [ty : (& ast.AstType)]
   [header-id : i64]) : OptDomCmpLookup
   (let
-    [preds : OptCfgCsr env.index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& env.index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     (if (or (< header-id 0) (>= (+ header-id 1) (array-length offsets)))
       (No)
       (let
@@ -56463,9 +56462,9 @@
   [parent-id : i64]
   [child-id : i64]) : bool
   (let
-    [preds : OptCfgCsr index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     (if (or (< child-id 0) (>= (+ child-id 1) (array-length offsets)))
       false
       (let
@@ -58290,7 +58289,7 @@
   [out : (&mut out (__tl_dyn-array OptDivRemBlockResult))]
   [slot : i64]) : unit
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     (if (>= slot index.reach-count)
       unit
       (let
@@ -60968,11 +60967,11 @@
   (if (<= fuel 0)
     var
     (let
-      [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-      [def-index : i64 (opt-unroll-def-index (& slots) phi-count last var)]
+      [def-index : i64
+        (opt-unroll-def-index (& instrs.slots) phi-count last var)]
       (if (< def-index 0)
         var
-        (match (array-ref slots def-index)
+        (match (array-ref instrs.slots def-index)
           [(Mov _ src _)
             (match src
               [(Var src-id)
@@ -66731,11 +66730,11 @@
           (if (= id iphi)
             (Some (- 0 1) 1 0)
             (let
-              [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-              [def-index : i64 (opt-unroll-def-index (& slots) 0 last id)]
+              [def-index : i64
+                (opt-unroll-def-index (& instrs.slots) 0 last id)]
               (if (< def-index 0)
                 (Some id 0 0)
-                (match (array-ref slots def-index)
+                (match (array-ref instrs.slots def-index)
                   [(Mov _ src _)
                     (match src
                       [(I64 k) (Some (- 0 1) 0 k)]
@@ -67245,7 +67244,7 @@
   [shape : (& shape OptUnrollConstShape)]) : OptUcePlan
   (let
     [trips : i64 shape.trips]
-    [ity : ast.AstType shape.ity]
+    [ity (& shape.ity)]
     [exit-label : i64 shape.exit-label]
     (if (or
       (< trips 4)
@@ -70492,11 +70491,11 @@
   (if (<= fuel 0)
     var
     (let
-      [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-      [def-index : i64 (opt-unroll-def-index (& slots) phi-count last var)]
+      [def-index : i64
+        (opt-unroll-def-index (& instrs.slots) phi-count last var)]
       (if (< def-index 0)
         var
-        (match (array-ref slots def-index)
+        (match (array-ref instrs.slots def-index)
           [(Mov _ src _)
             (match src
               [(Var src-id)
@@ -77122,7 +77121,7 @@
   [vars : (& vars OptBceMbVarList)]
   [index : i64]) : i64
   (let
-    [items : opt_dense_i64_vec.Vec vars.items]
+    [items (& vars.items)]
     (array-ref
       (opt_dense_i64_vec.slots (& items))
       (- (- (opt_dense_i64_vec.len (& items)) index) 1))))
@@ -88870,14 +88869,13 @@
     [(Block _ instrs)
       (let
         [count : i64 instrs.len]
-        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
         [index : i64 0]
         [found : bool false]
         (while (and (not found) (< index (- count 1)))
-          (match (& (array-ref slots index))
+          (match (& (array-ref instrs.slots index))
             [(Gep dst _ (I64 _) _)
               (let
-                [next (& (array-ref slots (+ index 1)))]
+                [next (& (array-ref instrs.slots (+ index 1)))]
                 (when
                   (and
                     (opt-load-sink-crossable? next)
@@ -88886,11 +88884,11 @@
             [(Load load-dst (Var gep-dst) _)
               (when
                 (> index 0)
-                (match (& (array-ref slots (- index 1)))
+                (match (& (array-ref instrs.slots (- index 1)))
                   [(Gep gep _ _ _)
                     (if (= gep gep-dst)
                       (let
-                        [next (& (array-ref slots (+ index 1)))]
+                        [next (& (array-ref instrs.slots (+ index 1)))]
                         (if (and
                           (opt-load-sink-crossable? next)
                           (not (opt-load-sink-instr-uses-var? next load-dst)))
@@ -88908,12 +88906,12 @@
     [(Array seq)
       (let
         [count : i64 seq.len]
-        [slots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [index : i64 0]
         [found : bool false]
         (while (and (not found) (< index count))
           (if (let
-            [block (compiler-opt-global-array-element-shared-view slots index)]
+            [block
+              (compiler-opt-global-array-element-shared-view seq.slots index)]
             (opt-load-sink-block-wants-pass? block))
             (set! found true)
             unit)
@@ -89002,14 +89000,18 @@
     [(Block _ instrs)
       (let
         [count : i64 instrs.len]
-        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
         [index : i64 2]
         [found : bool false]
         (while (and (not found) (< index count))
-          (match (compiler-opt-global-array-element-shared-view slots index)
+          (match (compiler-opt-global-array-element-shared-view
+            instrs.slots
+            index)
             [(StorePtr (Var address) _ _)
               (when
-                (opt-store-addr-sink-gep-before? (& slots) address (- index 1))
+                (opt-store-addr-sink-gep-before?
+                  (& instrs.slots)
+                  address
+                  (- index 1))
                 (set! found true))]
             [_ unit])
           (set! index (+ index 1)))
@@ -89066,14 +89068,13 @@
     [(Array seq)
       (let
         [count : i64 seq.len]
-        [source : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [index : i64 0]
         [wanted : bool false]
         (while (and (not wanted) (< index count))
           (when
             (let
               [block
-                (compiler-opt-global-array-element-shared-view source index)]
+                (compiler-opt-global-array-element-shared-view seq.slots index)]
               (opt-store-addr-sink-block-wants-pass? block))
             (set! wanted true))
           (set! index (+ index 1)))
@@ -89089,7 +89090,7 @@
             (while (< index count)
               (match (opt-store-addr-sink-block
                 (& use-counts)
-                (compiler-opt-global-array-element-shared-view source index))
+                (compiler-opt-global-array-element-shared-view seq.slots index))
                 [(Result next-block block-changed)
                   (set! (array-ref out index) next-block)
                   (when block-changed (set! changed true))])
@@ -96244,9 +96245,9 @@
 ;; Predecessors of `id`, exactly two, in CFG edge order.
 (define (opt-ubound-pred-pair [index : (& index OptCfgIndex)] [id : i64]) : OptUboundMaybePair
   (let
-    [preds : OptCfgCsr index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
       (No)
       (let
@@ -96259,9 +96260,9 @@
 ;; The single predecessor of `id`, or -1.
 (define (opt-ubound-sole-pred [index : (& index OptCfgIndex)] [id : i64]) : i64
   (let
-    [preds : OptCfgCsr index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
       (- 0 1)
       (let
@@ -115384,7 +115385,6 @@
   [index : (& index OptFunctionIndex)]) : (__tl_dyn-array bool)
   (let
     [count : i64 (opt-function-index-count index)]
-    [values : (__tl_dyn-array ir.CompilerIrFunction) index.values]
     [flags : (__tl_dyn-array bool)
       (__tl_make-array
         bool
@@ -115394,7 +115394,7 @@
     (for [i (iterator.range 0 count)]
       (set!
         (array-ref flags i)
-        (opt-inline-tiny-leaf-callee-ok? (& (array-ref values i)))))
+        (opt-inline-tiny-leaf-callee-ok? (& (array-ref index.values i)))))
     flags))
 
 (define (opt-inline-tiny-leaf-lookup
@@ -124244,13 +124244,12 @@
               (opt_i64_i64_map.with-capacity capacity)
               0))]
         [_data-slot-on : unit (set! opt-licm-global-data-slot-on true)]
-        [addr-taken : opt_i64_i64_map.Map
-          (owned_view.compiler-owned-reference-shared-view facts.addr-taken)]
+        [addr-taken (& facts.addr-taken)]
         ;; The non-negativity table reads `addr-taken` and the declared types,
         ;; so it is built from a partly-filled summary carrying exactly those.
         [seed : OptGlobalCellSummary
           (OptGlobalCellSummary
-            (compiler-opt-global-shared-view addr-taken)
+            (owned_view.compiler-owned-reference-shared-view addr-taken)
             (compiler-opt-global-shared-view type-index)
             (compiler-opt-global-shared-view types)
             0
@@ -124279,7 +124278,7 @@
         [len-eq-clean : opt_i64_i64_map.Map
           (opt-len-eq-clean-build facts.index len-eq capacity)]
         (OptGlobalCellSummary
-          (compiler-opt-global-shared-view addr-taken)
+          (owned_view.compiler-owned-reference-shared-view addr-taken)
           type-index
           types
           (opt-global-cell-word-count globals addr-taken 0)
@@ -124488,8 +124487,8 @@
     [visited : (__tl_dyn-array bool) visited-input]
     [stack : (__tl_dyn-array i64) stack-input]
     [sp-cell : (__tl_dyn-array i64) sp-cell-input]
-    [csr : OptCfgCsr index.succs]
-    [edges : (__tl_dyn-array i64) csr.edges]
+    [csr (& index.succs)]
+    [edges (& csr.edges)]
     [end : i64 (array-ref csr.offsets (+ id 1))]
     (for [edge (iterator.range (array-ref csr.offsets id) end)]
       (when
@@ -132309,9 +132308,9 @@
   [exits : (& (__tl_dyn-array OptPureCallTable))]
   [id : i64]) : OptPureCallTable
   (let
-    [preds : OptCfgCsr index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
-    [edges : (__tl_dyn-array i64) preds.edges]
+    [preds (& index.preds)]
+    [offsets (& preds.offsets)]
+    [edges (& preds.edges)]
     [start : i64 (array-ref offsets id)]
     [end : i64 (array-ref offsets (+ id 1))]
     (if (or (= start end) (>= (array-ref edges start) id))
@@ -134194,8 +134193,8 @@
   [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
-    [index : OptCfgIndex context.index]
-    [preds : OptCfgCsr index.preds]
+    [index (& context.index)]
+    [preds (& index.preds)]
     [entry-label : i64 context.entry-label]
     (match (opt-cfg-index-id index entry-label)
       [(Some entry-id)
@@ -135536,7 +135535,7 @@
     (>= (opt-load-join-count joins) (opt-load-join-phi-cap)))
     state
     (let
-      [index : OptCfgIndex context.index]
+      [index (& context.index)]
       [count : i64
         (opt-load-join-collect-preds index exit-states processed joins id)]
       (if (< count 0)
@@ -136152,7 +136151,7 @@
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     [block-count : i64 (opt-cfg-index-block-count index)]
     (if (or (< frame 1) (not (opt-load-pre-any-site? index block-count)))
       (owned_view.compiler-owned-reference-shared-view blocks)
@@ -136170,8 +136169,8 @@
           (__tl_make-array
             i64
             (opt-load-join-loop-count (opt_natural_loop_vec.view loops)))]
-        [succs : OptCfgCsr index.succs]
-        [reachable : (__tl_dyn-array bool) index.reachable]
+        [succs (& index.succs)]
+        [reachable (& index.reachable)]
         [moved : i64 0]
         [slot : i64 0]
         (while (< slot (array-length cache))
@@ -138508,7 +138507,7 @@
   [dropvar : (&mut dropvar (__tl_dyn-array bool))]
   [pairs : (&mut pairs (__tl_dyn-array i64))]) : i64
   (let
-    [index : OptCfgIndex context.index]
+    [index (& context.index)]
     [sites : (__tl_dyn-array i64)
       (__tl_make-array i64 (* (opt-guard-dedup-site-cap) 6))]
     [site-count : i64

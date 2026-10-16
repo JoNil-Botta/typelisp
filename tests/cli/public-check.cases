@@ -789,3 +789,140 @@ exit 1
 stdout empty
 stderr contains box view accepts at most one field selector
 stderr contains typed.tl:8:
+
+
+case check-box-origin-box-view-mut-borrow-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_box_view_mut_borrow_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]
+stderr contains cannot mutably borrow `r.b` behind a shared reference
+stderr contains tests/safety/mir_box_view_mut_borrow_reject.tl:11:12
+stderr contains tests/safety/mir_box_view_mut_borrow_reject.tl:10:8
+
+
+case check-box-origin-box-view-region-write-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_box_view_region_write_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]
+stderr contains cannot mutably borrow `r.b` behind a shared reference
+stderr contains tests/safety/mir_box_view_region_write_reject.tl:8:18
+stderr contains tests/safety/mir_box_view_region_write_reject.tl:7:27
+
+
+case check-box-origin-box-view-write-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_box_view_write_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]
+stderr contains cannot mutably borrow `r.b` behind a shared reference
+stderr contains tests/safety/mir_box_view_write_reject.tl:8:18
+stderr contains tests/safety/mir_box_view_write_reject.tl:7:8
+
+
+case check-box-origin-copied-box-alias-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_alias_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_alias_reject.tl:8:20
+
+
+case check-box-origin-copied-box-branch-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_branch_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_branch_reject.tl:9:9
+
+
+case check-box-origin-copied-box-call-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_call_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_call_reject.tl:9:12
+
+
+case check-box-origin-copied-box-field-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_field_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_field_reject.tl:7:20
+
+
+case check-box-origin-copied-box-macro-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_macro_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_macro_reject.tl:11:16
+stderr contains tests/safety/mir_copied_box_macro_reject.tl:11:3
+stderr contains in expansion of macro
+
+
+case check-box-origin-copied-box-nested-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_nested_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_nested_reject.tl:10:20
+
+
+case check-box-origin-copied-box-return-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_return_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_return_reject.tl:6:3
+
+
+case check-box-origin-copied-box-store-reject
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run compile "{{root}}/tests/safety/mir_copied_box_store_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+stderr contains tests/safety/mir_copied_box_store_reject.tl:6:11

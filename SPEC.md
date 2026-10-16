@@ -555,7 +555,11 @@ is rejected unless a future replacement operation explicitly supports it.
 reference storage place. Shared references are read-only. The replacement must
 typecheck against `T` and satisfy the same region/reference store checks as
 other place mutations. Borrowing `(deref value)` borrows the projected storage
-under the ordinary lexical exclusivity rules.
+under the ordinary lexical exclusivity rules. A Box field read through a shared
+reference remains a shared view when bound to a local, including a region-tagged
+local; dereferencing that view does not grant write access. A plain owned
+`(Box T)` annotation cannot take that field out of the reference. An explicit
+borrow preserves the origin, while `clone` produces an independent owned Box.
 
 The former `box-get` and `box-take` source forms are removed. The parser emits
 focused migration diagnostics directing old source to `deref`; internal AST

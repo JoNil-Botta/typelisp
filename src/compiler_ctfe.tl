@@ -1733,7 +1733,7 @@
   [key-id : i64]
   [field : i64]) : i64
   (let
-    [words : (__tl_dyn-array i64) items.aligns.words]
+    [words (& items.aligns.words)]
     [len : i64 items.aligns.len]
     [cursor : i64 0]
     [found : i64 0]
@@ -1766,7 +1766,9 @@
             CtfeReflectInfo
             (ctfe-metadata-grown-capacity capacity required))]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref grown index) (owned_view.compiler-owned-element-view slots index)))
+          (set!
+            (array-ref grown index)
+            (owned_view.compiler-owned-element-view slots index)))
         (set! items.slots grown)
         (set! items.len len)
         items))))

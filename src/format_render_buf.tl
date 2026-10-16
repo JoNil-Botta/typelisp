@@ -26,8 +26,7 @@
 
 (define (fmt-render-buf-reserve [buf : (&mut buf FmtRenderBuf)] [needed : i64]) : unit
   (let
-    [cur : (__tl_dyn-array u8) buf.data]
-    [cap : i64 (array-length cur)]
+    [cap : i64 (array-length buf.data)]
     (if (<= needed cap)
       unit
       (let
@@ -40,7 +39,7 @@
           (if (> n 0)
             (unsafe
               (string.str-copy-bytes-into
-                (ptr-cast (__tl_array-data cur) : (Ptr u8))
+                (ptr-cast (__tl_array-data buf.data) : (Ptr u8))
                 (__tl_array-data bigger)
                 0
                 n))

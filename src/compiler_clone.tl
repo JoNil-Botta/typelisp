@@ -168,7 +168,7 @@
   [name-id : i64]) : i64
   (if (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id))
     (let
-      [aliases : clone_id_map.Map names.aliases]
+      [aliases (& names.aliases)]
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
       [key-id : i64 (clone-import-alias-key-id module-id alias-id)]
       (match (clone_id_map.get (& aliases) key-id)

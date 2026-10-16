@@ -4050,7 +4050,9 @@
                       (tc-macro-expansion-result-with-frame
                         ctx
                         expanded
-                        (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))
+                        (=
+                          macro-name-id
+                          (ctfe_support.ctfe-compact-caller-origin-name))
                         (macro-expansion-invocation-path-id provenance-id)
                         (macro-expansion-origin-path-id provenance-id)
                         macro-name-id
@@ -33732,8 +33734,7 @@
   [data : (&mut data TcStringListStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcStringListNode) data.nodes]
-    [old-capacity : i64 (array-length old)]
+    [old-capacity : i64 (array-length data.nodes)]
     [next-capacity : i64 old-capacity]
     (unless
       (<= required old-capacity)
@@ -33748,10 +33749,12 @@
         [index : i64 0]
         (while (< index data.len)
           (let
-            [node : TcStringListNode
-              (tc-global-array-element-shared-view old index)]
-            [owned : String (in-arena owner (string.copy (& node.value)))]
-            (set! (array-ref next index) (TcStringListNode owned node.parent))
+            [parent : i64 (array-ref data.nodes index).parent]
+            [owned : String
+              (in-arena
+                owner
+                (string.copy (& (array-ref data.nodes index).value)))]
+            (set! (array-ref next index) (TcStringListNode owned parent))
             (set! index (+ index 1))))
         (set! data.nodes next)))))
 
@@ -33889,8 +33892,7 @@
   [data : (&mut data TcNameIdListStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcNameIdListNode) data.nodes]
-    [old-capacity : i64 (array-length old)]
+    [old-capacity : i64 (array-length data.nodes)]
     [next-capacity : i64 old-capacity]
     (unless
       (<= required old-capacity)
@@ -33905,7 +33907,7 @@
           [index : i64 0]
           (while (< index data.len)
             (let
-              [node : TcNameIdListNode (array-ref old index)]
+              [node : TcNameIdListNode (array-ref data.nodes index)]
               (set!
                 (array-ref next index)
                 (TcNameIdListNode node.value node.parent))
@@ -34590,8 +34592,7 @@
   [data : (&mut data TcLifetimeSubstStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcLifetimeSubstNode) data.nodes]
-    [old-capacity : i64 (array-length old)]
+    [old-capacity : i64 (array-length data.nodes)]
     [next-capacity : i64 old-capacity]
     (unless
       (<= required old-capacity)
@@ -34606,7 +34607,7 @@
           [index : i64 0]
           (while (< index data.len)
             (let
-              [node : TcLifetimeSubstNode (array-ref old index)]
+              [node : TcLifetimeSubstNode (array-ref data.nodes index)]
               (set!
                 (array-ref next index)
                 (TcLifetimeSubstNode node.from node.to node.parent))
@@ -38415,7 +38416,7 @@
   (let
     [count : i64 decls.len]
     [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-slots (& decls.slots)]
     [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [prev-arena : i64 (arena.tl_arena_current)]
     [old-arena : i64 tc-module-decl-index-arena]
@@ -38439,7 +38440,7 @@
     [import-running : i64 0]
     ;; Pass 1: assign a dense slot per module id and count its decls.
     (for [i (iterator.range 0 count)]
-      (match (array-ref decl-slots (+ decl-offset i))
+      (match (& (array-ref decl-slots (+ decl-offset i)))
         [(Module next-module) (set! cur-module-id next-module)]
         [_
           (let
@@ -38475,7 +38476,7 @@
     ;; Pass 2: fill program-order positions per module slot.
     (set! cur-module-id empty-module-id)
     (for [i (iterator.range 0 count)]
-      (match (array-ref decl-slots (+ decl-offset i))
+      (match (& (array-ref decl-slots (+ decl-offset i)))
         [(Module next-module) (set! cur-module-id next-module)]
         [_
           (let
@@ -60782,20 +60783,37 @@
   [env : TcTypeEnv]
   [name : String]
   [maybe-ty : ast.AstMaybeType]
-  [init : ast.AstExpr]
+  [init-id : i64]
   [init-ty : ast.AstType]) : ResultTcUnit
   (match maybe-ty
     [(Some want)
       (match (tc-expect-in-context
         ctx
         env
-        init-ty
-        want
+        (tc-global-shared-view init-ty)
+        (tc-global-shared-view want)
         (str_cat.str-cat "typecheck: let binding `" name "` type mismatch"))
-        [(Ok) Ok]
+        [(Ok)
+          (if (tc-selected-view-move-out?
+            ctx
+            env
+            want
+            (tc-global-shared-view init-ty))
+            (Err
+              (tc-selected-view-move-out-error
+                ctx
+                env
+                init-id
+                init-ty
+                1
+                TcNameIdList.Nil))
+            Ok)]
         [(Err message)
           (Err
-            (tc-locate-error-at-expr (tc-context-expr-bases ctx) init message))])]
+            (tc-locate-error-at-expr
+              (tc-context-expr-bases ctx)
+              (tc-context-expr-get ctx init-id)
+              message))])]
     [(No) Ok]))
 
 (define (tc-let-binding-plain-bind-type
@@ -60841,7 +60859,7 @@
                   (tc-context-structural-session ctx)
                   name)
                 (tc-global-shared-view resolved-maybe-ty)
-                (tc-global-shared-view init)
+                init-box
                 (tc-global-shared-view init-ty)))]
           (let
             [_
@@ -62231,7 +62249,7 @@
                 (tc-context-structural-session ctx)
                 name)
               (ast.AstMaybeType.Some (tc-global-shared-view resolved-want))
-              (tc-global-shared-view init)
+              init-id
               (tc-global-shared-view init-ty))
               [(ResultTcUnit.Err message)
                 (return (ResultTcLetBinding.Err message))]
@@ -70354,7 +70372,6 @@
       [_reset : unit (tc-program-enum-index-reset!)]
       [count : i64 decls.len]
       [decl-offset : i64 decls.offset]
-      [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
       [prev-arena : i64 (arena.tl_arena_current)]
       [index-arena : i64 (arena.tl_arena_make)]
       [_switch : unit
@@ -70366,7 +70383,7 @@
         (let
           [decl : ast.AstDecl
             (tc-global-array-element-shared-view
-              decl-slots
+              decls.slots
               (+ decl-offset position))]
           (match (tc-global-shared-view decl)
             [(Module next-module) (set! module-id next-module)]
@@ -87125,8 +87142,7 @@
   [data : (&mut data TcMovePathSegmentStoreData)]
   [required : i64]) : unit
   (let
-    [old : (__tl_dyn-array TcMovePathSegmentNode) data.nodes]
-    [old-capacity : i64 (array-length old)]
+    [old-capacity : i64 (array-length data.nodes)]
     [next-capacity : i64 old-capacity]
     (unless
       (<= required old-capacity)
@@ -87141,7 +87157,7 @@
           [index : i64 0]
           (while (< index data.len)
             (let
-              [node : TcMovePathSegmentNode (array-ref old index)]
+              [node : TcMovePathSegmentNode (array-ref data.nodes index)]
               (set!
                 (array-ref next index)
                 (TcMovePathSegmentNode node.parent node.kind node.value))
@@ -94612,7 +94628,7 @@
   [env : TcTypeEnv]) : TcTypeEnv
   (let
     [cur-env : TcTypeEnv env]
-    [prefix : ast.AstDeclList data.prefix-rev]
+    [prefix (& data.prefix-rev)]
     [len : i64 (ast.ast-decl-list-len (& prefix))]
     [position : i64 0]
     [node-address : i64 data.head]
@@ -100077,7 +100093,6 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [cur-module-id : i64 module-id]
     [out : TcNameIdList acc]
     (for [index (iterator.range 0 count)]
@@ -100095,7 +100110,7 @@
             (macro-collect-expr-type-decl-name
               expr-bases
               (tc-global-array-element-shared-view
-                decl-slots
+                decls.slots
                 (+ decl-offset index))
               cur-module-id
               out))]))
@@ -103945,7 +103960,7 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [decl-slots (& decls.slots)]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [truncated : bool false]
     (for [i (iterator.range 0 count)]

@@ -1222,12 +1222,11 @@
 (define (lsp-document-semantic-snapshot-status
   [doc : (& doc lsp_vector_families.LspDocument)]) : LspSemanticSnapshotStatus
   (let
-    [snapshot : lsp_vector_families.LspSemanticSnapshot doc.semantic]
+    [snapshot (& doc.semantic)]
     (if (not snapshot.present)
       Missing
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          snapshot.index]
+        [index (& snapshot.index)]
         [version : i64 snapshot.version]
         [complete : bool
           (compiler_semantic_index.compiler-semantic-source-index-complete?
@@ -1255,7 +1254,7 @@
 (define (lsp-semantic-record-exact-editable?
   [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
   (let
-    [span : compiler_semantic_index.CompilerSemanticSpan record.span]
+    [span (& record.span)]
     [source-span : ast.AstSourceSpan span.source]
     (and
       record.editable
@@ -1278,8 +1277,7 @@
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [index (& doc.semantic.index)]
         [cursor-index : i64
           (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
             (& index)
@@ -3140,14 +3138,15 @@
   [fallback-path : String]
   [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : bool
   (let
-    [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit) edits.slots]
     [count : i64 edits.len]
     [index : i64 0]
     [ok : bool (> count 0)]
     (while (and ok (< index count))
       (let
         [edit : cdiag.CompilerDiagnosticTextEdit
-          (owned_view.compiler-owned-array-element-shared-view slots index)]
+          (owned_view.compiler-owned-array-element-shared-view
+            edits.slots
+            index)]
         [span : cdiag.CompilerDiagnosticSpan
           (cdiag.compiler-diagnostic-text-edit-span edit)]
         [path : String
@@ -4901,8 +4900,7 @@
     [found : i64 0]
     [valid : bool (lsp-signature-named-parameter-owner? definition)]
     [owner : compiler_semantic_index.CompilerSemanticSymbolId definition.symbol]
-    [definition-span : compiler_semantic_index.CompilerSemanticSpan
-      definition.span]
+    [definition-span (& definition.span)]
     (while (and
       valid
       (< found parameter-count)
@@ -5614,7 +5612,7 @@
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [context : (& context LspCompletionContext)]) : unit
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
@@ -5956,7 +5954,7 @@
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [module : String]) : bool
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     [source-index : i64 0]
     [found : bool false]
     (while (and
@@ -5977,7 +5975,7 @@
   [prefix : String]
   [type-context : bool]) : unit
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
@@ -6078,8 +6076,7 @@
   [context : (& context LspCompletionContext)]
   [type-context : bool]) : unit
   (let
-    [index : compiler_semantic_index.CompilerSemanticSourceIndex
-      doc.semantic.index]
+    [index (& doc.semantic.index)]
     [receiver-end : i64 (- context.replace-start 1)]
     [point-index : i64
       (if (> receiver-end context.token-start)
@@ -6182,8 +6179,7 @@
   [doc : (& doc lsp_vector_families.LspDocument)]
   [context : (& context LspCompletionContext)]) : unit
   (let
-    [index : compiler_semantic_index.CompilerSemanticSourceIndex
-      doc.semantic.index]
+    [index (& doc.semantic.index)]
     [receiver-index : i64
       (lsp-completion-find-field-receiver
         (& index)
@@ -8758,8 +8754,7 @@
       (if (not complete)
         Missing
         (let
-          [index : compiler_semantic_index.CompilerSemanticSourceIndex
-            doc.semantic.index]
+          [index (& doc.semantic.index)]
           [best-width : i64 999999999]
           [result : LspRenameTargetLookup Missing]
           [source-text : String (string.copy (& doc.text))]
@@ -9373,9 +9368,9 @@
   [left : (& left LspWorkspaceSymbolCandidate)]
   [right : LspWorkspaceSymbolCandidate]) : bool
   (let
-    [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
+    [left-row (& left.row)]
     [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
-    [left-decl : lsp_vector_families.LspDeclEntry left-row.decl]
+    [left-decl (& left-row.decl)]
     [right-decl : lsp_vector_families.LspDeclEntry right-row.decl]
     (and
       (string.eq left-row.uri right-row.uri)
@@ -9440,7 +9435,7 @@
   [query : String]) : LspWorkspaceSymbolResults
   (let
     [results : LspWorkspaceSymbolResults (lsp-workspace-symbol-results-new)]
-    [sources : lsp_vector_families.LspWorkspaceSources index.sources]
+    [sources (& index.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
@@ -10160,8 +10155,7 @@
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [index (& doc.semantic.index)]
         [source-text : String (string.copy (& doc.text))]
         (for [record-index
           (iterator.range
@@ -12111,8 +12105,7 @@
     (if (< cursor-index 0)
       results
       (let
-        [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [semantic-index (& doc.semantic.index)]
         [cursor : compiler_semantic_index.CompilerSemanticRecord
           (compiler_semantic_index.compiler-semantic-source-index-get
             (& semantic-index)

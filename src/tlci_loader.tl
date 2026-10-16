@@ -382,8 +382,8 @@
 ;; registration entry: the loader reads the table directly.
 (define (tlci-loader-native-table-offset [image : (& image tlci.TlciImage)]) : i64
   (let
-    [entries : (__tl_dyn-array u8) image.entries]
-    [symbols : (__tl_dyn-array u8) image.symbols]
+    [entries (& image.entries)]
+    [symbols (& image.symbols)]
     [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
     [index : i64 0]
     [found : i64 -1]
@@ -1418,10 +1418,10 @@
   (let
     [count : i64 loaded.macro-entry-count]
     [generation : i64 loaded.macro-index-generation]
-    [slots : (__tl_dyn-array i64) loaded.macro-index-slots]
-    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
-    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
-    [entry-states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [slots (& loaded.macro-index-slots)]
+    [name-addrs (& loaded.macro-index-name-addrs)]
+    [name-lens (& loaded.macro-index-name-lens)]
+    [entry-states (& loaded.macro-index-entry-states)]
     (cond
       [(not (tlci-loader-image-live? loaded))
         (Err "tlci loader: image has been released")]
@@ -1474,9 +1474,9 @@
   (let
     [index : i64 resolved.entry-index]
     [count : i64 loaded.macro-entry-count]
-    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
-    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
-    [function-addrs : (__tl_dyn-array i64) loaded.macro-index-function-addrs]
+    [name-addrs (& loaded.macro-index-name-addrs)]
+    [name-lens (& loaded.macro-index-name-lens)]
+    [function-addrs (& loaded.macro-index-function-addrs)]
     (cond
       [(not (tlci-loader-image-live? loaded))
         (Err "tlci loader: image has been released")]

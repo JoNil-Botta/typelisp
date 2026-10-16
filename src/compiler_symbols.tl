@@ -446,9 +446,7 @@
   [map : (& map CompilerSymbolMap)]
   [key : i64]) : i64
   (let
-    [keys : (__tl_dyn-array i64) map.keys]
-    [values : (__tl_dyn-array i64) map.values]
-    [capacity : i64 (array-length keys)]
+    [capacity : i64 (array-length map.keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
       (let
@@ -456,10 +454,10 @@
         ;; data like the put path instead of paying a bounds check per probe.
         [key-data : (Ptr i64)
           (unsafe
-            (ptr-cast (__tl_array-data keys) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data map.keys) : (Ptr i64)))]
         [value-data : (Ptr i64)
           (unsafe
-            (ptr-cast (__tl_array-data values) : (Ptr i64)))]
+            (ptr-cast (__tl_array-data map.values) : (Ptr i64)))]
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
@@ -485,15 +483,13 @@
   [key : i64]
   [handle : i64]) : unit
   (let
-    [keys : (__tl_dyn-array i64) map.keys]
-    [values : (__tl_dyn-array i64) map.values]
     [key-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (__tl_array-data keys) : (MutPtr i64)))]
+        (ptr-cast (__tl_array-data map.keys) : (MutPtr i64)))]
     [value-data : (MutPtr i64)
       (unsafe
-        (ptr-cast (__tl_array-data values) : (MutPtr i64)))]
-    [capacity : i64 (array-length keys)]
+        (ptr-cast (__tl_array-data map.values) : (MutPtr i64)))]
+    [capacity : i64 (array-length map.keys)]
     [mask : i64 (- capacity 1)]
     [encoded : i64 (+ key 1)]
     [slot : i64 (compiler-symbol-map-first-slot key capacity)]
@@ -2064,7 +2060,7 @@
         decl-count
         1)]
     [decl-offset : i64 decls.offset]
-    [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [slots (& decls.slots)]
     [mod-ids : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [mod-head : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [mod-tail : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
@@ -2080,7 +2076,7 @@
     ;; memo stale. Slot assignment order (first appearance) is unchanged.
     [cur-slot : i64 -1]
     (for [position (iterator.range 0 decl-count)]
-      (match (array-ref slots (+ decl-offset position))
+      (match (& (array-ref slots (+ decl-offset position)))
         [(or (Import _ _) (IncludeStr _ _) (IncludeStrComptime _ _)
              (IncludeStrLzss _ _) (IncludeBin _ _) (Test _ _ _ _))
           unit]
@@ -2214,7 +2210,6 @@
       [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
         (let
           [decl-offset : i64 decls.offset]
-          [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
           [cur-symbols : CompilerSymbols symbols]
           [k : i64 head]
           (if (< k 0)
@@ -2230,7 +2225,7 @@
               (compiler-symbols-remove-decl-macro-alias
                 cur-symbols
                 (ast.ast-array-shared-view
-                  slots
+                  decls.slots
                   (+ decl-offset (array-ref ent-pos k)))
                 (+ handle-index-offset (array-ref ent-ridx k))))
             (set! k (array-ref ent-next k)))
@@ -2249,7 +2244,7 @@
       [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
         (let
           [decl-offset : i64 decls.offset]
-          [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+          [slots (& decls.slots)]
           [cur-symbols : CompilerSymbols symbols]
           [k : i64 head]
           (while (>= k 0)
@@ -3476,7 +3471,7 @@
       [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
         (let
           [decl-offset : i64 decls.offset]
-          [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+          [slots (& decls.slots)]
           [cur-registries : CompilerRegistries registries]
           [k : i64 head]
           (while (>= k 0)

@@ -4524,6 +4524,11 @@
         [box-step? : bool
           (and
             (= step.ordinal -1)
+            ;; A borrowed Box view is Copy and dereferences through its loan.
+            ;; Only the owned handle, including one holding loans, owns contents.
+            (>= step.container 0)
+            (< step.container (array-length state.classes))
+            (not (array-ref state.classes step.container).copy?)
             (or
               (normalize-box-class? (& state) step.container)
               (= (try (normalize-box-type! store lease step.container)) 1)))]

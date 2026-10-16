@@ -9568,7 +9568,7 @@
   (let
     [len : i64 decls.len]
     [offset : i64 decls.offset]
-    [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [slots (& decls.slots)]
     [count : i64 0]
     [scanning : bool true]
     (while scanning
@@ -12495,7 +12495,7 @@
   [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
   [seen : sym_i64_env.SymI64Env]) : CompilerLoadDependencySurfaceSelection
   (let
-    [surface : surface_ast.SurfaceAstHydration hydration.ast]
+    [surface (& hydration.ast)]
     [count : i64 (ast.ast-decl-list-len (& surface.decls))]
     [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
     [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]

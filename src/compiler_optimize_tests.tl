@@ -78277,7 +78277,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block block-label instrs)
           (if (= block-label label)
             (opt-count-storeptr-instrs instrs)

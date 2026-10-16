@@ -615,3 +615,125 @@ stdout empty
 stderr contains error[E0222]
 stderr contains while global `held` is borrowed
 stderr contains (via observe -> install!)
+
+
+# Unsafe callable effects survive type inference, qualification and unsafe scope.
+case check-string-raw-copy-function-values
+target linux-x86_64 windows-x86_64
+opt -
+each str-copy-bytes-into str-copy-owned-bytes-into str-copy-borrowed-bytes-into
+file -x safe-value.tl
+(import stdlib.string)
+(define (main) : i64
+  (let [copy string.{{each}}] 42))
+end-file
+file -x unsafe-value.tl
+(import stdlib.string as text)
+(define (main) : i64
+  (unsafe (let [copy text.{{each}}] 42)))
+end-file
+step source-safe
+run check "{{dir}}/safe-value.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains requires unsafe context
+step source-unsafe
+run check "{{dir}}/unsafe-value.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains is an unsafe callable and cannot be used as a plain function value
+cwd {{dir}}
+step embedded-safe
+run check "{{dir}}/safe-value.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains requires unsafe context
+step embedded-unsafe
+run check "{{dir}}/unsafe-value.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains is an unsafe callable and cannot be used as a plain function value
+
+
+case run-bytebuf-valid-extents
+do none
+target -
+opt 0 1 2
+each shared-empty shared-zero shared-equal mutable-empty mutable-zero mutable-equal append-equal
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 42
+stdout empty
+stderr empty
+
+
+case run-bytebuf-invalid-extents
+do none
+target -
+opt 0 1 2
+each shared-negative shared-over shared-maximum shared-empty-over mutable-negative mutable-over mutable-maximum mutable-empty-over append-negative append-negative-zero append-maximum
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 134
+stdout empty
+stderr contains tl: array index out of bounds
+
+
+case run-vector-valid-extent
+do none
+target -
+opt 0 1 2
+each valid
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/vector_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 42
+stdout empty
+stderr empty
+
+
+case run-vector-invalid-extents
+do none
+target -
+opt 0 1 2
+each negative maximum slots live
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/vector_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 134
+stdout empty
+stderr contains tl: array index out of bounds
+
+
+case run-wire-bytebuf-valid-extents
+do none
+target -
+opt 0 1 2
+each tls-empty-zero tls-empty-one tls-zero-one tls-equal-zero tls-equal-one ssh-empty-zero ssh-empty-one ssh-zero-one ssh-equal-zero ssh-equal-one
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/wire_byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 42
+stdout empty
+stderr empty
+
+
+case run-wire-bytebuf-invalid-extents
+do none
+target -
+opt 0 1 2
+each tls-negative-zero tls-negative-one tls-over-zero tls-over-one tls-maximum-zero tls-maximum-one tls-empty-over-zero tls-empty-over-one ssh-negative-zero ssh-negative-one ssh-over-zero ssh-over-one ssh-maximum-zero ssh-maximum-one ssh-empty-over-zero ssh-empty-over-one
+file -x extent.in
+{{each}}
+end-file
+run run "{{root}}/stdlib/tests/wire_byte_buf_live_extent.tl" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" < "{{dir}}/extent.in"
+exit 134
+stdout empty
+stderr contains tl: array index out of bounds

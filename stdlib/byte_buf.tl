@@ -218,17 +218,15 @@
         [dst : (MutPtr u8)
           (unsafe
             (__tl_array-data out))]
-        (string.str-copy-bytes-into
-          (unsafe
-            (bytes-data view))
-          dst
-          0
-          n)
+        (unsafe
+          (string.str-copy-bytes-into (bytes-data view) dst 0 n))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
 
 ;: Borrow the live range of a `ByteBuf` as immutable bytes.
+;: Public lengths outside the backing array trap before constructing the view.
 (define (as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
+  (check-range (array-length buf.slots) 0 buf.len)
   (unsafe
     (tl_bytes_view_from_buf_parts
       (ptr-cast (__tl_array-data buf.slots) : (Ptr u8))
@@ -236,7 +234,9 @@
       buf)))
 
 ;: Borrow the live range of a `ByteBuf` as mutable fixed-length bytes.
+;: Public lengths outside the backing array trap before constructing the view.
 (define (as-mut-bytes [buf : (&mut source ByteBuf)]) : (&mut source bytes)
+  (check-range (array-length buf.slots) 0 buf.len)
   (unsafe
     (tl_bytes_mut_view_from_buf_parts (__tl_array-data buf.slots) buf.len buf)))
 
@@ -375,12 +375,14 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data ready.slots))]
-    (string.str-copy-bytes-into
-      (unsafe
-        (ptr-offset (bytes-data src) start))
-      dst
-      old-len
-      count)
+    ;; Public len is not proof that reserve produced a valid raw destination.
+    (check-range (array-length ready.slots) old-len count)
+    (unsafe
+      (string.str-copy-bytes-into
+        (ptr-offset (bytes-data src) start)
+        dst
+        old-len
+        count))
     (set! ready.len (+ old-len count))
     ready))
 

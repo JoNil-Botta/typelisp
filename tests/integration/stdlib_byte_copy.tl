@@ -81,7 +81,8 @@
         (__tl_array-data dst))]
     (byte-copy-fill! (&mut src) 4 10)
     (byte-copy-fill-constant! (&mut dst) 4 77)
-    (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 2 0)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 2 0))
     (byte-copy-assert-constant-range
       dst
       0
@@ -102,7 +103,8 @@
     [n : i64 11]
     (byte-copy-fill! (&mut src) 20 20)
     (byte-copy-fill-constant! (&mut dst) 20 99)
-    (string.str-copy-bytes-into (byte-copy-source-at src-base 1) dst-base 3 n)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 1) dst-base 3 n))
     (byte-copy-assert-at dst 2 99 "unaligned prefix remains")
     (byte-copy-assert-range dst 3 n 21 "unaligned copy payload")
     (byte-copy-assert-at dst 14 99 "unaligned suffix remains")))
@@ -119,7 +121,8 @@
         (__tl_array-data dst))]
     (byte-copy-fill! (&mut src) 12 40)
     (byte-copy-fill-constant! (&mut dst) 12 88)
-    (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 1 n)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 1 n))
     (byte-copy-assert-at dst 0 88 "tail prefix remains")
     (byte-copy-assert-range dst 1 n 40 "tail copy payload")
     (byte-copy-assert-at dst (+ n 1) 88 "tail suffix remains")))
@@ -144,7 +147,8 @@
     [n : i64 (+ 64 9)]
     (byte-copy-fill! (&mut src) 96 3)
     (byte-copy-fill-constant! (&mut dst) 96 55)
-    (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 5 n)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 5 n))
     (byte-copy-assert-at dst 4 55 "medium prefix remains")
     (byte-copy-assert-range dst 5 n 3 "medium dynamic copy payload")
     (byte-copy-assert-at dst (+ 5 n) 55 "medium suffix remains")))
@@ -156,7 +160,8 @@
       (unsafe
         (__tl_array-data buf))]
     (byte-copy-fill! (&mut buf) 20 0)
-    (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10))
     (byte-copy-assert-range buf 0 3 0 "overlap prefix remains")
     (byte-copy-assert-range buf 3 10 0 "overlap copied payload")
     (byte-copy-assert-at buf 13 13 "overlap suffix remains")))
@@ -168,7 +173,8 @@
       (unsafe
         (__tl_array-data buf))]
     (byte-copy-fill! (&mut buf) 160 0)
-    (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120))
     (byte-copy-assert-range buf 0 17 0 "medium overlap prefix remains")
     (byte-copy-assert-range buf 17 120 0 "medium overlap copied payload")
     (byte-copy-assert-at buf 137 137 "medium overlap suffix remains")))
@@ -180,7 +186,8 @@
       (unsafe
         (__tl_array-data buf))]
     (byte-copy-fill! (&mut buf) 160 0)
-    (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120)
+    (unsafe
+      (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120))
     (byte-copy-assert-range buf 0 120 17 "medium forward overlap payload")
     (byte-copy-assert-at buf 120 120 "medium forward overlap suffix remains")))
 

@@ -20346,9 +20346,23 @@
   ;; The map is a per-program fact. Environments built by the per-function
   ;; summary passes carry an EMPTY one, which simply keeps the weaker verdict
   ;; (a call result stays unrooted).
-  (return-alias opt_i64_i64_map.Map))
+  (return-alias opt_i64_i64_map.Map)
+  ;; #8941. For a rooted pointer var reached from its root's own var through
+  ;; constant-offset geps and copies only: its byte offset from that var. Two
+  ;; addresses of one root with known offsets name byte ranges of one object,
+  ;; so a store whose range misses a load's cannot change the word the load
+  ;; reads (opt-licm-rooted-store-misses?). A var with no entry has an unknown
+  ;; offset, which proves nothing.
+  (offsets opt_i64_i64_map.Map))
 
-(import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
+;; A store LICM proved rooted: its root and, when known, the byte range it
+;; writes measured from the root's own var. `width` 0 is an unknown range.
+(defstruct OptLicmRootedStore
+  (root OptLicmRoot)
+  (offset i64)
+  (width i64))
+
+(import (vector.vector OptLicmRootedStore core) as opt_licm_store_root_vec)
 
 (defstruct OptLicmStoreRootList
   (items opt_licm_store_root_vec.Vec))
@@ -20410,7 +20424,10 @@
 (define (opt-licm-root-env-with-capacity
   [capacity : i64]
   [return-alias : opt_i64_i64_map.Map]) : OptLicmRootEnv
-  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity) return-alias))
+  (OptLicmRootEnv
+    (opt_i64_i64_map.with-capacity capacity)
+    return-alias
+    (opt_i64_i64_map.with-capacity capacity)))
 
 (define (opt-licm-root-encode [root : OptLicmRoot]) : i64
   (match root
@@ -20527,25 +20544,60 @@
 
 (define (opt-licm-store-roots-add
   [stores : OptLicmStoreRootList]
-  [root : OptLicmRoot]) : OptLicmStoreRootList
+  [root : OptLicmRoot]
+  [offset : i64]
+  [width : i64]) : OptLicmStoreRootList
   (let
     [items : opt_licm_store_root_vec.Vec stores.items]
-    (opt_licm_store_root_vec.push-ref! (&mut items) root)
+    (opt_licm_store_root_vec.push-ref!
+      (&mut items)
+      (OptLicmRootedStore root offset width))
     (OptLicmStoreRootList items)))
 
+;; #8941. Whether one rooted store leaves a load's word untouched: the roots are
+;; disjoint (opt-licm-root-disjoint-store?, unchanged), or they are the SAME
+;; root and the two byte ranges, both measured from that root's var, do not
+;; overlap. Distinct checked-reference parameter roots still prove nothing
+;; (#6693); this only separates two fields of one object, which is the rule
+;; the load table applies to one base (opt-load-ranges-disjoint?).
+(define (opt-licm-rooted-store-misses?
+  [store : OptLicmRootedStore]
+  [load-root : OptLicmRoot]
+  [load-offset : i64]
+  [load-width : i64]) : bool
+  (or
+    (opt-licm-root-disjoint-store? store.root load-root)
+    (and
+      (match load-root
+        [(NoRoot) false]
+        [_ (opt-licm-root-eq? store.root load-root)])
+      (opt-load-ranges-disjoint?
+        store.offset
+        store.width
+        load-offset
+        load-width))))
+
+;; Whether every rooted store of the loop misses the load. `load-width` 0 is a
+;; load whose range is unknown: only root disjointness can then decide.
 (define (opt-licm-store-roots-safe?
   [stores : (& stores OptLicmStoreRootList)]
-  [load-root : OptLicmRoot]) : bool
+  [load-root : OptLicmRoot]
+  [load-offset : i64]
+  [load-width : i64]) : bool
   (let
     [items (& stores.items)]
-    [slots : (& items (__tl_dyn-array OptLicmRoot))
+    [slots : (& items (__tl_dyn-array OptLicmRootedStore))
       (opt_licm_store_root_vec.slots (& items))]
     [index : i64 (- (opt_licm_store_root_vec.len (& items)) 1)]
     [safe? : bool true]
     (while (and safe? (>= index 0))
       (set!
         safe?
-        (opt-licm-root-disjoint-store? (array-ref slots index) load-root))
+        (opt-licm-rooted-store-misses?
+          (array-ref slots index)
+          load-root
+          load-offset
+          load-width))
       (-= index 1))
     safe?))
 
@@ -21328,16 +21380,20 @@
   [param : (& ir.CompilerIrParam)]) : unit
   (match param
     [(Param name ty var)
-      (opt-licm-root-env-bind!
-        env
-        var
-        (if (and
-          (match (compiler-opt-global-shared-view ty)
-            [(U64) true]
-            [_ false])
-          (string.eq name (opt-licm-sret-param-name)))
-          (Exclusive var)
-          (opt-licm-param-root type-segment-bases (& ty) var)))]))
+      (let
+        [root : OptLicmRoot
+          (if (and
+            (match (compiler-opt-global-shared-view ty)
+              [(U64) true]
+              [_ false])
+            (string.eq name (opt-licm-sret-param-name)))
+            (Exclusive var)
+            (opt-licm-param-root type-segment-bases (& ty) var))]
+        ;; #8941: a rooted parameter is its root's own var, at offset 0.
+        (match root
+          [(NoRoot) unit]
+          [_ (opt-licm-root-env-set-offset! env var (LookupFound 0))])
+        (opt-licm-root-env-bind! env var root))]))
 
 (define (opt-licm-root-env-seed-params!
   [type-segment-bases : i64]
@@ -21534,20 +21590,91 @@
         (No))]
     [(LookupMissing) (No)]))
 
+(define (opt-licm-root-env-offset
+  [env : (& env OptLicmRootEnv)]
+  [value : (& ir.CompilerIrValue)]) : opt_i64_i64_map.Lookup
+  (match value
+    [(Var var) (opt_i64_i64_map.get (& env.offsets) var)]
+    [_ (LookupMissing)]))
+
+(define (opt-licm-root-env-set-offset!
+  [env : (&mut env OptLicmRootEnv)]
+  [var : i64]
+  [offset : opt_i64_i64_map.Lookup]) : unit
+  (match offset
+    [(LookupFound value)
+      (opt_i64_i64_map.insert-ref! (&mut env.offsets) var value)
+      unit]
+    [(LookupMissing)
+      (opt_i64_i64_map.remove-ref! (&mut env.offsets) var)
+      unit]))
+
+;; A gep displacement scale this rule can read: the scalar widths
+;; opt-load-loc-type-size gives, never a reference element (whose width
+;; depends on its referent) -- 0 is unknown.
+(define (opt-licm-gep-scale [ty : (& ast.AstType)]) : i64
+  (match ty
+    [(or (Ref _ _) (MutRef _ _) (Region _ _) (Invalidate _ _)) 0]
+    [_ (opt-load-loc-type-size 0 ty)]))
+
+;; Offsets are kept only well inside i64, so neither a gep's displacement nor
+;; opt-load-ranges-disjoint?'s end-of-range sums can wrap.
+(define (opt-licm-offset-small? [offset : i64]) : bool
+  (and (> offset -4294967296) (< offset 4294967296)))
+
+;; Roots and byte coordinates follow the same definition in the verified SSA
+;; function. Parameters and the supported definitions below are the only
+;; offset insertions. Every other destination is distinct from those vars,
+;; so casts, bitcasts, loads and phis stay absent across both provenance scans.
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
+  [ptrs : (& ptrs OptLicmPtrEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Alloc dst _) (opt-licm-root-env-bind! env dst (Fresh dst))]
-    ;; The address of an allocated object designates that object. Without this
-    ;; arm every address-taken local was unrooted, so a write through one fell
-    ;; into the unrooted store summary (killing every descriptor proof in the
-    ;; loop) and a read through one could never use the disjointness its
-    ;; `Alloc` already establishes. `addr_of` of anything unrooted stays
-    ;; unrooted, exactly as the copy arms below behave.
-    [(AddrOf dst src) (opt-licm-root-env-copy! env dst (& (Var src)))]
-    [(or (Gep dst base _ _) (Mov dst base _) (Cast dst base _ _)
-         (Bitcast dst base _ _))
+    [(Alloc dst _)
+      (opt-licm-root-env-set-offset! env dst (LookupFound 0))
+      (opt-licm-root-env-bind! env dst (Fresh dst))]
+    ;; Only an original frame allocation's address shares its coordinate.
+    ;; A scalar heap-result pointer's frame home is a separate storage object.
+    [(AddrOf dst src)
+      (opt-licm-root-env-set-offset!
+        env
+        dst
+        (match (opt-licm-ptr-lookup ptrs src)
+          [(LocalObject id)
+            (if (= id src)
+              (LookupFound 0)
+              (LookupMissing))]
+          [_ (LookupMissing)]))
+      (opt-licm-root-env-copy! env dst (& (Var src)))]
+    [(Mov dst base _)
+      (opt-licm-root-env-set-offset!
+        env
+        dst
+        (opt-licm-root-env-offset env (& base)))
+      (opt-licm-root-env-copy! env dst (& base))]
+    [(Gep dst base offset ty)
+      (opt-licm-root-env-set-offset!
+        env
+        dst
+        (match (opt-licm-root-env-offset env (& base))
+          [(LookupFound from)
+            (match offset
+              [(I64 k)
+                (let
+                  [scale : i64 (opt-licm-gep-scale (& ty))]
+                  (if (and
+                    (> scale 0)
+                    (opt-licm-offset-small? k)
+                    (opt-licm-offset-small? (+ from (* k scale))))
+                    (LookupFound (+ from (* k scale)))
+                    (LookupMissing)))]
+              [_ (LookupMissing)])]
+          [(LookupMissing) (LookupMissing)]))
+      (opt-licm-root-env-copy! env dst (& base))]
+    ;; The existing coarse root rule remains; neither conversion defines a
+    ;; coordinate, even when it happens to preserve the address bits.
+    [(or (Cast dst base _ _) (Bitcast dst base _ _))
       (opt-licm-root-env-copy! env dst (& base))]
     [(Phi dst inputs _)
       (match (opt-licm-phi-root env inputs (No))
@@ -21558,15 +21685,21 @@
     [(Load dst _ _) (opt-licm-root-env-remove! env dst)]
     [(Call dst name args _)
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
-        (opt-licm-root-env-bind! env dst (Fresh dst))
-        ;; A callee that returns one of its arguments returns that object, so
-        ;; the result inherits the argument's root -- most often the caller's
-        ;; own sret buffer, whose root is the `Alloc` two instructions up.
-        ;; Binding a fresh id here instead would be unsound: the result and the
-        ;; argument would then read as two disjoint objects.
+        (begin
+          (opt-licm-root-env-set-offset! env dst (LookupFound 0))
+          (opt-licm-root-env-bind! env dst (Fresh dst)))
+        ;; Returning an argument preserves its root and coordinate. A fresh
+        ;; id here would incorrectly separate the result from that argument.
         (match (opt-licm-root-env-return-alias-value env name (& args))
-          [(Some value) (opt-licm-root-env-copy! env dst (& value))]
-          [(No) (opt-licm-root-env-remove! env dst)]))]
+          [(Some value)
+            (opt-licm-root-env-set-offset!
+              env
+              dst
+              (opt-licm-root-env-offset env (& value)))
+            (opt-licm-root-env-copy! env dst (& value))]
+          [(No)
+            (opt-licm-root-env-set-offset! env dst (LookupMissing))
+            (opt-licm-root-env-remove! env dst)]))]
     [_ unit]))
 
 (define (opt-licm-array-header-type?
@@ -21981,12 +22114,20 @@
   [state : OptLicmStoreState]
   [root : OptLicmRoot]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
+  (opt-licm-store-state-add-rooted-store-range state root 0 0 summary))
+
+(define (opt-licm-store-state-add-rooted-store-range
+  [state : OptLicmStoreState]
+  [root : OptLicmRoot]
+  [offset : i64]
+  [width : i64]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreState
   (OptLicmStoreState
     state.summary
     (opt-licm-store-summary-merge state.rooted-summary summary)
     state.ptrs
     state.roots
-    (opt-licm-store-roots-add state.store-roots root)
+    (opt-licm-store-roots-add state.store-roots root offset width)
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
     state.mem-clean-call?
@@ -22339,7 +22480,10 @@
         (owned_view.compiler-owned-reference-shared-view state)
         instr)]
     [_roots : unit
-      (opt-licm-root-env-update-instr! (&mut invalid.roots) (& instr))]
+      (opt-licm-root-env-update-instr!
+        (&mut invalid.roots)
+        (& invalid.ptrs)
+        (& instr))]
     (match instr
       [(Mov dst src _)
         (match src
@@ -22498,12 +22642,27 @@
               provenance.ptrs
               (opt-licm-element-class-bits type-segment-bases (& store-ty))
               (& ptr))]
+          ;; #8941: the bytes this store writes, from its root's var, when
+          ;; both its offset and its width are known.
+          [store-width : i64
+            (opt-load-loc-type-size type-segment-bases (& store-ty))]
+          [store-offset : opt_i64_i64_map.Lookup
+            (opt-licm-root-env-offset (& provenance.roots) (& ptr))]
           (match root
             [(or (Fresh _) (Exclusive _))
-              (opt-licm-store-state-add-rooted-store
-                provenance
-                root
-                legacy-summary)]
+              (match store-offset
+                [(LookupFound offset)
+                  (opt-licm-store-state-add-rooted-store-range
+                    provenance
+                    root
+                    offset
+                    store-width
+                    legacy-summary)]
+                [(LookupMissing)
+                  (opt-licm-store-state-add-rooted-store
+                    provenance
+                    root
+                    legacy-summary)])]
             [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
       [(StoreOwned ptr value ty)
         (opt-licm-store-state-instr
@@ -22878,6 +23037,10 @@
   [store-roots : (& store-roots OptLicmStoreRootList)]
   [any-call? : bool]
   [load-root : OptLicmRoot]
+  ;; #8941: the bytes the candidate reads, from `load-root`'s var (width 0 when
+  ;; unknown), for the same-root field rule in opt-licm-rooted-store-misses?.
+  [load-offset : i64]
+  [load-width : i64]
   [legacy-special-safe? : bool]
   ;; ALIAS-3. The TYPED-WORD verdict for THIS candidate's own static type
   ;; (opt-licm-store-summary-element-class-safe?), computed at the call site
@@ -22926,7 +23089,11 @@
           class-safe?
           (and
             (opt-licm-store-summary-clean? root-summary)
-            (opt-licm-store-roots-safe? store-roots load-root))))]))
+            (opt-licm-store-roots-safe?
+              store-roots
+              load-root
+              load-offset
+              load-width))))]))
 
 (define (opt-licm-vector-memory-instr? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
@@ -25325,6 +25492,16 @@
             store-roots
             any-call?
             (opt-licm-root-of-value (& roots) base)
+            ;; #8941: the address's first byte, from the root's var. The gate
+            ;; asks whether the loop writes the byte this address starts at;
+            ;; the load through it asks again with the width it reads, and an
+            ;; address hoisted without its load is still pure.
+            (match (opt-licm-root-env-offset (& roots) (& (Var dst)))
+              [(LookupFound address-offset) address-offset]
+              [(LookupMissing) 0])
+            (match (opt-licm-root-env-offset (& roots) (& (Var dst)))
+              [(LookupFound _) 1]
+              [(LookupMissing) 0])
             (and
               (opt-licm-store-summary-header-load-safe? legacy-store-summary)
               (opt-licm-header-slot-gep?
@@ -25362,6 +25539,13 @@
             store-roots
             any-call?
             (opt-licm-root-of-value roots src)
+            (match (opt-licm-root-env-offset roots (& src))
+              [(LookupFound offset) offset]
+              [(LookupMissing) 0])
+            (match (opt-licm-root-env-offset roots (& src))
+              [(LookupFound _)
+                (opt-load-loc-type-size type-segment-bases (& load-ty))]
+              [(LookupMissing) 0])
             (and
               (opt-licm-store-summary-header-load-safe-for?
                 legacy-store-summary

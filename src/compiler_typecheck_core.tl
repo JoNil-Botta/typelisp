@@ -4019,6 +4019,8 @@
         (match (tc-global-shared-view inner)
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (let
+              [compact? : bool
+                (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
               [observed? : bool (tc-semantic-capture-observed? ctx (& sink))]
               [_enter : unit
                 (when
@@ -4050,14 +4052,22 @@
                       (tc-macro-expansion-result-with-frame
                         ctx
                         expanded
-                        (=
-                          macro-name-id
-                          (ctfe_support.ctfe-compact-caller-origin-name))
+                        compact?
                         (macro-expansion-invocation-path-id provenance-id)
                         (macro-expansion-origin-path-id provenance-id)
                         macro-name-id
                         span
-                        (ResultTcType.Err message))
+                        ;; Compact caller operands carry their source span on
+                        ;; the expansion. Locate their error with the same
+                        ;; binding context as an ordinary Spanned operand.
+                        (if compact?
+                          (tc-locate-spanned-error-with-context
+                            ctx
+                            env
+                            (tc-context-expr-get ctx expanded)
+                            span
+                            message)
+                          (ResultTcType.Err message)))
                       next)])]
               (when
                 observed?

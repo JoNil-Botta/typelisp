@@ -31893,6 +31893,56 @@
         allow-mut-by-value-borrow)
       (tc-expr-id ctx env expr-id))))
 
+;; Both checking modes share macro provenance and the operand's Spanned view.
+(define (tc-check-spanned-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner-box : i64]
+  [span : ast.AstSourceSpan]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (let
+    [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+    (match (tc-global-shared-view inner)
+      [(MacroExpansion expanded provenance-id macro-name-id)
+        (let
+          [compact? : bool
+            (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
+          (tc-macro-expansion-result-with-frame
+            ctx
+            expanded
+            compact?
+            (macro-expansion-invocation-path-id provenance-id)
+            (macro-expansion-origin-path-id provenance-id)
+            macro-name-id
+            span
+            (tc-semantic-expansion
+              ctx
+              env
+              (macro-expansion-origin-path-id provenance-id)
+              macro-name-id
+              span
+              (tc-check-operand-view
+                ctx
+                env
+                expanded
+                span
+                compact?
+                expected
+                expected?
+                allow-mut-by-value-borrow))))]
+      [_
+        (tc-check-operand-view
+          ctx
+          env
+          inner-box
+          span
+          true
+          expected
+          expected?
+          allow-mut-by-value-borrow)])))
+
 (define (tc-expr-with-expected-or-actual-core-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -31901,46 +31951,14 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (let
-              [compact? : bool
-                (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
-              (tc-macro-expansion-result-with-frame
-                ctx
-                expanded
-                compact?
-                (macro-expansion-invocation-path-id provenance-id)
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-semantic-expansion
-                  ctx
-                  env
-                  (macro-expansion-origin-path-id provenance-id)
-                  macro-name-id
-                  span
-                  (tc-check-operand-view
-                    ctx
-                    env
-                    expanded
-                    span
-                    compact?
-                    expected
-                    true
-                    allow-mut-by-value-borrow))))]
-          [_
-            (tc-check-operand-view
-              ctx
-              env
-              inner-box
-              span
-              true
-              expected
-              true
-              allow-mut-by-value-borrow)]))]
+      (tc-check-spanned-operand
+        ctx
+        env
+        inner-box
+        span
+        expected
+        true
+        allow-mut-by-value-borrow)]
     [(MacroExpansion inner _ _)
       (tc-expr-with-expected-or-actual-core-id
         ctx
@@ -60467,46 +60485,7 @@
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (let
-              [compact? : bool
-                (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
-              (tc-macro-expansion-result-with-frame
-                ctx
-                expanded
-                compact?
-                (macro-expansion-invocation-path-id provenance-id)
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-semantic-expansion
-                  ctx
-                  env
-                  (macro-expansion-origin-path-id provenance-id)
-                  macro-name-id
-                  span
-                  (tc-check-operand-view
-                    ctx
-                    env
-                    expanded
-                    span
-                    compact?
-                    (Unit)
-                    false
-                    false))))]
-          [_
-            (tc-check-operand-view
-              ctx
-              env
-              inner-box
-              span
-              true
-              (Unit)
-              false
-              false)]))]
+      (tc-check-spanned-operand ctx env inner-box span (Unit) false false)]
     [(or (MacroExpansion inner _ _) (LaneValue inner))
       (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]

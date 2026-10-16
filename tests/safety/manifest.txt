@@ -1659,6 +1659,7 @@ mir_thread_send_other_branch_destroy_ok|check-ok|tests/safety/mir_thread_send_ot
 mir_thread_unjoined_handle_destroy_reject|check-fail|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl:17:7|requires atomic arena user `spawned` to be joined or released before invalidating `owner`
 mir_thread_join_then_destroy_ok|check-ok|tests/safety/mir_thread_join_then_destroy_ok.tl|-|-
 mir_view_field_assign_reject|check-fail|tests/safety/mir_view_field_assign_reject.tl|tests/safety/mir_view_field_assign_reject.tl:18:13|cannot assign to borrowed place `outer.inner`
+mir_view_field_move_reject|check-fail|tests/safety/mir_view_field_move_reject.tl|tests/safety/mir_view_field_move_reject.tl:16:24|cannot move a `ViewInner` out of a shared reference
 mir_view_field_after_last_use_ok|run-exit|tests/safety/mir_view_field_after_last_use_ok.tl|42|-
 mir_foreach_loop_carried_move_reject|check-fail|tests/safety/mir_foreach_loop_carried_move_reject.tl|tests/safety/mir_foreach_loop_carried_move_reject.tl:13:62|cannot move loop-carried owner value `text`
 mir_foreach_shared_view_ok|run-exit|tests/safety/mir_foreach_shared_view_ok.tl|42|-

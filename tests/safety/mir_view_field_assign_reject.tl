@@ -13,7 +13,7 @@
   (let
     [outer : ViewOuter (ViewOuter (ViewInner (__tl_make-array i64 2) 3) 0)]
     [shared : (& outer ViewOuter) (& outer)]
-    [inner : ViewInner shared.inner]
+    [inner : (& outer ViewInner) (& shared.inner)]
     (begin
       (set! outer.inner (ViewInner (__tl_make-array i64 5) 1))
       (array-length inner.items))))

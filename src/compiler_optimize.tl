@@ -50327,14 +50327,13 @@
   [type-segment-bases : i64]
   [table : (& table OptGvnMap)]
   [key : (& OptExprKey)]) : i64
-  (begin
-    (opt-gvn-lookup-bucket
-      type-segment-bases
-      (&
-        (array-ref
-          table.buckets
-          (opt-gvn-bucket-index type-segment-bases table.buckets key)))
-      key)))
+  (opt-gvn-lookup-bucket
+    type-segment-bases
+    (&
+      (array-ref
+        table.buckets
+        (opt-gvn-bucket-index type-segment-bases table.buckets key)))
+    key))
 
 ;; Rewriting an instruction allocates only when the rewrite fires: scanning a
 ;; sequence for changes is allocation-free, so unchanged blocks keep their
@@ -52666,24 +52665,23 @@
   [len : (& ir.CompilerIrValue)]) : bool
   (match value
     [(Var var)
-      (begin
-        (if (or (< var 0) (>= (+ var 1) (array-length env.checks.offsets)))
-          false
-          (let
-            [row : i64 (array-ref env.checks.offsets var)]
-            [end : i64 (array-ref env.checks.offsets (+ var 1))]
-            [found : bool false]
-            (while (and (not found) (< row end))
-              (let
-                [block : i64 (array-ref env.checks.blocks row)]
-                (if (and
-                  (opt-value-eq (& (array-ref env.checks.lens row)) len)
-                  (opt-dom-info-dominates-id? env.doms block at-id)
-                  (or end? (not (= block at-id))))
-                  (set! found true)
-                  unit))
-              (+= row 1))
-            found)))]
+      (if (or (< var 0) (>= (+ var 1) (array-length env.checks.offsets)))
+        false
+        (let
+          [row : i64 (array-ref env.checks.offsets var)]
+          [end : i64 (array-ref env.checks.offsets (+ var 1))]
+          [found : bool false]
+          (while (and (not found) (< row end))
+            (let
+              [block : i64 (array-ref env.checks.blocks row)]
+              (if (and
+                (opt-value-eq (& (array-ref env.checks.lens row)) len)
+                (opt-dom-info-dominates-id? env.doms block at-id)
+                (or end? (not (= block at-id))))
+                (set! found true)
+                unit))
+            (+= row 1))
+          found))]
     [_ false]))
 
 ;; --- phi-inductive range proof (ABCD cycle rule) ------------------------------

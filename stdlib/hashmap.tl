@@ -663,7 +663,7 @@
               (match (clone (__tl-project-field-name slot "state"))
                 [GeneratedHashmapSlotState.Occupied
                   (let
-                    [value : ,V (__tl-project-field-name slot "value")]
+                    [value (__tl-project-field-name slot "value")]
                     (LookupFound ,value-copy))]
                 [_ (LookupMissing)])))))]
     ;; `get` and `get-borrowed` take the same argument for a scalar key, so the

@@ -3572,12 +3572,11 @@
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrFunction) funcs.slots]
     [count : i64 funcs.len]
     [index : i64 0]
     [result : i64 (- 0 1)]
     (while (and (< index count) (< result 0))
-      (match (ir.compiler-ir-array-shared-view slots index)
+      (match (ir.compiler-ir-array-shared-view funcs.slots index)
         [(Function fname _ _ _ blocks _)
           (if (string.eq (ir.compiler-ir-symbol-text fname) name)
             (set! result (lower-test-blocks-spmd-call-count blocks))

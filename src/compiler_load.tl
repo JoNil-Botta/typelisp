@@ -15,7 +15,6 @@
 (import compiler_build_identity as build_identity)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_hydrate as surface_hydrate)
-(import compiler_surface_ast as surface_ast)
 (import compiler_surface_identity as surface_identity)
 (import sym_i64_env)
 (import stdlib.env)

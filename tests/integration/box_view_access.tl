@@ -28,17 +28,9 @@
 (define (main) : i64
   (let
     [h : Holder (Holder (box 20))]
-    (if (!= (shared-read (& h)) 40)
-      (return 1)
-      unit)
-    (if (!= (cloned-read (& h)) 119)
-      (return 2)
-      unit)
-    (if (!= (deref h.b) 20)
-      (return 3)
-      unit)
+    (when (!= (shared-read (& h)) 40) (return 1))
+    (when (!= (cloned-read (& h)) 119) (return 2))
+    (when (!= (deref h.b) 20) (return 3))
     (mutable-write (&mut h))
-    (if (!= (shared-read (& h)) 42)
-      (return 4)
-      unit)
+    (when (!= (shared-read (& h)) 42) (return 4))
     (owned-move h)))

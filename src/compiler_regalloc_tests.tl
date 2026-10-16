@@ -8312,7 +8312,7 @@
   [hi : i64]) : bool
   (let
     [var : i64 (+ model.scratch-base offset)]
-    [index : reg.CompilerRegIntervalIndex model.interval-index]
+    [index (& model.interval-index)]
     (and
       (= (array-ref index.starts var) lo)
       (= (array-ref index.ends var) hi)
@@ -15266,7 +15266,7 @@
   [root : i64]
   [index : i64]) : reg.CompilerRegMaybeLocation
   (let
-    [parents : (__tl_dyn-array i64) coalesce.parents]
+    [parents (& coalesce.parents)]
     (cond
       [(>= index (array-length parents)) No]
       [(or (= index var) (not (= (array-ref parents index) root)))

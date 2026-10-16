@@ -2617,16 +2617,15 @@
 (define (compiler-reg-interval-index-lookup
   [index : (& index CompilerRegIntervalIndex)]
   [var : i64]) : CompilerRegMaybeInterval
-  (begin
-    (if (or (< var 0) (>= var (array-length index.starts)))
+  (if (or (< var 0) (>= var (array-length index.starts)))
+    No
+    (if (< (array-ref index.starts var) 0)
       No
-      (if (< (array-ref index.starts var) 0)
-        No
-        (Some
-          (CompilerRegInterval
-            var
-            (array-ref index.starts var)
-            (array-ref index.ends var)))))))
+      (Some
+        (CompilerRegInterval
+          var
+          (array-ref index.starts var)
+          (array-ref index.ends var))))))
 
 (define (compiler-reg-extend-interval
   [starts : (&mut starts (__tl_dyn-array i64))]
@@ -7806,26 +7805,25 @@
   [ctx : (& ctx CompilerRegSvMultiCtx)]
   [m : i64]
   [v : i64]) : bool
-  (begin
-    (if (or (< m 0) (>= (+ m 1) (array-length ctx.def-off)))
-      true
-      (let
-        [i : i64 (array-ref ctx.def-off m)]
-        [stop : i64 (array-ref ctx.def-off (+ m 1))]
-        [hit : bool false]
-        (while (< i stop)
-          (if (and
-            (not hit)
-            (compiler-reg-sv-point-in-var-live?
-              ctx
-              v
-              (if (and (>= i 0) (< i (array-length ctx.def-pts)))
-                (array-ref ctx.def-pts i)
-                (- 0 1))))
-            (set! hit true)
-            unit)
-          (set! i (+ i 1)))
-        hit))))
+  (if (or (< m 0) (>= (+ m 1) (array-length ctx.def-off)))
+    true
+    (let
+      [i : i64 (array-ref ctx.def-off m)]
+      [stop : i64 (array-ref ctx.def-off (+ m 1))]
+      [hit : bool false]
+      (while (< i stop)
+        (if (and
+          (not hit)
+          (compiler-reg-sv-point-in-var-live?
+            ctx
+            v
+            (if (and (>= i 0) (< i (array-length ctx.def-pts)))
+              (array-ref ctx.def-pts i)
+              (- 0 1))))
+          (set! hit true)
+          unit)
+        (set! i (+ i 1)))
+      hit)))
 
 ;; Does any def point of m fall inside the liveness of ANY single-def member of
 ;; the class rooted at `root`?
@@ -7959,15 +7957,14 @@
   [ctx : (& ctx CompilerRegSvMultiCtx)]
   [svar : i64]
   [dst : i64]) : bool
-  (begin
-    (or
-      (and
-        (compiler-reg-sv-eligible? ctx.eligible dst)
-        (compiler-reg-sv-eligible? ctx.eligible svar))
-      (and
-        (compiler-reg-sv-eligible? ctx.hull-eligible dst)
-        (compiler-reg-sv-eligible? ctx.hull-eligible svar)
-        (compiler-reg-sv-hull-nested? ctx svar dst)))))
+  (or
+    (and
+      (compiler-reg-sv-eligible? ctx.eligible dst)
+      (compiler-reg-sv-eligible? ctx.eligible svar))
+    (and
+      (compiler-reg-sv-eligible? ctx.hull-eligible dst)
+      (compiler-reg-sv-eligible? ctx.hull-eligible svar)
+      (compiler-reg-sv-hull-nested? ctx svar dst))))
 
 ;; One copy pair (Mov, or width-64 int Cast). The single-def-src path mirrors
 ;; the original relation (no type restriction); the mutable-src path is the
@@ -7976,18 +7973,17 @@
   [ctx : (& ctx CompilerRegSvMultiCtx)]
   [svar : i64]
   [dst : i64]) : unit
-  (begin
-    (if (and
-      (compiler-reg-sv-single-def-non-phi? ctx.counts ctx.phi-defs dst)
-      (compiler-reg-sv-pair-admissible? ctx svar dst))
-      (if (compiler-reg-sv-single-def-non-phi? ctx.counts ctx.phi-defs svar)
+  (if (and
+    (compiler-reg-sv-single-def-non-phi? ctx.counts ctx.phi-defs dst)
+    (compiler-reg-sv-pair-admissible? ctx svar dst))
+    (if (compiler-reg-sv-single-def-non-phi? ctx.counts ctx.phi-defs svar)
+      (compiler-reg-sv-multi-union! ctx svar dst)
+      (if (and
+        (compiler-reg-sv-int-ok? ctx.int-ok svar)
+        (compiler-reg-sv-int-ok? ctx.int-ok dst))
         (compiler-reg-sv-multi-union! ctx svar dst)
-        (if (and
-          (compiler-reg-sv-int-ok? ctx.int-ok svar)
-          (compiler-reg-sv-int-ok? ctx.int-ok dst))
-          (compiler-reg-sv-multi-union! ctx svar dst)
-          unit))
-      unit)))
+        unit))
+    unit))
 
 (define (compiler-reg-sv-multi-add-instr!
   [instr : (& ir.CompilerIrInstr)]
@@ -12075,11 +12071,10 @@
 (define (compiler-reg-interval-index-var-has-segments?
   [index : (& index CompilerRegIntervalIndex)]
   [var : i64]) : bool
-  (begin
-    (and
-      (>= var 0)
-      (< var (array-length index.segments))
-      (not (compiler-reg-interval-seq-empty? (array-ref index.segments var))))))
+  (and
+    (>= var 0)
+    (< var (array-length index.segments))
+    (not (compiler-reg-interval-seq-empty? (array-ref index.segments var)))))
 
 (define (compiler-reg-loop-split-region-interval
   [region-var : i64]
@@ -19547,22 +19542,21 @@
   [v : i64]
   [lo : i64]
   [hi : i64]) : bool
-  (begin
-    (if (and (>= v 0) (< v (array-length interval-index.starts)))
-      (let
-        [segs : CompilerRegIntervalSeq
-          (if (< v (array-length interval-index.segments))
-            (owned_view.compiler-owned-array-element-shared-view
-              interval-index.segments
-              v)
-            (compiler-reg-interval-seq-empty))]
-        (if (not (compiler-reg-interval-seq-empty? segs))
-          (compiler-reg-call-region-var-overlaps-segs? segs lo hi)
-          (and
-            (>= (array-ref interval-index.starts v) 0)
-            (<= (array-ref interval-index.starts v) (+ hi 1))
-            (>= (array-ref interval-index.ends v) lo))))
-      true)))
+  (if (and (>= v 0) (< v (array-length interval-index.starts)))
+    (let
+      [segs : CompilerRegIntervalSeq
+        (if (< v (array-length interval-index.segments))
+          (owned_view.compiler-owned-array-element-shared-view
+            interval-index.segments
+            v)
+          (compiler-reg-interval-seq-empty))]
+      (if (not (compiler-reg-interval-seq-empty? segs))
+        (compiler-reg-call-region-var-overlaps-segs? segs lo hi)
+        (and
+          (>= (array-ref interval-index.starts v) 0)
+          (<= (array-ref interval-index.starts v) (+ hi 1))
+          (>= (array-ref interval-index.ends v) lo))))
+    true))
 
 (define (compiler-reg-call-region-pool-index-of
   [pool : (& pool (__tl_dyn-array i64))]
@@ -21726,14 +21720,13 @@
 (define (compiler-reg-coalesce-root-set-from-vars
   [coalesce : (& coalesce CompilerRegCoalesceMap)]
   [source : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
-  (begin
-    (if (= (array-length coalesce.parents) 0)
+  (if (= (array-length coalesce.parents) 0)
+    source
+    (compiler-reg-coalesce-root-set-from-vars-from
+      coalesce.parents
       source
-      (compiler-reg-coalesce-root-set-from-vars-from
-        coalesce.parents
-        source
-        0
-        (live.compiler-live-set-empty)))))
+      0
+      (live.compiler-live-set-empty))))
 
 ;; Expand a per-root assignment table to all original vars -- every
 ;; member of a coalesce class inherits its root's location (register or spill

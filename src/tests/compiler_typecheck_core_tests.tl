@@ -196,6 +196,8 @@
           (when
             rename?
             (set! env (tc_core.macro-hygiene-env-bind-raw env name renamed)))]
+        [hygiene-context : tc_core.MacroHygieneContext
+          (tc_core.MacroHygieneContext -1 -1 -1 0)]
         [_scratch : unit
           (unsafe
             (arena.set! scratch))]
@@ -203,15 +205,13 @@
           : i64
           ;; Compound child lists live in the output owner, as at the real
           ;; expansion boundary. Scalar span commits also tolerate scratch.
-          (in-arena
-            (if shared?
+          (if shared?
+            (in-arena
               owner
-              scratch)
-            (tc_core.macro-hygiene-produced-expr
-              root
-              env
-              (tc_core.MacroHygieneContext -1 -1 -1 0)
-              0))]
+              (tc_core.macro-hygiene-produced-expr root env hygiene-context 0))
+            (in-arena
+              scratch
+              (tc_core.macro-hygiene-produced-expr root env hygiene-context 0)))]
         [_leave : unit
           (unsafe
             (arena.set! owner))]

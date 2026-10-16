@@ -1028,6 +1028,18 @@
         ty)]
     [_ ty]))
 
+;; The macro name of a compact caller-origin marker. A macro that captures a
+;; spanned operand marks it with one that sits directly over the operand's
+;; semantic node, under the Spanned view that carries the operand's span
+;; (`macro-captured-expr-node`); the typechecker checks that operand through the
+;; view. Every other caller-origin marker has macro name -1.
+(define (ctfe-compact-caller-origin-name) : i64
+  -2)
+
+;; A binding clause's initializer as caller syntax: a -1 caller-origin marker
+;; over the initializer's Spanned row's inner node. An initializer whose inner
+;; node is a compact marker keeps that Spanned row below the new marker: the row
+;; is the compact marker's view.
 (define (ctfe-caller-origin-expr-node-with-pools
   [pools : ast.AstNodePoolContext]
   [node : i64]
@@ -1042,7 +1054,15 @@
             pools
             (ast.ast-node-pool-context-expr-push
               pools
-              (MacroExpansion inner (ci.intern-composite-pair-id -1 path-id) -1))
+              (MacroExpansion
+                (match (ast.ast-node-pool-context-expr-get pools inner)
+                  [(MacroExpansion _ _ name)
+                    (if (= name (ctfe-compact-caller-origin-name))
+                      node
+                      inner)]
+                  [_ inner])
+                (ci.intern-composite-pair-id -1 path-id)
+                -1))
             span)]
         [_ node]))))
 

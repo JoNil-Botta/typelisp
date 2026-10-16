@@ -78196,3 +78196,270 @@
       [(not (= escape.calls 1)) 13]
       [(= escape.result-lhs escape.result-rhs) 14]
       [else 42])))
+
+;; --- LICM: a store to one field of a root, a load of another (#8941) --------
+;;
+;; One loop, run through LICM alone, that sums `p.x` (bytes [0, 8) of the
+;; root `p`) and whose only other memory traffic is the WRITE spelled by
+;; `write`. The load leaves the loop exactly when every write provably misses
+;; those bytes. `q` is a second checked root, `n` the trip bound, `v`/`w` the
+;; stored values.
+(define (opt-licm-field-function [write : String]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @licm_field(p=%0:(&mut r i64), v=%1:i64, n=%2:i64, q=%3:(&mut s i64), w=%4:i32) -> i64 vars 20 {
+         entry:
+           %5 = mov 0 : i64
+           jump loop
+         loop:
+           %6 = phi [%5, entry], [%12, body] : i64
+           %14 = phi [%5, entry], [%15, body] : i64
+           "
+      write
+      "
+           %8 = gep %0, 0 : u8
+           %9 = load %8 : i64
+           %10 = lt %6, %2 : i64
+           branch %10, body, exit
+         body:
+           %12 = add %6, 1 : i64
+           %15 = add %14, %9 : i64
+           jump loop
+         exit:
+           return %14
+       }")))
+
+;; How many `store_ptr`s the block labelled `label` holds.
+(define (opt-licm-field-label-stores
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [label : i64]) : i64
+  (match blocks
+    [(slice) 0]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
+        [(Block block-label instrs)
+          (if (= block-label label)
+            (opt-count-storeptr-instrs instrs)
+            (opt-licm-field-label-stores rest label))])]))
+
+;; The function's shape after LICM alone, as three decimal digits: the loads
+;; left in the loop, the loads in the whole function, and the stores left in
+;; the loop. 11 is the hoist (the one load sits in the preheader, the store
+;; stays); 111 is the load kept in the loop.
+(define (opt-licm-field-shape [write : String]) : i64
+  (let
+    [func
+      (opt.opt-licm-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt-licm-field-function write)))]
+    [blocks (opt.opt-function-blocks func)]
+    [view (ir.compiler-ir-block-list-view blocks)]
+    [loop-label : i64 (ir.compiler-ir-label "loop")]
+    (+
+      (* 100 (opt-count-load-label-blocks view loop-label))
+      (* 10 (opt-count-load-blocks view))
+      (opt-licm-field-label-stores view loop-label))))
+
+(define (compiler-optimize-licm-field-self-test) : i64
+  (cond
+    ;; A store to `p.y` (bytes [8, 16)) misses `p.x`: the load leaves.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 8 : u8
+             store_ptr %7, %1 : i64")
+          11))
+      1]
+    ;; The same field: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 0 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      2]
+    ;; A narrower store overlapping bytes [4, 8) of `p.x`: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 4 : u8
+             store_ptr %7, %4 : i32")
+          111))
+      3]
+    ;; The same field offset through a second checked root: two reference
+    ;; parameters never prove disjoint (#6693), so the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %3, 8 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      4]
+    ;; A store at an offset that is not a constant: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, %2 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      5]
+    ;; `p` escapes to an unknown callee in the loop: the load stays.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 8 : u8
+             store_ptr %7, %1 : i64
+             %13 = call licm_field_opaque(%0) : unit")
+          111))
+      6]
+    ;; A narrowing cast can change the pointer's address. Its displacement
+    ;; cannot be measured from the original checked root.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%16 = cast %0 : (&mut r i64) to u64
+             %17 = cast %16 : u64 to u32
+             %18 = cast %17 : u32 to u64
+             %7 = gep %18, 4294967292 : u8
+             store_ptr %7, %1 : i64")
+          111))
+      7]
+    ;; Constant byte displacements must not wrap during scaled arithmetic.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%7 = gep %0, 9223372036854775807 : i64
+             store_ptr %7, %1 : i64")
+          111))
+      8]
+    ;; A copy and an element-scaled constant retain the same coordinate.
+    [(not
+        (=
+          (opt-licm-field-shape
+            "%16 = mov %0 : (&mut r i64)
+             %7 = gep %16, 1 : i64
+             store_ptr %7, %1 : i64")
+          11))
+      9]
+    [(not (opt-licm-field-storage-home-known? false)) 10]
+    [(opt-licm-field-storage-home-known? true) 11]
+    [(not (opt-licm-field-unsupported-offsets-missing?)) 12]
+    [(not (opt-licm-field-invalid-definition-refused?)) 13]
+    [else 42]))
+
+(define (compiler-optimize-licm-field-pipeline-self-test) : i64
+  (let
+    [func
+      (optimize-function-with-level
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-licm-field-function
+          "%7 = gep %0, 8 : u8
+           store_ptr %7, %1 : i64")
+        2)]
+    [blocks (opt.opt-function-blocks func)]
+    [view (ir.compiler-ir-block-list-view blocks)]
+    (cond
+      [(not (= (opt-count-load-blocks view) 1)) 1]
+      [(not
+          (= (opt-count-load-label-blocks view (ir.compiler-ir-label "loop")) 0))
+        2]
+      [else 42])))
+
+;; Taking the address of a frame allocation retains that object's coordinate.
+;; The home of a scalar heap-result pointer is a different storage object.
+(define (opt-licm-field-storage-home-known? [heap? : bool]) : bool
+  (let
+    [func
+      (opt-test-function
+        (opt-test-instrs
+          (if heap?
+            (ir.CompilerIrInstr.Call
+              0
+              cbi.compiler-builtin-id-tl-alloc
+              (One (I64 16))
+              (U64))
+            (ir.CompilerIrInstr.Alloc 0 (I64)))
+          (ir.CompilerIrInstr.AddrOf 1 0)
+          (ir.CompilerIrInstr.Return (Some (I64 42)))))]
+    [params (opt.opt-function-params (& func))]
+    [blocks (opt.opt-function-blocks func)]
+    [types (opt.opt-licm-type-env-from-function (& params) (& blocks))]
+    [state
+      (opt.opt-licm-provenance-state-from-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& params)
+        (& types)
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& blocks))]
+    (match (opt.opt-licm-root-env-offset (& state.roots) (& (Var 1)))
+      [(LookupFound offset) (= offset 0)]
+      [(LookupMissing) false])))
+
+(define (opt-licm-field-unsupported-offsets-missing?) : bool
+  (let
+    [func
+      (irt.func
+        "function @unknown_coords(p=%0:(&mut r i64)) -> i64 vars 4 {
+      entry:
+        %1 = cast %0 : (&mut r i64) to u64
+        %2 = bitcast %1 : u64 to u64
+        %3 = load %0 : i64
+        return %3
+    }")]
+    [params (opt.opt-function-params (& func))]
+    [blocks (opt.opt-function-blocks func)]
+    [types (opt.opt-licm-type-env-from-function (& params) (& blocks))]
+    [state
+      (opt.opt-licm-provenance-state-from-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& params)
+        (& types)
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& blocks))]
+    (and
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 0)))
+        [(LookupFound k) (= k 0)]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 1)))
+        [(LookupMissing) true]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 2)))
+        [(LookupMissing) true]
+        [_ false])
+      (match (opt.opt-licm-root-env-offset
+        (& state.roots)
+        (& (ir.CompilerIrValue.Var 3)))
+        [(LookupMissing) true]
+        [_ false]))))
+
+(define (opt-licm-field-invalid-definition-refused?) : bool
+  (let
+    [write
+      "%7 = gep %0, 8 : u8
+            %7 = cast %0 : (&mut r i64) to u64
+            store_ptr %7, %1 : i64"]
+    [func (opt-licm-field-function write)]
+    [invalid?
+      (opt-verify-error-ok?
+        (opt.opt-verify-function (& func))
+        "optimizer verify: duplicate var definition")]
+    [next
+      (opt.opt-licm-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& func))]
+    [blocks (opt.opt-function-blocks next)]
+    (and
+      invalid?
+      (=
+        (opt-count-load-label-blocks
+          (ir.compiler-ir-block-list-view (& blocks))
+          (ir.compiler-ir-label "loop"))
+        1))))

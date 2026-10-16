@@ -296,8 +296,12 @@ before value effects. A descriptor snapshot retains its array type so the
 existing memory summary can distinguish element writes from header writes.
 The value runs before checking and addressing the logical element in the
 selected array's current buffer, so RHS growth does not strand the store in
-an old buffer. Direct constructors retain a deferred destination until their
-existing argument collector evaluates every field; the same builders then
+an old buffer. A fixed-array receiver projected from a dynamic element carries
+its descriptor, selected parent index and byte offset through conditional,
+match and scope joins; it resolves that logical receiver after value effects.
+Intermediate projections check bounds when selected, while the final element
+check follows the RHS. Direct constructors retain the same deferred destination
+until their existing argument collector evaluates every field; the builders then
 store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.

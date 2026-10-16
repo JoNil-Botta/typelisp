@@ -37167,7 +37167,7 @@
 (defstruct LowerArrayStorePlace
   (receiver-box i64)
   (index-box i64)
-  (receiver-value ir.CompilerIrValue)
+  (receiver-place LowerStorePlace)
   (index-value ir.CompilerIrValue)
   (index-type ast.AstType)
   (container-type ast.AstType)
@@ -37205,7 +37205,7 @@
         ctx
         state
         (lower-context-expr-get ctx place.receiver-box)
-        place.receiver-value
+        place.receiver-place
         place.index-value
         place.index-type
         place.container-type
@@ -41380,7 +41380,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [arr : ast.AstExpr]
-  [arr-value : ir.CompilerIrValue]
+  [arr-place : LowerStorePlace]
   [idx-value : ir.CompilerIrValue]
   [idx-ty : ast.AstType]
   [container-ty : ast.AstType]
@@ -41392,27 +41392,31 @@
         (lower-array-element-addr
           ctx
           state
-          arr-value
+          arr-place.base
           idx-value
           idx-ty
           elem-ir-ty))]
     [(Array _ elem-count)
-      (Ok
-        (lower-fixed-array-element-addr
-          ctx
-          state
-          arr-value
-          idx-value
-          idx-ty
-          elem-ir-ty
-          elem-count))]
+      ;; A fixed array may be inline in a selected dynamic element. Resolve
+      ;; that receiver's current buffer only after the RHS has finished.
+      (match (lower-store-place-address ctx state arr-place arr)
+        [(Expr resolved receiver _)
+          (Ok
+            (lower-fixed-array-element-addr
+              ctx
+              resolved
+              receiver
+              idx-value
+              idx-ty
+              elem-ir-ty
+              elem-count))])]
     [(MutRef _ inner)
       (if (lower-fat-reference? ctx inner)
         (Ok
           (lower-slice-element-addr
             ctx
             state
-            arr-value
+            arr-place.base
             container-ty
             idx-value
             idx-ty
@@ -43752,6 +43756,60 @@
             (Err (box (lower-diagnostic-at-expr ctx origin message)))]))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx receiver message)))]))
 
+;; Fixed arrays carry a logical place through projections and control flow.
+;; Dynamic arrays and slices already carry their selected descriptor/address
+;; as a value; preserve that value before the index and RHS can rebind it.
+(define (lower-capture-array-store-receiver
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [arr-box : i64]
+  [index-box : i64]
+  [value-box : i64]
+  [container-ty : ast.AstType]) : ResultLowerStorePlace
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
+    [(Array _ _)
+      (lower-capture-store-place
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx arr-box)
+        (lower-context-expr-get ctx arr-box))]
+    [_
+      (let
+        [first-var (lower-state-next-var state)]
+        (match (lower-expr
+          ctx
+          state
+          env
+          type-env
+          (lower-context-expr-get ctx arr-box))
+          [(Ok (Expr evaluated value ty))
+            (match (lower-operand-snapshot
+              ctx
+              evaluated
+              arr-box
+              (& (LowerSnapshotTail.PlaceOperands index-box value-box))
+              first-var
+              -1
+              value
+              ty)
+              [(Snapshot captured receiver _)
+                (ResultLowerStorePlace.Ok
+                  captured
+                  (LowerStorePlace
+                    false
+                    (ir.CompilerIrValue.Bool false)
+                    receiver
+                    (ir.CompilerIrValue.I64 0)
+                    (ir.CompilerIrValue.I64 0)
+                    container-ty
+                    false))])]
+          [(Err error) (ResultLowerStorePlace.Err error)]))]))
+
 (define (lower-array-set
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -43795,147 +43853,141 @@
         (let
           [elem-ir-ty (tc_core.tc-type-without-regions elem-ty)]
           [first-var (lower-state-next-var state)]
-          [arr-lowered
-            (try
-              (lower-expr
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx arr-box)))]
-          [receiver-snapshot
-            (match arr-lowered
-              [(Expr read-state read-value read-ty)
-                (lower-operand-snapshot
-                  ctx
-                  read-state
-                  arr-box
-                  (& (LowerSnapshotTail.PlaceOperands index-box value-box))
-                  first-var
-                  -1
-                  read-value
-                  read-ty)])]
-          (match receiver-snapshot
-            [(Snapshot arr-state arr-value _)
-              (let
-                [idx-ty
-                  (match (lower-index-result-type-or-check
-                    ctx
-                    env
-                    type-env
-                    (lower-state-type-cache arr-state)
-                    (lower-state-function-state arr-state)
-                    (lower-context-expr-get ctx index-box))
-                    [(Ok ty) ty]
-                    [(Err message)
-                      (return
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              (lower-context-expr-get ctx index-box)
-                              message))))])]
-                [idx-lowered
-                  (try
-                    (lower-expr-expected
+          [captured-receiver
+            (lower-capture-array-store-receiver
+              ctx
+              state
+              env
+              type-env
+              arr-box
+              index-box
+              value-box
+              (lower-global-shared-view container-ty))]
+          (match captured-receiver
+            [(ResultLowerStorePlace.Ok arr-state arr-value)
+              (if (tc_core.tc-never-type?
+                (lower-global-shared-view arr-value.ty))
+                (Ok (Expr arr-state Unit (Never)))
+                (let
+                  [idx-ty
+                    (match (lower-index-result-type-or-check
                       ctx
-                      arr-state
                       env
                       type-env
-                      (lower-context-expr-get ctx index-box)
-                      (lower-global-shared-view idx-ty)
-                      (lower-context-expr-get ctx index-box)))]
-                [index-snapshot
-                  (match idx-lowered
-                    [(Expr idx-state idx-value idx-value-ty)
-                      (lower-operand-snapshot
+                      (lower-state-type-cache arr-state)
+                      (lower-state-function-state arr-state)
+                      (lower-context-expr-get ctx index-box))
+                      [(Ok ty) ty]
+                      [(Err message)
+                        (return
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                (lower-context-expr-get ctx index-box)
+                                message))))])]
+                  [idx-lowered
+                    (try
+                      (lower-expr-expected
                         ctx
-                        idx-state
-                        index-box
-                        (& (LowerSnapshotTail.Operand value-box))
-                        first-var
-                        -1
-                        idx-value
-                        idx-value-ty)])]
-                (match index-snapshot
-                  [(Snapshot idx-state idx-value _)
-                    (let
-                      [direct : LowerMaybeDirectStore
-                        (if (lower-direct-store-target?
+                        arr-state
+                        env
+                        type-env
+                        (lower-context-expr-get ctx index-box)
+                        (lower-global-shared-view idx-ty)
+                        (lower-context-expr-get ctx index-box)))]
+                  [index-snapshot
+                    (match idx-lowered
+                      [(Expr idx-state idx-value idx-value-ty)
+                        (lower-operand-snapshot
                           ctx
-                          (lower-global-shared-view elem-ir-ty))
-                          (lower-direct-store-rhs-into
+                          idx-state
+                          index-box
+                          (& (LowerSnapshotTail.Operand value-box))
+                          first-var
+                          -1
+                          idx-value
+                          idx-value-ty)])]
+                  (match index-snapshot
+                    [(Snapshot idx-state idx-value _)
+                      (let
+                        [direct : LowerMaybeDirectStore
+                          (if (lower-direct-store-target?
                             ctx
-                            idx-state
-                            env
-                            type-env
-                            (LowerStoreDestination.ArrayElement
-                              (box
-                                (LowerArrayStorePlace
-                                  arr-box
-                                  index-box
-                                  (lower-global-shared-view arr-value)
-                                  (lower-global-shared-view idx-value)
-                                  (lower-global-shared-view idx-ty)
-                                  (lower-global-shared-view container-ty)
-                                  (lower-global-shared-view elem-ir-ty))))
-                            (lower-global-shared-view value)
-                            (lower-global-shared-view elem-ir-ty)
-                            (lower-global-shared-view value))
-                          (No))]
-                      (match direct
-                        [(Store done) (Ok (Expr done Unit (Unit)))]
-                        [(Err message) (Err message)]
-                        [(No)
-                          (let
-                            [value-lowered
-                              (try
-                                (lower-expr-expected
-                                  ctx
-                                  idx-state
-                                  env
-                                  type-env
-                                  (lower-global-shared-view value)
-                                  (lower-global-shared-view elem-ir-ty)
-                                  (lower-global-shared-view value)))]
-                            (match value-lowered
-                              [(Expr value-state value-ir _)
-                                (let
-                                  [address
-                                    (try
-                                      (lower-array-set-element-address
-                                        ctx
-                                        value-state
-                                        (lower-context-expr-get ctx arr-box)
-                                        arr-value
-                                        idx-value
-                                        (lower-global-shared-view idx-ty)
-                                        container-ty
-                                        (lower-global-shared-view elem-ir-ty)))]
-                                  (match address
-                                    [(Expr addr-state elem-ptr _)
-                                      (let
-                                        [checked
-                                          (lower-state-record-latest-bounds-check-at-expr
-                                            ctx
-                                            addr-state
-                                            (lower-context-expr-get
+                            (lower-global-shared-view elem-ir-ty))
+                            (lower-direct-store-rhs-into
+                              ctx
+                              idx-state
+                              env
+                              type-env
+                              (LowerStoreDestination.ArrayElement
+                                (box
+                                  (LowerArrayStorePlace
+                                    arr-box
+                                    index-box
+                                    (lower-global-shared-view arr-value)
+                                    (lower-global-shared-view idx-value)
+                                    (lower-global-shared-view idx-ty)
+                                    (lower-global-shared-view container-ty)
+                                    (lower-global-shared-view elem-ir-ty))))
+                              (lower-global-shared-view value)
+                              (lower-global-shared-view elem-ir-ty)
+                              (lower-global-shared-view value))
+                            (No))]
+                        (match direct
+                          [(Store done) (Ok (Expr done Unit (Unit)))]
+                          [(Err message) (Err message)]
+                          [(No)
+                            (let
+                              [value-lowered
+                                (try
+                                  (lower-expr-expected
+                                    ctx
+                                    idx-state
+                                    env
+                                    type-env
+                                    (lower-global-shared-view value)
+                                    (lower-global-shared-view elem-ir-ty)
+                                    (lower-global-shared-view value)))]
+                              (match value-lowered
+                                [(Expr value-state value-ir _)
+                                  (let
+                                    [address
+                                      (try
+                                        (lower-array-set-element-address
+                                          ctx
+                                          value-state
+                                          (lower-context-expr-get ctx arr-box)
+                                          arr-value
+                                          idx-value
+                                          (lower-global-shared-view idx-ty)
+                                          container-ty
+                                          (lower-global-shared-view elem-ir-ty)))]
+                                    (match address
+                                      [(Expr addr-state elem-ptr _)
+                                        (let
+                                          [checked
+                                            (lower-state-record-latest-bounds-check-at-expr
                                               ctx
-                                              index-box))]
-                                        (Ok
-                                          (Expr
-                                            (if (=
-                                              (lower-type-size ctx elem-ir-ty)
-                                              0)
-                                              checked
-                                              (lower-array-elem-store-state
+                                              addr-state
+                                              (lower-context-expr-get
                                                 ctx
+                                                index-box))]
+                                          (Ok
+                                            (Expr
+                                              (if (=
+                                                (lower-type-size ctx elem-ir-ty)
+                                                0)
                                                 checked
-                                                elem-ptr
-                                                value-ir
-                                                elem-ir-ty))
-                                            Unit
-                                            (Unit))))]))]))]))]))]))])))
+                                                (lower-array-elem-store-state
+                                                  ctx
+                                                  checked
+                                                  elem-ptr
+                                                  value-ir
+                                                  elem-ir-ty))
+                                              Unit
+                                              (Unit))))]))]))]))])))]
+            [(ResultLowerStorePlace.Err error) (Err error)]))])))
 
 ;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
 ;; emitted as explicit IR so `array-push!` works for runtime lengths.

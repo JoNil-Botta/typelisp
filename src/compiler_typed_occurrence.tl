@@ -570,7 +570,7 @@
   [store : (& store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
   [signature : (& signature TypedTypeId)]) : i64
-  (match (typed-type-ok store lease signature)
+  (match (typed-type-handle-ok store signature)
     [(TypedResult.Err _) -1]
     [(TypedResult.Ok _)
       (match (& (array-ref store.types signature.handle.index).value)
@@ -1074,11 +1074,12 @@
     (< handle.index count)
     (> handle.serial 0)))
 
-(define (typed-type-ok
+;; Entry operations validate the lease and every table extent with
+;; typed-charge! before checking handles. Growth preserves those extents and
+;; no resolver or pool mutation runs between that check and these reads.
+(define (typed-type-handle-ok
   [store : (& store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
   [type : (& type TypedTypeId)]) : TypedResult
-  (try (typed-lease-ok store lease))
   (if (and
     (typed-handle-range? store (& type.handle) store.type-count)
     (= (array-ref store.types type.handle.index).serial type.handle.serial))
@@ -1294,7 +1295,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.binder-count))
   (try (typed-reserve-records! store lease (+ store.binder-count 1)))
-  (try (typed-type-ok (& store) lease (& type)))
+  (try (typed-type-handle-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (match (& kind)
     [(TypedBinderKind.Global global)
@@ -1320,8 +1321,8 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.projection-count))
   (try (typed-reserve-records! store lease (+ store.projection-count 1)))
-  (try (typed-type-ok (& store) lease (& container)))
-  (try (typed-type-ok (& store) lease (& result)))
+  (try (typed-type-handle-ok (& store) (& container)))
+  (try (typed-type-handle-ok (& store) (& result)))
   (try (typed-origin-ok (& store) (& origin)))
   (unless
     (match (& kind)
@@ -1413,7 +1414,7 @@
     (when
       (> index-count store.limits.children)
       (try (typed-resource-fail! store TypedError.Budget)))
-    (try (typed-type-ok (& store) lease (& type)))
+    (try (typed-type-handle-ok (& store) (& type)))
     (let
       [handle : TypedHandle (typed-fresh! store store.place-count)]
       (set!
@@ -1431,7 +1432,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.call-count))
   (try (typed-reserve-records! store lease (+ store.call-count 1)))
-  (try (typed-type-ok (& store) lease (& signature)))
+  (try (typed-type-handle-ok (& store) (& signature)))
   (unless
     (and (>= argument-count 0) (<= argument-count store.limits.children))
     (return (TypedCallResult.Err TypedError.Shape)))
@@ -1648,7 +1649,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.occurrence-count))
   (try (typed-reserve-records! store lease (+ store.occurrence-count 1)))
-  (try (typed-type-ok (& store) lease (& type)))
+  (try (typed-type-handle-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (try (typed-operation-payload-ok! store lease (& operation)))
   (match (& operation)
@@ -1809,9 +1810,8 @@
   (try (typed-charge! store lease 1))
   (try (typed-place-shape-ok (& store) (& id)))
   (try
-    (typed-type-ok
+    (typed-type-handle-ok
       (& store)
-      lease
       (& (array-ref store.places id.handle.index).type)))
   (TypedPlaceView.Ok (& (array-ref store.places id.handle.index))))
 
@@ -1847,7 +1847,7 @@
   [lease : (& lease (TypedBodyLease intern))]
   [id : TypedTypeId]) : (TypedTypeResult store)
   (try (typed-charge! store lease 1))
-  (try (typed-type-ok (& store) lease (& id)))
+  (try (typed-type-handle-ok (& store) (& id)))
   (TypedTypeResult.Ok (& (array-ref store.types id.handle.index).value)))
 
 ;; Revocation is unconditional and allocation-free, including after exhaustion.

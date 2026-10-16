@@ -78092,3 +78092,115 @@
       [(not (= escape.calls 1)) 13]
       [(= escape.result-lhs escape.result-rhs) 14]
       [else 42])))
+
+;; The midpoint's range is independent of trip count. Mutations below retain
+;; valid SSA while breaking one premise, so refusal must preserve each check.
+(define (opt-interval-test-blocks [variant : i64]) : ir.CompilerIrBlockList
+  (let
+    [text : String
+      "entry:
+         jump header
+       header:
+         %3 = phi [%2, entry], [%11, latch] : i64
+         %4 = phi [%0, entry], [%12, latch] : i64
+         %5 = le %3, %4 : i64
+         branch %5, body, exit
+       body:
+         %6 = add %3, %4 : i64
+         %7 = shr %6, 1 : i64
+         bounds_check %7, %1 message \"interval\"
+         %8 = lt %7, 7 : i64
+         branch %8, left, right
+       left:
+         %9 = add %7, 1 : i64
+         jump latch
+       right:
+         %10 = sub %7, 1 : i64
+         jump latch
+       latch:
+         %11 = phi [%9, left], [%3, right] : i64
+         %12 = phi [%4, left], [%10, right] : i64
+         jump header
+       exit:
+         return %3"]
+    (irt.blocks
+      (cond
+        [(= variant 1) (string.replace text "shr %6, 1" "div %6, 2")]
+        [(= variant 2) (string.replace text "add %3, %4" "add %4, %3")]
+        [(= variant 3) (string.replace text "add %7, 1" "sub %7, 1")]
+        [(= variant 4) (string.replace text "sub %7, 1" "add %7, 1")]
+        [(= variant 5) (string.replace text "shr %6, 1" "div %6, 3")]
+        [(= variant 6) (string.replace text "le %3, %4" "le %4, %3")]
+        [(= variant 7)
+          (string.replace
+            text
+            "bounds_check %7, %1 message"
+            "bounds_check %3, %1 message \"other\"\n bounds_check %7, %1 message")]
+        [(= variant 8) (string.replace text "[%9, left]" "[0, left]")]
+        [(= variant 9) (string.replace text "[%2, entry]" "[-1, entry]")]
+        [(= variant 10)
+          (string.replace text "[%0, entry]" "[9223372036854775807, entry]")]
+        [(= variant 11)
+          (string.replace text "[%0, entry]" "[4611686018427387903, entry]")]
+        [(= variant 12) (string.replace text "shr %6, 1" "shr %6, 2")]
+        ;; hi + 1 still fits: midpoint overflow alone must reject this interval.
+        [(= variant 13)
+          (string.replace
+            (string.replace
+              (string.replace text "[%0, entry]" "[4611686018427387904, entry]")
+              "[%2, entry]"
+              "[0, entry]")
+            "bounds_check %7, %1"
+            "bounds_check %7, 9223372036854775807")]
+        [else text]))))
+
+(test
+  bce-version-binary-interval
+  (for [variant (iterator.range 0 14)]
+    (let
+      [original : ir.CompilerIrFunction
+        (Function
+          (opt-test-symbol "binary_interval")
+          (opt-bce-version-test-params)
+          (I64)
+          13
+          (opt-interval-test-blocks variant)
+          Ordinary)]
+      [optimized : ir.CompilerIrFunction
+        (opt.opt-bce-version-function (& original))]
+      [blocks (opt.opt-function-blocks optimized)]
+      [versioned? (or (< variant 3) (= variant 11) (= variant 13))]
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& original))))
+        "interval input satisfies SSA")
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& optimized))))
+        "interval clone satisfies SSA")
+      (test.assert-i64-eq
+        (opt-bce-version-test-block-checks
+          blocks
+          (ir.compiler-ir-label "body__bce_fast"))
+        (if versioned?
+          0
+          -1)
+        "only guarded midpoints lose the fast check")
+      (test.assert-i64-eq
+        (opt-bce-version-test-block-checks blocks (ir.compiler-ir-label "body"))
+        (if (= variant 7)
+          2
+          1)
+        "slow checks and order are retained")
+      (when
+        (= variant 13)
+        (let
+          [folded
+            (opt.opt-sccp-blocks
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (& (opt-bce-version-test-params))
+              (& blocks))]
+          (test.assert-i64-eq
+            (opt-bce-version-test-block-checks
+              folded
+              (ir.compiler-ir-label "body__bce_fast"))
+            -1
+            "midpoint overflow selects the slow copy while hi + 1 still fits"))))))

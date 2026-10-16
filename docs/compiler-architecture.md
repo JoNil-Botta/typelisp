@@ -1069,6 +1069,19 @@ a hash probe's `walked` cursor is that case. The
 `bce-version-mb-monotone-cursor` optimizer test and
 `tests/integration/bce_monotone_cursor.tl` cover it.
 
+A binary search can instead supply a bounded midpoint: two header phis
+hold an inclusive interval, the body computes `(lo + hi) / 2` (or an
+arithmetic shift by one), and each end remains unchanged or becomes
+`mid + 1` / `mid - 1`. The entry guard proves nonnegative initial ends,
+ordered entry and a nonwrapping midpoint sum. Both top-tested and rotated
+loops use the existing versioned clone and descriptor-stability checks.
+The midpoint carries only a value range; it cannot authorize unrolling,
+trip-count-based inductions, or hoisted comparisons about a counter limit.
+Guard failure preserves the original checks and diagnostics. The
+`bce-version-binary-interval` test covers proof refusals, and
+`tests/integration/bce_binary_interval.tl` compares searches against a linear
+reference and pins invalid-range and overflow traps at every optimization level.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

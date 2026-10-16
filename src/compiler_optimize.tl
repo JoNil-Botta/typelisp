@@ -21618,6 +21618,7 @@
 ;; displacement, and everything else forgets it.
 (define (opt-licm-root-env-offset-update-instr!
   [env : (&mut env OptLicmRootEnv)]
+  [ptrs : (& ptrs OptLicmPtrEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(Alloc dst _) (opt-licm-root-env-set-offset! env dst (LookupFound 0))]
@@ -21628,8 +21629,8 @@
       (opt-licm-root-env-set-offset!
         env
         dst
-        (match (opt-licm-root-env-lookup env src)
-          [(Fresh id)
+        (match (opt-licm-ptr-lookup ptrs src)
+          [(LocalObject id)
             (if (= id src)
               (LookupFound 0)
               (LookupMissing))]
@@ -21676,8 +21677,9 @@
 
 (define (opt-licm-root-env-update-instr!
   [env : (&mut env OptLicmRootEnv)]
+  [ptrs : (& ptrs OptLicmPtrEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (opt-licm-root-env-offset-update-instr! env instr)
+  (opt-licm-root-env-offset-update-instr! env ptrs instr)
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(Alloc dst _) (opt-licm-root-env-bind! env dst (Fresh dst))]
     ;; The address of an allocated object designates that object. Without this
@@ -22488,7 +22490,10 @@
         (owned_view.compiler-owned-reference-shared-view state)
         instr)]
     [_roots : unit
-      (opt-licm-root-env-update-instr! (&mut invalid.roots) (& instr))]
+      (opt-licm-root-env-update-instr!
+        (&mut invalid.roots)
+        (& invalid.ptrs)
+        (& instr))]
     (match instr
       [(Mov dst src _)
         (match src

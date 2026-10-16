@@ -78237,6 +78237,8 @@
              store_ptr %7, %1 : i64")
           11))
       9]
+    [(not (opt-licm-field-storage-home-known? false)) 10]
+    [(opt-licm-field-storage-home-known? true) 11]
     [else 42]))
 
 (define (compiler-optimize-licm-field-pipeline-self-test) : i64
@@ -78257,3 +78259,33 @@
           (= (opt-count-load-label-blocks view (ir.compiler-ir-label "loop")) 0))
         2]
       [else 42])))
+
+;; Taking the address of a frame allocation retains that object's coordinate.
+;; The home of a scalar heap-result pointer is a different storage object.
+(define (opt-licm-field-storage-home-known? [heap? : bool]) : bool
+  (let
+    [func
+      (opt-test-function
+        (opt-test-instrs
+          (if heap?
+            (ir.CompilerIrInstr.Call
+              0
+              cbi.compiler-builtin-id-tl-alloc
+              (One (I64 16))
+              (U64))
+            (ir.CompilerIrInstr.Alloc 0 (I64)))
+          (ir.CompilerIrInstr.AddrOf 1 0)
+          (ir.CompilerIrInstr.Return (Some (I64 42)))))]
+    [params (opt.opt-function-params (& func))]
+    [blocks (opt.opt-function-blocks func)]
+    [types (opt.opt-licm-type-env-from-function (& params) (& blocks))]
+    [state
+      (opt.opt-licm-provenance-state-from-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& params)
+        (& types)
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& blocks))]
+    (match (opt.opt-licm-root-env-offset (& state.roots) (& (Var 1)))
+      [(LookupFound offset) (= offset 0)]
+      [(LookupMissing) false])))

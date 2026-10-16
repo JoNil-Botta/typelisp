@@ -996,6 +996,8 @@ LICM also proves that loop writes cannot change the loaded word. Same-root
 stores can be separated by non-overlapping constant byte ranges, using the
 shared load-CSE range predicate. Copies and constant-offset geps retain a root
 coordinate; unknown offsets, casts and bitcasts discard that range proof.
+An `AddrOf` keeps the coordinate only for an original frame allocation. The
+home of a scalar heap-result variable is separate from the returned object.
 Distinct checked-reference parameter roots still do not imply disjointness.
 
 LICM moves a load only with evidence that its word is readable at the

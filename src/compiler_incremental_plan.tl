@@ -1,6 +1,7 @@
 ;; Serial, bounded query scheduling (#7188). #7025 supplies execution, payload
 ;; admission and publication. This module retains metadata, never payloads.
 (import compiler_incremental_graph as graph)
+(import compiler_abort as abort)
 (import compiler_incremental_identity as identity)
 (import compiler_incremental_trace as trace)
 (import compiler_incremental_binary as binary)
@@ -666,8 +667,12 @@
           [(Ok builder)
             (match (graph.compiler-graph-finalize builder)
               [(Ok value) value]
-              [_ (string.tl_oob_abort)])]
-          [_ (string.tl_oob_abort)])]
+              [_
+                (abort.compiler-abort
+                  "compiler-plan-begin: empty graph finalization failed\n")])]
+          [_
+            (abort.compiler-abort
+              "compiler-plan-begin: validated graph limits rejected\n")])]
       [cold : i64 0]
       [snapshot : graph.CompilerIncrementalGraph
         (match prior
@@ -904,7 +909,7 @@
   (match (& plan (array-ref plan.nodes.slots node).result)
     [(Reused value) value]
     [(Recomputed value) value]
-    [Pending (string.tl_oob_abort)]))
+    [Pending (abort.compiler-abort "plan-result: pending node has no result\n")]))
 
 (define (plan-query [plan : (& plan CompilerIncrementalPlan)] [node : i64]) : (&
     plan
@@ -1484,7 +1489,7 @@
 (define (plan-child-request [key : (& key trace.CompilerIncrementalTraceKey)]) : identity.CompilerIncrementalIdentity
   (match key
     [(Child _ _ query) (identity.clone-compiler-incremental-identity query)]
-    [_ (string.tl_oob_abort)]))
+    [_ (abort.compiler-abort "plan-child-request: expected child trace key\n")]))
 
 (define (plan-self-child?
   [key : (& key trace.CompilerIncrementalTraceKey)]

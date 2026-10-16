@@ -1689,8 +1689,8 @@
   [index : i64]
   [expected : i64]) : bool
   (let
-    [items : opt_global_fact_vec.Vec facts.items]
-    (match (clone (array-ref (opt_global_fact_vec.slots (& items)) index))
+    [items : (& facts opt_global_fact_vec.Vec) (& facts.items)]
+    (match (clone (array-ref (opt_global_fact_vec.slots items) index))
       [(Copy dst src _ _)
         (and
           (= dst expected)
@@ -64052,9 +64052,12 @@
         (& fixture)
         (& (ir.compiler-ir-function-seq1 (& reader))))]
     [scratch (arena.tl_arena_make_small)]
+    [scratch-owner : arena.Arena
+      (unsafe
+        (arena.Arena scratch))]
     [_normalize : unit
       (in-arena
-        (arena.Arena scratch)
+        scratch-owner
         (opt.opt-pure-call-inline-memory-install! bases (& functions))
         unit)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]

@@ -6464,9 +6464,48 @@
         (> (lower-test-count functions "put" (Bounds)) 0))]
     [_ false]))
 
-;; Dynamic writes retain a pre-RHS reservation check and a post-RHS live-extent
-;; check. Fixed storage needs only the reservation check. The native place
-;; fixture independently checks relocation and single evaluation semantics.
+;; Final bounds checks follow the RHS for both array representations. The
+;; instruction-order witness rejects an early check even when counts match.
+(define (compiler-lower-store-place-rhs-order? [fixed? : bool]) : bool
+  (let
+    [source : String
+      (str_cat.str-cat
+        (string.replace
+          (if fixed?
+            (compiler-lower-fixed-array-access-source)
+            (compiler-lower-array-access-source))
+          "(set! (array-ref a i) v)"
+          "(set! (array-ref a i) (rhs v))")
+        "\n(define (rhs [v : i64]) : i64 v)")]
+    (match (lower-test-functions (lower.lower-compiler-source source))
+      [(Some functions)
+        (match (lower-test-function-seq-find functions "put")
+          [(Some (Function _ _ _ _ (Array blocks) _))
+            (if (!= blocks.len 1)
+              false
+              (match (ir.compiler-ir-block-seq-ref blocks 0)
+                [(Block _ instrs)
+                  (let
+                    [calls : i64 0]
+                    [checks : i64 0]
+                    [stores : i64 0]
+                    [index : i64 0]
+                    (while (< index instrs.len)
+                      (match (ir.compiler-ir-instr-seq-ref instrs index)
+                        [(Call _ name _ _)
+                          (when
+                            (string.eq (ir.compiler-ir-symbol-text name) "rhs")
+                            (+= calls 1))]
+                        [(BoundsCheck _ _ _)
+                          (unless (= calls 1) (return false))
+                          (+= checks 1)]
+                        [(StorePtr _ _ _) (when (= checks 1) (+= stores 1))]
+                        [_ unit])
+                      (+= index 1))
+                    (and (= calls 1) (= checks 1) (> stores 0)))]))]
+          [_ false])]
+      [_ false])))
+
 (define (compiler-lower-store-place-checks-ok?) : bool
   (and
     (match (lower-test-functions
@@ -6474,19 +6513,21 @@
       [(LowerTestFunctions.Some functions)
         (and
           (= (lower-test-count functions "get" (LowerTestInstr.Bounds)) 1)
-          (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 2))]
+          (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 1))]
       [_ false])
     (match (lower-test-functions
       (lower.lower-compiler-source (compiler-lower-fixed-array-access-source)))
       [(LowerTestFunctions.Some functions)
         (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 1)]
-      [_ false])))
+      [_ false])
+    (compiler-lower-store-place-rhs-order? false)
+    (compiler-lower-store-place-rhs-order? true)))
 
 (test
   compiler-lower-store-place-checks
   (test.assert-true
     (compiler-lower-store-place-checks-ok?)
-    "dynamic stores check reserved and current live extents; fixed stores check once"))
+    "array stores check the selected receiver after the RHS and before writing"))
 
 (define (compiler-lower-array-take-shape-ok?) : bool
   (match (lower-test-functions

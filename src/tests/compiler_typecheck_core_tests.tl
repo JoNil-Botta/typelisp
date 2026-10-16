@@ -13309,7 +13309,9 @@
               diagnostic.message
               "typecheck: return type mismatch: expected i64, found bool"))]
         [_ false])]
-    [initializer-gap : bool
+    [probes-unchanged : bool (= count store.occurrence-count)]
+    [binders : i64 store.binder-count]
+    [initializer-selected : bool
       (match (tc_core.tc-infer-selected-id
         ctx
         env
@@ -13322,9 +13324,52 @@
           (&mut selected-bindings-24)))
         [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
           (match occurrence
-            [(tc_core.TcSelectedOccurrence.Unrepresented) true]
+            [(tc_core.TcSelectedOccurrence.Selected id)
+              (let
+                [child : typed.TypedOccurrenceId
+                  (tc-selected-test-child! (&mut store) (& lease) id 0)]
+                (and
+                  (= store.occurrence-count (+ count 3))
+                  (= store.binder-count binders)
+                  (match (tc_core.tc-selected-occurrence-never!
+                    (&mut store)
+                    (& lease)
+                    id)
+                    [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+                    [_ false])
+                  (match (typed.typed-occurrence-get! (&mut store) (& lease) id)
+                    [(typed.TypedNodeResult.Ok node)
+                      (and
+                        (= node.child-count 1)
+                        (match node.operation
+                          [(typed.TypedOperation.Sequence) true]
+                          [_ false]))]
+                    [_ false])
+                  (match (typed.typed-occurrence-get!
+                    (&mut store)
+                    (& lease)
+                    child)
+                    [(typed.TypedNodeResult.Ok node)
+                      (and
+                        (= node.child-count 1)
+                        (match node.operation
+                          [(typed.TypedOperation.Return) true]
+                          [_ false]))]
+                    [_ false])
+                  (match (ownership_normalize.ownership-normalize!
+                    (&mut store)
+                    (& lease)
+                    id
+                    return-type
+                    (__tl_make-array
+                      ownership_normalize.OwnershipNormalizeTypeClass
+                      0)
+                    (ownership_normalize.ownership-normalize-default-limits))
+                    [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+                    [_ false])))]
             [_ false])]
         [_ false])]
+    [selected-count : i64 store.occurrence-count]
     [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! saved)]
     [missing : bool
       (match (tc_core.tc-infer-selected-id
@@ -13340,7 +13385,8 @@
         [(tc_core.TcSelectedResult.Err message _)
           (string.eq message "typecheck: return requires enclosing function")]
         [_ false])]
-    [unchanged : bool (= count store.occurrence-count)]
+    [unchanged : bool
+      (and probes-unchanged (= selected-count store.occurrence-count))]
     (typed.typed-store-retire! (&mut store))
     (unless
       intrinsic
@@ -13352,8 +13398,9 @@
       binary-selected
       (io.panic "selected return: divergent binary operand selected"))
     (unless
-      initializer-gap
-      (io.panic "selected return: divergent initializer stays unrepresented"))
+      initializer-selected
+      (io.panic
+        "selected return: divergent initializer is a normalized Never prefix without a binder"))
     (unless missing (io.panic "selected return: enclosing function required"))
     (unless unchanged (io.panic "selected return: failed operand retired"))
     true))

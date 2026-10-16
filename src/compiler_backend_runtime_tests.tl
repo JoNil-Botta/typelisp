@@ -59,7 +59,7 @@
     true
     true
     true
-    31))
+    63))
 
 (test
   compiler-backend-runtime-memchr-parity
@@ -142,6 +142,37 @@
         false
         false)]
     (begin
+      (test.assert-true
+        (and
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& linux-min-data)
+              ".L_tl_global_aggregate_arena:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-min-data)
+              ".L_tl_global_aggregate_arena:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& linux-min-functions)
+              "tl_alloc_global:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-min-functions)
+              "tl_alloc_global:"))
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-data)
+            ".L_tl_global_aggregate_arena:")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-data)
+            ".L_tl_global_aggregate_arena:")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "tl_alloc_global:")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "tl_alloc_global:"))
+        "global storage emits its private owner and allocator together only when selected")
       (test.assert-true
         (compiler-backend-runtime-test-contains? (& linux-min-data) ".tbss")
         "Linux runtime data owns the TLS arena slot")

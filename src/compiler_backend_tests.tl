@@ -41221,7 +41221,7 @@ user_fn:
             false
             false
             backtrace
-            31)))]
+            63)))]
     (and
       (asm-has?
         rewritten

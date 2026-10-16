@@ -470,8 +470,10 @@ job retirement releases those owners after the last reset.
 `test_cli_entry_memory_smoke.tl` exercises twelve ordinary inline entries in
 one process and checks retained bytes after four warm-up entries. The small
 leaf still compiles and executes its test each time; all eight measured entries
-must retain at most 1 MiB in total; the native integration manifest runs it on
-both hosts. `test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
+must retain at most 1 MiB in total. This also covers repeated unbound-name
+snapshot recording and clearing after implicit global storage copies acquire
+program lifetime; the snapshot container must be reused. The native integration
+manifest runs it on both hosts. `test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
 bindings after success/error scalar results, and verifies copied cache hits and
 misses survive cache reset after the caller scratch arena has been destroyed.
 Macro hygiene retirement requires no active root; the debug runtime permits that explicit

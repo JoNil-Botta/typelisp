@@ -94,7 +94,9 @@
   (WindowsObjectMainFiberContribution)
   (WindowsObjectOverflowFilterContribution)
   (LinuxRuntimeCopyFwd)
-  (LinuxRuntimeCopy8Fwd))
+  (LinuxRuntimeCopy8Fwd)
+  (LinuxRuntimeGlobalAlloc)
+  (WindowsRuntimeGlobalAlloc))
 
 (defenum CompilerX64TemplateTarget
   (AnyX64)

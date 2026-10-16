@@ -24,7 +24,7 @@
     (ptr-read (ptr-offset (__tl_array-data ids.slots) index))))
 
 (define (compiler-x64-template-id-from-index [index : i64]) : x64.CompilerX64ExecutableTemplateId
-  (if (or (< index 0) (>= index 84))
+  (if (or (< index 0) (>= index 86))
     (io.panic "x64 executable template: id index is out of range")
     (unsafe
       (ptr-read
@@ -39,7 +39,7 @@
         (__tl_make-array x64.CompilerX64ExecutableTemplateId 96)
         0)]
     [index : i64 0]
-    (while (< index 84)
+    (while (< index 86)
       (compiler-x64-template-id-list-push!
         (&mut ids)
         (compiler-x64-template-id-from-index index))
@@ -139,6 +139,11 @@
               features.profile
               features.arena-debug)))
         (when
+          (and features.alloc (!= (bit-and features.leaf-mask 32) 0))
+          (compiler-x64-template-id-list-push!
+            (&mut ids)
+            (LinuxRuntimeGlobalAlloc)))
+        (when
           features.region-mark
           (compiler-x64-template-id-list-push!
             (&mut ids)
@@ -199,6 +204,11 @@
               (WindowsRuntimeAllocProfileDebug)
               features.profile
               features.arena-debug)))
+        (when
+          (and features.alloc (!= (bit-and features.leaf-mask 32) 0))
+          (compiler-x64-template-id-list-push!
+            (&mut ids)
+            (WindowsRuntimeGlobalAlloc)))
         (when
           features.region-mark
           (compiler-x64-template-id-list-push!

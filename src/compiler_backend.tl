@@ -76041,6 +76041,7 @@
       [(string.eq text "tl_mem_copy_fwd") 4]
       [(string.eq text "tl_mem_copy8_fwd") 8]
       [(string.eq text "tl_mem_fill8") 16]
+      [(string.eq text "tl_alloc_global") 32]
       [else 0])))
 
 (define (compiler-backend-runtime-used-leaf-mask
@@ -76101,18 +76102,21 @@
   (let
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
-    (match target
-      [(CompilerBackendTarget.Linux)
-        (when
-          emit-entry
-          (set!
-            features.leaf-mask
-            (compiler-backend-runtime-used-leaf-mask
-              backend-state
-              runtime-index
-              referenced
-              externs)))]
-      [_ unit])
+    (when
+      emit-entry
+      (let
+        [used : i64
+          (compiler-backend-runtime-used-leaf-mask
+            backend-state
+            runtime-index
+            referenced
+            externs)]
+        (set!
+          features.leaf-mask
+          (match target
+            [(CompilerBackendTarget.Linux) used]
+            [(CompilerBackendTarget.Windows)
+              (bit-or features.leaf-mask (bit-and used 32))]))))
     features))
 
 (define (compiler-backend-current-arena-load

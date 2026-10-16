@@ -935,7 +935,12 @@ arena with program lifetime, selects it only for the allocation, and restores
 the caller's current arena before returning. This arena is never exposed to
 source reset or destruction. Payloads retain their checked source lifetimes;
 this transport does not clone them. Global initialization and ordinary heap
-allocation continue to use `tl_alloc`.
+allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
+this helper and its private arena only when referenced on either target. Each
+platform wrapper has its own catalog row; ordinary allocator variants keep
+their original payloads. Internal mutable diagnostic state keeps its latest
+unbound-name snapshot in one fixed array slot, avoiding a new retained global
+container for every lookup and reset.
 
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,

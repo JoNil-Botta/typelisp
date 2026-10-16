@@ -312,7 +312,9 @@ tl_profile_alloc_peak_bytes:
   [arena-data : String]) : String
   (str_cat.str-cat
     arena-data
-    (if features.alloc
+    (if (and
+      features.alloc
+      (compiler-backend-runtime-features-leaf? features 32))
       "    .section .bss
     .balign 8
 .L_tl_global_aggregate_arena:

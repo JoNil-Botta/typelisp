@@ -11314,3 +11314,268 @@
         arg
         "the implicit borrow borrows the argument's own node")
       (test.assert-i64-eq rows-after rows "the implicit borrow adds no row"))))
+
+(cfg
+  test
+  ;; The capture of ARG (#8884), with a caller-origin marker when RECORD?.
+  (define (tc-caller-marker-test-capture
+    [ctx : tc_core.TcContext]
+    [arg : i64]
+    [record? : bool]) : i64
+    (tc_core.macro-captured-expr-node
+      ctx
+      (tc_core.tc-context-expr-cell-address-live ctx)
+      (tc_core.tc-context-type-cell-address-live ctx)
+      arg
+      (tc_core.tc-context-expr-get ctx arg)
+      record?)))
+
+(cfg
+  test
+  ;; The node a caller-origin marker capture wraps: OUT is
+  ;; Spanned(MacroExpansion(node, caller, NAME), SPAN), or -1 for any other
+  ;; shape or marker name.
+  (define (tc-caller-marker-test-wrapped
+    [ctx : tc_core.TcContext]
+    [out : i64]
+    [name : i64]
+    [span : ast.AstSourceSpan]) : i64
+    (match (tc_core.tc-context-expr-get ctx out)
+      [(Spanned marker view-span)
+        (match (tc_core.tc-context-expr-get ctx marker)
+          [(MacroExpansion node _ marker-name)
+            (if (and
+              (= marker-name name)
+              (ast.ast-source-span-eq? view-span span))
+              node
+              -1)]
+          [_ -1])]
+      [_ -1])))
+
+(test
+  macro-captured-expr-node-caller-marker-shapes
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 3 5 3 9)]
+    [inner-span : ast.AstSourceSpan (ast.ast-source-span 3 6 3 8)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "caller-marker-operand")))]
+    [var-arg : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [call : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Call var (ast.ast-expr-list-new)))]
+    [call-arg : i64 (ast.ast-expr-source-view-with-pools pools call span)]
+    [nested-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-expr-source-view-with-pools pools var inner-span)
+        span)]
+    [text : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Literal (String (ci.intern "caller-marker-text"))))]
+    [text-arg : i64 (ast.ast-expr-source-view-with-pools pools text span)]
+    ;; An operand that is itself an expansion frame (a macro call's output)
+    ;; and one that is already a compact caller-origin marker.
+    [frame-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ci.intern "caller-marker-macro")))
+        span)]
+    [marked-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (tc_core.tc-compact-caller-origin-name)))
+        span)]
+    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! pools)
+    ;; Unobserved: the compact marker takes the operand's Spanned place.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx var-arg true)
+        (tc_core.tc-compact-caller-origin-name)
+        span)
+      var
+      "a plain operand's compact marker wraps its semantic node")
+    ;; A call keeps its row: the expansion walk frames a macro call with the
+    ;; Spanned row directly above it. A nested view keeps its distinct span.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx call-arg true)
+        -1
+        span)
+      call-arg
+      "a call operand keeps its Spanned row under a -1 marker")
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx nested-arg true)
+        -1
+        span)
+      nested-arg
+      "a nested source view keeps its row under a -1 marker")
+    ;; A marker over a marker: an expansion frame and a compact marker are
+    ;; both recognized by the Spanned row directly above them, so the new
+    ;; marker goes over that row.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx frame-arg true)
+        -1
+        span)
+      frame-arg
+      "an expansion-frame operand keeps its Spanned row under a -1 marker")
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx marked-arg true)
+        -1
+        span)
+      marked-arg
+      "a marked operand keeps its Spanned row under a -1 marker")
+    ;; A string literal is copied, never aliased.
+    (let
+      [copy : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx text-arg true)
+          (tc_core.tc-compact-caller-origin-name)
+          span)]
+      (test.assert-true
+        (and (>= copy 0) (!= copy text))
+        "a string operand's compact marker wraps a fresh literal")
+      (test.assert-true
+        (match (tc_core.tc-context-expr-get ctx copy)
+          [(Literal (String id)) (= id (ci.intern "caller-marker-text"))]
+          [_ false])
+        "the copied literal keeps its text"))
+    ;; Without a marker, the operand stays as it was; a string is still
+    ;; copied, under its own span.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-capture ctx var-arg false)
+      var-arg
+      "an unmarked operand is the argument itself")
+    (test.assert-true
+      (match (tc_core.tc-context-expr-get
+        ctx
+        (tc-caller-marker-test-capture ctx text-arg false))
+        [(Spanned copy view-span)
+          (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
+        [_ false])
+      "an unmarked string operand is a spanned copy")
+    ;; A job with a semantic observer keeps the operand's own row under a -1
+    ;; marker: its semantic facts are keyed by the Spanned rows the check
+    ;; visits.
+    (tc_core.tc-job-state-set-semantic-observer!
+      (tc_core.tc-context-job-state ctx)
+      (tc_core.TcSemanticObserver 1))
+    (let
+      [observed : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx var-arg true)
+          -1
+          span)]
+      [observed-text : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx text-arg true)
+          -1
+          span)]
+      (tc_core.tc-job-state-set-semantic-observer!
+        (tc_core.tc-context-job-state ctx)
+        (tc_core.TcSemanticObserver 0))
+      (ast.ast-node-pool-context-install! saved)
+      (test.assert-i64-eq
+        observed
+        var-arg
+        "an observed operand's marker wraps its Spanned row")
+      (test.assert-true
+        (match (tc_core.tc-context-expr-get ctx observed-text)
+          [(Spanned copy view-span)
+            (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
+          [_ false])
+        "an observed string operand's marker wraps a spanned copy"))))
+
+(cfg
+  test
+  ;; The node under OUT's caller-origin marker when OUT is
+  ;; Spanned(MacroExpansion(node, caller, -1), _), or -1.
+  (define (tc-initializer-marker-test-inner
+    [pools : ast.AstNodePoolContext]
+    [out : i64]) : i64
+    (match (ast.ast-node-pool-context-expr-get pools out)
+      [(Spanned marker _)
+        (match (ast.ast-node-pool-context-expr-get pools marker)
+          [(MacroExpansion node _ name)
+            (if (= name -1)
+              node
+              -1)]
+          [_ -1])]
+      [_ -1])))
+
+;; The CTFE route marks a binding clause's initializer with a -1 caller-origin
+;; marker over the inner node of the initializer's Spanned row. Over a compact
+;; marker (#8884) it keeps that Spanned row, the compact operand's view.
+(test
+  ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 9)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "initializer-operand")))]
+    [plain : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [compact : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ctfe_support.ctfe-compact-caller-origin-name)))
+        span)]
+    [ty : ast.AstType
+      (Region
+        (ctfe_support.ctfe-caller-origin-expr-type-id)
+        (ci.intern-composite-pair-id
+          (ci.intern "initializer-path")
+          (ast.ast-node-pool-context-type-push pools (I64))))]
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          plain
+          (& ty)))
+      var
+      "an initializer's marker goes over its Spanned row's inner node")
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          compact
+          (& ty)))
+      compact
+      "over a compact marker, it keeps the marker's Spanned view")))

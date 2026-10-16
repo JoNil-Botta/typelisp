@@ -5754,6 +5754,31 @@
 (define (macro-expansion-provenance-id [path-id : i64] [origin-path-id : i64]) : i64
   (ci.intern-composite-pair-id path-id origin-path-id))
 
+;; The macro name of a compact caller-origin marker
+;; (`ctfe-compact-caller-origin-name`). Caller-origin markers have a negative
+;; macro name. A compact one, captured from a spanned operand, sits directly over
+;; the operand's semantic node, under one Spanned view with the operand's span
+;; (`macro-captured-expr-node`). Every other caller-origin marker has -1,
+;; including those the CTFE route builds over a binding clause's initializer,
+;; which also sit over a bare node; they are checked as before.
+(define (tc-compact-caller-origin-name) : i64
+  (ctfe_support.ctfe-compact-caller-origin-name))
+
+(define (tc-compact-caller-origin-marker? [macro-name-id : i64]) : bool
+  (= macro-name-id (tc-compact-caller-origin-name)))
+
+;; The expression below a marker as checking and locating see it. Below a
+;; compact marker, that is the view the operand's own Spanned row gave it: a
+;; Spanned value over the node with the same span.
+(define (tc-caller-origin-operand-view
+  [expanded : i64]
+  [expanded-expr : ast.AstExpr]
+  [macro-name-id : i64]
+  [span : ast.AstSourceSpan]) : ast.AstExpr
+  (if (tc-compact-caller-origin-marker? macro-name-id)
+    (Spanned expanded span)
+    expanded-expr))
+
 (define (macro-expansion-invocation-path-id [provenance-id : i64]) : i64
   (ci.intern-composite-left-id-unchecked provenance-id))
 
@@ -5787,7 +5812,11 @@
         [(MacroExpansion expanded provenance-id macro-name-id)
           (let
             [expanded-expr : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases expanded)]
+              (tc-caller-origin-operand-view
+                expanded
+                (ast.ast-expr-segment-bases-get expr-bases expanded)
+                macro-name-id
+                span)]
             [path-id : i64 (macro-expansion-invocation-path-id provenance-id)]
             [origin-path-id : i64
               (macro-expansion-origin-path-id provenance-id)]
@@ -31803,9 +31832,14 @@
             (Ok (tc-contextual-result-type expected matched))]
           [(Mismatch _) (Ok actual)])])))
 
+;; An unlocated error from checking the expanded node EXPANDED takes that
+;; node's span, or the frame SPAN when it has none. The operand of a compact
+;; caller-origin marker (COMPACT?) is located at SPAN, the span of the Spanned
+;; view it is checked through (`tc-caller-origin-operand-view`).
 (define (tc-macro-expansion-result-with-frame
   [ctx : TcContext]
-  [inner : ast.AstExpr]
+  [expanded : i64]
+  [compact? : bool]
   [path-id : i64]
   [origin-path-id : i64]
   [macro-name-id : i64]
@@ -31816,11 +31850,15 @@
     [(Err message)
       (let
         [located : String
-          (if (tc-encoded-error? message)
-            message
-            (match (tc-expr-maybe-span (tc-context-expr-bases ctx) inner)
-              [(Some primary) (tc-located-error primary message)]
-              [(No) (tc-located-error span message)]))]
+          (cond
+            [(tc-encoded-error? message) message]
+            [compact? (tc-located-error span message)]
+            [else
+              (match (tc-expr-id-maybe-span
+                (tc-context-expr-bases ctx)
+                expanded)
+                [(Some primary) (tc-located-error primary message)]
+                [(No) (tc-located-error span message)])])]
         (Err
           (tc-macro-framed-error
             path-id
@@ -31841,25 +31879,35 @@
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (tc-global-shared-view inner)
           [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
+            (let
+              [compact? : bool (tc-compact-caller-origin-marker? macro-name-id)]
+              (tc-macro-expansion-result-with-frame
                 ctx
-                env
+                expanded
+                compact?
+                (macro-expansion-invocation-path-id provenance-id)
                 (macro-expansion-origin-path-id provenance-id)
                 macro-name-id
                 span
-                (tc-expr-with-expected-or-actual-core-id
+                (tc-semantic-expansion
                   ctx
                   env
-                  expanded
-                  expected
-                  allow-mut-by-value-borrow)))]
+                  (macro-expansion-origin-path-id provenance-id)
+                  macro-name-id
+                  span
+                  (if compact?
+                    (tc-expr-with-expected-or-actual-core
+                      ctx
+                      env
+                      (Spanned expanded span)
+                      expected
+                      allow-mut-by-value-borrow)
+                    (tc-expr-with-expected-or-actual-core-id
+                      ctx
+                      env
+                      expanded
+                      expected
+                      allow-mut-by-value-borrow)))))]
           [_
             (let
               [result : ResultTcType
@@ -60417,20 +60465,25 @@
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (tc-global-shared-view inner)
           [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
+            (let
+              [compact? : bool (tc-compact-caller-origin-marker? macro-name-id)]
+              (tc-macro-expansion-result-with-frame
                 ctx
-                env
+                expanded
+                compact?
+                (macro-expansion-invocation-path-id provenance-id)
                 (macro-expansion-origin-path-id provenance-id)
                 macro-name-id
                 span
-                (tc-expr-id ctx env expanded)))]
+                (tc-semantic-expansion
+                  ctx
+                  env
+                  (macro-expansion-origin-path-id provenance-id)
+                  macro-name-id
+                  span
+                  (if compact?
+                    (tc-expr ctx env (Spanned expanded span))
+                    (tc-expr-id ctx env expanded)))))]
           [_
             (let
               [result : ResultTcType
@@ -105277,6 +105330,40 @@
     (string.eq macro-name "stdlib.core_macros/__tl-project-set-field-name")
     (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
 
+(define (macro-caller-origin-marker-node
+  [ctx : TcContext]
+  [expr-cell-address : u64]
+  [type-cell-address : u64]
+  [node : i64]
+  [macro-name-id : i64]
+  [span : ast.AstSourceSpan]) : i64
+  (tc-context-expr-push-cell-addresses
+    expr-cell-address
+    type-cell-address
+    (Spanned
+      (tc-context-expr-push-cell-addresses
+        expr-cell-address
+        type-cell-address
+        (MacroExpansion
+          node
+          (macro-expansion-provenance-id -1 (macro-active-decl-path-id ctx))
+          macro-name-id))
+      span)))
+
+;; A caller-origin marker over a spanned operand takes the place of the
+;; operand's own Spanned row: the compact marker (`tc-compact-caller-origin-name`)
+;; wraps the operand's semantic node and one Spanned view with the operand's
+;; span wraps the marker. Wrapping the operand's Spanned row instead would
+;; repeat that span in a second row for every captured operand. Checking and
+;; locating below the marker see the same view (`tc-caller-origin-operand-view`).
+;; The operand keeps its Spanned row, under an ordinary -1 marker, when that row
+;; is the only record of something below it: over a call, since the expansion
+;; walk frames a macro call with the Spanned row directly above it; over another
+;; Spanned view with a different span; and over a macro marker, whose frame is
+;; recognized by the Spanned row above it. A job with a semantic observer (the
+;; semantic lint facts collector, `compiler_semantic_lint_facts.tl`) keeps it
+;; too, since the observer records a fact for each Spanned row the check visits
+;; by id. A string literal operand is copied.
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [expr-cell-address : u64]
@@ -105284,48 +105371,64 @@
   [arg-id : i64]
   [arg-expr : ast.AstExpr]
   [record-caller-origin : bool]) : i64
-  (let
-    [captured : i64
-      (match (tc-global-shared-view arg-expr)
-        [(Spanned inner span)
+  (match (tc-global-shared-view arg-expr)
+    [(Spanned inner span)
+      (let
+        [compact? : bool
+          (and
+            record-caller-origin
+            (=
+              (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
+              0))]
+        [operand : i64
           (match (tc-context-expr-get ctx inner)
             [(Literal (String string-id))
-              (tc-context-expr-push-cell-addresses
-                expr-cell-address
-                type-cell-address
-                (Spanned
+              (let
+                [literal : i64
                   (tc-context-expr-push-cell-addresses
                     expr-cell-address
                     type-cell-address
-                    (Literal (String string-id)))
-                  span))]
-            [_ arg-id])]
-        [(Literal (String string-id))
-          (tc-context-expr-push-cell-addresses
+                    (Literal (String string-id)))]
+                (if compact?
+                  literal
+                  (tc-context-expr-push-cell-addresses
+                    expr-cell-address
+                    type-cell-address
+                    (Spanned literal span))))]
+            [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _)) arg-id]
+            [_
+              (if compact?
+                inner
+                arg-id)])]
+        (if record-caller-origin
+          (macro-caller-origin-marker-node
+            ctx
             expr-cell-address
             type-cell-address
-            (Literal (String string-id)))]
-        [_ arg-id])]
-    [path-id : i64 (macro-active-decl-path-id ctx)]
-    [out : i64
+            operand
+            (if (and compact? (!= operand arg-id))
+              (tc-compact-caller-origin-name)
+              -1)
+            span)
+          operand))]
+    [(Literal (String string-id))
+      (tc-context-expr-push-cell-addresses
+        expr-cell-address
+        type-cell-address
+        (Literal (String string-id)))]
+    [_
       (if record-caller-origin
         (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
           [(Some span)
-            (tc-context-expr-push-cell-addresses
+            (macro-caller-origin-marker-node
+              ctx
               expr-cell-address
               type-cell-address
-              (Spanned
-                (tc-context-expr-push-cell-addresses
-                  expr-cell-address
-                  type-cell-address
-                  (MacroExpansion
-                    captured
-                    (macro-expansion-provenance-id -1 path-id)
-                    -1))
-                span))]
-          [(No) captured])
-        captured)]
-    out))
+              arg-id
+              -1
+              span)]
+          [(No) arg-id])
+        arg-id)]))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]

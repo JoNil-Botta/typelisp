@@ -269,6 +269,88 @@
       5
       10)))
 
+;; An error raised while checking a captured caller operand is located at the
+;; whole operand, the span its own Spanned view carried before the operand's
+;; caller-origin marker took that view's place.
+(define (compiler-check-caller-operand-view-spans-ok?) : bool
+  (and
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_view.tl"
+      "(defmacro (once [e : Expr]) : unit
+  e)
+
+(define (f) : i64
+  (let
+    [total : i64 0]
+    [s : String \"a\"]
+    (once (set! total s))
+    0))
+
+(define (main) : i64
+  0)"
+      "typecheck: assignment type mismatch: expected i64, found String"
+      8
+      11
+      8
+      24)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_overflow.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once 256))
+(define (main) : i64 0)"
+      "typecheck: integer literal 256 does not fit expected type u8"
+      2
+      24
+      2
+      24)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_nested.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once (once 256)))
+(define (main) : i64 0)"
+      "typecheck: integer literal 256 does not fit expected type u8"
+      2
+      30
+      2
+      30)
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_string.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : i64 (once \"a\"))
+(define (main) : i64 0)"
+      "typecheck: return type mismatch: expected i64, found String"
+      2
+      25
+      2
+      25)
+    ;; An operand a template uses twice is one captured node.
+    (compiler-check-first-diagnostic-exact?
+      "tests/caller_operand_shared.tl"
+      "(defmacro (twice [e : Expr]) : unit
+  `(begin ,e ,e))
+
+(define (f) : i64
+  (let
+    [total : i64 0]
+    [s : String \"a\"]
+    (twice (set! total s))
+    0))
+
+(define (main) : i64
+  0)"
+      "typecheck: assignment type mismatch: expected i64, found String"
+      8
+      12
+      8
+      25)
+    (match (check_core.compiler-check-source
+      "tests/caller_operand_boundary.tl"
+      "(defmacro (once [e : Expr]) : Expr e)
+(define (f) : u8 (once (once 255)))
+(define (main) : i64 0)")
+      [(Ok _ _) true]
+      [(Err _ _) false])))
+
 (define (compiler-check-qualified-near-miss-ok?) : bool
   (match (tc_api.typecheck-compiler-source
     "(module data)
@@ -839,6 +921,7 @@
     (compiler-check-semantic-access-ok?)
     (compiler-check-advisory-result-ok?)
     (compiler-check-subform-diagnostic-spans-ok?)
+    (compiler-check-caller-operand-view-spans-ok?)
     (compiler-check-qualified-near-miss-ok?)
     (compiler-check-qualified-unbound-display-ok?)
     (compiler-check-caller-operand-diagnostic-path-ok?)

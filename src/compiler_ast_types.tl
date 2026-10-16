@@ -1712,7 +1712,7 @@
     ;; The row view is consumed by this match before recursion. This walker
     ;; never installs, resets, grows, or rewrites an expression pool, so no
     ;; view survives a generation or exact-row mutation boundary.
-    (match (ast-expr-segment-bases-shared-view expr-segment-bases id AstExpr)
+    (match (ast-expr-segment-bases-shared-view expr-segment-bases id)
       [(or (Spanned inner _) (MacroExpansion inner _ _))
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
@@ -4833,12 +4833,10 @@
 ;; cannot invalidate the address; reset/generation handoff and rewriting this
 ;; exact row still end the view's lifetime. Keeping this as a macro lets
 ;; aggregate call lowering hand the stable row directly to the callee instead
-;; of returning it through a second 32-byte value slot. The caller supplies
-;; AstExpr in its own namespace so imported callers retain the canonical type.
+;; of returning it through a second 32-byte value slot.
 (defmacro (ast-expr-segment-bases-shared-view
   [segment-bases : Expr]
-  [id : Expr]
-  [node-type : Expr]) : Expr
+  [id : Expr]) : Expr
   `(let
     [bases-address : i64 ,segment-bases]
     [row-id : i64 ,id]
@@ -4850,7 +4848,7 @@
       (ptr-read
         (int->ptr
           (+ biased-base (* row-id (ast-expr-node-bytes)))
-          : (Ptr ,node-type))))))
+          : (Ptr AstExpr))))))
 
 ;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
 ;; this table in place and never moves it, and a push rewrites the cell without
@@ -4862,6 +4860,37 @@
     (unsafe
       (ptr-read (ast-expr-pool-cell-ptr pools.expr-pool)))
     segment-bases))
+
+;; The prepared owner's rows remain stable throughout this read-only scan.
+;; A segment walk loads its biased base once and reads only live row tags;
+;; no row or view survives a pool mutation or generation handoff.
+(define (ast-node-pool-context-has-spmd? [pools : (& pools AstNodePoolContext)]) : bool
+  (let
+    [bases : i64 (ast-node-pool-context-expr-segment-bases pools)]
+    [count : i64 (ast-node-pool-context-expr-len pools)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [end : i64
+          (if (< (+ index ast-expr-node-pool-segment-size) count)
+            (+ index ast-expr-node-pool-segment-size)
+            count)]
+        [base : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr bases : (Ptr i64)) (shr index 16))))]
+        [address : i64 (+ base (* index (ast-expr-node-bytes)))]
+        [remaining : i64 (- end index)]
+        (while (> remaining 0)
+          (match (unsafe
+            (ptr-read (int->ptr address : (Ptr AstExpr))))
+            [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+                 (SpmdBroadcast _ _) (SpmdShuffle _ _))
+              (return true)]
+            [_ unit])
+          (+= address (ast-expr-node-bytes))
+          (-= remaining 1))
+        (set! index end)))
+    false))
 
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
 ;; one `ast-node-get` reads.
@@ -11184,8 +11213,7 @@
                   remap
                   (ast-expr-segment-bases-shared-view
                     remap.source-expr-bases
-                    id
-                    AstExpr))]
+                    id))]
               (ast-compaction-remap-dest-expr-set! remap id owned-expr)
               id)
             (let
@@ -11194,8 +11222,7 @@
                   remap
                   (ast-expr-segment-bases-shared-view
                     remap.source-expr-bases
-                    id
-                    AstExpr))]
+                    id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
               (ast-compaction-map-set!
@@ -11622,7 +11649,7 @@
         [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
           (set!
             current
-            (ast-expr-segment-bases-shared-view segment-bases inner-id AstExpr))]
+            (ast-expr-segment-bases-shared-view segment-bases inner-id))]
         [_ (return current)]))
     current))
 

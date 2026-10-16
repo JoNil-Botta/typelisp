@@ -86,6 +86,29 @@ stdout empty
 stderr contains ok borrowed-struct-pattern-string
 stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
 
+# The late clone producer must reach native link and execution on both hosts.
+# Its test reuses a production enum, preserving the zero-cons fixture invariant.
+case clone-boxed-production-tail-opt0
+run test "{{root}}/src/compiler_clone_tests.tl" --target {{host-target}} --opt-level 0 --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+stdout empty
+stderr contains ok compiler-clone-late-tail-template
+stderr contains ok compiler-clone-boxed-production-tail
+stderr contains TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total
+
+case clone-boxed-production-tail-opt1
+run test "{{root}}/src/compiler_clone_tests.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+stdout empty
+stderr contains ok compiler-clone-late-tail-template
+stderr contains ok compiler-clone-boxed-production-tail
+stderr contains TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total
+
+case clone-boxed-production-tail-opt2
+run test "{{root}}/src/compiler_clone_tests.tl" --target {{host-target}} --opt-level 2 --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src"
+stdout empty
+stderr contains ok compiler-clone-late-tail-template
+stderr contains ok compiler-clone-boxed-production-tail
+stderr contains TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total
+
 # #8169: an inline-test harness prunes runtime declarations to those its tests
 # reach. A constant named only by an imported module's top-level declaration
 # macro call is such a reference and must survive, or the expansion reads an

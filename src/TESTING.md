@@ -338,6 +338,12 @@ in their body otherwise reaches the native linker as an unresolved function.
 The test uses the shared AST child traversal and adds no list-shaped schema to
 the repository's zero-cons corpus.
 
+`compiler-clone-boxed-production-tail` reuses the optimizer's existing
+`OptNonnegPhis` type for empty, single and 30,000-element clones. It validates
+every element after source-arena retirement and checks tail mutation isolation.
+The three `clone-boxed-production-tail-opt{0,1,2}` public-tool cases compile,
+link and execute both clone tests on Linux and Windows without a test filter.
+
 ## Compiler arena ownership
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`

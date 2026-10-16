@@ -31845,6 +31845,54 @@
             macro-name-id
             (tc-unbound-finalize-located-error located))))]))
 
+;; Ordinary Spanned nodes and compact caller operands use the same transient
+;; view. No-view callers retain the ID entrypoint's normalization/observation.
+;; The view checks Unsafe with its span and locates errors with full context.
+(define (tc-check-operand-view
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [span : ast.AstSourceSpan]
+  [view? : bool]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (if view?
+    (let
+      [inner : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+      [result : ResultTcType
+        (match (tc-global-shared-view inner)
+          [(Unsafe exprs)
+            (tc-unsafe-begin-list-scoped
+              ctx
+              env
+              exprs
+              (if expected?
+                (Some expected)
+                (No))
+              (Some span))]
+          [_
+            (if expected?
+              (tc-expr-with-expected-or-actual-core-id
+                ctx
+                env
+                expr-id
+                expected
+                allow-mut-by-value-borrow)
+              (tc-expr-id ctx env expr-id))])]
+      (match result
+        [(Ok ty) (Ok ty)]
+        [(Err message)
+          (tc-locate-spanned-error-with-context ctx env inner span message)]))
+    (if expected?
+      (tc-expr-with-expected-or-actual-core-id
+        ctx
+        env
+        expr-id
+        expected
+        allow-mut-by-value-borrow)
+      (tc-expr-id ctx env expr-id))))
+
 (define (tc-expr-with-expected-or-actual-core-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -31874,46 +31922,25 @@
                   (macro-expansion-origin-path-id provenance-id)
                   macro-name-id
                   span
-                  (if compact?
-                    (tc-expr-with-expected-or-actual-core
-                      ctx
-                      env
-                      (Spanned expanded span)
-                      expected
-                      allow-mut-by-value-borrow)
-                    (tc-expr-with-expected-or-actual-core-id
-                      ctx
-                      env
-                      expanded
-                      expected
-                      allow-mut-by-value-borrow)))))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped
-                      ctx
-                      env
-                      exprs
-                      (Some expected)
-                      (Some span))]
-                  [_
-                    (tc-expr-with-expected-or-actual-core-id
-                      ctx
-                      env
-                      inner-box
-                      expected
-                      allow-mut-by-value-borrow)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
+                  (tc-check-operand-view
                     ctx
                     env
-                    inner
+                    expanded
                     span
-                    message)]))]))]
+                    compact?
+                    expected
+                    true
+                    allow-mut-by-value-borrow))))]
+          [_
+            (tc-check-operand-view
+              ctx
+              env
+              inner-box
+              span
+              true
+              expected
+              true
+              allow-mut-by-value-borrow)]))]
     [(MacroExpansion inner _ _)
       (tc-expr-with-expected-or-actual-core-id
         ctx
@@ -60461,25 +60488,25 @@
                   (macro-expansion-origin-path-id provenance-id)
                   macro-name-id
                   span
-                  (if compact?
-                    (tc-expr ctx env (Spanned expanded span))
-                    (tc-expr-id ctx env expanded)))))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped ctx env exprs No (Some span))]
-                  [_ (tc-expr-id ctx env inner-box)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
+                  (tc-check-operand-view
                     ctx
                     env
-                    inner
+                    expanded
                     span
-                    message)]))]))]
+                    compact?
+                    (Unit)
+                    false
+                    false))))]
+          [_
+            (tc-check-operand-view
+              ctx
+              env
+              inner-box
+              span
+              true
+              (Unit)
+              false
+              false)]))]
     [(or (MacroExpansion inner _ _) (LaneValue inner))
       (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]

@@ -77,7 +77,8 @@ src/compiler_lower_tests.tl	compiler-lower-slice-split-at-shape-ok?	test	test-on
 src/compiler_lower_tests.tl	compiler-lower-spmd-decisions-text	test	test-only	CompilerLowerMode[.]LinuxAvx2	1	SPMD route table pins native, fallback, specified scalar, inactive and rejected facts.
 src/compiler_lower_tests.tl	compiler-lower-spmd-macro-source	test	test-only	CompilerLowerMode[.](LinuxAvx2|WindowsAvx512)	5	SPMD macro fixtures pin owned origins, bounded expansion context, optimizer retention and independent-region order.
 src/compiler_lower_tests.tl	compiler-lower-spmd-source-facts	test	test-only	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	7	SPMD backend fixture checks all six modes and intentional atomic scalar execution.
-src/compiler_lower_tests.tl	g	test	test-only	CompilerLowerMode[.]LinuxAvx2	2	SPMD function/lambda identity and unlocated API-root fixtures follow source strings defining g.
+src/compiler_lower_tests.tl	compiler-lower-spmd-unlocated-text	test	test-only	CompilerLowerMode[.]LinuxAvx2	1	Unspanned API source fixtures preserve all six SPMD forms through lowering.
+src/compiler_lower_tests.tl	g	test	test-only	CompilerLowerMode[.]LinuxAvx2	1	SPMD function/lambda identity and unlocated API-root fixtures follow source strings defining g.
 src/compiler_lower_tests.tl	compiler-lower-static-array-global-shape-ok?	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer static-array global test checks target-independent static-array initializer lowering on Linux and Windows scalar modes.
 src/compiler_lower_tests.tl	compiler-lower-tuple-inline-storage-ok?	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer tuple inline-storage shape test checks target-independent lowering on Linux and Windows scalar modes.
 src/compiler_lower_tests.tl	compiler-lower-windows-error-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.

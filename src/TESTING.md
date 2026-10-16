@@ -298,8 +298,9 @@ natively and through forced-source CTFE.
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected
 maps, empty/tail ranges, cross-lane parent identities and deterministic order.
-Control-flow cases retain inactive source sites after returns and inside empty
-regions without hiding later live or rejected sites. Terminal completion is
+Control-flow cases retain inactive source sites after returns and earlier
+errors without hiding later live or rejected sites. Empty scalar loop bodies
+that lowering emits keep their decisions, including nested rejections. Terminal completion is
 separate from provisional plan selection. Lambda cases pin distinct typed
 function identities with independent source ordinals. Repeated captured syntax
 has separate sites for each expanded occurrence, including nested empty regions
@@ -311,6 +312,8 @@ expected-type/tail lowering: either boundary can lose a source-node link even
 while emitted programs remain correct. The IR source-span escape smoke checks
 owned records after destroying the producing arena. Optimizer and backend
 span rewrites must preserve source IDs independently of instruction remapping.
+Fully unspanned API fixtures cover all six forms and nested source sites; payload
+copies must not lose identity or turn visited children into inactive records.
 
 ## Vector reduction source ownership
 

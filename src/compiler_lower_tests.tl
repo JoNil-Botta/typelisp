@@ -15581,7 +15581,7 @@
           "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:-1\n2:foreach:fallback:MapShape:1:-1\n3:foreach:fallback:MapShape:1:-1\n")
         (LowerSpmdDecisionCase
           "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f) : unit (twice (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit))))"
-          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:fallback:MapShape:1:-1\n3:foreach:inactive:NotLowered:0:2\n")
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:0\n2:foreach:fallback:MapShape:1:-1\n3:foreach:fallback:MapShape:1:2\n")
         (LowerSpmdDecisionCase
           "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (twice (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0)))))"
           "0:foreach:native:DirectMap:4:-1\n1:broadcast:native:DirectMap:4:0\n2:foreach:native:DirectMap:4:-1\n3:broadcast:native:DirectMap:4:2\n")
@@ -15641,19 +15641,19 @@
           "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:-1\n")
         (LowerSpmdDecisionCase
           "(define (f) : unit (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)))"
-          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n")
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:0\n")
         (LowerSpmdDecisionCase
           "(define (f) : unit (begin (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)) (foreach ([k : i64 0 1]) unit)))"
-          "0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:fallback:MapShape:1:-1\n")
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:0\n2:foreach:fallback:MapShape:1:-1\n")
         (LowerSpmdDecisionCase
           "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (begin (foreach ([i : i64 0 0]) (foreach ([j : i64 0 0]) unit)) (foreach ([k : i64 0 n]) (set! (array-ref out k) (array-ref xs (+ k 1)))) (foreach ([m : i64 0 1]) unit)))"
-          "error\n0:foreach:fallback:MapShape:1:-1\n1:foreach:inactive:NotLowered:0:0\n2:foreach:rejected:UnsupportedMap:1:-1\n3:foreach:inactive:NotLowered:0:-1\n")
+          "error\n0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:0\n2:foreach:rejected:UnsupportedMap:1:-1\n3:foreach:inactive:NotLowered:0:-1\n")
         (LowerSpmdDecisionCase
           "(define (f) : (-> unit) (lambda () : unit (foreach ([i : i64 0 0]) unit)))"
           "0:foreach:fallback:MapShape:1:-1\n")
         (LowerSpmdDecisionCase
           "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (foreach ([j : i64 0 n]) (set! (array-ref out j) (array-ref xs (+ j 1))))))"
-          "error\n0:foreach:rejected:UnsupportedSource:1:-1\n1:foreach:inactive:NotLowered:0:0\n"))]
+          "error\n0:foreach:rejected:UnsupportedSource:1:-1\n1:foreach:rejected:UnsupportedMap:1:0\n"))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
         [row : (& cases LowerSpmdDecisionCase) (& (array-ref cases index))]
@@ -16048,47 +16048,80 @@
         (not (= first.site.function.value second.site.function.value))
         "typed function symbols distinguish source scopes"))))
 
+(define (compiler-lower-spmd-unspan-tree!
+  [pools : ast.AstNodePoolContext]
+  [id : i64]) : unit
+  (let
+    [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get (& pools) id)]
+    [plain : ast.AstExpr (ast.ast-expr-unspan-with-pools (& pools) (& expr))]
+    [children : ast.AstExprList (ast.ast-expr-child-ids (clone plain))]
+    (for [index (iterator.range 0 children.len)]
+      (compiler-lower-spmd-unspan-tree!
+        pools
+        (ast.ast-expr-list-get (& children) index -1)))
+    (ast.ast-node-pool-context-expr-set! pools id (& plain))))
+
+(define (compiler-lower-spmd-unlocated-text [source : String]) : String
+  (match (parser.parse-ast-source (& source))
+    [(Ok program)
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (match program
+          [(Program declarations)
+            (let
+              [decls : ast.AstDeclList (deref declarations)]
+              (for [index (iterator.range 0 decls.len)]
+                (let
+                  [decl : ast.AstDecl
+                    (ast.ast-decl-list-get
+                      (& decls)
+                      index
+                      (ast.ast-decl-fallback))]
+                  (match (ast.ast-decl-unwrapped (& decl))
+                    [(DefFn _ _ _ _ body _)
+                      (compiler-lower-spmd-unspan-tree! pools body)]
+                    [_ unit])))
+              (match (lower.lower-compiler-program-with-path-mode
+                "api.tl"
+                (ast.AstProgram.Program (box decls))
+                lower.CompilerLowerMode.LinuxAvx2)
+                [(Ok _ spans)
+                  (compiler-lower-spmd-facts-text
+                    (ir.compiler-source-spans-spmd (& spans)))]
+                [(Err _) "lower error\n"]))]))]
+    [(Err _) "parse error\n"]))
+
 (test
   compiler-lower-spmd-decisions-unlocated-root
   (let
-    [source : String "(define (f) : unit (foreach ([i : i64 0 0]) unit))"]
-    (match (parser.parse-ast-source (& source))
-      [(Ok program)
-        (let
-          [pools : ast.AstNodePoolContext
-            (ast.ast-node-pool-context-capture-active)]
-          (match program
-            [(Program declarations)
-              (let
-                [decls : ast.AstDeclList (deref declarations)]
-                (for [index (iterator.range 0 decls.len)]
-                  (let
-                    [decl : ast.AstDecl
-                      (ast.ast-decl-list-get
-                        (& decls)
-                        index
-                        (ast.ast-decl-fallback))]
-                    (match (ast.ast-decl-unwrapped (& decl))
-                      [(DefFn _ _ _ _ body _)
-                        (let
-                          [expr : ast.AstExpr
-                            (ast.ast-node-pool-context-expr-get (& pools) body)]
-                          [plain : ast.AstExpr
-                            (ast.ast-expr-unspan-with-pools (& pools) (& expr))]
-                          (ast.ast-node-pool-context-expr-set!
-                            pools
-                            body
-                            (& plain)))]
-                      [_ unit])))
-                (match (lower.lower-compiler-program-with-path-mode
-                  "api.tl"
-                  (ast.AstProgram.Program (box decls))
-                  (lower.CompilerLowerMode.LinuxAvx2))
-                  [(Ok _ spans)
-                    (test.assert-owned-string-eq
-                      (compiler-lower-spmd-facts-text
-                        (ir.compiler-source-spans-spmd (& spans)))
-                      "0:foreach:fallback:MapShape:1:-1\n"
-                      "unspanned API root retains its site")]
-                  [(Err _) (test.assert-true false "unspanned API AST lowers")]))]))]
-      [(Err _) (test.assert-true false "API root source parses")])))
+    [cases : (Array LowerSpmdDecisionCase 7)
+      (array
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (foreach ([i : i64 0 0]) unit))"
+          "0:foreach:fallback:MapShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (foreach ([i : i64 0 1]) (foreach ([j : i64 0 1]) unit)))"
+          "0:foreach:fallback:MapShape:1:-1\n1:foreach:fallback:MapShape:1:0\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : i64 (spmd-reduce sum ([i : i64 0 3]) 0 i))"
+          "0:reduce:fallback:ReductionValueShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64 0]) i unit))"
+          "0:scan:fallback:ScanInputShape:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f) : i64 (spmd-compact ([i : i64 0 3] [slot : i64 0]) true unit))"
+          "0:compact:specified:OrderedCompact:1:-1\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))))"
+          "0:foreach:native:DirectMap:4:-1\n1:broadcast:native:DirectMap:4:0\n")
+        (LowerSpmdDecisionCase
+          "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+          "0:foreach:native:DirectMap:4:-1\n1:shuffle:native:DirectMap:4:0\n"))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case : LowerSpmdDecisionCase (clone (array-ref cases index))]
+        (test.assert-owned-string-eq
+          (compiler-lower-spmd-unlocated-text case.source)
+          case.expected
+          "fully unspanned API syntax retains every source site")))))

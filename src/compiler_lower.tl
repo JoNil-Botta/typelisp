@@ -33,6 +33,7 @@
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
+(import (hashmap.hashmap String i64) as lower_spmd_key_map)
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.byte_buf_core)
@@ -1029,9 +1030,137 @@
   (No)
   (Some (Box LowerMaskedPreheaderCacheData)))
 
+;; These keys contain syntax IDs, not names or diagnostic text. They are
+;; function scratch only; source identity remains the function and ordinal.
+(define (lower-spmd-source-key-text [fields : (Array i64 11)]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    (for [index (iterator.range 0 11)]
+      (set!
+        buf
+        (text_buf.append
+          (text_buf.append buf "|")
+          (string.int->string (array-ref fields index)))))
+    (text_buf.render buf)))
+
+(define (lower-spmd-source-op-key [op : (& op ast.AstReduceOp)]) : i64
+  (match op
+    [(Sum) 0]
+    [(Min) 1]
+    [(Max) 2]
+    [(All) 3]
+    [(Any) 4]))
+
+(define (lower-spmd-source-type-id
+  [pools : ast.AstNodePoolContext]
+  [ty : (& ty ast.AstType)]) : i64
+  (ast.ast-node-pool-context-type-push-cells
+    (cast (ast.ast-node-pool-context-expr-cell-address pools) : u64)
+    (cast (ast.ast-node-pool-context-type-cell-address (& pools)) : u64)
+    ty))
+
+(define (lower-spmd-source-key
+  [ctx : tc_core.TcContext]
+  [expr : (& expr ast.AstExpr)]) : String
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    (match expr
+      [(Foreach node)
+        (match node
+          [(Foreach name ty start end body)
+            (lower-spmd-source-key-text
+              (array
+                0
+                0
+                name
+                -1
+                (lower-spmd-source-type-id pools ty)
+                -1
+                start
+                end
+                -1
+                -1
+                body))]
+          [(Foreach2
+              name
+              ty
+              start
+              end
+              inner-name
+              inner-ty
+              inner-start
+              inner-end
+              body)
+            (lower-spmd-source-key-text
+              (array
+                0
+                1
+                name
+                inner-name
+                (lower-spmd-source-type-id pools ty)
+                (lower-spmd-source-type-id pools inner-ty)
+                start
+                end
+                inner-start
+                inner-end
+                body))])]
+      [(SpmdReduce node)
+        (match node
+          [(Reduce op name ty start end init value)
+            (lower-spmd-source-key-text
+              (array
+                1
+                (lower-spmd-source-op-key (& op))
+                name
+                -1
+                (lower-spmd-source-type-id pools ty)
+                -1
+                start
+                end
+                init
+                -1
+                value))])]
+      [(SpmdScan node)
+        (match node
+          [(Scan op name ty start end prefix prefix-ty init value body)
+            (lower-spmd-source-key-text
+              (array
+                2
+                (lower-spmd-source-op-key (& op))
+                name
+                prefix
+                (lower-spmd-source-type-id pools ty)
+                (lower-spmd-source-type-id pools prefix-ty)
+                start
+                end
+                init
+                value
+                body))])]
+      [(SpmdCompact node)
+        (match node
+          [(Compact name ty start end slot slot-ty init mask body)
+            (lower-spmd-source-key-text
+              (array
+                3
+                0
+                name
+                slot
+                (lower-spmd-source-type-id pools ty)
+                (lower-spmd-source-type-id pools slot-ty)
+                start
+                end
+                init
+                mask
+                body))])]
+      [(SpmdBroadcast value lane)
+        (lower-spmd-source-key-text (array 4 0 -1 -1 -1 -1 value lane -1 -1 -1))]
+      [(SpmdShuffle value lane)
+        (lower-spmd-source-key-text (array 5 0 -1 -1 -1 -1 value lane -1 -1 -1))]
+      [_ (io.panic "lower: source-key requires an SPMD source form")])))
+
 ;; A function's source sites are enumerated before any planner can consume or
-;; duplicate an expression. AST IDs index lowering scratch only; the durable
-;; identity is the typed function symbol and source-order ordinal.
+;; duplicate an expression. Syntax keys index lowering scratch only; the
+;; durable identity is the typed function symbol and source-order ordinal.
 (defstruct LowerSpmdSite
   (subtree-end i64)
   (next-source i64)
@@ -1056,11 +1185,10 @@
 
 (defstruct LowerSpmdSites
   (items LowerSpmdSiteList)
-  (by-source lower_i64_i64_map.Map)
+  (by-source lower_spmd_key_map.Map)
   (frames ir.CompilerSpmdMacroFrameList)
   (active i64)
   (lookup-parent i64)
-  (source-hint i64)
   (flushed i64)
   (flushed-frames i64)
   (frame-base i64))
@@ -1078,9 +1206,8 @@
 (define (lower-spmd-sites-empty) : LowerSpmdSites
   (LowerSpmdSites
     (lower-spmd-site-list-new)
-    (lower_i64_i64_map.with-capacity 1)
+    (lower_spmd_key_map.with-capacity 1)
     (ir.compiler-spmd-macro-frame-list-empty)
-    -1
     -1
     -1
     0
@@ -1113,8 +1240,9 @@
       (clone (array-ref frames.slots index)))))
 
 (define (lower-spmd-add-site!
+  [ctx : tc_core.TcContext]
   [state : LowerState]
-  [id : i64]
+  [expr : (& expr ast.AstExpr)]
   [parent : i64]
   [form : ir.CompilerSpmdForm]
   [origin : LowerSpmdOrigin]
@@ -1123,7 +1251,11 @@
     [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
     [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
     [ordinal : i64 sites.items.len]
-    [head : i64 (lower_i64_i64_map.get-value-or (& sites.by-source) id -1)]
+    [key : String (lower-spmd-source-key ctx expr)]
+    [head : i64
+      (lower_spmd_key_map.lookup-value-or
+        (lower_spmd_key_map.get-borrowed (& sites.by-source) (& key))
+        -1)]
     [previous : i64
       (if (>= head 0)
         (array-ref sites.items.slots head).source-tail
@@ -1158,13 +1290,11 @@
           frame-start
           frames.len
           origin.truncated)))
-    ;; An unspanned root has the function-local sentinel ID; child IDs remain
-    ;; ordinary pool indices. Keeping that root key avoids dropping API ASTs.
     (if (>= head 0)
       (begin
         (set! (array-ref sites.items.slots previous).next-source ordinal)
         (set! (array-ref sites.items.slots head).source-tail ordinal))
-      (lower_i64_i64_map.insert-ref! (&mut sites.by-source) id ordinal))
+      (lower_spmd_key_map.insert-ref! (&mut sites.by-source) key ordinal))
     ordinal))
 
 ;; Captured syntax can reuse one AST node in several source positions. The
@@ -1173,9 +1303,12 @@
 ;; of consuming the same node's occurrence in a later region.
 (define (lower-spmd-site-for-source!
   [sites : (&mut sites LowerSpmdSites)]
-  [id : i64]) : i64
+  [key : String]) : i64
   (let
-    [cursor : i64 (lower_i64_i64_map.get-value-or (& sites.by-source) id -1)]
+    [cursor : i64
+      (lower_spmd_key_map.lookup-value-or
+        (lower_spmd_key_map.get-borrowed (& sites.by-source) (& key))
+        -1)]
     [parent : i64 sites.lookup-parent]
     [limit : i64
       (if (>= parent 0)
@@ -1187,9 +1320,9 @@
         [item : LowerSpmdSite (clone (array-ref sites.items.slots index))]
         (when
           (and (= item.decision.parent-ordinal parent) (not item.entered))
-          (lower_i64_i64_map.insert-ref!
+          (lower_spmd_key_map.insert-ref!
             (&mut sites.by-source)
-            id
+            key
             (if (>= item.next-source 0)
               item.next-source
               index))
@@ -1233,7 +1366,6 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [expr : ast.AstExpr]
-  [id : i64]
   [parent : i64]
   [origin : (&mut origin LowerSpmdOrigin)]
   [frames : (&mut frames ir.CompilerSpmdMacroFrameList)]) : unit
@@ -1248,7 +1380,6 @@
             ctx
             state
             (tc_core.tc-context-expr-get ctx inner)
-            inner
             parent
             origin
             frames)
@@ -1295,7 +1426,6 @@
             ctx
             state
             (tc_core.tc-context-expr-get ctx inner)
-            inner
             parent
             origin
             frames)
@@ -1306,8 +1436,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Foreach)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1316,8 +1447,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Reduce)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1326,8 +1458,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Scan)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1336,8 +1469,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Compact)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1346,8 +1480,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Broadcast)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1356,8 +1491,9 @@
         (set!
           next-parent
           (lower-spmd-add-site!
+            ctx
             state
-            id
+            (& expr)
             parent
             (Shuffle)
             (lower-spmd-origin-copy (& (deref origin)))
@@ -1373,7 +1509,6 @@
             ctx
             state
             (tc_core.tc-context-expr-get ctx child)
-            child
             next-parent
             origin
             frames))))
@@ -1406,7 +1541,7 @@
         (lower-state-current-source-path-id state)
         (ast.ast-source-span 0 0 0 0))]
     [origin : LowerSpmdOrigin (LowerSpmdOrigin location location false false)]
-    (lower-spmd-enumerate! ctx state body -1 -1 (&mut origin) (&mut frames))))
+    (lower-spmd-enumerate! ctx state body -1 (&mut origin) (&mut frames))))
 
 ;; The prepared pool contains every source child before lowering starts.
 ;; Scanning all rows is conservative: quoted or unreachable sites keep the
@@ -1424,15 +1559,6 @@
           (return true)]
         [_ unit]))
     false))
-
-(define (lower-spmd-origin-id
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]
-  [id : i64]) : i64
-  (match expr
-    [(or (Spanned inner _) (MacroExpansion inner _ _) (Ann inner _))
-      (lower-spmd-origin-id ctx (tc_core.tc-context-expr-get ctx inner) inner)]
-    [_ id]))
 
 (define (lower-spmd-select!
   [state : LowerState]
@@ -29031,23 +29157,6 @@
           [(Err message)
             (Err (box (lower-diagnostic-at-expr ctx origin message)))])])))
 
-(defmacro (lower-spmd-with-source-id
-  [ctx : Expr]
-  [state : Expr]
-  [id : Expr]
-  [body : Expr]) : Expr
-  `(let
-    [sites : (Box LowerSpmdSites) (lower-state-spmd-sites ,state)]
-    [prior : i64 (__tl-project-field (__tl-box-place sites) source-hint)]
-    (__tl-project-set-field
-      (__tl-box-place sites)
-      source-hint
-      (lower-spmd-origin-id ,ctx (tc_core.tc-context-expr-get ,ctx ,id) ,id))
-    (let
-      [result ,body]
-      (__tl-project-set-field (__tl-box-place sites) source-hint prior)
-      result)))
-
 (define (lower-spmd-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -29068,7 +29177,7 @@
         [site : i64
           (lower-spmd-site-for-source!
             sites
-            (lower-spmd-origin-id ctx (clone origin) sites.source-hint))]
+            (lower-spmd-source-key ctx (& expr)))]
         (set! sites.active site)
         (when
           (>= site 0)
@@ -30271,32 +30380,14 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (& inner)
-          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-               (SpmdBroadcast _ _) (SpmdShuffle _ _))
-            (lower-spmd-with-source-id
-              ctx
-              state
-              inner-box
-              (lower-expr-expected
-                ctx
-                state
-                env
-                type-env
-                inner
-                expected-ty
-                origin))]
-          [_
-            (lower-expr-expected
-              ctx
-              state
-              env
-              type-env
-              inner
-              expected-ty
-              origin)]))]
+      (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box)
+        expected-ty
+        origin)]
     [(Literal lit)
       (lower-materialize-at-expr
         ctx
@@ -67173,17 +67264,14 @@
   [sret-var : i64]) : ResultLowerState
   (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (Ann inner-box _))
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match (& inner)
-          [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-               (SpmdBroadcast _ _) (SpmdShuffle _ _))
-            (lower-spmd-with-source-id
-              ctx
-              state
-              inner-box
-              (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-          [_ (lower-tail-expr ctx state env type-env inner ret-ty sret-var)]))]
+      (lower-tail-expr
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box)
+        ret-ty
+        sret-var)]
     [(Cast inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]

@@ -393,16 +393,18 @@ broadcast and shuffle has one site. A parent ordinal relates nested cross-lane
 forms to their owning region. Enumeration uses the shared AST child order
 before planners consume expressions or emit scalar tails; lambdas enumerate
 under their own function identity. Captured syntax reused by a macro receives
-a distinct ordinal at each expanded source occurrence. The function-scratch
-AST-ID lookup links those occurrences in preorder; lowering advances within
-the source parent's subtree, while scalar-tail revisits reuse its entered site.
-The lookup and occurrence links never escape as identity.
+a distinct ordinal at each expanded source occurrence. Function scratch keys
+encode binding/type/child-node IDs, so payload copies and unspanned API syntax
+retain their lookup. Occurrence links advance within the source parent's
+subtree, while scalar-tail revisits reuse its entered site. These keys and links
+never escape as identity.
 
 A final decision records the selected backend and lane count, route and first
 typed reason. Routes distinguish native gangs, compiler-limitation fallback,
 language-specified or explicit scalar execution, scalar backend and rejection.
 A source site that lowering never visits is `Inactive/NotLowered`, with zero
-lanes, including code after a return or inside an empty enclosing region.
+lanes, including code after a return or after an earlier lowering error.
+Scalar loop bodies still emitted for empty ranges retain their selected route.
 Plan selection and terminal completion are separate: only finished records
 escape, so a later rejection cannot leak an earlier scalar fallback.
 `lower-plan-foreach` owns route/failure precedence; emitters consume its plan.

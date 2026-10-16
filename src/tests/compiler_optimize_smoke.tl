@@ -30,7 +30,7 @@
       (match found
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Return (Some (I64 value))) value]
               [_ (- 0 1)])
             (- 0 1))])]))
@@ -85,7 +85,7 @@
       (+ index 1)
       (+
         acc
-        (match (ir.compiler-ir-instr-seq-ref instrs index)
+        (match (ir.compiler-ir-instr-seq-borrow instrs index)
           [(Switch _ _ _ _) 1]
           [(TotalEnumSwitch _ _ _ _ _) 1]
           [_ 0])))))
@@ -112,7 +112,7 @@
       (match block
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Switch _ base _ _) base]
               [(TotalEnumSwitch _ base _ _ _) base]
               [_ (- 0 1)])
@@ -141,7 +141,7 @@
       (match block
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Switch _ _ _ default-label) default-label]
               [(TotalEnumSwitch _ _ _ default-label _) default-label]
               [_ (ir.compiler-ir-label-none)])
@@ -219,7 +219,7 @@
 (define (opt-switch-test-block-tail-base [block : (& block ir.CompilerIrBlock)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ base _ _) base]
@@ -241,7 +241,7 @@
   [block : (& block ir.CompilerIrBlock)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ _ _ default-label) default-label]
@@ -252,7 +252,7 @@
   [block : (& block ir.CompilerIrBlock)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(TotalEnumSwitch _ _ _ _ _) true]
@@ -261,7 +261,7 @@
 (define (opt-switch-test-block-starts-with-mov? [block : ir.CompilerIrBlock]) : bool
   (match block
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+      (match (ir.compiler-ir-instr-seq-borrow instrs 0)
         [(Mov _ _ _) true]
         [_ false])]))
 
@@ -272,7 +272,7 @@
   (let
     [index : i64 0]
     (while (< index cases.len)
-      (match (ir.compiler-ir-switch-case-seq-ref cases index)
+      (match (ir.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label) (when (= tag want-tag) (return (= label want-label)))])
       (set! index (+ index 1)))
     false))
@@ -301,10 +301,10 @@
         [(Block _ instrs)
           (and
             (= (ir.compiler-ir-instr-seq-count instrs) 2)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Call _ name _ _) (= name cbi.compiler-builtin-id-tl-oob-abort)]
               [_ false])
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 1)
               [(Jump target) (= target label)]
               [_ false]))])]))
 
@@ -1555,7 +1555,7 @@
   [ty : ast.AstType]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Mov d (Var s) mov-ty)
         (if (= d dst)
           (and

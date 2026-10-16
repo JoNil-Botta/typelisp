@@ -62,6 +62,36 @@
     63))
 
 (test
+  compiler-backend-runtime-global-storage-page
+  (let
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (compiler-backend-runtime-test-full-features)]
+    [linux : String (runtime_linux.compiler-backend-runtime-data (& features))]
+    [windows : String
+      (runtime_windows.compiler-backend-runtime-data (& features))]
+    [header : String
+      ".L_tl_global_aggregate_arena:
+    .quad 0
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage_end
+    .quad 0
+    .quad .L_tl_global_aggregate_arena
+    .quad 1
+    .quad .L_tl_global_aggregate_arena
+    .quad .L_tl_global_aggregate_storage_end
+    .section .bss
+    .balign 4096
+.L_tl_global_aggregate_storage:
+    .zero 4096
+.L_tl_global_aggregate_storage_end:"]
+    (test.assert-true
+      (and
+        (string.contains (& linux) (& header))
+        (string.contains (& windows) (& header)))
+      "both targets start with a fully committed atomic page and a self-owned root")))
+
+(test
   compiler-backend-runtime-memchr-parity
   (let
     [linux : String (runtime_linux.compiler-backend-runtime-memchr-functions)]

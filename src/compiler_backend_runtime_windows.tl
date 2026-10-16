@@ -2089,7 +2089,6 @@ tl_tlci_call_macro_entry:
           (runtime_common.compiler-backend-runtime-features-leaf? features 32))
         (WindowsRuntimeGlobalAlloc)
         (runtime_common.compiler-backend-runtime-global-alloc-functions
-          "%rcx"
           (compiler-backend-current-arena-load "%r13")
           (compiler-backend-current-arena-store "%rbx")
           (compiler-backend-current-arena-store "%r13")

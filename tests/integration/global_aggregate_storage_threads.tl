@@ -18,7 +18,7 @@
   0)
 
 ;; Each worker owns a distinct global. The barrier races only the private
-;; allocator's first use, and join orders the parent's subsequent reads.
+;; allocator's first use and page growth; join orders the parent's later reads.
 (define (worker [first : bool]) : i64
   (unsafe
     (atomic-fetch-add! (ptr-addr-of ready) 1))

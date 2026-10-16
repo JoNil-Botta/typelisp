@@ -307,6 +307,9 @@ tl_profile_alloc_peak_bytes:
 
 ")
 
+;; The private root uses the ordinary arena header, with a separate static
+;; buffer. Its Windows committed bound equals capacity: exhaustion grows a new
+;; segment rather than trying to commit image storage. Linux ignores that word.
 (define (compiler-backend-runtime-common-data
   [features : (& features CompilerBackendRuntimeFeatures)]
   [arena-data : String]) : String
@@ -315,10 +318,23 @@ tl_profile_alloc_peak_bytes:
     (if (and
       features.alloc
       (compiler-backend-runtime-features-leaf? features 32))
-      "    .section .bss
+      "    .section .data
     .balign 8
 .L_tl_global_aggregate_arena:
-    .zero 8
+    .quad 0
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage_end
+    .quad 0
+    .quad .L_tl_global_aggregate_arena
+    .quad 1
+    .quad .L_tl_global_aggregate_arena
+    .quad .L_tl_global_aggregate_storage_end
+    .section .bss
+    .balign 4096
+.L_tl_global_aggregate_storage:
+    .zero 4096
+.L_tl_global_aggregate_storage_end:
 
 "
       "")
@@ -331,12 +347,10 @@ tl_profile_alloc_peak_bytes:
     (compiler-backend-runtime-env-data)))
 
 ;; Implicit global storage must survive the caller's temporary arena. The
-;; private atomic arena is never exposed or reset. Its zero/initializing/root
-;; publication protocol permits concurrent first use without duplicate owners.
-;; Only the shallow aggregate container uses this allocator; owning payloads
-;; retain their source lifetime and ordinary checked transfers.
+;; private atomic root starts with one static page and reuses ordinary arena
+;; growth after that page fills. Its root and segments are never exposed or
+;; reset. Only shallow containers use it; payload lifetimes are unchanged.
 (define (compiler-backend-runtime-global-alloc-functions
-  [arg : String]
   [save-current : String]
   [select-global : String]
   [restore-current : String]
@@ -348,40 +362,18 @@ tl_profile_alloc_peak_bytes:
     "    .globl tl_alloc_global
 tl_alloc_global:
     pushq %rbx
-    pushq %r12
     pushq %r13
-    subq $32, %rsp
-    movq "
-    arg
-    ", %r12\n"
-    save-current
-    ".L_tl_global_alloc_retry:
-    movq .L_tl_global_aggregate_arena(%rip), %rbx
-    cmpq $1, %rbx
-    ja .L_tl_global_alloc_ready
-    je .L_tl_global_alloc_wait
-    xorq %rax, %rax
-    movq $1, %r11
-    lock cmpxchgq %r11, .L_tl_global_aggregate_arena(%rip)
-    jne .L_tl_global_alloc_wait
-    call tl_arena_make_atomic
-    movq %rax, %rbx
-    movq %rbx, .L_tl_global_aggregate_arena(%rip)
-.L_tl_global_alloc_ready:
+    subq $40, %rsp
 "
+    save-current
+    "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n"
     select-global
-    "    movq %r12, "
-    arg
-    "\n    call tl_alloc\n"
+    "    call tl_alloc\n"
     restore-current
-    "    addq $32, %rsp
+    "    addq $40, %rsp
     popq %r13
-    popq %r12
     popq %rbx
     ret
-.L_tl_global_alloc_wait:
-    pause
-    jmp .L_tl_global_alloc_retry
 "
     (if elf?
       "    .size tl_alloc_global, . - tl_alloc_global\n\n"

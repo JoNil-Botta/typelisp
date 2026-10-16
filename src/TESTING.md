@@ -33,9 +33,11 @@ conditional, transitive and recursive whole-global replacement.
 It also checks that the allocator restores the caller's arena and remains
 visible to allocation profiling. `global_aggregate_storage_threads.tl` races
 first use from two workers writing distinct globals and reads the results only
-after join. Both fixtures run at opt0/1/2 on both hosts. The existing
+after join. `global_aggregate_storage_boundary.tl` fills the private static page
+exactly and retains an old receiver across the first growth. All three fixtures
+run at opt0/1/2 on both hosts. The existing
 `scratch_body_global_store_reject.tl` keeps source allocation escape illegal.
-The arena-debug gate repeats both fixtures with debug, profile, and backtrace
+The arena-debug gate repeats all three fixtures with debug, profile, and backtrace
 instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.

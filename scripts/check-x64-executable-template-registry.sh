@@ -29,12 +29,12 @@ count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
 # Pin the full-file lexical census as a construction-site tripwire. The typed
 # catalog remains authoritative; these counts make newly concatenated assembly
 # visible even if its owner forgot to add a render gate.
-# The shared global allocator contributes one entry/return, two calls and one
-# retry jump in each of the two registered global-allocation leaves.
+# The shared global allocator contributes one entry/return and one call in
+# each of the two registered global-allocation leaves.
 count_matches 10 '\.globl' src/compiler_backend_runtime_common.tl
 count_matches 17 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 4 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 8 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 3 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
+count_matches 7 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 34 '\.globl' src/compiler_backend_runtime_linux.tl
 count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 7 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl

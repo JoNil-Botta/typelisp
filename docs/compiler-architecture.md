@@ -930,10 +930,13 @@ Whole-global assignment copies the shallow container through the private
 `tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
 store preserves the backend's global-writer and inline-storage eligibility
 analysis; mutating one permanent home would incorrectly retarget a receiver
-captured before the replacement. The runtime lazily publishes a private atomic
-arena with program lifetime, selects it only for the allocation, and restores
-the caller's current arena before returning. This arena is never exposed to
-source reset or destruction. Payloads retain their checked source lifetimes;
+captured before the replacement. A private atomic arena starts with one static
+page and uses ordinary arena growth after it fills. Constant allocations up to
+64 bytes reserve space with an inline compare-and-swap; other allocations
+temporarily select the private root, then restore the caller's current arena.
+Every segment has program lifetime, so an allocation can finish on an older
+head while another thread grows the arena. The root and its segments are never
+exposed to source reset or destruction. Payloads retain their checked source lifetimes;
 this transport does not clone them. Global initialization and ordinary heap
 allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
 this helper and its private arena only when referenced on either target. Each

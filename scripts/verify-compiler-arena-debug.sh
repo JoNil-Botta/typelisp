@@ -51,8 +51,8 @@ done
 echo "compiler arena debug native matrix passed (15 cases, $HOST_OS)"
 
 # Exercise the private global allocator with all instrumentation enabled. The
-# fixtures check arena restoration, payload identity, and concurrent first use.
-for source in global_aggregate_storage_lifetime global_aggregate_storage_threads; do
+# fixtures check arena restoration, payload identity, and concurrent growth.
+for source in global_aggregate_storage_lifetime global_aggregate_storage_threads global_aggregate_storage_boundary; do
     for opt in 0 1 2; do
         asm="$WORKDIR/$source-opt$opt.s"
         binary="$WORKDIR/$source-opt$opt$BIN_EXT"
@@ -72,7 +72,7 @@ for source in global_aggregate_storage_lifetime global_aggregate_storage_threads
             fail "global storage $source opt$opt: unexpected output"
     done
 done
-echo "global storage debug/profile/backtrace matrix passed (6 cases, $HOST_OS)"
+echo "global storage debug/profile/backtrace matrix passed (9 cases, $HOST_OS)"
 
 # Linux's private TLS word must also work with the debug renderer enabled in
 # this emitter. Ordinary compilers deliberately omit that renderer.

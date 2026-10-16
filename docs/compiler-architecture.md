@@ -507,7 +507,7 @@ the final IR consumer. Later driver cleanup remains idempotent.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
-those headers and bytes can belong to lower IR, which retires after emission.
+at opt0 those headers and bytes can belong to lower IR until emission finishes.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to

@@ -556,12 +556,14 @@
       (> capacity current)
       (set!
         (deref buf)
-        (byte_buf.append-bytes
-          (byte_buf.with-capacity
-            (if (< capacity (* 2 current))
-              (* 2 current)
-              capacity))
-          (byte_buf.as-bytes buf))))))
+        (let
+          [live : (& buf bytes) (byte_buf.as-bytes buf)]
+          (byte_buf.append-bytes
+            (byte_buf.with-capacity
+              (if (< capacity (* 2 current))
+                (* 2 current)
+                capacity))
+            live))))))
 
 ;: Append `count` bytes of `src` from `start` to `buf`.
 (define (buffer-append!
@@ -573,9 +575,8 @@
     [old-len : i64 buf.len]
     (byte_buf.check-range (byte_buf.bytes-length src) start count)
     (buffer-reserve! buf (+ old-len count))
-    ;; The source range was checked above and the storage now holds
-    ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
-    ;; makes, into storage reached through `&mut`.
+    ;; A public length does not prove the reserved raw destination is live.
+    (byte_buf.check-range (array-length buf.slots) old-len count)
     (unsafe
       (string.str-copy-bytes-into
         (ptr-offset (byte_buf.bytes-data src) start)

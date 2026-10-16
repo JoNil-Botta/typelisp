@@ -102,6 +102,8 @@ borrowed view or using a raw destination. `ByteBuf` views prove its live length
 lies within the backing array; appends prove the destination extent after
 reservation. Cleanup-owning generated vectors prove the live prefix fits both
 slot and liveness arrays before replacement can clean or write an element.
+Wire-buffer growth validates the old live view before allocating replacement
+storage; its raw append checks the reserved destination even for a zero-byte copy.
 The three string raw-copy helpers carry unsafe-call effects; each caller keeps
 its source/destination proof at an explicit unsafe call, and a plain function
 value cannot erase that effect.

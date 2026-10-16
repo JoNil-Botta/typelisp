@@ -165,15 +165,16 @@
 
 ;: Copy `n` initialized bytes from `src` into `dst` at byte offset `doff`.
 ;:
-;: This is a stdlib-internal raw-pointer helper. Callers must uphold the
+;: Requires unsafe context. Callers must uphold the
 ;: `string-runtime-copy-bytes!` range contract above.
-(define (str-copy-bytes-into
-  [src : (Ptr u8)]
-  [dst : (MutPtr u8)]
-  [doff : i64]
-  [n : i64]) : unit
-  (unsafe
-    (string-runtime-copy-bytes! (ptr-offset dst doff) src n)))
+(unsafe
+  (define (str-copy-bytes-into
+    [src : (Ptr u8)]
+    [dst : (MutPtr u8)]
+    [doff : i64]
+    [n : i64]) : unit
+    (unsafe
+      (string-runtime-copy-bytes! (ptr-offset dst doff) src n))))
 
 ;: Expand to a copy of the `len` bytes at the `(Ptr u8)` `sp` to the
 ;: `(MutPtr u8)` `dp`. The expansion belongs inside `unsafe`: both ranges must
@@ -213,28 +214,32 @@
     [else unit]))
 
 ;: Copy `n` bytes from owned `chunk` into `dst` at byte offset `start`.
-(define (str-copy-owned-bytes-into
-  [chunk : String]
-  [dst : (MutPtr u8)]
-  [start : i64]
-  [n : i64]) : unit
-  (unsafe
-    (let
-      [src : (Ptr u8) (string-data (& chunk))]
-      [dp : (MutPtr u8) (ptr-offset dst start)]
-      (string-bytes-copy! dp src n))))
+;: Requires unsafe context: the source prefix and destination range must be live.
+(unsafe
+  (define (str-copy-owned-bytes-into
+    [chunk : String]
+    [dst : (MutPtr u8)]
+    [start : i64]
+    [n : i64]) : unit
+    (unsafe
+      (let
+        [src : (Ptr u8) (string-data (& chunk))]
+        [dp : (MutPtr u8) (ptr-offset dst start)]
+        (string-bytes-copy! dp src n)))))
 
 ;: Copy `n` bytes from borrowed `chunk` into `dst` at byte offset `start`.
-(define (str-copy-borrowed-bytes-into
-  [chunk : (& chunk str)]
-  [dst : (MutPtr u8)]
-  [start : i64]
-  [n : i64]) : unit
-  (unsafe
-    (let
-      [src : (Ptr u8) (string-data chunk)]
-      [dp : (MutPtr u8) (ptr-offset dst start)]
-      (string-bytes-copy! dp src n))))
+;: Requires unsafe context: the source prefix and destination range must be live.
+(unsafe
+  (define (str-copy-borrowed-bytes-into
+    [chunk : (& chunk str)]
+    [dst : (MutPtr u8)]
+    [start : i64]
+    [n : i64]) : unit
+    (unsafe
+      (let
+        [src : (Ptr u8) (string-data chunk)]
+        [dp : (MutPtr u8) (ptr-offset dst start)]
+        (string-bytes-copy! dp src n)))))
 
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
@@ -243,12 +248,8 @@
       (unsafe
         (string-data text))]
     [dst : (MutPtr u8) (string-runtime-alloc len)]
-    (str-copy-bytes-into
-      (unsafe
-        (ptr-offset src start))
-      dst
-      0
-      len)
+    (unsafe
+      (str-copy-bytes-into (ptr-offset src start) dst 0 len))
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))
 
@@ -265,8 +266,10 @@
       (unsafe
         (string-data right))]
     [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-    (str-copy-bytes-into left-src dst 0 left-len)
-    (str-copy-bytes-into right-src dst left-len right-len)
+    (unsafe
+      (str-copy-bytes-into left-src dst 0 left-len))
+    (unsafe
+      (str-copy-bytes-into right-src dst left-len right-len))
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))
 
@@ -297,12 +300,8 @@
         (let
           [part : (& parts str) (& (array-ref parts copy-index))]
           [len : i64 (__tl_string_length part)]
-          (str-copy-bytes-into
-            (unsafe
-              (string-data part))
-            dst
-            off
-            len)
+          (unsafe
+            (str-copy-bytes-into (string-data part) dst off len))
           (set! off (+ off len))
           (set! copy-index (+ copy-index 1))))
       (unsafe
@@ -319,9 +318,12 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-borrowed-bytes-into a dst 0 a-len)
-        (str-copy-borrowed-bytes-into b dst a-len b-len)
-        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+        (unsafe
+          (str-copy-borrowed-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
@@ -341,10 +343,14 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-borrowed-bytes-into a dst 0 a-len)
-        (str-copy-borrowed-bytes-into b dst a-len b-len)
-        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
-        (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (unsafe
+          (str-copy-borrowed-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
@@ -366,15 +372,20 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-borrowed-bytes-into a dst 0 a-len)
-        (str-copy-borrowed-bytes-into b dst a-len b-len)
-        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
-        (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-        (str-copy-borrowed-bytes-into
-          e
-          dst
-          (+ a-len (+ b-len (+ c-len d-len)))
-          e-len)
+        (unsafe
+          (str-copy-borrowed-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len))
+        (unsafe
+          (str-copy-borrowed-bytes-into
+            e
+            dst
+            (+ a-len (+ b-len (+ c-len d-len)))
+            e-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
@@ -389,9 +400,12 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-owned-bytes-into a dst 0 a-len)
-        (str-copy-owned-bytes-into b dst a-len b-len)
-        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+        (unsafe
+          (str-copy-owned-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-owned-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
@@ -407,10 +421,14 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-owned-bytes-into a dst 0 a-len)
-        (str-copy-owned-bytes-into b dst a-len b-len)
-        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
-        (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (unsafe
+          (str-copy-owned-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-owned-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len))
+        (unsafe
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
@@ -432,15 +450,20 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (str-copy-owned-bytes-into a dst 0 a-len)
-        (str-copy-owned-bytes-into b dst a-len b-len)
-        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
-        (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-        (str-copy-owned-bytes-into
-          e
-          dst
-          (+ a-len (+ b-len (+ c-len d-len)))
-          e-len)
+        (unsafe
+          (str-copy-owned-bytes-into a dst 0 a-len))
+        (unsafe
+          (str-copy-owned-bytes-into b dst a-len b-len))
+        (unsafe
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len))
+        (unsafe
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len))
+        (unsafe
+          (str-copy-owned-bytes-into
+            e
+            dst
+            (+ a-len (+ b-len (+ c-len d-len)))
+            e-len))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 

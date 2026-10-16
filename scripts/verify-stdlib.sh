@@ -288,6 +288,10 @@ stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/idna_unicode12_api.tl|42|printf:lookup allocated bytes=0\n|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
+stdlib/tests/string_raw_copy_api.tl|42|-|-|-
+stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-equal
+stdlib/tests/vector_live_extent.tl|42|-|-|literal:valid
+stdlib/tests/wire_byte_buf_live_extent.tl|42|-|-|literal:tls-equal-one
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
@@ -480,6 +484,11 @@ stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would
 stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
 stdlib/tests/vector_native_slice_split_grow_live.tl|fail|typecheck: cannot read mutably borrowed place `items`
 stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot read mutably borrowed place `items`
+stdlib/tests/string_raw_copy_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_owned_copy_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_borrowed_copy_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_copy_alias_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_copy_function_value_reject.tl|fail|is an unsafe callable and cannot be used as a plain function value
 EOF
 }
 

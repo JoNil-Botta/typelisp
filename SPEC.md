@@ -404,6 +404,10 @@ there is no public unsized `Array` alias.
   range `[len, capacity)` is reserved implementation storage and cannot be
   read by safe code.
 - `ByteBuf` has no text, encoding, or NUL-termination invariant.
+- Safe borrowed byte views validate `0 <= len <= array-length slots` before
+  constructing the view. An invalid public length takes the ordinary bounds
+  trap. Raw string-copy helpers require explicit unsafe context and a proof
+  of their source and destination extents.
 - Growing a `ByteBuf` may allocate a new active-arena backing store and copy
   the live bytes. The old backing store is not reclaimed until its arena is
   reset or the process exits.

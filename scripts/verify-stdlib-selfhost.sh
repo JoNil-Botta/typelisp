@@ -26,6 +26,10 @@ esac
 # scripts/verify-stdlib.sh.
 reject_diag() {
     case "$1" in
+        stdlib/tests/string_raw_copy_reject.tl | stdlib/tests/string_raw_owned_copy_reject.tl | stdlib/tests/string_raw_borrowed_copy_reject.tl | stdlib/tests/string_raw_copy_alias_reject.tl)
+            printf 'requires unsafe context' ;;
+        stdlib/tests/string_raw_copy_function_value_reject.tl)
+            printf 'is an unsafe callable and cannot be used as a plain function value' ;;
         stdlib/tests/arena_policy_escape_string.tl | stdlib/tests/arena_policy_escape_text_buf.tl)
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)

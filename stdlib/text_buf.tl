@@ -90,12 +90,8 @@
       [storage : (MutPtr u8) (string.string-runtime-alloc count)]
       [chunk : String
         (begin
-          (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& data)))
-            storage
-            0
-            count)
+          (unsafe
+            (string.str-copy-bytes-into (string-data (& data)) storage 0 count))
           (unsafe
             (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
       [next : TextBuf (append buf chunk)]

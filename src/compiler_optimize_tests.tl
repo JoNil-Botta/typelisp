@@ -3422,11 +3422,12 @@
       (in-arena
         (arena.Arena source)
         (ir.compiler-ir-clone-function-seq pools (& functions)))]
+    [function-count : i64 functions.len]
     [control : ir.CompilerIrProgram
       (match (opt.optimize-program
         (Program
           (ir.compiler-ir-global-seq-empty)
-          (owned_view.compiler-owned-shared-view functions)
+          functions
           (ir.compiler-ir-extern-seq-empty))
         (ir.compiler-source-spans-empty)
         (opt.optimize-request pools level))
@@ -3466,7 +3467,7 @@
           (= (array-ref state.source 0) 0)
           (test.assert-i64-eq
             source-functions.len
-            functions.len
+            function-count
             "retained source functions remain readable")
           (set! (array-ref state.source 0) 0)
           (unsafe

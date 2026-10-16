@@ -3460,8 +3460,8 @@
         (test.assert-true
           (opt-test-program-eq
             (ast.ast-node-pool-context-type-segment-bases pools)
-            (owned_view.compiler-owned-shared-view control)
-            (owned_view.compiler-owned-shared-view result))
+            (clone control)
+            (clone result))
           "retirement preserves the complete optimized program")
         (unless
           (= (array-ref state.source 0) 0)

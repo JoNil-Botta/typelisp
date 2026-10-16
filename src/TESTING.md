@@ -329,6 +329,15 @@ the prelude `for` body does; it composes nested macros, list inspection, begin
 bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
+## Late clone helper syntax
+
+`compiler-clone-late-tail-template` evaluates the stdlib producer's actual
+self-tail template with both boxing choices and requires ordinary syntax.
+Synthesized clone helpers are installed after macro expansion, so a macro call
+in their body otherwise reaches the native linker as an unresolved function.
+The test uses the shared AST child traversal and adds no list-shaped schema to
+the repository's zero-cons corpus.
+
 ## Compiler arena ownership
 
 `compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`

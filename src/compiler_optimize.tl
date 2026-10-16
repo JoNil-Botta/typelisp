@@ -21707,9 +21707,11 @@
 ;; This table answers the question from the CALLEE's own IR rather than from
 ;; the calling convention: a function qualifies only when EVERY `Return` in it
 ;; returns the same parameter var, verbatim -- no phi, no copy chain, no
-;; aggregate rebuild -- and the function contains no tail call (whose result is
-;; the tail callee's, not a parameter of this one). Under that condition the
-;; call's dst is definitionally the value of that argument, whatever the ABI
+;; aggregate rebuild -- and that parameter is neither redefined nor address-taken.
+;; These bodies may precede SSA, so a returned variable alone proves no identity.
+;; The function also contains no tail call (whose result is the tail callee's,
+;; not a parameter of this one). The call's dst is then definitionally the
+;; value of that argument, whatever the ABI
 ;; does to transport it, so the caller may copy the argument's root and pointer
 ;; class onto the result. A function with no `Return` at all (every path
 ;; aborts) does not qualify: there is no returned value to describe.
@@ -21769,6 +21771,17 @@
             rest
             (opt-licm-return-alias-instr-seq-from params instrs 0 found))])]))
 
+(define (opt-licm-return-alias-instr-keeps-param?
+  [var : i64]
+  [instr : (& ir.CompilerIrInstr)]) : bool
+  (and
+    (match instr
+      [(AddrOf _ src _storage-words) (not (= src var))]
+      [_ true])
+    (match (opt-instr-def-var instr)
+      [(Some dst) (not (= dst var))]
+      [(None) true])))
+
 ;; The parameter index this function returns unchanged, or -1.
 (define (opt-licm-return-alias-function-index
   [func : (& ir.CompilerIrFunction)]) : i64
@@ -21782,7 +21795,14 @@
             -2)]
         (if (< found 0)
           -1
-          found))]))
+          (match (ir.compiler-ir-param-seq-ref (& params) found)
+            [(Param _ _ var)
+              (if (opt-blocks-every?
+                blocks
+                opt-licm-return-alias-instr-keeps-param?
+                var)
+                found
+                -1)])))]))
 
 (define (opt-licm-return-alias-add-functions-from
   [functions : (& functions ir.CompilerIrFunctionSeq)]

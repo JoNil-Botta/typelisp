@@ -4913,7 +4913,6 @@
                 (owned_view.compiler-owned-shared-view object-text)))]
           (if (and (not runtime-dirty) (not tlci-dirty))
             (begin
-              (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
               (compiler_driver_core.compiler-driver-reset-file-state!)
               (build-package-announce-freshness
                 artifact-path
@@ -4968,9 +4967,6 @@
                             (io.print-error message)
                             1]
                           [(Ok)
-                            (if runtime-dirty
-                              unit
-                              (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!))
                             (compiler_driver_core.compiler-driver-reset-file-state!)
                             (build-package-commit-generated-artifacts
                               stage
@@ -5013,8 +5009,6 @@
         (build-package-file-text-eq?
           (owned_view.compiler-owned-shared-view tlci-path)
           (owned_view.compiler-owned-shared-view tlci-text)))]
-    [_release-lower : unit
-      (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)]
     (match (build-package-runtime-input-transcript
       kind
       target

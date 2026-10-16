@@ -1189,23 +1189,29 @@
             cfgs
             (tc.tc-prefix-default-cache-scope)
             pools)
-            [(Ok program spans)
-              (match (driver.compiler-driver-emit-lowered-with-level
-                virtual-path
-                program
-                spans
-                target
-                true
-                (opt.compiler-optimize-default-level))
-                [(Ok asm advisories)
-                  (driver.compiler-driver-print-advisories (& advisories))
-                  (Ok
-                    (build_run_core.source-tool-augment-assembly-for-target
-                      asm
-                      target))]
-                [(Err diag advisories)
-                  (driver.compiler-driver-print-advisories (& advisories))
-                  (Err (cdiag.compiler-diagnostic-render (deref diag)))])]
+            [(Ok program spans lower-state)
+              (let
+                [emitted : driver.ResultCompilerDriver
+                  (driver.compiler-driver-emit-lowered-with-level
+                    virtual-path
+                    program
+                    spans
+                    target
+                    true
+                    (opt.compiler-optimize-default-level)
+                    lower-state)]
+                (driver.compiler-driver-release-lower-arenas-after-emit!
+                  lower-state)
+                (match emitted
+                  [(Ok asm advisories)
+                    (driver.compiler-driver-print-advisories (& advisories))
+                    (Ok
+                      (build_run_core.source-tool-augment-assembly-for-target
+                        asm
+                        target))]
+                  [(Err diag advisories)
+                    (driver.compiler-driver-print-advisories (& advisories))
+                    (Err (cdiag.compiler-diagnostic-render (deref diag)))]))]
             [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))])]
         [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))])]
     (driver.compiler-driver-state-clear-pool-backed-caches!)

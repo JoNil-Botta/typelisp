@@ -62387,41 +62387,45 @@
         TcSelectedOccurrence.Unrepresented
         sink)]
     [(TcSelectedOccurrence.Selected child)
-      (if (or
-        (not (tc-type-env-scoped-runtime-active? env))
-        (not
-          (tc-selected-aligned-type?
-            ctx
-            (tc-global-shared-view binding-ty)
-            (tc-global-shared-view init-ty))))
-        (TcSelectedResult.Ok
-          ast.AstType.Unit
-          TcSelectedOccurrence.Unrepresented
-          sink)
-        (match sink
-          [(TcSelectedSink.Query)
-            (TcSelectedResult.Err
-              "typecheck: query retained a selected initializer"
-              TcSelectedSink.Query)]
-          [(TcSelectedSink.Capture store lease bindings)
-            (let
-              [never? : bool
-                (match (tc-selected-occurrence-never!
-                  store
-                  lease
-                  (typed.TypedOccurrenceId
-                    (typed.typed-handle-copy (& child.handle))))
-                  [(TcSelectedBoolResult.Ok value) value]
-                  [(TcSelectedBoolResult.Err error)
-                    (return
-                      (TcSelectedResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
-              (if never?
+      (match sink
+        [(TcSelectedSink.Query)
+          (TcSelectedResult.Err
+            "typecheck: query retained a selected initializer"
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (let
+            [never? : bool
+              (match (tc-selected-occurrence-never!
+                store
+                lease
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& child.handle))))
+                [(TcSelectedBoolResult.Ok value) value]
+                [(TcSelectedBoolResult.Err error)
+                  (return
+                    (TcSelectedResult.Err
+                      (tc-selected-error error)
+                      (TcSelectedSink.Capture store lease bindings)))])]
+            (cond
+              ;; A diverging initializer never creates storage. Preserve its
+              ;; control flow even when Never was coerced to the binder type.
+              [never?
+                (TcSelectedResult.Ok
+                  ast.AstType.Never
+                  (TcSelectedOccurrence.Selected child)
+                  (TcSelectedSink.Capture store lease bindings))]
+              [(or
+                  (not (tc-type-env-scoped-runtime-active? env))
+                  (not
+                    (tc-selected-aligned-type?
+                      ctx
+                      (tc-global-shared-view binding-ty)
+                      (tc-global-shared-view init-ty))))
                 (TcSelectedResult.Ok
                   ast.AstType.Unit
                   TcSelectedOccurrence.Unrepresented
-                  (TcSelectedSink.Capture store lease bindings))
+                  (TcSelectedSink.Capture store lease bindings))]
+              [else
                 (let
                   [source : ownership.OwnershipSource
                     (match (tc-selected-occurrence-origin-copy!
@@ -62518,7 +62522,7 @@
                                 source
                                 (typed.TypedOperation.Initialize binder)
                                 (__tl_make-array child)
-                                (TcSelectedSink.Capture store lease bindings))])])]))))]))]))
+                                (TcSelectedSink.Capture store lease bindings))])])]))]))])]))
 
 ;; A Copy arena handle the legacy rules track per binder (SPEC 5.16): a direct
 ;; owner annotated with the bare `Arena` type, or a phase token.
@@ -62563,6 +62567,7 @@
           source
           (__tl_make-array typed.TypedOccurrenceId 0)
           false
+          -1
           TcSelectedSink.Query)]
       [(TcSelectedSink.Capture store lease associations)
         (match (typed.typed-charge! store lease 1)
@@ -62598,6 +62603,7 @@
                   source
                   (__tl_make-array typed.TypedOccurrenceId (+ count 1))
                   true
+                  -1
                   (TcSelectedSink.Capture store lease associations))])])])))
 
 (define (tc-selected-scope-finish
@@ -63651,6 +63657,8 @@
   [source : ownership.OwnershipSource]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [represented? : bool]
+  ;; The initialized prefix through the first diverging initializer, or -1.
+  [cut : i64]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
@@ -63675,18 +63683,29 @@
             0))
           [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
           [(ResultTcUnit.Ok)
-            (match occurrence
-              [(TcSelectedOccurrence.Selected child)
-                (set! (array-ref children index) child)
-                (tc-selected-publish-flow
-                  (ResultTcType.Ok ty)
-                  syntax
-                  source
-                  typed.TypedOperation.Sequence
-                  children
-                  next)]
-              [(TcSelectedOccurrence.Unrepresented)
-                (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)])])])
+            (if (>= cut 0)
+              (tc-selected-publish-flow
+                (ResultTcType.Ok ty)
+                syntax
+                source
+                typed.TypedOperation.Sequence
+                (tc-selected-children-prefix children cut)
+                next)
+              (match occurrence
+                [(TcSelectedOccurrence.Selected child)
+                  (set! (array-ref children index) child)
+                  (tc-selected-publish-flow
+                    (ResultTcType.Ok ty)
+                    syntax
+                    source
+                    typed.TypedOperation.Sequence
+                    children
+                    next)]
+                [(TcSelectedOccurrence.Unrepresented)
+                  (TcSelectedResult.Ok
+                    ty
+                    TcSelectedOccurrence.Unrepresented
+                    next)]))])])
     (match (ast.ast-let-binding-list-get
       bindings
       index
@@ -63753,7 +63772,7 @@
                     next)
                     [(TcSelectedResult.Err message next)
                       (TcSelectedResult.Err message next)]
-                    [(TcSelectedResult.Ok _ initialized next)
+                    [(TcSelectedResult.Ok initialized-ty initialized next)
                       (let
                         [selected? : bool
                           (match initialized
@@ -63761,6 +63780,13 @@
                               (set! (array-ref children index) child)
                               true]
                             [(TcSelectedOccurrence.Unrepresented) false])]
+                        [diverged? : bool
+                          (and
+                            represented?
+                            selected?
+                            (match initialized-ty
+                              [(ast.AstType.Never) true]
+                              [_ false]))]
                         (tc-infer-selected-let-at
                           ctx
                           next-env
@@ -63772,7 +63798,10 @@
                           expected
                           source
                           children
-                          (and represented? selected?)
+                          (and represented? selected? (not diverged?))
+                          (if (and diverged? (< cut 0))
+                            (+ index 1)
+                            cut)
                           next))])])]))])))
 
 (define (tc-resource-cleanup-direct-name-ok

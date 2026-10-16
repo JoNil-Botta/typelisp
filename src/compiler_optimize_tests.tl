@@ -34703,6 +34703,108 @@
   (opt.opt-licm-return-alias-function-index
     (& (opt-licm-ls-alias-function blocks))))
 
+;; The program summary is built before scalar SSA. Only the returned
+;; parameter's binding must stay fixed; unrelated mutable locals are allowed.
+(define (opt-licm-ls-alias-binding-cases?) : bool
+  (and
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks "entry:
+         %0 = mov %1 : u64
+         return %0"))
+      -1)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks "entry:
+         %0 = add %0, 8 : u64
+         return %0"))
+      -1)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks
+          "entry:
+         %0 = call alias_opaque() : u64
+         return %0"))
+      -1)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks
+          "entry:
+         %2 = addr_of %0
+         store_ptr %2, %1 : u64
+         return %0"))
+      -1)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks
+          "entry:
+         %5 = eq %1, 0 : u64
+         branch %5, left, right
+       left:
+         return %0
+       right:
+         %0 = mov %1 : u64
+         return %0"))
+      -1)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks
+          "entry:
+         %1 = mov 7 : u64
+         %2 = mov 0 : u64
+         %2 = add %2, 1 : u64
+         store_ptr %0, %1 : u64
+         return %0"))
+      0)
+    (=
+      (opt-licm-ls-alias-index
+        (irt.blocks "entry:
+         %0 = mov 7 : u64
+         return %1"))
+      1)))
+
+;; The helper returns the array's element buffer after rebinding its first
+;; parameter. Calling it with a frame object must not colour the result as
+;; that frame object: its first word aliases the loop's element stores.
+(define (opt-licm-ls-rebound-call-loads) : i64
+  (let
+    [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
+    [callee : ir.CompilerIrFunction
+      (Function
+        symbols.ret-arg
+        (opt-licm-ls-alias-params)
+        (U64)
+        8
+        (irt.blocks "entry:
+          %0 = mov %1 : u64
+          return %0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& callee)
+        (& (ir.compiler-ir-function-seq-empty)))]
+    [aliases (opt.opt-licm-return-alias-map (& functions) 4)]
+    [func
+      (opt-licm-ls-optimized
+        (opt-licm-ls-blocks
+          (opt-test-instrs
+            (Mov 3 (I64 0) (I64))
+            (Alloc 20 (opt-licm-ls-local-object-type))
+            (AddrOf 21 20 0)
+            (Gep 23 (Var 1) (I64 0) (U8))
+            (Load 24 (Var 23) (U64))
+            (Call 22 symbols.ret-arg (Two (Var 21) (Var 24)) (U64))
+            (Jump (ir.compiler-ir-label "loop")))
+          (opt-licm-ls-field-read-body 22 (opt-licm-ls-finish-instrs)))
+        (opt_i64_i64_map.with-capacity 1)
+        aliases)]
+    [blocks (opt.opt-function-blocks func)]
+    (if (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+      (opt-count-load-label-blocks
+        (ir.compiler-ir-block-list-view (& blocks))
+        (ir.compiler-ir-label "loop"))
+      -1)))
+
 (define (compiler-optimize-licm-local-slot-self-test) : i64
   (let
     [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
@@ -34845,6 +34947,8 @@
             (opt-licm-ls-alias-index (opt-licm-ls-alias-two-return-blocks 0 1))
             -1))
         305]
+      [(not (opt-licm-ls-alias-binding-cases?)) 306]
+      [(not (= (opt-licm-ls-rebound-call-loads) 1)) 307]
       ;; The frame-object proof.
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& plain-func)))))
         310]

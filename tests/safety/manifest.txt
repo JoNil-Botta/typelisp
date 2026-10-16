@@ -1605,6 +1605,10 @@ mir_try_moved_reject|check-fail|tests/safety/mir_try_moved_reject.tl|tests/safet
 mir_holder_ok|run-exit|tests/safety/mir_holder_ok.tl|5|-
 mir_holder_borrow_conflict_reject|check-fail|tests/safety/mir_holder_borrow_conflict_reject.tl|tests/safety/mir_holder_borrow_conflict_reject.tl:16:13|cannot mutably borrow borrowed place `items`
 mir_unreachable_tail_ok|check-ok|tests/safety/mir_unreachable_tail_ok.tl|-|-
+mir_let_never_ok|run-exit|tests/safety/mir_let_never_ok.tl|42|-
+mir_let_never_before_move_reject|check-fail|tests/safety/mir_let_never_before_move_reject.tl|-|typecheck: use of moved value `items`
+mir_let_never_live_move_reject|check-fail|tests/safety/mir_let_never_live_move_reject.tl|-|typecheck: use of moved value `items`
+mir_let_never_dead_type_reject|check-fail|tests/safety/mir_let_never_dead_type_reject.tl|-|let binding `wrong` type mismatch
 mir_call_result_lifetime_ok|run-exit|tests/safety/mir_call_result_lifetime_ok.tl|42|-
 mir_reborrow_shared_from_mut_reject|check-fail|tests/safety/mir_reborrow_shared_from_mut_reject.tl|tests/safety/mir_reborrow_shared_from_mut_reject.tl:14:13|cannot assign to borrowed place `exclusive.value`
 mir_call_result_deref_reject|check-fail|tests/safety/mir_call_result_deref_reject.tl|tests/safety/mir_call_result_deref_reject.tl:14:13|cannot assign to borrowed place `x.value`

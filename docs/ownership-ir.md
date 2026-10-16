@@ -1529,8 +1529,9 @@ Unsupported and ordinary fallback paths preserve the original ID entry points,
 including dotted-place normalization; they do not infer a second time to fill
 the store. Failed or unrepresented parents roll back their selected children.
 Lease, resource and identity failures remain hard errors. A `begin` gives only
-its final child the contextual type. An early `Never` still checks the later
-children once through Query and leaves the sequence unrepresented.
+its final child the contextual type. An early `Never` retains the executable
+prefix through that child; later children are still checked once through Query
+without adding unreachable ownership effects.
 
 Unary operations and conditionals share the same implementation with and
 without an expected type. Noncontextual binary inference returns both its
@@ -1569,6 +1570,11 @@ the actual value slot, after owner/phase markers, and retains an `Initialize`
 child before checking the next initializer. Initializer origins come from the
 selected child through lease-checked getters, with byte-copy work charged in
 advance. A let retains the ordered initializations and body in a sequence.
+A diverging initializer instead retains its intrinsic `Never` occurrence without
+creating binder storage. The sequence ends at that initializer; later bindings
+and the body still receive ordinary typechecking. Contextual coercion to the
+binder's declared type does not erase the exit, and earlier live ownership
+errors remain visible. The `mir_let_never_*` safety fixtures cover these edges.
 Scope exit restores the actual carrier and visible association bound without
 discarding the binder records used by that sequence. Specialized capability
 closures and unrepresented initializer coercions still preserve legacy admission.
@@ -1723,10 +1729,6 @@ and epoch advancement now use sticky exhaustion states. Canonical lookup and
 source inference reject exhaustion before cached results, including exhaustion
 caused by restoring a scope after an otherwise successful check. Occurrence rollback restores the visible binder associations
 alongside the canonical scope rollback, without refunding serials or work.
-An early `Never` expression in `begin` is another migration boundary: current
-inference still checks later expressions, so the bounded producer retains
-that checking exactly once while leaving the whole unsupported sequence
-unrepresented until explicit unreachable child handling exists.
 
 Scalar `while`, `break` and `continue` now have selected producers. Query and
 Capture call the same condition/body inference and canonical type checks;

@@ -81118,6 +81118,8 @@ tl_shared_object_init:
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-globals-from parts target globals program-index 0))
 
+;; Object data outlives lower IR, which can own these literal headers/bytes.
+;; Copy payloads into the object destination before the lower owner retires.
 (define (compiler-backend-object-strings
   [parts : object_target.CompilerBackendObjectTargetParts]
   [strings : BackendStringSeq]
@@ -81145,7 +81147,7 @@ tl_shared_object_init:
                           (Data))
                         (Label
                           (compiler-backend-global-shared-view data-symbol)))
-                      (String (compiler-backend-global-shared-view text)))
+                      (String (string.copy (& text))))
                     (compiler-backend-global-shared-view fat-symbol)
                     (Rodata)
                     (Data))
@@ -81192,7 +81194,7 @@ tl_shared_object_init:
                       (Label (compiler-backend-global-shared-view data-symbol)))
                     (if (= (string.string-length bytes) 0)
                       (Zero 1)
-                      (Bytes (compiler-backend-global-shared-view bytes))))
+                      (Bytes (string.copy (& bytes)))))
                   (compiler-backend-global-shared-view fat-symbol)
                   (Abs64)
                   (compiler-backend-global-shared-view data-symbol))
@@ -92576,28 +92578,46 @@ tl_shared_object_init:
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (compiler_lower.lower-compiler-source src)
-    [(Ok program spans)
-      (compiler-backend-emit-program-linux-with-spans program spans)]
+    [(Ok program spans lower-state)
+      (let
+        [result : ResultCompilerBackend
+          (compiler-backend-emit-program-linux-with-spans program spans)]
+        (compiler_lower.compiler-lower-arena-state-release!
+          (compiler_lower.compiler-lower-state-arenas lower-state))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
   (match (compiler-backend-lower-source-for-target src target)
-    [(Ok program spans)
-      (compiler-backend-emit-program-with-spans-for-target program spans target)]
+    [(Ok program spans lower-state)
+      (let
+        [result : ResultCompilerBackend
+          (compiler-backend-emit-program-with-spans-for-target
+            program
+            spans
+            target)]
+        (compiler_lower.compiler-lower-arena-state-release!
+          (compiler_lower.compiler-lower-state-arenas lower-state))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-emit-source-object-image-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendObject
   (match (compiler-backend-lower-source-for-target src target)
-    [(Ok program spans)
-      (compiler-backend-emit-program-object-image-target
-        program
-        target
-        spans
-        true)]
+    [(Ok program spans lower-state)
+      (let
+        [result : ResultCompilerBackendObject
+          (compiler-backend-emit-program-object-image-target
+            program
+            target
+            spans
+            true)]
+        (compiler_lower.compiler-lower-arena-state-release!
+          (compiler_lower.compiler-lower-state-arenas lower-state))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-string-prefix-at?
@@ -93074,13 +93094,18 @@ tl_shared_object_init:
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendPic
   (match (compiler-backend-lower-source-for-target src target)
-    [(Ok program spans)
-      (compiler-backend-emit-program-pic-target-with-mode
-        program
-        target
-        (Scalar)
-        spans
-        true)]
+    [(Ok program spans lower-state)
+      (let
+        [result : ResultCompilerBackendPic
+          (compiler-backend-emit-program-pic-target-with-mode
+            program
+            target
+            (Scalar)
+            spans
+            true)]
+        (compiler_lower.compiler-lower-arena-state-release!
+          (compiler_lower.compiler-lower-state-arenas lower-state))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic

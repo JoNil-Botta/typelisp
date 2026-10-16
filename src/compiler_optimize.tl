@@ -20542,7 +20542,7 @@
 (define (opt-licm-store-roots-new) : OptLicmStoreRootList
   (OptLicmStoreRootList (opt_licm_store_root_vec.with-capacity 4)))
 
-(define (opt-licm-store-roots-add-range
+(define (opt-licm-store-roots-add
   [stores : OptLicmStoreRootList]
   [root : OptLicmRoot]
   [offset : i64]
@@ -20553,11 +20553,6 @@
       (&mut items)
       (OptLicmRootedStore root offset width))
     (OptLicmStoreRootList items)))
-
-(define (opt-licm-store-roots-add
-  [stores : OptLicmStoreRootList]
-  [root : OptLicmRoot]) : OptLicmStoreRootList
-  (opt-licm-store-roots-add-range stores root 0 0))
 
 ;; #8941. Whether one rooted store leaves a load's word untouched: the roots are
 ;; disjoint (opt-licm-root-disjoint-store?, unchanged), or they are the SAME
@@ -20584,7 +20579,7 @@
 
 ;; Whether every rooted store of the loop misses the load. `load-width` 0 is a
 ;; load whose range is unknown: only root disjointness can then decide.
-(define (opt-licm-store-roots-safe-for-range?
+(define (opt-licm-store-roots-safe?
   [stores : (& stores OptLicmStoreRootList)]
   [load-root : OptLicmRoot]
   [load-offset : i64]
@@ -20605,11 +20600,6 @@
           load-width))
       (-= index 1))
     safe?))
-
-(define (opt-licm-store-roots-safe?
-  [stores : (& stores OptLicmStoreRootList)]
-  [load-root : OptLicmRoot]) : bool
-  (opt-licm-store-roots-safe-for-range? stores load-root 0 0))
 
 (define (opt-licm-body-map-capacity [body-blocks : (& ir.CompilerIrBlockList)]) : i64
   (+ 1 (ir.compiler-ir-block-list-instruction-count body-blocks)))
@@ -22137,7 +22127,7 @@
     (opt-licm-store-summary-merge state.rooted-summary summary)
     state.ptrs
     state.roots
-    (opt-licm-store-roots-add-range state.store-roots root offset width)
+    (opt-licm-store-roots-add state.store-roots root offset width)
     state.any-call?
     (or state.global-write? (opt-licm-store-summary-global-write? summary))
     state.mem-clean-call?
@@ -23099,7 +23089,7 @@
           class-safe?
           (and
             (opt-licm-store-summary-clean? root-summary)
-            (opt-licm-store-roots-safe-for-range?
+            (opt-licm-store-roots-safe?
               store-roots
               load-root
               load-offset

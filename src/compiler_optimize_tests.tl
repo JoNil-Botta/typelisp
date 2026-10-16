@@ -1264,7 +1264,7 @@
   (if (> next last)
     roots
     (opt-dense-test-licm-roots
-      (opt.opt-licm-store-roots-add roots (Fresh next))
+      (opt.opt-licm-store-roots-add roots (Fresh next) 0 0)
       (+ next 1)
       last)))
 
@@ -1803,8 +1803,8 @@
               (PackWord 7 0 (I64 2) 0 2))
             (PackWord 7 0 (I64 1) 0 1))))]
     (cond
-      [(not (opt.opt-licm-store-roots-safe? licm (Fresh 99))) 1]
-      [(opt.opt-licm-store-roots-safe? licm (Fresh 4)) 2]
+      [(not (opt.opt-licm-store-roots-safe? licm (Fresh 99) 0 0)) 1]
+      [(opt.opt-licm-store-roots-safe? licm (Fresh 4) 0 0) 2]
       [(not (= memory-count 8)) 3]
       [(not (= newest-index 0)) 4]
       [(not (= oldest-index 7)) 5]

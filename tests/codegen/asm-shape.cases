@@ -7,6 +7,17 @@
 
 args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
+case binary-interval-search
+source tests/integration/bce_binary_interval.tl
+in fn _tl_bce_binary_interval_search_div
+count = 1 __bce_guard:$
+count >= 1 __bce_fast:$
+count = 1 call tl_oob_abort_at
+in fn _tl_bce_binary_interval_search_shift
+count = 1 __bce_guard:$
+count >= 1 __bce_fast:$
+count = 1 call tl_oob_abort_at
+
 # SROA-2: the four-word enum of the lattice join lives in registers -- no frame,
 # no wide copy, no frame-slot store or compare; JT-2 threads the equality match
 # away, leaving the three payload-word compares against memory.

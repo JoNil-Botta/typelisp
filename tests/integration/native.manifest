@@ -526,6 +526,7 @@ mutable_reference_disjoint_read|all|-|tests/safety/mutable_reference_read_disjoi
 mir_let_never|all|0,1,2|tests/safety/mir_let_never_ok.tl|42|-|-|stdlib/io.tl|-
 mir_field_view_last_use|all|0,1,2|tests/safety/mir_field_view_last_use_ok.tl|42|-|-|-|-
 mir_view_field_last_use|all|0,1,2|tests/safety/mir_view_field_after_last_use_ok.tl|42|-|-|-|-
+region_view_call_argument|all|0,1,2|tests/safety/region_view_call_argument_ok.tl|42|-|-|-|-
 enum_string_payload|all|-|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl|-
 f32_scalar|all|-|tests/integration/f32_scalar.tl|42|-|-|-|-
 f64_negation|all|-|tests/integration/f64_negation.tl|42|-|-|-|-

@@ -1,4 +1,4 @@
-;: A value read through a reference is a view of the referenced memory;
+;: A borrowed field is a view of the referenced memory;
 ;: passing it to a reference parameter reborrows that memory, and the view
 ;: keeps pointing where it did (#8449).
 (defstruct Csr
@@ -17,10 +17,10 @@
 
 (define (f [context : (& context Ctx)]) : bool
   (let
-    [index : Index context.index]
+    [index : (& context Index) (& context.index)]
     [id : i64 (lookup index context.entry)]
-    [preds : Csr index.preds]
-    [offsets : (__tl_dyn-array i64) preds.offsets]
+    [preds : (& context Csr) (& index.preds)]
+    [offsets : (& context (__tl_dyn-array i64)) (& preds.offsets)]
     (= (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 0)))
 
 (define (main) : i64

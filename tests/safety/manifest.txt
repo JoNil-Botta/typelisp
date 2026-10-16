@@ -1857,6 +1857,7 @@ mir_by_value_holder_call_store_then_write_reject|check-fail|tests/safety/mir_by_
 reborrow_through_mut_holder_bound_ok|run-exit|tests/safety/reborrow_through_mut_holder_bound_ok.tl|42|-
 reborrow_lending_cursor_ok|run-exit|tests/safety/reborrow_lending_cursor_ok.tl|42|-
 region_view_call_argument_ok|run-exit|tests/safety/region_view_call_argument_ok.tl|42|-
+region_view_owned_read_reject|check-fail|tests/safety/region_view_owned_read_reject.tl|tests/safety/region_view_owned_read_reject.tl:20:20|cannot move a `Index` out of a shared reference
 region_by_value_holder_store_reborrow_ok|run-exit|tests/safety/region_by_value_holder_store_reborrow_ok.tl|42|-
 mir_holder_disjoint_lifetime_store_ok|run-exit|tests/safety/mir_holder_disjoint_lifetime_store_ok.tl|42|-
 mir_reborrow_returned_holder_ok|run-exit|tests/safety/mir_reborrow_returned_holder_ok.tl|42|-

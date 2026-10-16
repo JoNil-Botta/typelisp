@@ -2691,9 +2691,9 @@
 (define (compiler-backend-windows-object-manifest-resource-ok?
   [image : (& image cobj.CompilerObjectImage)]) : bool
   (let
-    [sections : cobj.CompilerObjectSectionList image.sections]
-    [symbols : cobj.CompilerObjectSymbolList image.symbols]
-    [relocs : cobj.CompilerObjectRelocationList image.relocations]
+    [sections (& image.sections)]
+    [symbols (& image.symbols)]
+    [relocs (& image.relocations)]
     [manifest : String
       (string.copy (& object_windows.compiler-backend-object-utf8-manifest))]
     [manifest-size : i64 (string.string-length manifest)]

@@ -79,7 +79,7 @@
                   (set! ok (compiler-windows-coff-extern-linkable? name kind))]
                 [_ (set! ok true)])
               (set! done true))
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     ok))
 
 ;; The index of the first relocation against an external symbol the binding
@@ -98,7 +98,7 @@
           (if (compiler-windows-coff-relocation-target-linkable?
             (owned_view.compiler-owned-shared-view symbols)
             target)
-            (set! index (+ index 1))
+            (+= index 1)
             (set! found index))]))
     found))
 

@@ -1,4 +1,5 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
 (import compiler_object as cobj)
@@ -56,7 +57,7 @@
     [end : i64 (string.string-length spec)]
     [i : i64 end]
     (while (> i 0)
-      (set! i (- i 1))
+      (-= i 1)
       (when
         (= (string.char-at spec i) ' ')
         (set!
@@ -532,9 +533,8 @@
     [items : (__tl_dyn-array regalloc.CompilerRegLocation)
       (regalloc.compiler-reg-assignment-table-items assignment-index)]
     [limit : i64 (array-length present)]
-    [v : i64 0]
     [mask : i64 0]
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       (if (and
         (< v limit)
         (not (= (array-ref present v) 0))
@@ -547,8 +547,7 @@
             mask
             (backend.compiler-backend-scavenge-location-mask
               (ir.compiler-ir-array-shared-view items v))))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     mask))
 
 (define (compiler-backend-scavenge-pick
@@ -602,8 +601,7 @@
   (let
     [slots : (__tl_dyn-array backend.BackendFloatEntry) items.slots]
     [count : i64 items.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [entry : backend.BackendFloatEntry
           (ir.compiler-ir-array-shared-view slots index)]
@@ -611,8 +609,7 @@
           (and
             (compiler-backend-test-float-type-eq? entry.ty ty)
             (= entry.bits bits))
-          (return true))
-        (set! index (+ index 1))))
+          (return true))))
     false))
 
 (define (compiler-backend-smoke-source) : String
@@ -2202,7 +2199,7 @@
         [(Jump symbol)
           (if (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0)
             (if previous-store?
-              (set! edges (+ edges 1))
+              (+= edges 1)
               (set! edges -1))
             unit)
           (set! previous-store? false)]
@@ -2210,11 +2207,11 @@
           (if (and
             previous-store?
             (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0))
-            (set! edges (+ edges 1))
+            (+= edges 1)
             unit)
           (set! previous-store? false)]
         [_ (set! previous-store? false)])
-      (set! index (+ index 1)))
+      (+= index 1))
     edges))
 
 (define (compiler-backend-object-phi-edge-copy-ok?) : bool
@@ -2503,7 +2500,7 @@
                 (compiler-backend-object-rbp-store-chunk? value))]
             [(Jcc cc _)
               (if (and (= cc expected-cc) previous-store?)
-                (set! jcc-count (+ jcc-count 1))
+                (+= jcc-count 1)
                 (set! ok false))]
             [(Branch _ _) (set! ok false)]
             [(Jump target)
@@ -2517,7 +2514,7 @@
                 unit)]
             [_ unit])
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and ok (= jcc-count 1))))
 
 (define (compiler-backend-object-branch-flags-ok?) : bool
@@ -2545,7 +2542,7 @@
                   instrs
                   (array-ref inverse-cc (% index 6)))])]
           [(Err _) false]))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; Flags are scoped to one adjacent integer producer, including when the same
@@ -2618,7 +2615,7 @@
                 (Var 7)
                 program-index)
               -1)))
-        (set! case-index (+ case-index 1))))
+        (+= case-index 1)))
     ok))
 
 ;; The absent-next-block sentinel must never erase an invalid target. Include
@@ -2703,7 +2700,7 @@
           (if (< index 8)
             (backend.CompilerBackendTarget.Linux)
             (backend.CompilerBackendTarget.Windows))))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
@@ -9085,7 +9082,7 @@
           (regalloc.compiler-reg-id-seq-ref regs index)))
         unit
         (set! ok false))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-backend-reg-part-pools-ok?) : bool
@@ -10529,7 +10526,6 @@
   (let
     [input-buf : text_buf.TextBuf (text_buf.empty)]
     [want-buf : text_buf.TextBuf (text_buf.empty)]
-    [k : i64 0]
     (set!
       input-buf
       (text_buf.append
@@ -10540,7 +10536,7 @@
       (text_buf.append
         want-buf
         "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
-    (while (< k 50)
+    (for [k (iterator.range 0 50)]
       (let
         [a : i64 (+ 8 (* 16 k))]
         [b : i64 (+ 16 (* 16 k))]
@@ -10581,8 +10577,7 @@
               (string.int->string a)
               "(%rsp), "
               reg
-              "\n")))
-        (set! k (+ k 1))))
+              "\n")))))
     (let
       [input : String
         (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
@@ -11249,8 +11244,7 @@
 (define (compiler-backend-streamed-final-batch-equivalent?) : bool
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i 65)
+    (for [i (iterator.range 0 65)]
       (set!
         buf
         (text_buf.append
@@ -11260,8 +11254,7 @@
             (string.int->string i)
             ") : i64 "
             (string.int->string i)
-            ")\n")))
-      (set! i (+ i 1)))
+            ")\n"))))
     (compiler-backend-streamed-final-output-equivalent-source?
       (text_buf.render
         (text_buf.append buf "(define (main) : i64 (+ (f0) (f64)))\n")))))
@@ -11502,12 +11495,10 @@
     [total : i64 (+ count 1)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr total)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref slots index)
-        (ir.CompilerIrInstr.Mov index (I64 index) (I64)))
-      (set! index (+ index 1)))
+        (ir.CompilerIrInstr.Mov index (I64 index) (I64))))
     (set!
       (array-ref slots count)
       (ir.CompilerIrInstr.Return (Some (Var (- count 1)))))
@@ -19814,20 +19805,20 @@ f:
     [(No) true]))
 
 (define (compiler-backend-avx512-mask-spill-assignment?
-  [assignments : regalloc.CompilerRegAssignmentTable]
-  [var : i64]) : bool
-  (if (> var 6)
-    false
-    (or
+  [assignments : regalloc.CompilerRegAssignmentTable]) : bool
+  (for [var (iterator.range 0 (+ 6 1))]
+    (when
       (compiler-backend-maybe-location-mask-stack?
         (regalloc.compiler-reg-assignment-lookup assignments var))
-      (compiler-backend-avx512-mask-spill-assignment? assignments (+ var 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
   (match (reg_tests.compiler-reg-plan-function
     (compiler-backend-avx512-mask-spill-function))
     [(Plan assignments _ _ _ _)
-      (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))
+      (compiler-backend-avx512-mask-spill-assignment? assignments)]))
 
 (define (compiler-backend-avx512-mask-spill-compile-ok?) : bool
   (match (backend.compiler-backend-emit-program-target-with-mode
@@ -19989,8 +19980,7 @@ f:
 (define (compiler-backend-simd-copy-shape-branching-text [n : i64]) : String
   (let
     [body : String ""]
-    [i : i64 1]
-    (while (< i n)
+    (for [i (iterator.range 1 n)]
       (set!
         body
         (str_cat.str-cat
@@ -19999,8 +19989,7 @@ f:
           (string.int->string i)
           " = mov %"
           (string.int->string (+ i 1))
-          " : i64\n"))
-      (set! i (+ i 1)))
+          " : i64\n")))
     (str_cat.str-cat
       "first:\n"
       body
@@ -20106,10 +20095,9 @@ f:
       (text_buf.append
         (text_buf.empty)
         "function @colored_vector_extent() -> f64 vars 10 {\nentry:\n")]
-    [index : i64 0]
     ;; Nine independent full-width values remain live across an ordinary
     ;; call. Their final homes exceed the raw ten-variable ID domain.
-    (while (< index 9)
+    (for [index (iterator.range 0 9)]
       (set!
         body
         (text_buf.append
@@ -20121,11 +20109,9 @@ f:
             (string.int->string index)
             " lanes "
             (string.int->string lanes)
-            " : i64\n")))
-      (set! index (+ index 1)))
+            " : i64\n"))))
     (set! body (text_buf.append body "%9 = call side_effect() : f64\n"))
-    (set! index 0)
-    (while (< index 9)
+    (for [index (iterator.range 0 9)]
       (set!
         body
         (text_buf.append
@@ -20137,8 +20123,7 @@ f:
             (string.int->string index)
             " lanes "
             (string.int->string lanes)
-            " : i64\n")))
-      (set! index (+ index 1)))
+            " : i64\n"))))
     (set! body (text_buf.append body "return %9\n}"))
     (match (backend.compiler-backend-emit-program-target-with-mode
       (compiler-backend-vector-home-program (irt.func (text_buf.render body)))
@@ -29838,12 +29823,10 @@ f:
 (define (compiler-backend-i64-type-list8) : ast.AstTypeList
   (let
     [out : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
-    [i : i64 0]
-    (while (< i 8)
+    (for [i (iterator.range 0 8)]
       (ast.ast-type-list-push
         (&mut out)
-        (ast.ast-node-pool-reader-type-push (& (I64))))
-      (set! i (+ i 1)))
+        (ast.ast-node-pool-reader-type-push (& (I64)))))
     out))
 
 (define (compiler-backend-i64-immediate-call-args8) : ir.CompilerIrCallArgs
@@ -30076,7 +30059,7 @@ f:
     [i : i64 5]
     (while (> i 0)
       (set! types (ast.ast-type-cons (& (I64)) (& types)))
-      (set! i (- i 1)))
+      (-= i 1))
     types))
 
 (define (compiler-backend-linux-atomic-pressure-args [tail? : bool]) : ir.CompilerIrCallArgs
@@ -30095,7 +30078,7 @@ f:
       (set!
         values
         (ir.compiler-ir-value-seq-prepend (& (I64 (+ i 10))) (& values)))
-      (set! i (- i 1)))
+      (-= i 1))
     (ir.compiler-ir-call-args-from-seq (& values))))
 
 (define (compiler-backend-linux-atomic-pressure-params [group : ast.AstType]) : ir.CompilerIrParamSeq
@@ -30111,7 +30094,7 @@ f:
         (ir.compiler-ir-param-seq-prepend
           (Param (str_cat.str-cat "scalar" (string.int->string i)) (I64) i)
           params))
-      (set! i (- i 1)))
+      (-= i 1))
     params))
 
 (define (compiler-backend-linux-atomic-pressure-memory-assignments) : regalloc.CompilerRegAssignmentTable
@@ -30476,29 +30459,23 @@ f:
     [groups : compiler_liveness.CompilerLiveI64Set
       (compiler_liveness.compiler-live-set-empty)]
     [slots : (__tl_dyn-array String) (__tl_make-array String 16)]
-    [index : i64 0]
-    [mask : i64 0]
-    (while (< index 8)
-      (set! groups (compiler_liveness.compiler-live-set-insert groups index))
-      (set! index (+ index 1)))
-    (while (< mask 256)
+    (for [index (iterator.range 0 8)]
+      (set! groups (compiler_liveness.compiler-live-set-insert groups index)))
+    (for [mask (iterator.range 0 256)]
       (let
         [addressable : compiler_liveness.CompilerLiveI64Set
           (compiler_liveness.compiler-live-set-empty)]
-        (set! index 0)
-        (while (< index 8)
+        (for [index (iterator.range 0 8)]
           (when
             (not (= (bit-and mask (shl 1 index)) 0))
             (set!
               addressable
-              (compiler_liveness.compiler-live-set-insert addressable index)))
-          (set! index (+ index 1)))
+              (compiler_liveness.compiler-live-set-insert addressable index))))
         (backend.compiler-backend-group-vars-enable!
           state
           (owned_view.compiler-owned-shared-view groups)
           addressable)
-        (set! index 0)
-        (while (< index 16)
+        (for [index (iterator.range 0 16)]
           (match (backend.compiler-backend-group-word-operand-with-backend-state
             (regalloc.compiler-reg-assignment-table-empty)
             (/ index 2)
@@ -30506,17 +30483,12 @@ f:
             8
             state)
             [(Ok operand)
-              (let
-                [previous : i64 0]
-                (while (< previous index)
-                  (when
-                    (string.eq operand (array-ref slots previous))
-                    (return false))
-                  (set! previous (+ previous 1)))
-                (set! (array-ref slots index) operand))]
-            [(Err _) (return false)])
-          (set! index (+ index 1)))
-        (set! mask (+ mask 1))))
+              (for [previous (iterator.range 0 index)]
+                (when
+                  (string.eq operand (array-ref slots previous))
+                  (return false)))
+              (set! (array-ref slots index) operand)]
+            [(Err _) (return false)]))))
     true))
 
 (define (compiler-backend-stack-args-ok?) : bool
@@ -31929,7 +31901,7 @@ f:
         (compiler-backend-test-instr-seq-prepend
           (Mov (+ 30 v) (Var v) (I64))
           instrs))
-      (set! v (- v 1)))
+      (-= v 1))
     (compiler-backend-test-instr-seq-prepend
       (Call 20 (ci.intern "tl_alloc") (One (I64 8)) (U64))
       instrs)))
@@ -33358,13 +33330,10 @@ f:
   [count : i64]
   [start : i64]
   [end : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref starts i) start)
-      (set! (array-ref ends i) end)
-      (set! i (+ i 1)))
-    unit))
+  (for [i (iterator.range 0 count)]
+    (set! (array-ref starts i) start)
+    (set! (array-ref ends i) end))
+  unit)
 
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
@@ -34090,7 +34059,7 @@ f:
         (if (or (< at 0) (>= at limit))
           (set! done true)
           (begin
-            (set! seen (+ seen 1))
+            (+= seen 1)
             (set! i (+ at 1))))))
     seen))
 
@@ -34484,7 +34453,7 @@ f:
     [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
     [i : i64 (array-length labels)]
     (while (> i 0)
-      (set! i (- i 1))
+      (-= i 1)
       (set!
         out
         (ir.compiler-ir-blocks-with-tail
@@ -34842,17 +34811,17 @@ f:
 
 (define (compiler-backend-scavenge-segment-subset-ok?
   [hull : (__tl_dyn-array i64)]
-  [segmented : (__tl_dyn-array i64)]
-  [index : i64]) : bool
-  (if (>= index (array-length hull))
-    true
-    (and
+  [segmented : (__tl_dyn-array i64)]) : bool
+  (for [index (iterator.range 0 (array-length hull))]
+    (unless
       (=
         (bit-and
           (array-ref segmented index)
           (bit-xor (array-ref hull index) -1))
         0)
-      (compiler-backend-scavenge-segment-subset-ok? hull segmented (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (compiler-backend-scavenge-segment-occupancy-ok?) : bool
   (let
@@ -34877,7 +34846,7 @@ f:
       (not (= (bit-and (array-ref segmented 4) r11) 0))
       (not (= (bit-and (array-ref hull 4) r11) 0))
       ;; monotone: the table can only LOSE bits, never gain one
-      (compiler-backend-scavenge-segment-subset-ok? hull segmented 0))))
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented))))
 
 ;; The consequence at the pick. With every candidate reading occupied the picker
 ;; runs off the end of the pool and returns its emergency fallback with a pending
@@ -35830,9 +35799,8 @@ b_keep:
     addq $56, %rsp
     ret
 ")]
-    [i : i64 1]
     (set! (array-ref chunks 0) first)
-    (while (< i 65)
+    (for [i (iterator.range 1 65)]
       (let
         [suffix : String (string.int->string i)]
         [symbol : String (str_cat.str-cat prefix suffix)]
@@ -35845,8 +35813,7 @@ b_keep:
             symbol
             ":\n    movq $"
             suffix
-            ", %rax\n    ret\n"))
-        (set! i (+ i 1))))
+            ", %rax\n    ret\n"))))
     chunks))
 
 (define (compiler-backend-assembly-stream-test-run-serial
@@ -35855,15 +35822,13 @@ b_keep:
   (let
     [session : CompilerBackendAssemblyStreamTestSession
       (compiler-backend-assembly-stream-test-session-new)]
-    [i : i64 0]
     (if a?
       (compiler-backend-assembly-stream-test-seed-a! session)
       (compiler-backend-assembly-stream-test-seed-b! session))
-    (while (< i (array-length chunks))
+    (for [i (iterator.range 0 (array-length chunks))]
       (compiler-backend-assembly-stream-test-session-process!
         session
-        (ir.compiler-ir-array-shared-view chunks i))
-      (set! i (+ i 1)))
+        (ir.compiler-ir-array-shared-view chunks i)))
     (let
       [out : String
         (compiler-backend-assembly-stream-test-session-finish-copy session)]
@@ -35904,18 +35869,16 @@ b_keep:
       (compiler-backend-assembly-stream-test-session-process!
         failed-b
         (ir.compiler-ir-array-shared-view chunks-b i))
-      (set! i (+ i 1)))
+      (+= i 1))
     (compiler-backend-assembly-stream-test-session-destroy! failed-b)
     (let
       [session-b : CompilerBackendAssemblyStreamTestSession
         (compiler-backend-assembly-stream-test-session-new)]
       [_seed-b : unit (compiler-backend-assembly-stream-test-seed-b! session-b)]
-      [replay : i64 0]
-      (while (< replay 7)
+      (for [replay (iterator.range 0 7)]
         (compiler-backend-assembly-stream-test-session-process!
           session-b
-          (ir.compiler-ir-array-shared-view chunks-b replay))
-        (set! replay (+ replay 1)))
+          (ir.compiler-ir-array-shared-view chunks-b replay)))
       (while (< i 65)
         (compiler-backend-assembly-stream-test-session-process!
           session-a
@@ -35923,7 +35886,7 @@ b_keep:
         (compiler-backend-assembly-stream-test-session-process!
           session-b
           (ir.compiler-ir-array-shared-view chunks-b i))
-        (set! i (+ i 1)))
+        (+= i 1))
       (let
         [out-a : String
           (compiler-backend-assembly-stream-test-session-finish-copy session-a)]
@@ -35965,8 +35928,7 @@ b_keep:
       (text_buf.append
         (text_buf.empty)
         ".globl stream_growth\nstream_growth:\n")]
-    [i : i64 0]
-    (while (< i 128)
+    (for [i (iterator.range 0 128)]
       (set!
         body
         (text_buf.append
@@ -35974,8 +35936,7 @@ b_keep:
           (str_cat.str-cat
             "    movq very_long_stream_owner_global_symbol_"
             (string.int->string i)
-            "(%rip), %rax\n")))
-      (set! i (+ i 1)))
+            "(%rip), %rax\n"))))
     (set! body (text_buf.append body "    ret\n"))
     (compiler-backend-assembly-stream-test-session-process!
       session
@@ -36002,13 +35963,11 @@ b_keep:
     [idle? : bool
       (= (compiler-backend-stream-state-retained-table-bytes stream) 0)]
     [_reset : unit (compiler-backend-peephole-test-session-reset! session)]
-    [i : i64 0]
-    (while (< i 600)
+    (for [i (iterator.range 0 600)]
       (backend.compiler-backend-peephole-carry-safe-insert!
         backend-state
         stream
-        (str_cat.str-cat ".Lcarry_growth_" (string.int->string i)))
-      (set! i (+ i 1)))
+        (str_cat.str-cat ".Lcarry_growth_" (string.int->string i))))
     (let
       [last : String ".Lcarry_growth_599"]
       [carry-grew? : bool
@@ -36023,8 +35982,7 @@ b_keep:
             (string.string-length last)
             (ci.intern-hash last)))]
       [owner-input : text_buf.TextBuf (text_buf.empty)]
-      (set! i 0)
-      (while (< i 128)
+      (for [i (iterator.range 0 128)]
         (set!
           owner-input
           (text_buf.append
@@ -36032,8 +35990,7 @@ b_keep:
             (str_cat.str-cat
               "    movq very_long_owner_global_symbol_"
               (string.int->string i)
-              "(%rip), %rax\n")))
-        (set! i (+ i 1)))
+              "(%rip), %rax\n"))))
       (let
         [_owner-output : String
           (compiler-backend-peephole-test-session-asm
@@ -36046,8 +36003,7 @@ b_keep:
               (compiler-backend-stream-state-owner-bytes-capacity stream)
               4096))]
         (backend.compiler-backend-sweep-reset! backend-state stream)
-        (set! i 0)
-        (while (< i 200)
+        (for [i (iterator.range 0 200)]
           (backend.compiler-backend-sweep-record-win64!
             backend-state
             stream
@@ -36058,8 +36014,7 @@ b_keep:
             1
             0
             0
-            0)
-          (set! i (+ i 1)))
+            0))
         (let
           [sweep-grew? : bool
             (and
@@ -36101,10 +36056,8 @@ b_keep:
     [session : CompilerBackendPeepholeTestSession
       (compiler-backend-peephole-test-session-new)]
     [input : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i 128)
-      (set! input (text_buf.append input "\n"))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 128)]
+      (set! input (text_buf.append input "\n")))
     (let
       [expected : String (text_buf.render input)]
       [actual : String
@@ -36372,15 +36325,13 @@ b_keep:
 
 (define (compiler-backend-test-register-mask [regs : (__tl_dyn-array i64)]) : i64
   (let
-    [index : i64 0]
     [mask : i64 0]
-    (while (< index (array-length regs))
+    (for [index (iterator.range 0 (array-length regs))]
       (set!
         mask
         (bit-or
           mask
-          (backend.compiler-backend-scavenge-reg-id-bit (array-ref regs index))))
-      (set! index (+ index 1)))
+          (backend.compiler-backend-scavenge-reg-id-bit (array-ref regs index)))))
     mask))
 
 ;; Function-local traversal state must follow the backend job, even when two
@@ -36829,7 +36780,7 @@ b_keep:
       (if (= (array-ref order i) (array-ref expected i))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 (define (compiler-backend-placement-test-expected
@@ -37972,11 +37923,9 @@ b_keep:
   [items : backend.BackendStringSeq]
   [needle : String]) : bool
   (let
-    [i : i64 0]
     [n : i64 items.len]
-    (while (< i n)
-      (when (string.eq (array-ref items.slots i) needle) (return true))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 n)]
+      (when (string.eq (array-ref items.slots i) needle) (return true)))
     false))
 
 (define (compiler-backend-program-collections-new) : backend.CompilerBackendProgramCollections
@@ -38259,7 +38208,7 @@ b_keep:
           (begin
             (set! found i)
             (set! done true))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! done true)))
     found))
 
@@ -38433,7 +38382,7 @@ b_keep:
           (if (< end n)
             (+ end 1)
             end))
-        (set! k (+ k 1))))
+        (+= k 1)))
     (if (and (< result 0) (< i n))
       (cfg
         test
@@ -38495,8 +38444,7 @@ b_keep:
     (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
     (let
       [state : CompilerBackendPeepholeChunkState initial]
-      [i : i64 0]
-      (while (< i chunk-count)
+      (for [i (iterator.range 0 chunk-count)]
         (let
           [chunk : String
             (backend.compiler-backend-global-array-element-shared-view items i)]
@@ -38511,8 +38459,7 @@ b_keep:
               (owned_view.compiler-owned-shared-view state))]
           [group : text_buf.TextBuf
             (in-arena group-arena (text_buf.append at-boundary.group chunk))]
-          (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))
-          (set! i (+ i 1))))
+          (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
         [flushed : CompilerBackendPeepholeChunkState
           (compiler-backend-peephole-chunk-state-flush
@@ -38549,14 +38496,10 @@ b_keep:
       (unsafe
         (string-data asm))]
     [total : i64 0]
-    [k : i64 0]
-    (while (< k len)
+    (for [k (iterator.range 0 len)]
       (let
         [line : i64 (array-ref plan k)]
-        (set!
-          total
-          (+ total (- (array-ref starts (+ line 1)) (array-ref starts line))))
-        (set! k (+ k 1))))
+        (+= total (- (array-ref starts (+ line 1)) (array-ref starts line)))))
     (if (= total 0)
       ""
       (let
@@ -38568,8 +38511,7 @@ b_keep:
         [run-start : i64 0]
         [run-end : i64 0]
         [active : bool false]
-        [j : i64 0]
-        (while (< j len)
+        (for [j (iterator.range 0 len)]
           (let
             [line : i64 (array-ref plan j)]
             [s : i64 (array-ref starts line)]
@@ -38586,11 +38528,10 @@ b_keep:
                       (- run-end run-start)
                       dst
                       pos)
-                    (set! pos (+ pos (- run-end run-start)))))
+                    (+= pos (- run-end run-start))))
                 (set! active true)
                 (set! run-start s)
-                (set! run-end e)))
-            (set! j (+ j 1))))
+                (set! run-end e)))))
         (when
           active
           (begin
@@ -38600,7 +38541,7 @@ b_keep:
               (- run-end run-start)
               dst
               pos)
-            (set! pos (+ pos (- run-end run-start)))))
+            (+= pos (- run-end run-start))))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
@@ -40784,7 +40725,7 @@ b_keep:
         [(Bytes value) (and byte-payload? (string.eq value text))]
         [_ false])
         (set! found true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (compiler-object-data-record-list-contains-f64?
@@ -40799,8 +40740,8 @@ b_keep:
         [(F64 value)
           (if (= value bits)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-f32?
@@ -40815,8 +40756,8 @@ b_keep:
         [(F32 value)
           (if (= value bits)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-align?
@@ -40831,8 +40772,8 @@ b_keep:
         [(Align value)
           (if (= value align)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-i64?
@@ -40847,8 +40788,8 @@ b_keep:
         [(I64 found-value)
           (if (= found-value value)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-label-has-i64-pair?
@@ -40875,12 +40816,12 @@ b_keep:
                     [(I64 second-found)
                       (if (= second-found second)
                         (set! found true)
-                        (set! index (+ index 1)))]
-                    [_ (set! index (+ index 1))])
-                  (set! index (+ index 1)))]
-              [_ (set! index (+ index 1))])
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+                        (+= index 1))]
+                    [_ (+= index 1)])
+                  (+= index 1))]
+              [_ (+= index 1)])
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-string?
@@ -40949,8 +40890,8 @@ b_keep:
         [(Call value)
           (if (string.eq value target)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-call?
@@ -40972,8 +40913,8 @@ b_keep:
         [(XorpdRip value)
           (if (string.eq value target)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-xorpd-rip?

@@ -209,6 +209,21 @@
       before
       "current arena restored")))
 
+(define (replace-recursively [depth : i64] [seed : i64]) : i64
+  (with-scratch (install-in-scope (+ seed depth)))
+  (when
+    (> depth 0)
+    (set!
+      (array-ref values 0)
+      (if (= (bit-and depth 1) 0)
+        (replace-recursively (- depth 1) seed)
+        (replace-transitively (- depth 1) seed))))
+  (check-values seed)
+  7)
+
+(define (replace-transitively [depth : i64] [seed : i64]) : i64
+  (replace-recursively depth seed))
+
 (define (main) : i64
   (cfg
     compiler-arena-debug
@@ -249,12 +264,20 @@
       (> (profile.alloc-total) before)
       "implicit copies remain profiled"))
   (check-values 44)
-  (set!
-    (array-ref values 0)
-    (begin
-      (with-scratch (install-in-scope 73))
-      7))
+  (set! (array-ref values 0) (replace-recursively 3 73))
   (check-values 73)
+  (let
+    [local : (Array i64 2) (array 10 20)]
+    (set! (array-ref local 0) (replace-recursively 2 83))
+    (test.assert-i64-eq
+      (array-ref local 0)
+      7
+      "local receiver after global replacement")
+    (test.assert-i64-eq
+      (array-ref local 1)
+      20
+      "local sibling after global replacement")
+    (check-values 83))
   (let
     [replacement : Owner (Owner (box 42) 7 8)]
     [address : u64

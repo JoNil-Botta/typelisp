@@ -28,7 +28,8 @@ The indirect-call shape remains independently covered.
 
 `global_aggregate_storage_lifetime.tl` checks shallow global container storage
 after scratch and explicit arena destruction, nested scopes, repeated writes,
-large arrays, MoveOnly Box payloads, and a receiver retained across replacement.
+large arrays, MoveOnly Box payloads, and local/global receivers retained across
+conditional, transitive and recursive whole-global replacement.
 It also checks that the allocator restores the caller's arena and remains
 visible to allocation profiling. `global_aggregate_storage_threads.tl` races
 first use from two workers writing distinct globals and reads the results only

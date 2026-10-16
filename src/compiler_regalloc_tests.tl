@@ -221,31 +221,31 @@
             (string.eq
               (reg.compiler-reg-early-exit-bare-label-current)
               "entry__shrinkwrap_bare")
-            (match (ir.compiler-ir-block-seq-ref seq 0)
+            (match (ir.compiler-ir-block-seq-borrow seq 0)
               [(Block label instrs)
                 (and
                   (= label (ir.compiler-ir-label "entry"))
-                  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                     [(Branch _ yes no)
                       (and
                         (= yes (ir.compiler-ir-label "entry__shrinkwrap_bare0"))
                         (= no (ir.compiler-ir-label "guard_limit")))]
                     [_ false]))])
-            (match (ir.compiler-ir-block-seq-ref seq 1)
+            (match (ir.compiler-ir-block-seq-borrow seq 1)
               [(Block label instrs)
                 (and
                   (= label (ir.compiler-ir-label "guard_limit"))
-                  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                     [(Branch _ yes no)
                       (and
                         (= yes (ir.compiler-ir-label "entry__shrinkwrap_bare1"))
                         (= no (ir.compiler-ir-label "entry__shrinkwrap_save")))]
                     [_ false]))])
-            (match (ir.compiler-ir-instr-seq-ref body 1)
+            (match (ir.compiler-ir-instr-seq-borrow body 1)
               [(Jump target)
                 (= target (ir.compiler-ir-label "entry__shrinkwrap_framed"))]
               [_ false])
-            (match (ir.compiler-ir-block-seq-ref seq 7)
+            (match (ir.compiler-ir-block-seq-borrow seq 7)
               [(Block label _)
                 (=
                   label
@@ -308,7 +308,7 @@
 (cfg
   test
   (define (compiler-reg-cold-call-test-mov?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]
     [src : i64]) : bool
     (match instr
@@ -347,33 +347,33 @@
               (= vars 9)
               (= (ir.compiler-ir-instr-seq-count instrs) 8)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 0)
+                (ir.compiler-ir-instr-seq-borrow instrs 0)
                 6
                 0)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 1)
+                (ir.compiler-ir-instr-seq-borrow instrs 1)
                 7
                 1)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 2)
+                (ir.compiler-ir-instr-seq-borrow instrs 2)
                 8
                 2)
-              (match (ir.compiler-ir-instr-seq-ref instrs 3)
+              (match (ir.compiler-ir-instr-seq-borrow instrs 3)
                 [(Call _ _ _ _) true]
                 [_ false])
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 4)
+                (ir.compiler-ir-instr-seq-borrow instrs 4)
                 0
                 6)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 5)
+                (ir.compiler-ir-instr-seq-borrow instrs 5)
                 1
                 7)
               (compiler-reg-cold-call-test-mov?
-                (ir.compiler-ir-instr-seq-ref instrs 6)
+                (ir.compiler-ir-instr-seq-borrow instrs 6)
                 2
                 8)
-              (match (ir.compiler-ir-instr-seq-ref instrs 7)
+              (match (ir.compiler-ir-instr-seq-borrow instrs 7)
                 [(Jump target) (= target (ir.compiler-ir-label "join"))]
                 [_ false])
               (reg.compiler-reg-location-register?
@@ -1013,42 +1013,45 @@
         ;; 8 original + 2 stores + 2 reloads
         (= (ir.compiler-ir-instr-seq-count instrs) 12)
         (compiler-reg-call-hole-mov-const?
-          (ir.compiler-ir-instr-seq-ref instrs 0)
+          (ir.compiler-ir-instr-seq-borrow instrs 0)
           0)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref instrs 1)
+          (ir.compiler-ir-instr-seq-borrow instrs 1)
           6
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 2))
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-borrow instrs 2))
         ;; the reload after `call f` is DEAD and is not emitted
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 3))
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-borrow instrs 3))
         ;; `call g` re-uses the carrier the first crossing filled: no store
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref instrs 4)
+          (ir.compiler-ir-instr-seq-borrow instrs 4)
           0
           6)
         (compiler-reg-call-hole-binop?
-          (ir.compiler-ir-instr-seq-ref instrs 5)
+          (ir.compiler-ir-instr-seq-borrow instrs 5)
           3)
         ;; the redefinition invalidates the carrier ...
         (compiler-reg-call-hole-mov-const?
-          (ir.compiler-ir-instr-seq-ref instrs 6)
+          (ir.compiler-ir-instr-seq-borrow instrs 6)
           0)
         ;; ... so `call h` stores again
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref instrs 7)
+          (ir.compiler-ir-instr-seq-borrow instrs 7)
           6
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 8))
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-borrow instrs 8))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref instrs 9)
+          (ir.compiler-ir-instr-seq-borrow instrs 9)
           0
           6)
         (compiler-reg-call-hole-binop?
-          (ir.compiler-ir-instr-seq-ref instrs 10)
+          (ir.compiler-ir-instr-seq-borrow instrs 10)
           5)
         (compiler-reg-call-hole-return?
-          (ir.compiler-ir-instr-seq-ref instrs 11))))))
+          (ir.compiler-ir-instr-seq-borrow instrs 11))))))
 
 ;; --- E-1 across the CFG ------------------------------------------------------
 ;; `entry` stores the carrier at `call f` and both successors inherit it, so
@@ -1116,42 +1119,43 @@
         ;; entry: def, store, call, branch -- and NO reload
         (= (ir.compiler-ir-instr-seq-count entry) 4)
         (compiler-reg-call-hole-mov-const?
-          (ir.compiler-ir-instr-seq-ref entry 0)
+          (ir.compiler-ir-instr-seq-borrow entry 0)
           0)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref entry 1)
+          (ir.compiler-ir-instr-seq-borrow entry 1)
           7
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref entry 2))
-        (compiler-reg-call-hole-branch? (ir.compiler-ir-instr-seq-ref entry 3))
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-borrow entry 2))
+        (compiler-reg-call-hole-branch?
+          (ir.compiler-ir-instr-seq-borrow entry 3))
         ;; then: call g (no store, no reload), call k (no store), reload, mul
         (= (ir.compiler-ir-instr-seq-count then-block) 5)
         (compiler-reg-call-hole-call?
-          (ir.compiler-ir-instr-seq-ref then-block 0))
+          (ir.compiler-ir-instr-seq-borrow then-block 0))
         (compiler-reg-call-hole-call?
-          (ir.compiler-ir-instr-seq-ref then-block 1))
+          (ir.compiler-ir-instr-seq-borrow then-block 1))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref then-block 2)
+          (ir.compiler-ir-instr-seq-borrow then-block 2)
           0
           7)
         (compiler-reg-call-hole-binop?
-          (ir.compiler-ir-instr-seq-ref then-block 3)
+          (ir.compiler-ir-instr-seq-borrow then-block 3)
           3)
         (compiler-reg-call-hole-return?
-          (ir.compiler-ir-instr-seq-ref then-block 4))
+          (ir.compiler-ir-instr-seq-borrow then-block 4))
         ;; else: call h (no store), reload, add
         (= (ir.compiler-ir-instr-seq-count else-block) 4)
         (compiler-reg-call-hole-call?
-          (ir.compiler-ir-instr-seq-ref else-block 0))
+          (ir.compiler-ir-instr-seq-borrow else-block 0))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref else-block 1)
+          (ir.compiler-ir-instr-seq-borrow else-block 1)
           0
           7)
         (compiler-reg-call-hole-binop?
-          (ir.compiler-ir-instr-seq-ref else-block 2)
+          (ir.compiler-ir-instr-seq-borrow else-block 2)
           5)
         (compiler-reg-call-hole-return?
-          (ir.compiler-ir-instr-seq-ref else-block 3))))))
+          (ir.compiler-ir-instr-seq-borrow else-block 3))))))
 
 ;; --- E-1, the two negative cases --------------------------------------------
 ;; `a` reaches `join` having stored the carrier; `b` reaches it having only
@@ -1217,12 +1221,13 @@
         ;; store `join` emits reads the register
         (= (ir.compiler-ir-instr-seq-count a-block) 5)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref a-block 1)
+          (ir.compiler-ir-instr-seq-borrow a-block 1)
           4
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref a-block 2))
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-borrow a-block 2))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref a-block 3)
+          (ir.compiler-ir-instr-seq-borrow a-block 3)
           0
           4)
         ;; b: untouched -- it crosses nothing
@@ -1230,16 +1235,19 @@
         ;; join: the store is EMITTED, because `b` reaches it without one
         (= (ir.compiler-ir-instr-seq-count join) 5)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref join 0)
+          (ir.compiler-ir-instr-seq-borrow join 0)
           4
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref join 1))
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-borrow join 1))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref join 2)
+          (ir.compiler-ir-instr-seq-borrow join 2)
           0
           4)
-        (compiler-reg-call-hole-binop? (ir.compiler-ir-instr-seq-ref join 3) 3)
-        (compiler-reg-call-hole-return? (ir.compiler-ir-instr-seq-ref join 4))))))
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-borrow join 3)
+          3)
+        (compiler-reg-call-hole-return?
+          (ir.compiler-ir-instr-seq-borrow join 4))))))
 
 ;; A redefinition of the value between two crossings takes the carrier's claim
 ;; away even though the two crossings sit in different blocks, so the second
@@ -1288,34 +1296,39 @@
         ;; entry: def, store, call, reload, jump
         (= (ir.compiler-ir-instr-seq-count entry) 5)
         (compiler-reg-call-hole-mov-const?
-          (ir.compiler-ir-instr-seq-ref entry 0)
+          (ir.compiler-ir-instr-seq-borrow entry 0)
           0)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref entry 1)
+          (ir.compiler-ir-instr-seq-borrow entry 1)
           5
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref entry 2))
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-borrow entry 2))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref entry 3)
+          (ir.compiler-ir-instr-seq-borrow entry 3)
           0
           5)
         ;; next: mul, redef, STORE again, call, reload, add, return
         (= (ir.compiler-ir-instr-seq-count next) 7)
-        (compiler-reg-call-hole-binop? (ir.compiler-ir-instr-seq-ref next 0) 3)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-borrow next 0)
+          3)
         (compiler-reg-call-hole-mov-const?
-          (ir.compiler-ir-instr-seq-ref next 1)
+          (ir.compiler-ir-instr-seq-borrow next 1)
           0)
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref next 2)
+          (ir.compiler-ir-instr-seq-borrow next 2)
           5
           0)
-        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref next 3))
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-borrow next 3))
         (compiler-reg-cold-call-test-mov?
-          (ir.compiler-ir-instr-seq-ref next 4)
+          (ir.compiler-ir-instr-seq-borrow next 4)
           0
           5)
-        (compiler-reg-call-hole-binop? (ir.compiler-ir-instr-seq-ref next 5) 4)
-        (compiler-reg-call-hole-return? (ir.compiler-ir-instr-seq-ref next 6))))))
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-borrow next 5)
+          4)
+        (compiler-reg-call-hole-return?
+          (ir.compiler-ir-instr-seq-borrow next 6))))))
 
 ;; Absence of information reads as "no carrier is available" and "every value
 ;; may be read", never the other way round -- the rule
@@ -1374,7 +1387,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-branch? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-branch? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Branch _ _ _) true]
       [_ false])))
@@ -1382,7 +1395,7 @@
 (cfg
   test
   (define (compiler-reg-call-hole-mov-const?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]) : bool
     (match instr
       [(Mov found-dst (I64 _) _) (= found-dst dst)]
@@ -1390,7 +1403,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-call? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-call? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Call _ _ _ _) true]
       [_ false])))
@@ -1398,7 +1411,7 @@
 (cfg
   test
   (define (compiler-reg-call-hole-binop?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]) : bool
     (match instr
       [(BinOp found-dst _ _ _ _) (= found-dst dst)]
@@ -1406,7 +1419,7 @@
 
 (cfg
   test
-  (define (compiler-reg-call-hole-return? [instr : ir.CompilerIrInstr]) : bool
+  (define (compiler-reg-call-hole-return? [instr : (& ir.CompilerIrInstr)]) : bool
     (match instr
       [(Return _) true]
       [_ false])))
@@ -2403,7 +2416,7 @@
 (cfg
   test
   (define (compiler-reg-loop-park-mov?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [dst : i64]
     [src : i64]) : bool
     (match instr
@@ -2418,7 +2431,7 @@
 (cfg
   test
   (define (compiler-reg-loop-park-phi-keyed-on?
-    [instr : ir.CompilerIrInstr]
+    [instr : (& ir.CompilerIrInstr)]
     [var : i64]
     [label : i64]) : bool
     (match instr
@@ -2428,7 +2441,7 @@
 
 (cfg
   test
-  (define (compiler-reg-loop-park-branch-false [instr : ir.CompilerIrInstr]) : i64
+  (define (compiler-reg-loop-park-branch-false [instr : (& ir.CompilerIrInstr)]) : i64
     (match instr
       [(Branch _ _ f) f]
       [_ (- 0 1)])))
@@ -2490,9 +2503,10 @@
               ;; values defined below it
               (= (array-ref pk.park-store-at 0) 0)
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out pre)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0))
                 vars
                 1)
               (=
@@ -2501,9 +2515,10 @@
                 3)
               ;; the reload is the exit target first instruction
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 1
                 vars)
               (=
@@ -2576,16 +2591,18 @@
               (= spliced count)
               ;; store in the preheader
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out pre)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out pre)
+                    0))
                 vars
                 1)
               ;; the spliced block reloads, then jumps to the original target
               (compiler-reg-loop-park-mov?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out spliced)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out spliced)
+                    0))
                 1
                 vars)
               (=
@@ -2595,30 +2612,34 @@
               ;; the loop exit edge now goes through it ...
               (=
                 (compiler-reg-loop-park-branch-false
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out header)
-                    2))
+                  (&
+                    (ir.compiler-ir-instr-seq-ref
+                      (reg.compiler-reg-loop-park-block-instrs out header)
+                      2)))
                 splice-label)
               ;; ... and the merge phi loop-side input is re-keyed to it, so
               ;; it reads the value the reload has just restored
               (compiler-reg-loop-park-phi-keyed-on?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 3
                 splice-label)
               (not
                 (compiler-reg-loop-park-phi-keyed-on?
-                  (ir.compiler-ir-instr-seq-ref
-                    (reg.compiler-reg-loop-park-block-instrs out exit)
-                    0)
+                  (&
+                    (ir.compiler-ir-instr-seq-ref
+                      (reg.compiler-reg-loop-park-block-instrs out exit)
+                      0))
                   3
                   (reg.compiler-reg-loop-park-block-label seq header)))
               ;; the other predecessor input is untouched
               (compiler-reg-loop-park-phi-keyed-on?
-                (ir.compiler-ir-instr-seq-ref
-                  (reg.compiler-reg-loop-park-block-instrs out exit)
-                  0)
+                (&
+                  (ir.compiler-ir-instr-seq-ref
+                    (reg.compiler-reg-loop-park-block-instrs out exit)
+                    0))
                 8
                 (ir.compiler-ir-label "other")))))])))
 
@@ -6451,7 +6472,7 @@
       [(Block _ instrs)
         (if (>= index (ir.compiler-ir-instr-seq-count instrs))
           false
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
             [(Mov d value _)
               (match value
                 [(Var s) (and (= d dst) (= s src))]
@@ -12178,11 +12199,11 @@
                 (reg.compiler-reg-remap-params (& remap) (& params))]
               (and
                 (= remapped.len 3)
-                (match (ir.compiler-ir-param-seq-ref remapped 0)
+                (match (ir.compiler-ir-param-seq-borrow remapped 0)
                   [(Param _ _ active-param) (= active-param active)])
-                (match (ir.compiler-ir-param-seq-ref remapped 1)
+                (match (ir.compiler-ir-param-seq-borrow remapped 1)
                   [(Param _ _ varying-param) (= varying-param varying)])
-                (match (ir.compiler-ir-param-seq-ref remapped 2)
+                (match (ir.compiler-ir-param-seq-borrow remapped 2)
                   [(Param _ _ uniform-param) (= uniform-param uniform)]))))
           true)]
       [(None) false])))

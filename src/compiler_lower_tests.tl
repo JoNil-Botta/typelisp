@@ -3266,7 +3266,7 @@
 
 (define (lower-test-pack-values-shape? [values : ir.CompilerIrValueSeq]) : bool
   (if (= (ir.compiler-ir-value-seq-count values) 2)
-    (match (ir.compiler-ir-value-seq-ref values 1)
+    (match (ir.compiler-ir-value-seq-borrow values 1)
       [(I64 length) (= length 3)]
       [_ false])
     false))
@@ -4742,7 +4742,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [name : String]) : bool
   (for [index (iterator.range 0 globals.len)]
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-borrow globals index)
       [(Global global-name _ _)
         (when
           (string.eq (ir.compiler-ir-symbol-text global-name) name)
@@ -4762,7 +4762,7 @@
   [global-name : String]
   [function-name : String]) : bool
   (for [index (iterator.range 0 globals.len)]
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-borrow globals index)
       [(Global name _ initial)
         (when
           (string.eq (ir.compiler-ir-symbol-text name) global-name)
@@ -4783,7 +4783,7 @@
   [globals : ir.CompilerIrGlobalSeq]
   [name : (& name str)]) : bool
   (for [index (iterator.range 0 globals.len)]
-    (match (ir.compiler-ir-global-seq-ref globals index)
+    (match (ir.compiler-ir-global-seq-borrow globals index)
       [(Global global-name ty initial)
         (when
           (string.eq (ir.compiler-ir-symbol-text global-name) name)

@@ -167,7 +167,7 @@
       "only cycles over supported scalar multiply allocate a temporary")
     (match (opt.opt-function-blocks out)
       [(Array seq)
-        (match (ir.compiler-ir-block-seq-ref seq 2)
+        (match (ir.compiler-ir-block-seq-borrow seq 2)
           [(Block _ instrs)
             (test.assert-i64-eq
               instrs.len
@@ -186,20 +186,20 @@
                     [_ false])
                   "shift the recurrence source into the fresh temporary")
                 (test.assert-true
-                  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                  (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                     [(BinOp 3 (Add) (Var 7) (Var 1) (I64)) true]
                     [_ false])
                   "add the original source into the original destination")))])
         (when
           (= mode 5)
-          (match (ir.compiler-ir-block-seq-ref seq 0)
+          (match (ir.compiler-ir-block-seq-borrow seq 0)
             [(Block _ instrs)
               (test.assert-i64-eq
                 instrs.len
                 2
                 "a non-multiply definition of the dst is not rewritten")
               (test.assert-true
-                (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                (match (ir.compiler-ir-instr-seq-borrow instrs 0)
                   [(BinOp 3 (Add) (Var 0) (I64 7) (I64)) true]
                   [_ false])
                 "the entry add keeps its operands")]))])))

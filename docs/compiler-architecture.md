@@ -1104,6 +1104,14 @@ a hash probe's `walked` cursor is that case. The
 `bce-version-mb-monotone-cursor` optimizer test and
 `tests/integration/bce_monotone_cursor.tl` cover it.
 
+Dense IR sequences expose `compiler-ir-*-seq-borrow` for read-only consumers.
+It returns a reference into existing slots and checks the physical array bound;
+callers also maintain `0 <= index < seq.len` because shared storage can exceed the
+logical prefix. Phi inputs include their stored start offset. A borrow must end
+before any alias mutates the same slot or retires its storage. The existing
+by-value `-seq-ref` accessors retain their shallow-copy contract while owned-value
+consumers migrate; checked readers do not create an ownership view.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

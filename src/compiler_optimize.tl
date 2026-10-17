@@ -1213,7 +1213,7 @@
           (set! (array-ref content.index var) content.entries.len))
         (Dense state)])))
 
-(define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
+(define (opt-const-lookup [env : (& env OptConstEnv)] [var : i64]) : OptKnownConst
   (match env
     [(Nil) (NoConst)]
     [(Dense state)
@@ -1432,9 +1432,7 @@
   [fallback-ty : (& fallback-ty ast.AstType)]) : OptKnownConst
   (match value
     [(Var id)
-      (match (opt-const-lookup
-        (owned_view.compiler-owned-reference-shared-view env)
-        id)
+      (match (opt-const-lookup env id)
         [(SomeConst v ty) (SomeConst v ty)]
         [(NoConst) (NoConst)])]
     [_
@@ -1447,9 +1445,7 @@
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view value)
     [(Var id)
-      (match (opt-const-lookup
-        (owned_view.compiler-owned-reference-shared-view env)
-        id)
+      (match (opt-const-lookup env id)
         [(SomeConst v _) v]
         [(NoConst) value])]
     [_ value]))
@@ -59216,7 +59212,7 @@
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
   [tables : (&mut tables OptBlockExprTables)]
-  [instrs : ir.CompilerIrInstrSeq]) : i64
+  [instrs : (&mut instrs ir.CompilerIrInstrSeq)]) : i64
   (let
     [store-count : i64 0]
     [fold-state : OptConstEnv (opt-const-env-clear (& tables.fold))]
@@ -59247,7 +59243,7 @@
                         (+= store-count 1)
                         unit)]
                     [_ unit])
-                  (ir.compiler-ir-instr-seq-set! (&mut instrs) index rewritten)
+                  (ir.compiler-ir-instr-seq-set! instrs index rewritten)
                   (set! fold-state next-fold)
                   (set! strength-state next-strength)
                   (set! cse-state next-cse)
@@ -59947,7 +59943,7 @@
           (opt-fold-strength-cse-instr-seq-rewrite!
             type-segment-bases
             tables
-            (compiler-opt-global-shared-view work)))
+            (&mut work)))
         (set!
           work
           (opt-dead-store-instr-seq-known-with-kinds

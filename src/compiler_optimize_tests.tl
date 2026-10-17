@@ -66960,7 +66960,7 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables)
-      (opt.compiler-opt-global-shared-view no-exprs))
+      (&mut no-exprs))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
       0
@@ -66968,7 +66968,7 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables)
-      (opt.compiler-opt-global-shared-view first))
+      (&mut first))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
       1
@@ -66976,7 +66976,7 @@
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables)
-      (opt.compiler-opt-global-shared-view second))
+      (&mut second))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
       2
@@ -78761,9 +78761,7 @@
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
 
 (define (opt-test-const-env-i64 [env : (& opt.OptConstEnv)] [var : i64]) : i64
-  (match (opt.opt-const-lookup
-    (owned_view.compiler-owned-reference-shared-view env)
-    var)
+  (match (opt.opt-const-lookup env var)
     [(NoConst) -1]
     [(SomeConst value _)
       (match value
@@ -78797,7 +78795,7 @@
       "fold and strength states are independent")
     (set! env (opt.opt-const-bind (& env) 0 (I64 44) (I32)))
     (test.assert-true
-      (match (opt.opt-const-lookup (opt.compiler-opt-global-shared-view env) 0)
+      (match (opt.opt-const-lookup (& env) 0)
         [(SomeConst (I64 44) (I32)) true]
         [_ false])
       "rebind retains typed scalar")
@@ -78847,16 +78845,14 @@
         (opt-test-const-env-i64 (& env) (+ (* index 3) 1))
         -1
         "sparse local holes remain empty"))
-    (match (opt.compiler-opt-global-shared-view env)
+    (match (& env)
       [(Dense state)
         (let
           [content : (& state opt.OptConstState) (& (deref state))]
           (set! capacity (array-length content.index))
           (set! slots (array-length content.entries.slots)))]
       [_ (test.assert-true false "bindings allocate dense state")])
-    (set!
-      previous
-      (opt.opt-const-lookup (opt.compiler-opt-global-shared-view env) 0))
+    (set! previous (opt.opt-const-lookup (& env) 0))
     (set! env (opt.opt-const-env-clear (& env)))
     (for [index (iterator.range 0 129)]
       (test.assert-i64-eq
@@ -78877,7 +78873,7 @@
         [(SomeConst (I64 10) (I64)) true]
         [_ false])
       "returned constants survive fact-slot reuse")
-    (match (opt.compiler-opt-global-shared-view env)
+    (match (& env)
       [(Dense state)
         (let
           [content : (& state opt.OptConstState) (& (deref state))]
@@ -78920,7 +78916,7 @@
       (opt.opt-fold-strength-cse-instr-seq-rewrite!
         bases
         (&mut tables)
-        (opt.compiler-opt-global-shared-view instrs))
+        (&mut instrs))
       (test.assert-true
         (opt.opt-instr-eq
           bases
@@ -78945,7 +78941,7 @@
       (opt.opt-fold-strength-cse-instr-seq-rewrite!
         bases
         (&mut tables)
-        (opt.compiler-opt-global-shared-view later))
+        (&mut later))
       (test.assert-true
         (opt.opt-instr-seq-eq
           bases
@@ -78955,7 +78951,7 @@
       (opt.opt-fold-strength-cse-instr-seq-rewrite!
         bases
         (&mut tables)
-        (opt.compiler-opt-global-shared-view rebind))
+        (&mut rebind))
       (test.assert-true
         (opt.opt-instr-eq
           bases

@@ -1880,7 +1880,8 @@
                 ;; the same final binding and transition.
                 (unless
                   (and
-                    (tc-type-eq fact.binding-ty binding-ty)
+                    ;; Proof identity includes allocation-region wrappers.
+                    (ast.ast-type-eq? fact.binding-ty binding-ty)
                     (tc-checked-let-binding-transition-eq?
                       fact.transition
                       transition))

@@ -57,7 +57,7 @@
     (ast.ast-node-pool-context-install! pools)
     (test.assert-true
       (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
-        [(Ok ty) (tc_core.tc-type-eq ty (clone source))]
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
         [_ false])
       "missing checked facts infer the source brand")
     (tc_core.tc-checked-let-binding-facts-begin! facts)
@@ -78,6 +78,15 @@
       init
       (Bool)
       transition)
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
+        [_ false])
+      "inconsistent checked facts infer the source brand")
+    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (tc_core.tc-checked-let-binding-fact-record!
       facts
       12
@@ -89,11 +98,6 @@
     (tc_core.tc-checked-let-binding-facts-freeze! facts)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (test.assert-true
-      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
-        [(Ok ty) (tc_core.tc-type-eq ty (clone source))]
-        [_ false])
-      "inconsistent checked facts infer the source brand")
-    (test.assert-true
       (match (lower.lower-let-binding-source-type
         ctx
         (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))
@@ -102,7 +106,7 @@
         name
         (No)
         init)
-        [(Ok ty) (tc_core.tc-type-eq ty source)]
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
         [_ false])
       "an exact checked proof retains its semantic type")
     (tc_core.tc-checked-let-binding-facts-finish! facts)

@@ -702,6 +702,40 @@
           -1)
         "released generations retain no source identity"))))
 
+(test
+  tc-checked-let-binding-facts-region-conflict
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [inner : i64 (ast.ast-node-pool-reader-type-push (& (String)))]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 77 inner)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 78 inner)
+      transition)
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+        [(Inconsistent) true]
+        [_ false])
+      "different allocation regions are conflicting checked proofs")
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
+
 (define (tc-job-state-set-topenv-membership-enabled!
   [state : tc_core.TcJobState]
   [enabled : bool]) : unit

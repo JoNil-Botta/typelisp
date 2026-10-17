@@ -1450,8 +1450,12 @@ Global length facts may cross a dynamic-array descriptor snapshot only when
 its pointer uses are closed: a fresh two-word allocation, two uniquely used
 field addresses, one snapshot transfer, and one consuming container use. The
 shared operand-use census accounts for every instruction. Extra aliases,
-calls, address-taking, duplicate definitions and stores refuse the proof;
-the existing length-token and family checks remain authoritative.
+calls, address-taking, duplicate definitions and stores refuse the proof.
+A closed use set alone does not rule out aliases present on function entry:
+the existing memory summary must also prove writes stay in fresh storage or
+the single container parameter. Unknown, global, element and other parameter
+writes refuse snapshot facts. The existing length-token and family checks
+remain authoritative.
 
 The SSA verifier traces marked sret operands to inline aggregate `Alloc`
 storage, explicitly sized physical slots, or the declared incoming result

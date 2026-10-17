@@ -275,6 +275,8 @@ refuses direct/indirect call escapes, aliases, extra stores, address-taking,
 redefined values and narrower moves. Existing `arg_global_len_eq_pair.tl`
 and `arg_global_len_eq_split.tl` retain the matching-length behavior and
 mismatched-length bounds failure through actual optimized code.
+Hidden global aliases and calls without pointer arguments must also refuse the
+summary; the existing call-memory analysis supplies the write-footprint proof.
 
 ## Optimizer dense block scans
 

@@ -122001,6 +122001,7 @@
 (defstruct OptLenEqDefs
   (defs (__tl_dyn-array OptBoolBranchDef))
   (uses (__tl_dyn-array i64))
+  (write-root i64)
   (w0 (__tl_dyn-array ir.CompilerIrValue))
   (w1 (__tl_dyn-array ir.CompilerIrValue))
   (n0 (__tl_dyn-array i64))
@@ -122019,7 +122020,10 @@
   ;; before its region began.
   (rdef (__tl_dyn-array i64)))
 
-(define (opt-len-eq-defs-new [frame : i64] [uses : (__tl_dyn-array i64)]) : OptLenEqDefs
+(define (opt-len-eq-defs-new
+  [frame : i64]
+  [uses : (__tl_dyn-array i64)]
+  [write-root : i64]) : OptLenEqDefs
   (let
     [size : i64
       (if (> frame 0)
@@ -122028,6 +122032,7 @@
     (OptLenEqDefs
       (__tl_make-array OptBoolBranchDef size)
       uses
+      write-root
       (__tl_make-array ir.CompilerIrValue size)
       (__tl_make-array ir.CompilerIrValue size)
       (__tl_make-array i64 size)
@@ -122239,10 +122244,14 @@
 (define (opt-len-eq-defs-build
   [type-segment-bases : i64]
   [frame : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLenEqDefs
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [write-root : i64]) : OptLenEqDefs
   (let
     [tables : OptLenEqDefs
-      (opt-len-eq-defs-new frame (opt-collect-blocks-uses-array frame blocks))]
+      (opt-len-eq-defs-new
+        frame
+        (opt-collect-blocks-uses-array frame blocks)
+        write-root)]
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-blocks-visit
       blocks
@@ -122443,6 +122452,7 @@
             [(Mov _ (Var source) (DynArray _))
               (if (and
                 (= (array-ref tables.uses snapshot) 1)
+                (or (= tables.write-root -1) (= tables.write-root container))
                 (opt-len-eq-private-word-pair? tables container)
                 (opt-len-eq-private-word-pair? tables source)
                 (match (opt-len-eq-def tables source)
@@ -122591,11 +122601,34 @@
   [seen : i64]) : i64
   (opt-blocks-fold blocks seen opt-len-eq-return-count-instr))
 
+;; A closed use set does not exclude aliases which existed on function entry.
+;; The memory summary must prove all writes are fresh-local, or target exactly
+;; the container parameter. Unknown, global, element and other parameter writes
+;; refuse snapshot facts, including mutations reached through hidden aliases.
+(define (opt-len-eq-write-root
+  [summaries : (& summaries opt_i64_i64_map.Map)]
+  [func : (& ir.CompilerIrFunction)]) : i64
+  (match func
+    [(Function name params _ _ _ _)
+      (match (opt_i64_i64_map.get summaries (ir.compiler-ir-symbol-id name))
+        [(LookupFound summary)
+          (when (= summary 0) (return -1))
+          (for [index (iterator.range 0 params.len)]
+            (when
+              (and
+                (< index (opt-call-memory-param-limit))
+                (= summary (shl 1 index)))
+              (match (ir.compiler-ir-param-seq-borrow params index)
+                [(Param _ _ var) (return var)])))
+          -2]
+        [_ -2])]))
+
 ;; The summary of one function, or 0. Encoded exactly like a family entry: the
 ;; "family" slot carries the parameter index and the low bit the `.len`
 ;; agreement.
 (define (opt-len-eq-ctor-summary
   [type-segment-bases : i64]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
     [(Function _ params _ frame blocks _)
@@ -122603,7 +122636,11 @@
         0
         (let
           [tables : OptLenEqDefs
-            (opt-len-eq-defs-build type-segment-bases frame blocks)]
+            (opt-len-eq-defs-build
+              type-segment-bases
+              frame
+              blocks
+              (opt-len-eq-write-root call-memory func))]
           [ret : i64
             (opt-len-eq-ctor-return-var (ir.compiler-ir-block-list-view blocks))]
           [count : i64 (ir.compiler-ir-param-seq-count params)]
@@ -123216,7 +123253,11 @@
       (let
         [taint : OptLenEqTaint (opt-len-eq-taint-new frame)]
         [tables : OptLenEqDefs
-          (opt-len-eq-defs-build ctx.type-segment-bases frame blocks)]
+          (opt-len-eq-defs-build
+            ctx.type-segment-bases
+            frame
+            blocks
+            (opt-len-eq-write-root (& ctx.call-memory) func))]
         [unmodelled : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         (opt-len-eq-scan-blocks!
           ctx
@@ -123253,7 +123294,11 @@
         (opt_i64_i64_map.insert-ref! bad owner 1)
         (let
           [tables : OptLenEqDefs
-            (opt-len-eq-defs-build ctx.type-segment-bases frame blocks)]
+            (opt-len-eq-defs-build
+              ctx.type-segment-bases
+              frame
+              blocks
+              (opt-len-eq-write-root (& ctx.call-memory) func))]
           (match (opt-len-eq-length-of
             tables
             (& ctx.ctors)
@@ -123294,6 +123339,7 @@
 
 (define (opt-len-eq-ctors-build
   [type-segment-bases : i64]
+  [call-memory : (& opt_i64_i64_map.Map)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [out-input : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
@@ -123307,6 +123353,7 @@
             [summary : i64
               (opt-len-eq-ctor-summary
                 type-segment-bases
+                call-memory
                 (& (array-ref functions.slots index)))]
             (if (> summary 0)
               (opt_i64_i64_map.insert-ref!
@@ -123454,6 +123501,7 @@
               cand.map
               (opt-len-eq-ctors-build
                 type-segment-bases
+                (& call-memory)
                 functions
                 (opt_i64_i64_map.with-capacity capacity))
               call-memory

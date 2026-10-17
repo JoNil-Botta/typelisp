@@ -80749,22 +80749,58 @@
         (ir.compiler-ir-instr-builder-push!
           (&mut b)
           (CallIndirect 20 (Var 0) (One (Var 7)) (Unit)))]
+      [(= case 22)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Load 20 (Global (opt-test-symbol "hidden_container")) (U64)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Gep 21 (Var 20) (I64 0) (U8)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Load 22 (Var 21) (DynArray 0)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Gep 23 (Var 22) (I64 8) (U8)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (StorePtr (Var 23) (I64 0) (I64)))]
+      [(= case 23)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Call 20 (opt-test-symbol "mutate_hidden_container") (Nil) (Unit)))]
       [else unit])
     (ir.compiler-ir-instr-builder-push! (&mut b) (Return (Some (Var 1))))
     (opt-le-function
       (opt-test-symbol "snapshot_constructor")
-      (opt-le-params 2)
+      (ir.compiler-ir-param-seq-prepend
+        (Param "n" (I64) 0)
+        (ir.compiler-ir-param-seq-prepend
+          (Param (ir.compiler-ir-hidden-sret-param-name) (U64) 1)
+          (ir.compiler-ir-param-seq-empty)))
       (ir.compiler-ir-instr-builder-to-seq b))))
 
 (test
   len-eq-descriptor-snapshot-provenance
-  (for [case (iterator.range 0 22)]
-    (test.assert-i64-eq
-      (opt.opt-len-eq-ctor-summary 0 (& (opt-le-snapshot-constructor case)))
-      (cond
-        [(or (= case 0) (= case 15) (= case 18)) 2]
-        [(= case 19) 1]
-        [else 0])
-      (str_cat.str-cat
-        "descriptor snapshot provenance case "
-        (string.int->string case)))))
+  (for [case (iterator.range 0 24)]
+    (let
+      [func (opt-le-snapshot-constructor case)]
+      [summaries
+        (opt.opt-call-memory-seed-builtins
+          (& (opt_i64_i64_map.with-capacity 8)))]
+      [writes
+        (opt.opt-call-memory-function-candidate
+          0
+          (& (opt_i64_i64_map.with-capacity 1))
+          (& summaries)
+          (& func))]
+      (opt_i64_i64_map.insert-ref!
+        (&mut summaries)
+        (opt-test-symbol "snapshot_constructor")
+        writes)
+      (test.assert-i64-eq
+        (opt.opt-len-eq-ctor-summary 0 (& summaries) (& func))
+        (cond [(or (= case 0) (= case 15)) 2] [(= case 19) 1] [else 0])
+        (str_cat.str-cat
+          "descriptor snapshot provenance case "
+          (string.int->string case))))))

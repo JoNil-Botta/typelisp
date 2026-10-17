@@ -107660,6 +107660,138 @@
     [(or (Array arr) (Sret arr _))
       (ir.compiler-ir-clone-value (& (array-ref arr id)))]))
 
+;; A callee may receive its result address through an unmarked heap/field
+;; argument. Its incoming-output proof does not become a caller-frame proof
+;; when that body is inlined. Preserve local storage proofs, and demote only
+;; marked arguments that were valid specifically because of the incoming ABI.
+;; Removing the marker preserves every argument and its ABI position.
+(define (opt-inline-site-storage-args
+  [args : ir.CompilerIrCallArgs]
+  [defs : (& (__tl_dyn-array OptMaybeVarDef))]
+  [incoming : (&mut (OptSretStorageProof body))]
+  [local : (&mut (OptSretStorageProof local-body))]) : ir.CompilerIrCallArgs
+  (match args
+    [(Sret values index)
+      (if (and
+        (>= index 0)
+        (< index (array-length values))
+        (opt-verify-sret-storage-pointer?
+          defs
+          incoming
+          (& (array-ref values index))
+          (array-length defs))
+        (not
+          (opt-verify-sret-storage-pointer?
+            defs
+            local
+            (& (array-ref values index))
+            (array-length defs))))
+        (let
+          [count : i64 (array-length values)]
+          (ir.compiler-ir-call-args-from-seq
+            (& (ir.CompilerIrValueSeq values count))))
+        (Sret values index))]
+    [_ args]))
+
+(define (opt-inline-site-storage-instr
+  [instr : ir.CompilerIrInstr]
+  [defs : (& (__tl_dyn-array OptMaybeVarDef))]
+  [incoming : (&mut (OptSretStorageProof body))]
+  [local : (&mut (OptSretStorageProof local-body))]) : ir.CompilerIrInstr
+  (match instr
+    [(Call dst name args ty)
+      (Call dst name (opt-inline-site-storage-args args defs incoming local) ty)]
+    [(CallIndirect dst callee args ty)
+      (CallIndirect
+        dst
+        callee
+        (opt-inline-site-storage-args args defs incoming local)
+        ty)]
+    [(TailCall name args ty)
+      (TailCall name (opt-inline-site-storage-args args defs incoming local) ty)]
+    [(TailCallIndirect callee args ty)
+      (TailCallIndirect
+        callee
+        (opt-inline-site-storage-args args defs incoming local)
+        ty)]
+    [_ instr]))
+
+(defenum OptInlineStorageBlocks
+  (Keep)
+  (Replace ir.CompilerIrBlockList))
+
+(define (opt-inline-site-storage-view
+  [rewrite : (& body OptInlineStorageBlocks)]
+  [original : (& body ir.CompilerIrBlockList)]) : (&
+    body
+    ir.CompilerIrBlockList)
+  (match rewrite
+    [(OptInlineStorageBlocks.Keep) original]
+    [(OptInlineStorageBlocks.Replace blocks) blocks]))
+
+(define (opt-inline-site-storage-blocks
+  [callee : (& callee ir.CompilerIrFunction)]
+  [args : (& ir.CompilerIrCallArgs)]) : OptInlineStorageBlocks
+  (match callee
+    [(Function _ params _ vars blocks abi)
+      (unless
+        (and
+          (match abi
+            [(ir.CompilerIrFunctionAbi.ReturnStorage _) true]
+            [_ false])
+          (match args
+            [(Sret _ _) false]
+            [_ true]))
+        (return OptInlineStorageBlocks.Keep))
+      (match (opt-var-defs-index-checked params vars blocks)
+        [(Duplicate) OptInlineStorageBlocks.Keep]
+        [(Index defs)
+          (let
+            [marks (opt-addr-taken-vars vars blocks)]
+            [ordinary : ir.CompilerIrFunctionAbi
+              ir.CompilerIrFunctionAbi.Ordinary]
+            [incoming : (OptSretStorageProof callee)
+              (OptSretStorageProof
+                blocks
+                params
+                abi
+                (clone marks)
+                (__tl_make-array i64 vars))]
+            [local
+              (OptSretStorageProof
+                blocks
+                params
+                (& ordinary)
+                marks
+                (__tl_make-array i64 vars))]
+            [out
+              (ir.compiler-ir-block-builder-with-capacity
+                (ir.compiler-ir-block-list-count blocks))]
+            (match blocks
+              [(ir.CompilerIrBlockList.Array seq)
+                (for [i (iterator.range 0 seq.len)]
+                  (match (ir.compiler-ir-block-seq-borrow seq i)
+                    [(Block label instrs)
+                      (let
+                        [rewritten
+                          (ir.compiler-ir-instr-builder-with-capacity
+                            instrs.len)]
+                        (for [j (iterator.range 0 instrs.len)]
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut rewritten)
+                            (opt-inline-site-storage-instr
+                              (ir.compiler-ir-instr-seq-ref instrs j)
+                              (& defs)
+                              (&mut incoming)
+                              (&mut local))))
+                        (ir.compiler-ir-block-builder-push!
+                          (&mut out)
+                          (Block
+                            label
+                            (ir.compiler-ir-instr-builder-to-seq rewritten))))]))])
+            (OptInlineStorageBlocks.Replace
+              (ir.compiler-ir-block-builder-to-list out)))])]))
+
 (define (opt-inline-remap-value
   [v : (& v ir.CompilerIrValue)]
   [sa : (& sa ir.CompilerIrCallArgs)]
@@ -113839,7 +113971,7 @@
         scc-result
         caller-scc)
         [(Some callee)
-          (match callee
+          (match (& callee)
             [(Function callee-name cparams callee-ret cvars cblocks _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
@@ -113856,10 +113988,16 @@
                     (& callee-ret)
                     caller-blocks
                     added-so-far))
-                  (begin
+                  (let
+                    [clone-blocks
+                      (opt-inline-site-storage-blocks (& callee) (& cargs))]
                     (+= opt-inline-caller-site-count 1)
                     (match (opt-inline-expand-instrs-with-spans
-                      (& (opt-inline-single-block-instrs cblocks))
+                      (&
+                        (opt-inline-single-block-instrs
+                          (opt-inline-site-storage-view
+                            (& clone-blocks)
+                            (& cblocks))))
                       dst
                       (& cret)
                       (& cargs)
@@ -113900,7 +114038,7 @@
         scc-result
         caller-scc)
         [(Some callee)
-          (match callee
+          (match (& callee)
             [(Function callee-name cparams callee-ret cvars cblocks _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
@@ -113917,10 +114055,16 @@
                     (& callee-ret)
                     caller-blocks
                     added-so-far))
-                  (begin
+                  (let
+                    [clone-blocks
+                      (opt-inline-site-storage-blocks (& callee) (& cargs))]
                     (+= opt-inline-caller-site-count 1)
                     (match (opt-inline-expand-tail-instrs-with-spans
-                      (& (opt-inline-single-block-instrs cblocks))
+                      (&
+                        (opt-inline-single-block-instrs
+                          (opt-inline-site-storage-view
+                            (& clone-blocks)
+                            (& cblocks))))
                       (& cret)
                       (& cargs)
                       np
@@ -114983,7 +115127,7 @@
   [cargs : (& ir.CompilerIrCallArgs)]
   [cret : (& ast.AstType)]
   [tail-site? : bool]
-  [callee : (& ir.CompilerIrFunction)]
+  [callee : (& callee ir.CompilerIrFunction)]
   [census : (& OptInlineCensus)]
   [func-name : i64]
   [vars : i64]
@@ -115027,6 +115171,7 @@
             [(State prefix-instrs prefix-vars prefix-added spans2)
               (let
                 [_site-note : unit (opt-inline-site-note! plan callee-name)]
+                [clone-blocks (opt-inline-site-storage-blocks callee cargs)]
                 [prefix : String
                   (opt-inline-site-prefix
                     func-name
@@ -115087,7 +115232,8 @@
                             (& stage-instrs)
                             (& (ir.compiler-ir-instr-seq1 (Jump entry-label))))))))]
                 (match (opt-inline-clone-multiblock-blocks-with-spans
-                  (ir.compiler-ir-block-list-view cblocks)
+                  (ir.compiler-ir-block-list-view
+                    (opt-inline-site-storage-view (& clone-blocks) (& cblocks)))
                   prefix
                   cont-label
                   tail-base

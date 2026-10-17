@@ -11376,6 +11376,99 @@
     (typed.typed-store-retire! (&mut store))
     (and different generated query (= query-count store.occurrence-count))))
 
+;; Compound branch tails receive the joined type before their occurrences
+;; are published. Query and capture retain the same rejection boundary.
+(define (tc-selected-compound-if-case? [form : String] [valid? : bool]) : bool
+  (let
+    [expr : i64 (macro-output-probe-body form)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [query : bool
+      (match (tc_core.tc-expr-id ctx env expr)
+        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) valid?]
+        [(tc_core.ResultTcType.Err _) (not valid?)]
+        [_ false])]
+    [selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        expr
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "compound-if.tl" 1 1 "")
+        (tc_core.tc-selected-capture (&mut store) (& lease) (&mut bindings)))
+        [(tc_core.TcSelectedResult.Ok
+            (ast.AstType.I64)
+            (tc_core.TcSelectedOccurrence.Selected root)
+            _)
+          (let
+            [left : typed.TypedOccurrenceId
+              (tc-selected-test-child! (&mut store) (& lease) root 1)]
+            [right : typed.TypedOccurrenceId
+              (tc-selected-test-child! (&mut store) (& lease) root 2)]
+            (and
+              valid?
+              (tc-selected-test-type?
+                (&mut store)
+                (& lease)
+                root
+                ast.AstType.I64)
+              (tc-selected-test-type?
+                (&mut store)
+                (& lease)
+                left
+                ast.AstType.I64)
+              (tc-selected-test-type?
+                (&mut store)
+                (& lease)
+                right
+                ast.AstType.I64)))]
+        [(tc_core.TcSelectedResult.Err _ _)
+          (and (not valid?) (= store.occurrence-count 0))]
+        [_ false])]
+    (tc_core.tc-type-env-scoped-runtime-restore! saved)
+    (typed.typed-store-retire! (&mut store))
+    (and query selected)))
+
+(define (tc-selected-compound-if-ok?) : bool
+  (let
+    [forms : (Array String 8)
+      (array
+        "(if true (begin unit 0) (cast 42 : i64))"
+        "(if true (cast 42 : i64) (begin unit 0))"
+        "(if true (let [x : i64 7] 0) (cast 42 : i64))"
+        "(if true (if false 0 1) (cast 42 : i64))"
+        "(if true (begin unit 0) (begin unit (cast 42 : i64)))"
+        "(if true (neg 1) (cast 42 : i64))"
+        "(if true (+ 1 2) (cast 42 : i64))"
+        "(if true (begin unit 4294967296) (cast 42 : i64))")]
+    [ok? : bool true]
+    (for [index (iterator.range 0 (array-length forms))]
+      (unless
+        (tc-selected-compound-if-case?
+          (string.copy (& (array-ref forms index)))
+          true)
+        (set! ok? false)))
+    (and
+      ok?
+      (tc-selected-compound-if-case?
+        "(if true (begin unit true) (cast 42 : i64))"
+        false)
+      (tc-selected-compound-if-case?
+        "(if true (begin unit 300) (cast 7 : i8))"
+        false))))
+
 (define (tc-selected-unary-and-plain-if-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -14403,6 +14496,7 @@
     (ci.intern-source-name-session-capture-active-handle))
   (and
     (tc-selected-contextual-results-ok?)
+    (tc-selected-compound-if-ok?)
     (tc-selected-unary-and-plain-if-ok?)
     (tc-selected-plain-binary-ok?)
     (tc-selected-literal-probe-case? 0)

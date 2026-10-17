@@ -50901,6 +50901,198 @@
     [(ast.AstExpr.Literal (ast.AstLiteral.Float _)) true]
     [_ false]))
 
+(define (tc-infer-selected-if-branches
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [syntax : typed.TypedSyntax]
+  [then-branch-id : i64]
+  [else-branch-id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [condition : TcSelectedOccurrence]
+  [retry? : (&mut bool)]
+  [next : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-id
+    ctx
+    env
+    then-branch-id
+    (tc-selected-if-branch-expected
+      ctx
+      env
+      (tc-global-shared-view expected)
+      then-branch-id
+      else-branch-id)
+    (tc-global-shared-view source)
+    next)
+    [(TcSelectedResult.Err message ready) (TcSelectedResult.Err message ready)]
+    [(TcSelectedResult.Ok then-ty then-occurrence ready)
+      (match (tc-infer-selected-id
+        ctx
+        env
+        else-branch-id
+        (tc-selected-if-branch-expected
+          ctx
+          env
+          (tc-global-shared-view expected)
+          else-branch-id
+          then-branch-id)
+        (tc-global-shared-view source)
+        ready)
+        [(TcSelectedResult.Err message done)
+          (TcSelectedResult.Err message done)]
+        [(TcSelectedResult.Ok else-ty else-occurrence done)
+          (let
+            [joined : ResultTcType
+              (tc-semantic-unobserved
+                ctx
+                (match expected
+                  [(ast.AstMaybeType.No)
+                    (tc-merge-if-branch-types
+                      ctx
+                      env
+                      then-branch-id
+                      else-branch-id
+                      (tc-global-shared-view then-ty)
+                      (tc-global-shared-view else-ty))]
+                  [(ast.AstMaybeType.Some want)
+                    (if (and
+                      (tc-type-coercible?
+                        ctx
+                        env
+                        (tc-global-shared-view want)
+                        (tc-global-shared-view then-ty))
+                      (tc-type-coercible?
+                        ctx
+                        env
+                        (tc-global-shared-view want)
+                        (tc-global-shared-view else-ty)))
+                      (ResultTcType.Ok want)
+                      (tc-merge-if-branch-types
+                        ctx
+                        env
+                        then-branch-id
+                        else-branch-id
+                        (tc-global-shared-view then-ty)
+                        (tc-global-shared-view else-ty)))]))]
+            ;; A branch of another type needs a coercion occurrence.
+            [aligned? : bool
+              (and
+                (tc-selected-branch-aligned?
+                  ctx
+                  (tc-global-shared-view then-ty)
+                  (tc-global-shared-view joined))
+                (tc-selected-branch-aligned?
+                  ctx
+                  (tc-global-shared-view else-ty)
+                  (tc-global-shared-view joined)))]
+            (when
+              (tc-selected-branch-move-out?
+                ctx
+                env
+                (tc-global-shared-view then-ty)
+                (& joined))
+              (return
+                (TcSelectedResult.Err
+                  (tc-selected-view-move-out-error
+                    ctx
+                    env
+                    then-branch-id
+                    (tc-global-shared-view then-ty)
+                    0
+                    TcNameIdList.Nil)
+                  done)))
+            (when
+              (tc-selected-branch-move-out?
+                ctx
+                env
+                (tc-global-shared-view else-ty)
+                (& joined))
+              (return
+                (TcSelectedResult.Err
+                  (tc-selected-view-move-out-error
+                    ctx
+                    env
+                    else-branch-id
+                    (tc-global-shared-view else-ty)
+                    0
+                    TcNameIdList.Nil)
+                  done)))
+            (when (not aligned?) (set! (deref retry?) true))
+            (tc-selected-publish-if
+              joined
+              syntax
+              source
+              condition
+              (if aligned?
+                then-occurrence
+                TcSelectedOccurrence.Unrepresented)
+              (if aligned?
+                else-occurrence
+                TcSelectedOccurrence.Unrepresented)
+              done))])]))
+
+;; Keep the common aligned branches in their original inference attempt.
+;; A contextual join retries only the mismatched branches, after the typed
+;; store discards their provisional records and binding handles.
+(define (tc-infer-selected-if-choose
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [syntax : typed.TypedSyntax]
+  [then-branch-id : i64]
+  [else-branch-id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [condition : TcSelectedOccurrence]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [retry? : bool false]
+    (match (tc-selected-probe-begin sink)
+      [(TcSelectedProbeStart.Err message next)
+        (TcSelectedResult.Err message next)]
+      [(TcSelectedProbeStart.Ok probe next)
+        (match (tc-selected-probe-finish
+          probe
+          true
+          (tc-infer-selected-if-branches
+            ctx
+            env
+            syntax
+            then-branch-id
+            else-branch-id
+            expected
+            (clone source)
+            (clone condition)
+            (&mut retry?)
+            next))
+          [(TcSelectedResult.Err message done)
+            (TcSelectedResult.Err message done)]
+          [(TcSelectedResult.Ok chosen child done)
+            (if retry?
+              (match done
+                [(TcSelectedSink.Query)
+                  (TcSelectedResult.Ok chosen child TcSelectedSink.Query)]
+                [(TcSelectedSink.Capture store lease bindings)
+                  (tc-infer-selected-if-branches
+                    ctx
+                    env
+                    syntax
+                    then-branch-id
+                    else-branch-id
+                    (ast.AstMaybeType.Some chosen)
+                    source
+                    condition
+                    (&mut retry?)
+                    (TcSelectedSink.Capture store lease bindings))])
+              (TcSelectedResult.Ok chosen child done))])])))
+
 (define (tc-infer-selected-if
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -50930,118 +51122,16 @@
         "typecheck: if condition must be bool")
         [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
         [(ResultTcUnit.Ok)
-          (match (tc-infer-selected-id
+          (tc-infer-selected-if-choose
             ctx
             env
+            syntax
             then-branch-id
-            (tc-selected-if-branch-expected
-              ctx
-              env
-              (tc-global-shared-view expected)
-              then-branch-id
-              else-branch-id)
-            (tc-global-shared-view source)
-            next)
-            [(TcSelectedResult.Err message ready)
-              (TcSelectedResult.Err message ready)]
-            [(TcSelectedResult.Ok then-ty then-occurrence ready)
-              (match (tc-infer-selected-id
-                ctx
-                env
-                else-branch-id
-                (tc-selected-if-branch-expected
-                  ctx
-                  env
-                  (tc-global-shared-view expected)
-                  else-branch-id
-                  then-branch-id)
-                (tc-global-shared-view source)
-                ready)
-                [(TcSelectedResult.Err message done)
-                  (TcSelectedResult.Err message done)]
-                [(TcSelectedResult.Ok else-ty else-occurrence done)
-                  (let
-                    [joined : ResultTcType
-                      (match expected
-                        [(ast.AstMaybeType.No)
-                          (tc-merge-branch-type
-                            ctx
-                            env
-                            (tc-global-shared-view then-ty)
-                            (tc-global-shared-view else-ty))]
-                        [(ast.AstMaybeType.Some want)
-                          (if (and
-                            (tc-type-coercible?
-                              ctx
-                              env
-                              (tc-global-shared-view want)
-                              (tc-global-shared-view then-ty))
-                            (tc-type-coercible?
-                              ctx
-                              env
-                              (tc-global-shared-view want)
-                              (tc-global-shared-view else-ty)))
-                            (ResultTcType.Ok want)
-                            (tc-merge-branch-type
-                              ctx
-                              env
-                              (tc-global-shared-view then-ty)
-                              (tc-global-shared-view else-ty)))])]
-                    ;; A branch of another type needs a coercion occurrence.
-                    [aligned? : bool
-                      (and
-                        (tc-selected-branch-aligned?
-                          ctx
-                          (tc-global-shared-view then-ty)
-                          (tc-global-shared-view joined))
-                        (tc-selected-branch-aligned?
-                          ctx
-                          (tc-global-shared-view else-ty)
-                          (tc-global-shared-view joined)))]
-                    (when
-                      (tc-selected-branch-move-out?
-                        ctx
-                        env
-                        (tc-global-shared-view then-ty)
-                        (& joined))
-                      (return
-                        (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error
-                            ctx
-                            env
-                            then-branch-id
-                            (tc-global-shared-view then-ty)
-                            0
-                            TcNameIdList.Nil)
-                          done)))
-                    (when
-                      (tc-selected-branch-move-out?
-                        ctx
-                        env
-                        (tc-global-shared-view else-ty)
-                        (& joined))
-                      (return
-                        (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error
-                            ctx
-                            env
-                            else-branch-id
-                            (tc-global-shared-view else-ty)
-                            0
-                            TcNameIdList.Nil)
-                          done)))
-                    (tc-selected-publish-if
-                      joined
-                      syntax
-                      source
-                      condition
-                      (if aligned?
-                        then-occurrence
-                        TcSelectedOccurrence.Unrepresented)
-                      (if aligned?
-                        else-occurrence
-                        TcSelectedOccurrence.Unrepresented)
-                      done))])])])]))
+            else-branch-id
+            expected
+            source
+            condition
+            next)])]))
 
 (define (tc-type-list-len [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))

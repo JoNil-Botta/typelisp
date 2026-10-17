@@ -103,8 +103,16 @@
           (set! i (+ i 1))))
       sum)))
 
+;; The tail loop keeps the same caller-owned output through every iteration.
+(define (recursive-result [n : i64]) : Triple
+  (if (> n 0)
+    (recursive-result (- n 1))
+    (Triple 7 11 24)))
+
 (define (main) : i64
   (let
+    [recursive : Triple (recursive-result 7)]
+    [zero : Triple (recursive-result 0)]
     [source : Triple (Triple 7 11 24)]
     [forwarded : Triple (forward-read source)]
     [boxed : (Box Triple) (box (read-triple (& source)))]
@@ -129,6 +137,8 @@
       (io.print-format "{}\n" results)
       (if (and
         (= results 15)
+        (= (+ recursive.a recursive.b recursive.c) 42)
+        (= (+ zero.a zero.b zero.c) 42)
         (= (+ forwarded.a forwarded.b forwarded.c) 42)
         (= (+ heap-result.a heap-result.b heap-result.c) 42)
         (= (+ viewed.a view.first view.second) 42)

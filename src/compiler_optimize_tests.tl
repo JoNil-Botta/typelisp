@@ -32,6 +32,166 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+(define (opt-inline-storage-test-body
+  [prefix : String]
+  [slot : String]
+  [marked? : bool]) : String
+  (str_cat.str-cat
+    prefix
+    "\n%7 = alloc (Array i64 3)\n%8 = addr_of %7\n%9 = call fill([sret arg 0] %8) : u64\n%10 = call fill("
+    (if marked?
+      "[sret arg 0] "
+      "")
+    slot
+    ") : u64\nreturn %1"))
+
+(define (opt-inline-storage-test-case?
+  [prefix : String]
+  [slot : String]
+  [keep? : bool]) : bool
+  (let
+    [callee
+      (irt.func
+        (str_cat.str-cat
+          "function @forward(condition=%0:bool, output=%1:u64) -> u64 vars 12 abi return-storage internal-trailing arg 1 bytes 24 output (Array i64 3) result u64 params (bool u64) source (-> bool (Array i64 3)) {\n"
+          (opt-inline-storage-test-body (clone prefix) (clone slot) true)
+          "\n}"))]
+    [unmarked
+      (match (irt.instr "%10 = call forward(true, %2) : u64")
+        [(ir.CompilerIrInstr.Call _ _ args _) args]
+        [_ ir.CompilerIrCallArgs.Nil])]
+    [marked
+      (match (irt.instr "%10 = call forward([sret arg 1] true, %2) : u64")
+        [(ir.CompilerIrInstr.Call _ _ args _) args]
+        [_ ir.CompilerIrCallArgs.Nil])]
+    [expected
+      (irt.blocks
+        (opt-inline-storage-test-body (clone prefix) (clone slot) keep?))]
+    [original
+      (irt.blocks
+        (opt-inline-storage-test-body (clone prefix) (clone slot) true))]
+    [actual-rewrite
+      (opt.opt-inline-site-storage-blocks (& callee) (& unmarked))]
+    [original-blocks
+      (irt.blocks
+        (opt-inline-storage-test-body (clone prefix) (clone slot) true))]
+    [actual
+      (opt.opt-inline-site-storage-view (& actual-rewrite) (& original-blocks))]
+    [retained-rewrite
+      (opt.opt-inline-site-storage-blocks (& callee) (& marked))]
+    [retained
+      (opt.opt-inline-site-storage-view
+        (& retained-rewrite)
+        (& original-blocks))]
+    (and
+      (opt.opt-block-list-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& actual)
+        (& expected))
+      (opt.opt-block-list-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& retained)
+        (& original)))))
+
+(define (opt-inline-storage-proof-test) : i64
+  (let
+    [prefixes : (Array String 12)
+      (array
+        "entry:"
+        "entry:\n%4 = mov %1 : u64"
+        "entry:\n%4 = gep %1, 0 : u8"
+        "entry:\n%2 = alloc (Array i64 3)\n%4 = addr_of %2"
+        "entry:\n%4 = gep %1, 1 : u8"
+        "entry:\n%4 = mov 42 : u64"
+        "entry:\n%3 = addr_of %1\n%4 = mov %1 : u64"
+        "entry:\n%4 = select %0, %1, %1 lanes 0 : u64"
+        "entry:\n%2 = alloc (Array i64 3)\n%3 = addr_of %2\n%4 = select %0, %1, %3 lanes 0 : u64"
+        "entry:\n%2 = alloc (Array i64 3)\n%3 = addr_of %2\n%4 = select %0, 42, %3 lanes 0 : u64"
+        "entry:\nbranch %0, left, right\nleft:\njump join\nright:\njump join\njoin:\n%4 = phi [%1, left], [%1, right] : u64"
+        "entry:\n%4 = mov %1 : u64\n%4 = mov %1 : u64")]
+    [expected : (Array bool 12)
+      (array false false false true true true true false false true false true)]
+    (for [i (iterator.range 0 12)]
+      (unless
+        (opt-inline-storage-test-case?
+          (clone (array-ref prefixes i))
+          (if (= i 0)
+            "%1"
+            "%4")
+          (array-ref expected i))
+        (return (+ 100 i))))
+    42))
+
+(define (opt-inline-storage-integration? [multi? : bool] [frame? : bool]) : bool
+  (let
+    [callee
+      (irt.func
+        (str_cat.str-cat
+          "function @forward(output=%0:u64) -> u64 vars 3 abi return-storage internal-trailing arg 0 bytes 24 output (Array i64 3) result u64 params (u64) source (-> (Array i64 3)) {\n"
+          (if multi?
+            "entry:\nbranch true, left, right\nleft:\n%1 = call fill([sret arg 0] %0) : u64\nreturn %0\nright:\n%2 = call fill([sret arg 0] %0) : u64\nreturn %0\n}"
+            "entry:\n%1 = call fill([sret arg 0] %0) : u64\nreturn %0\n}")))]
+    [caller
+      (irt.func
+        (str_cat.str-cat
+          "function @main() -> u64 vars 4 {\nentry:\n"
+          (if frame?
+            "%2 = alloc (Array i64 3)\n%0 = addr_of %2\n%1 = call forward([sret arg 0] %0) : u64"
+            "%0 = call tl_alloc(24) : u64\n%1 = call forward(%0) : u64")
+          "\nreturn %1\n}"))]
+    [out
+      (opt-test-inline-program-functions
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-prepend
+          (& callee)
+          (& (ir.compiler-ir-function-seq1 (& caller))))
+        2)]
+    (when (!= out.len 2) (return false))
+    (let
+      [function (ir.compiler-ir-function-seq-ref out 1)]
+      [seen : i64 0]
+      [ok? : bool
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& function))))]
+      (match function
+        [(Function _ _ _ _ (ir.CompilerIrBlockList.Array blocks) _)
+          (for [b (iterator.range 0 blocks.len)]
+            (match (ir.compiler-ir-block-seq-ref blocks b)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (for [i (iterator.range 0 instrs.len)]
+                  (match (ir.compiler-ir-instr-seq-ref instrs i)
+                    [(Call _ name args _)
+                      (when
+                        (ir.compiler-ir-symbol-eq?
+                          name
+                          (opt-test-symbol "forward"))
+                        (set! ok? false))
+                      (when
+                        (ir.compiler-ir-symbol-eq?
+                          name
+                          (opt-test-symbol "fill"))
+                        (+= seen 1)
+                        (unless
+                          (=
+                            frame?
+                            (match args
+                              [(Sret _ _) true]
+                              [_ false]))
+                          (set! ok? false)))]
+                    [_ unit]))]))]
+        [_ (set! ok? false)])
+      (and ok? (> seen 0)))))
+
+(test
+  inline-return-storage-provenance
+  (test.assert-i64-eq
+    (opt-inline-storage-proof-test)
+    42
+    "incoming output proof after inlining")
+  (for [mode (iterator.range 0 4)]
+    (test.assert-true
+      (opt-inline-storage-integration? (>= mode 2) (or (= mode 1) (= mode 3)))
+      "single/multiblock clones retain only caller-valid storage roles")))
+
 (test
   cfg-never-call-exits
   (let

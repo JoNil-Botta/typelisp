@@ -57,6 +57,11 @@ sub-word integer and floating fields, and move-only boxed field values.
 
 ## Store RHS control flow
 
+`if_literal_branch_join.tl` covers contextual numeric and tuple tails through
+begin, let, nested conditionals and arithmetic on both branch paths. The selected
+inference test checks the committed child types and rollback after invalid joins;
+the semantic-index smoke checks the joined type and unique binding/use records.
+
 `store_rhs_control_flow.tl` retains the tail-call borrowed-argument case.
 The shared scalar/projected store matrix lives in `store_operand_exits.tl`;
 both fixtures run at opt0/1/2 on both hosts. Their paired safety cases require
@@ -104,7 +109,9 @@ hidden aggregate-result arguments after a nonreturning call.
 
 `result_slot_forwarding.tl` verifies returns through a borrowed local aggregate,
 direct construction into a fresh box, and lifetime-bearing aggregate calls at
-all opt levels.
+all opt levels, including zero and repeated aggregate tail recursion. The
+inlining proof matrix retains local frame markers while demoting valid incoming
+markers at unmarked sites; malformed storage origins remain malformed.
 The SSA tests retain positive unspecified-extent joins and reject scalar,
 offset, overwritten and mixed-origin pointers. Explicit output declarations
 also check incoming parameters, invalid extents, overlap and mismatched returns.

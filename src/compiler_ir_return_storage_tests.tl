@@ -690,6 +690,54 @@
     "return storage signatures and ranges"))
 
 (test
+  return-storage-incoming-self-assignment
+  (let
+    [bodies : (Array String 7)
+      (array
+        "%0 = mov %0 : u64"
+        "%0 = mov %0 : u64\n%0 = mov %0 : u64"
+        "%0 = mov %0 : u8"
+        "%0 = mov 7 : u64"
+        "%1 = mov %0 : u64\n%0 = mov %1 : u64"
+        "%1 = mov %0 : u64\n%1 = mov %1 : u64"
+        "%0 = mov %0 : u64\n%0 = mov 7 : u64")]
+    (for [i (iterator.range 0 7)]
+      (let
+        [function
+          (irt.func
+            (str_cat.str-cat
+              "function @self(output=%0:u64) -> u64 vars 2 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n"
+              (clone (array-ref bodies i))
+              "\nreturn %0\n}"))]
+        (match function
+          [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+            (let
+              [facts
+                (storage.facts
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  params
+                  abi
+                  blocks
+                  vars)]
+              [budget : i64 64]
+              [known?
+                (match (storage.range
+                  (& facts)
+                  (ir.CompilerIrValue.Var 0)
+                  (&mut budget))
+                  [(storage.StorageRange.Range root bytes)
+                    (and (= root -1) (= bytes 24))]
+                  [_ false])]
+              (test.assert-true
+                (= known? (or (< i 2) (= i 5)))
+                "only exact incoming u64 self assignments preserve the output range")
+              (when
+                (= i 5)
+                (test.assert-false
+                  (storage.single? (& facts) 1)
+                  "ordinary pointer redefinitions remain unavailable")))])))))
+
+(test
   return-storage-lifetime-instantiation
   (let
     [types : (Array String 4)

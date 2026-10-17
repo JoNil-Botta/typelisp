@@ -75,7 +75,10 @@
                     (ir.compiler-ir-instr-seq-ref instrs p)]
                   [dst : i64 (ir.compiler-ir-instr-dst instr)]
                   (when
-                    (and (>= dst 0) (< dst vars))
+                    (and
+                      (>= dst 0)
+                      (< dst vars)
+                      (not (identity-incoming-move? (& out) instr)))
                     (set!
                       (array-ref out.definition-count dst)
                       (+ 1 (array-ref out.definition-count dst)))
@@ -245,6 +248,25 @@
                   (StorageRange.Unknown))])
             (StorageRange.Unknown)))]
       [_ (StorageRange.Unknown)])))
+
+;; Tail-recursion lowering can leave an exact u64 self assignment of the
+;; hidden output parameter. It changes neither its bits nor its declaration;
+;; other writes, including narrower moves and copies through aliases, still
+;; invalidate the single-definition evidence.
+(define (identity-incoming-move?
+  [facts : (& StorageFacts)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov
+        dst
+        (ir.CompilerIrValue.Var source)
+        (ast.AstType.U64))
+      (and
+        (= dst source)
+        (match (incoming-range facts dst)
+          [(StorageRange.Range _ _) true]
+          [_ false]))]
+    [_ false]))
 
 (define (addressed-range
   [facts : (& facts StorageFacts)]

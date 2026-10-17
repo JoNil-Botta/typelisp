@@ -1457,6 +1457,10 @@ output extent. The return-storage verifier validates declarations, complete
 uniform extents and overlap before accepting the function, including mutable
 IR. Joining unspecified extents retains unavailable range evidence; it never
 grants a range, an alias identity or a stack-coloring proof.
+Inlining at an unmarked output site removes only markers whose callee proof
+depended on its incoming result parameter; local storage proofs remain intact.
+Exact u64 self assignments of that parameter preserve its range through tail
+recursion. Narrower moves, other writes and redefined aliases retain no proof.
 Call-site layout comparisons instantiate declaration-local lifetime names;
 nominal identity, lifetime arity, reference mutability and runtime type
 structure remain exact. Source signatures and captured ABI authority keep

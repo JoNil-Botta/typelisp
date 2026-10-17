@@ -1268,8 +1268,9 @@ summary does not prove their payload unchanged. Missing summaries and escaped
 cell addresses remain conservative. Per-program facts live with the inline
 stage and are unpublished when it finishes. Later snapshot rematerialization
 must respect the same write barriers, so it cannot undo the call-entry capture.
-This does not replace the
-lowering rule for writes by later argument expressions described above.
+It also retains its existing pointer-write motion barriers; only argument
+staging uses the cell-address proof to avoid a capture. This does not replace
+the lowering rule for writes by later argument expressions described above.
 
 The multiblock inliner admits known one-word nominal results and register groups
 within the group splitter's word limit, using the installed program

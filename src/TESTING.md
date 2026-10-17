@@ -65,6 +65,14 @@ and backtrace instrumentation enabled, so its allocation-counter assertion
 observes the active allocator.
 Zero-sized tuple/array call transport keeps the existing ABI rejection.
 
+`reference_copy_consumer.tl` adds opt0/1/2 coverage on both hosts for pure scalar
+matches, mutation after scalar and aggregate pattern binding, aggregate match
+results, early returns, explicit return transport and clone independence.
+Lowerer shape checks on both ABIs require one return copy and no snapshot for
+pure scalar matches; calls and escaping aggregate results retain a snapshot.
+The prelude-aware clone shape fixture requires a single copy of a projected
+memory-class value.
+
 `set_place_eval_order.tl`, `raw_pointer_field_place.tl` and
 `by_value_aggregate_abi.tl` keep nested array-store receivers attached to their
 original places while whole projection reads copy independently.

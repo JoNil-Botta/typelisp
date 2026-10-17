@@ -269,9 +269,14 @@ use `lower-copy-projected-value`: register values are already independent, and
 memory-class values are copied into frame storage. `lower-projection-receiver`
 reuses place addressing when a projection, borrow or store receiver needs the
 original storage, so scalar field reads and nested stores do not copy their
-parent. Type projection distinguishes
-these reads from pattern/store places: reference-free Copy reads omit the
-container's extra region, while intrinsic region facts and stored-reference
+parent. Return transport and explicit clones consume that original place when
+their own immediate copy already produces independent bytes. Value and tail
+matches share `lower-match-scrutinee`: an integer, boolean or character result
+may read the original storage only when `lower-deferred-copy-scan` finds no
+calls, writes, early exits, cleanup or unmodeled effects in any arm. Aggregate
+results keep the snapshot, since a payload could otherwise retain its address.
+Type projection distinguishes these reads from pattern/store places:
+reference-free Copy reads omit the container's extra region, while intrinsic region facts and stored-reference
 lifetimes remain checked. These rules do not change plain variable bindings.
 
 Binary operators use the same snapshot helper and storage-write scan with a

@@ -11177,6 +11177,112 @@
     [(typed.TypedStoreResult.Err error)
       (io.panic (tc_core.tc-selected-error error))]))
 
+(define (tc-selected-normalized-certificate-case? [mode : i64]) : bool
+  (let
+    [name : i64 (ci.intern-generated-canonical-name "retained-normalized")]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
+    [expression : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [ret : ast.AstType ast.AstType.I64]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        expression
+        ast.AstType.I64)]
+    [selected : tc_core.TcSelectedOccurrence
+      (tc_core.TcSelectedOccurrence.Selected root)]
+    [type : typed.TypedTypeId
+      (match (typed.typed-occurrence-get! (&mut store) (& lease) root)
+        [(typed.TypedNodeResult.Ok node) node.type]
+        [_ (return false)])]
+    (tc_core.tc-selected-lowering-start! state)
+    (with-arena
+      scratch
+      (match (tc_core.tc-selected-prepare-named-body
+        ctx
+        name
+        (& params)
+        (& ret)
+        expression
+        (&mut store)
+        (& lease)
+        selected
+        type)
+        [(tc_core.TcSelectedAdmission.Ok true) unit]
+        [_ (return false)]))
+    (typed.typed-store-retire! (&mut store))
+    ;; The transient normalized graph and its paths have been retired.
+    ;; The typed source store is no longer available for interpretation.
+    ;; The published graph must be an independent job-owned value.
+    (tc_core.tc-selected-lowering-finish! state)
+    (let
+      [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
+      (cond
+        [(= mode 1)
+          (set! data.selected-owner (+ data.selected-owner (cast 1 : u64)))]
+        [(= mode 2) (set! data.selected-revision (cast 0 : u64))]
+        [(= mode 3) (set! data.selected-ready? false)]
+        [(= mode 4) (set! data.selected-failed? true)]
+        [else unit])
+      (tc_core.tc-body-state-data-set! state data))
+    (match (tc_core.tc-selected-certificate-lookup
+      ctx
+      (if (= mode 6)
+        (ci.intern-generated-canonical-name "missing-normalized")
+        name)
+      (& params)
+      (& ret)
+      (if (= mode 5)
+        -1
+        expression))
+      [(tc_core.TcSelectedLookup.Normalized address)
+        (and
+          (= mode 0)
+          (> address (cast 0 : u64))
+          (let
+            [output : ownership_normalize.OwnershipNormalizedBody
+              (tc_core.tc-state-cell-read
+                address
+                ownership_normalize.OwnershipNormalizedBody)]
+            (and
+              (ownership_normalize.ownership-normalized-scalar-emission?
+                (& output))
+              (match (ownership.ownership-check
+                (& output.body)
+                (ownership.ownership-default-limits))
+                [(ownership.OwnershipResult.Ok) true]
+                [_ false]))))]
+      [(tc_core.TcSelectedLookup.Err message)
+        (and
+          (> mode 0)
+          (string.eq
+            message
+            (if (= mode 6)
+              "lower: missing checked source body entry"
+              "lower: stale checked source body entry")))]
+      [_ false])))
+
+(test
+  tc-selected-normalized-certificate-retirement
+  (for [mode (iterator.range 0 7)]
+    (test.assert-true
+      (tc-selected-normalized-certificate-case? mode)
+      (str_cat.str-cat
+        "normalized certificate retirement mode "
+        (string.int->string mode)))))
+
 (define (tc-selected-test-infer!
   [ctx : tc_core.TcContext]
   [store : (&mut store typed.TypedStore)]

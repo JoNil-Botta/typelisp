@@ -20109,6 +20109,14 @@
   [expression : i64]) : TcSelectedLookup
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
+    [initial : TcBodyStateData (tc-body-state-data-value state)]
+    [_phase : unit
+      (unless
+        (and
+          initial.selected-lowering?
+          initial.selected-ready?
+          (not initial.selected-failed?))
+        (return (TcSelectedLookup.Err "lower: stale checked source body entry")))]
     [_charge : unit
       (match (tc-selected-certificate-charge! state 0 1 0)
         [(ResultTcUnit.Ok) unit]

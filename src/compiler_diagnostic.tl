@@ -371,6 +371,55 @@
 (define (compiler-diagnostic-code-parse-invalid-pattern) : String
   "E0104")
 
+(define (compiler-diagnostic-code-load-source-read) : String
+  "E0301")
+
+(define (compiler-diagnostic-code-load-include-read) : String
+  "E0302")
+
+(define (compiler-diagnostic-code-load-import-resolution) : String
+  "E0303")
+
+(define (compiler-diagnostic-code-load-selected-item) : String
+  "E0304")
+
+(define (compiler-diagnostic-code-load-ambiguous-import) : String
+  "E0305")
+
+(define (compiler-diagnostic-code-load-module-identity) : String
+  "E0306")
+
+(define (compiler-diagnostic-code-load-duplicate-module) : String
+  "E0307")
+
+(defenum CompilerLoadKind
+  (SourceRead)
+  (IncludeRead)
+  (ImportResolution)
+  (SelectedItem)
+  (AmbiguousImport)
+  (ModuleIdentity)
+  (DuplicateModule))
+
+;; Only a loader-owned failure enters this conversion. Forwarded parser and
+;; typechecker diagnostics keep their original code, category and provenance.
+(define (compiler-diagnostic-load
+  [kind : CompilerLoadKind]
+  [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (let
+    [code : String
+      (match kind
+        [(SourceRead) (compiler-diagnostic-code-load-source-read)]
+        [(IncludeRead) (compiler-diagnostic-code-load-include-read)]
+        [(ImportResolution) (compiler-diagnostic-code-load-import-resolution)]
+        [(SelectedItem) (compiler-diagnostic-code-load-selected-item)]
+        [(AmbiguousImport) (compiler-diagnostic-code-load-ambiguous-import)]
+        [(ModuleIdentity) (compiler-diagnostic-code-load-module-identity)]
+        [(DuplicateModule) (compiler-diagnostic-code-load-duplicate-module)])]
+    (compiler-diagnostic-with-category
+      (& (compiler-diagnostic-with-code (& diag) code))
+      "load")))
+
 ;; One kind per published parse code, append-only like the codes.
 ;; `UnclassifiedParse` is `E0100`. A parser raise site tags its message with
 ;; its kind (`compiler-diagnostic-parse-tagged`); a lexer or reader error
@@ -683,7 +732,7 @@
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  28)
+  35)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -715,6 +764,13 @@
     [(= index 25) (compiler-diagnostic-code-parse-malformed-token)]
     [(= index 26) (compiler-diagnostic-code-parse-malformed-form)]
     [(= index 27) (compiler-diagnostic-code-parse-invalid-pattern)]
+    [(= index 28) (compiler-diagnostic-code-load-source-read)]
+    [(= index 29) (compiler-diagnostic-code-load-include-read)]
+    [(= index 30) (compiler-diagnostic-code-load-import-resolution)]
+    [(= index 31) (compiler-diagnostic-code-load-selected-item)]
+    [(= index 32) (compiler-diagnostic-code-load-ambiguous-import)]
+    [(= index 33) (compiler-diagnostic-code-load-module-identity)]
+    [(= index 34) (compiler-diagnostic-code-load-duplicate-module)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -747,6 +803,13 @@
     [(= index 25) "malformed token"]
     [(= index 26) "malformed form"]
     [(= index 27) "invalid pattern syntax"]
+    [(= index 28) "cannot read source module"]
+    [(= index 29) "cannot read included file"]
+    [(= index 30) "cannot resolve import"]
+    [(= index 31) "missing selected import item"]
+    [(= index 32) "ambiguous import binding"]
+    [(= index 33) "module identity mismatch"]
+    [(= index 34) "duplicate module declaration"]
     [else ""]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String

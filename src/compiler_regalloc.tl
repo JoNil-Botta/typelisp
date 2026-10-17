@@ -294,12 +294,14 @@
 ;; A liveness handle belongs to exactly one immutable CompilerIrFunction value.
 ;; Regalloc creates a fresh handle after every IR rewrite, then shares its
 ;; baseline analysis through all read-only planning helpers for that version.
-;; The edge-precise result is populated only for scalar opt2 allocation and
-;; coalescing. Keeping both analyses here lets the coalescer retain its one
+;; Scalar opt2 allocation and coalescing request edge-precise liveness.
+;; Baseline records that the function has no phis, so both analyses coincide.
+;; Keeping both analyses here lets the coalescer retain its one
 ;; deliberately conservative exclusion while making the version boundary
 ;; explicit and preventing accidental cross-function reuse.
 (defenum CompilerRegMaybeLiveness
   (No)
+  (Baseline)
   (Some live.CompilerFunctionLiveness))
 
 (defstruct CompilerRegLivenessHandle
@@ -384,9 +386,7 @@
                       1)
                     unit)
                   (CompilerRegLivenessHandle baseline (Some edge-precise))))
-              (CompilerRegLivenessHandle
-                (compiler-reg-global-shared-view baseline)
-                (Some baseline)))])
+              (CompilerRegLivenessHandle baseline (Baseline)))])
         (CompilerRegLivenessHandle baseline (No))))))
 
 (define (compiler-reg-liveness-handle-edge-precise
@@ -394,6 +394,8 @@
   (match (& handle.edge-precise)
     ;; A shallow view: the handle keeps owning the liveness tables.
     [(Some liveness) (owned_view.compiler-owned-reference-shared-view liveness)]
+    [(Baseline)
+      (owned_view.compiler-owned-reference-shared-view (& handle.baseline))]
     [(No)
       ;; Callers requesting this accessor are scalar coalescer paths and must
       ;; request edge-precise analysis when constructing their handle.
@@ -26419,13 +26421,17 @@
     ;; rows (see `seed-live-in?`), and the allocation walk is not run at all
     ;; unless the mode below asks for it.
     ;;
-    ;; Everything here is dead work for a move-free function and for the
-    ;; SIMD/AVX plan, exactly as before: the coalesce map build returns the
-    ;; empty map without reading an index, so the plan is unchanged.
+    ;; With no phis, both liveness analyses and their interval selections are
+    ;; identical. The incoming scalar index already includes the parameter-entry
+    ;; reservations; reuse it instead of rebuilding the same rows. The handle
+    ;; records this fact from its existing phi scan for this function version.
     [ep-relax? : bool
       (and
         allow-caller-saved-zero-call
-        (not (compiler-reg-move-list-empty? moves)))]
+        (not (compiler-reg-move-list-empty? moves))
+        (match (& liveness-handle.edge-precise)
+          [(Some _) true]
+          [_ false]))]
     ;; Exclude unsafe live-out inputs while admitting proven self-loop
     ;; back-edge-only values. Fixed div/mod or variable-shift functions retain
     ;; the conservative guard: relaxing an otherwise unrelated carry can reshape
@@ -26470,7 +26476,7 @@
     [coalesce-index : CompilerRegIntervalIndex
       (if (compiler-reg-move-list-empty? moves)
         (owned_view.compiler-owned-reference-shared-view interval-index)
-        (if allow-caller-saved-zero-call
+        (if ep-relax?
           ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
           ;; by the coalescing segment index AND the live-out-input phi exclusion.
           ;; Skipped entirely when there are no moves to coalesce (the empty arm

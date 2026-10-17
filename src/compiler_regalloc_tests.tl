@@ -6829,12 +6829,18 @@
       (reg.compiler-reg-liveness-census-reset!
         (owned_view.compiler-owned-shared-view metrics))
       (let
-        [_handle : reg.CompilerRegLivenessHandle
+        [handle : reg.CompilerRegLivenessHandle
           (reg.compiler-reg-liveness-handle-make
             (& func)
             true
             (owned_view.compiler-owned-shared-view metrics))]
         (and
+          (match (live.compiler-live-function-find-block
+            (& (reg.compiler-reg-liveness-handle-edge-precise (& handle)))
+            (ir.compiler-ir-label (& "hot")))
+            [(Some block)
+              (live.compiler-live-set-contains? (& block.live-in) 0)]
+            [(No) false])
           (= (compiler-reg-liveness-census-baseline-count metrics) 1)
           ;; The linear fixture is phi-free, so the edge-precise analysis is
           ;; the baseline itself and no second fixpoint is computed.
@@ -6864,12 +6870,18 @@
       (reg.compiler-reg-liveness-census-reset!
         (owned_view.compiler-owned-shared-view metrics))
       (let
-        [_handle : reg.CompilerRegLivenessHandle
+        [handle : reg.CompilerRegLivenessHandle
           (reg.compiler-reg-liveness-handle-make
             (& (compiler-reg-liveness-handle-phi-fixture))
             true
             (owned_view.compiler-owned-shared-view metrics))]
         (and
+          (match (live.compiler-live-function-find-block
+            (& (reg.compiler-reg-liveness-handle-edge-precise (& handle)))
+            (ir.compiler-ir-label (& "loop")))
+            [(Some block)
+              (not (live.compiler-live-set-contains? (& block.live-in) 0))]
+            [(No) false])
           (= (compiler-reg-liveness-census-baseline-count metrics) 1)
           ;; Phi present: the second, edge-precise fixpoint is computed.
           (= (compiler-reg-liveness-census-edge-precise-count metrics) 1))))))

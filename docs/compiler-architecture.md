@@ -1347,6 +1347,16 @@ borrows live only for the current fold; block storage keeps its input IR owner.
 Literal facts do not depend on global initialization or infer constancy for
 writable runtime strings.
 
+Scalar coalescing recognizes a zero-offset `Gep` on a thin pointer or reference
+base as a copy only through the existing same-value relation. Storage-identity
+exclusions, definition checks and register-class interference still apply;
+call-crossing pairs require nested live hulls. The liveness handle records when
+phi-free IR makes baseline and edge-precise analysis identical. Scalar planning
+then reuses its incoming interval index, including parameter-entry reservations,
+instead of rebuilding masks and segments. Phi-bearing functions retain their
+conservative coalescing index and guarded edge-precise substitutions. Each IR
+rewrite receives a new handle, so this equality proof cannot outlive its input.
+
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
 using division to avoid multiplication overflow. Small analyses allocate in the

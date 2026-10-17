@@ -22557,7 +22557,9 @@
                     items
                     (- index 1)
                     (sym_i64_env.sym-i64-bind-id env name-id loaded-var)
-                    (tc_core.tc-bind-id type-env name-id capture-ty))]
+                    ;; Slot types describe storage. Keep the inherited source
+                    ;; binding and its arena-owner markers for semantic queries.
+                    type-env)]
                 [_
                   (Err
                     (box

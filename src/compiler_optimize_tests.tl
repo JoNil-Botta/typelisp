@@ -66959,7 +66959,7 @@
 %5 = mul %0, %1 : i64")]
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
-      (&mut tables.exprs)
+      (&mut tables)
       (opt.compiler-opt-global-shared-view no-exprs))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -66967,7 +66967,7 @@
       "a walk that inserts nothing allocates no state")
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
-      (&mut tables.exprs)
+      (&mut tables)
       (opt.compiler-opt-global-shared-view first))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -66975,7 +66975,7 @@
       "the first inserting walk stores its state in the pass's slot")
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
-      (&mut tables.exprs)
+      (&mut tables)
       (opt.compiler-opt-global-shared-view second))
     (test.assert-i64-eq
       (opt-cse-table-generation (& tables.exprs))
@@ -78759,3 +78759,211 @@
               (ir.compiler-ir-label "body__bce_fast"))
             -1
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
+
+(define (opt-test-const-env-i64 [env : (& opt.OptConstEnv)] [var : i64]) : i64
+  (match (opt.opt-const-lookup
+    (owned_view.compiler-owned-reference-shared-view env)
+    var)
+    [(NoConst) -1]
+    [(SomeConst value _)
+      (match value
+        [(I64 number) number]
+        [_ -2])]))
+
+(test
+  const-env-index-shadow-and-independent-states
+  (let
+    [env : opt.OptConstEnv (Nil)]
+    [other : opt.OptConstEnv (Nil)]
+    (set! env (opt.opt-const-unbind (& env) 1000000000))
+    (test.assert-true
+      (match (& env)
+        [(Nil) true]
+        [_ false])
+      "missing unbind allocates no state")
+    (test.assert-i64-eq (opt-test-const-env-i64 (& env) 0) -1 "empty lookup")
+    (set! env (opt.opt-const-bind (& env) 0 (I64 42) (I64)))
+    (set! env (opt.opt-const-bind (& env) 0 (I64 43) (I64)))
+    (set! other (opt.opt-const-bind (& other) 0 (I64 99) (I64)))
+    (test.assert-i64-eq (opt-test-const-env-i64 (& env) 0) 43 "newest binding")
+    (set! env (opt.opt-const-unbind (& env) 0))
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 0)
+      -1
+      "unbind does not reveal older binding")
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& other) 0)
+      99
+      "fold and strength states are independent")
+    (set! env (opt.opt-const-bind (& env) 0 (I64 44) (I32)))
+    (test.assert-true
+      (match (opt.opt-const-lookup (opt.compiler-opt-global-shared-view env) 0)
+        [(SomeConst (I64 44) (I32)) true]
+        [_ false])
+      "rebind retains typed scalar")
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) -1)
+      -1
+      "negative lookup is missing")
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 1000000000)
+      -1
+      "out-of-range lookup is missing")
+    (set! env (opt.opt-const-unbind (& env) -1))
+    (set! env (opt.opt-const-unbind (& env) 1000000000))
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 0)
+      44
+      "out-of-range unbind preserves live fact")
+    (opt.opt-function-addr-taken-install!
+      2
+      (& (irt.blocks "entry:\n %1 = addr_of %0")))
+    (set! env (opt.opt-const-bind (& env) 0 (I64 55) (I64)))
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 0)
+      -1
+      "address-taken bind retires an old fact instead of installing a new one")
+    (opt.opt-function-addr-taken-install!
+      0
+      (& (irt.blocks "entry:\n return 0")))))
+
+(test
+  const-env-index-growth-and-block-clear
+  (let
+    [env : opt.OptConstEnv (Nil)]
+    [capacity : i64 0]
+    [slots : i64 0]
+    [previous : opt.OptKnownConst (NoConst)]
+    (for [index (iterator.range 0 129)]
+      (set!
+        env
+        (opt.opt-const-bind (& env) (* index 3) (I64 (+ index 10)) (I64))))
+    (for [index (iterator.range 0 129)]
+      (test.assert-i64-eq
+        (opt-test-const-env-i64 (& env) (* index 3))
+        (+ index 10)
+        "fact survives growth")
+      (test.assert-i64-eq
+        (opt-test-const-env-i64 (& env) (+ (* index 3) 1))
+        -1
+        "sparse local holes remain empty"))
+    (match (opt.compiler-opt-global-shared-view env)
+      [(Dense state)
+        (let
+          [content : (& state opt.OptConstState) (& (deref state))]
+          (set! capacity (array-length content.index))
+          (set! slots (array-length content.entries.slots)))]
+      [_ (test.assert-true false "bindings allocate dense state")])
+    (set!
+      previous
+      (opt.opt-const-lookup (opt.compiler-opt-global-shared-view env) 0))
+    (set! env (opt.opt-const-env-clear (& env)))
+    (for [index (iterator.range 0 129)]
+      (test.assert-i64-eq
+        (opt-test-const-env-i64 (& env) (* index 3))
+        -1
+        "next block sees no old facts"))
+    (set! env (opt.opt-const-bind (& env) 1 (I64 77) (I64)))
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 0)
+      -1
+      "reused first slot does not revive prior index")
+    (test.assert-i64-eq
+      (opt-test-const-env-i64 (& env) 1)
+      77
+      "next block binds independently")
+    (test.assert-true
+      (match previous
+        [(SomeConst (I64 10) (I64)) true]
+        [_ false])
+      "returned constants survive fact-slot reuse")
+    (match (opt.compiler-opt-global-shared-view env)
+      [(Dense state)
+        (let
+          [content : (& state opt.OptConstState) (& (deref state))]
+          (test.assert-i64-eq
+            (array-length content.index)
+            capacity
+            "reuse index capacity")
+          (test.assert-i64-eq
+            (array-length content.entries.slots)
+            slots
+            "reuse fact capacity"))]
+      [_ (test.assert-true false "clear retains allocation")])))
+
+(test
+  const-env-fold-shadow-address-and-block-boundaries
+  (for [variant (iterator.range 0 6)]
+    (let
+      [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
+      [text : String
+        (cond
+          [(= variant 1)
+            "%0 = mov 41 : i64\n %0 = mov %7 : i64\n %1 = add %0, 1 : i64"]
+          [(= variant 2)
+            "%0 = mov 41 : i64\n %2 = addr_of %0\n %1 = add %0, 1 : i64"]
+          [(= variant 3)
+            "%0 = mov 41 : i64\n store_ptr %7, 9 : i64\n %1 = add %0, 1 : i64"]
+          [(= variant 4)
+            "%0 = mov 41 : i64\n store_owned %7 -> %6 : i64\n %1 = add %0, 1 : i64"]
+          [(= variant 5)
+            "%0 = mov 41 : i64\n copy_bytes %7, %6, 8\n %1 = add %0, 1 : i64"]
+          [else "%0 = mov 41 : i64\n %1 = add %0, 1 : i64"])]
+      [blocks : ir.CompilerIrBlockList
+        (irt.blocks (str_cat.str-cat "entry:\n" (clone text)))]
+      [instrs : ir.CompilerIrInstrSeq (irt.instrs text)]
+      [later : ir.CompilerIrInstrSeq (irt.instrs "%3 = add %0, 1 : i64")]
+      [rebind : ir.CompilerIrInstrSeq
+        (irt.instrs "%5 = mov 99 : i64\n %6 = add %5, 1 : i64")]
+      [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+      (opt.opt-function-addr-taken-install! 8 (& blocks))
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables)
+        (opt.compiler-opt-global-shared-view instrs))
+      (test.assert-true
+        (opt.opt-instr-eq
+          bases
+          (ir.compiler-ir-instr-seq-borrow instrs (- instrs.len 1))
+          (&
+            (irt.instr
+              (if (= variant 0)
+                "%1 = mov 42 : i64"
+                "%1 = add %0, 1 : i64"))))
+        "shadowed, address-taken and memory-invalidated operands remain unknown")
+      (when
+        (>= variant 3)
+        (test.assert-true
+          (and
+            (match (& tables.fold)
+              [(Dense _) true]
+              [_ false])
+            (match (& tables.strength)
+              [(Dense _) true]
+              [_ false]))
+          "memory barriers retain both allocations"))
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables)
+        (opt.compiler-opt-global-shared-view later))
+      (test.assert-true
+        (opt.opt-instr-seq-eq
+          bases
+          (& later)
+          (& (irt.instrs "%3 = add %0, 1 : i64")))
+        "reused block state preserves live-in operands")
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables)
+        (opt.compiler-opt-global-shared-view rebind))
+      (test.assert-true
+        (opt.opt-instr-eq
+          bases
+          (ir.compiler-ir-instr-seq-borrow instrs (- instrs.len 1))
+          (&
+            (irt.instr
+              (if (= variant 0)
+                "%1 = mov 42 : i64"
+                "%1 = add %0, 1 : i64"))))
+        "rewritten IR survives later fact-slot reuse")))
+  (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "entry:\n return 0"))))

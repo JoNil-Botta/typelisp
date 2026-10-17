@@ -1132,42 +1132,126 @@
   (NoConst)
   (SomeConst ir.CompilerIrValue ast.AstType))
 
-;; The const env is threaded linearly through a single block's fold/strength
-;; passes (each block starts fresh at `OptConstEnv.Nil`); it is never forked or
-;; reused across blocks. So bind/unbind only ever extend the most recent env.
-;; We exploit that: the newest entry for a var always shadows older ones, so
-;; `bind` and `unbind` just PREPEND (O(1)) instead of rebuilding the whole list
-;; to remove the prior entry, which would make folding a single large block
-;; O(n^2) in both time and allocation (a function that is one giant `str-cat`
-;; lowers to a long `string-append` call chain, and each call unbinds its dst).
-;; `OptConstEnv.Shadow` records "this var is no longer a known constant" so
-;; lookup stops at it.
+(defstruct OptConstEntry
+  (var i64)
+  (value ir.CompilerIrValue)
+  (ty ast.AstType))
+
+(import (vector.vector OptConstEntry core) as opt_const_entry_vec)
+
+(defstruct OptConstState
+  (index (__tl_dyn-array i64))
+  (entries opt_const_entry_vec.Vec))
+
+;; Fold and strength each own one state for a function pass. Their block walks
+;; thread it linearly: no older environment is retained. Only local vreg ids
+;; index it; zero means unknown, and a positive index names the newest compact
+;; fact slot plus one. Lookup checks both the live slot range and its key, so
+;; clear can retire all facts by resetting len. Reused slots cannot revive an
+;; old index. Unbinding zeroes the index and never reveals an older binding.
 (defenum OptConstEnv
   (Nil)
-  (Cons i64 ir.CompilerIrValue ast.AstType (Box OptConstEnv))
-  (Shadow i64 (Box OptConstEnv)))
+  (Dense (Box OptConstState)))
 
 (define (opt-const-unbind [env : (& env OptConstEnv)] [var : i64]) : OptConstEnv
-  (Shadow var (box env)))
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(Nil) (Nil)]
+    [(Dense state)
+      (let
+        [content : (&mut state OptConstState) (&mut (__tl-box-place state))]
+        (when
+          (and
+            (> content.entries.len 0)
+            (>= var 0)
+            (< var (array-length content.index)))
+          (set! (array-ref content.index var) 0)))
+      (Dense state)]))
 
+;; A call through an exposed address may write the local without naming its
+;; dst. Reject such facts at insertion: only bind can introduce one, and the
+;; function pass installs its complete address-taken marks before any block.
 (define (opt-const-bind
   [env : (& env OptConstEnv)]
   [var : i64]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptConstEnv
-  (Cons var value ty (box env)))
+  (if (or (< var 0) (opt-addr-taken-var? (& opt-function-addr-taken.marks) var))
+    (opt-const-unbind env var)
+    (match (owned_view.compiler-owned-reference-shared-view env)
+      [(Nil)
+        (let
+          [allocated : OptConstEnv
+            (Dense
+              (box
+                (OptConstState
+                  (__tl_make-array i64 0)
+                  (opt_const_entry_vec.new))))]
+          (opt-const-bind (& allocated) var value ty))]
+      [(Dense state)
+        (let
+          [content : (&mut state OptConstState) (&mut (__tl-box-place state))]
+          [capacity : i64 (array-length content.index)]
+          (when
+            (>= var capacity)
+            (let
+              [grown : i64
+                (if (= capacity 0)
+                  16
+                  capacity)]
+              (while (>= var grown)
+                (set! grown (* grown 2)))
+              (let
+                [fresh : (__tl_dyn-array i64) (__tl_make-array i64 grown)]
+                (for [position (iterator.range 0 capacity)]
+                  (set!
+                    (array-ref fresh position)
+                    (array-ref content.index position)))
+                (set! content.index fresh))))
+          (opt_const_entry_vec.push-ref!
+            (&mut content.entries)
+            (OptConstEntry var value ty))
+          (set! (array-ref content.index var) content.entries.len))
+        (Dense state)])))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
   (match env
     [(Nil) (NoConst)]
-    [(Cons id value ty rest)
-      (if (= id var)
-        (SomeConst value ty)
-        (opt-const-lookup (deref rest) var))]
-    [(Shadow id rest)
-      (if (= id var)
-        (NoConst)
-        (opt-const-lookup (deref rest) var))]))
+    [(Dense state)
+      (let
+        [content : (& state OptConstState) (& (deref state))]
+        [position : i64
+          (if (and
+            (> content.entries.len 0)
+            (>= var 0)
+            (< var (array-length content.index)))
+            (array-ref content.index var)
+            0)]
+        (if (or (= position 0) (> position content.entries.len))
+          (NoConst)
+          (let
+            [entry : (& content OptConstEntry)
+              (& (array-ref content.entries.slots (- position 1)))]
+            (if (= entry.var var)
+              (SomeConst
+                (owned_view.compiler-owned-reference-shared-view
+                  (& entry.value))
+                (owned_view.compiler-owned-reference-shared-view (& entry.ty)))
+              (NoConst)))))]))
+
+(define (opt-const-env-clear [env : (& env OptConstEnv)]) : OptConstEnv
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(Nil) (Nil)]
+    [(Dense state)
+      (set! (__tl-box-place state).entries.len 0)
+      (Dense state)]))
+
+;; Preserve the first block's lazy allocation for subsequent block walks.
+(define (opt-const-env-keep!
+  [env : (&mut env OptConstEnv)]
+  [walk : OptConstEnv]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(Nil) (set! (deref env) walk)]
+    [(Dense _) unit]))
 
 (define (opt-integer-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -2673,7 +2757,7 @@
         (opt-const-unbind env dst)
         (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
+      (Result (opt-const-env-clear env) instr)]
     [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
     [_
       (Result
@@ -2722,7 +2806,7 @@
         (opt-const-unbind env dst)
         (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
+      (Result (opt-const-env-clear env) instr)]
     [(or (Pack _ _ _) (Word _ _ _ _))
       (Result (owned_view.compiler-owned-reference-shared-view env) instr)]
     [_
@@ -6337,18 +6421,17 @@
     [(Empty) (set! (deref table) walk)]
     [(Dense _) unit]))
 
-;; The block pass's two CSE tables: `exprs` for `opt-cse-instr` and `words` for
-;; the Slice-word CSE of the load/copy walk. One pair serves a whole function
-;; pass, next to its other per-pass scratch: the walkers borrow it mutably, each
-;; block walk clears the table it uses before its first instruction, so no entry
-;; crosses a block, and the first walk that inserts stores its state back with
-;; `opt-expr-table-keep!`.
+;; Block-local tables belong to one function pass. Each walk clears its own
+;; table before its first instruction and retains its lazy allocation afterward;
+;; storage is reused across blocks, but facts never cross a block boundary.
 (defstruct OptBlockExprTables
   (exprs OptExprTable)
-  (words OptExprTable))
+  (words OptExprTable)
+  (fold OptConstEnv)
+  (strength OptConstEnv))
 
 (define (opt-block-expr-tables-new) : OptBlockExprTables
-  (OptBlockExprTables (opt-expr-table-new) (opt-expr-table-new)))
+  (OptBlockExprTables (opt-expr-table-new) (opt-expr-table-new) (Nil) (Nil)))
 
 ;; A stamp makes ordinary clears independent of the largest earlier block.
 ;; Bucket counts are powers of two; only entries from the current generation
@@ -20837,7 +20920,7 @@
 ;;   the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
 ;;   before it examines one.
 ;; - Fold keeps no copy or constant fact naming one (`opt-copy-update-env`,
-;;   `opt-const-forget-addr-taken!`); `optimize-block-list-for-function-pass`
+;;   `opt-const-bind`); `optimize-block-list-for-function-pass`
 ;;   installs the set before its block walk.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
@@ -59130,29 +59213,15 @@
       blocks)
     blocks))
 
-;; Drops the constant fact a fold or strength step just bound for an
-;; address-taken var (#7973), for the reason `opt-copy-update-env` gives: a call
-;; through the exposed address does not clear this env either. A step binds at
-;; most one fact, its dst's, and `opt-const-bind` puts it at the head, so the
-;; head is the only fact a step can have added. Dropping it leaves the var
-;; unbound: no earlier step left a fact for it below.
-(define (opt-const-forget-addr-taken! [env : (&mut env OptConstEnv)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view env)
-    [(Cons var _ _ rest)
-      (if (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
-        (set! (deref env) (deref rest))
-        unit)]
-    [_ unit]))
-
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [exprs : (&mut exprs OptExprTable)]
+  [tables : (&mut tables OptBlockExprTables)]
   [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
     [store-count : i64 0]
-    [fold-state : OptConstEnv (Nil)]
-    [strength-state : OptConstEnv (Nil)]
-    [cse-state : OptExprTable (opt-expr-table-clear exprs)]
+    [fold-state : OptConstEnv (opt-const-env-clear (& tables.fold))]
+    [strength-state : OptConstEnv (opt-const-env-clear (& tables.strength))]
+    [cse-state : OptExprTable (opt-expr-table-clear (& tables.exprs))]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (for [index (iterator.range 0 count)]
       (match (opt-fold-instr
@@ -59181,14 +59250,11 @@
                   (ir.compiler-ir-instr-seq-set! (&mut instrs) index rewritten)
                   (set! fold-state next-fold)
                   (set! strength-state next-strength)
-                  ;; Empty marks: the function takes no address.
-                  (when
-                    (> (array-length opt-function-addr-taken.marks) 0)
-                    (opt-const-forget-addr-taken! (&mut fold-state))
-                    (opt-const-forget-addr-taken! (&mut strength-state)))
                   (set! cse-state next-cse)
                   unit])])]))
-    (opt-expr-table-keep! exprs cse-state)
+    (opt-const-env-keep! (&mut tables.fold) fold-state)
+    (opt-const-env-keep! (&mut tables.strength) strength-state)
+    (opt-expr-table-keep! (&mut tables.exprs) cse-state)
     store-count))
 
 ;; Native Slice parameters are two-word register groups passed by value. Their
@@ -59880,7 +59946,7 @@
           store-capacity
           (opt-fold-strength-cse-instr-seq-rewrite!
             type-segment-bases
-            (&mut tables.exprs)
+            tables
             (compiler-opt-global-shared-view work)))
         (set!
           work
@@ -60044,7 +60110,7 @@
         ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
-        ;; One pair of block CSE tables per pass, cleared by each block's walk.
+        ;; One set of block-local tables per pass, cleared by each block's walk.
         [tables : OptBlockExprTables (opt-block-expr-tables-new)]
         [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [next : ir.CompilerIrBlockList

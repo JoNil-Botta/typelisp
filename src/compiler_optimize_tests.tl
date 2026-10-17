@@ -474,6 +474,7 @@
       pools
       (&mut input)
       type-segment-bases
+      (& (ir.compiler-ir-global-seq-empty))
       functions
       level
       spans)))
@@ -3143,6 +3144,7 @@
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
+        (& (ir.compiler-ir-global-seq-empty))
         (opt-input-arena-functions)
         2
         (ir.compiler-source-spans-empty))]
@@ -3231,6 +3233,7 @@
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
+        (& (ir.compiler-ir-global-seq-empty))
         (opt-input-arena-functions)
         1
         (ir.compiler-source-spans-empty))]
@@ -67879,7 +67882,10 @@
         (& (opt-test-function (ir.compiler-ir-instr-seq-empty)))
         (& (ir.compiler-ir-function-seq-empty)))]
     [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
-    [_install : unit (opt.opt-inline-owned-state-install! index)]
+    [_install : unit
+      (opt.opt-inline-owned-state-install!
+        index
+        (& (ir.compiler-ir-global-seq-empty)))]
     [live-owned : opt.CompilerOptOwnedState
       (opt.compiler-opt-owned-state-shared-view)]
     [live : opt.OptInlineOwnedState live-owned.inline-state]

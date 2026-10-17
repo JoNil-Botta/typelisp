@@ -481,7 +481,8 @@
   ;; SHAPE reason is recorded here, and only so a callee with fifteen refused
   ;; sites produces one line instead of fifteen -- the property the multiblock
   ;; tracer gets from its verdict memo.
-  (single-shape-traced (__tl_dyn-array i64)))
+  (single-shape-traced (__tl_dyn-array i64))
+  (global-mod-ref OptGlobalModRef))
 
 ;; The optimizer's two cross-function arena protocols are process-serial, but
 ;; their owners and every global view backed by the surrounding compile job
@@ -513,7 +514,8 @@
     (OptInlineOwnedState
       (arena.Arena 0)
       (__tl_make-array i64 0)
-      (__tl_make-array i64 0))
+      (__tl_make-array i64 0)
+      (opt-global-mod-ref-none))
     (OptDebugState
       (arena.Arena 0)
       (cis.InternStructuralSessionHandle 0)
@@ -570,7 +572,8 @@
       (OptInlineOwnedState
         (arena.Arena 0)
         (__tl_make-array i64 0)
-        (__tl_make-array i64 0))
+        (__tl_make-array i64 0)
+        (opt-global-mod-ref-none))
       (OptDebugState
         (arena.current)
         structural-session
@@ -104758,7 +104761,9 @@
 ;; rest of the pass and the cached verdict cannot go stale. A -1 slot means
 ;; "not yet computed". The verdict cached here is caller-independent; the
 ;; self-call check stays outside in opt-inline-multiblock-callee-ok-cached?.
-(define (opt-inline-owned-state-install! [index : (& index OptFunctionIndex)]) : unit
+(define (opt-inline-owned-state-install!
+  [index : (& index OptFunctionIndex)]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]) : unit
   (let
     [count : i64 (opt-function-index-count index)]
     [memo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -104773,12 +104778,27 @@
           count
           0))]
     [scratch : arena.Arena (arena.make)]
+    [mod-ref : OptGlobalModRef
+      (if (and (> globals.len 0) (<= count (opt-summary-function-limit)))
+        (let
+          [functions
+            (opt-function-index-to-seq
+              (owned_view.compiler-owned-reference-shared-view index))]
+          [facts (opt-program-facts-build (& functions))]
+          (opt-global-mod-ref-build
+            globals
+            (& functions)
+            (& facts.index)
+            (& facts.cells.stores)
+            (& facts.addr-taken)
+            (opt-function-index-capacity count)))
+        (opt-global-mod-ref-none))]
     (opt-cfg-fill-i64! (&mut memo) count (- 0 1))
     (opt-cfg-fill-i64! (&mut traced) (array-length traced) (- 0 1))
     (__tl-project-set-field
       compiler-opt-owned-state
       inline-state
-      (OptInlineOwnedState scratch memo traced))))
+      (OptInlineOwnedState scratch memo traced mod-ref))))
 
 (define (opt-inline-owned-state-reset! [destroy-owner? : bool]) : unit
   (let
@@ -104794,7 +104814,8 @@
       (OptInlineOwnedState
         (arena.Arena 0)
         (__tl_make-array i64 0)
-        (__tl_make-array i64 0)))
+        (__tl_make-array i64 0)
+        (opt-global-mod-ref-none)))
     (if (or (not destroy-owner?) (= (arena.raw-handle scratch) 0))
       unit
       (unsafe
@@ -105272,13 +105293,67 @@
       [(Param name _ _)
         (string.eq name (ir.compiler-ir-hidden-sret-param-name))])))
 
+(defstruct OptInlineArgStaging
+  (all? bool)
+  (values? bool)
+  (globals (__tl_dyn-array bool))
+  (count i64))
+
+;; Substituting a Global into the body would reload the cell at each use.
+;; Save only actuals the callee can overwrite; GlobalAddr still names storage.
+;; Missing call facts and pointer/unknown writes retain the value conservatively.
+(define (opt-inline-arg-staging
+  [params : (& ir.CompilerIrParamSeq)]
+  [args : (& ir.CompilerIrCallArgs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [all? : bool]
+  [values? : bool]) : OptInlineArgStaging
+  (let
+    [np : i64 (opt-inline-param-count params)]
+    [globals : (__tl_dyn-array bool) (__tl_make-array bool 0)]
+    [count : i64 0]
+    (when
+      (and (not all?) (not values?) (opt-inline-arity-ok? args np))
+      (for [index (iterator.range 0 np)]
+        (match (opt-inline-clone-arg-at args index)
+          [(Global name)
+            (when
+              (opt-blocks-any?
+                blocks
+                opt-global-snapshot-global-killed?
+                (& compiler-opt-owned-state.inline-state.global-mod-ref)
+                (& opt-pure-call-inline-memory)
+                name)
+              (when (= count 0) (set! globals (__tl_make-array bool np)))
+              (set! (array-ref globals index) true)
+              (+= count 1))]
+          [_ unit])))
+    (OptInlineArgStaging
+      all?
+      values?
+      globals
+      (if (or all? values?)
+        np
+        count))))
+
+(define (opt-inline-stage-arg?
+  [params : (& ir.CompilerIrParamSeq)]
+  [staging : (& staging OptInlineArgStaging)]
+  [index : i64]) : bool
+  (or
+    staging.all?
+    (and staging.values? (not (opt-inline-param-is-sret? params index)))
+    (and
+      (< index (array-length staging.globals))
+      (array-ref staging.globals index))))
+
 (define (opt-inline-staged-arg
   [params : (& ir.CompilerIrParamSeq)]
   [args : (& args ir.CompilerIrCallArgs)]
   [base : i64]
   [index : i64]
-  [stage-all? : bool]) : ir.CompilerIrValue
-  (if (or stage-all? (not (opt-inline-param-is-sret? params index)))
+  [staging : (& staging OptInlineArgStaging)]) : ir.CompilerIrValue
+  (if (opt-inline-stage-arg? params staging index)
     (opt-inline-stage-arg-var base index)
     (opt-inline-clone-arg-at args index)))
 
@@ -105287,19 +105362,19 @@
   [params : (& ir.CompilerIrParamSeq)]
   [args : (& ir.CompilerIrCallArgs)]
   [base : i64]
-  [stage-all? : bool]
+  [staging : (& staging OptInlineArgStaging)]
   [index : i64]) : unit
   (unless
     (>= index (array-length out))
     (set!
       (array-ref out index)
-      (opt-inline-staged-arg params args base index stage-all?))
+      (opt-inline-staged-arg params args base index staging))
     (opt-inline-staged-args-array-fill!
       out
       params
       args
       base
-      stage-all?
+      staging
       (+ index 1))))
 
 (define (opt-inline-staged-args
@@ -105307,14 +105382,14 @@
   [args : (& ir.CompilerIrCallArgs)]
   [np : i64]
   [base : i64]
-  [stage-all? : bool]) : ir.CompilerIrCallArgs
+  [staging : (& staging OptInlineArgStaging)]) : ir.CompilerIrCallArgs
   (cond
     [(= np 0) (Nil)]
-    [(= np 1) (One (opt-inline-staged-arg params args base 0 stage-all?))]
+    [(= np 1) (One (opt-inline-staged-arg params args base 0 staging))]
     [(= np 2)
       (Two
-        (opt-inline-staged-arg params args base 0 stage-all?)
-        (opt-inline-staged-arg params args base 1 stage-all?))]
+        (opt-inline-staged-arg params args base 0 staging)
+        (opt-inline-staged-arg params args base 1 staging))]
     [else
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
@@ -105324,7 +105399,7 @@
           params
           args
           base
-          stage-all?
+          staging
           0)
         (Array out))]))
 
@@ -105332,16 +105407,14 @@
   [params : (& ir.CompilerIrParamSeq)]
   [args : (& args ir.CompilerIrCallArgs)]
   [base : i64]
-  [stage-all? : bool]
+  [staging : (& staging OptInlineArgStaging)]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
     unit
     (match (ir.compiler-ir-param-seq-ref params index)
-      [(Param name ty _)
-        (if (or
-          stage-all?
-          (not (string.eq name (ir.compiler-ir-hidden-sret-param-name))))
+      [(Param _ ty _)
+        (if (opt-inline-stage-arg? params staging index)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Mov
@@ -105353,7 +105426,7 @@
           params
           args
           base
-          stage-all?
+          staging
           (+ index 1)
           (&mut builder))])))
 
@@ -105361,7 +105434,7 @@
   [params : (& ir.CompilerIrParamSeq)]
   [args : (& args ir.CompilerIrCallArgs)]
   [base : i64]
-  [stage-all? : bool]
+  [staging : (& staging OptInlineArgStaging)]
   [index : i64]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
@@ -105371,7 +105444,7 @@
       params
       args
       base
-      stage-all?
+      staging
       index
       (&mut builder))
     (ir.compiler-ir-instr-builder-to-seq builder)))
@@ -105840,13 +105913,13 @@
         callee
         (&mut builder)))))
 
-(define (opt-inline-expand-instrs-with-spans-from
+(define (opt-inline-expand-instrs-with-spans
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [count : i64]
   [dst : i64]
   [ret : (& ast.AstType)]
   [sa : (& ir.CompilerIrCallArgs)]
+  [params : (& ir.CompilerIrParamSeq)]
+  [staging : (& staging OptInlineArgStaging)]
   [np : i64]
   [base : i64]
   [label-prefix : String]
@@ -105856,18 +105929,37 @@
   [call-instr : (& ir.CompilerIrInstr)]
   [callee : i64]) : OptInlineSpanState
   (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [clone-base : i64
+      (if (> staging.count 0)
+        (+ base np)
+        base)]
+    [args : ir.CompilerIrCallArgs
+      (if (> staging.count 0)
+        (opt-inline-staged-args params sa np base staging)
+        (owned_view.compiler-owned-reference-shared-view sa))]
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+      (ir.compiler-ir-instr-builder-with-capacity (+ count staging.count))]
+    [_staged : unit
+      (when
+        (> staging.count 0)
+        (opt-inline-stage-param-instrs-into!
+          params
+          sa
+          base
+          staging
+          0
+          (&mut builder)))]
     [final-spans : ir.CompilerSourceSpans
       (opt-inline-expand-instrs-with-spans-into!
         instrs
-        index
+        0
         count
         dst
         ret
-        sa
+        (& args)
         np
-        base
+        clone-base
         label-prefix
         source-spans
         out-spans
@@ -105875,36 +105967,11 @@
         call-instr
         callee
         (&mut builder))]
-    (State (ir.compiler-ir-instr-builder-to-seq builder) base 0 final-spans)))
-
-(define (opt-inline-expand-instrs-with-spans
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [dst : i64]
-  [ret : (& ast.AstType)]
-  [sa : (& ir.CompilerIrCallArgs)]
-  [np : i64]
-  [base : i64]
-  [label-prefix : String]
-  [source-spans : (& source-spans ir.CompilerSourceSpans)]
-  [out-spans : ir.CompilerSourceSpans]
-  [caller : i64]
-  [call-instr : (& ir.CompilerIrInstr)]
-  [callee : i64]) : OptInlineSpanState
-  (opt-inline-expand-instrs-with-spans-from
-    instrs
-    0
-    (ir.compiler-ir-instr-seq-count instrs)
-    dst
-    ret
-    sa
-    np
-    base
-    label-prefix
-    source-spans
-    out-spans
-    caller
-    call-instr
-    callee))
+    (State
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      clone-base
+      0
+      final-spans)))
 
 ;; The destination-free expansion, for a direct tail-call site. It is the same
 ;; walk as opt-inline-expand-instrs-with-spans-into! with one difference, and the
@@ -105983,6 +106050,8 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [ret : (& ast.AstType)]
   [sa : (& ir.CompilerIrCallArgs)]
+  [params : (& ir.CompilerIrParamSeq)]
+  [staging : (& staging OptInlineArgStaging)]
   [np : i64]
   [base : i64]
   [label-prefix : String]
@@ -105993,17 +106062,35 @@
   [callee : i64]) : OptInlineSpanState
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [clone-base : i64
+      (if (> staging.count 0)
+        (+ base np)
+        base)]
+    [args : ir.CompilerIrCallArgs
+      (if (> staging.count 0)
+        (opt-inline-staged-args params sa np base staging)
+        (owned_view.compiler-owned-reference-shared-view sa))]
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
+      (ir.compiler-ir-instr-builder-with-capacity (+ count staging.count))]
+    [_staged : unit
+      (when
+        (> staging.count 0)
+        (opt-inline-stage-param-instrs-into!
+          params
+          sa
+          base
+          staging
+          0
+          (&mut builder)))]
     [final-spans : ir.CompilerSourceSpans
       (opt-inline-expand-tail-instrs-with-spans-into!
         instrs
         0
         count
         ret
-        sa
+        (& args)
         np
-        base
+        clone-base
         label-prefix
         source-spans
         out-spans
@@ -106011,7 +106098,11 @@
         call-instr
         callee
         (&mut builder))]
-    (State (ir.compiler-ir-instr-builder-to-seq builder) base 0 final-spans)))
+    (State
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      clone-base
+      0
+      final-spans)))
 
 (define (opt-inline-empty-instr-seq) : ir.CompilerIrInstrSeq
   (ir.compiler-ir-instr-builder-to-seq
@@ -111484,6 +111575,7 @@
   [callee-name : i64]
   [cargs : (& cargs ir.CompilerIrCallArgs)]
   [np : i64]
+  [captures : i64]
   [cblocks : (& cblocks ir.CompilerIrBlockList)]
   [callee-ret : (& ast.AstType)]
   [caller-blocks : i64]
@@ -111498,7 +111590,8 @@
     [has-bounds? : bool
       (opt-inline-instr-seq-has-bounds-check? (& body-instrs))]
     [bounds-leaf? : bool (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
-    [callee-instrs : i64 (opt-inline-single-block-cost-instrs cblocks)]
+    [callee-instrs : i64
+      (+ captures (opt-inline-single-block-cost-instrs cblocks))]
     (or
       (and
         (opt-inline-bounds-inline-ok? has-bounds? absorbable? const-args np)
@@ -111568,6 +111661,8 @@
             [(Function callee-name cparams callee-ret cvars cblocks _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
+                [staging
+                  (opt-inline-arg-staging cparams cargs cblocks false false)]
                 (if (and
                   (opt-inline-arity-ok? cargs np)
                   (opt-inline-single-block-site-admitted?
@@ -111577,6 +111672,7 @@
                     callee-name
                     cargs
                     np
+                    staging.count
                     cblocks
                     (& callee-ret)
                     caller-blocks
@@ -111588,6 +111684,8 @@
                       dst
                       (& cret)
                       (& cargs)
+                      (& cparams)
+                      (& staging)
                       np
                       vars
                       (opt-inline-site-prefix
@@ -111600,10 +111698,10 @@
                       func-name
                       instr
                       cname)
-                      [(State expanded _ _ next-spans)
+                      [(State expanded clone-base _ next-spans)
                         (State
                           expanded
-                          (+ vars (opt-inline-frame-growth cvars np))
+                          (+ clone-base (opt-inline-frame-growth cvars np))
                           added-so-far
                           next-spans)]))
                   (State
@@ -111629,6 +111727,8 @@
             [(Function callee-name cparams callee-ret cvars cblocks _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
+                [staging
+                  (opt-inline-arg-staging cparams cargs cblocks false false)]
                 (if (and
                   (opt-inline-arity-ok? cargs np)
                   (opt-inline-single-block-site-admitted?
@@ -111638,6 +111738,7 @@
                     callee-name
                     cargs
                     np
+                    staging.count
                     cblocks
                     (& callee-ret)
                     caller-blocks
@@ -111648,6 +111749,8 @@
                       (& (opt-inline-single-block-instrs cblocks))
                       (& cret)
                       (& cargs)
+                      (& cparams)
+                      (& staging)
                       np
                       vars
                       (opt-inline-site-prefix
@@ -111660,10 +111763,10 @@
                       func-name
                       instr
                       cname)
-                      [(State expanded _ _ next-spans)
+                      [(State expanded clone-base _ next-spans)
                         (State
                           expanded
-                          (+ vars (opt-inline-frame-growth cvars np))
+                          (+ clone-base (opt-inline-frame-growth cvars np))
                           added-so-far
                           next-spans)]))
                   (State
@@ -111926,8 +112029,7 @@
   (np i64)
   (added-blocks i64)
   (tail-slots i64)
-  (stage-all-args? bool)
-  (stage-args? bool)
+  (staging OptInlineArgStaging)
   (callee-instrs i64)
   (absorb-class i64)
   (refs i64)
@@ -111980,16 +112082,16 @@
                 (opt-inline-blocks-have-tail-call? cblocks))
                 (- added-blocks 1)
                 0)]
-            [stage-all-args? : bool
-              (opt-inline-param-mutating-blocks? cblocks np)]
-            [stage-args? : bool
-              (or stage-all-args? (opt-inline-params-have-sret? (& cparams)))]
+            [staging : OptInlineArgStaging
+              (opt-inline-arg-staging
+                cparams
+                cargs
+                cblocks
+                (opt-inline-param-mutating-blocks? cblocks np)
+                (opt-inline-params-have-sret? (& cparams)))]
+            [stage-args? : bool (> staging.count 0)]
             [callee-instrs : i64
-              (+
-                (opt-inline-multiblock-cost-instrs cblocks)
-                (if stage-args?
-                  np
-                  0))]
+              (+ (opt-inline-multiblock-cost-instrs cblocks) staging.count)]
             [const-args : i64 (opt-inline-args-const-count cargs)]
             [absorb-class : i64
               (opt-inline-census-absorb-class
@@ -112230,8 +112332,7 @@
                   np
                   added-blocks
                   tail-slots
-                  stage-all-args?
-                  stage-args?
+                  staging
                   callee-instrs
                   absorb-class
                   refs
@@ -112247,7 +112348,9 @@
 ;; Keep these two emission boundaries separate: prefix rewriting happens
 ;; before the site note; label/frame construction happens before import
 ;; charging. The checked-new-site flag is read at charge time.
-(define (opt-inline-site-note! [plan : OptInlineSitePlan] [callee-name : i64]) : unit
+(define (opt-inline-site-note!
+  [plan : (& plan OptInlineSitePlan)]
+  [callee-name : i64]) : unit
   (let
     [_site-bump : unit (+= opt-inline-caller-site-count 1)]
     ;; INL-6: one `--trace-passes` line per site a BAND took,
@@ -112270,7 +112373,7 @@
     unit))
 
 (define (opt-inline-site-charge!
-  [plan : OptInlineSitePlan]
+  [plan : (& plan OptInlineSitePlan)]
   [prefix-added : i64]) : i64
   (let
     [_hot-loop-bump : unit
@@ -112751,7 +112854,7 @@
             out-spans)
             [(State prefix-instrs prefix-vars prefix-added spans2)
               (let
-                [_site-note : unit (opt-inline-site-note! plan callee-name)]
+                [_site-note : unit (opt-inline-site-note! (& plan) callee-name)]
                 [prefix : String
                   (opt-inline-site-prefix
                     func-name
@@ -112769,31 +112872,31 @@
                   (+
                     prefix-vars
                     (+
-                      (if plan.stage-args?
+                      (if (> plan.staging.count 0)
                         cvars
                         (opt-inline-frame-growth cvars plan.np))
                       plan.tail-slots))]
-                [added2 : i64 (opt-inline-site-charge! plan prefix-added)]
+                [added2 : i64 (opt-inline-site-charge! (& plan) prefix-added)]
                 [stage-instrs : ir.CompilerIrInstrSeq
-                  (if plan.stage-args?
+                  (if (> plan.staging.count 0)
                     (opt-inline-stage-param-instrs
                       (& cparams)
                       cargs
                       prefix-vars
-                      plan.stage-all-args?
+                      (& plan.staging)
                       0)
                     (opt-inline-empty-instr-seq))]
                 [staged-args : ir.CompilerIrCallArgs
-                  (if plan.stage-args?
+                  (if (> plan.staging.count 0)
                     (opt-inline-staged-args
                       (& cparams)
                       cargs
                       plan.np
                       prefix-vars
-                      plan.stage-all-args?)
+                      (& plan.staging))
                     (owned_view.compiler-owned-reference-shared-view cargs))]
                 [clone-base : i64
-                  (if plan.stage-args?
+                  (if (> plan.staging.count 0)
                     (+ prefix-vars plan.np)
                     prefix-vars)]
                 ;; The first slot past the clone's rebased frame: the
@@ -114079,6 +114182,8 @@
             [(Function callee-name cparams _ cvars cblocks _)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
+                [staging
+                  (opt-inline-arg-staging cparams cargs cblocks false false)]
                 (if (opt-inline-arity-ok? cargs np)
                   (begin
                     (+= opt-inline-caller-site-count 1)
@@ -114087,6 +114192,8 @@
                       dst
                       (& cret)
                       (& cargs)
+                      (& cparams)
+                      (& staging)
                       np
                       vars
                       (opt-inline-site-prefix
@@ -114099,10 +114206,10 @@
                       func-name
                       instr
                       cname)
-                      [(State expanded _ _ next-spans)
+                      [(State expanded clone-base _ next-spans)
                         (State
                           expanded
-                          (+ vars (opt-inline-frame-growth cvars np))
+                          (+ clone-base (opt-inline-frame-growth cvars np))
                           0
                           next-spans)]))
                   (State
@@ -114387,6 +114494,7 @@
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
   [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]
   [spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
@@ -114411,7 +114519,8 @@
           index
           (&
             (opt-function-index-to-seq (compiler-opt-global-shared-view index))))]
-      [_install-owned-state : unit (opt-inline-owned-state-install! index)]
+      [_install-owned-state : unit
+        (opt-inline-owned-state-install! index globals)]
       [_synth : unit
         (opt-inline-synth-build!
           index
@@ -123736,6 +123845,32 @@
             (ir.compiler-ir-symbol-id name))))]
     [_ false]))
 
+(define (opt-global-snapshot-global-killed?
+  [mod-ref : (& mod-ref OptGlobalModRef)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [name : i64]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Store target _ _) (= target name)]
+    [(or (Call _ target _ _) (TailCall target _ _))
+      (and
+        (not
+          (match (opt_i64_i64_map.get
+            call-memory
+            (ir.compiler-ir-symbol-id target))
+            [(LookupFound summary) (= summary 0)]
+            [(LookupMissing) false]))
+        (or
+          (not
+            (opt_i64_i64_map.contains?
+              (& mod-ref.writes)
+              (ir.compiler-ir-symbol-id target)))
+          (opt-global-mod-ref-mask-may-write?
+            mod-ref.index
+            (opt-global-mod-ref-call-mask mod-ref target)
+            name)))]
+    [_ (opt-alias-instr-clears-all? instr)]))
+
 (define (opt-global-snapshot-entry-killed?
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -123743,26 +123878,11 @@
   [entry : (& entry OptCopyEntry)]) : bool
   (match entry
     [(Copy _ (Global name))
-      (match instr
-        [(Store target _ _) (= target name)]
-        [(or (Call _ target _ _) (TailCall target _ _))
-          (and
-            (not
-              (match (opt_i64_i64_map.get
-                call-memory
-                (ir.compiler-ir-symbol-id target))
-                [(LookupFound summary) (= summary 0)]
-                [(LookupMissing) false]))
-            (or
-              (not
-                (opt_i64_i64_map.contains?
-                  (& cell.mod-ref.writes)
-                  (ir.compiler-ir-symbol-id target)))
-              (opt-global-mod-ref-mask-may-write?
-                cell.mod-ref.index
-                (opt-global-mod-ref-call-mask (& cell.mod-ref) target)
-                name)))]
-        [_ (opt-alias-instr-clears-all? instr)])]
+      (opt-global-snapshot-global-killed?
+        (& cell.mod-ref)
+        call-memory
+        name
+        instr)]
     [_ true]))
 
 (define (opt-global-snapshot-filter
@@ -124358,6 +124478,7 @@
                 pools
                 (&mut optimizer-input)
                 type-segment-bases
+                (& globals)
                 functions
                 level
                 spans)]

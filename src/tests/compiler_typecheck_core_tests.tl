@@ -729,11 +729,24 @@
       17
       (Region 78 inner)
       transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      12
+      0
+      13
+      17
+      (Bool)
+      transition)
     (test.assert-true
       (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
         [(Inconsistent) true]
         [_ false])
       "different allocation regions are conflicting checked proofs")
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 12 0 13 17)
+        [(Hit (Bool) _) true]
+        [_ false])
+      "a conflicting proof cannot disable an unrelated binding")
     (tc_core.tc-checked-let-binding-facts-finish! facts)))
 
 (define (tc-job-state-set-topenv-membership-enabled!

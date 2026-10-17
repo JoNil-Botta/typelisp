@@ -235,6 +235,7 @@
   (name-id i64)
   (init-id i64)
   (binding-ty ast.AstType)
+  (inconsistent bool)
   (transition TcCheckedLetBindingTransition)
   ;; Previous fact with the same composite hash. Full identity is compared on
   ;; lookup, so hash collisions cannot alias bindings.
@@ -258,8 +259,7 @@
   ;; a separately resettable arena rather than leaking boxes into the job arena.
   (payload-arena i64)
   (return-arena i64)
-  (owner-arena i64)
-  (inconsistent bool))
+  (owner-arena i64))
 
 (defstruct TcCheckedLetBindingFactState
   (address i64))
@@ -790,8 +790,7 @@
         (tc_i64_i64_map.with-capacity 1)
         0
         0
-        (arena.tl_arena_current)
-        false))
+        (arena.tl_arena_current)))
     (TcCheckedLetBindingFactState
       (cast
         (unsafe
@@ -1676,8 +1675,7 @@
           (set! (deref data).enabled false)
           (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
-          (set! (deref data).len 0)
-          (set! (deref data).inconsistent false))
+          (set! (deref data).len 0))
         (begin
           (if (= (arena.tl_arena_current) payload)
             (arena.tl_arena_set (deref data).return-arena)
@@ -1699,7 +1697,6 @@
           (set! (deref data).len 0)
           (set! (deref data).payload-arena 0)
           (set! (deref data).return-arena 0)
-          (set! (deref data).inconsistent false)
           (arena.tl_arena_destroy payload))))))
 
 (define (tc-checked-let-binding-facts-begin!
@@ -1725,8 +1722,7 @@
             (deref data).declaration-ordinals
             (tc_i64_i64_map.with-capacity 128))
           (set! (deref data).payload-arena payload)
-          (set! (deref data).return-arena return-arena)
-          (set! (deref data).inconsistent false))))))
+          (set! (deref data).return-arena return-arena))))))
 
 (define (tc-checked-let-binding-facts-finish!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -1885,8 +1881,7 @@
                     (tc-checked-let-binding-transition-eq?
                       fact.transition
                       transition))
-                  (set! data.inconsistent true)
-                  (tc-checked-let-binding-fact-state-data-set! state data))
+                  (set! (array-ref data.facts cursor).inconsistent true))
                 (return unit))
               (set! cursor fact.hash-next))))
         (if (>= data.len data.capacity)
@@ -1909,6 +1904,7 @@
               name-id
               init-id
               persisted
+              false
               transition
               head))
           ;; Hashmap growth allocates in the active arena. Force it into the
@@ -1931,10 +1927,8 @@
   (let
     [data : TcCheckedLetBindingFactStateData
       (tc-checked-let-binding-fact-state-data state)]
-    (if (or (not data.enabled) data.inconsistent)
-      (if data.inconsistent
-        (Inconsistent)
-        (Missing))
+    (if (not data.enabled)
+      (Missing)
       (let
         [key-hash : i64
           (tc-checked-let-binding-key-hash
@@ -1956,7 +1950,10 @@
               binding-ordinal
               name-id
               init-id)
-              (return (Hit fact.binding-ty fact.transition))
+              (return
+                (if fact.inconsistent
+                  (Inconsistent)
+                  (Hit fact.binding-ty fact.transition)))
               (set! cursor fact.hash-next))))
         (Missing)))))
 

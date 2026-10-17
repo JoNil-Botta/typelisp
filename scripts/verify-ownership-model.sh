@@ -167,7 +167,7 @@ for opt in 0 1 2; do
         fi
         if [ "$program" = loan-model ]; then
             source=$SOURCE_LOAN_MAIN
-            expected='ownership-loan-model-v1: direct=576 reborrow=13 three=8 passed'
+            expected='ownership-loan-model-v2: direct=576 reborrow=13 three=8 holders=16 limits=3 passed'
         fi
         if [ "$program" = loan-crosscheck ]; then
             source=$SOURCE_LOAN_COMPARE

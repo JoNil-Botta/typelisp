@@ -2,6 +2,7 @@
 (import loan_model as model)
 (import loan_cases as cases)
 (import stdlib.io)
+(import stdlib.iterator)
 
 (define (accepted? [result : model.Outcome]) : bool
   (match result
@@ -250,10 +251,187 @@
             (set! mode (+ mode 1)))))
       true)))
 
+(define (holder-program [mode : i64]) : model.ReferenceProgram
+  (let
+    [copy? : bool
+      (not
+        (or (= mode 0) (= mode 1) (= mode 4) (= mode 7) (= mode 13) (= mode 14)))]
+    [events : (__tl_dyn-array model.ReferenceEvent)
+      (match mode
+        [0
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Use 0))]
+        [1
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Clear 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Use 0))]
+        [2
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 1 0)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Use 1))]
+        [3
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1)
+            (model.ReferenceEvent.Clear 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [4
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [5
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 1))
+            (model.ReferenceEvent.Bind 1 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Move 1 0)
+            (model.ReferenceEvent.Use 0))]
+        [6
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 1))
+            (model.ReferenceEvent.Bind 2 1)
+            (model.ReferenceEvent.Move 2 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [7
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Use 0))]
+        [8
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Use 1))]
+        [9
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.End 0))
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 1 0)
+            (model.ReferenceEvent.Use 0))]
+        [10
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.End 0)))]
+        [11 (__tl_make-array (model.ReferenceEvent.Use 3))]
+        [12 (__tl_make-array model.ReferenceEvent 0)]
+        [13
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 0)
+            (model.ReferenceEvent.Use 0))]
+        [14
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1))]
+        [_ (__tl_make-array (model.ReferenceEvent.Use 0))])]
+    (model.ReferenceProgram copy? events)))
+
+(define (holder-controls?) : bool
+  (for [mode (iterator.range 0 16)]
+    (let
+      [program : model.ReferenceProgram (holder-program mode)]
+      [loans : (Array model.Loan 3)
+        (array
+          (model.Loan model.Cell.Left (not program.copy?) -1)
+          (model.Loan model.Cell.Right (not program.copy?) -1)
+          (model.Loan model.Cell.Whole false -1))]
+      [result : model.Outcome
+        (model.execute-references (& loans) 2 (& program) true true)]
+      [ok? : bool
+        (match mode
+          [0 (rejected-at? result 2)]
+          [3 (rejected-at? result 4)]
+          [4 (rejected-at? result 3)]
+          [6 (rejected-at? result 6)]
+          [7 (rejected-at? result 3)]
+          [9 (rejected-at? result 2)]
+          [(or 11 14)
+            (match result
+              [(model.Outcome.InvalidInput) true]
+              [_ false])]
+          [15 (rejected-at? result 0)]
+          [_ (accepted? result)])]
+      (unless
+        ok?
+        (io.println "ownership reference-value model mismatch: mode={}" mode)
+        (return false))))
+  true)
+
+(define (holder-limits?) : bool
+  (let
+    [loans : (Array model.Loan 3)
+      (array
+        (model.Loan model.Cell.Left false -1)
+        (model.Loan model.Cell.Right false -1)
+        (model.Loan model.Cell.Whole false -1))]
+    [empty : model.ReferenceProgram
+      (model.ReferenceProgram true (__tl_make-array model.ReferenceEvent 0))]
+    [counts : (Array i64 2) (array -1 4)]
+    (for [index (iterator.range 0 2)]
+      (unless
+        (match (model.execute-references
+          (& loans)
+          (array-ref counts index)
+          (& empty)
+          true
+          true)
+          [(model.Outcome.InvalidInput) true]
+          [_ false])
+        (return false)))
+    (let
+      [events : (__tl_dyn-array model.ReferenceEvent)
+        (__tl_make-array model.ReferenceEvent 0)]
+      (for [_index (iterator.range 0 129)]
+        (__tl_array-push! events (model.ReferenceEvent.Clear 0)))
+      (match (model.execute-references
+        (& loans)
+        2
+        (& (model.ReferenceProgram true events))
+        true
+        true)
+        [(model.Outcome.InvalidInput) true]
+        [_ false]))))
+
 (define (main) : i64
-  (if (and (single-cases?) (reborrow-controls?) (three-controls?))
+  (if (and
+    (single-cases?)
+    (reborrow-controls?)
+    (three-controls?)
+    (holder-controls?)
+    (holder-limits?))
     (begin
       (io.println
-        "ownership-loan-model-v1: direct=576 reborrow=13 three=8 passed")
+        "ownership-loan-model-v2: direct=576 reborrow=13 three=8 holders=16 limits=3 passed")
       0)
     1))

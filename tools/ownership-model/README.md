@@ -190,7 +190,7 @@ access, explicit ending, repeated issuance, old-child retention across the
 reissue of an exclusive parent (rejected) and of a shared parent (joined, and a
 write under the joined token conflicts), and invalid access. Its exact success
 line is
-`ownership-loan-model-v1: direct=576 reborrow=13 three=8 passed`.
+`ownership-loan-model-v2: direct=576 reborrow=13 three=8 holders=16 limits=3 passed`.
 
 Eight additional authored controls exercise competing direct loans, overlapping
 and expired siblings, disjoint exclusive loans, retention through two ancestors,
@@ -211,11 +211,24 @@ are evidence for the authored graphs, not an exhaustive argument about all
 loops. Success is exactly
 `ownership-loan-crosscheck-v1: direct=576 reborrow=137 three=3848 graphs=17 paths=54 passed`.
 
-The traces have no reference values: a Keep or MayKeep names a static loan
-slot, and a later issue of that loan takes the slot over. So the model cannot
-express a reference that still holds an earlier issue after its loan is issued
-again, or the holder-keyed demands that a Copy or Move into a reference ends.
-Those production rules are witnessed by the core cases
+The original `Event` traces name static loan slots with Keep and MayKeep.
+`ReferenceProgram` additionally interprets three reference holders whose values
+retain the exact issued token, over the same two cells and three loan sites.
+Bind, Copy, Move, Clear and Use execute concrete value transfers; Copy requires
+the shared reference type, and moving an exclusive reference clears its source.
+Expiry follows actual values along one concrete suffix, independently of the
+production backward holder-demand analysis. Existing primitive transfers and
+generation/parent checks remain shared within the independent model. Programs
+are limited to 128 events with one shared or exclusive type for all holders.
+Sixteen controls cover overwrites, surviving copies, moves, self-moves, shared
+and exclusive reissues, explicit ending with an older reference still used,
+unavailable references and malformed holder/type metadata. Three more controls
+reject negative/excessive loan counts and an over-limit trace before indexing.
+
+The production adapters still use the original trace representation. Their
+reference-value correspondence, CFG/path expansion and targeted mutations
+remain incomplete; the new concrete controls alone do not establish production
+soundness. The production rules remain witnessed by the core cases
 `ownership-loan-holder-overwrite` and `ownership-loan-reissue` and by the
 safety fixtures `mir_nll_loop_if_join_reference_*`,
 `mir_reference_copy_then_write_reject`,

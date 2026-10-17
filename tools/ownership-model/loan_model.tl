@@ -2,6 +2,8 @@
 ;; No production imports, CFG lattice, worklist or abstract transfer rules.
 ;; Each issued capability gets a fresh dynamic token. Finite traces represent
 ;; individual executions, including repeated visits to a static borrow site.
+(import stdlib.iterator)
+
 (defenum Cell
   (Whole)
   (Left)
@@ -489,3 +491,226 @@
               (expire! loans count (&mut memory) trace (+ index 1))
               (set! index (+ index 1)))))
         (Observation before after before-parents after-parents index -1)))))
+
+;; Reference values retain a concrete issuance, independently of the static
+;; borrow slot. All three holders have the same Copy/MoveOnly reference type.
+(defstruct ReferenceValue
+  (loan i64)
+  (token i64))
+
+(defenum ReferenceEvent
+  (Intrinsic Event)
+  (Bind i64 i64)
+  (Copy i64 i64)
+  (Move i64 i64)
+  (Clear i64)
+  (Use i64))
+
+(defstruct ReferenceProgram
+  (copy? bool)
+  (events (__tl_dyn-array ReferenceEvent)))
+
+(define (reference-slot? [slot : i64]) : bool
+  (and (>= slot 0) (< slot 3)))
+
+(define (reference-program-valid?
+  [loans : (& loans (Array Loan 3))]
+  [count : i64]
+  [program : (& program ReferenceProgram)]) : bool
+  (let
+    [intrinsics : (__tl_dyn-array Event) (__tl_make-array Event 0)]
+    (unless
+      (and (>= count 0) (<= count 3) (<= (array-length program.events) 128))
+      (return false))
+    (for [index (iterator.range 0 (array-length program.events))]
+      (unless
+        (match (array-ref program.events index)
+          [(ReferenceEvent.Intrinsic event)
+            (__tl_array-push! intrinsics event)
+            true]
+          [(ReferenceEvent.Bind holder loan)
+            (and
+              (reference-slot? holder)
+              (>= loan 0)
+              (< loan count)
+              (= program.copy? (not (array-ref loans loan).exclusive)))]
+          [(ReferenceEvent.Copy source destination)
+            (and
+              program.copy?
+              (reference-slot? source)
+              (reference-slot? destination))]
+          [(ReferenceEvent.Move source destination)
+            (and (reference-slot? source) (reference-slot? destination))]
+          [(or (ReferenceEvent.Clear holder) (ReferenceEvent.Use holder))
+            (reference-slot? holder)])
+        (return false)))
+    (input-valid? loans count (& intrinsics))))
+
+(define (reference-live?
+  [loans : (& loans (Array Loan 3))]
+  [count : i64]
+  [memory : (& memory Memory)]
+  [value : ReferenceValue]) : bool
+  (and
+    (>= value.loan 0)
+    (< value.loan count)
+    (> value.token 0)
+    (= value.token (array-ref memory.tokens value.loan))
+    (live? loans memory value.loan)))
+
+;; Follow values along one concrete suffix, not production holder demands.
+;; A new issuance replaces its slot but never a saved reference value. Copy
+;; and move read their source before overwriting their destination.
+(define (reference-needed-later?
+  [loans : (& loans (Array Loan 3))]
+  [count : i64]
+  [memory : (& memory Memory)]
+  [values : (& values (Array ReferenceValue 3))]
+  [program : (& program ReferenceProgram)]
+  [start : i64]
+  [loan : i64]) : bool
+  (let
+    [token : i64 (array-ref memory.tokens loan)]
+    [carriers : (Array bool 3) (array false false false)]
+    [holders : (Array bool 3) (array false false false)]
+    (when (= token 0) (return false))
+    (for [site (iterator.range 0 count)]
+      (set!
+        (array-ref carriers site)
+        (and
+          (> (array-ref memory.tokens site) 0)
+          (depends-on? loans memory site token))))
+    (for [holder (iterator.range 0 3)]
+      (let
+        [value : ReferenceValue (array-ref values holder)]
+        (set!
+          (array-ref holders holder)
+          (and
+            (reference-live? loans count memory value)
+            (array-ref carriers value.loan)))))
+    (for [index (iterator.range start (array-length program.events))]
+      (match (array-ref program.events index)
+        [(ReferenceEvent.Intrinsic event)
+          (match event
+            [(Event.Borrow site) (set! (array-ref carriers site) false)]
+            [(Event.Reborrow site)
+              (when
+                (array-ref carriers (array-ref loans site).parent)
+                (return true))
+              (set! (array-ref carriers site) false)]
+            [(or (Event.Keep site) (Event.MayKeep site)
+                 (Event.ReadThrough site _) (Event.WriteThrough site _))
+              (when (array-ref carriers site) (return true))]
+            [(Event.End site)
+              (when (array-ref carriers site) (return true))
+              (set! (array-ref carriers site) false)]
+            [_ unit])]
+        [(ReferenceEvent.Bind holder site)
+          (when (array-ref carriers site) (return true))
+          (set! (array-ref holders holder) false)]
+        [(or (ReferenceEvent.Copy source destination)
+             (ReferenceEvent.Move source destination))
+          (when (array-ref holders source) (return true))
+          (set! (array-ref holders destination) false)]
+        [(ReferenceEvent.Clear holder) (set! (array-ref holders holder) false)]
+        [(ReferenceEvent.Use holder)
+          (when (array-ref holders holder) (return true))]))
+    false))
+
+(define (execute-references
+  [loans : (& loans (Array Loan 3))]
+  [count : i64]
+  [program : (& program ReferenceProgram)]
+  [left : bool]
+  [right : bool]) : Outcome
+  (unless
+    (reference-program-valid? loans count program)
+    (return Outcome.InvalidInput))
+  (let
+    [memory : Memory (Memory left right (array 0 0 0) (array 0 0 0) 1)]
+    [values : (Array ReferenceValue 3)
+      (array (ReferenceValue -1 0) (ReferenceValue -1 0) (ReferenceValue -1 0))]
+    (for [index (iterator.range 0 (array-length program.events))]
+      (let
+        [ok? : bool
+          (match (array-ref program.events index)
+            [(ReferenceEvent.Intrinsic event)
+              ;; Reuse the existing concrete primitive transfer. The End
+              ;; operation's suffix includes a retained use exactly when a
+              ;; future reference value still needs that actual generation.
+              (let
+                [ending-site : i64
+                  (match event
+                    [(Event.End site) site]
+                    [_ -1])]
+                [retained? : bool
+                  (and
+                    (>= ending-site 0)
+                    (reference-needed-later?
+                      loans
+                      count
+                      (& memory)
+                      (& values)
+                      program
+                      (+ index 1)
+                      ending-site))]
+                [primitive : (__tl_dyn-array Event)
+                  (__tl_make-array
+                    Event
+                    (if retained?
+                      2
+                      1))]
+                (set! (array-ref primitive 0) (clone event))
+                (when
+                  retained?
+                  (set! (array-ref primitive 1) (Event.Keep ending-site)))
+                (step! loans count (&mut memory) (& primitive) 0))]
+            [(ReferenceEvent.Bind holder site)
+              (if (live? loans (& memory) site)
+                (begin
+                  (set!
+                    (array-ref values holder)
+                    (ReferenceValue site (array-ref memory.tokens site)))
+                  true)
+                false)]
+            [(or (ReferenceEvent.Copy source destination)
+                 (ReferenceEvent.Move source destination))
+              (let
+                [value : ReferenceValue (array-ref values source)]
+                (if (reference-live? loans count (& memory) value)
+                  (begin
+                    (when
+                      (and
+                        (not program.copy?)
+                        (match (array-ref program.events index)
+                          [(ReferenceEvent.Move _ _) true]
+                          [_ false]))
+                      (set! (array-ref values source) (ReferenceValue -1 0)))
+                    (set! (array-ref values destination) value)
+                    true)
+                  false))]
+            [(ReferenceEvent.Clear holder)
+              (set! (array-ref values holder) (ReferenceValue -1 0))
+              true]
+            [(ReferenceEvent.Use holder)
+              (reference-live? loans count (& memory) (array-ref values holder))])]
+        (unless ok? (return (Outcome.Rejected index))))
+      (let
+        [needed : (Array bool 3) (array false false false)]
+        (for [site (iterator.range 0 count)]
+          (set!
+            (array-ref needed site)
+            (reference-needed-later?
+              loans
+              count
+              (& memory)
+              (& values)
+              program
+              (+ index 1)
+              site)))
+        (for [site (iterator.range 0 count)]
+          (unless
+            (array-ref needed site)
+            (set! (array-ref memory.tokens site) 0)
+            (set! (array-ref memory.parents site) 0)))))
+    (Outcome.Accepted memory.left memory.right)))

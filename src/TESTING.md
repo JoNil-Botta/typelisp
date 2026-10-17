@@ -87,6 +87,17 @@ storage and renderer symbols really exist before running each binary. Its unsafe
 declaration is paired with `thread_local_word_unsafe_call_reject.tl` in the
 safety corpus. This accessor is a freestanding Linux ABI primitive.
 
+## Arena early exits
+
+`arena_early_exits.tl` runs at opt0/1/2 on both hosts. It preserves scalar
+returns, returns from caller-owned arenas, values allocated before a scoped
+arena, scalar error propagation, and payload-free Option propagation. The
+`arena_return_*_reject` and `arena_try_*_reject` safety rows reject String,
+Box, tuple, and outer-region escapes through early exits on both targets.
+Diagnostics locate the returned value or the try operand and retain E0205
+and clone-out help. Keep the outer-region cases: checking only the active
+innermost arena misses an allocation that dies in an enclosing scope.
+
 ## Generated cfg declarations
 
 `tests/integration/generated_cfg.tl` constructs conditional syntax in both

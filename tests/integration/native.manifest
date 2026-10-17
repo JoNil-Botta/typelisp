@@ -790,6 +790,7 @@ register_group_borrowed_match|all|-|tests/integration/register_group_borrowed_ma
 borrowed_enum_inline_struct_payload|all|-|tests/integration/borrowed_enum_inline_struct_payload.tl|42|-|-|-|-
 register_group_try|all|-|tests/integration/register_group_try.tl|42|-|-|-|-
 try_propagation|all|-,0,1,2|tests/integration/try_propagation.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+arena_early_exits|all|-,0,1,2|tests/integration/arena_early_exits.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 try_err_payloads|all|-,0,1,2|tests/integration/try_err_payloads.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 try_sret_forward|all|-,0,1,2|tests/integration/try_sret_forward.tl|42|-|-|stdlib/io.tl|-
 register_resident_enum16|all|-|tests/integration/register_resident_enum16.tl|42|-|-|-|-

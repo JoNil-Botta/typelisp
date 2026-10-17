@@ -948,6 +948,14 @@ using that job's original expression IDs and recorded divergence facts.
 Lambda bodies start from their capture locals so their exits cannot discharge
 or require the enclosing function's obligations or inherit its loop depth.
 
+Arena early exits use the same lexical owner ordering as stores:
+`tc-check-early-exit-regions` requires a returned allocation's regions to
+outlive the current function's return-type marker. This checks every enclosing
+scoped arena while retaining input-tied arena results. `try` checks only its
+error payload, tagged with the carrier's allocation regions; the successful
+payload stays in the current scope. Scalar errors and payload-free `None`
+do not carry the carrier's allocation.
+
 `AstType.Invalidate` retains a parameter's lifetime destruction effect through
 callable identity, substitution, reflection and surface serialization (schema
 12, type tag 39). Parameter binding exposes the inner type while a lexical

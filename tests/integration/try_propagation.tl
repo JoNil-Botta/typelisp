@@ -205,12 +205,14 @@
 ;; The error path leaves the scratch arena reset and the outer arena current.
 (define (arena-step [x : i64]) : ReadResult
   (let
+    ;; The error payload must outlive the arena that try leaves.
+    [result : ReadResult (read x)]
     [n : i64
       (with-arena
         scratch
         (let
           [text : String (string.int->string x)]
-          (+ (string.string-length text) (try (read x)))))]
+          (+ (string.string-length text) (try result))))]
     (Ok n)))
 
 (define (main) : i64

@@ -6445,7 +6445,11 @@ region-tagged value escape its scope:
   `(with-arena r (string.int->string 42))`).
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
-- Returned from an enclosing function.
+- Returned from an enclosing function, including an explicit `return` nested
+  anywhere in the region body.
+- Propagated by `try` through its error payload. The check applies to the
+  payload that leaves the function: a scalar error or payload-free `None`
+  may propagate even when the carrier was allocated inside the region.
 - Passed to a function call (function parameters carry no region tag).
 
 **Nested regions:** Inner and outer regions are distinct. A value allocated in

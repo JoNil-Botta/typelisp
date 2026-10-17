@@ -205,6 +205,18 @@ removed_string_to_int_reject|check-fail|tests/safety/removed_string_to_int_rejec
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
+arena_return_string_reject|check-fail|tests/safety/arena_return_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_return_outer_reject|check-fail|tests/safety/arena_return_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
+arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_string_reject|check-fail|tests/safety/arena_try_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
+arena_return_string_reject_windows|check-fail-windows|tests/safety/arena_return_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_return_outer_reject_windows|check-fail-windows|tests/safety/arena_return_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
+arena_return_box_reject_windows|check-fail-windows|tests/safety/arena_return_box_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_return_nested_tuple_reject_windows|check-fail-windows|tests/safety/arena_return_nested_tuple_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_string_reject_windows|check-fail-windows|tests/safety/arena_try_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_outer_reject_windows|check-fail-windows|tests/safety/arena_try_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items[0]`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
 mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot read mutably borrowed place `bags.left[0]`

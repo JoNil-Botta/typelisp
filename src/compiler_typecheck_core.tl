@@ -8164,13 +8164,21 @@
           (let
             [value : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            [value-span : TcMaybeAstSourceSpan
+              (tc-expr-maybe-span expr-bases value)]
+            [primary : ast.AstSourceSpan
+              (if (tc-region-escape-message? message)
+                (match value-span
+                  [(Some at) at]
+                  [(No) span])
+                span)]
             [help : String (tc-escape-help message)]
             (Some
               (tc-rich-error-with-maybe-secondary
-                span
+                primary
                 message
                 help
-                (tc-expr-maybe-span expr-bases value)
+                value-span
                 "returned value carries a lifetime or arena that cannot cross this boundary")))
           (No))]
       [(Set name value-box)
@@ -51138,6 +51146,30 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
+(define (tc-region-escape-error [region : i64]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: region-tagged value cannot escape with-arena '"
+    (tc-lifetime-name-render region)
+    "'"))
+
+;; Returning crosses every scope introduced after this function's return
+;; marker. Use the lexical owner relation, not only the innermost active arena:
+;; an outer scoped allocation also dies, while an input-tied arena survives.
+(define (tc-check-early-exit-regions [env : TcTypeEnv] [regions : TcNameIdList]) : ResultTcUnit
+  (let
+    [regions : TcNameIdList regions]
+    (while (not (tc-name-id-list-empty? regions))
+      (let
+        [region : i64 (tc-name-id-list-head regions)]
+        (unless
+          (or
+            (tc-program-lifetime-id? region)
+            (tc-lifetime-outlives-binding-id? env region (tc-return-type-id)))
+          (return (Err (tc-region-escape-error region)))))
+      (set! regions (tc-name-id-list-rest regions))))
+  Ok)
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
     [operand-ty : ast.AstType
@@ -51148,19 +51180,40 @@
       [(Ok return-ty)
         (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
           [(TcTryQueryCompatible operand-info _)
-            (if (and
-              (tc-regions-have-scratch-body? regions)
-              (tc-region-taggable-type?
-                (tc-result-info-err-type (tc-global-shared-view operand-info))))
-              (Err
-                (tc-locate-error-at-expr
-                  (tc-context-expr-bases ctx)
-                  inner
-                  (tc-scratch-exit-error "try's error exit")))
-              ;; The Ok payload lives where the operand does, as a match
-              ;; arm's binding would.
-              (Ok
-                (tc-tag-regions regions (tc-result-info-ok-type operand-info))))]
+            (let
+              [allocated-payload : bool
+                (tc-region-taggable-type?
+                  (tc-result-info-err-type (tc-global-shared-view operand-info)))]
+              (if (and
+                (tc-regions-have-scratch-body? regions)
+                allocated-payload)
+                (Err
+                  (tc-locate-error-at-expr
+                    (tc-context-expr-bases ctx)
+                    inner
+                    (tc-scratch-exit-error "try's error exit")))
+                (let
+                  ;; Only the residual leaves the function. A scalar Err or
+                  ;; payload-free None carries no allocation from the carrier.
+                  [_
+                    (try
+                      (match (if allocated-payload
+                        (tc-check-early-exit-regions env regions)
+                        ResultTcUnit.Ok)
+                        [(Ok) ResultTcUnit.Ok]
+                        [(Err message)
+                          (ResultTcUnit.Err
+                            (tc-rich-escape-at-expr
+                              (tc-context-expr-bases ctx)
+                              inner
+                              message
+                              "try's error payload leaves this function"))]))]
+                  ;; The Ok payload lives where the operand does, as a match
+                  ;; arm's binding would.
+                  (Ok
+                    (tc-tag-regions
+                      regions
+                      (tc-result-info-ok-type operand-info))))))]
           [(TcTryQueryIncompatible _ _ reason)
             (Err (tc-try-incompatibility-message reason))])]
       [(Err _) (Err "typecheck: try requires enclosing Result-like function")])))
@@ -51179,11 +51232,10 @@
               env
               (tc-global-shared-view value)
               (tc-global-shared-view return-ty)))]
-        [scratch-value : bool
-          (and
-            (tc-type-contains-region-tag? (tc-global-shared-view value-ty))
-            (tc-regions-have-scratch-body?
-              (tc-type-collect-regions (tc-global-shared-view value-ty))))]
+        [regions : TcNameIdList
+          (if (tc-type-contains-region-tag? (tc-global-shared-view value-ty))
+            (tc-type-collect-regions (tc-global-shared-view value-ty))
+            Nil)]
         [_
           (try (tc-expect value-ty return-ty "typecheck: return type mismatch"))]
         (if (tc-expr-result-uses-active-cleanup-owner? ctx env value)
@@ -51191,9 +51243,11 @@
             (tc-kind-message
               (ResourceOwnership)
               "typecheck: cleanup-required resource would escape with scope"))
-          (if scratch-value
+          (if (tc-regions-have-scratch-body? regions)
             (Err (tc-scratch-exit-error "return"))
-            (Ok (Never)))))]
+            (match (tc-check-early-exit-regions env regions)
+              [(Ok) (Ok (Never))]
+              [(Err message) (Err message)]))))]
     [(Err _) (Err "typecheck: return requires enclosing function")]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
@@ -59091,12 +59145,7 @@
     [body-ty : ast.AstType
       (try (tc-begin-list-maybe-expected ctx region-env body expected))]
     (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-          "typecheck: region-tagged value cannot escape with-arena '"
-          (tc-lifetime-name-render region)
-          "'"))
+      (Err (tc-region-escape-error region))
       (Ok body-ty))))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical

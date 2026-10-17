@@ -173,6 +173,41 @@ stderr contains 4 |   (with-arena r (string.int->string 41)))
 stderr contains |                 ^^^^^^^^^^^^^^^
 stderr contains = help: use with-escape to clone one supported result out of `r`
 
+case check-arena-return-escape
+file main.tl
+(import stdlib.string)
+
+(define (leak [n : i64]) : String
+  (with-arena phase (return (string.int->string n)))
+  "")
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0205]
+stderr contains region-tagged value cannot escape with-arena 'phase'
+stderr contains main.tl:4:29
+stderr contains returned value carries a lifetime or arena
+stderr contains use with-escape
+
+case check-arena-try-escape
+file main.tl
+(import stdlib.string)
+(defenum Parsed (Ok i64) (Err String))
+(define (parse [n : i64]) : Parsed (Parsed.Err (string.int->string n)))
+(define (leak [n : i64]) : Parsed
+  (with-arena phase (try (parse n)))
+  (Parsed.Ok 0))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0205]
+stderr contains region-tagged value cannot escape with-arena 'phase'
+stderr contains main.tl:5:26
+stderr contains try's error payload leaves this function
+stderr contains use with-escape
+
 case check-stdlib-region-escape
 file main.tl
 (import stdlib.string)

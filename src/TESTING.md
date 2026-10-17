@@ -65,6 +65,10 @@ and backtrace instrumentation enabled, so its allocation-counter assertion
 observes the active allocator.
 Zero-sized tuple/array call transport keeps the existing ABI rejection.
 
+`set_place_eval_order.tl`, `raw_pointer_field_place.tl` and
+`by_value_aggregate_abi.tl` keep nested array-store receivers attached to their
+original places while whole projection reads copy independently.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

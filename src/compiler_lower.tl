@@ -41670,7 +41670,7 @@
           [first-var (lower-state-next-var state)]
           [arr-lowered
             (try
-              (lower-expr
+              (lower-projection-receiver
                 ctx
                 state
                 env

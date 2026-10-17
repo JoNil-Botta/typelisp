@@ -1179,6 +1179,13 @@
             (string.int->string mode)))
         (set! mode (+ mode 1))))
     (test.assert-true
+      (and
+        (normalize-test-exiting-store? false false)
+        (normalize-test-exiting-store? false true)
+        (normalize-test-exiting-store? true false)
+        (normalize-test-exiting-store? true true))
+      "normalizer exiting stores and intrinsic result validation")
+    (test.assert-true
       (normalize-test-dead-unsupported?)
       "normalizer does not certify unsupported dead forms")
     (set! mode 0)
@@ -1431,6 +1438,125 @@
           (match (& failure.kind)
             [(own.OwnershipFailureKind.Uninitialized) true]
             [_ false]))]
+      [_ false])))
+
+;; Exiting stores retain their evaluated operands but issue no write or
+;; exclusive loan. A nominal Unit/value result on that node is malformed.
+(define (normalize-test-exiting-store? [replace? : bool] [malformed? : bool]) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (fixture.typed-test-lease (& intern-state) (cast 502 : u64))]
+    [store : typed.TypedStore (fixture.typed-test-store (& lease))]
+    [origin : typed.TypedOriginId
+      (fixture.typed-test-origin! (&mut store) (& lease))]
+    [int-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [unit-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Unit)]
+    [never-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Never)]
+    [binder : typed.TypedBinderId
+      (normalize-test-binder! (&mut store) (& lease) int-type origin true)]
+    [place : typed.TypedPlaceId
+      (match (typed.typed-place-add!
+        (&mut store)
+        (& lease)
+        (typed.TypedPlaceKind.Root binder))
+        [(typed.TypedPlaceResult.Ok id) id]
+        [_ (io.panic "exiting store fixture place")])]
+    [formed : typed.TypedOccurrenceId
+      (normalize-test-node!
+        (&mut store)
+        (& lease)
+        int-type
+        origin
+        (typed.TypedOperation.FormPlace place)
+        (normalize-test-empty))]
+    [value : typed.TypedOccurrenceId
+      (fixture.typed-test-literal!
+        (&mut store)
+        (& lease)
+        int-type
+        origin
+        typed.TypedSyntax.Generated
+        42)]
+    [returned : typed.TypedOccurrenceId
+      (normalize-test-node!
+        (&mut store)
+        (& lease)
+        never-type
+        origin
+        typed.TypedOperation.Return
+        (normalize-test-one value))]
+    [root : typed.TypedOccurrenceId
+      (normalize-test-node!
+        (&mut store)
+        (& lease)
+        (if malformed?
+          (if replace?
+            int-type
+            unit-type)
+          never-type)
+        origin
+        (if replace?
+          (typed.TypedOperation.ReplacePlace place)
+          (typed.TypedOperation.AssignPlace place))
+        (fixture.typed-test-children2 formed returned))]
+    (match (norm.ownership-normalize!
+      (&mut store)
+      (& lease)
+      root
+      int-type
+      (__tl_make-array norm.OwnershipNormalizeTypeClass 0)
+      (norm.ownership-normalize-default-limits))
+      [(norm.OwnershipNormalizeResult.Ok output)
+        (let
+          [block : i64 0]
+          [writes : i64 0]
+          [returns : i64 0]
+          [exclusive : bool false]
+          (while (< block (array-length output.body.blocks))
+            (let
+              [instructions : (&
+                output
+                (__tl_dyn-array own.OwnershipInstruction))
+                (& (array-ref output.body.blocks block).instructions)]
+              [index : i64 0]
+              (while (< index (array-length instructions))
+                (match (& (array-ref instructions index).operation)
+                  [(or (own.OwnershipOperation.Assign target)
+                       (own.OwnershipOperation.Copy _ target)
+                       (own.OwnershipOperation.Move _ target))
+                    (when (= target.index 0) (+= writes 1))]
+                  [_ unit])
+                (+= index 1)))
+            (match (& (array-ref output.body.blocks block).terminator)
+              [(own.OwnershipTerminator.Return _) (+= returns 1)]
+              [_ unit])
+            (+= block 1))
+          (set! block 0)
+          (while (< block (array-length output.body.loans))
+            (when
+              (own.ownership-loan-exclusive?
+                (& (array-ref output.body.loans block)))
+              (set! exclusive true))
+            (+= block 1))
+          (and
+            (not malformed?)
+            (= writes 0)
+            (= returns 1)
+            (not exclusive)
+            (= (array-length output.nodes) 4)
+            (=
+              (array-length output.body.loans)
+              (if replace?
+                1
+                0))))]
+      [(norm.OwnershipNormalizeResult.Err
+          (norm.OwnershipNormalizeFailure.Structural _))
+        malformed?]
       [_ false])))
 
 (define (normalize-test-dead-unsupported?) : bool

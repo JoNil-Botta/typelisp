@@ -1529,9 +1529,11 @@ Unsupported and ordinary fallback paths preserve the original ID entry points,
 including dotted-place normalization; they do not infer a second time to fill
 the store. Failed or unrepresented parents roll back their selected children.
 Lease, resource and identity failures remain hard errors. A `begin` gives only
-its final child the contextual type. An early `Never` retains the executable
-prefix through that child; later children are still checked once through Query
-without adding unreachable ownership effects.
+its final child the contextual type. An intrinsically diverging child retains
+the executable prefix through that child; later children are still checked once
+through Query without adding unreachable ownership effects. This uses the
+selected occurrence's type, including when canonical assignment typing returns
+Unit. Stale identities and lease failures cannot be interpreted as fallthrough.
 
 Unary operations and conditionals share the same implementation with and
 without an expected type. Noncontextual binary inference returns both its
@@ -1622,11 +1624,17 @@ through to another lookup.
 `tc-infer-selected-return` owns the canonical operand inference and cleanup escape
 check. The public inferred type still follows contextual `Never` coercion; the
 selected `Return` occurrence retains intrinsic `Never` and its explicit operand.
-`tc-selected-publish-flow` derives the intrinsic result of selected sequences and
-conditionals from their checked child records, preserving this distinction
-through `let`, `begin` and `if` without retyping. Divergent binary operands,
-initializers and assignment RHSs remain explicit migration gaps; their parents
-discard retained children and preserve the original typechecking result.
+`tc-selected-publish-flow` derives the intrinsic result of selected sequences,
+conditionals and stores from their checked child records. A local assignment
+whose RHS exits retains that RHS; projected stores retain place formation before
+the RHS. Normalization ends at the exit without a write, replacement result or
+borrow activation, and requires the store's intrinsic result to be `Never`.
+Deferred receiver records retain the formed place without producing a reference.
+Implicit reborrow child loans are allocated only when their reservation
+activates, so an exiting RHS leaves no undefined loan. Ordinary fallthrough
+retains the existing reservation and conflict checks. Divergent binary operands
+and initializers retain their executed prefix too; canonical typechecking,
+including errors in unreachable source, remains unchanged.
 
 This first slice deliberately returns `Unrepresented` for unsupported forms,
 including expansion/unsafe wrappers, and for synthetic clients without a real

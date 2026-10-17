@@ -8,7 +8,10 @@ This page describes the compiler pipeline and command-line surface. Run
 The [ownership IR design and migration inventory](ownership-ir.md) records the
 typed control-flow foundation for #8449. Production ownership checks normalize
 typed occurrences into that IR and require the core's certificate before
-lowering. Checked MIR-to-IR lowering remains open.
+lowering. Selected stores preserve intrinsic divergence independently of their
+canonical result type: place formation and RHS effects run in order, and an
+exit prevents the write and borrow activation. Checked MIR-to-IR lowering
+remains open.
 
 Internal compiler box views share one API in `compiler_owned_view.tl`: omitting
 its optional field selector preserves the whole-payload view; providing one

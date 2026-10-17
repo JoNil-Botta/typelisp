@@ -11212,6 +11212,10 @@
     (match (typed.typed-type-get! store lease type-id)
       [(typed.TypedTypeResult.Ok actual)
         (match actual
+          [(ast.AstType.Never)
+            (match want
+              [(ast.AstType.Never) true]
+              [_ false])]
           [(ast.AstType.I8)
             (match want
               [(ast.AstType.I8) true]
@@ -13137,6 +13141,28 @@
         (ast.AstExpr.Binary ast.AstBinOp.Add direct-return literal))]
     [divergent-init : i64
       (tc-selected-test-let-id pools name ast.AstType.I64 direct-return read)]
+    [assignment : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Set name direct-return))]
+    [assignment-items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_assignment-items : unit
+      (begin
+        (ast.ast-expr-list-push (&mut assignment-items) assignment)
+        (ast.ast-expr-list-push (&mut assignment-items) literal))]
+    [assignment-tail : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Begin assignment-items))]
+    [assignment-body : i64
+      (tc-selected-test-let-id pools name ast.AstType.I64 literal assignment)]
+    [assignment-sequence : i64
+      (tc-selected-test-let-id
+        pools
+        name
+        ast.AstType.I64
+        literal
+        assignment-tail)]
     [branch : i64
       (ast.ast-node-pool-context-expr-push
         pools
@@ -13163,6 +13189,12 @@
     [selected-bindings-22 : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [selected-bindings-21 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [assignment-bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [sequence-bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [fault-bindings : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [store : typed.TypedStore (tc-selected-test-store (& lease))]
     [base : tc_core.TcTypeEnv
@@ -13369,6 +13401,74 @@
                     [_ false])))]
             [_ false])]
         [_ false])]
+    [assignment-selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        assignment-body
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "selected-return.tl" 10 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut assignment-bindings)))
+        [(tc_core.TcSelectedResult.Ok
+            (ast.AstType.Unit)
+            (tc_core.TcSelectedOccurrence.Selected id)
+            _)
+          (tc-selected-test-type? (&mut store) (& lease) id ast.AstType.Never)]
+        [_ false])]
+    [assignment-prefix : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        assignment-sequence
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 11 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut sequence-bindings)))
+        [(tc_core.TcSelectedResult.Ok
+            (ast.AstType.I64)
+            (tc_core.TcSelectedOccurrence.Selected id)
+            _)
+          (let
+            [prefix : typed.TypedOccurrenceId
+              (tc-selected-test-child! (&mut store) (& lease) id 1)]
+            (and
+              (tc-selected-test-type?
+                (&mut store)
+                (& lease)
+                prefix
+                ast.AstType.Never)
+              (match (typed.typed-occurrence-get! (&mut store) (& lease) prefix)
+                [(typed.TypedNodeResult.Ok node) (= node.child-count 1)]
+                [_ false])
+              (match (ownership_normalize.ownership-normalize!
+                (&mut store)
+                (& lease)
+                id
+                return-type
+                (__tl_make-array
+                  ownership_normalize.OwnershipNormalizeTypeClass
+                  0)
+                (ownership_normalize.ownership-normalize-default-limits))
+                [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+                [_ false])))]
+        [_ false])]
+    [stale : typed.TypedOccurrenceId
+      (typed.TypedOccurrenceId (typed.typed-handle-copy (& root.handle)))]
+    [_stale : unit (set! stale.handle.serial (+ stale.handle.serial 1))]
+    [fault : bool
+      (match (tc_core.tc-selected-sink-never!
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut fault-bindings))
+        stale)
+        [(tc_core.TcSelectedNeverCheck.Fault (typed.TypedError.Stale) _) true]
+        [_ false])]
     [selected-count : i64 store.occurrence-count]
     [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! saved)]
     [missing : bool
@@ -13401,6 +13501,13 @@
       initializer-selected
       (io.panic
         "selected return: divergent initializer is a normalized Never prefix without a binder"))
+    (unless
+      assignment-selected
+      (io.panic "selected store: canonical Unit keeps intrinsic Never"))
+    (unless
+      assignment-prefix
+      (io.panic "selected store: only executed prefix is normalized"))
+    (unless fault (io.panic "selected flow: stale identity is a hard error"))
     (unless missing (io.panic "selected return: enclosing function required"))
     (unless unchanged (io.panic "selected return: failed operand retired"))
     true))

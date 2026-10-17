@@ -217,6 +217,7 @@ cleanup_vec_live_short_bitmap|all|0,1,2|tests/integration/cleanup_vec_live_bound
 tls_buffer_live_negative|all|0,1,2|tests/integration/tls_buffer_live_bounds.tl|134|-|-|stdlib/byte_buf.tl stdlib/net/tls_wire.tl|expected-stderr:tl: array index out of bounds\n
 raw_copy_api|all|0,1,2|stdlib/tests/raw_copy_api.tl|42|-|-|stdlib/string.tl stdlib/format.tl|-
 array_set_eval_order|all|0,1,2|tests/integration/array_set_eval_order.tl|42|-|-|-|-
+store_rhs_control_flow|all|0,1,2|tests/integration/store_rhs_control_flow.tl|42|-|-|stdlib/test.tl|-
 array_store_place|all|0,1,2|tests/integration/array_store_place.tl|42|-|-|-|-
 array_store_scope|all|0,1,2|tests/integration/array_store_scope.tl|42|-|-|stdlib/arena.tl|-
 array_set_bounds_order|all|0,1,2|tests/integration/array_set_bounds_order.tl|134|RHS ran\n|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:10:26: array index out of bounds: index=1 length=1\n

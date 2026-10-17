@@ -42,6 +42,18 @@ The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
 sub-word integer and floating fields, and move-only boxed field values.
 
+## Store RHS control flow
+
+`store_rhs_control_flow.tl` covers returns through local, projected, array,
+box, reference, slice, global, raw-pointer and replacement stores, including
+receiver/index effects, conditional fallthrough, loop breaks and continues.
+It runs at opt0/1/2 on both hosts. Its paired safety cases require unreachable
+tails, return types and immutable targets to retain their canonical errors.
+The selected-inference test checks canonical Unit versus intrinsic Never,
+executed-prefix selection and hard stale-identity failures. The normalizer
+checks no write or exclusive activation after an exit and rejects an incorrectly
+nominal result type; existing reference tests cover ordinary activation.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

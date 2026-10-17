@@ -309,6 +309,17 @@
   ;; operands are borrowed places or evaluated values; the result is fresh.
   (Builtin i64 i64))
 
+;; Stores commit only after evaluating their operands in order. A diverging
+;; operand leaves the destination unchanged and produces no store result.
+(define (typed-builtin-store? [code : i64]) : bool
+  (or (= code 105) (= code 111) (= code 125) (= code 126)))
+
+(define (typed-primitive-store? [primitive : (& primitive TypedPrimitive)]) : bool
+  (match primitive
+    [(or (TypedPrimitive.PtrWrite) (TypedPrimitive.RawWrite _)) true]
+    [(TypedPrimitive.Builtin code _) (typed-builtin-store? code)]
+    [_ false]))
+
 (define (typed-primitive-arity [primitive : (& primitive TypedPrimitive)]) : i64
   (match primitive
     [(TypedPrimitive.Cast) 1]

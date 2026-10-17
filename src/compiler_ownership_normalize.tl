@@ -1306,10 +1306,9 @@
   (reserved-places (__tl_dyn-array i64))
   (reserved-results (__tl_dyn-array i64))
   (reserved-sources (__tl_dyn-array own.OwnershipSource))
-  ;; The child loan of an implicit reborrow of a mutable-reference binder (its
-  ;; reservation is a shared loan of the binder itself, so the binder cannot
-  ;; be reassigned before the call), or -1 for an explicit `(&mut place)`.
-  (reserved-children (__tl_dyn-array i64))
+  ;; An implicit reborrow reserves its binder, then creates its child loan
+  ;; only at activation. An exiting operand must leave no undefined loan.
+  (reserved-implicit (__tl_dyn-array bool))
   ;; The entry loan a reservation of a place behind a parameter reborrows, or -1.
   (reserved-parents (__tl_dyn-array i64))
   ;; Whether the reservation activates a shared reborrow (a read-only receiver)
@@ -3845,7 +3844,7 @@
         borrowed.place
         result
         kept-source
-        -1
+        false
         reserve-parent
         shared?))
     (NormalizeValueResult.Ok (NormalizeValue node.type result borrowed.block))))
@@ -3857,7 +3856,7 @@
   [place : i64]
   [result : i64]
   [source : own.OwnershipSource]
-  [child : i64]
+  [implicit? : bool]
   [parent : i64]
   [shared? : bool]) : unit
   (if (< state.reserved-count (array-length state.reserved-loans))
@@ -3866,7 +3865,7 @@
       (set! (array-ref state.reserved-places state.reserved-count) place)
       (set! (array-ref state.reserved-results state.reserved-count) result)
       (set! (array-ref state.reserved-sources state.reserved-count) source)
-      (set! (array-ref state.reserved-children state.reserved-count) child)
+      (set! (array-ref state.reserved-implicit state.reserved-count) implicit?)
       (set! (array-ref state.reserved-parents state.reserved-count) parent)
       (set! (array-ref state.reserved-shared state.reserved-count) shared?))
     (begin
@@ -3874,7 +3873,7 @@
       (__tl_array-push! state.reserved-places place)
       (__tl_array-push! state.reserved-results result)
       (__tl_array-push! state.reserved-sources source)
-      (__tl_array-push! state.reserved-children child)
+      (__tl_array-push! state.reserved-implicit implicit?)
       (__tl_array-push! state.reserved-parents parent)
       (__tl_array-push! state.reserved-shared shared?)))
   (set! state.reserved-count (+ state.reserved-count 1)))
@@ -3898,11 +3897,26 @@
         [loan : i64 state.loan-count]
         [loan-source : own.OwnershipSource
           (own.ownership-source-copy (& source))]
-        [child : i64 (array-ref state.reserved-children index)]
-        (if (>= child 0)
+        [implicit? : bool (array-ref state.reserved-implicit index)]
+        (if implicit?
           ;; An implicit reborrow takes its child loan at the boundary; the
           ;; binder is read there and its loan is the solved parent.
           (begin
+            (try (normalize-charge! state 1 1 0))
+            (normalize-loan-append!
+              state
+              (own.OwnershipLoan
+                (normalize-place-id (& state) place)
+                (if (array-ref state.reserved-shared index)
+                  own.OwnershipLoanKind.Shared
+                  own.OwnershipLoanKind.Exclusive)
+                (own.OwnershipLoanOrigin.Parent
+                  (own.OwnershipLoanId
+                    (typed.typed-body-copy (& state.body.id))
+                    loan))
+                loan-source))
+            (__tl_array-push! state.reborrow-loans loan)
+            (__tl_array-push! state.reborrow-places place)
             (try
               (normalize-emit!
                 state
@@ -3926,7 +3940,7 @@
                 (own.OwnershipOperation.Reborrow
                   (own.OwnershipLoanId
                     (typed.typed-body-copy (& state.body.id))
-                    child))
+                    loan))
                 (& source)))
             (try
               (normalize-emit!
@@ -3935,7 +3949,7 @@
                 (own.OwnershipOperation.Assign
                   (normalize-place-id (& state) result))
                 (& source)))
-            (try (normalize-note-origin! state result child))
+            (try (normalize-note-origin! state result loan))
             (set! index (+ index 1)))
           (begin
             (try
@@ -4034,9 +4048,6 @@
   [active : i64]
   [shared? : bool]) : NormalizeValueResult
   (let
-    [loan : i64 state.loan-count]
-    [loan-source : own.OwnershipSource
-      (try (normalize-source-copy! state (& node.source)))]
     [kept-source : own.OwnershipSource
       (try (normalize-source-copy! state (& node.source)))]
     [result : i64
@@ -4046,21 +4057,6 @@
         (= (array-length node.children) 0)
         (= (array-ref state.body.places place).type.index node.type))
       (return (NormalizeValueResult.Err (normalize-type-error))))
-    ;; The child loan's place and parent are patched to the binder's single
-    ;; solved origin; it is issued when the call activates its arguments.
-    (try (normalize-charge! state 1 1 0))
-    (normalize-loan-append!
-      state
-      (own.OwnershipLoan
-        (normalize-place-id (& state) place)
-        (if shared?
-          own.OwnershipLoanKind.Shared
-          own.OwnershipLoanKind.Exclusive)
-        (own.OwnershipLoanOrigin.Parent
-          (own.OwnershipLoanId (typed.typed-body-copy (& state.body.id)) loan))
-        loan-source))
-    (__tl_array-push! state.reborrow-loans loan)
-    (__tl_array-push! state.reborrow-places place)
     (let
       [reservation : i64 state.loan-count]
       [reservation-source : own.OwnershipSource
@@ -4091,7 +4087,7 @@
         place
         result
         kept-source
-        loan
+        true
         -1
         shared?))
     (NormalizeValueResult.Ok (NormalizeValue node.type result active))))
@@ -4985,7 +4981,12 @@
         (NormalizeValueResult.Err
           (OwnershipNormalizeFailure.Structural
             "ownership normalization: diverging place formation"))))
-    (when (= value.type 13) (return (NormalizeValueResult.Ok value)))
+    (when
+      (= value.type 13)
+      (unless
+        (= node.type 13)
+        (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (NormalizeValueResult.Ok value)))
     (unless
       (and (= value.type formed.type) (= node.type 0))
       (return (NormalizeValueResult.Err (normalize-type-error))))
@@ -5183,7 +5184,12 @@
           (normalize-child-id node 1)
           formed.block
           depth))]
-    (when (= value.type 13) (return (NormalizeValueResult.Ok value)))
+    (when
+      (= value.type 13)
+      (unless
+        (= node.type 13)
+        (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (NormalizeValueResult.Ok value)))
     (unless
       (and (= value.type formed.type) (= node.type formed.type))
       (return (NormalizeValueResult.Err (normalize-type-error))))
@@ -6081,7 +6087,12 @@
     [store? : bool
       (match (& node.operation)
         [(NormalizeOperation.Primitive (typed.TypedPrimitive.Builtin code _))
-          (or (= code 105) (= code 111) (= code 125) (= code 126))]
+          (typed.typed-builtin-store? code)]
+        [_ false])]
+    [write? : bool
+      (match (& node.operation)
+        [(NormalizeOperation.Primitive primitive)
+          (typed.typed-primitive-store? primitive)]
         [_ false])]
     [first-loan : i64 state.loan-count]
     [store-end : i64 -1]
@@ -6206,10 +6217,25 @@
                     [_ 0])))])]
         (when
           (= value.type 13)
-          (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: eager call Never operand coercion"))))
+          (if write?
+            (begin
+              (unless
+                (= node.type 13)
+                (return (NormalizeValueResult.Err (normalize-type-error))))
+              ;; The receiver's place was formed, but no mutable reference
+              ;; is produced when the stored value exits.
+              (match deferred
+                [(NormalizeMaybeDeferred.Some receiver)
+                  (try (normalize-retain-node! state receiver.node -1))]
+                [(NormalizeMaybeDeferred.No) unit])
+              ;; No activation or write follows an exiting operand. Restore
+              ;; the caller's reservation stack before lowering another arm.
+              (set! state.reserved-count mark)
+              (return (NormalizeValueResult.Ok value)))
+            (return
+              (NormalizeValueResult.Err
+                (OwnershipNormalizeFailure.Unsupported
+                  "ownership normalization: eager call Never operand coercion")))))
         (try (normalize-charge! state 1 1 0))
         (__tl_array-push! operands value.place)
         (__tl_array-push!
@@ -11077,7 +11103,7 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array own.OwnershipSource 0)
-          (__tl_make-array i64 0)
+          (__tl_make-array bool 0)
           (__tl_make-array i64 0)
           (__tl_make-array bool 0)
           0

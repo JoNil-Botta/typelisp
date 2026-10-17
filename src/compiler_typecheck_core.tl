@@ -3524,7 +3524,8 @@
 ;; handed back; a query knows nothing and says no.
 (defenum TcSelectedNeverCheck
   (:lifetimes store lease intern bind)
-  (Checked bool (TcSelectedSink store lease intern bind)))
+  (Checked bool (TcSelectedSink store lease intern bind))
+  (Fault typed.TypedError (TcSelectedSink store lease intern bind)))
 
 (define (tc-selected-sink-never!
   [sink : (TcSelectedSink store lease intern bind)]
@@ -3537,66 +3538,77 @@
     [(TcSelectedSink.Query)
       (TcSelectedNeverCheck.Checked false TcSelectedSink.Query)]
     [(TcSelectedSink.Capture store lease bindings)
-      (TcSelectedNeverCheck.Checked
-        (match (tc-selected-occurrence-never! store lease id)
-          [(TcSelectedBoolResult.Ok diverges) diverges]
-          [(TcSelectedBoolResult.Err _) false])
-        (TcSelectedSink.Capture store lease bindings))]))
+      (match (tc-selected-occurrence-never! store lease id)
+        [(TcSelectedBoolResult.Ok diverges)
+          (TcSelectedNeverCheck.Checked
+            diverges
+            (TcSelectedSink.Capture store lease bindings))]
+        [(TcSelectedBoolResult.Err error)
+          (TcSelectedNeverCheck.Fault
+            error
+            (TcSelectedSink.Capture store lease bindings))])]))
 
 ;; Contextual Never coercion affects the checker's result, not control flow.
-;; Derive the intrinsic result of these two compound forms from their actual
+;; Derive intrinsic control flow and store results from their actual
 ;; chosen child records while retaining the canonical inferred type separately.
 (define (tc-selected-flow-never!
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [operation : (& operation typed.TypedOperation)]
   [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]) : TcSelectedBoolResult
-  (match operation
-    [(typed.TypedOperation.Sequence)
-      (let
-        [index : i64 0]
-        [never? : bool false]
-        (while (< index (array-length children))
-          (let
-            [child-never? : bool
-              (try
-                (tc-selected-occurrence-never!
-                  store
-                  lease
-                  (typed.TypedOccurrenceId
-                    (typed.typed-handle-copy
-                      (& (array-ref children index).handle)))))]
-            (set! never? (or never? child-never?))
-            (set! index (+ index 1))))
-        (TcSelectedBoolResult.Ok never?))]
-    [(typed.TypedOperation.If)
-      (unless
-        (= (array-length children) 3)
-        (return (TcSelectedBoolResult.Err typed.TypedError.Shape)))
-      (let
-        [condition : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 0).handle)))))]
-        [left : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 1).handle)))))]
-        [right : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 2).handle)))))]
-        (TcSelectedBoolResult.Ok (or condition (and left right))))]
-    [_ (TcSelectedBoolResult.Err typed.TypedError.Shape)]))
+  (if (match operation
+    [(or (typed.TypedOperation.Sequence) (typed.TypedOperation.AssignPlace _)
+         (typed.TypedOperation.ReplacePlace _))
+      true]
+    [(typed.TypedOperation.Primitive primitive)
+      (typed.typed-primitive-store? primitive)]
+    [_ false])
+    (let
+      [index : i64 0]
+      [never? : bool false]
+      (while (< index (array-length children))
+        (let
+          [child-never? : bool
+            (try
+              (tc-selected-occurrence-never!
+                store
+                lease
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy
+                    (& (array-ref children index).handle)))))]
+          (set! never? (or never? child-never?))
+          (set! index (+ index 1))))
+      (TcSelectedBoolResult.Ok never?))
+    (match operation
+      [(typed.TypedOperation.If)
+        (unless
+          (= (array-length children) 3)
+          (return (TcSelectedBoolResult.Err typed.TypedError.Shape)))
+        (let
+          [condition : bool
+            (try
+              (tc-selected-occurrence-never!
+                store
+                lease
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& (array-ref children 0).handle)))))]
+          [left : bool
+            (try
+              (tc-selected-occurrence-never!
+                store
+                lease
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& (array-ref children 1).handle)))))]
+          [right : bool
+            (try
+              (tc-selected-occurrence-never!
+                store
+                lease
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& (array-ref children 2).handle)))))]
+          (TcSelectedBoolResult.Ok (or condition (and left right))))]
+      [(typed.TypedOperation.Primitive _) (TcSelectedBoolResult.Ok false)]
+      [_ (TcSelectedBoolResult.Err typed.TypedError.Shape)])))
 
 (define (tc-selected-publish-flow
   [result : ResultTcType]
@@ -5501,7 +5513,7 @@
     bind)
   (match children
     [(TcSelectedChildren.Some ids)
-      (tc-selected-publish
+      (tc-selected-publish-flow
         result
         syntax
         source
@@ -9355,6 +9367,8 @@
                     after
                     (typed.TypedOccurrenceId
                       (typed.typed-handle-copy (& body-child.handle))))
+                    [(TcSelectedNeverCheck.Fault error after)
+                      (TcSelectedResult.Err (tc-selected-error error) after)]
                     [(TcSelectedNeverCheck.Checked diverges after)
                       (if diverges
                         (let
@@ -12774,13 +12788,12 @@
                 (TcSelectedResult.Err message next)]
               [(TcSelectedArgsResult.Ok children represented? next)
                 (if represented?
-                  (tc-selected-publish
+                  (tc-selected-publish-primitive
                     (ResultTcType.Ok ty)
                     syntax
                     source
-                    (typed.TypedOperation.Primitive
-                      (typed.TypedPrimitive.Builtin code count))
-                    children
+                    (typed.TypedPrimitive.Builtin code count)
+                    (TcSelectedChildren.Some children)
                     next)
                   (TcSelectedResult.Ok
                     ty
@@ -17660,13 +17673,12 @@
               (TcSelectedResult.Err message done)]
             [(TcSelectedArgsResult.Ok children all? done)
               (if all?
-                (tc-selected-publish
+                (tc-selected-publish-primitive
                   (ResultTcType.Ok ast.AstType.Unit)
                   syntax
                   source
-                  (typed.TypedOperation.Primitive
-                    (typed.TypedPrimitive.RawWrite (array-length children)))
-                  children
+                  (typed.TypedPrimitive.RawWrite (array-length children))
+                  (TcSelectedChildren.Some children)
                   done)
                 (tc-selected-unrepresented
                   (ResultTcType.Ok ast.AstType.Unit)
@@ -18860,7 +18872,7 @@
                           (TcSelectedResult.Err
                             (tc-selected-error error)
                             (TcSelectedSink.Capture store lease bindings)))])]
-                  (tc-selected-publish
+                  (tc-selected-publish-flow
                     (tc-global-shared-view result)
                     syntax
                     source
@@ -51118,8 +51130,8 @@
 
 ;; The canonical sequence checker retains precisely the child results it just
 ;; selected. A Never before the last child keeps the old checking schedule:
-;; later children are still checked once, in Query mode, and the whole sequence
-;; remains unrepresented until unreachable execution has a normalized form.
+;; later children are still checked once in Query mode; only the executed
+;; prefix through the diverging occurrence is represented.
 (define (tc-infer-selected-begin
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -51279,73 +51291,76 @@
                   (set! (array-ref children index) id)
                   true]
                 [(TcSelectedOccurrence.Unrepresented) false])]
-            (cond
-              [(and
-                  unit-each?
-                  (match (& ty)
-                    [(ast.AstType.Unit) false]
-                    [(ast.AstType.Never) false]
-                    [_ true]))
-                (TcSelectedResult.Err
-                  (tc-locate-error-at-expr
-                    (tc-context-expr-bases ctx)
-                    (tc-context-expr-get
+            (match (if (and represented? selected?)
+              (tc-selected-sink-never!
+                next
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy
+                    (& (array-ref children index).handle))))
+              (TcSelectedNeverCheck.Checked false next))
+              [(TcSelectedNeverCheck.Fault error after)
+                (TcSelectedResult.Err (tc-selected-error error) after)]
+              [(TcSelectedNeverCheck.Checked diverged? after)
+                (cond
+                  [(and
+                      unit-each?
+                      (match (& ty)
+                        [(ast.AstType.Unit) false]
+                        [(ast.AstType.Never) false]
+                        [_ true]))
+                    (TcSelectedResult.Err
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        (tc-context-expr-get
+                          ctx
+                          (ast.ast-expr-list-get exprs index 0))
+                        (match (tc-expect
+                          ty
+                          ast.AstType.Unit
+                          "typecheck: while body must be unit")
+                          [(ResultTcUnit.Err message) message]
+                          [(ResultTcUnit.Ok)
+                            "typecheck: while body must be unit"]))
+                      after)]
+                  ;; The children after a diverging one never run: the sequence
+                  ;; is its prefix through that child (they are still typed).
+                  [(and last? (>= cut 0))
+                    (tc-selected-publish-flow
+                      (ResultTcType.Ok ty)
+                      syntax
+                      source
+                      typed.TypedOperation.Sequence
+                      (tc-selected-children-prefix children cut)
+                      after)]
+                  [last?
+                    (if (and represented? selected?)
+                      (tc-selected-publish-flow
+                        (ResultTcType.Ok ty)
+                        syntax
+                        source
+                        typed.TypedOperation.Sequence
+                        children
+                        after)
+                      (TcSelectedResult.Ok
+                        ty
+                        TcSelectedOccurrence.Unrepresented
+                        after))]
+                  [else
+                    (tc-infer-selected-begin-at
                       ctx
-                      (ast.ast-expr-list-get exprs index 0))
-                    (match (tc-expect
-                      ty
-                      ast.AstType.Unit
-                      "typecheck: while body must be unit")
-                      [(ResultTcUnit.Err message) message]
-                      [(ResultTcUnit.Ok) "typecheck: while body must be unit"]))
-                  next)]
-              ;; The children after a diverging one never run: the sequence
-              ;; is its prefix through that child (they are still typed).
-              [(and last? (>= cut 0))
-                (tc-selected-publish-flow
-                  (ResultTcType.Ok ty)
-                  syntax
-                  source
-                  typed.TypedOperation.Sequence
-                  (tc-selected-children-prefix children cut)
-                  next)]
-              [last?
-                (if (and represented? selected?)
-                  (tc-selected-publish-flow
-                    (ResultTcType.Ok ty)
-                    syntax
-                    source
-                    typed.TypedOperation.Sequence
-                    children
-                    next)
-                  (TcSelectedResult.Ok
-                    ty
-                    TcSelectedOccurrence.Unrepresented
-                    next))]
-              [else
-                (let
-                  [diverged? : bool
-                    (and
-                      represented?
-                      selected?
-                      (match ty
-                        [(ast.AstType.Never) true]
-                        [_ false]))]
-                  (tc-infer-selected-begin-at
-                    ctx
-                    env
-                    exprs
-                    (+ index 1)
-                    syntax
-                    expected
-                    source
-                    children
-                    (and represented? selected? (not diverged?))
-                    (if (and diverged? (< cut 0))
+                      env
+                      exprs
                       (+ index 1)
-                      cut)
-                    unit-each?
-                    next))]))]))))
+                      syntax
+                      expected
+                      source
+                      children
+                      (and represented? selected? (not diverged?))
+                      (if (and diverged? (< cut 0))
+                        (+ index 1)
+                        cut)
+                      unit-each?
+                      after)])]))]))))
 
 (define (tc-selected-children-prefix
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
@@ -82604,7 +82619,7 @@
             (if never?
               (TcSelectedResult.Ok
                 ast.AstType.Unit
-                TcSelectedOccurrence.Unrepresented
+                (TcSelectedOccurrence.Selected id)
                 (TcSelectedSink.Capture store lease bindings))
               (match (tc-selected-binding-find!
                 store

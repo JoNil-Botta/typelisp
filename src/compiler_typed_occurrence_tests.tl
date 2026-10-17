@@ -1791,7 +1791,7 @@
               ast.AstExternKind.Function
               (ast.AstExternMetadata.Metadata
                 ast.AstExternAbi.C
-                (ci.intern-id-from-raw foreign-name)
+                (ci.intern-id-from-renderable foreign-name)
                 (ast.AstExternLinkInputList
                   (__tl_make-array ast.AstExternLinkInput 0)
                   0)

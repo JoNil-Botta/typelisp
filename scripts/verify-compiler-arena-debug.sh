@@ -50,9 +50,10 @@ for operation in invalid-null invalid-address invalid-atomic retire-unprotected 
 done
 echo "compiler arena debug native matrix passed (15 cases, $HOST_OS)"
 
-# Exercise the private global allocator with all instrumentation enabled. The
-# fixtures check arena restoration, payload identity, and concurrent growth.
-for source in global_aggregate_storage_lifetime global_aggregate_storage_threads global_aggregate_storage_boundary; do
+# Exercise aggregate storage with all instrumentation enabled. Global fixtures
+# check arena restoration, payload identity and concurrent growth; reference
+# reads check independent frame copies with active allocation counters.
+for source in global_aggregate_storage_lifetime global_aggregate_storage_threads global_aggregate_storage_boundary reference_copy_read; do
     for opt in 0 1 2; do
         asm="$WORKDIR/$source-opt$opt.s"
         binary="$WORKDIR/$source-opt$opt$BIN_EXT"
@@ -62,20 +63,24 @@ for source in global_aggregate_storage_lifetime global_aggregate_storage_threads
             --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
             --cfg compiler-arena-debug --cfg compile-profile --backtrace -o "$asm"
-        for symbol in tl_alloc_global: tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:; do
+        symbols="tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:"
+        if [ "$source" != reference_copy_read ]; then
+            symbols="tl_alloc_global: $symbols"
+        fi
+        for symbol in $symbols; do
             grep -F "$symbol" "$asm" >/dev/null ||
-                fail "global storage $source opt$opt omitted $symbol"
+                fail "aggregate storage $source opt$opt omitted $symbol"
         done
-        assemble_and_link "global storage $source opt$opt" "$asm" \
+        assemble_and_link "aggregate storage $source opt$opt" "$asm" \
             "$WORKDIR/$source-opt$opt.$OBJ_EXT" "$binary"
         status=0
         "$binary" > "$binary.stdout" 2> "$binary.stderr" || status=$?
-        [ "$status" -eq 42 ] || fail "global storage $source opt$opt: exit $status"
+        [ "$status" -eq 42 ] || fail "aggregate storage $source opt$opt: exit $status"
         [ ! -s "$binary.stdout" ] && [ ! -s "$binary.stderr" ] ||
-            fail "global storage $source opt$opt: unexpected output"
+            fail "aggregate storage $source opt$opt: unexpected output"
     done
 done
-echo "global storage debug/profile/backtrace matrix passed (9 cases, $HOST_OS)"
+echo "aggregate storage debug/profile/backtrace matrix passed (12 cases, $HOST_OS)"
 
 # Linux's private TLS word must also work with the debug renderer enabled in
 # this emitter. Ordinary compilers deliberately omit that renderer.

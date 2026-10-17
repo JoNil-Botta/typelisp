@@ -44,11 +44,11 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | `Call`, `Lambda`, `Let`, `Begin`, `Unsafe` | Unpack children/bindings and route to `lower-call`, `lower-lambda`, `lower-let-bindings`, or `lower-begin-expected`; unsafe entry changes the type environment. Direct and indirect calls share one lowering per ABI (`lower-c-abi-call-values`, `lower-internal-call-values`, `lower-call-values`) through a `LowerCallTarget`. |
 | `If`, `While`, `ForOwnedState`, `ForOwnedStep`, `Foreach` | Resolve children or unpack the typed payload, then use the existing control-flow family helper. |
 | `SpmdReduce`, `SpmdScan`, `SpmdCompact`, `SpmdBroadcast`, `SpmdShuffle` | Existing SPMD helpers own lowering. The longer dispatcher wrappers unpack payloads and forward resolved child expressions; they do not construct family IR. |
-| `Match`, `StringRef`, `StructGet`, `StructSet` | Child-resolution routes to the existing match/string/field helpers. Value and tail-position matches share one arm walker (`lower-match-dispatch` and the `lower-match-*` arms) parameterized by a `LowerMatchCont`. |
-| `MakeArray`, `Array`, `DynArray`, `ArrayRef`, `ArraySet`, `ArrayTake`, `Replace`, `ArrayPush` | Existing allocation/literal/element/ownership helpers; dispatcher only forwards the selected family and operands. |
-| `Tuple`, `TupleRef` | Existing tuple construction/access helpers. |
+| `Match`, `StringRef`, `StructGet`, `StructSet` | Child-resolution routes to the existing match/string/field helpers; whole field reads pass through `lower-copy-projected-value`. Value and tail-position matches share one arm walker (`lower-match-dispatch` and the `lower-match-*` arms) parameterized by a `LowerMatchCont`. |
+| `MakeArray`, `Array`, `DynArray`, `ArrayRef`, `ArraySet`, `ArrayTake`, `Replace`, `ArrayPush` | Existing allocation/literal/element/ownership helpers; dispatcher forwards the selected family and operands, materializing whole `ArrayRef` Copy results. |
+| `Tuple`, `TupleRef` | Existing tuple construction/access helpers; whole `TupleRef` Copy results are materialized. |
 | `WithRegion`, `WithEscape`, `WithScratch`, `InArena`, `WithResource` | Existing arena/resource helpers own cleanup and lifetime handoffs. |
-| `Box`, `BoxGet`, `BoxTake`, `BoxSet` | Existing box helpers; `BoxGet`/`BoxTake` share the established `lower-box-get` route. |
+| `Box`, `BoxGet`, `BoxTake`, `BoxSet` | Existing box helpers; `BoxGet`/`BoxTake` share `lower-box-get`, followed by `lower-copy-projected-value` for whole reads. Projection and borrow receivers reuse original-place addressing through `lower-projection-receiver`. |
 | `Try`, `Return`, `Break`, `Continue` | Existing result/return/loop-control helpers own exit construction. |
 | `Quote`, `Quasiquote`, `Unquote`, `UnquoteSplicing`, `TypeLiteral` | Small explicit rejection/materialization-policy arms; preserve their original diagnostic locations. |
 | `PtrNull` | Existing `lower-ptr-null-expr` route. |

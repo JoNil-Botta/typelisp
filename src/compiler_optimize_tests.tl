@@ -45441,6 +45441,145 @@
         "%2, 0 : u8"))
     "nested address recipes preserve offsets, element scales, frozen pricing, and exposed base values"))
 
+(define (opt-gep-split-address-identity-check
+  [address : String]
+  [offset : String]
+  [effect : String]
+  [flatten? : bool]
+  [forward? : bool]
+  [valid? : bool]) : bool
+  (let
+    [copy (str_cat.str-cat "%3 = gep %2, " offset " : u8\n")]
+    [tail "%5 = load %4 : i64\nreturn %5"]
+    [source
+      (str_cat.str-cat
+        "entry:\n"
+        (clone address)
+        (clone copy)
+        (clone effect)
+        "%4 = gep %3, %1 : i64\n"
+        (clone tail))]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "address-identity")
+        (irt.params "value=%0:i64, index=%1:i64")
+        (I64)
+        8
+        (irt.blocks (clone source))
+        Ordinary)]
+    [next
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        flatten?
+        (& func))]
+    [blocks (opt.opt-function-blocks (& next))]
+    [actual
+      (opt.opt-dce-block-list-array-fixpoint
+        (opt.opt-function-frame (& next))
+        (& blocks)
+        8)]
+    [expected
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n"
+          address
+          (if forward?
+            ""
+            copy)
+          effect
+          (if forward?
+            "%4 = gep %2, %1 : i64\n"
+            "%4 = gep %3, %1 : i64\n")
+          tail))]
+    [original (opt.opt-function-blocks (& func))]
+    [unchanged (irt.blocks source)]
+    (and
+      (= valid? (opt.opt-verify-ok? (& (opt.opt-verify-function (& func)))))
+      (= valid? (opt.opt-verify-ok? (& (opt.opt-verify-function (& next)))))
+      (opt.opt-block-list-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& original)
+        (& unchanged))
+      (opt.opt-block-list-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& actual)
+        (& expected)))))
+
+(test
+  gep-split-stable-address-identities
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      "store_ptr %2, 29 : i64\n"
+      true
+      true
+      true)
+    "pointee mutation preserves the address")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      ""
+      false
+      false
+      true)
+    "frozen pricing preserves the original operand")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "8"
+      ""
+      true
+      false
+      true)
+    "nonzero displacement is preserved")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = mov %0 : i64\n"
+      "0"
+      ""
+      true
+      false
+      true)
+    "unknown pointer sources are preserved")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      "%6 = addr_of %2\nstore_ptr %6, 2048 : i64\n"
+      true
+      false
+      true)
+    "an exposed source address remains a snapshot")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      "%6 = addr_of %3\nstore_ptr %6, 2048 : i64\n"
+      true
+      false
+      true)
+    "an exposed result address remains mutable")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      "%2 = addr_of %1\n"
+      true
+      false
+      false)
+    "multiple source definitions cannot be forwarded")
+  (test.assert-true
+    (opt-gep-split-address-identity-check
+      "%2 = addr_of %0\n"
+      "0"
+      "%3 = gep %2, 1 : u8\n"
+      true
+      false
+      false)
+    "multiple result definitions cannot be forwarded"))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : ir.CompilerIrFunction

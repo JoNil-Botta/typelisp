@@ -1,5 +1,6 @@
 ;; git_protocol_tests.tl - pkt-line framing, sideband, upload-pack codecs and
 ;; the fetch session over fragmented, malformed and adversarial input (#7074).
+(import stdlib.iterator)
 (import git_object_core as git_object)
 (import git_pkt_line_core as pkt)
 (import git_protocol_core as proto)
@@ -69,10 +70,8 @@
   (let
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
-      (byte_buf.byte-buf-builder-push (&mut out) (cast byte : u8))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (byte_buf.byte-buf-builder-push (&mut out) (cast byte : u8)))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 ;: A sideband packet on `channel`.
@@ -176,11 +175,10 @@
     [stream : String (gp-split-stream)]
     [expected : String (gp-split-expected)]
     [count : i64 (string.string-length (& stream))]
-    [split : i64 0]
     (gp-require
       (string.eq (gp-frame (string.copy (& stream))) (& expected))
       "whole stream")
-    (while (<= split count)
+    (for [split (iterator.range 0 (+ count 1))]
       (let
         [reader : pkt.GitPktReader (pkt.git-pkt-reader-new)]
         (gp-feed (&mut reader) (gp-sub (& stream) 0 split))
@@ -196,16 +194,13 @@
               (match (pkt.git-pkt-reader-end (& reader))
                 [(Ok) true]
                 [_ false])
-              "a whole stream ends cleanly"))))
-      (set! split (+ split 1)))
+              "a whole stream ends cleanly")))))
     (let
       [reader : pkt.GitPktReader (pkt.git-pkt-reader-new)]
       [all : String ""]
-      [index : i64 0]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (gp-feed (&mut reader) (gp-sub (& stream) index (+ index 1)))
-        (set! all (str_cat.str-cat all (gp-drain (&mut reader))))
-        (set! index (+ index 1)))
+        (set! all (str_cat.str-cat all (gp-drain (&mut reader)))))
       (gp-require (string.eq (& all) (& expected)) "byte-at-a-time input"))))
 
 ;: The packets of `stream` fed in `piece`-byte chunks, draining after each,
@@ -462,8 +457,7 @@
         " caps="
         (string.int->string (array-length advert.capabilities))
         " refs=")]
-    [index : i64 0]
-    (while (< index (array-length advert.refs))
+    (for [index (iterator.range 0 (array-length advert.refs))]
       (let
         [ref : (& advert git_object.GitAdvertisedRef)
           (& (array-ref advert.refs index))]
@@ -478,8 +472,7 @@
               [(Present peeled)
                 (str_cat.str-cat "^" (gp-sub (& peeled.hex) 0 1))]
               [(Absent) ""])
-            ",")))
-      (set! index (+ index 1)))
+            ","))))
     out))
 
 (define (gp-advert [lines : (__tl_dyn-array String)]) : String
@@ -510,12 +503,10 @@
   (let
     [out : (__tl_dyn-array String) (__tl_make-array String 0)]
     [tail : (__tl_dyn-array String) (gp-payloads rest)]
-    [index : i64 0]
     (when version-line (__tl_array-push! out "version 1\n"))
     (__tl_array-push! out first)
-    (while (< index (array-length tail))
-      (__tl_array-push! out (string.copy (& (array-ref tail index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length tail))]
+      (__tl_array-push! out (string.copy (& (array-ref tail index)))))
     out))
 
 ;; --- advertisements ----------------------------------------------------------
@@ -590,12 +581,10 @@
   (let
     [lines : (__tl_dyn-array String) (gp-payloads "version 2")]
     [limits : proto.GitProtocolLimits (proto.GitProtocolLimits 16 2 64 64)]
-    [index : i64 0]
-    (while (< index 3)
+    (for [index (iterator.range 0 3)]
       (let
         [item : String (str_cat.str-cat "cap" (string.int->string index) "\n")]
-        (__tl_array-push! lines item))
-      (set! index (+ index 1)))
+        (__tl_array-push! lines item)))
     (gp-require
       (match (proto.git-advertisement-parse (& lines) (& limits))
         [(Err (CapabilityLimit)) true]
@@ -812,12 +801,10 @@
       (if (= (string.string-length (& prefixes)) 0)
         (__tl_make-array String 0)
         (gp-payloads prefixes))]
-    [index : i64 0]
-    (while (< index (array-length items))
+    (for [index (iterator.range 0 (array-length items))]
       (let
         [item : String (pkt.git-pkt-text (& (array-ref items index)))]
-        (__tl_array-push! list item))
-      (set! index (+ index 1)))
+        (__tl_array-push! list item)))
     (match (proto.git-ls-refs-request (& advert) (& list) unborn)
       [(Ok plan)
         (str_cat.str-cat
@@ -908,8 +895,7 @@
     [(Ok refs)
       (let
         [out : String ""]
-        [index : i64 0]
-        (while (< index (array-length refs))
+        (for [index (iterator.range 0 (array-length refs))]
           (set!
             out
             (str_cat.str-cat
@@ -935,8 +921,7 @@
                     (string.copy name)
                     "->"
                     (string.copy target))])
-              ","))
-          (set! index (+ index 1)))
+              ",")))
         out)]))
 
 (test
@@ -1067,12 +1052,10 @@
   (let
     [list : (__tl_dyn-array String) (__tl_make-array String 0)]
     [items : (__tl_dyn-array String) (gp-payloads wants)]
-    [index : i64 0]
-    (while (< index (array-length items))
+    (for [index (iterator.range 0 (array-length items))]
       (let
         [item : String (pkt.git-pkt-text (& (array-ref items index)))]
-        (__tl_array-push! list item))
-      (set! index (+ index 1)))
+        (__tl_array-push! list item)))
     (match (proto.git-fetch-request (& advert) (& list) (& options))
       [(Ok plan)
         (str_cat.str-cat (gp-facts-text (& plan.facts)) "|" plan.request)]
@@ -1583,28 +1566,24 @@
 (define (gp-session-pump [session : (&mut session proto.GitSession)]) : GpPump
   (let
     [out : String ""]
-    [steps : i64 0]
-    (while (< steps 100000)
+    (for [steps (iterator.range 0 100000)]
       (let
         [event : proto.GitSessionEvent (proto.git-session-step! session)]
         [waiting : bool (proto.git-session-waiting? (& event))]
         [text : String (gp-session-event-text event)]
         (set! out (str_cat.str-cat out (string.copy (& text))))
         (when (gp-terminal? (& text)) (return (GpPump out true)))
-        (when waiting (return (GpPump out false))))
-      (set! steps (+ steps 1)))
+        (when waiting (return (GpPump out false)))))
     (io.panic "gp-session-pump: the session did not settle")))
 
 (define (gp-wants [text : String]) : (__tl_dyn-array String)
   (let
     [list : (__tl_dyn-array String) (__tl_make-array String 0)]
     [items : (__tl_dyn-array String) (gp-payloads text)]
-    [index : i64 0]
-    (while (< index (array-length items))
+    (for [index (iterator.range 0 (array-length items))]
       (let
         [item : String (pkt.git-pkt-text (& (array-ref items index)))]
-        (__tl_array-push! list item))
-      (set! index (+ index 1)))
+        (__tl_array-push! list item)))
     list))
 
 ;: Run a session over `stream` fed in two pieces at `split`, then (when `eof`)
@@ -1673,7 +1652,6 @@
     [stream : String (gp-v2-session-stream)]
     [expected : String (gp-v2-session-events)]
     [count : i64 (string.string-length (& stream))]
-    [split : i64 0]
     (gp-require
       (string.eq
         (gp-session
@@ -1684,7 +1662,7 @@
           true)
         (& expected))
       "the whole stream")
-    (while (<= split count)
+    (for [split (iterator.range 0 (+ count 1))]
       (gp-require
         (string.eq
           (gp-session
@@ -1694,8 +1672,7 @@
             split
             true)
           (& expected))
-        "a split changes the session's events")
-      (set! split (+ split 1)))
+        "a split changes the session's events"))
     (let
       [session : proto.GitSession
         (proto.git-session-new
@@ -1703,15 +1680,13 @@
           (gp-options true true false)
           (proto.GitProtocolLimits 64 32 64 4096))]
       [out : String ""]
-      [index : i64 0]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (proto.git-session-feed!
           (&mut session)
           (& (gp-sub (& stream) index (+ index 1))))
         (let
           [pumped : GpPump (gp-session-pump (&mut session))]
-          (set! out (str_cat.str-cat out (string.copy (& pumped.text)))))
-        (set! index (+ index 1)))
+          (set! out (str_cat.str-cat out (string.copy (& pumped.text))))))
       (gp-require (string.eq (& out) (& expected)) "byte-at-a-time input")
       (gp-require
         (string.eq
@@ -1724,8 +1699,7 @@
   (let
     [stream : String (gp-v2-session-stream)]
     [count : i64 (string.string-length (& stream))]
-    [prefix : i64 0]
-    (while (< prefix count)
+    (for [prefix (iterator.range 0 count)]
       (let
         [ended : String
           (gp-session
@@ -1750,8 +1724,7 @@
             (string.int->string prefix)))
         (gp-require
           (not (gp-terminal-anywhere? (& waiting)))
-          "a prefix without end of input waits for more"))
-      (set! prefix (+ prefix 1)))))
+          "a prefix without end of input waits for more")))))
 
 (define (gp-ends-with? [text : (& text str)] [suffix : (& suffix str)]) : bool
   (let
@@ -1776,7 +1749,7 @@
       (when
         (string.eq (string.substring text index width) needle)
         (return index))
-      (set! index (+ index 1)))
+      (+= index 1))
     -1))
 
 (test
@@ -1935,10 +1908,9 @@
     [stream : String (gp-v2-session-stream)]
     [count : i64 (string.string-length (& stream))]
     [state : i64 7074]
-    [index : i64 0]
     [failures : i64 0]
     [completes : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! state (gp-next-random state))
       (let
         [original : i64 (cast (string.string-ref (& stream) index) : i64)]
@@ -1965,9 +1937,8 @@
           (string.eq (& first) (& second))
           "the outcome does not depend on the split")
         (if (>= (gp-index-of (& first) "complete:") 0)
-          (set! completes (+ completes 1))
-          (set! failures (+ failures 1))))
-      (set! index (+ index 1)))
+          (+= completes 1)
+          (+= failures 1))))
     (gp-require (> failures (/ count 2)) "most mutations are rejected")
     (gp-require (> completes 0) "mutations inside pack bytes still complete")))
 
@@ -1998,19 +1969,16 @@
   git-protocol-session-settles-on-random-packet-sequences
   (let
     [state : i64 8318]
-    [round : i64 0]
-    (while (< round 400)
+    (for [round (iterator.range 0 400)]
       (set! state (gp-next-random state))
       (let
         [length : i64 (+ 1 (% state 12))]
         [stream : String ""]
-        [index : i64 0]
-        (while (< index length)
+        (for [index (iterator.range 0 length)]
           (set! state (gp-next-random state))
           (set!
             stream
-            (str_cat.str-cat stream (gp-corpus-packet (% (/ state 7) 18))))
-          (set! index (+ index 1)))
+            (str_cat.str-cat stream (gp-corpus-packet (% (/ state 7) 18)))))
         (let
           [first : String
             (gp-session
@@ -2031,5 +1999,4 @@
             "a random stream settles")
           (gp-require
             (string.eq (& first) (& second))
-            "the outcome does not depend on the split")))
-      (set! round (+ round 1)))))
+            "the outcome does not depend on the split"))))))

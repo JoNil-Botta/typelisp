@@ -5,6 +5,7 @@
 ;; provide typed inputs and receive one portable, versioned transcript plus its
 ;; exact SHA-256 fingerprint.  No cwd, arena address, intern id, temporary path,
 ;; scheduler order, or observation-only flag is admitted by this schema.
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
@@ -280,7 +281,7 @@
       (if (= (string.string-ref left index) (string.string-ref right index))
         unit
         (set! equal? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     equal?))
 
 (define (compiler-incremental-string-bytes [text : (& text str)]) : (__tl_dyn-array
@@ -288,10 +289,8 @@
   (let
     [length : i64 (string.string-length text)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (cast (string.string-ref text index) : u8))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (cast (string.string-ref text index) : u8)))
     out))
 
 (define (compiler-incremental-text-valid?
@@ -339,7 +338,7 @@
           (= code 45)
           (= code 46)
           (= code 47))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! ok? false))))
     ok?))
 
@@ -406,13 +405,8 @@
 (define (compiler-incremental-push-digest!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [digest : (& digest sha256.Sha256Digest)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index 32)
-      (byte_buf_core.byte-buf-builder-push
-        out
-        (sha256.digest-byte digest index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 32)]
+    (byte_buf_core.byte-buf-builder-push out (sha256.digest-byte digest index))))
 
 (define (compiler-incremental-push-child!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -568,7 +562,7 @@
             (compiler-incremental-add-size
               size
               (compiler-incremental-add-size 4 field-payload)))
-          (set! index (+ index 1))))
+          (+= index 1)))
       size)))
 
 (define (compiler-incremental-config-valid?
@@ -615,7 +609,7 @@
             (& field.value)
             true
             limits.max-string-bytes))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! ok? false))))
     ok?))
 
@@ -801,7 +795,7 @@
             config.extensions
             index)]
         (incremental_config_vec.push-ref! (&mut fields) field)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (incremental_config_sort.sort!
       (&mut fields)
       compiler-incremental-config-field-less?)
@@ -815,7 +809,7 @@
           (& (array-ref slots (- index 1)).name)
           (& (array-ref slots index).name))
           (set! duplicate? true)
-          (set! index (+ index 1)))))
+          (+= index 1))))
     (if duplicate?
       (Err
         (compiler-incremental-error
@@ -825,9 +819,9 @@
       (let
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
-        [record-index : i64 0]
         (byte_le.push-u32! (&mut out) (incremental_config_vec.len (& fields)))
-        (while (< record-index (incremental_config_vec.len (& fields)))
+        (for [record-index
+          (iterator.range 0 (incremental_config_vec.len (& fields)))]
           (let
             [slots (incremental_config_vec.slots (& fields))]
             [record : CompilerIncrementalEncodedRecord
@@ -835,8 +829,7 @@
                 (& (array-ref slots record-index)))]
             (byte_buf_core.byte-buf-builder-append-string
               (&mut out)
-              record.bytes)
-            (set! record-index (+ record-index 1))))
+              record.bytes)))
         (Ok (byte_buf_core.byte-buf-builder-finish-string (& out)))))))
 
 (define (compiler-incremental-input-invalid-code
@@ -1059,7 +1052,7 @@
           (compiler-incremental-add-size
             size
             (compiler-incremental-add-size 5 payload-size)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     size))
 
 (define (compiler-incremental-owned-plan-valid?
@@ -1072,7 +1065,7 @@
     [copy-index : i64 1]
     (while (and (>= owned 0) (< copy-index 5))
       (set! owned (compiler-incremental-add-size owned transcript-size))
-      (set! copy-index (+ copy-index 1)))
+      (+= copy-index 1))
     (and (>= owned 0) (<= owned limits.max-owned-bytes))))
 
 (define (compiler-incremental-identity-encode
@@ -1130,8 +1123,7 @@
           (let
             [records : incremental_record_vec.Vec
               (incremental_record_vec.with-capacity (array-length query.inputs))]
-            [index : i64 0]
-            (while (< index (array-length query.inputs))
+            (for [index (iterator.range 0 (array-length query.inputs))]
               (let
                 [input : CompilerIncrementalInput
                   (owned_view.compiler-owned-array-element-shared-view
@@ -1139,13 +1131,12 @@
                     index)]
                 [record
                   (try (compiler-incremental-encode-input (& input) limits))]
-                (incremental_record_vec.push-ref! (&mut records) record)
-                (set! index (+ index 1))))
+                (incremental_record_vec.push-ref! (&mut records) record)))
             (incremental_record_sort.sort!
               (&mut records)
               compiler-incremental-record-less?)
-            (set! index 1)
-            (while (< index (incremental_record_vec.len (& records)))
+            (for [index
+              (iterator.range 1 (incremental_record_vec.len (& records)))]
               (let
                 [previous : CompilerIncrementalEncodedRecord
                   (owned_view.compiler-owned-array-element-shared-view
@@ -1178,13 +1169,12 @@
                           compiler-incremental-error-order
                           0
                           "duplicate ordered-child sequence ordinal")))]
-                  [else (set! index (+ index 1))])))
+                  [else unit])))
             (let
               [build : CompilerIncrementalChildIdentity
                 (compiler-incremental-build-available (& query.compiler-build))]
               [out : byte_buf_core.ByteBufBuilder
                 (byte_buf_core.byte-buf-builder-with-capacity planned-size)]
-              [record-index : i64 0]
               (binary.compiler-incremental-binary-push-string!
                 (&mut out)
                 (& compiler-incremental-identity-domain))
@@ -1196,14 +1186,14 @@
               (byte_le.push-u32!
                 (&mut out)
                 (incremental_record_vec.len (& records)))
-              (while (< record-index (incremental_record_vec.len (& records)))
+              (for [record-index
+                (iterator.range 0 (incremental_record_vec.len (& records)))]
                 (let
                   [slots (incremental_record_vec.slots (& records))]
                   (byte_buf_core.byte-buf-builder-append-string
                     (&mut out)
                     (owned_view.compiler-owned-string-place-shared-view
-                      (array-ref slots record-index).bytes))
-                  (set! record-index (+ record-index 1))))
+                      (array-ref slots record-index).bytes))))
               (let
                 [transcript : (__tl_dyn-array u8)
                   (byte_buf_core.byte-buf-builder-finish-array (& out))]
@@ -1255,12 +1245,10 @@
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]) : sha256.Sha256Digest
   (let
     [octets : (Array u8 32) (make-array u8 32)]
-    [index : i64 0]
-    (while (< index 32)
+    (for [index (iterator.range 0 32)]
       (set!
         (array-ref octets index)
-        (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
-      (set! index (+ index 1)))
+        (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8)))
     (sha256.Sha256Digest octets)))
 
 (define (compiler-incremental-read-child!
@@ -1330,7 +1318,7 @@
             (set! less? true)
             (set! decided? true)]
           [(> left-byte right-byte) (set! decided? true)]
-          [else (set! index (+ index 1))])))
+          [else (+= index 1)])))
     (if decided?
       less?
       (< left-length right-length))))
@@ -1349,7 +1337,7 @@
         "incremental identity work limit exceeded")
       false)
     (begin
-      (set! reader.cursor.work (+ reader.cursor.work additional))
+      (+= reader.cursor.work additional)
       true)))
 
 (define (compiler-incremental-read-query-kind!
@@ -1394,9 +1382,7 @@
           "incremental identity record storage exceeds owned-byte limit")
         false)
       (begin
-        (set!
-          reader.owned-bytes
-          (+ reader.owned-bytes (* count bytes-per-record)))
+        (+= reader.owned-bytes (* count bytes-per-record))
         true))))
 
 (define (compiler-incremental-read-config!
@@ -1496,7 +1482,7 @@
                   (set!
                     (array-ref extensions index)
                     (CompilerIncrementalConfigField name value))
-                  (set! index (+ index 1)))))))))
+                  (+= index 1))))))))
     (CompilerIncrementalConfiguration
       target
       profile
@@ -1776,7 +1762,7 @@
                       (set! (array-ref inputs index) input)
                       (set! previous-start frame-start)
                       (set! previous-length frame-length)
-                      (set! index (+ index 1)))))))))
+                      (+= index 1))))))))
         (if (and
           reader.cursor.ok?
           (!= reader.cursor.offset (array-length reader.cursor.bytes)))
@@ -1941,7 +1927,7 @@
                     (if (compiler-incremental-record-bytes-eq?
                       (& left-record)
                       (& right-record))
-                      (set! index (+ index 1))
+                      (+= index 1)
                       (begin
                         (set! different? true)
                         (set!

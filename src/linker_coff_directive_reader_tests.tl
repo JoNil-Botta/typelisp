@@ -1,4 +1,5 @@
 ;; Executable `.drectve` reader conformance, discovered by inline-test CI.
+(import stdlib.iterator)
 (import linker_coff_directive_reader as drectve)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.io)
@@ -68,8 +69,7 @@
     [(Ok records)
       (let
         [out : String ""]
-        [index : i64 0]
-        (while (< index records.len)
+        (for [index (iterator.range 0 records.len)]
           (let
             [record : (& records drectve.CoffDirectiveRecord)
               (& (array-ref records.slots index))]
@@ -85,8 +85,7 @@
                 (string.int->string record.end)
                 " "
                 (render-directive (& record.directive))
-                "\n"))
-            (set! index (+ index 1))))
+                "\n"))))
         out)]))
 
 (define (render-owned [result : drectve.ResultCoffDirectives]) : String
@@ -470,7 +469,7 @@
         (while (and
           (< kept expected.len)
           (<= (array-ref expected.slots kept).end cut))
-          (set! kept (+ kept 1)))
+          (+= kept 1))
         kept)]
     [_ (io.panic "truncation fixture failed\n")]))
 
@@ -509,7 +508,7 @@
                   (=
                     (array-ref records.slots index).end
                     (array-ref expected.slots index).end)))
-              (set! index (+ index 1)))
+              (+= index 1))
             same)]
         [_ false])]
     [_ false]))
@@ -521,8 +520,7 @@
       "   /DEFAULTLIB:\"LIBCMT\" /FAILIFMISMATCH:\"_MSC_VER=1900\"\t/EXPORT:\"?v@@3HA\",DATA /DELAY:UNLOAD"]
     [full : drectve.ResultCoffDirectives (read-data (bytes-of (clone text)))]
     [length : i64 (string.string-length (& text))]
-    [cut : i64 0]
-    (while (<= cut length)
+    (for [cut (iterator.range 0 (+ length 1))]
       (let
         [result : drectve.ResultCoffDirectives
           (read-data (bytes-of (string.substring (& text) 0 cut)))]
@@ -546,8 +544,7 @@
                 "cut "
                 (string.int->string cut)
                 " failed outside its partial option: "
-                (string.copy error.message)))])
-        (set! cut (+ cut 1))))))
+                (string.copy error.message)))])))))
 
 ;; Only the section's bytes matter: the same text embedded anywhere in the
 ;; object reads identically, and bytes around it are never inspected.
@@ -599,13 +596,11 @@
   (let
     [out : bytes.ByteBufBuilder (bytes.byte-buf-builder-new)]
     [count : i64 (fuzz-below 48)]
-    [index : i64 0]
     (when
       (= (fuzz-below 4) 0)
       (bytes.byte-buf-builder-append-string (&mut out) "/DEFAULTLIB:"))
-    (while (< index count)
-      (bytes.byte-buf-builder-push (&mut out) (cast (fuzz-byte) : u8))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (bytes.byte-buf-builder-push (&mut out) (cast (fuzz-byte) : u8)))
     (bytes.byte-buf-builder-to-array (& out))))
 
 (define (raw-text [data : (& d (__tl_dyn-array u8))] [start : i64] [end : i64]) : String
@@ -621,9 +616,8 @@
 (test
   drectve-fuzzed-sections-stay-in-bounds
   (let
-    [case : i64 0]
     [parsed : i64 0]
-    (while (< case 3000)
+    (for [case (iterator.range 0 3000)]
       (let
         [data : (__tl_dyn-array u8) (fuzz-section)]
         [size : i64 (array-length data)]
@@ -640,10 +634,9 @@
                 (string.copy error.message)))]
           [(Ok records)
             (let
-              [index : i64 0]
               [previous-end : i64 0]
-              (set! parsed (+ parsed 1))
-              (while (< index records.len)
+              (+= parsed 1)
+              (for [index (iterator.range 0 records.len)]
                 (let
                   [record : (& records drectve.CoffDirectiveRecord)
                     (& (array-ref records.slots index))]
@@ -656,7 +649,5 @@
                         record.spelling
                         (raw-text (& data) record.start record.end)))
                     "fuzz record range or spelling is wrong")
-                  (set! previous-end record.end)
-                  (set! index (+ index 1)))))])
-        (set! case (+ case 1))))
+                  (set! previous-end record.end))))])))
     (assert (> parsed 0) "fuzz never produced an accepted section")))

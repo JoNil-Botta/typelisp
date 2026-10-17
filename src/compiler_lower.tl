@@ -26943,13 +26943,58 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (lower-materialize-at-expr ctx state value ty origin))
 
+;; Default fields read no earlier value and invoke no user expression. Lower
+;; them left to right before constructing or writing the aggregate, without
+;; retaining synthetic Init operands in the program's expression pool.
+(define (lower-init-field-values
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ResultLowerArgs
+  (if (>= index (ast.ast-type-list-len types))
+    (Ok state (ir.compiler-ir-value-seq-empty))
+    (let
+      [field-id : i64
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
+      [field-ty : ast.AstType
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-resolve-type
+            ctx
+            (tc_core.tc-context-type-get ctx field-id)))]
+      [lowered
+        (try
+          (lower-expr-and-coerce
+            ctx
+            state
+            env
+            type-env
+            (Init field-id)
+            field-ty))]
+      (match lowered
+        [(Expr next-state value _)
+          (match (lower-init-field-values
+            ctx
+            next-state
+            env
+            type-env
+            types
+            (+ index 1))
+            [(Ok rest-state rest-values)
+              (Ok
+                rest-state
+                (ir.compiler-ir-value-seq-prepend (& value) (& rest-values)))]
+            [(Err message) (Err message)])]))))
+
 (define (lower-init-struct
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [struct-name : String]
-  [struct-ty : ast.AstType]) : ResultLowerExpr
+  [struct-ty : ast.AstType]
+  [destination : ir.CompilerIrMaybeValue]) : ResultLowerExpr
   (let
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
@@ -26973,19 +27018,38 @@
                 (lower-struct-constructor-field-types-for-result
                   field-ctx
                   (lower-global-shared-view struct-ty)
-                  fields))]
-            (lower-construct-struct
+                  (clone fields)))]
+            (match (lower-init-field-values
               ctx
               state
               env
               type-env
-              struct-name
-              (lower-struct-type-handle-or
-                ctx
-                (lower-global-shared-view struct-ty)
-                (csym.compiler-symbols-missing-handle))
-              (lower-init-expr-list-from-types ctx field-types)
-              struct-ty))]
+              (& field-types)
+              0)
+              [(Ok args-state values)
+                (match destination
+                  [(No)
+                    (lower-construct-struct-inline-from-values
+                      field-ctx
+                      args-state
+                      struct-name
+                      values
+                      fields
+                      struct-ty)]
+                  [(Some dst)
+                    (let
+                      [done
+                        (try
+                          (lower-construct-struct-inline-into-from-values
+                            field-ctx
+                            args-state
+                            (clone dst)
+                            (lower-struct-type-name-id-or struct-ty -1)
+                            struct-name
+                            values
+                            fields))]
+                      (Ok (Expr done dst struct-ty)))])]
+              [(Err message) (Err message)]))]
         [(Err message) (Err (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum
@@ -26994,7 +27058,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [enum-name : String]
-  [enum-ty : ast.AstType]) : ResultLowerExpr
+  [enum-ty : ast.AstType]
+  [destination : ir.CompilerIrMaybeValue]) : ResultLowerExpr
   (let
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
@@ -27039,134 +27104,41 @@
                           (lower-global-shared-view enum-ty)
                           (csym.compiler-symbols-missing-handle))]
                       (if (csym.compiler-symbols-handle-found? handle)
-                        (lower-construct-enum-with-name
+                        (match (lower-init-field-values
                           ctx
                           state
                           env
                           type-env
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types ctx payload-types)
-                          enum-name
-                          enum-ty)
-                        (Err
-                          (box
-                            (lower-diagnostic
-                              (str_cat.str-cat
-                                "lower: unknown variant "
-                                lookup-name))))))])))])]
-      [(Err message) (Err (box (lower-diagnostic message)))])))
-
-(define (lower-init-struct-into
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [struct-name : String]
-  [struct-ty : ast.AstType]) : ResultLowerState
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
-    (if (lower-struct-repr-c-id?
-      field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
-      (Err
-        (box
-          (lower-diagnostic "lower: init supports only default-layout structs")))
-      (match (lower-struct-fields-id
-        field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
-        (lower-global-shared-view struct-name))
-        [(Ok fields)
-          (let
-            [field-types : ast.AstTypeList
-              (tc_core.tc-resolve-type-list
-                field-ctx
-                (lower-struct-constructor-field-types-for-result
-                  field-ctx
-                  (lower-global-shared-view struct-ty)
-                  fields))]
-            (lower-construct-struct-into
-              ctx
-              state
-              env
-              type-env
-              (LowerStoreDestination.FixedAddress dst)
-              struct-name
-              (lower-struct-type-handle-or
-                ctx
-                (lower-global-shared-view struct-ty)
-                (csym.compiler-symbols-missing-handle))
-              (lower-init-expr-list-from-types ctx field-types)
-              struct-ty))]
-        [(Err message) (Err (box (lower-diagnostic message)))]))))
-
-(define (lower-init-enum-into
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [enum-name : String]
-  [enum-ty : ast.AstType]) : ResultLowerState
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
-    (match (tc_core.tc-enum-decl-id
-      field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
-      [(Ok decl)
-        (match decl
-          [(TcEnumDecl _ variants)
-            (if (ast.ast-variant-def-list-empty? (& variants))
-              (Err
-                (box
-                  (lower-diagnostic
-                    "lower: init requires enum with at least one variant")))
-              (let
-                [variant : ast.AstVariantDef
-                  (ast.ast-variant-def-list-get
-                    (& variants)
-                    0
-                    (ast.ast-variant-def-fallback))]
-                (match variant
-                  [(Def variant-name fields _)
-                    (let
-                      [lookup-name : String
-                        (tc_core.tc-variant-name-for-enum
-                          (lower-global-shared-view enum-name)
-                          (tc_core.tc-env-key-name-text variant-name))]
-                      [payload-types : ast.AstTypeList
-                        (tc_core.tc-resolve-type-list
-                          field-ctx
-                          (lower-enum-constructor-fields-for-result
-                            field-ctx
-                            (lower-global-shared-view enum-ty)
-                            fields))]
-                      [handle : i64
-                        (lower-variant-constructor-handle-id-or
-                          ctx
-                          (tc_core.tc-env-key-name-text variant-name)
-                          variant-name
-                          (lower-global-shared-view enum-ty)
-                          (csym.compiler-symbols-missing-handle))]
-                      (if (csym.compiler-symbols-handle-found? handle)
-                        (lower-construct-enum-with-name-into
-                          ctx
-                          state
-                          env
-                          type-env
-                          (LowerStoreDestination.FixedAddress dst)
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types ctx payload-types)
-                          enum-name
-                          enum-ty)
+                          (& payload-types)
+                          0)
+                          [(Ok args-state values)
+                            (match destination
+                              [(No)
+                                (lower-construct-enum-inline-from-values
+                                  ctx
+                                  args-state
+                                  lookup-name
+                                  handle
+                                  values
+                                  payload-types
+                                  enum-name
+                                  enum-ty)]
+                              [(Some dst)
+                                (let
+                                  [done
+                                    (try
+                                      (lower-construct-enum-inline-into-from-values
+                                        ctx
+                                        args-state
+                                        (clone dst)
+                                        lookup-name
+                                        handle
+                                        values
+                                        payload-types
+                                        (lower-enum-type-name-id-or enum-ty -1)
+                                        enum-name))]
+                                  (Ok (Expr done dst enum-ty)))])]
+                          [(Err message) (Err message)])
                         (Err
                           (box
                             (lower-diagnostic
@@ -27186,25 +27158,25 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (match (lower-global-shared-view resolved)
+    (match (match (lower-global-shared-view resolved)
       [(or (Struct name) (StructArgs name _))
-        (lower-init-struct-into
+        (lower-init-struct
           ctx
           state
           env
           type-env
-          dst
           (tc_core.tc-nominal-name-id-display name)
-          resolved)]
+          resolved
+          (Some dst))]
       [(or (Enum name) (EnumArgs name _))
-        (lower-init-enum-into
+        (lower-init-enum
           ctx
           state
           env
           type-env
-          dst
           (tc_core.tc-nominal-name-id-display name)
-          resolved)]
+          resolved
+          (Some dst))]
       [_
         (Err
           (box
@@ -27213,7 +27185,9 @@
               origin
               (str_cat.str-cat
                 "lower: init unsupported type "
-                (tc_core.tc-type-render resolved)))))])))
+                (tc_core.tc-type-render resolved)))))])
+      [(Ok (Expr done _ _)) (Ok done)]
+      [(Err message) (Err message)])))
 
 (define (lower-init-expr
   [ctx : tc_core.TcContext]
@@ -27304,7 +27278,8 @@
             env
             type-env
             (tc_core.tc-nominal-name-id-display name)
-            resolved)]
+            resolved
+            (No))]
         [(or (Enum name) (EnumArgs name _))
           (lower-init-enum
             ctx
@@ -27312,7 +27287,8 @@
             env
             type-env
             (tc_core.tc-nominal-name-id-display name)
-            resolved)]
+            resolved
+            (No))]
         [_
           (Err
             (box

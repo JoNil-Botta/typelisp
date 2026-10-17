@@ -503,6 +503,12 @@ Object emission copies literal string/byte payloads into its destination;
 those headers and bytes can belong to lower IR, which retires after emission.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
+Struct and enum default fields lower directly to IR values without appending
+temporary `Init` operands to the persistent expression pool. Field types resolve
+in their nominal owner's context. Values are constructed left to right before
+the existing aggregate constructors pack them or write the destination; allocating
+defaults retain independent storage for each field and array element.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

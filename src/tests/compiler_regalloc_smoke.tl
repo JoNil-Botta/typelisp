@@ -147,6 +147,40 @@
       (not (live.compiler-live-set-contains? groups 6))
       (not (live.compiler-live-set-contains? groups 7)))))
 
+(import compiler_abi as cabi)
+
+(define (compiler-reg-smoke-gep-copy-home?
+  [abi : cabi.CompilerRegTargetAbi]
+  [func : (& ir.CompilerIrFunction)]) : bool
+  (match (reg.compiler-reg-plan-function-scalar-for-abi abi func)
+    [(Plan assignments _ _ _ _)
+      (reg_tests.compiler-reg-same-location? assignments 0 1)]))
+
+(define (compiler-reg-smoke-gep-copy-case? [source : String] [expected : bool]) : bool
+  (let
+    [func : ir.CompilerIrFunction (irt.func source)]
+    (and
+      (= (compiler-reg-smoke-gep-copy-home? Linux (& func)) expected)
+      (= (compiler-reg-smoke-gep-copy-home? Windows (& func)) expected))))
+
+(define (compiler-reg-smoke-gep-late-copy-excluded?) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        "function @gep_late_copy() -> i64 vars 4 {
+         entry:
+           %0 = call pointer_source() : (Ptr u8)
+           %2 = call opaque() : unit
+           %1 = gep %0, 0 : u8
+           %3 = load %1 : i64
+           return %3
+         }")]
+    [moves : reg.CompilerRegMoveSeq
+      (reg_tests.compiler-reg-function-moves-with-destructive-and-casts
+        func
+        false)]
+    (not (reg.compiler-reg-move-list-contains-undirected? moves 0 1))))
+
 (define (main) : i64
   (reg_tests.compiler-regalloc-self-test-require!
     "named failure message renderer"
@@ -160,4 +194,117 @@
   (reg_tests.compiler-regalloc-self-test-require!
     "compiler-reg-smoke-descriptor-pair-group-ok?"
     (compiler-reg-smoke-descriptor-pair-group-ok?))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep ptr both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_ptr(p=%0:(Ptr u8)) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 0 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (Ptr u8)
+  return %3
+}"
+      true))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep mutptr both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_mutptr(p=%0:(MutPtr u8)) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 0 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (MutPtr u8)
+  return %3
+}"
+      true))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep ref both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_ref(p=%0:(& p i64)) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 0 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (& p i64)
+  return %3
+}"
+      true))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep mutref both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_mutref(p=%0:(&mut p i64)) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 0 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (&mut p i64)
+  return %3
+}"
+      true))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep nonzero both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_nonzero(p=%0:(Ptr u8)) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 1 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (Ptr u8)
+  return %3
+}"
+      false))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep dynamic both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_dynamic(p=%0:(Ptr u8), i=%4:i64) -> i64 vars 5 {
+entry:
+  %1 = gep %0, %4 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (Ptr u8)
+  return %3
+}"
+      false))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep mutable-source both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_mutable(p=%0:(Ptr u8), q=%4:(Ptr u8)) -> i64 vars 5 {
+entry:
+  %1 = gep %0, 0 : u8
+  %0 = mov %4 : (Ptr u8)
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (Ptr u8)
+  return %3
+}"
+      false))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep address-taken both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_address_taken(p=%0:(Ptr u8)) -> i64 vars 5 {
+entry:
+  %4 = addr_of %0 storage 1
+  %1 = gep %0, 0 : u8
+  %2 = call opaque(%4) : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (Ptr u8)
+  return %3
+}"
+      false))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep fat-reference both ABIs"
+    (compiler-reg-smoke-gep-copy-case?
+      "function @gep_copy_fat(p=%0:(& p (Slice u8))) -> i64 vars 4 {
+entry:
+  %1 = gep %0, 0 : u8
+  %2 = call opaque() : unit
+  %3 = load %1 : i64
+  store @sink, %0 : (& p (Slice u8))
+  return %3
+}"
+      false))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "zero-gep late call-crossing input excluded"
+    (compiler-reg-smoke-gep-late-copy-excluded?))
   42)

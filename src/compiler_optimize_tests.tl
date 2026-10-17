@@ -32,6 +32,53 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+(test
+  cfg-never-call-exits
+  (let
+    [calls : (Array String 3) (array "call die()" "call* %4()" "call_c* %4()")]
+    (for [kind (iterator.range 0 3)]
+      (for [mode (iterator.range 0 2)]
+        (let
+          [exits? : bool (= mode 0)]
+          [text : String
+            (str_cat.str-cat
+              "%2 = "
+              (clone (array-ref calls kind))
+              (if exits?
+                " : never"
+                " : i64"))]
+          [instructions : ir.CompilerIrInstrSeq (irt.instrs (clone text))]
+          [function : ir.CompilerIrFunction
+            (Function
+              (opt-test-symbol "never_call_merge")
+              (irt.params "condition=%0:bool, callee=%4:u64")
+              (I64)
+              5
+              (irt.blocks
+                (str_cat.str-cat
+                  "entry:\nbranch %0, good, bad\ngood:\n%1 = mov 42 : i64\njump merge\nbad:\n"
+                  text
+                  "\nmerge:\n%3 = phi [%1, good] : i64\nreturn %3"))
+              Ordinary)]
+          (test.assert-true
+            (and
+              (=
+                (opt.opt-cfg-terminator-instr?
+                  (ir.compiler-ir-instr-seq-borrow instructions 0))
+                exits?)
+              (=
+                (opt.opt-cfg-instr-seq-can-fallthrough? (& instructions))
+                (not exits?))
+              (not (opt.opt-flag-exit-block-pure? (& instructions) 0))
+              (=
+                (opt.opt-verify-ok? (& (opt.opt-verify-function (& function))))
+                exits?))
+            (str_cat.str-cat
+              "Never call has no merge edge but keeps effects: "
+              (string.int->string kind)
+              "/"
+              (string.int->string mode))))))))
+
 ;; Storage adoption consumes a private completed value at the original copy.
 ;; Each refusal changes one proof obligation; expectations compare the complete
 ;; instruction sequence, preserving initialization, unrelated effects and uses.
@@ -5720,6 +5767,62 @@
           valid
           (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))))
         "every phi edge must carry inline storage"))))
+
+(test
+  optimizer-sret-declared-storage
+  (for [mode (iterator.range 0 5)]
+    (let
+      [prefix : String
+        (str_cat.str-cat
+          "%1 = alloc i64\n%2 = alloc i64\n%3 = alloc "
+          (if (= mode 3)
+            "u64"
+            "i64")
+          "\n%4 = addr_of %3 storage "
+          (if (= mode 1)
+            "4"
+            "3")
+          (cond
+            [(= mode 2) "\n%5 = addr_of %2"]
+            [(= mode 4) "\n%5 = mov %2 : i64"]
+            [else ""]))]
+      (test.assert-true
+        (=
+          (= mode 0)
+          (opt.opt-verify-ok?
+            (&
+              (opt.opt-verify-function
+                (&
+                  (opt-sret-role-verify-function
+                    prefix
+                    "%10 = call make([sret arg 0] %4) : u64"))))))
+        "declared scalar-word storage requires a complete, uniform, unaliased extent"))))
+
+(test
+  optimizer-sret-incoming-storage
+  (for [mode (iterator.range 0 4)]
+    (let
+      [function : ir.CompilerIrFunction
+        (irt.func
+          (str_cat.str-cat
+            "function @incoming(scalar=%0:u64, output=%1:u64) -> u64 vars 3 abi return-storage internal-trailing arg "
+            (if (= mode 2)
+              "2"
+              "1")
+            " bytes 24 output SretValue result u64 params (u64 u64) source (-> u64 SretValue) {\nentry:\n%2 = call make([sret arg 0] "
+            (if (= mode 1)
+              "%0"
+              "%1")
+            ") : u64\nreturn "
+            (if (= mode 3)
+              "%0"
+              "%1")
+            "\n}"))]
+      (test.assert-true
+        (=
+          (= mode 0)
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))))
+        "only the declared incoming result pointer can be forwarded and returned"))))
 
 (test
   optimizer-sret-storage-current-body

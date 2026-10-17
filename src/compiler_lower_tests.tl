@@ -2828,8 +2828,11 @@
 
 (define (compiler-lower-never-aggregate-call-source) : String
   "(defstruct NeverOutput (x i64) (y i64) (z i64))
+(defstruct NeverPair (x i64) (y i64))
 (extern (fail [message : String]) : never (:symbol \"tl_abort_string\"))
 (define (die [message : String]) : never (fail message))
+(define (sink [p : (&mut p i64)]) : never (fail \"sink\\n\"))
+(define (writeback-never) : i64 (let [p : NeverPair (NeverPair 1 2)] (sink (&mut p.x))))
 (define (foreign-direct) : NeverOutput (fail \"foreign direct\\n\"))
 (define (internal-direct) : NeverOutput (die \"internal direct\\n\"))
 (define (internal-indirect [f : (-> String never)]) : NeverOutput (f \"internal indirect\\n\"))
@@ -2859,48 +2862,57 @@
     name)
     [(LowerTestMaybeFunction.No) false]
     [(LowerTestMaybeFunction.Some func)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-          (let
-            [dense : ir.CompilerIrBlockSeq
-              (ir.compiler-ir-block-list-seq blocks)]
-            [b : i64 0]
-            [seen : i64 0]
-            [ok? : bool true]
-            (while (< b dense.len)
-              (begin
-                (match (ir.compiler-ir-block-seq-ref dense b)
-                  [(ir.CompilerIrBlock.Block _ instructions)
-                    (let
-                      [i : i64 0]
-                      (while (< i (ir.compiler-ir-instr-seq-count instructions))
-                        (begin
-                          (match (ir.compiler-ir-instr-seq-ref instructions i)
-                            [(ir.CompilerIrInstr.Call _ _ args ty)
-                              (set! seen (+ seen 1))
-                              (set!
-                                ok?
-                                (and
+      (let
+        [verified : bool
+          (optimize.opt-verify-ok? (& (optimize.opt-verify-function (& func))))]
+        (match func
+          [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+            (let
+              [dense : ir.CompilerIrBlockSeq
+                (ir.compiler-ir-block-list-seq blocks)]
+              [b : i64 0]
+              [seen : i64 0]
+              [ok? : bool
+                (and
+                  verified
+                  (lower-test-block-exits?
+                    (ir.compiler-ir-block-list-view blocks)))]
+              (while (< b dense.len)
+                (begin
+                  (match (ir.compiler-ir-block-seq-ref dense b)
+                    [(ir.CompilerIrBlock.Block _ instructions)
+                      (let
+                        [i : i64 0]
+                        (while (<
+                          i
+                          (ir.compiler-ir-instr-seq-count instructions))
+                          (begin
+                            (match (ir.compiler-ir-instr-seq-ref instructions i)
+                              [(ir.CompilerIrInstr.Call _ _ args ty)
+                                (set! seen (+ seen 1))
+                                (set!
                                   ok?
-                                  (compiler-lower-never-call-args-ok? args ty)))]
-                            [(ir.CompilerIrInstr.CallIndirect _ _ args ty)
-                              (set! seen (+ seen 1))
-                              (set!
-                                ok?
-                                (and
+                                  (and
+                                    ok?
+                                    (compiler-lower-never-call-args-ok? args ty)))]
+                              [(ir.CompilerIrInstr.CallIndirect _ _ args ty)
+                                (set! seen (+ seen 1))
+                                (set!
                                   ok?
-                                  (compiler-lower-never-call-args-ok? args ty)))]
-                            [(ir.CompilerIrInstr.CallIndirectC _ _ args ty)
-                              (set! seen (+ seen 1))
-                              (set!
-                                ok?
-                                (and
+                                  (and
+                                    ok?
+                                    (compiler-lower-never-call-args-ok? args ty)))]
+                              [(ir.CompilerIrInstr.CallIndirectC _ _ args ty)
+                                (set! seen (+ seen 1))
+                                (set!
                                   ok?
-                                  (compiler-lower-never-call-args-ok? args ty)))]
-                            [_ unit])
-                          (set! i (+ i 1)))))])
-                (set! b (+ b 1))))
-            (and ok? (= seen 1)))])]))
+                                  (and
+                                    ok?
+                                    (compiler-lower-never-call-args-ok? args ty)))]
+                              [_ unit])
+                            (set! i (+ i 1)))))])
+                  (set! b (+ b 1))))
+              (and ok? (= seen 1)))]))]))
 
 (define (compiler-lower-never-aggregate-call-shape-ok?) : bool
   (match (lower.lower-compiler-source
@@ -2918,7 +2930,8 @@
                   functions
                   "internal-indirect")
                 (compiler-lower-never-function-ok? functions "foreign-indirect")
-                (compiler-lower-never-function-ok? functions "foreign-tuple"))])]
+                (compiler-lower-never-function-ok? functions "foreign-tuple")
+                (compiler-lower-never-function-ok? functions "writeback-never"))])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))
         ok)]))

@@ -1186,8 +1186,8 @@
         (normalize-test-exiting-store? true true))
       "normalizer exiting stores and intrinsic result validation")
     (test.assert-true
-      (normalize-test-dead-unsupported?)
-      "normalizer does not certify unsupported dead forms")
+      (and (normalize-test-dead-exit? false) (normalize-test-dead-exit? true))
+      "normalizer retains dead exiting operands and rejects malformed flow")
     (set! mode 0)
     (while (< mode 15)
       (begin
@@ -1559,7 +1559,7 @@
         malformed?]
       [_ false])))
 
-(define (normalize-test-dead-unsupported?) : bool
+(define (normalize-test-dead-exit? [malformed? : bool]) : bool
   (let
     [intern-state : ci.InternCompatState
       (ci.intern-compat-state-capture-active)]
@@ -1568,8 +1568,8 @@
     [store : typed.TypedStore (fixture.typed-test-store (& lease))]
     [origin : typed.TypedOriginId
       (fixture.typed-test-origin! (&mut store) (& lease))]
-    [int-type : typed.TypedTypeId
-      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [bool-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Bool)]
     [unit-type : typed.TypedTypeId
       (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Unit)]
     [never-type : typed.TypedTypeId
@@ -1582,7 +1582,7 @@
         origin
         typed.TypedOperation.Return
         (normalize-test-empty))]
-    ;; A call whose operand diverges is outside the subset, even dead.
+    ;; Eager operands still have intrinsic control flow in an unreachable tail.
     [diverged : typed.TypedOccurrenceId
       (normalize-test-node!
         (&mut store)
@@ -1595,9 +1595,11 @@
       (normalize-test-node!
         (&mut store)
         (& lease)
-        int-type
+        (if malformed?
+          bool-type
+          never-type)
         origin
-        (typed.TypedOperation.Primitive (typed.TypedPrimitive.Builtin 999 1))
+        (typed.TypedOperation.Primitive typed.TypedPrimitive.PtrNullCheck)
         (__tl_make-array diverged))]
     [root : typed.TypedOccurrenceId
       (normalize-test-node!
@@ -1614,9 +1616,15 @@
       unit-type
       (__tl_make-array norm.OwnershipNormalizeTypeClass 0)
       (norm.ownership-normalize-default-limits))
+      [(norm.OwnershipNormalizeResult.Ok output)
+        (and
+          (not malformed?)
+          (= (array-length output.nodes) 4)
+          (= (array-ref output.nodes 3).result-place -1)
+          (= (array-length output.body.loans) 0))]
       [(norm.OwnershipNormalizeResult.Err
-          (norm.OwnershipNormalizeFailure.Unsupported _))
-        true]
+          (norm.OwnershipNormalizeFailure.Structural _))
+        malformed?]
       [_ false])))
 
 (define (normalize-test-goto?

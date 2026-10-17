@@ -8,9 +8,10 @@ This page describes the compiler pipeline and command-line surface. Run
 The [ownership IR design and migration inventory](ownership-ir.md) records the
 typed control-flow foundation for #8449. Production ownership checks normalize
 typed occurrences into that IR and require the core's certificate before
-lowering. Selected stores preserve intrinsic divergence independently of their
-canonical result type: place formation and RHS effects run in order, and an
-exit prevents the write and borrow activation. Checked MIR-to-IR lowering
+lowering. Selected eager operations preserve intrinsic divergence independently
+of their canonical result type. Place records keep the storage type while their
+receiver and index children describe evaluation flow; an exit prevents later
+operands, writes and borrow activation. Checked MIR-to-IR lowering
 remains open.
 
 Internal compiler box views share one API in `compiler_owned_view.tl`: omitting
@@ -1441,13 +1442,20 @@ function. `opt-def-counts-*` counts entry parameters and all destinations throug
 the verifier's canonical instruction classifier.
 
 The SSA verifier traces marked sret operands to inline aggregate `Alloc`
-storage through address-preserving aliases. Every phi/select input must prove
+storage, explicitly sized physical slots, or the declared incoming result
+parameter through address-preserving aliases. Every phi/select input must prove
 storage, and an address-taken pointer variable cannot supply that proof. The
 definition index reads the current body even when a pass reuses CFG topology.
 Memoized provenance stays in the verification call's scratch lifetime. This
 storage-origin check does not establish the callee's return convention or the
-output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
-those proofs and their enforcement before stack coloring, including mutable IR.
+output extent. The return-storage verifier validates declarations, complete
+uniform extents and overlap before accepting the function, including mutable
+IR. Joining unspecified extents retains unavailable range evidence; it never
+grants a range, an alias identity or a stack-coloring proof.
+Call-site layout comparisons instantiate declaration-local lifetime names;
+nominal identity, lifetime arity, reference mutability and runtime type
+structure remain exact. Source signatures and captured ABI authority keep
+their full type identity.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it

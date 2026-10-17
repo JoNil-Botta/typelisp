@@ -1,5 +1,5 @@
 ;; Capture all constructor operands before touching an existing destination,
-;; and retain the identity of a local's inline home during whole assignment.
+;; and keep a captured receiver on its old value across whole rebinding.
 (defstruct Inner
   (a i64)
   (b i64)
@@ -61,7 +61,7 @@
         (begin
           (set! p q)
           5))
-      (and (= p.a 5) (= p.b 8) (= p.c 9)))))
+      (and (= p.a 7) (= p.b 8) (= p.c 9) (= q.a 7)))))
 
 (define (small-reassignment?) : bool
   (let
@@ -73,7 +73,7 @@
         (begin
           (set! p q)
           5))
-      (and (= p.a 5) (= p.b 8)))))
+      (and (= p.a 7) (= p.b 8) (= q.a 7)))))
 
 (define (tuple-reassignment?) : bool
   (let
@@ -85,7 +85,11 @@
         (begin
           (set! p q)
           5))
-      (and (= (tuple-ref p 0) 5) (= (tuple-ref p 1) 8) (= (tuple-ref p 2) 9)))))
+      (and
+        (= (tuple-ref p 0) 7)
+        (= (tuple-ref p 1) 8)
+        (= (tuple-ref p 2) 9)
+        (= (tuple-ref q 0) 7)))))
 
 (define (owning-swap?) : bool
   (let
@@ -114,6 +118,9 @@
   (let
     [source : Inner (Inner 7 8 9)]
     [before : Inner global-inner]
+    [captured : (MutPtr i64)
+      (unsafe
+        (ptr-addr-of global-inner.a))]
     (begin
       (set!
         global-inner.a
@@ -122,9 +129,13 @@
           5))
       (set! source.b 99)
       (and
-        (= global-inner.a 5)
+        (= global-inner.a 7)
         (= global-inner.b 8)
         (= global-inner.c 9)
+        (=
+          (unsafe
+            (ptr-read captured))
+          5)
         (= source.a 7)
         (= before.a 1)
         (= before.b 2)
@@ -134,6 +145,9 @@
 (define (global-owning-transfer?) : bool
   (let
     [replacement : Owner (Owner (box 42) 8 9)]
+    [captured : (MutPtr i64)
+      (unsafe
+        (ptr-addr-of global-owner.padding))]
     [address : u64
       (unsafe
         (ptr-read (ptr-cast (ptr-addr-of replacement.handle) : (Ptr u64))))]
@@ -145,8 +159,12 @@
           5))
       (and
         (= (deref global-owner.handle) 42)
-        (= global-owner.padding 5)
+        (= global-owner.padding 8)
         (= global-owner.more 9)
+        (=
+          (unsafe
+            (ptr-read captured))
+          5)
         (=
           address
           (unsafe

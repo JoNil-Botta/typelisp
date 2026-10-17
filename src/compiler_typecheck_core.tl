@@ -3510,21 +3510,47 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedOccurrenceId]) : TcSelectedBoolResult
   (let
+    [children : i64 0]
     [type : typed.TypedTypeId
       (match (typed.typed-occurrence-get! store lease id)
         [(typed.TypedNodeResult.Err error)
           (return (TcSelectedBoolResult.Err error))]
         [(typed.TypedNodeResult.Ok node)
+          ;; Place records retain their canonical storage types even when
+          ;; evaluating a receiver or index exits before forming the place.
+          (set!
+            children
+            (match (& node.operation)
+              [(or (typed.TypedOperation.FormPlace _)
+                   (typed.TypedOperation.CopyPlace _)
+                   (typed.TypedOperation.MovePlace _)
+                   (typed.TypedOperation.Borrow _))
+                node.child-count]
+              [_ 0]))
           (typed.TypedTypeId (typed.typed-handle-copy (& node.type.handle)))])]
-    (match (typed.typed-type-get! store lease type)
-      [(typed.TypedTypeResult.Err error) (TcSelectedBoolResult.Err error)]
-      [(typed.TypedTypeResult.Ok value)
-        (TcSelectedBoolResult.Ok
+    [intrinsic : bool
+      (match (typed.typed-type-get! store lease type)
+        [(typed.TypedTypeResult.Err error)
+          (return (TcSelectedBoolResult.Err error))]
+        [(typed.TypedTypeResult.Ok value)
           (match value
             [(ast.AstType.Never) true]
-            [_ false]))])))
+            [_ false])])]
+    [index : i64 0]
+    (when intrinsic (return (TcSelectedBoolResult.Ok true)))
+    (while (< index children)
+      (let
+        [child : typed.TypedOccurrenceId
+          (match (typed.typed-child-get! store lease id index)
+            [(typed.TypedChildResult.Ok child) child]
+            [(typed.TypedChildResult.Err error)
+              (return (TcSelectedBoolResult.Err error))])]
+        [never? : bool (try (tc-selected-occurrence-never! store lease child))]
+        (when never? (return (TcSelectedBoolResult.Ok true)))
+        (set! index (+ index 1))))
+    (TcSelectedBoolResult.Ok false)))
 
-;; Whether occurrence `id` diverges (its own type is Never), with the sink
+;; Whether evaluating occurrence `id` diverges, with the sink
 ;; handed back; a query knows nothing and says no.
 (defenum TcSelectedNeverCheck
   (:lifetimes store lease intern bind)
@@ -3553,7 +3579,7 @@
             (TcSelectedSink.Capture store lease bindings))])]))
 
 ;; Contextual Never coercion affects the checker's result, not control flow.
-;; Derive intrinsic control flow and store results from their actual
+;; Derive intrinsic control flow and eager results from their actual
 ;; chosen child records while retaining the canonical inferred type separately.
 (define (tc-selected-flow-never!
   [store : (&mut store typed.TypedStore)]
@@ -3562,10 +3588,9 @@
   [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]) : TcSelectedBoolResult
   (if (match operation
     [(or (typed.TypedOperation.Sequence) (typed.TypedOperation.AssignPlace _)
-         (typed.TypedOperation.ReplacePlace _))
+         (typed.TypedOperation.ReplacePlace _) (typed.TypedOperation.Call _)
+         (typed.TypedOperation.Primitive _))
       true]
-    [(typed.TypedOperation.Primitive primitive)
-      (typed.typed-primitive-store? primitive)]
     [_ false])
     (let
       [index : i64 0]
@@ -3611,7 +3636,6 @@
                 (typed.TypedOccurrenceId
                   (typed.typed-handle-copy (& (array-ref children 2).handle)))))]
           (TcSelectedBoolResult.Ok (or condition (and left right))))]
-      [(typed.TypedOperation.Primitive _) (TcSelectedBoolResult.Ok false)]
       [_ (TcSelectedBoolResult.Err typed.TypedError.Shape)])))
 
 (define (tc-selected-publish-flow
@@ -12551,7 +12575,7 @@
                   (TcSelectedResult.Err message next)]
                 [(TcSelectedArgsResult.Ok children represented? next)
                   (if represented?
-                    (tc-selected-publish
+                    (tc-selected-publish-flow
                       (ResultTcType.Ok (tc-global-shared-view ty))
                       syntax
                       source
@@ -16036,7 +16060,7 @@
                       (tc-selected-error error)
                       (TcSelectedSink.Capture store lease bindings))]
                   [(typed.TypedCallResult.Ok call)
-                    (tc-selected-publish
+                    (tc-selected-publish-flow
                       result
                       syntax
                       source
@@ -18115,6 +18139,14 @@
     intern
     bind)
   (let
+    [never? : bool
+      (match (tc-selected-occurrence-never! store lease value)
+        [(TcSelectedBoolResult.Ok value) value]
+        [(TcSelectedBoolResult.Err error)
+          (return
+            (TcSelectedPlaceResult.Err
+              (tc-selected-error error)
+              (TcSelectedSink.Capture store lease bindings)))])]
     [type-id : typed.TypedTypeId
       (match (typed.typed-type-add! store lease (tc-global-shared-view ty))
         [(typed.TypedTypeIdResult.Ok id) id]
@@ -18123,8 +18155,13 @@
             (TcSelectedPlaceResult.Err
               (tc-selected-error error)
               (TcSelectedSink.Capture store lease bindings)))])]
-    [unit-id : typed.TypedTypeId
-      (match (typed.typed-type-add! store lease ast.AstType.Unit)
+    [result-id : typed.TypedTypeId
+      (match (typed.typed-type-add!
+        store
+        lease
+        (if never?
+          ast.AstType.Never
+          ast.AstType.Unit))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
           (return
@@ -18174,7 +18211,7 @@
     (match (typed.typed-occurrence-add!
       store
       lease
-      unit-id
+      result-id
       typed.TypedSyntax.Generated
       origin
       (typed.TypedOperation.Initialize binder)
@@ -19134,20 +19171,6 @@
                 (tc-selected-error typed.TypedError.Query)
                 TcSelectedSink.Query)]
             [(TcSelectedSink.Capture store lease bindings)
-              (match (tc-selected-occurrence-never! store lease index)
-                [(TcSelectedBoolResult.Err error)
-                  (return
-                    (TcSelectedPlaceResult.Err
-                      (tc-selected-error error)
-                      (TcSelectedSink.Capture store lease bindings)))]
-                [(TcSelectedBoolResult.Ok diverges)
-                  (when
-                    diverges
-                    (return
-                      (TcSelectedPlaceResult.Ok
-                        type
-                        TcSelectedPlace.Unrepresented
-                        (TcSelectedSink.Capture store lease bindings))))])
               (let
                 [count : i64 (array-length indices)]
                 [_charged : unit

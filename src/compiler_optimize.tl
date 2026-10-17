@@ -11878,13 +11878,17 @@
 (defstruct OptSretStorageProof
   (:lifetimes body)
   (body (& body ir.CompilerIrBlockList))
+  (params (& body ir.CompilerIrParamSeq))
+  (abi (& body ir.CompilerIrFunctionAbi))
   (marks (__tl_dyn-array bool))
   (memo (__tl_dyn-array i64)))
 
 ;; An integer-shaped value is not evidence of storage. Follow only operations
 ;; that preserve the base address of an allocated inline aggregate. Every arm
 ;; of a join must prove storage; bounded recursion refuses ungrounded cycles.
-;; Callee/result ABI and extent checks are separate obligations of #7738.
+;; Explicit extents and the incoming result parameter also establish origins;
+;; the return-storage verifier checks their declarations before accepting the
+;; function. This origin proof alone never supplies an extent or callee ABI.
 (define (opt-verify-sret-storage-pointer?
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -11904,10 +11908,10 @@
           (match (opt-verify-definition defs proof.body var)
             [(Some instr)
               (match instr
-                [(AddrOf _ src _)
+                [(AddrOf _ src words)
                   (match (opt-verify-definition defs proof.body src)
                     [(Some (Alloc _ ty))
-                      (opt-verify-inline-storage-type? (& ty))]
+                      (or (> words 0) (opt-verify-inline-storage-type? (& ty)))]
                     [_ false])]
                 [(Mov _ source ty)
                   (and
@@ -11976,7 +11980,20 @@
                       (& (deref payload).on-false)
                       (- fuel 1)))]
                 [_ false])]
-            [_ false])]
+            [_
+              (match proof.abi
+                [(ir.CompilerIrFunctionAbi.ReturnStorage boxed)
+                  (let
+                    [abi (ir.compiler-ir-box-shared-view boxed)]
+                    (and
+                      (>= abi.index 0)
+                      (< abi.index proof.params.len)
+                      (match (ir.compiler-ir-param-seq-ref
+                        proof.params
+                        abi.index)
+                        [(ir.CompilerIrParam.Param _ _ incoming)
+                          (= var incoming)])))]
+                [_ false])])]
         (set!
           (array-ref proof.memo var)
           (if valid
@@ -12482,7 +12499,7 @@
   [func : (& func ir.CompilerIrFunction)]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
-    [(Function _ params _ vars blocks _)
+    [(Function _ params _ vars blocks abi)
       (match (opt-var-defs-index-checked (& params) vars blocks)
         [(Duplicate) (Err "optimizer verify: duplicate var definition")]
         [(Index defs)
@@ -12493,6 +12510,8 @@
             [proof : (OptSretStorageProof func)
               (OptSretStorageProof
                 blocks
+                params
+                abi
                 (__tl_make-array bool 0)
                 (__tl_make-array i64 0))]
             (opt-verify-block-uses
@@ -12510,7 +12529,7 @@
   [func : (& func ir.CompilerIrFunction)]
   [context : (& OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ params _ _ blocks abi)
       (let
         [doms : OptDomInfo
           (owned_view.compiler-owned-reference-shared-view (& context.doms))]
@@ -12520,6 +12539,8 @@
         [proof : (OptSretStorageProof func)
           (OptSretStorageProof
             blocks
+            params
+            abi
             (__tl_make-array bool 0)
             (__tl_make-array i64 0))]
         (opt-verify-block-uses-contextual
@@ -16941,6 +16962,12 @@
          (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
          (TotalEnumSwitch _ _ _ _ _))
       true]
+    ;; A declared Never result has no continuation, including an implicit
+    ;; fallthrough edge into the next stored block.
+    [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty))
+      (match ty
+        [(ast.AstType.Never) true]
+        [_ false])]
     [_ false]))
 
 (define (opt-cfg-instr-seq-can-fallthrough?
@@ -34431,6 +34458,13 @@
       true
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        ;; A nonreturning call terminates control flow but still has effects.
+        (when
+          (match (& instr)
+            [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _))
+              true]
+            [_ false])
+          (return false))
         (if (and (= index (- count 1)) (opt-cfg-terminator-instr? instr))
           true
           (if (opt-flag-exit-pure-instr? (& instr))

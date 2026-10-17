@@ -260,6 +260,66 @@
         [(> words 0) (StorageRange.Range source (* words 8))]
         [else (StorageRange.Unknown)]))))
 
+;; Call-site lifetimes instantiate declaration-local binders without changing
+;; layout. Keep nominal identities, lifetime arity, mutability and all runtime
+;; type structure exact. Declaration/authority identity remains stricter.
+(define (layout-type-ids-equal?
+  [bases : i64]
+  [depth : i64]
+  [left : i64]
+  [right : i64]) : bool
+  (or
+    (= left right)
+    (layout-type-equal?
+      bases
+      (ast.ast-type-segment-bases-get bases left)
+      (ast.ast-type-segment-bases-get bases right)
+      depth)))
+
+(define (layout-type-equal?
+  [bases : i64]
+  [left : ast.AstType]
+  [right : ast.AstType]
+  [depth : i64]) : bool
+  (if (<= depth 0)
+    false
+    (match (ir.compiler-ir-global-shared-view left)
+      [(ast.AstType.StructArgs name lifetimes)
+        (match right
+          [(ast.AstType.StructArgs other arguments)
+            (and
+              (= name other)
+              (=
+                (ast.ast-lifetime-list-len (deref lifetimes))
+                (ast.ast-lifetime-list-len (deref arguments))))]
+          [_ false])]
+      [(ast.AstType.EnumArgs name lifetimes)
+        (match right
+          [(ast.AstType.EnumArgs other arguments)
+            (and
+              (= name other)
+              (=
+                (ast.ast-lifetime-list-len (deref lifetimes))
+                (ast.ast-lifetime-list-len (deref arguments))))]
+          [_ false])]
+      [(ast.AstType.Ref _ inner)
+        (match right
+          [(ast.AstType.Ref _ other)
+            (layout-type-ids-equal? bases (- depth 1) inner other)]
+          [_ false])]
+      [(ast.AstType.MutRef _ inner)
+        (match right
+          [(ast.AstType.MutRef _ other)
+            (layout-type-ids-equal? bases (- depth 1) inner other)]
+          [_ false])]
+      [_
+        (ast.ast-type-children-eq?
+          left
+          right
+          layout-type-ids-equal?
+          bases
+          (- depth 1))])))
+
 (define (range-output?
   [facts : (& facts StorageFacts)]
   [root : i64]
@@ -273,7 +333,7 @@
           (let
             [abi : ir.CompilerIrReturnStorageAbi
               (ir.compiler-ir-box-shared-view boxed)]
-            (ast.ast-type-eq-with-seg-bases? facts.bases output abi.output))]
+            (layout-type-equal? facts.bases output abi.output 64))]
         [_ false]))
     (if (not (single? facts root))
       false
@@ -286,11 +346,17 @@
             [(ir.CompilerIrBlock.Block _ instrs)
               (match (ir.compiler-ir-instr-seq-ref instrs position)
                 [(ir.CompilerIrInstr.Alloc _ ty)
-                  (ast.ast-type-eq-with-seg-bases? facts.bases output ty)]
+                  (layout-type-equal? facts.bases output ty 64)]
                 [_ false])]))))))
 
 (define (range-equal [left : StorageRange] [right : StorageRange]) : StorageRange
   (match left
+    ;; Missing extent evidence stays missing across a join. This never grants
+    ;; a range, an alias identity or permission to use a callee ABI proof.
+    [(StorageRange.Unproven)
+      (match right
+        [(StorageRange.Unproven) (StorageRange.Unproven)]
+        [_ (StorageRange.Unknown)])]
     [(StorageRange.Range root bytes)
       (match right
         [(StorageRange.Range other count)
@@ -395,8 +461,7 @@
                 (ast.ast-type-list-len abi.physical-params)))
             (ReturnStorageProof.Invalid
               "sret physical argument count differs from callee ABI")]
-          [(not
-              (ast.ast-type-eq-with-seg-bases? bases result abi.physical-result))
+          [(not (layout-type-equal? bases result abi.physical-result 64))
             (ReturnStorageProof.Invalid
               "sret physical result differs from callee ABI")]
           [else (ReturnStorageProof.Known declaration)])]

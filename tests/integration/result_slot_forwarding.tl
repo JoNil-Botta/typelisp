@@ -12,6 +12,12 @@
   (first Triple)
   (second Triple))
 
+(defstruct TripleView
+  (:lifetimes owner)
+  (item (& owner Triple))
+  (first i64)
+  (second i64))
+
 (defenum Checked
   (Ok Triple)
   (Err i64))
@@ -22,6 +28,19 @@
 
 (define (bump [t : Triple]) : Triple
   (Triple (+ t.a 1) (+ t.b 10) (+ t.c 100)))
+
+(define (read-triple [t : (& t Triple)]) : Triple
+  (Triple t.a t.b t.c))
+
+(define (make-view [t : (& input Triple)]) : (TripleView input)
+  (TripleView t 11 24))
+
+;; A borrowed argument keeps this as an ordinary call into the enclosing
+;; result slot. Its output role must survive forwarding and verify at opt0.
+(define (forward-read [t : Triple]) : Triple
+  (let
+    [local : Triple (Triple t.a t.b t.c)]
+    (read-triple (& local))))
 
 (define (check [t : Triple]) : Checked
   (if (< t.a 0)
@@ -86,6 +105,12 @@
 
 (define (main) : i64
   (let
+    [source : Triple (Triple 7 11 24)]
+    [forwarded : Triple (forward-read source)]
+    [boxed : (Box Triple) (box (read-triple (& source)))]
+    [heap-result : Triple (deref boxed)]
+    [view (make-view (& source))]
+    [viewed : Triple (deref view.item)]
     [results : i64
       (+
         (if (= (wrap-ok-case) 117)
@@ -102,6 +127,11 @@
           0))]
     (begin
       (io.print-format "{}\n" results)
-      (if (= results 15)
+      (if (and
+        (= results 15)
+        (= (+ forwarded.a forwarded.b forwarded.c) 42)
+        (= (+ heap-result.a heap-result.b heap-result.c) 42)
+        (= (+ viewed.a view.first view.second) 42)
+        (= (+ source.a source.b source.c) 42))
         42
         results))))

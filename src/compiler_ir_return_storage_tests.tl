@@ -8,6 +8,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.test)
+(import stdlib.iterator)
 
 (define (internal-callee) : ir.CompilerIrFunction
   (irt.func
@@ -15,6 +16,10 @@
      entry:
        return %0
      }"))
+
+(define (lifetime-callee) : ir.CompilerIrFunction
+  (irt.func
+    "function @make(output=%0:u64) -> (SretValue declared) vars 1 abi return-storage internal-trailing arg 0 bytes 24 output (SretValue declared) result (SretValue declared) params (u64) source (-> (SretValue declared)) {\nentry:\nreturn %0\n}"))
 
 (define (foreign-callee) : ir.CompilerIrExtern
   (match (irt.func
@@ -99,6 +104,7 @@
     [functions : ir.CompilerIrFunctionSeq
       (cond
         [(= declaration 1) (ir.compiler-ir-function-seq1 (& (internal-callee)))]
+        [(= declaration 8) (ir.compiler-ir-function-seq1 (& (lifetime-callee)))]
         [(= declaration 3)
           (ir.compiler-ir-function-seq1
             (&
@@ -121,19 +127,20 @@
         ;; entity, exactly as a single declaration does.
         [(= declaration 7)
           (ir.compiler-ir-extern-seq2 (foreign-callee) (foreign-callee))]
-        [(>= declaration 5)
+        [(and (>= declaration 5) (<= declaration 6))
           (ir.compiler-ir-extern-seq1 (foreign-value-callee (= declaration 6)))]
         [else (ir.compiler-ir-extern-seq-empty)])]
     [canonical-functions : ir.CompilerIrFunctionSeq
-      (if (= declaration 1)
-        (ir.compiler-ir-function-seq1 (& (internal-callee)))
-        (ir.compiler-ir-function-seq-empty))]
+      (cond
+        [(= declaration 1) (ir.compiler-ir-function-seq1 (& (internal-callee)))]
+        [(= declaration 8) (ir.compiler-ir-function-seq1 (& (lifetime-callee)))]
+        [else (ir.compiler-ir-function-seq-empty)])]
     [canonical-externs : ir.CompilerIrExternSeq
       (cond
         [(= declaration 2) (ir.compiler-ir-extern-seq1 (foreign-callee))]
         [(= declaration 7)
           (ir.compiler-ir-extern-seq2 (foreign-callee) (foreign-callee))]
-        [(>= declaration 5)
+        [(and (>= declaration 5) (<= declaration 6))
           (ir.compiler-ir-extern-seq1 (foreign-value-callee (= declaration 6)))]
         [else (ir.compiler-ir-extern-seq-empty)])]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
@@ -657,6 +664,22 @@
       40]
     [(not (case? 7 "" (private-body "%4 = call make([sret arg 0] %3) : u64") 1))
       41]
+    ;; A join of unspecified extents supplies no optimization proof; mixing
+    ;; in a scalar address still rejects the output-storage claim.
+    [(not
+        (case?
+          1
+          ""
+          "%0 = alloc SretValue\n%1 = addr_of %0\n%2 = select true, %1, %1 lanes 0 : u64\n%4 = call make([sret arg 0] %2) : u64"
+          0))
+      43]
+    [(not
+        (case?
+          1
+          "scalar=%3:u64"
+          "%0 = alloc SretValue\n%1 = addr_of %0\n%2 = select true, %1, %3 lanes 0 : u64\n%4 = call make([sret arg 0] %2) : u64"
+          -1))
+      44]
     [else 42]))
 
 (test
@@ -665,3 +688,80 @@
     (return-storage-proof-self-test)
     42
     "return storage signatures and ranges"))
+
+(test
+  return-storage-lifetime-instantiation
+  (let
+    [types : (Array String 4)
+      (array
+        "(SretValue actual)"
+        "(WrongValue actual)"
+        "(SretValue actual extra)"
+        "u64")]
+    (for [mode (iterator.range 0 7)]
+      (let
+        [slot : String
+          (clone
+            (array-ref
+              types
+              (if (< mode 4)
+                mode
+                0)))]
+        [result : String
+          (clone
+            (array-ref
+              types
+              (if (< mode 4)
+                0
+                (- mode 3))))]
+        [body : String
+          (str_cat.str-cat
+            "%0 = alloc "
+            (clone slot)
+            "\n%1 = alloc "
+            (clone slot)
+            "\n%2 = alloc "
+            slot
+            "\n%3 = addr_of %2 storage 3\n%4 = call make([sret arg 0] %3) : "
+            result)]
+        (test.assert-true
+          (case?
+            8
+            ""
+            body
+            (if (= mode 0)
+              1
+              -1))
+          "lifetime instantiation preserves layout; nominal identity, arity and result representation remain exact")))))
+
+(test
+  return-storage-nested-lifetime-layout
+  (let
+    [types : (Array String 7)
+      (array
+        "(Tuple (& actual i64) (SretValue actual))"
+        "(Tuple (&mut actual i64) (SretValue actual))"
+        "(Tuple (& actual f64) (SretValue actual))"
+        "(Tuple (& actual i64) (WrongValue actual))"
+        "(Tuple (& actual i64) (SretValue actual extra))"
+        "(Tuple (& actual i64))"
+        "(Array (& actual i64) 2)")]
+    (for [mode (iterator.range 0 7)]
+      (match (irt.func
+        "function @left() -> (Tuple (& declared i64) (SretValue declared)) vars 0 {\nentry:\nreturn\n}")
+        [(ir.CompilerIrFunction.Function _ _ left _ _ _)
+          (match (irt.func
+            (str_cat.str-cat
+              "function @right() -> "
+              (clone (array-ref types mode))
+              " vars 0 {\nentry:\nreturn\n}"))
+            [(ir.CompilerIrFunction.Function _ _ right _ _ _)
+              (test.assert-true
+                (=
+                  (= mode 0)
+                  (storage.layout-type-equal?
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    left
+                    right
+                    64))
+                "nested lifetime substitution cannot change runtime layout or reference mutability")])]))))

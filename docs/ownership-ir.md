@@ -1601,7 +1601,7 @@ once, preserving receiver/index checking order and selected index-child order.
 The eventual checked place consumer must interleave each index evaluation with
 that projection's access and bounds check before evaluating the next index;
 eagerly evaluating every index first would reorder observable failures. Borrowed
-array/Slice receivers, divergent indices and other receiver forms keep their
+array/Slice receivers and other receiver forms keep their
 canonical typecheck and remain explicitly unrepresented. Aggregate construction
 and product normalization are still required; the scalar normalizer explicitly
 leaves place acquisitions unsupported.
@@ -1625,7 +1625,15 @@ through to another lookup.
 check. The public inferred type still follows contextual `Never` coercion; the
 selected `Return` occurrence retains intrinsic `Never` and its explicit operand.
 `tc-selected-publish-flow` derives the intrinsic result of selected sequences,
-conditionals and stores from their checked child records. A local assignment
+conditionals, calls, eager primitives and stores from their checked child records.
+Place formation and acquisition retain the exact canonical storage type even
+when a receiver or index exits; the flow query follows their lease-checked
+children instead of weakening place type or category validation. A temporary
+receiver's initializer records its own intrinsic flow separately from its binder
+type. Normalization propagates an exit before forming, reading or borrowing the
+place. Selected children after that exit are retained and checked in unreachable
+blocks, so malformed dead operations still fail structural validation.
+A local assignment
 whose RHS exits retains that RHS; projected stores retain place formation before
 the RHS. Normalization ends at the exit without a write, replacement result or
 borrow activation, and requires the store's intrinsic result to be `Never`.

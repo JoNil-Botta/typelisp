@@ -14,6 +14,15 @@ Argument collectors expose `Exit` explicitly; their callers must stop before
 later arguments, snapshots, calls or writebacks. Array-literal builders retain
 the same distinction when constructing values for a store. The lowerer test
 `compiler-lower-store-exits` checks that each emitted terminator ends its block.
+Calls retain their declared `Never` result through contextual coercion. Direct,
+indirect and C-indirect calls with that result end the CFG block without a
+fallthrough edge or argument writeback; they remain effectful instructions.
+
+Direct calls that build an aggregate in the enclosing function's output slot
+retain the `Sret` role and return that supplied slot. A fresh box uses the same
+physical hidden argument without claiming inline frame storage. The callee's
+result-slot contract requires it to fill and return the supplied storage on
+every path, including early exits.
 
 Requested pointer-proof capture runs at the specialized, checked function
 boundary before expression dispatch erases pointer semantics. It uses the shared

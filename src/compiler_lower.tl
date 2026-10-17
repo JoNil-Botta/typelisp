@@ -27411,7 +27411,9 @@
 (define (lower-apply-arg-writebacks
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [writebacks : LowerArgWritebacks]) : LowerState
+  [writebacks : LowerArgWritebacks]
+  [result-ty : ast.AstType]) : LowerState
+  (when (tc_core.tc-never-type? result-ty) (return state))
   (match writebacks
     [(None) state]
     [(Some items)
@@ -37009,7 +37011,11 @@
           [(Expr call-state call-value call-ty)
             (Ok
               (Expr
-                (lower-apply-arg-writebacks ctx call-state writebacks)
+                (lower-apply-arg-writebacks
+                  ctx
+                  call-state
+                  writebacks
+                  (lower-global-shared-view call-ty))
                 call-value
                 call-ty))]))]
     [(Err message) (Err message)]))
@@ -37368,7 +37374,11 @@
                   [(LowerExpr.Expr call-state call-value call-ty)
                     (ResultLowerExpr.Ok
                       (LowerExpr.Expr
-                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        (lower-apply-arg-writebacks
+                          ctx
+                          call-state
+                          writebacks
+                          (lower-global-shared-view call-ty))
                         call-value
                         call-ty))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
@@ -37385,7 +37395,11 @@
                   [(LowerExpr.Expr call-state call-value call-ty)
                     (ResultLowerExpr.Ok
                       (LowerExpr.Expr
-                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        (lower-apply-arg-writebacks
+                          ctx
+                          call-state
+                          writebacks
+                          (lower-global-shared-view call-ty))
                         call-value
                         call-ty))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
@@ -39129,7 +39143,8 @@
                                 (lower-apply-arg-writebacks
                                   ctx
                                   call-state
-                                  writebacks)
+                                  writebacks
+                                  (lower-global-shared-view ty))
                                 value
                                 ty))])])]))])))]
     [_
@@ -39269,7 +39284,8 @@
                                               (lower-apply-arg-writebacks
                                                 ctx
                                                 call-state
-                                                writebacks)
+                                                writebacks
+                                                (lower-global-shared-view ty))
                                               value
                                               ty))])]
                                     [(ResultLowerExpr.Err message)
@@ -45212,7 +45228,10 @@
         value
         (lower-global-shared-view origin)
         false))
-      [(ResultLowerExpr.Ok (LowerExpr.Expr stored _ _))
+      [(ResultLowerExpr.Ok (LowerExpr.Expr stored _ stored-ty))
+        (when
+          (tc_core.tc-never-type? (lower-global-shared-view stored-ty))
+          (return (Ok (Expr stored Unit (Never)))))
         (match (lower-refresh-register-resident-root-after-store
           ctx
           stored
@@ -71003,8 +71022,8 @@
 ;;   * The result-slot ABI: a function with a nominal result slot returns that
 ;;     slot on every path (`try` early exits build their `Err` there too), which
 ;;     lowering checks for every function it emits
-;;     (`lower-result-slot-abi-violated?`). `Stored` still carries the call's
-;;     returned pointer.
+;;     (`lower-result-slot-abi-violated?`). `Stored` carries the supplied slot,
+;;     retaining that identity without reconstructing it from the call result.
 ;;   * No argument can alias the slot. The slot is either freshly reserved by
 ;;     the original caller (`lower-call-append-sret-arg`,
 ;;     `lower-internal-call-values`, `lower-c-abi-call-values`, a new box) or
@@ -71096,7 +71115,9 @@
                     [(ResultLowerCallArgs.Exit exit-state)
                       (LowerSlotStore.Exit exit-state)]
                     [(ResultLowerCallArgs.Ok args-state values writebacks)
-                      (match (lower-slot-dest-value args-state slot)
+                      (match (lower-slot-dest-value
+                        args-state
+                        (lower-global-shared-view slot))
                         [(LowerExpr.Expr slot-state slot-value _)
                           (match (lower-state-alloc-var slot-state)
                             [(LowerAlloc.Alloc allocated call-var)
@@ -71106,7 +71127,16 @@
                                     ctx
                                     ret-ty)]
                                 [sret-values : ir.CompilerIrValueSeq
-                                  (lower-value-seq-append-one values slot-value)]
+                                  (lower-value-seq-append-one
+                                    values
+                                    (lower-global-shared-view slot-value))]
+                                [_derived : unit
+                                  (lower-call-result-derive-return-slot!
+                                    ctx
+                                    allocated
+                                    call-var
+                                    (& sret-values)
+                                    (lower-global-shared-view ret-ty))]
                                 [call-name : i64
                                   (lower-resolve-call-name-id-with-display
                                     allocated
@@ -71120,18 +71150,28 @@
                                     (ir.CompilerIrInstr.Call
                                       call-var
                                       call-name
-                                      (ir.compiler-ir-call-args-from-seq
-                                        sret-values)
-                                      result-ir-ty)
+                                      (match slot
+                                        [(LowerSlotDest.Given _)
+                                          (lower-call-args-with-nominal-sret
+                                            ctx
+                                            sret-values
+                                            (lower-global-shared-view ret-ty))]
+                                        ;; Heap storage is not a frame-output
+                                        ;; range for the Sret ownership role.
+                                        [(LowerSlotDest.NewBox _ _)
+                                          (ir.compiler-ir-call-args-from-seq
+                                            sret-values)])
+                                      (lower-global-shared-view result-ir-ty))
                                     origin)]
                                 [writeback-state : LowerState
                                   (lower-apply-arg-writebacks
                                     ctx
                                     call-state
-                                    writebacks)]
+                                    writebacks
+                                    (lower-global-shared-view result-ir-ty))]
                                 (LowerSlotStore.Stored
                                   writeback-state
-                                  (ir.CompilerIrValue.Var call-var)))])])]
+                                  slot-value))])])]
                     [(ResultLowerCallArgs.Err message)
                       (LowerSlotStore.Err message)])]
                 [(tc_core.ResultTcTypeList.Err message)

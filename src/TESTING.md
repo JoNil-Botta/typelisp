@@ -51,6 +51,9 @@ The selected-inference test checks canonical Unit versus intrinsic Never,
 executed-prefix selection and hard stale-identity failures. The normalizer
 checks no write or exclusive activation after an exit and rejects an incorrectly
 nominal result type; existing reference tests cover ordinary activation.
+Its unreachable-operand case checks both a valid intrinsic exit and a malformed
+nominal result. Place-flow tests retain canonical storage type/category checks
+while exits from receiver and index evaluation prevent acquisition or writes.
 
 `global_aggregate_storage_lifetime.tl` checks shallow global container storage
 after scratch and explicit arena destruction, nested scopes, repeated writes,
@@ -77,6 +80,20 @@ instruction after a terminator, including annotation, replacement, constructor,
 direct/indirect call, C ABI and syscall paths. The paired safety cases retain
 canonical rejection of immutable receivers, wrong return types and invalid
 unreachable tails.
+
+`never_call_merge.tl` checks surviving match arms beside direct, indirect and
+C-ABI nonreturning calls at opt0/1/2 on both hosts, including a packed-field
+mutable argument. `cfg-never-call-exits` checks the missing fallthrough edge
+and retained call effects; ordinary returning calls remain negative controls
+for an incomplete merge phi. The lowerer also checks absence of writebacks and
+hidden aggregate-result arguments after a nonreturning call.
+
+`result_slot_forwarding.tl` verifies returns through a borrowed local aggregate,
+direct construction into a fresh box, and lifetime-bearing aggregate calls at
+all opt levels.
+The SSA tests retain positive unspecified-extent joins and reject scalar,
+offset, overwritten and mixed-origin pointers. Explicit output declarations
+also check incoming parameters, invalid extents, overlap and mismatched returns.
 
 ## Runtime byte search
 
@@ -856,10 +873,10 @@ unknown or narrow operands and repeated snapshot destinations.
 atomic/volatile stores, fetch-add and CAS when later operands rebind an earlier
 operand's source. `array_set_eval_order.tl` covers fixed/dynamic arrays, borrowed
 Slices, direct and materialized aggregate RHS values, and zero-size elements.
-`aggregate_assignment_storage.tl` keeps local storage identity when the RHS
-reassigns a selected field's receiver and snapshots the final aggregate
-constructor operand before destination writes; packed locals, tuples, enums,
-global storage and shallow Box transfers provide controls. `array_store_place.tl` grows the
+`aggregate_assignment_storage.tl` keeps a selected field's receiver on its old
+value when the RHS rebinds it, and snapshots the final aggregate constructor
+operand before destination writes. Packed locals, tuples, enums, captured
+global pointers and shallow Box transfers provide controls. `array_store_place.tl` grows the
 captured dynamic descriptor during the RHS, including through nested inline
 projections, and distinguishes descriptor rebinding from descriptor mutation.
 Wrapper controls merge mixed fixed/dynamic places and unequal dynamic root

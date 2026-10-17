@@ -2409,6 +2409,35 @@
     (try (normalize-retain-node! state node value.place))
     (NormalizeValueResult.Ok value)))
 
+;; Retained occurrences own all selected children, including an eager tail
+;; after an exit. Check that tail without an incoming execution edge.
+(define (normalize-unreachable-children!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [node : (& node NormalizeNode)]
+  [start : i64]
+  [depth : i64]) : NormalizeUnit
+  (let
+    [index : i64 start]
+    [active : i64 -1]
+    [mark : i64 state.reserved-count]
+    (while (< index (array-length node.children))
+      (let
+        [value : NormalizeValue
+          (try
+            (normalize-walk!
+              state
+              store
+              lease
+              (normalize-child-id node index)
+              active
+              depth))]
+        (set! active value.block)
+        (set! index (+ index 1))))
+    (set! state.reserved-count mark)
+    (NormalizeUnit.Ok unit)))
+
 (define (normalize-unary!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -3766,6 +3795,7 @@
     (unless
       (= (array-length node.children) 1)
       (return (NormalizeValueResult.Err (normalize-type-error))))
+    (when (= borrowed.type 13) (return (NormalizeValueResult.Ok borrowed)))
     (normalize-reserve-place!
       state
       node
@@ -4680,6 +4710,17 @@
               active
               depth))]
         (when
+          (= value.type 13)
+          (try
+            (normalize-unreachable-children!
+              state
+              store
+              lease
+              node
+              (+ index 1)
+              depth))
+          (return (NormalizeValueResult.Ok value)))
+        (when
           (< value.block 0)
           (return
             (NormalizeValueResult.Err
@@ -4793,6 +4834,7 @@
     [boxed : bool state.formed-boxed]
     [fixed : bool state.formed-fixed]
     [element : i64 state.formed-element]
+    (when (= formed.type 13) (return (NormalizeValueResult.Ok formed)))
     (unless
       (= formed.type node.type)
       (return (NormalizeValueResult.Err (normalize-type-error))))
@@ -4966,6 +5008,14 @@
     [loan : i64 state.formed-loan]
     [binder : i64 state.formed-binder]
     [indexed : bool state.formed-indexed]
+    [_exit : unit
+      (when
+        (= formed.type 13)
+        (unless
+          (= node.type 13)
+          (return (NormalizeValueResult.Err (normalize-type-error))))
+        (try (normalize-unreachable-children! state store lease node 1 depth))
+        (return (NormalizeValueResult.Ok formed)))]
     [value : NormalizeValue
       (try
         (normalize-walk!
@@ -5127,6 +5177,14 @@
     [loan : i64 state.formed-loan]
     [binder : i64 state.formed-binder]
     [indexed : bool state.formed-indexed]
+    [_exit : unit
+      (when
+        (= formed.type 13)
+        (unless
+          (= node.type 13)
+          (return (NormalizeValueResult.Err (normalize-type-error))))
+        (try (normalize-unreachable-children! state store lease node 1 depth))
+        (return (NormalizeValueResult.Ok formed)))]
     [_diverging : unit
       (when
         (< formed.block 0)
@@ -5488,6 +5546,7 @@
       (if (< (array-length state.type-references) (+ node.type 1))
         0
         (array-ref state.type-references node.type))]
+    (when (= borrowed.type 13) (return (NormalizeValueResult.Ok borrowed)))
     (unless
       (=
         kind
@@ -6089,11 +6148,6 @@
         [(NormalizeOperation.Primitive (typed.TypedPrimitive.Builtin code _))
           (typed.typed-builtin-store? code)]
         [_ false])]
-    [write? : bool
-      (match (& node.operation)
-        [(NormalizeOperation.Primitive primitive)
-          (typed.typed-primitive-store? primitive)]
-        [_ false])]
     [first-loan : i64 state.loan-count]
     [store-end : i64 -1]
     ;; A store's receiver place is formed in order (its index operands run
@@ -6217,25 +6271,27 @@
                     [_ 0])))])]
         (when
           (= value.type 13)
-          (if write?
-            (begin
-              (unless
-                (= node.type 13)
-                (return (NormalizeValueResult.Err (normalize-type-error))))
-              ;; The receiver's place was formed, but no mutable reference
-              ;; is produced when the stored value exits.
-              (match deferred
-                [(NormalizeMaybeDeferred.Some receiver)
-                  (try (normalize-retain-node! state receiver.node -1))]
-                [(NormalizeMaybeDeferred.No) unit])
-              ;; No activation or write follows an exiting operand. Restore
-              ;; the caller's reservation stack before lowering another arm.
-              (set! state.reserved-count mark)
-              (return (NormalizeValueResult.Ok value)))
-            (return
-              (NormalizeValueResult.Err
-                (OwnershipNormalizeFailure.Unsupported
-                  "ownership normalization: eager call Never operand coercion")))))
+          (unless
+            (= node.type 13)
+            (return (NormalizeValueResult.Err (normalize-type-error))))
+          ;; An exiting operand prevents the call, construction or store.
+          ;; A formed receiver produces no mutable reference on this path.
+          (match deferred
+            [(NormalizeMaybeDeferred.Some receiver)
+              (try (normalize-retain-node! state receiver.node -1))]
+            [(NormalizeMaybeDeferred.No) unit])
+          ;; No activation or write follows the exit. Restore the caller's
+          ;; reservation stack before lowering another arm.
+          (set! state.reserved-count mark)
+          (try
+            (normalize-unreachable-children!
+              state
+              store
+              lease
+              node
+              (+ index 1)
+              depth))
+          (return (NormalizeValueResult.Ok value)))
         (try (normalize-charge! state 1 1 0))
         (__tl_array-push! operands value.place)
         (__tl_array-push!

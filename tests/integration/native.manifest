@@ -1075,3 +1075,4 @@ global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_s
 
 store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
 store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+never_call_merge|all|0,1,2|tests/integration/never_call_merge.tl|42|-|-|stdlib/test.tl|-

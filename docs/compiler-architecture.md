@@ -1229,6 +1229,17 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+Constant folding and strength reduction each keep a separate `OptConstEnv` in
+the function pass's block workspace. A lazy direct-vreg index points into
+compact typed fact slots. Lookup validates the live slot range and stored key;
+stale indexes remain unknown when slots are reused for other variables. Unbind
+zeroes the index, so it cannot reveal an older fact. Each block clears the
+live length in constant time before reusing its slots and capacity.
+Memory-write barriers clear all facts while retaining the allocation. The
+states are threaded linearly, never retained as snapshots, and expire with
+the function's optimizer arena. Address-taken variables remain excluded from
+both environments at insertion by the existing per-function marks.
+
 Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
 reuse one table pair per function pass (`OptExprTable`), clearing each table
 before its block walk. The block walkers borrow the pair mutably. An empty

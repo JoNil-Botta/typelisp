@@ -34,6 +34,16 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+## Global by-value inline arguments
+
+`inline-global-actual-*` compares verified IR before and after inline staging
+for direct and tail calls, conditional and transitive writes, opaque calls,
+non-writers and different-global writers that remain out of line. The address
+and arity cases distinguish storage operands from captured values.
+`inline_global_by_value.tl` runs at opt0/1/2 on both hosts, covering scalar,
+one-/two-word structs and enums, the memory-class boundary, forwarding,
+duplicate arguments, single evaluation and raw-pointer aliases.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

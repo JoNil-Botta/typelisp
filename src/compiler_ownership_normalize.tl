@@ -1699,59 +1699,58 @@
           (return
             (NormalizeOperationResult.Err
               (OwnershipNormalizeFailure.Typed error)))])]
-    (let
-      [call : typed.TypedCall
-        (match (typed.typed-call-get! store lease record)
-          [(typed.TypedCallView.Ok call) (clone (deref call))]
-          [(typed.TypedCallView.Err error)
-            (return
-              (NormalizeOperationResult.Err
-                (OwnershipNormalizeFailure.Typed error)))])]
-      [signature : ast.AstType
-        (match (typed.typed-type-get! store lease call.signature)
-          [(typed.TypedTypeResult.Ok signature) (clone (deref signature))]
-          [(typed.TypedTypeResult.Err error)
-            (return
-              (NormalizeOperationResult.Err
-                (OwnershipNormalizeFailure.Typed error)))])]
-      [key : i64
-        (match (& call.kind)
-          [(typed.TypedCallKind.Declared key _) key]
-          [(typed.TypedCallKind.Foreign key _) key]
-          [(typed.TypedCallKind.Discharge key) key]
-          [_ -1])]
-      [indirect? : bool
-        (match (& call.kind)
-          [(typed.TypedCallKind.Indirect _) true]
-          [_ false])]
-      [discharge? : bool
-        (match (& call.kind)
-          [(typed.TypedCallKind.Discharge _) true]
-          [(typed.TypedCallKind.Construct) true]
-          [_ false])]
-      (try
-        (normalize-charge!
-          state
-          1
-          1
-          (+
-            (comptime (size-of (type NormalizeCall)))
-            (match (& signature)
-              [(ast.AstType.Func params _)
-                (+ (comptime (size-of (type ast.AstTypeList))) (* params.len 8))]
-              [_ 0]))))
-      (NormalizeOperationResult.Ok
-        (NormalizeOperation.Call
-          key
-          (+
-            call.argument-count
-            (if indirect?
-              1
-              0))
-          discharge?
-          indirect?
-          call.signature.handle.index
-          (NormalizeCall call.kind signature record.handle.index))))))
+    [call : typed.TypedCall
+      (match (typed.typed-call-get! store lease record)
+        [(typed.TypedCallView.Ok call) (clone (deref call))]
+        [(typed.TypedCallView.Err error)
+          (return
+            (NormalizeOperationResult.Err
+              (OwnershipNormalizeFailure.Typed error)))])]
+    [signature : ast.AstType
+      (match (typed.typed-type-get! store lease call.signature)
+        [(typed.TypedTypeResult.Ok signature) (clone (deref signature))]
+        [(typed.TypedTypeResult.Err error)
+          (return
+            (NormalizeOperationResult.Err
+              (OwnershipNormalizeFailure.Typed error)))])]
+    [key : i64
+      (match (& call.kind)
+        [(typed.TypedCallKind.Declared key _) key]
+        [(typed.TypedCallKind.Foreign key _) key]
+        [(typed.TypedCallKind.Discharge key) key]
+        [_ -1])]
+    [indirect? : bool
+      (match (& call.kind)
+        [(typed.TypedCallKind.Indirect _) true]
+        [_ false])]
+    [discharge? : bool
+      (match (& call.kind)
+        [(typed.TypedCallKind.Discharge _) true]
+        [(typed.TypedCallKind.Construct) true]
+        [_ false])]
+    (try
+      (normalize-charge!
+        state
+        1
+        1
+        (+
+          (comptime (size-of (type NormalizeCall)))
+          (match (& signature)
+            [(ast.AstType.Func params _)
+              (+ (comptime (size-of (type ast.AstTypeList))) (* params.len 8))]
+            [_ 0]))))
+    (NormalizeOperationResult.Ok
+      (NormalizeOperation.Call
+        key
+        (+
+          call.argument-count
+          (if indirect?
+            1
+            0))
+        discharge?
+        indirect?
+        call.signature.handle.index
+        (NormalizeCall call.kind signature record.handle.index)))))
 
 (define (normalize-node!
   [state : (&mut state NormalizeState)]

@@ -286,7 +286,10 @@ Annotations preserve that flow. Argument collectors carry an explicit `Exit`
 state, which callers propagate without snapshots, remaining arguments, calls
 or writebacks. Direct constructors and array-literal builders return their
 flow type so an exit cannot become a successful store through a state-only
-result. Conditional exits still leave the surviving path available to commit.
+result. Box and tuple literals preserve the same flow before allocation,
+stores, later elements or result materialization. Tuple element builders carry
+that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
+path available to commit.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask

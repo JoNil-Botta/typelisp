@@ -14,6 +14,8 @@ Argument collectors expose `Exit` explicitly; their callers must stop before
 later arguments, snapshots, calls or writebacks. Array-literal builders retain
 the same distinction when constructing values for a store. The lowerer test
 `compiler-lower-store-exits` checks that each emitted terminator ends its block.
+Box and tuple construction preserve the same flow; the tuple element builder
+returns `ResultLowerExpr` to retain that distinction.
 
 Requested pointer-proof capture runs at the specialized, checked function
 boundary before expression dispatch erases pointer semantics. It uses the shared

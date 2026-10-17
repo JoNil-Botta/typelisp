@@ -1526,3 +1526,9 @@ store_rhs_return_type_reject|check-fail|tests/safety/store_rhs_return_type_rejec
 store_rhs_return_type_reject-windows|check-fail-windows|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
 store_rhs_immutable_reject|check-fail|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
 store_rhs_immutable_reject-windows|check-fail-windows|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+
+# Literal exits preserve return and unreachable-element type checking.
+literal_exit_return_type_reject|check-fail|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+literal_exit_return_type_reject-windows|check-fail-windows|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+tuple_exit_unreachable_type_reject|check-fail|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch

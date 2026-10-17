@@ -31065,6 +31065,9 @@
               inner))]
         (match lowered
           [(Expr inner-state inner-value inner-ty)
+            (match (& inner-ty)
+              [(Never) (return (Ok (Expr inner-state Unit (Never))))]
+              [_ unit])
             (match (lower-reserve-heap-storage
               inner-state
               (lower-type-size ctx inner-ty)
@@ -31292,7 +31295,7 @@
   [base : ir.CompilerIrValue]
   [values : ast.AstExprList]
   [types : ast.AstTypeList]
-  [cursor : i64]) : ResultLowerState
+  [cursor : i64]) : ResultLowerExpr
   (lower-tuple-store-elems-at
     ctx
     state
@@ -31313,9 +31316,9 @@
   [values : (& values ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]
-  [cursor : i64]) : ResultLowerState
+  [cursor : i64]) : ResultLowerExpr
   (if (>= index values.len)
-    (Ok state)
+    (Ok (Expr state Unit (Unit)))
     (if (>= index (ast.ast-type-list-len types))
       (Err (box (lower-diagnostic "lower: tuple arity mismatch")))
       (let
@@ -31339,7 +31342,12 @@
               (lower-global-shared-view resolved)
               value))]
         (match lowered
-          [(Expr elem-state elem-value _)
+          [(Expr elem-state elem-value elem-ty)
+            ;; A contextual element type does not replace its actual flow:
+            ;; exits have no value to store and cancel the remaining elements.
+            (match (& elem-ty)
+              [(Never) (return (Ok (Expr elem-state Unit (Never))))]
+              [_ unit])
             (lower-tuple-store-elems-at
               ctx
               (if (> size 0)
@@ -31394,7 +31402,11 @@
                   values
                   (deref elem-tys)
                   0))]
-            (Ok (Expr final-state base result-ty)))])]
+            (match final-state
+              [(Expr done-state _ done-ty)
+                (match done-ty
+                  [(Never) (Ok (Expr done-state Unit (Never)))]
+                  [_ (Ok (Expr done-state base result-ty))])]))])]
     [_
       (Err
         (box

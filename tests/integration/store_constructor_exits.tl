@@ -141,13 +141,13 @@
 
 (define (tuple-store-continue) : i64
   (let
-    [p : (Tuple i64 i64) (tuple 1 2)]
+    [_p : (Tuple i64 i64) (tuple 1 2)]
     [i : i64 0]
     [n : i64 2]
     (while (< i 3)
       (+= i 1)
       (set!
-        p
+        _p
         (tuple
           (begin
             (+= n 10)

@@ -1505,12 +1505,17 @@
         (compiler-lower-tuple-inline-storage-frame? functions "leaf"))]
     [_ false]))
 
+(define (compiler-lower-scalar-test-mode [windows : bool]) : lower.CompilerLowerMode
+  (if windows
+    (lower.CompilerLowerMode.WindowsScalar)
+    (lower.CompilerLowerMode.LinuxScalar)))
+
 (define (compiler-lower-tuple-inline-storage-ok?) : bool
   (and
     (compiler-lower-tuple-inline-storage-mode-ok?
-      (lower.CompilerLowerMode.LinuxScalar))
+      (compiler-lower-scalar-test-mode false))
     (compiler-lower-tuple-inline-storage-mode-ok?
-      (lower.CompilerLowerMode.WindowsScalar))))
+      (compiler-lower-scalar-test-mode true))))
 
 (define (compiler-lower-mut-ref-array-access-source) : String
   "(define (len [a : (& a (__tl_dyn-array i64))]) : i64 (array-length a))
@@ -16370,8 +16375,8 @@
   (let
     [modes : (Array lower.CompilerLowerMode 2)
       (array
-        (lower.CompilerLowerMode.LinuxScalar)
-        (lower.CompilerLowerMode.WindowsScalar))]
+        (compiler-lower-scalar-test-mode false)
+        (compiler-lower-scalar-test-mode true))]
     (for [index (iterator.range 0 2)]
       (test.assert-true
         (match (lower-test-functions

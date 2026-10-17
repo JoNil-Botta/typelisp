@@ -22,6 +22,14 @@ user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the
 seed policy are in
 [`../docs/testing-and-bootstrap.md`](../docs/testing-and-bootstrap.md).
 
+`tests/spmd/float_comparisons.tl` uses integer ranks for all six f32/f64
+predicates over signed zeros, finite values, infinities and quiet/signaling
+NaNs in either operand. The SIMD cases run scalar/AVX2/AVX-512 at opt0/1/2
+over empty, singleton, full-gang and tail lengths, check inactive sentinels,
+and compare selected payload bits. Shape rows retain ordered packed GT/GE
+on both target ABIs; backend IR-text cases cover register and spill operands
+and unchanged AVX-512 signed/unsigned integer predicates.
+
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222. Its raw-pointer counterpart retains the old aggregate across a
 whole-global rebind, so the backend must preserve the boxed cell and fresh

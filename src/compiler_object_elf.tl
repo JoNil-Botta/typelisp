@@ -217,7 +217,7 @@
   [image : (& image cobj.CompilerObjectImage)]
   [name : (& str)]) : i64
   (let
-    [symbols : cobj.CompilerObjectSymbolList image.symbols]
+    [symbols (& image.symbols)]
     [local : i64 (compiler-object-elf-local-symbol-index-from symbols name 1)]
     (if (>= local 0)
       local

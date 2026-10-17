@@ -18,6 +18,7 @@
 (import compiler_intern_state as cis)
 (import stdlib.io)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define host-smoke-cookie : i64
   0x5151)
@@ -1242,7 +1243,7 @@
               (and
                 (= actual scrutinee)
                 (= arms.len 1)
-                (match (array-ref arms.slots 0)
+                (match (owned_view.compiler-owned-element-view arms.slots 0)
                   [(Arm pattern actual-body)
                     (and
                       (= actual-body body)
@@ -1255,13 +1256,17 @@
                                 (host-smoke-syntax-name-text name)
                                 "Some")
                               (= args.len 2)
-                              (match (array-ref args.slots 0)
+                              (match (owned_view.compiler-owned-element-view
+                                args.slots
+                                0)
                                 [(Binding first)
                                   (string.eq
                                     (host-smoke-syntax-name-text first)
                                     "p0")]
                                 [_ false])
-                              (match (array-ref args.slots 1)
+                              (match (owned_view.compiler-owned-element-view
+                                args.slots
+                                1)
                                 [(Binding second)
                                   (string.eq
                                     (host-smoke-syntax-name-text second)

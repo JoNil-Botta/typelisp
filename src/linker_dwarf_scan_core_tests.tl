@@ -1643,8 +1643,13 @@
   (let
     [views : (__tl_dyn-array dwarf.LinkerDwarfView) first]
     [index : i64 0]
+    ;; `second` is consumed: each view moves out of its slot.
     (while (< index (array-length second))
-      (__tl_array-push! views (array-ref second index))
+      (__tl_array-push!
+        views
+        (replace!
+          (array-ref second index)
+          (dwarf.LinkerDwarfView 0 0 0 false (__tl_make-array u8 0))))
       (set! index (+ index 1)))
     views))
 
@@ -1656,8 +1661,9 @@
     [out : (__tl_dyn-array dwarf.LinkerDwarfView)
       (__tl_make-array dwarf.LinkerDwarfView 0)]
     [index : i64 (- (array-length views) 1)]
+    ;; The views stay with the caller: each one is cloned.
     (while (>= index 0)
-      (__tl_array-push! out (array-ref views index))
+      (__tl_array-push! out (clone (array-ref views index)))
       (set! index (- index 1)))
     out))
 

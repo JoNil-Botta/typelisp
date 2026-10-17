@@ -2,7 +2,7 @@
 
 ; Must fail: the returned command would borrow executable text allocated in the
 ; inner arena.
-(define (main [outer : String]) : (process_borrowed.ProcessBorrowedCommand
+(define (main [outer : (& outer String)]) : (process_borrowed.ProcessBorrowedCommand
     outer
     outer
     outer

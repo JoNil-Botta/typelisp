@@ -382,8 +382,8 @@
 ;; registration entry: the loader reads the table directly.
 (define (tlci-loader-native-table-offset [image : (& image tlci.TlciImage)]) : i64
   (let
-    [entries : (__tl_dyn-array u8) image.entries]
-    [symbols : (__tl_dyn-array u8) image.symbols]
+    [entries (& image.entries)]
+    [symbols (& image.symbols)]
     [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
     [index : i64 0]
     [found : i64 -1]
@@ -478,7 +478,10 @@
 ;; cannot inherit an owner by omission; the arity is the enforcement.
 (define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (__tl_dyn-array
     i64)
-  (in-arena (arena.Arena owner-arena) (__tl_make-array i64 count)))
+  (in-arena
+    (unsafe
+      (arena.Arena owner-arena))
+    (__tl_make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
@@ -730,7 +733,10 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     0
-    (in-arena (arena.Arena owner-arena) (__tl_make-array true))))
+    (in-arena
+      (unsafe
+        (arena.Arena owner-arena))
+      (__tl_make-array true))))
 
 (define (tlci-loader-loaded-image-with-registration
   [loaded : TlciLoadedImage]
@@ -1391,7 +1397,8 @@
           [index-arena : i64 (arena.tl_arena_make_small)]
           [result : ResultTlciLoadedImage
             (in-arena
-              (arena.Arena index-arena)
+              (unsafe
+                (arena.Arena index-arena))
               (tlci-loader-build-macro-index loaded index-arena))]
           (match result
             [(Err message)
@@ -1411,10 +1418,10 @@
   (let
     [count : i64 loaded.macro-entry-count]
     [generation : i64 loaded.macro-index-generation]
-    [slots : (__tl_dyn-array i64) loaded.macro-index-slots]
-    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
-    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
-    [entry-states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [slots (& loaded.macro-index-slots)]
+    [name-addrs (& loaded.macro-index-name-addrs)]
+    [name-lens (& loaded.macro-index-name-lens)]
+    [entry-states (& loaded.macro-index-entry-states)]
     (cond
       [(not (tlci-loader-image-live? loaded))
         (Err "tlci loader: image has been released")]
@@ -1467,9 +1474,9 @@
   (let
     [index : i64 resolved.entry-index]
     [count : i64 loaded.macro-entry-count]
-    [name-addrs : (__tl_dyn-array i64) loaded.macro-index-name-addrs]
-    [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
-    [function-addrs : (__tl_dyn-array i64) loaded.macro-index-function-addrs]
+    [name-addrs (& loaded.macro-index-name-addrs)]
+    [name-lens (& loaded.macro-index-name-lens)]
+    [function-addrs (& loaded.macro-index-function-addrs)]
     (cond
       [(not (tlci-loader-image-live? loaded))
         (Err "tlci loader: image has been released")]
@@ -1494,7 +1501,9 @@
   [resolved : TlciResolvedMacroEntry]) : ResultTlciLoaderUnit
   (let
     [_ (try (tlci-loader-resolved-macro-entry loaded resolved))]
-    [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [states : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-reference-shared-view
+        (& loaded.macro-index-entry-states))]
     [index : i64 resolved.entry-index]
     (if (not (= (array-length states) loaded.macro-entry-count))
       (Err "tlci loader: macro entry state index is unavailable")

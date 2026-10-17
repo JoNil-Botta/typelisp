@@ -168,7 +168,7 @@
   [name-id : i64]) : i64
   (if (and (ci.intern-renderable-id? name-id) (ci.intern-dotted? name-id))
     (let
-      [aliases : clone_id_map.Map names.aliases]
+      [aliases (& names.aliases)]
       [alias-id : i64 (ci.intern-leading-dot-id name-id)]
       [key-id : i64 (clone-import-alias-key-id module-id alias-id)]
       (match (clone_id_map.get (& aliases) key-id)
@@ -390,7 +390,8 @@
         1
         (* old-capacity 2))]
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [bigger : (__tl_dyn-array CloneRootEntry)
           (__tl_make-array CloneRootEntry new-capacity)]
@@ -603,7 +604,8 @@
                     (clone-root-entries-store-read target-address)]
                   [owner : i64 target-store.arena]
                   (in-arena
-                    (arena.Arena owner)
+                    (unsafe
+                      (arena.Arena owner))
                     (if (>=
                       target-store.len
                       (array-length target-store.entries))

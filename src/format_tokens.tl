@@ -144,7 +144,7 @@
   (let
     [stream : FormatTokenStream
       (owned_view.compiler-owned-reference-shared-view stream)]
-    (array-ref stream.tokens idx)))
+    (owned_view.compiler-owned-element-view stream.tokens idx)))
 
 (define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64]) : i64
   (array-ref stream.starts idx))
@@ -604,7 +604,7 @@
     [bigger : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken newcap)]
     [j : i64 0]
     (while (< j count)
-      (set! (array-ref bigger j) (array-ref old j))
+      (set! (array-ref bigger j) (owned_view.compiler-owned-element-view old j))
       (set! j (+ j 1)))
     bigger))
 

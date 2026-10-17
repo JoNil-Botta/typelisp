@@ -444,7 +444,7 @@
     ">\")\n  (io.println \"\"))"))
 
 (define (repl-display-body [ty : ast.AstType] [expr-source : String]) : ResultReplString
-  (match (owned_view.compiler-owned-shared-view ty)
+  (match (& ty)
     [(or (I64) (Bool))
       (Ok (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
     [(I32)

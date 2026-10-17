@@ -5,6 +5,21 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
+The [ownership IR design and migration inventory](ownership-ir.md) records the
+typed control-flow foundation for #8449. Production ownership checks normalize
+typed occurrences into that IR and require the core's certificate before
+lowering. Checked MIR-to-IR lowering remains open.
+
+Internal compiler box views share one API in `compiler_owned_view.tl`: omitting
+its optional field selector preserves the whole-payload view; providing one
+reads only that field. A boxed payload is addressed through its stored pointer,
+and a payload behind a shared reference uses the existing checked field borrow
+and reference bridge. Callers retain the payload owner for the alias's lifetime;
+these representation copies do not transfer ownership. Extra selectors reject
+during macro evaluation. `src/tests/compiler_owned_view_smoke.tl` covers both
+routes and the zero/one-selector boundary; public-check transcripts pin excess
+arity with source and embedded stdlib loading.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)
@@ -15,6 +30,14 @@ Source (.tl)
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
+
+Expression-pool aliases share their node allocation cursor and span-table
+headers. Canonical and ReSpan append counts and the ordering flag belong to
+those stable headers, not to copied pool-state values. Truncation changes the live extent
+and record validity for every alias. The span oracle checks the complete
+live extent, including nodes appended through another snapshot or installed
+writer. See `AstExprNodePoolState` and the segmented record accessors in
+[compiler_ast_types.tl](../src/compiler_ast_types.tl).
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -264,6 +287,15 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+A reference argument captures an address, so forming a later mutable borrow
+alone does not require a second address snapshot. The same later operand still
+requires a snapshot of an earlier by-value aggregate. Explicit borrows can use
+the owned-local-root proof when later operands do not name that owner and the
+body takes no raw address; a reference parameter does not satisfy that proof.
+Actual writes and calls keep the conservative snapshot path unless the local
+root proof independently excludes interference. The call-borrow snapshot tests
+cover both address identity and by-value isolation.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit
@@ -273,11 +305,23 @@ before value effects. A descriptor snapshot retains its array type so the
 existing memory summary can distinguish element writes from header writes.
 The value runs before checking and addressing the logical element in the
 selected array's current buffer, so RHS growth does not strand the store in
-an old buffer. Direct constructors retain a deferred destination until their
-existing argument collector evaluates every field; the same builders then
+an old buffer. A fixed-array receiver projected from a dynamic element carries
+its descriptor, selected parent index and byte offset through conditional,
+match and scope joins; it resolves that logical receiver after value effects.
+Intermediate projections check bounds when selected, while the final element
+check follows the RHS. Direct constructors retain the same deferred destination
+until their existing argument collector evaluates every field; the builders then
 store those values without an aggregate copy. Box assignment captures its
-selected pointer before value effects. Zero-sized array values still run their
-effects before the final bounds check.
+selected pointer before value effects. Projected stores keep the selected base
+addresses in a scoped reservation list while their later operands run. A whole
+local aggregate assignment in that scope selects a frame home outside all the
+reserved address ranges. With N retained bases, N+1 candidate slots guarantee a
+free home even when a loop revisits the same assignment site. This preserves
+old receivers without allocating in a temporary arena; a selected address has
+no single static storage root, so rebinding clears the old root evidence.
+Reservations are restored after each store and intermediate index, including
+errors, and only addresses dominating the later operands enter the list.
+Zero-sized array values still run their effects before the final bounds check.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -1144,6 +1188,14 @@ and then reads an invariant address, which a syntactic scan finds first, and
 it records one plan per read during the loop walk and builds the diamonds
 afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
 cover it.
+
+Gep use splitting resolves admitted zero-offset wrapper chains before cloning
+an address at its memory users. Each clone retains the inner offset and element
+scale, so it computes the same address without keeping intermediate wrappers
+live. Nonzero wrappers, exposed base/index storage and implicit mutable global
+reads stop this resolution. The inliner's frozen pricing pipeline keeps its
+original recipes. The nested-address IR tests cover shared users in different
+blocks, signed offsets, dynamic indices and an address-exposed base.
 
 The multi-block bounds-check versioner clones a loop behind one entry guard
 and drops the checks the guard proves. Its derivations read a counter's value

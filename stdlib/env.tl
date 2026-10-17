@@ -741,7 +741,11 @@
     [i : i64 0]
     (set! (array-ref slots 0) value)
     (while (< i n)
-      (set! (array-ref slots (+ i 1)) (array-ref rest.slots i))
+      ;; `rest` is consumed: each element moves bitwise exactly once.
+      (set!
+        (array-ref slots (+ i 1))
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data rest.slots) i))))
       (set! i (+ i 1)))
     (EnvStringList slots (+ n 1))))
 

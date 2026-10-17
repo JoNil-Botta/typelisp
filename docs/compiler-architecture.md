@@ -5,6 +5,25 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
+The [ownership IR design and migration inventory](ownership-ir.md) records the
+typed control-flow foundation for #8449. Production ownership checks normalize
+typed occurrences into that IR and require the core's certificate before
+lowering. Selected eager operations preserve intrinsic divergence independently
+of their canonical result type. Place records keep the storage type while their
+receiver and index children describe evaluation flow; an exit prevents later
+operands, writes and borrow activation. Checked MIR-to-IR lowering
+remains open.
+
+Internal compiler box views share one API in `compiler_owned_view.tl`: omitting
+its optional field selector preserves the whole-payload view; providing one
+reads only that field. A boxed payload is addressed through its stored pointer,
+and a payload behind a shared reference uses the existing checked field borrow
+and reference bridge. Callers retain the payload owner for the alias's lifetime;
+these representation copies do not transfer ownership. Extra selectors reject
+during macro evaluation. `src/tests/compiler_owned_view_smoke.tl` covers both
+routes and the zero/one-selector boundary; public-check transcripts pin excess
+arity with source and embedded stdlib loading.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)
@@ -15,6 +34,14 @@ Source (.tl)
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
+
+Expression-pool aliases share their node allocation cursor and span-table
+headers. Canonical and ReSpan append counts and the ordering flag belong to
+those stable headers, not to copied pool-state values. Truncation changes the live extent
+and record validity for every alias. The span oracle checks the complete
+live extent, including nodes appended through another snapshot or installed
+writer. See `AstExprNodePoolState` and the segmented record accessors in
+[compiler_ast_types.tl](../src/compiler_ast_types.tl).
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -264,6 +291,15 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+A reference argument captures an address, so forming a later mutable borrow
+alone does not require a second address snapshot. The same later operand still
+requires a snapshot of an earlier by-value aggregate. Explicit borrows can use
+the owned-local-root proof when later operands do not name that owner and the
+body takes no raw address; a reference parameter does not satisfy that proof.
+Actual writes and calls keep the conservative snapshot path unless the local
+root proof independently excludes interference. The call-borrow snapshot tests
+cover both address identity and by-value isolation.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit
@@ -273,11 +309,32 @@ before value effects. A descriptor snapshot retains its array type so the
 existing memory summary can distinguish element writes from header writes.
 The value runs before checking and addressing the logical element in the
 selected array's current buffer, so RHS growth does not strand the store in
-an old buffer. Direct constructors retain a deferred destination until their
-existing argument collector evaluates every field; the same builders then
+an old buffer. A fixed-array receiver projected from a dynamic element carries
+its descriptor, selected parent index and byte offset through conditional,
+match and scope joins; it resolves that logical receiver after value effects.
+Intermediate projections check bounds when selected, while the final element
+check follows the RHS. Direct constructors retain the same deferred destination
+until their existing argument collector evaluates every field; the builders then
 store those values without an aggregate copy. Box assignment captures its
-selected pointer before value effects. Zero-sized array values still run their
-effects before the final bounds check.
+selected pointer before value effects. Projected stores keep the selected base
+addresses in a scoped reservation list while their later operands run. A whole
+local aggregate assignment in that scope selects a frame home outside all the
+reserved address ranges. With N retained bases, N+1 candidate slots guarantee a
+free home even when a loop revisits the same assignment site. This preserves
+old receivers without allocating in a temporary arena; a selected address has
+no single static storage root, so rebinding clears the old root evidence.
+Reservations are restored after each store and intermediate index, including
+errors, and only addresses dominating the later operands enter the list.
+Zero-sized array values still run their effects before the final bounds check.
+
+Store lowering uses the operand's actual flow type independently of its
+contextual value type. `Never` from a receiver, index or value stops evaluation
+before further operands, bounds checks, writes or packed-local refreshes.
+Annotations preserve that flow. Argument collectors carry an explicit `Exit`
+state, which callers propagate without snapshots, remaining arguments, calls
+or writebacks. Direct constructors and array-literal builders return their
+flow type so an exit cannot become a successful store through a state-only
+result. Conditional exits still leave the surviving path available to commit.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -1106,6 +1163,11 @@ analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
 
+GEP use splitting may re-evaluate only stable literals, addresses and
+single-definition variables. `Global` and `RuntimeGlobal` are implicit mutable
+reads, so a GEP containing either operand retains its original capture point
+across intervening writes and calls.
+
 LICM also proves that loop writes cannot change the loaded word. Same-root
 stores can be separated by non-overlapping constant byte ranges, using the
 shared load-CSE range predicate. Copies and constant-offset geps retain a root
@@ -1170,6 +1232,14 @@ and then reads an invariant address, which a syntactic scan finds first, and
 it records one plan per read during the loop walk and builds the diamonds
 afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
 cover it.
+
+Gep use splitting resolves admitted zero-offset wrapper chains before cloning
+an address at its memory users. Each clone retains the inner offset and element
+scale, so it computes the same address without keeping intermediate wrappers
+live. Nonzero wrappers, exposed base/index storage and implicit mutable global
+reads stop this resolution. The inliner's frozen pricing pipeline keeps its
+original recipes. The nested-address IR tests cover shared users in different
+blocks, signed offsets, dynamic indices and an address-exposed base.
 
 The multi-block bounds-check versioner clones a loop behind one entry guard
 and drops the checks the guard proves. Its derivations read a counter's value
@@ -1338,6 +1408,16 @@ borrows live only for the current fold; block storage keeps its input IR owner.
 Literal facts do not depend on global initialization or infer constancy for
 writable runtime strings.
 
+Scalar coalescing recognizes a zero-offset `Gep` on a thin pointer or reference
+base as a copy only through the existing same-value relation. Storage-identity
+exclusions, definition checks and register-class interference still apply;
+call-crossing pairs require nested live hulls. The liveness handle records when
+phi-free IR makes baseline and edge-precise analysis identical. Scalar planning
+then reuses its incoming interval index, including parameter-entry reservations,
+instead of rebuilding masks and segments. Phi-bearing functions retain their
+conservative coalescing index and guarded edge-precise substitutions. Each IR
+rewrite receives a new handle, so this equality proof cannot outlive its input.
+
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
 using division to avoid multiplication overflow. Small analyses allocate in the
@@ -1373,14 +1453,36 @@ late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
 the verifier's canonical instruction classifier.
 
+Global length facts may cross a dynamic-array descriptor snapshot only when
+its pointer uses are closed: a fresh two-word allocation, two uniquely used
+field addresses, one snapshot transfer, and one consuming container use. The
+shared operand-use census accounts for every instruction. Extra aliases,
+calls, address-taking, duplicate definitions and stores refuse the proof.
+A closed use set alone does not rule out aliases present on function entry:
+the existing memory summary must also prove writes stay in fresh storage or
+the single container parameter. Unknown, global, element and other parameter
+writes refuse snapshot facts. The existing length-token and family checks
+remain authoritative.
+
 The SSA verifier traces marked sret operands to inline aggregate `Alloc`
-storage through address-preserving aliases. Every phi/select input must prove
+storage, explicitly sized physical slots, or the declared incoming result
+parameter through address-preserving aliases. Every phi/select input must prove
 storage, and an address-taken pointer variable cannot supply that proof. The
 definition index reads the current body even when a pass reuses CFG topology.
 Memoized provenance stays in the verification call's scratch lifetime. This
 storage-origin check does not establish the callee's return convention or the
-output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
-those proofs and their enforcement before stack coloring, including mutable IR.
+output extent. The return-storage verifier validates declarations, complete
+uniform extents and overlap before accepting the function, including mutable
+IR. Joining unspecified extents retains unavailable range evidence; it never
+grants a range, an alias identity or a stack-coloring proof.
+Inlining at an unmarked output site removes only markers whose callee proof
+depended on its incoming result parameter; local storage proofs remain intact.
+Exact u64 self assignments of that parameter preserve its range through tail
+recursion. Narrower moves, other writes and redefined aliases retain no proof.
+Call-site layout comparisons instantiate declaration-local lifetime names;
+nominal identity, lifetime arity, reference mutability and runtime type
+structure remain exact. Source signatures and captured ABI authority keep
+their full type identity.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it

@@ -933,7 +933,8 @@
     [storage-root : i64 (arena.tl_arena_make)]
     [new-buffer : (__tl_dyn-array token.SpannedToken)
       (in-arena
-        (arena.Arena storage-root)
+        (unsafe
+          (arena.Arena storage-root))
         (__tl_make-array
           token.SpannedToken
           (spanned-token-buffer-next-capacity required)))]

@@ -832,8 +832,8 @@
               "tlci native image: unknown host import "
               import-name))
           (begin
-            (set! (array-ref names index) name)
             (set! names-len (+ names-len (string.string-length name)))
+            (set! (array-ref names index) name)
             (set! index (+ index 1))))))
     (if (= (string.string-length error) 0)
       (if (= count 0)

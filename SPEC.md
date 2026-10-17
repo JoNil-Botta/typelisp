@@ -555,7 +555,11 @@ is rejected unless a future replacement operation explicitly supports it.
 reference storage place. Shared references are read-only. The replacement must
 typecheck against `T` and satisfy the same region/reference store checks as
 other place mutations. Borrowing `(deref value)` borrows the projected storage
-under the ordinary lexical exclusivity rules.
+under the ordinary lexical exclusivity rules. A Box field read through a shared
+reference remains a shared view when bound to a local, including a region-tagged
+local; dereferencing that view does not grant write access. A plain owned
+`(Box T)` annotation cannot take that field out of the reference. An explicit
+borrow preserves the origin, while `clone` produces an independent owned Box.
 
 The former `box-get` and `box-take` source forms are removed. The parser emits
 focused migration diagnostics directing old source to `deref`; internal AST
@@ -1478,6 +1482,14 @@ representation). Their public API is length/index/iteration-oriented;
 Recursive cons cells are not part of the public contract, and cons-list
 bridge names are not part of the public macro ABI.
 
+Syntax and reflection values follow ordinary ownership: like their
+declarations, `Expr`, `ExprList` and the other well-known types are
+move-only (an `Expr` holds strings and boxed nodes). Using one twice
+requires building it again. A by-value `match` on a syntax value moves only
+the parts its arm binds, so a fallback arm can still return the whole value.
+A `(Box Expr)` payload such as `Expr.If`'s condition binds as the `Expr`
+itself, since macro CTFE boxes nodes transparently.
+
 The public enum variant policy follows the dotted qualified variant
 direction: stdlib declarations use short variant names such as `Var`, `Call`,
 `Struct`, or `Enum`, and source code refers to them through enum-qualified
@@ -1815,6 +1827,21 @@ types accept `T`. It is **not** a subtype where the value would leave the
 region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
 function.
+
+**Views read through a reference.** Reading a region-taggable value by value
+through a reference, such as `r.items` for `r : (& r S)` or an element of an
+array reached through a reference, produces a value tagged with the
+reference's lifetime. A Copy value is an ordinary copy. A move-only value is a
+*view*: it shares the referent's storage, so it may be read, matched, lent with
+`(& ...)`, passed where the region rules admit it, and bound by value (the
+binder is a view too). A view cannot become an owned value of its plain type:
+an `if` or `match` join with an owned value, a `let` declared with the plain
+type, or a function result would move the value out from behind the reference,
+which section 3.4's `deref` rule rejects ("cannot move non-Copy value through
+shared reference"). Writing a view's elements or fields, or lending it with
+`(&mut ...)`, writes through the shared reference and is rejected ("cannot
+mutably borrow ... behind a shared reference"). The non-escaping subtype rule
+above concerns arena regions; it does not make a view writable or owned.
 
 **Confinement rule:** A region-tagged value may cross a function boundary only
 when the signature explicitly preserves its input-tied lifetime. For example,
@@ -2192,7 +2219,9 @@ does a renamed copy.
 lifetime from the owner:
 
 - A local or parameter root named `x` gives references rooted in `x` the
-  lifetime name `x`.
+  lifetime name `x`. A by-value parameter's storage belongs to the call, like a
+  local's, so its name cannot appear as a lifetime in the function's return
+  type: such a reference would outlive the call.
 - A global root named `x` gives references rooted in `x` the lifetime name
   `x`, unless its arena-tagged type supplies the owner lifetime below.
 - A field, tuple element, or array element projection inherits the lifetime
@@ -2260,7 +2289,11 @@ fixed arrays such as `(Array (& n i64) 1)`, tuple elements, and nested
 structural types. Those lifetimes are preserved through `array-ref` and
 `tuple-ref`. Structural return types that expose the reference lifetime
 directly, such as `(& n T)`, `(Tuple (& n T))`, and `(Array (& n T) k)`, may be
-returned when the lifetime is tied to an input.
+returned when the lifetime is tied to an input: a lifetime named in a
+parameter's type (an incoming reference or a lifetime-parameterized
+aggregate), or `program`. A by-value parameter's own name is not such a
+lifetime; returning a borrow of the parameter, or of its fields or elements,
+is rejected.
 
 #### 3.10.1 Function-signature lifetime elision
 
@@ -3680,8 +3713,14 @@ runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
 the file's bytes at the loader boundary, and defines an opaque static
 `name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
-compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream.
+compiler-owned `__typelisp_embedded_stdlib_lzss_v2__` marker, the decimal
+uncompressed byte length and a newline, followed by the token stream coded
+under one fixed canonical Huffman model (a literal-or-match symbol, then for a
+match a distance bucket with extra bits and a length symbol), most significant
+bit first and zero-padded to a byte. The model's code lengths are part of the
+compiler, so a payload carries no tables. The decoder also accepts the earlier
+`__typelisp_embedded_stdlib_lzss_v1__` envelope, whose token stream is uncoded,
+so a payload built by an older compiler stays readable.
 
 - A `path` that does not end in `.tl` is compressed exactly. Like
   `include-bin`, and unlike `include-str`, the input is never decoded or
@@ -4323,12 +4362,18 @@ propagation, and a `break` or `continue` that leaves the loop the binding is in.
 The declared cleanup function is identified by its declaration, so a
 module-qualified or import-aliased call counts, while a same-named or
 same-typed function does not. The following are rejected with a diagnostic
-naming the binding: passing the value by value to any other function, moving
-only part of it, leaving it on one exit edge, and discharging it on only some
-of the paths that meet at an `if`, `match`, `and`/`or` or loop exit. A path
+naming the binding: passing the value by value to any other function, leaving
+it only partly discharged at a normal exit, leaving it on one exit edge, and
+discharging it on only some of the paths that meet at an `if`, `match`,
+`and`/`or` or loop exit. A path
 that ends in a call of a `never` function, such as a panic, needs no discharge.
 Function parameters do not yet carry a cleanup obligation (#6947); an
 `(:invalidate r)` parameter carries the destroy obligation of section 5.16.
+
+A partial move does not discharge the whole binding. As with other
+cleanup-owning structs, a moved field may be definitely reinitialized before
+the restored whole value is cleaned or transferred. Both the transferred
+field and the restored owner retain their respective cleanup responsibilities.
 
 These transfers also recognize transparent value forms (`begin`, `unsafe`,
 and nested scopes) and `if`/`match` arms that all yield the same visible owner
@@ -4987,6 +5032,8 @@ arena-owned storage escape the scoped region.
 - Direct calls: the callee is a known function name.
 - Indirect calls: the callee is a variable or parameter of function type,
   including a named top-level function passed as a function value.
+- The callee value is evaluated once before the arguments. Reassigning its
+  source binding while evaluating an argument does not change this call's target.
 - Arguments are evaluated left-to-right. Each argument passes the value it had
   when it was evaluated. A later argument that assigns or writes the variable,
   field or element an earlier argument read does not change the earlier
@@ -7500,6 +7547,10 @@ explicit unsafe expression when they perform an unsafe call.
 
 The unsafe operation set:
 
+Operands of raw-pointer, atomic, volatile, and syscall forms are evaluated once
+from left to right. Each operand's value is captured before evaluating the next
+operand; later mutation of its source binding does not change that value.
+
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
@@ -9084,6 +9135,24 @@ arena helper signatures, and an `arena.Arena` cannot be passed where an
 `arena.ArenaMark` or `arena.ArenaPhase` is required. By themselves these
 values do not switch the active arena, free arena chains, rewind allocation,
 or invalidate live safe handles.
+
+Constructing the canonical `arena.Arena` from an integer requires `unsafe`,
+including through import aliases and generated expressions. Its constructor
+has the ordinary unsafe-callable effect and cannot be erased into a plain
+function value. The caller must establish that the raw handle identifies a
+live arena for every use of the resulting wrapper. Zero identifies the
+runtime's default arena; `(init : arena.Arena)` therefore remains valid.
+Reading `.handle` produces an inert integer and is safe. Writing that field,
+replacing it, or exposing an exclusive reference to it requires `unsafe` and
+the same live-handle obligation. The rule belongs to the canonical arena
+declaration, not an unrelated user type with the same short name.
+
+An `in-arena` target may also be a shared or exclusive reference to a branded
+`(arena.Arena storage)`. Allocation provenance is `storage`, independent of the
+reference's own loan lifetime, and entering the allocation extent does not move
+the owner. Ordinary value wrappers around the reference preserve this rule.
+The scratch-cloning `with-escape` operation retains its separate value-target
+contract.
 
 Programs may opt into poison-on-reclaim mode with:
 

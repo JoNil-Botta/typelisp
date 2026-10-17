@@ -5,6 +5,7 @@
 (import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
+(import stdlib.iterator)
 (import stdlib.profile)
 (import stdlib.string)
 (import stdlib.vector)
@@ -304,7 +305,7 @@
   [name : String]
   [kind : sem.CompilerSemanticSymbolKind]) : bool
   (let
-    [span : sem.CompilerSemanticSpan record.span]
+    [span : (& record sem.CompilerSemanticSpan) (& record.span)]
     [start : i64 span.start-byte]
     [end : i64 span.end-byte]
     (and
@@ -453,7 +454,7 @@
   [record : (& record sem.CompilerSemanticRecord)]
   [expected : String]) : bool
   (let
-    [span : sem.CompilerSemanticSpan record.span]
+    [span : (& record sem.CompilerSemanticSpan) (& record.span)]
     [start : i64 span.start-byte]
     [end : i64 span.end-byte]
     (and
@@ -1937,6 +1938,50 @@
       (sem.compiler-semantic-source-index-release! (&mut partial))
       false]
     [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false]))
+
+(define (compiler-check-semantic-index-compound-if-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_compound_if.tl"]
+    [source : String
+      "(define (compound-probe [flag : bool] [wide : i64]) : i64
+  (let [joined (if flag (let [inside : i64 9] (begin unit 0)) wide)] joined))"]
+    (match (compiler-check-source-index-with-roots
+      (clone path)
+      source
+      (svec.new))
+      [(Ok _ index)
+        (let
+          [definitions : i64 0]
+          [uses : i64 0]
+          [inside : i64 0]
+          [wide-uses : i64 0]
+          [ok? : bool true]
+          (for [i (iterator.range 0 index.len)]
+            (let
+              [record (sem.compiler-semantic-source-index-get (& index) i)]
+              (cond
+                [(string.eq record.display-name "joined")
+                  (unless
+                    (string.eq record.resolved-type "i64")
+                    (set! ok? false))
+                  (match record.role
+                    [(Definition) (+= definitions 1)]
+                    [(Use) (+= uses 1)])]
+                [(string.eq record.display-name "inside")
+                  (match record.role
+                    [(Definition) (+= inside 1)]
+                    [_ unit])]
+                [(string.eq record.display-name "wide")
+                  (match record.role
+                    [(Use) (+= wide-uses 1)]
+                    [_ unit])]
+                [else unit])))
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          (and ok? (= definitions 1) (= uses 1) (= inside 1) (= wide-uses 1)))]
+      [(Partial _ index)
+        (sem.compiler-semantic-source-index-release! (&mut index))
+        false]
+      [(Err _) false])))
 
 (define (compiler-check-semantic-index-inferred-locals-ok?) : bool
   (let
@@ -4623,6 +4668,7 @@
     [locals-ok : bool
       (and
         (compiler-check-semantic-index-inferred-locals-ok?)
+        (compiler-check-semantic-index-compound-if-ok?)
         (compiler-check-semantic-index-slice-pattern-locals-ok?)
         (compiler-check-semantic-index-or-pattern-ok?))]
     [locals-timing-ok : bool

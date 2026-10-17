@@ -452,11 +452,7 @@
             unit)
           (let
             [hash : i64 (hash-key ,owned-query-key)]
-            (match (probe
-              (& map.slots)
-              (capacity-mut map)
-              ,owned-query-key
-              hash)
+            (match (probe (& map.slots) (capacity map) ,owned-query-key hash)
               [(GeneratedHashmapProbe.Found index) ,update-slot-body]
               [(GeneratedHashmapProbe.Absent index)
                 (let
@@ -667,7 +663,7 @@
               (match (clone (__tl-project-field-name slot "state"))
                 [GeneratedHashmapSlotState.Occupied
                   (let
-                    [value : ,V (__tl-project-field-name slot "value")]
+                    [value (__tl-project-field-name slot "value")]
                     (LookupFound ,value-copy))]
                 [_ (LookupMissing)])))))]
     ;; `get` and `get-borrowed` take the same argument for a scalar key, so the

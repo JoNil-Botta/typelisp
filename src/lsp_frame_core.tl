@@ -487,12 +487,28 @@
   (stderr String))
 
 (define lsp-frame-memory-state : LspFrameMemoryState
-  (LspFrameMemoryState false (arena.Arena 0) "" 0 false "" ""))
+  (LspFrameMemoryState
+    false
+    (unsafe
+      (arena.Arena 0))
+    ""
+    0
+    false
+    ""
+    ""))
 
 (define (lsp-frame-memory-reset!) : unit
   (set!
     lsp-frame-memory-state
-    (LspFrameMemoryState false (arena.Arena 0) "" 0 false "" "")))
+    (LspFrameMemoryState
+      false
+      (unsafe
+        (arena.Arena 0))
+      ""
+      0
+      false
+      ""
+      "")))
 
 (define (lsp-frame-memory-install!
   [input : (& input str)]
@@ -500,10 +516,12 @@
   (set!
     lsp-frame-memory-state
     (in-arena
-      (arena.Arena transport-arena)
+      (unsafe
+        (arena.Arena transport-arena))
       (LspFrameMemoryState
         true
-        (arena.Arena transport-arena)
+        (unsafe
+          (arena.Arena transport-arena))
         (string.copy input)
         0
         false
@@ -872,7 +890,9 @@
                 (while (and
                   (= (string.string-length error) 0)
                   (< index items.len))
-                  (match (array-ref items.slots index)
+                  (match (owned_view.compiler-owned-element-view
+                    items.slots
+                    index)
                     [(JsonString name)
                       (lsp_svec.push-ref!
                         (&mut cfg-names)
@@ -1133,7 +1153,7 @@
 (define (lsp-diagnostic-uris-get
   [uris : lsp_vector_families.LspDiagnosticUris]
   [index : i64]) : String
-  (array-ref uris.slots index))
+  (owned_view.compiler-owned-element-view uris.slots index))
 
 (define (lsp-diagnostic-uris-contains-from?
   [uris : lsp_vector_families.LspDiagnosticUris]
@@ -1173,7 +1193,9 @@
               (* old-cap 2))]
           [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
           (for [index (iterator.range 0 n)]
-            (set! (array-ref bigger index) (array-ref slots index)))
+            (set!
+              (array-ref bigger index)
+              (owned_view.compiler-owned-element-view slots index)))
           (set! slots bigger)))
       (set! (array-ref slots n) uri)
       (lsp_vector_families.LspDiagnosticUris slots (+ n 1)))))
@@ -1200,12 +1222,11 @@
 (define (lsp-document-semantic-snapshot-status
   [doc : (& doc lsp_vector_families.LspDocument)]) : LspSemanticSnapshotStatus
   (let
-    [snapshot : lsp_vector_families.LspSemanticSnapshot doc.semantic]
+    [snapshot (& doc.semantic)]
     (if (not snapshot.present)
       Missing
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          snapshot.index]
+        [index (& snapshot.index)]
         [version : i64 snapshot.version]
         [complete : bool
           (compiler_semantic_index.compiler-semantic-source-index-complete?
@@ -1233,7 +1254,7 @@
 (define (lsp-semantic-record-exact-editable?
   [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
   (let
-    [span : compiler_semantic_index.CompilerSemanticSpan record.span]
+    [span (& record.span)]
     [source-span : ast.AstSourceSpan span.source]
     (and
       record.editable
@@ -1256,8 +1277,7 @@
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [index (& doc.semantic.index)]
         [cursor-index : i64
           (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
             (& index)
@@ -1462,7 +1482,8 @@
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         [snapshot : lsp_vector_families.LspSemanticSnapshot
           (in-arena
-            (arena.Arena semantic-index.owner-arena)
+            (unsafe
+              (arena.Arena semantic-index.owner-arena))
             (lsp_vector_families.LspSemanticSnapshot
               semantic-index
               version
@@ -1543,8 +1564,9 @@
   (let
     [doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) docs.slots]
-    [path : String doc.path]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
+      (owned_view.compiler-owned-shared-view docs.slots)]
+    [path : String (owned_view.compiler-owned-shared-view doc.path)]
     ;; Versioned documents are client-owned open buffers. Only unversioned
     ;; entries loaded by tooling may be refreshed from disk.
     (if (or (string.eq path "") (>= doc.version 0))
@@ -1568,7 +1590,9 @@
                     LspCheckCacheInvalid
                     (lsp-semantic-snapshot-empty))]
                 (lsp-semantic-snapshot-release! (&mut doc.semantic))
-                (set! (array-ref slots index) updated)
+                (set!
+                  (array-ref slots index)
+                  (owned_view.compiler-owned-shared-view updated))
                 updated)))]
         [(ErrIoBytes _) doc]))))
 
@@ -1611,7 +1635,7 @@
   [roots : (& roots lsp_vector_families.LspWorkspaceRoots)]
   [index : i64]) : lsp_vector_families.LspWorkspaceRoot
   (if (and (>= index 0) (< index roots.len))
-    (array-ref roots.slots index)
+    (owned_view.compiler-owned-element-view (& roots.slots) index)
     (lsp-workspace-root-fallback)))
 
 (define (lsp-workspace-roots-copy-range!
@@ -1619,7 +1643,9 @@
   [src : (& src (__tl_dyn-array lsp_vector_families.LspWorkspaceRoot))]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (lsp-workspace-roots-grow!
   [roots : (&mut roots lsp_vector_families.LspWorkspaceRoots)]) : unit
@@ -1665,7 +1691,9 @@
       (for [cursor (iterator.range index last)]
         (set!
           (array-ref roots.slots cursor)
-          (array-ref roots.slots (+ cursor 1))))
+          (owned_view.compiler-owned-array-element-shared-view
+            roots.slots
+            (+ cursor 1))))
       (set! roots.len last))))
 
 (define (lsp-workspace-sources-new) : lsp_vector_families.LspWorkspaceSources
@@ -1681,7 +1709,7 @@
   [sources : (& sources lsp_vector_families.LspWorkspaceSources)]
   [index : i64]) : lsp_vector_families.LspWorkspaceSource
   (if (and (>= index 0) (< index sources.len))
-    (array-ref sources.slots index)
+    (owned_view.compiler-owned-element-view (& sources.slots) index)
     (lsp-workspace-source-fallback)))
 
 (define (lsp-workspace-sources-copy-range!
@@ -1689,7 +1717,9 @@
   [src : (& src (__tl_dyn-array lsp_vector_families.LspWorkspaceSource))]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (lsp-workspace-sources-grow!
   [sources : (&mut sources lsp_vector_families.LspWorkspaceSources)]) : unit
@@ -1748,7 +1778,9 @@
       (for [cursor (iterator.range index last)]
         (set!
           (array-ref sources.slots cursor)
-          (array-ref sources.slots (+ cursor 1))))
+          (owned_view.compiler-owned-array-element-shared-view
+            sources.slots
+            (+ cursor 1))))
       (set! sources.len last))))
 
 (define (lsp-documents-find-path-index
@@ -3106,14 +3138,15 @@
   [fallback-path : String]
   [edits : (& edits cdiag.CompilerDiagnosticTextEditSeq)]) : bool
   (let
-    [slots : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit) edits.slots]
     [count : i64 edits.len]
     [index : i64 0]
     [ok : bool (> count 0)]
     (while (and ok (< index count))
       (let
         [edit : cdiag.CompilerDiagnosticTextEdit
-          (owned_view.compiler-owned-array-element-shared-view slots index)]
+          (owned_view.compiler-owned-array-element-shared-view
+            edits.slots
+            index)]
         [span : cdiag.CompilerDiagnosticSpan
           (cdiag.compiler-diagnostic-text-edit-span edit)]
         [path : String
@@ -4721,8 +4754,8 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [path : String doc.path]
-        [text : String doc.text]
+        [path : String (owned_view.compiler-owned-shared-view doc.path)]
+        [text : String (owned_view.compiler-owned-shared-view doc.text)]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
@@ -4867,8 +4900,7 @@
     [found : i64 0]
     [valid : bool (lsp-signature-named-parameter-owner? definition)]
     [owner : compiler_semantic_index.CompilerSemanticSymbolId definition.symbol]
-    [definition-span : compiler_semantic_index.CompilerSemanticSpan
-      definition.span]
+    [definition-span (& definition.span)]
     (while (and
       valid
       (< found parameter-count)
@@ -5157,7 +5189,7 @@
   [results : (& results LspCompletionResults)]
   [index : i64]) : LspCompletionCandidate
   (if (and (>= index 0) (< index results.len))
-    (array-ref results.slots index)
+    (owned_view.compiler-owned-element-view (& results.slots) index)
     (lsp-completion-candidate-fallback)))
 
 (define (lsp-completion-match-rank [label : (& label str)] [prefix : String]) : i64
@@ -5241,7 +5273,9 @@
           (while (> write position)
             (set!
               (array-ref results.slots write)
-              (array-ref results.slots (- write 1)))
+              (owned_view.compiler-owned-array-element-shared-view
+                results.slots
+                (- write 1)))
             (-= write 1))
           (set! (array-ref results.slots position) candidate)
           (if (< len lsp-completion-result-limit)
@@ -5578,7 +5612,7 @@
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [context : (& context LspCompletionContext)]) : unit
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
@@ -5623,7 +5657,8 @@
           unit)
         (if (string.eq source.module (string.copy (& context.receiver)))
           (let
-            [decls : lsp_decl_vec.Vec source.decls]
+            [decls : lsp_decl_vec.Vec
+              (owned_view.compiler-owned-shared-view source.decls)]
             (for [decl-index (iterator.range 0 (lsp_decl_vec.len (& decls)))]
               (lsp-completion-add-workspace-decl!
                 results
@@ -5919,7 +5954,7 @@
   [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
   [module : String]) : bool
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     [source-index : i64 0]
     [found : bool false]
     (while (and
@@ -5940,7 +5975,7 @@
   [prefix : String]
   [type-context : bool]) : unit
   (let
-    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [sources (& workspace.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
@@ -5948,7 +5983,8 @@
           (lsp-workspace-sources-get (& sources) source-index)]
         (if (string.eq source.module module)
           (let
-            [decls : lsp_decl_vec.Vec source.decls]
+            [decls : lsp_decl_vec.Vec
+              (owned_view.compiler-owned-shared-view source.decls)]
             (for [decl-index (iterator.range 0 (lsp_decl_vec.len (& decls)))]
               (let
                 [decl : lsp_vector_families.LspDeclEntry
@@ -6040,8 +6076,7 @@
   [context : (& context LspCompletionContext)]
   [type-context : bool]) : unit
   (let
-    [index : compiler_semantic_index.CompilerSemanticSourceIndex
-      doc.semantic.index]
+    [index (& doc.semantic.index)]
     [receiver-end : i64 (- context.replace-start 1)]
     [point-index : i64
       (if (> receiver-end context.token-start)
@@ -6144,8 +6179,7 @@
   [doc : (& doc lsp_vector_families.LspDocument)]
   [context : (& context LspCompletionContext)]) : unit
   (let
-    [index : compiler_semantic_index.CompilerSemanticSourceIndex
-      doc.semantic.index]
+    [index (& doc.semantic.index)]
     [receiver-index : i64
       (lsp-completion-find-field-receiver
         (& index)
@@ -6354,7 +6388,7 @@
                   "character")))
               (lsp-completion-empty-result)
               (match (lsp-completion-context-at-position
-                doc.text
+                (owned_view.compiler-owned-shared-view doc.text)
                 (lsp-json-int-field-default position "line" -1)
                 (lsp-json-int-field-default position "character" -1))
                 [(Missing) (lsp-completion-empty-result)]
@@ -7213,7 +7247,7 @@
       (let
         [doc : lsp_vector_families.LspDocument
           (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [text : String doc.text]
+        [text : String (owned_view.compiler-owned-shared-view doc.text)]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
@@ -7884,7 +7918,7 @@
     (let
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-      [path : String doc.path]
+      [path : String (owned_view.compiler-owned-shared-view doc.path)]
       [uri : String
         (if (> (string.string-length path) 0)
           (lsp-resolved-path-to-file-uri path)
@@ -8396,7 +8430,11 @@
             (& (array-ref facts.slots position)))))
         (+= position 1))
       (while (> write position)
-        (set! (array-ref facts.slots write) (array-ref facts.slots (- write 1)))
+        (set!
+          (array-ref facts.slots write)
+          (owned_view.compiler-owned-array-element-shared-view
+            facts.slots
+            (- write 1)))
         (-= write 1))
       (set! (array-ref facts.slots position) candidate)
       (+= facts.len 1))))
@@ -8716,8 +8754,7 @@
       (if (not complete)
         Missing
         (let
-          [index : compiler_semantic_index.CompilerSemanticSourceIndex
-            doc.semantic.index]
+          [index (& doc.semantic.index)]
           [best-width : i64 999999999]
           [result : LspRenameTargetLookup Missing]
           [source-text : String (string.copy (& doc.text))]
@@ -8732,7 +8769,7 @@
                   (& index)
                   record-index)]
               [record-span : compiler_semantic_index.CompilerSemanticSpan
-                record.span]
+                (lsp-global-shared-view record.span)]
               [edit-span : compiler_semantic_index.CompilerSemanticSpan
                 (lsp-rename-effective-span
                   (lsp-global-shared-view record-span)
@@ -8893,7 +8930,7 @@
                     [candidate : String
                       (lsp-rename-module-new-path
                         fact.span.path
-                        target.surface-name
+                        (lsp-global-shared-view target.surface-name)
                         (lsp-global-shared-view new-name))]
                     (cond
                       [(= (string.string-length old-path) 0)
@@ -9282,7 +9319,7 @@
   [results : (& results LspWorkspaceSymbolResults)]
   [index : i64]) : LspWorkspaceSymbolCandidate
   (if (and (>= index 0) (< index results.len))
-    (array-ref results.slots index)
+    (owned_view.compiler-owned-element-view (& results.slots) index)
     (lsp-workspace-symbol-candidate-fallback)))
 
 (define (lsp-workspace-symbol-match-rank
@@ -9331,9 +9368,9 @@
   [left : (& left LspWorkspaceSymbolCandidate)]
   [right : LspWorkspaceSymbolCandidate]) : bool
   (let
-    [left-row : lsp_vector_families.LspWorkspaceDeclRow left.row]
+    [left-row (& left.row)]
     [right-row : lsp_vector_families.LspWorkspaceDeclRow right.row]
-    [left-decl : lsp_vector_families.LspDeclEntry left-row.decl]
+    [left-decl (& left-row.decl)]
     [right-decl : lsp_vector_families.LspDeclEntry right-row.decl]
     (and
       (string.eq left-row.uri right-row.uri)
@@ -9384,7 +9421,9 @@
           (while (> write position)
             (set!
               (array-ref results.slots write)
-              (array-ref results.slots (- write 1)))
+              (owned_view.compiler-owned-array-element-shared-view
+                results.slots
+                (- write 1)))
             (-= write 1))
           (set! (array-ref results.slots position) candidate)
           (if (< len lsp-workspace-symbol-result-limit)
@@ -9396,13 +9435,14 @@
   [query : String]) : LspWorkspaceSymbolResults
   (let
     [results : LspWorkspaceSymbolResults (lsp-workspace-symbol-results-new)]
-    [sources : lsp_vector_families.LspWorkspaceSources index.sources]
+    [sources (& index.sources)]
     (for [source-index
       (iterator.range 0 (lsp-workspace-sources-len (& sources)))]
       (let
         [source : lsp_vector_families.LspWorkspaceSource
           (lsp-workspace-sources-get (& sources) source-index)]
-        [decls : lsp_decl_vec.Vec source.decls]
+        [decls : lsp_decl_vec.Vec
+          (owned_view.compiler-owned-shared-view source.decls)]
         (for [decl-index (iterator.range 0 (lsp_decl_vec.len (& decls)))]
           (let
             [decl : lsp_vector_families.LspDeclEntry
@@ -9414,11 +9454,11 @@
                 (LspWorkspaceSymbolCandidate
                   rank
                   (lsp_vector_families.LspWorkspaceDeclRow
-                    source.root-uri
-                    source.root-path
-                    source.uri
-                    source.path
-                    source.module
+                    (owned_view.compiler-owned-shared-view source.root-uri)
+                    (owned_view.compiler-owned-shared-view source.root-path)
+                    (owned_view.compiler-owned-shared-view source.uri)
+                    (owned_view.compiler-owned-shared-view source.path)
+                    (owned_view.compiler-owned-shared-view source.module)
                     source.explicit-module
                     source.overlay
                     decl)))
@@ -10115,8 +10155,7 @@
   (match (lsp-document-semantic-snapshot-status doc)
     [(Current _ _)
       (let
-        [index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [index (& doc.semantic.index)]
         [source-text : String (string.copy (& doc.text))]
         (for [record-index
           (iterator.range
@@ -10355,11 +10394,12 @@
   [doc : lsp_vector_families.LspDocument]
   [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
   (let
-    [text : String doc.text]
+    [text : String (owned_view.compiler-owned-shared-view doc.text)]
     [uri : String doc.uri]
     [scanned : lsp_decl_vec.Vec
       (lsp-scan-decls (owned_view.compiler-owned-shared-view text))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument) docs.slots]
+    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
+      (owned_view.compiler-owned-shared-view docs.slots)]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (when
       (>= idx 0)
@@ -10388,7 +10428,8 @@
       cached
       (if (> lsp-document-cache-arena 0)
         (in-arena
-          (arena.Arena lsp-document-cache-arena)
+          (unsafe
+            (arena.Arena lsp-document-cache-arena))
           (lsp-document-decls-cache-on-current-arena doc docs))
         (lsp-document-decls-cache-on-current-arena doc docs)))))
 
@@ -10419,7 +10460,7 @@
     [decl : lsp_vector_families.LspDeclEntry row.decl]
     (lsp-json-object4
       "name"
-      (JsonString decl.name)
+      (JsonString (owned_view.compiler-owned-shared-view decl.name))
       "kind"
       (lsp-json-number decl.symbol-kind)
       "location"
@@ -10859,7 +10900,7 @@
           (lsp_decl_vec.get (& decls) nearest-index (lsp-decl-entry-fallback))]
         (set! nearest-line (- entry.form-start-line 1))
         (set! nearest-col (- entry.form-start-col 1))
-        (set! nearest-name entry.name)
+        (set! nearest-name (owned_view.compiler-owned-shared-view entry.name))
         (set! nearest-kind (owned_view.compiler-owned-shared-view entry.kind))
         (set! nearest-range (lsp-decl-entry-form-range-json entry)))
       unit)
@@ -11044,7 +11085,10 @@
 
 (define (lsp-cache-string-copy [text : String]) : String
   (if (> lsp-document-cache-arena 0)
-    (in-arena (arena.Arena lsp-document-cache-arena) (string.copy (& text)))
+    (in-arena
+      (unsafe
+        (arena.Arena lsp-document-cache-arena))
+      (string.copy (& text)))
     (string.copy (& text))))
 
 (define (lsp-diagnostic-uris-copy
@@ -11065,7 +11109,8 @@
   [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
   (if (> lsp-document-cache-arena 0)
     (in-arena
-      (arena.Arena lsp-document-cache-arena)
+      (unsafe
+        (arena.Arena lsp-document-cache-arena))
       (lsp-diagnostic-uris-copy uris))
     (lsp-diagnostic-uris-copy uris)))
 
@@ -12040,7 +12085,9 @@
           (while (> write position)
             (set!
               (array-ref results.slots write)
-              (array-ref results.slots (- write 1)))
+              (owned_view.compiler-owned-array-element-shared-view
+                results.slots
+                (- write 1)))
             (-= write 1))
           (set! (array-ref results.slots position) candidate)
           (+= results.len 1))))))
@@ -12058,8 +12105,7 @@
     (if (< cursor-index 0)
       results
       (let
-        [semantic-index : compiler_semantic_index.CompilerSemanticSourceIndex
-          doc.semantic.index]
+        [semantic-index (& doc.semantic.index)]
         [cursor : compiler_semantic_index.CompilerSemanticRecord
           (compiler_semantic_index.compiler-semantic-source-index-get
             (& semantic-index)
@@ -12153,7 +12199,10 @@
               (let
                 [line : i64 (lsp-json-int-field-default position "line" 0)]
                 [col : i64 (lsp-json-int-field-default position "character" 0)]
-                (match (lsp-offset-at-position-checked doc.text line col)
+                (match (lsp-offset-at-position-checked
+                  (owned_view.compiler-owned-shared-view doc.text)
+                  line
+                  col)
                   [(Missing)
                     (lsp-write-response id (lsp-json-array (json.list-empty)))]
                   [(Found off)

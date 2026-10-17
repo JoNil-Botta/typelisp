@@ -88,15 +88,18 @@
 (define (cand-builder-new) : CandBuilder
   (CandBuilder (__tl_make-array Candidate 4) 0))
 
-(define (cand-builder-copy-range!
+(define (cand-builder-move-range!
   [dst : (&mut dst (__tl_dyn-array Candidate))]
-  [src : (& src (__tl_dyn-array Candidate))]
+  [src : (&mut src (__tl_dyn-array Candidate))]
   [count : i64]) : unit
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+      (begin
+        (set!
+          (array-ref dst index)
+          (replace! (array-ref src index) (Candidate 0 0 "" 0)))
+        (set! index (+ index 1))))))
 
 (define (cand-builder-grow! [builder : (&mut builder CandBuilder)]) : unit
   (let
@@ -106,7 +109,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array Candidate) (__tl_make-array Candidate new-cap)]
-    (cand-builder-copy-range! (&mut bigger) (& builder.slots) builder.len)
+    (cand-builder-move-range! (&mut bigger) (&mut builder.slots) builder.len)
     (set! builder.slots bigger)))
 
 (define (cand-builder-push!

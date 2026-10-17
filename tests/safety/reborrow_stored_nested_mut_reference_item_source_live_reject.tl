@@ -1,5 +1,6 @@
-;: A mutable reborrow through a nested reference-bearing struct field protects
-;: the original array after the holder state leaves scope.
+;: A mutable reborrow through a nested reference-bearing struct field lends
+;: from the holder, which holds the array borrow: while the item is live the
+;: array stays borrowed (#8449).
 (defstruct NestedMutReborrowIter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))
@@ -10,12 +11,12 @@
   (iter (NestedMutReborrowIter source)))
 
 (defenum NestedMutReborrowNext
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source i64)))
+  (Item (&mut item i64)))
 
-(define (nested-next [holder : (&mut state (NestedMutReborrowHolder source))]) : (NestedMutReborrowNext
-    source)
+(define (nested-next [holder : (&mut item (NestedMutReborrowHolder source))]) : (NestedMutReborrowNext
+    item)
   (let
     [index : i64 holder.iter.index]
     (if (>= index 1)
@@ -32,14 +33,10 @@
 (define (main) : unit
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (let
-      [first : (NestedMutReborrowNext items)
-        (let
-          [iter : (NestedMutReborrowIter items)
-            (NestedMutReborrowIter (&mut items) 0)]
-          [holder : (NestedMutReborrowHolder items)
-            (NestedMutReborrowHolder iter)]
-          (nested-next (&mut holder)))]
-      (begin
-        (set! (array-ref items 0) 42)
-        (consume first)))))
+    [iter : (NestedMutReborrowIter items)
+      (NestedMutReborrowIter (&mut items) 0)]
+    [holder : (NestedMutReborrowHolder items) (NestedMutReborrowHolder iter)]
+    [first : (NestedMutReborrowNext holder) (nested-next (&mut holder))]
+    (begin
+      (set! (array-ref items 0) 42)
+      (consume first))))

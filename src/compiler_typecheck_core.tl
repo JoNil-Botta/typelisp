@@ -16355,7 +16355,18 @@
 (define (tc-atomic-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (or
     (tc-generated-atomic-arena-brand-id? name-id)
-    (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id))))
+    (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id))
+    (match (cis.intern-structural-session-arena-phase-record-for-raw
+      (tc-type-env-structural-session env)
+      name-id)
+      [(Some (Region owner _))
+        (or
+          (tc-generated-atomic-arena-brand-id? owner)
+          (tc-arena-owner-active-id?
+            env
+            owner
+            (tc-atomic-arena-owner-marker-id)))]
+      [_ false])))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (let
@@ -23668,6 +23679,13 @@
     (csym.compiler-symbol-name-id-key name-id)
     (csym.compiler-symbol-name-id-key cbi.compiler-builtin-id-arena-type)))
 
+(define (tc-arena-capability-arity [name-id : i64]) : i64
+  (cond
+    [(tc-arena-nominal-name-id? name-id) 1]
+    [(tc-nominal-name-id-eq? name-id cbi.compiler-builtin-id-arena-phase-type)
+      2]
+    [else 0]))
+
 (define (tc-branded-arena-erases-to-bare?
   [expected-name-id : i64]
   [actual-name-id : i64]
@@ -23686,8 +23704,10 @@
       (if (or
         (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
         (and
-          (tc-arena-nominal-name-id? name-id)
-          (= (tc-lifetime-list-count lifetimes) 1)))
+          (> (tc-arena-capability-arity name-id) 0)
+          (=
+            (tc-lifetime-list-count lifetimes)
+            (tc-arena-capability-arity name-id))))
         Ok
         (Err
           (tc-kind-message
@@ -26340,7 +26360,7 @@
           ;; Arena's brand is a capability identity, not a borrowed view. Its
           ;; phantom lifetime stays invariant even though the unchanged runtime
           ;; declaration has no field that ordinary inference could inspect.
-          (if (and (tc-arena-nominal-name-id? name-id) (= index 0))
+          (if (and (> (tc-arena-capability-arity name-id) index) (>= index 0))
             (TcVarianceInvariant)
             (tc-variance-compose
               position
@@ -26472,7 +26492,7 @@
   [ctx : TcContext]
   [name-id : i64]
   [index : i64]) : TcVariance
-  (if (and (tc-arena-nominal-name-id? name-id) (= index 0))
+  (if (and (> (tc-arena-capability-arity name-id) index) (>= index 0))
     (TcVarianceInvariant)
     (tc-nominal-lifetime-variance-at ctx name-id index Nil)))
 
@@ -27677,7 +27697,7 @@
         [args : ast.AstLifetimeList
           (ast.ast-lifetime-list-box-shared-view lifetimes)]
         (if (and
-          (tc-arena-nominal-name-id? name)
+          (> (tc-arena-capability-arity name) 0)
           (> (tc-lifetime-list-count args) 0))
           (MoveOnly)
           (tc-type-move-kind-nominal-with-stack ctx name args stack)))]
@@ -36076,6 +36096,38 @@
       (tc-arena-brand-id kind call-site-id)
       (& (ast.ast-lifetime-list-new)))))
 
+(defenum TcArenaPhaseBrands
+  (No)
+  (Some i64 i64))
+
+(define (tc-arena-phase-brands [ctx : TcContext] [ty : ast.AstType]) : TcArenaPhaseBrands
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(StructArgs name lifetimes)
+      (let
+        [args : ast.AstLifetimeList
+          (ast.ast-lifetime-list-box-shared-view lifetimes)]
+        (if (and
+          (tc-nominal-name-id-eq? name cbi.compiler-builtin-id-arena-phase-type)
+          (= (tc-lifetime-list-count args) 2))
+          (Some
+            (ast.ast-lifetime-list-get (& args) 0 (ast.ast-lifetime-fallback))
+            (ast.ast-lifetime-list-get (& args) 1 (ast.ast-lifetime-fallback)))
+          No))]
+    [_ No]))
+
+(define (tc-arena-phase-branded-type
+  [env : TcTypeEnv]
+  [owner : i64]
+  [call-site : i64]) : ast.AstType
+  (ast.ast-ty-struct-args
+    cbi.compiler-builtin-id-arena-phase-type
+    (ast.ast-lifetime-cons
+      owner
+      (&
+        (ast.ast-lifetime-cons
+          (tc-arena-phase-region-id env owner call-site)
+          (& (ast.ast-lifetime-list-new)))))))
+
 (define (tc-arena-call-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -36177,9 +36229,16 @@
                       (tc-context-expr-segment-bases ctx)
                       owner-expr)]
                   (if (>= oid 0)
-                    (if (or
-                      (tc-ordinary-arena-owner-active-id? env oid)
-                      (tc-atomic-arena-owner-active-id? env oid))
+                    (if (and
+                      (match (tc-lookup-id env oid)
+                        [(Ok ty)
+                          (match (tc-arena-branded-region ctx ty)
+                            [(Some _) false]
+                            [(No) true])]
+                        [(Err _) false])
+                      (or
+                        (tc-ordinary-arena-owner-active-id? env oid)
+                        (tc-atomic-arena-owner-active-id? env oid)))
                       (Some oid)
                       (No))
                     (No)))
@@ -38660,13 +38719,37 @@
 (define (tc-phase-call
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [func : ast.AstExpr]
+  [func-id : i64]
   [args : ast.AstExprList]) : ResultTcType
   (if (= args.len 1)
     (let
       [owner-expr : ast.AstExpr
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [owner-ty (try (tc-expr ctx env (tc-global-shared-view owner-expr)))]
+      (match (tc-arena-branded-region ctx (tc-global-shared-view owner-ty))
+        [(Some owner)
+          (unless
+            (tc-generated-arena-brand-id? owner)
+            (return
+              (Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  owner-expr
+                  (tc-kind-message
+                    (ArenaOwnership)
+                    "typecheck: arena.phase requires a locally created owner; pass an ArenaPhase parameter for allocation routing")))))
+          (when
+            (tc-active-region-owned-by-arena-id? env owner)
+            (return
+              (Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  owner-expr
+                  (tc-kind-message
+                    (ArenaOwnership)
+                    "typecheck: arena.phase cannot open inside its owner's allocation extent")))))
+          (return (Ok (tc-arena-phase-branded-type env owner func-id)))]
+        [(No) unit])
       (if (tc-arena-type? ctx owner-ty)
         (let
           [oid : i64
@@ -38677,7 +38760,7 @@
             (if (or
               (tc-ordinary-arena-owner-active-id? env oid)
               (tc-atomic-arena-owner-active-id? env oid))
-              (match (tc-expr ctx env func)
+              (match (tc-expr-id ctx env func-id)
                 [(Ok (Func _ ret)) (Ok (ast.ty-node-get ret))]
                 [(Ok _) (Err "typecheck: arena.phase target is not a function")]
                 [(Err message) (Err message)])
@@ -38716,6 +38799,27 @@
       [phase-expr : ast.AstExpr
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
       [phase-ty (try (tc-expr ctx env (tc-global-shared-view phase-expr)))]
+      (match (tc-arena-phase-brands ctx (tc-global-shared-view phase-ty))
+        [(Some owner _)
+          (return
+            (if (tc-active-region-owned-by-arena-id? env owner)
+              (Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  phase-expr
+                  (tc-kind-message
+                    (ArenaOwnership)
+                    "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds")))
+              (match (tc-move-direct-root-base-path
+                (tc-context-expr-bases ctx)
+                (tc-global-shared-view phase-expr))
+                [(Some _) (Ok (Unit))]
+                [(No)
+                  (Err
+                    (tc-kind-message
+                      (ArenaOwnership)
+                      "typecheck: arena.rewind-safe! requires a local phase token place"))])))]
+        [(No) unit])
       (if (tc-arena-phase-type? ctx phase-ty)
         (let
           [pid : i64
@@ -40791,7 +40895,7 @@
                     args
                     arena-owner-kind)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                  (tc-phase-call ctx env func args)]
+                  (tc-phase-call ctx env func-id args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
                   (tc-rewind-safe-call ctx env args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
@@ -51462,10 +51566,10 @@
   [name-id : i64]
   [args : ast.AstLifetimeList]) : ResultTcLifetimeSubst
   (if (and
-    (tc-arena-nominal-name-id? name-id)
-    (= (tc-lifetime-list-count args) 1))
-    ;; Arena's single checker-only brand is phantom: its one-word runtime
-    ;; declaration intentionally has no lifetime parameter or field to rewrite.
+    (> (tc-arena-capability-arity name-id) 0)
+    (= (tc-lifetime-list-count args) (tc-arena-capability-arity name-id)))
+    ;; Arena and ArenaPhase brands are phantom; their runtime declarations
+    ;; retain the bare one-word and two-word layouts.
     (Ok Nil)
     (let
       [params : ast.AstLifetimeList (try (tc-nominal-lifetimes-id ctx name-id))]
@@ -51476,6 +51580,21 @@
   [struct-name-id : i64]
   [lifetimes : ast.AstLifetimeList]
   [field-id : i64]) : ResultTcType
+  (when
+    (and
+      (= (tc-arena-capability-arity struct-name-id) 2)
+      (= (tc-lifetime-list-count (& lifetimes)) 2)
+      (string.eq (ci.intern-str field-id) "arena"))
+    (return
+      (Ok
+        (ast.ast-ty-struct-args
+          cbi.compiler-builtin-id-arena-type
+          (ast.ast-lifetime-cons
+            (ast.ast-lifetime-list-get
+              (& lifetimes)
+              0
+              (ast.ast-lifetime-fallback))
+            (& (ast.ast-lifetime-list-new)))))))
   (let
     [handle : i64
       (csym.compiler-registries-lookup-struct-field-id-or
@@ -59329,6 +59448,9 @@
   [env : TcTypeEnv]
   [arena : ast.AstExpr]
   [arena-ty : ast.AstType]) : TcMaybeNameId
+  (match (tc-arena-phase-brands ctx (tc-global-shared-view arena-ty))
+    [(Some _ generation) (return (Some generation))]
+    [(No) unit])
   (match (tc-arena-branded-region ctx arena-ty)
     [(Some region) (Some region)]
     [(No)
@@ -59366,7 +59488,11 @@
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [arena-ty (try (tc-expr ctx env (tc-global-shared-view arena)))]
-    (if (tc-arena-type? ctx (tc-global-shared-view arena-ty))
+    (if (or
+      (tc-arena-type? ctx (tc-global-shared-view arena-ty))
+      (match (tc-arena-phase-brands ctx (tc-global-shared-view arena-ty))
+        [(Some _ _) true]
+        [(No) false]))
       (let
         [body-ty
           (try
@@ -59383,7 +59509,9 @@
       (Err
         (tc-kind-message
           (ArenaOwnership)
-          "typecheck: in-arena arena must be Arena")))))
+          (str_cat.str-cat
+            "typecheck: in-arena arena must be Arena or a branded ArenaPhase; found "
+            (tc-type-render arena-ty)))))))
 
 (define (tc-with-resource-expr
   [ctx : TcContext]
@@ -64401,16 +64529,127 @@
   (parameter-id i64)
   (parent i64))
 
+(defstruct TcArenaPhaseStateNode
+  (owner i64)
+  (generation i64)
+  (parent i64))
+
 (defstruct TcMovedSet
   (roots tc_i64_i64_map.Map)
   (partials tc_i64_i64_map.Map)
   (paths TcMovedPathFacts)
   (hidden-atomic-users tc_i64_i64_map.Map)
+  ;; Immutable owner-brand -> generation facts, separate from local place IDs.
+  ;; Empty state costs one word; snapshots share nodes in the body's arena.
+  (arena-phases i64)
   ;; Persistent one-word head for the rare local aliases that still point into
   ;; a memory-class by-value parameter's ABI backing storage. Keeping this out
   ;; of the broad type environment avoids copying another hash-map value
   ;; through every move-check frame.
   (param-storage-origins i64))
+
+(define (tc-arena-phase-state-read [address : i64]) : TcArenaPhaseStateNode
+  (unsafe
+    (ptr-read (int->ptr (cast address : u64) : (Ptr TcArenaPhaseStateNode)))))
+
+(define (tc-arena-phase-state-cons
+  [owner : i64]
+  [generation : i64]
+  [parent : i64]) : i64
+  (let
+    [cell : (__tl_dyn-array TcArenaPhaseStateNode)
+      (__tl_make-array TcArenaPhaseStateNode 1)]
+    (set! (array-ref cell 0) (TcArenaPhaseStateNode owner generation parent))
+    (unsafe
+      (cast (ptr->int (__tl_array-data cell)) : i64))))
+
+;; -2 means absent; -1 conservatively represents different generations at a
+;; branch join. Neither sentinel can be a structural generation identity.
+(define (tc-arena-phase-state-get [head : i64] [owner : i64]) : i64
+  (let
+    [cursor : i64 head]
+    (while (!= cursor 0)
+      (let
+        [node : TcArenaPhaseStateNode (tc-arena-phase-state-read cursor)]
+        (when (= node.owner owner) (return node.generation))
+        (set! cursor node.parent)))
+    -2))
+
+(define (tc-arena-phase-state-remove [head : i64] [owner : i64]) : i64
+  (when (= (tc-arena-phase-state-get head owner) -2) (return head))
+  (let
+    [first : TcArenaPhaseStateNode (tc-arena-phase-state-read head)]
+    (when (= first.owner owner) (return first.parent)))
+  (let
+    [cursor : i64 head]
+    [out : i64 0]
+    (while (!= cursor 0)
+      (let
+        [node : TcArenaPhaseStateNode (tc-arena-phase-state-read cursor)]
+        (unless
+          (= node.owner owner)
+          (set! out (tc-arena-phase-state-cons node.owner node.generation out)))
+        (set! cursor node.parent)))
+    out))
+
+(define (tc-arena-phase-state-union [a : i64] [b : i64]) : i64
+  (when (= a b) (return a))
+  (let
+    [cursor : i64 a]
+    [out : i64 b]
+    (while (!= cursor 0)
+      (let
+        [node : TcArenaPhaseStateNode (tc-arena-phase-state-read cursor)]
+        [other : i64 (tc-arena-phase-state-get out node.owner)]
+        (when
+          (!= other node.generation)
+          (set!
+            out
+            (tc-arena-phase-state-cons
+              node.owner
+              (if (= other -2)
+                node.generation
+                -1)
+              (tc-arena-phase-state-remove out node.owner))))
+        (set! cursor node.parent)))
+    out))
+
+(define (tc-arena-phase-state-subset? [a : i64] [b : i64]) : bool
+  (when (= a b) (return true))
+  (let
+    [cursor : i64 a]
+    (while (!= cursor 0)
+      (let
+        [node : TcArenaPhaseStateNode (tc-arena-phase-state-read cursor)]
+        (unless
+          (= node.generation (tc-arena-phase-state-get b node.owner))
+          (return false))
+        (set! cursor node.parent)))
+    true))
+
+(define (tc-move-check-phase-loop-backedge
+  [expr-bases : i64]
+  [entry : i64]
+  [current : i64]
+  [origin : ast.AstExpr]) : ResultTcUnit
+  (if (tc-arena-phase-state-subset? current entry)
+    Ok
+    (Err
+      (tc-locate-error-at-expr
+        expr-bases
+        origin
+        (tc-kind-message
+          (ArenaOwnership)
+          "typecheck: a phase opened in a loop must be rewound before the next iteration")))))
+
+(define (tc-moved-with-arena-phases [set : TcMovedSet] [phases : i64]) : TcMovedSet
+  (TcMovedSet
+    (tc-moved-roots (tc-global-shared-view set))
+    (tc-moved-partials (tc-global-shared-view set))
+    (tc-moved-paths (tc-global-shared-view set))
+    (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+    phases
+    (tc-moved-param-storage-origins set)))
 
 (define (tc-moved-set-box-shared-view [value : (Box TcMovedSet)]) : TcMovedSet
   (let
@@ -64585,6 +64824,7 @@
     (tc-global-shared-view tc-moved-shared-empty-id-map)
     Nil
     (tc-global-shared-view tc-moved-shared-empty-id-map)
+    0
     0))
 
 (define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
@@ -64839,7 +65079,8 @@
     (tc-moved-roots (tc-global-shared-view set))
     (tc-moved-partials (tc-global-shared-view set))
     (tc-moved-paths (tc-global-shared-view set))
-    (tc-moved-hidden-atomic-users set)
+    (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+    set.arena-phases
     origins))
 
 (define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
@@ -64918,6 +65159,7 @@
       (tc-moved-clone-id-map-or-shared (& partials))
       paths
       (tc-moved-clone-id-map-or-shared (& hidden))
+      set.arena-phases
       (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-contains? [set : (& set TcMovedSet)] [name-id : i64]) : bool
@@ -64939,6 +65181,7 @@
       (tc-moved-partials (tc-global-shared-view set))
       (tc-moved-paths (tc-global-shared-view set))
       (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+      set.arena-phases
       (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
@@ -64951,6 +65194,7 @@
       (tc-moved-partials (tc-global-shared-view set))
       (tc-moved-paths (tc-global-shared-view set))
       (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+      set.arena-phases
       (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-add-origin
@@ -64973,6 +65217,7 @@
           (tc-moved-partials (tc-global-shared-view set))
           (tc-moved-paths (tc-global-shared-view set))
           (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+          set.arena-phases
           (tc-moved-param-storage-origins set))))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
@@ -65295,6 +65540,7 @@
       partials
       (tc-moved-paths (tc-global-shared-view set))
       (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+      set.arena-phases
       (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-remove-partial [set : TcMovedSet] [name-id : i64]) : TcMovedSet
@@ -65312,6 +65558,7 @@
           partials
           (tc-moved-paths (tc-global-shared-view set))
           (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+          set.arena-phases
           (tc-moved-param-storage-origins set))))))
 
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
@@ -65375,9 +65622,11 @@
           (tc-moved-paths (tc-global-shared-view set))
           fact)
         (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+        set.arena-phases
         (tc-moved-param-storage-origins set)))))
 
 (define (tc-moved-owner-dependency-at?
+  [env : TcTypeEnv]
   [facts : TcMovedPathFacts]
   [local-id : i64]
   [owner-id : i64]) : bool
@@ -65390,16 +65639,17 @@
         (= fact.path.root local-id)
         (match fact.kind
           [(OwnerDependency dependency-owner-id)
-            (= dependency-owner-id owner-id)]
+            (tc-arena-region-owned-by-id? env owner-id dependency-owner-id)]
           [_ false]))
         true
-        (tc-moved-owner-dependency-at? rest local-id owner-id)))))
+        (tc-moved-owner-dependency-at? env rest local-id owner-id)))))
 
 (define (tc-moved-owner-dependency?
+  [env : TcTypeEnv]
   [set : TcMovedSet]
   [local-id : i64]
   [owner-id : i64]) : bool
-  (tc-moved-owner-dependency-at? (tc-moved-paths set) local-id owner-id))
+  (tc-moved-owner-dependency-at? env (tc-moved-paths set) local-id owner-id))
 
 (define (tc-moved-add-owner-dependencies
   [moved : TcMovedSet]
@@ -65483,6 +65733,7 @@
         (tc-moved-partials (tc-global-shared-view set))
         facts
         (tc-moved-hidden-atomic-users (tc-global-shared-view set))
+        set.arena-phases
         (tc-moved-param-storage-origins set))]))
 
 (define (tc-moved-path-exact-conflict-kind-at
@@ -65883,6 +66134,7 @@
       (tc-moved-partials (tc-global-shared-view without-root))
       facts
       (tc-moved-hidden-atomic-users (tc-global-shared-view without-root))
+      without-root.arena-phases
       (tc-param-storage-origin-clear
         (tc-moved-param-storage-origins without-root)
         name-id))))
@@ -66878,6 +67130,7 @@
     [b-paths : TcMovedPathFacts (tc-moved-paths (tc-global-shared-view b))]
     [b-hidden : tc_i64_i64_map.Map
       (tc-moved-hidden-atomic-users (tc-global-shared-view b))]
+    [phases : i64 (tc-arena-phase-state-union a.arena-phases b.arena-phases)]
     [origins : i64
       (tc-param-storage-origins-union
         (tc-moved-param-storage-origins a)
@@ -66888,6 +67141,7 @@
         (tc-global-shared-view b-partials)
         a-paths
         (tc-global-shared-view b-hidden)
+        phases
         origins)]
     [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
     (TcMovedSet
@@ -66895,6 +67149,7 @@
       (tc-moved-union-id-loop (& a-partials) 0 b-partials)
       (tc-moved-paths with-paths)
       (tc-moved-union-id-loop (& a-hidden) 0 b-hidden)
+      phases
       origins)))
 
 ;; Branch joins compare an arm's state with the state at branch entry, and an
@@ -66957,6 +67212,8 @@
     [path-len : i64 (tc-moved-path-facts-len (tc-global-shared-view a-paths))]
     (and
       (tc-moved-id-map-same-keys? (& a.roots) (& b.roots))
+      (tc-arena-phase-state-subset? a.arena-phases b.arena-phases)
+      (tc-arena-phase-state-subset? b.arena-phases a.arena-phases)
       (= path-len (tc-moved-path-facts-len (tc-global-shared-view b-paths)))
       (= a.param-storage-origins b.param-storage-origins)
       (tc-moved-id-map-same-keys? (& a.partials) (& b.partials))
@@ -66973,6 +67230,7 @@
   [b-paths : TcMovedPathFacts]) : bool
   (and
     (= a.param-storage-origins b.param-storage-origins)
+    (tc-arena-phase-state-subset? a.arena-phases b.arena-phases)
     (tc-moved-id-map-keys-subset? (& a.roots) (& b.roots))
     (tc-moved-id-map-keys-subset? (& a.partials) (& b.partials))
     (tc-moved-id-map-keys-subset?
@@ -68345,7 +68603,7 @@
       (tc-move-global-copyable-nominal? ctx name depth)]
     [(StructArgs name lifetimes)
       (if (and
-        (tc-arena-nominal-name-id? name)
+        (> (tc-arena-capability-arity name) 0)
         (> (tc-lifetime-list-count (deref lifetimes)) 0))
         false
         (tc-move-global-copyable-nominal? ctx name depth))]
@@ -68612,7 +68870,13 @@
               (tc-name-id-list-add seen key)
               remaining
               origin)]
-          [(tc-type-contains-region ty region)
+          [(or
+              (tc-type-contains-region ty region)
+              (tc-moved-owner-dependency?
+                env
+                (tc-global-shared-view moved)
+                key
+                region))
             (let
               [moved2
                 (try
@@ -68847,6 +69111,7 @@
           [(or
               (tc-type-contains-arena-owner-region? env ty owner)
               (tc-moved-owner-dependency?
+                env
                 (tc-global-shared-view moved)
                 key
                 owner))
@@ -69038,12 +69303,28 @@
       (tc-moved-partials (tc-global-shared-view set))
       (tc-moved-paths (tc-global-shared-view set))
       hidden
+      set.arena-phases
       (tc-moved-param-storage-origins set))))
 
-(define (tc-moved-hidden-atomic-user? [set : TcMovedSet] [owner-id : i64]) : bool
+(define (tc-moved-hidden-atomic-user?
+  [env : TcTypeEnv]
+  [set : TcMovedSet]
+  [owner-id : i64]) : bool
   (let
     [hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users set)]
-    (tc_i64_i64_map.contains? (& hidden) owner-id)))
+    [remaining : i64 (tc_i64_i64_map.len (& hidden))]
+    [cursor : i64 0]
+    (while (> remaining 0)
+      (set! cursor (tc_i64_i64_map.next-occupied (& hidden) cursor))
+      (match (tc_i64_i64_map.entry-at (& hidden) cursor)
+        [(EntrySome region _)
+          (when
+            (tc-arena-region-owned-by-id? env owner-id region)
+            (return true))]
+        [(EntryNone) unit])
+      (+= cursor 1)
+      (-= remaining 1))
+    false))
 
 (define (tc-move-mark-hidden-atomic-arena-users
   [moved : TcMovedSet]
@@ -69066,9 +69347,10 @@
     "` is released after an owner-tagged value was sent to a channel"))
 
 (define (tc-move-check-atomic-arena-hidden-users-released
+  [env : TcTypeEnv]
   [moved : TcMovedSet]
   [owner-id : i64]) : TcMoveResult
-  (if (tc-moved-hidden-atomic-user? (tc-global-shared-view moved) owner-id)
+  (if (tc-moved-hidden-atomic-user? env (tc-global-shared-view moved) owner-id)
     (Err
       (tc-move-atomic-arena-hidden-user-message (tc-env-key-name-text owner-id)))
     (Ok moved)))
@@ -69155,7 +69437,7 @@
   [owner : i64]) : TcMoveResult
   (let
     [moved1 : TcMovedSet
-      (try (tc-move-check-atomic-arena-hidden-users-released moved owner))]
+      (try (tc-move-check-atomic-arena-hidden-users-released env moved owner))]
     (tc-move-check-atomic-arena-users-released-scan
       ctx
       env
@@ -69164,6 +69446,107 @@
       owner
       Nil
       (tc-moved-len locals))))
+
+(define (tc-move-safe-arena-phase-effect
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [args : ast.AstExprList]
+  [origin : ast.AstExpr]) : TcMoveResult
+  (when (!= args.len 1) (return (Ok moved)))
+  (let
+    [arg : i64 (ast.ast-expr-list-get (& args) 0 0)]
+    [ty (try (tc-body-type-fact-expr-id "move.phase_owner" ctx env arg))]
+    (match (tc-arena-branded-region ctx ty)
+      [(Some owner)
+        (if (!= (tc-arena-phase-state-get moved.arena-phases owner) -2)
+          (Err
+            (tc-locate-error-at-expr
+              expr-bases
+              origin
+              (tc-kind-message
+                (ArenaOwnership)
+                "typecheck: arena.phase cannot overlap a live phase for the same owner")))
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& origin))
+            [(Call func-id _)
+              (let
+                [phases : i64
+                  (tc-arena-phase-state-cons
+                    owner
+                    (tc-arena-phase-region-id env owner func-id)
+                    moved.arena-phases)]
+                (Ok (tc-moved-with-arena-phases moved phases)))]
+            [_ (Ok moved)]))]
+      [(No) (Ok moved)])))
+
+(define (tc-move-branded-arena-rewind-effect
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [phase : ast.AstExpr]
+  [owner : i64]
+  [generation : i64]
+  [origin : ast.AstExpr]) : TcMoveResult
+  ;; An abstract input brand may have caller-owned atomic users this body
+  ;; cannot inspect, even when this body created the mark itself.
+  (unless
+    (tc-generated-arena-brand-id? owner)
+    (return
+      (Err
+        (tc-locate-error-at-expr
+          expr-bases
+          phase
+          (tc-kind-message
+            (ArenaOwnership)
+            "typecheck: arena.rewind-safe! requires a locally created owner; a parameter owner needs a caller-visible invalidation effect")))))
+  (unless
+    (= (tc-arena-phase-state-get moved.arena-phases owner) generation)
+    (return
+      (Err
+        (tc-locate-error-at-expr
+          expr-bases
+          phase
+          (tc-kind-message
+            (ArenaOwnership)
+            "typecheck: arena.rewind-safe! requires the matching phase opened in this function; parameter rewind needs a caller-visible invalidation effect")))))
+  (let
+    [moved1
+      (try
+        (if (tc-atomic-arena-owner-active-id? env owner)
+          (tc-move-check-atomic-arena-users-released
+            ctx
+            env
+            (tc-global-shared-view locals)
+            moved
+            owner)
+          (TcMoveResult.Ok moved)))]
+    [moved2
+      (try
+        (tc-move-after-consuming-projection
+          ctx
+          expr-bases
+          env
+          (tc-global-shared-view locals)
+          (tc-global-shared-view loop-carried)
+          moved1
+          phase))]
+    [moved3
+      (try
+        (tc-move-mark-region-locals
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved2
+          generation
+          (tc-env-key-name-text owner)
+          origin))]
+    [phases : i64 (tc-arena-phase-state-remove moved3.arena-phases owner)]
+    (Ok (tc-moved-with-arena-phases moved3 phases))))
 
 (define (tc-move-safe-arena-rewind-effect
   [ctx : TcContext]
@@ -69180,7 +69563,25 @@
       [phase-box : i64 (ast.ast-expr-list-get (& args) 0 0)]
       [phase-expr : ast.AstExpr
         (ast.ast-expr-segment-bases-get expr-bases phase-box)]
-      [pid : i64 (tc-expr-var-name-id expr-bases phase-expr)]
+      [phase-ty
+        (try (tc-body-type-fact-expr-id "move.rewind_phase" ctx env phase-box))]
+      [pid : i64
+        (tc-expr-var-name-id expr-bases (tc-global-shared-view phase-expr))]
+      (match (tc-arena-phase-brands ctx phase-ty)
+        [(Some owner generation)
+          (return
+            (tc-move-branded-arena-rewind-effect
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              phase-expr
+              owner
+              generation
+              origin))]
+        [(No) unit])
       (if (>= pid 0)
         (match (tc-arena-phase-token-region-active env pid)
           [(Some region)
@@ -69348,6 +69749,14 @@
         [arena-call-kind : i64
           (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
+          [(= arena-call-kind (tc-arena-safe-call-kind-phase))
+            (tc-move-safe-arena-phase-effect
+              ctx
+              expr-bases
+              env
+              moved
+              args
+              origin)]
           [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-move-safe-arena-rewind-effect
               ctx
@@ -72447,6 +72856,13 @@
         (Ok false (box moved1) true (box moved1)))]
     [(Continue)
       (let
+        [_
+          (try
+            (tc-move-check-phase-loop-backedge
+              expr-bases
+              loop-carried.arena-phases
+              moved.arena-phases
+              (tc-global-shared-view expr)))]
         [moved1
           (try
             (tc-move-check-obligations-exit
@@ -72518,6 +72934,7 @@
   [body : ast.AstExpr]) : TcMoveLoopResult
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
+    [phase-entry : i64 loop-carried.arena-phases]
     [outer : TcMoveBreakCollection
       (tc-body-move-breaks-swap! state (tc-move-break-collection-new false))]
     [result : TcMoveLoopResult
@@ -72529,11 +72946,26 @@
         loop-carried
         outer-loop-carried
         moved
-        body
+        (tc-global-shared-view body)
         true
         false)]
     [_ (tc-body-move-breaks-swap! state outer)]
-    result))
+    (match result
+      [(Ok normal? normal-box breaks? breaks-box)
+        (when
+          normal?
+          (try
+            (tc-move-check-phase-loop-backedge
+              expr-bases
+              phase-entry
+              (__tl-project-field
+                (tc-moved-set-box-shared-view
+                  (tc-global-shared-view normal-box))
+                arena-phases)
+              body))
+          unit)
+        (Ok normal? normal-box breaks? breaks-box)]
+      [(Err message) (Err message)])))
 
 ;; #7976: the defining module owns writes to its globals. A safe
 ;; write-capable place operation (assignment, a field/tuple/element/deref
@@ -73996,6 +74428,7 @@
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 index))]
     [(While cond-box body-box)
       (let
+        [phase-entry : i64 moved.arena-phases]
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
         [body : ast.AstExpr (Begin body-box)]
@@ -74010,7 +74443,9 @@
               moved
               cond))]
         [body-loop-carried : TcMovedSet
-          (tc-moved-union locals (tc-moved-clone loop-carried))]
+          (tc-moved-with-arena-phases
+            (tc-moved-union locals (tc-moved-clone loop-carried))
+            phase-entry)]
         (match (tc-move-check-loop-body
           ctx
           expr-bases
@@ -74239,7 +74674,9 @@
                   moved1
                   end))]
             [body-loop-carried : TcMovedSet
-              (tc-moved-union locals (tc-moved-clone loop-carried))]
+              (tc-moved-with-arena-phases
+                (tc-moved-union locals (tc-moved-clone loop-carried))
+                moved2.arena-phases)]
             (match (tc-move-check-loop-body
               ctx
               expr-bases
@@ -74297,7 +74734,9 @@
             [body-loop-carried : TcMovedSet
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state
-                  (tc-moved-union locals (tc-moved-clone loop-carried))
+                  (tc-moved-with-arena-phases
+                    (tc-moved-union locals (tc-moved-clone loop-carried))
+                    moved2.arena-phases)
                   outer
                   false)
                 inner
@@ -74542,7 +74981,23 @@
               (tc-global-shared-view locals)
               (tc-global-shared-view loop-carried)
               moved
-              arena))]
+              (tc-global-shared-view arena)))]
+        [arena-ty
+          (try
+            (tc-body-type-fact-expr-id "move.in_arena_target" ctx env arena-box))]
+        (match (tc-arena-branded-region ctx arena-ty)
+          [(Some owner)
+            (unless
+              (= (tc-arena-phase-state-get moved1.arena-phases owner) -2)
+              (return
+                (Err
+                  (tc-locate-error-at-expr
+                    expr-bases
+                    arena
+                    (tc-kind-message
+                      (ArenaOwnership)
+                      "typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token")))))]
+          [(No) unit])
         (tc-move-check-exprs
           ctx
           expr-bases
@@ -74753,6 +75208,12 @@
           true)
         (Ok moved1))]
     [(Continue)
+      (try
+        (tc-move-check-phase-loop-backedge
+          expr-bases
+          loop-carried.arena-phases
+          moved.arena-phases
+          (tc-global-shared-view expr)))
       (tc-body-early-exit-note! (tc-context-body-state ctx))
       (tc-body-move-loop-exit-note! (tc-context-body-state ctx) (& moved) false)
       (tc-move-check-obligations-exit
@@ -74864,7 +75325,9 @@
     [(ForeachActive lane body-box)
       (let
         [body-loop-carried : TcMovedSet
-          (tc-moved-union locals (tc-moved-clone loop-carried))]
+          (tc-moved-with-arena-phases
+            (tc-moved-union locals (tc-moved-clone loop-carried))
+            moved.arena-phases)]
         (match (tc-move-check-loop-body
           ctx
           expr-bases
@@ -76918,6 +77381,7 @@
       (tc-moved-partials (tc-global-shared-view without-two-phase))
       facts
       (tc-moved-hidden-atomic-users (tc-global-shared-view without-two-phase))
+      without-two-phase.arena-phases
       (tc-moved-param-storage-origins without-two-phase))))
 
 (define (tc-borrow-check-two-phase-mut-conflict
@@ -77435,6 +77899,7 @@
       (tc-moved-paths (tc-global-shared-view borrowed))
       scope-id)
     (tc-moved-hidden-atomic-users (tc-global-shared-view borrowed))
+    borrowed.arena-phases
     (tc-moved-param-storage-origins borrowed)))
 
 (define (tc-borrow-check-prune-before-exprs-loop
@@ -81300,7 +81765,40 @@
       [phase-box : i64 (ast.ast-expr-list-get (& args) 0 0)]
       [phase-expr : ast.AstExpr
         (ast.ast-expr-segment-bases-get expr-bases phase-box)]
-      [pid : i64 (tc-expr-var-name-id expr-bases phase-expr)]
+      [phase-ty
+        (try
+          (tc-body-type-fact-expr-id "borrow.rewind_phase" ctx env phase-box))]
+      [pid : i64
+        (tc-expr-var-name-id expr-bases (tc-global-shared-view phase-expr))]
+      (match (tc-arena-phase-brands ctx phase-ty)
+        [(Some _ generation)
+          (let
+            [place : TcMaybeMovePath
+              (tc-move-direct-root-base-path expr-bases phase-expr)]
+            (match place
+              [(Some path)
+                (try
+                  (tc-borrow-check-assign-conflict
+                    ctx
+                    expr-bases
+                    (tc-global-shared-view locals)
+                    (tc-global-shared-view borrowed)
+                    path
+                    (tc-global-shared-view primary)))
+                unit]
+              [(No) unit])
+            (return
+              (tc-borrow-check-region-invalidation-scan
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                borrowed
+                generation
+                Nil
+                (tc-moved-len locals)
+                primary)))]
+        [(No) unit])
       (if (>= pid 0)
         (let
           [_
@@ -86399,6 +86897,7 @@
                 (tc-moved-partials (tc-global-shared-view borrowed))
                 facts
                 (tc-moved-hidden-atomic-users (tc-global-shared-view borrowed))
+                borrowed.arena-phases
                 (tc-moved-param-storage-origins borrowed))]
             (tc-borrow-check-add-lambda-capture-lending-scan
               ctx
@@ -86429,6 +86928,7 @@
                   facts
                   (tc-moved-hidden-atomic-users
                     (tc-global-shared-view borrowed))
+                  borrowed.arena-phases
                   (tc-moved-param-storage-origins borrowed)))
               borrowed))]
         [(No) borrowed])]))

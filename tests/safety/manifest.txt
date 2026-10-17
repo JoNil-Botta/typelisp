@@ -44,6 +44,20 @@ process_runtime_safe_inherit_reject|check-fail|tests/safety/process_runtime_safe
 process_runtime_safe_start_reject|check-fail|tests/safety/process_runtime_safe_start_reject.tl|-|process_runtime/tl_process_start requires unsafe context
 process_runtime_safe_wait_reject|check-fail|tests/safety/process_runtime_safe_wait_reject.tl|-|process_runtime/tl_process_wait requires unsafe context
 process_child_copy_reject|check-fail|tests/safety/process_child_copy_reject.tl|-|typecheck: use of moved value `child`
+process_step_live_borrow_reject|check-fail|tests/safety/process_step_live_borrow_reject.tl|-|typecheck: cannot move borrowed place `step`
+process_env_step_moved_reject|check-fail|tests/safety/process_env_step_moved_reject.tl|-|typecheck: use of moved value `step`
+process_command_live_borrow_reject|check-fail|tests/safety/process_command_live_borrow_reject.tl|-|typecheck: cannot move borrowed place `command`
+process_info_borrow_escape_reject|check-fail|tests/safety/process_info_borrow_escape_reject.tl|-|typecheck: reference value would escape lexical scope
+process_borrowed_command_moved_reject|check-fail|tests/safety/process_borrowed_command_moved_reject.tl|-|typecheck: use of moved value `command`
+process_borrowed_field_live_reject|check-fail|tests/safety/process_borrowed_field_live_reject.tl|-|typecheck: cannot move borrowed place `command`
+msvc_tool_live_borrow_reject|check-fail|tests/safety/msvc_tool_live_borrow_reject.tl|-|typecheck: cannot assign to borrowed place `tool.path`
+process_step_live_borrow_windows_reject|check-fail-windows|tests/safety/process_step_live_borrow_reject.tl|-|typecheck: cannot move borrowed place `step`
+process_env_step_moved_windows_reject|check-fail-windows|tests/safety/process_env_step_moved_reject.tl|-|typecheck: use of moved value `step`
+process_command_live_borrow_windows_reject|check-fail-windows|tests/safety/process_command_live_borrow_reject.tl|-|typecheck: cannot move borrowed place `command`
+process_info_borrow_escape_windows_reject|check-fail-windows|tests/safety/process_info_borrow_escape_reject.tl|-|typecheck: reference value would escape lexical scope
+process_borrowed_command_moved_windows_reject|check-fail-windows|tests/safety/process_borrowed_command_moved_reject.tl|-|typecheck: use of moved value `command`
+process_borrowed_field_live_windows_reject|check-fail-windows|tests/safety/process_borrowed_field_live_reject.tl|-|typecheck: cannot move borrowed place `command`
+msvc_tool_live_borrow_windows_reject|check-fail-windows|tests/safety/msvc_tool_live_borrow_reject.tl|-|typecheck: cannot assign to borrowed place `tool.path`
 winsock_table_without_unsafe_reject|check-fail|tests/safety/winsock_table_without_unsafe_reject.tl|-|winsock/winsock-table-for-lease requires unsafe context
 winsock_table_storage_safe_write_reject|check-fail|tests/safety/winsock_table_storage_safe_write_reject.tl|-|ptr-write! requires unsafe context
 winsock_lease_move_reuse_reject|check-fail|tests/safety/winsock_lease_move_reuse_reject.tl|-|typecheck: use of moved value `lease`

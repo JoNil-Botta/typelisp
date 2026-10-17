@@ -35,6 +35,16 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+## Process accessor ownership
+
+`stdlib/tests/process_api.tl` reads step values before consuming their tails,
+including empty, singleton, and multiple-entry lists and absent optional text.
+The process safety fixtures reject live field borrows across command or step
+moves, reuse of consumed commands and steps, and escape of optional-string
+borrows. Windows-target rows also check the embedded stdlib route.
+`stdlib/tests/msvc_api.tl` checks borrowed PATH/LIB/INCLUDE accessors and their
+owned environment conversions after the original fields are replaced.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

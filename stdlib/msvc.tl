@@ -111,34 +111,41 @@
   (msvc-string-shared-view tool.executable))
 
 ;: Return the PATH override for invoking the tool.
-(define (tool-path [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.path))
+(define (tool-path [tool : (& tool MsvcTool)]) : (& tool str)
+  (& tool.path))
 
 ;: Return the LIB override for invoking the tool.
-(define (tool-lib [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.lib))
+(define (tool-lib [tool : (& tool MsvcTool)]) : (& tool str)
+  (& tool.lib))
 
 ;: Return the INCLUDE override for invoking the tool.
-(define (tool-include [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.include))
+(define (tool-include [tool : (& tool MsvcTool)]) : (& tool str)
+  (& tool.include))
 
-;: Return process environment overrides for invoking the tool.
+;: Return process environment overrides for invoking the tool, copying the
+;: three path lists once per call.
 (define (tool-process-env [tool : (& tool MsvcTool)]) : process.ProcessEnvList
   (process.env-cons
     "PATH"
-    (tool-path tool)
+    (string.copy (tool-path tool))
     (process.env-cons
       "LIB"
-      (tool-lib tool)
-      (process.env-cons "INCLUDE" (tool-include tool) (process.env-empty)))))
+      (string.copy (tool-lib tool))
+      (process.env-cons
+        "INCLUDE"
+        (string.copy (tool-include tool))
+        (process.env-empty)))))
 
 ;: Return vector-backed process environment overrides for invoking the tool.
 (define (tool-process-env-vec [tool : (& tool MsvcTool)]) : process.ProcessEnvVec
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
-    (process.env-vec-append! (&mut env) "PATH" (tool-path tool))
-    (process.env-vec-append! (&mut env) "LIB" (tool-lib tool))
-    (process.env-vec-append! (&mut env) "INCLUDE" (tool-include tool))
+    (process.env-vec-append! (&mut env) "PATH" (string.copy (tool-path tool)))
+    (process.env-vec-append! (&mut env) "LIB" (string.copy (tool-lib tool)))
+    (process.env-vec-append!
+      (&mut env)
+      "INCLUDE"
+      (string.copy (tool-include tool)))
     env))
 
 ;: Render a discovery error as a diagnostic message.

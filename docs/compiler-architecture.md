@@ -16,6 +16,15 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Lowering retains source binding types, including arena brands and lifetime
+arguments, in its semantic `TcTypeEnv`. It uses the shared let-binding rules
+for annotations and inferred values whenever it extends that environment.
+Physical IR storage types are derived separately with regions erased.
+Semantic queries for operands and nested calls therefore receive the same
+brands as the original checked binding. Encoded typechecker errors cross the
+lowering boundary through the shared decoder, preserving the producer's code,
+primary span, help and secondary labels.
+
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
 - the lowerer's target-aware C ABI shapes;

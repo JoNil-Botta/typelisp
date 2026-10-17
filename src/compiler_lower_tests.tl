@@ -941,6 +941,63 @@
     [span-ok : bool (compiler-lower-maybe-span-start-ok? found-span 11 3)]
     (and diag-ok span-ok)))
 
+(test
+  compiler-lower-typecheck-error-transport
+  (let
+    [primary : ast.AstSourceSpan (ast.ast-source-span 23 7 23 11)]
+    [secondary : ast.AstSourceSpan (ast.ast-source-span 19 2 19 8)]
+    [outer : ast.AstSourceSpan (ast.ast-source-span 41 3 41 16)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [expr : ast.AstExpr
+      (ast.ast-node-get
+        (ast.ast-expr-spanned
+          (ast.ast-node-push (Literal (ast.AstLiteral.Int 0 "0")))
+          outer))]
+    [messages : (Array String 2)
+      (array
+        (tc_core.tc-located-error
+          primary
+          (tc_core.tc-kind-message (TypeMismatch) "typecheck: operand mismatch"))
+        (tc_core.tc-rich-error-one-secondary
+          primary
+          (tc_core.tc-kind-message (TypeMismatch) "typecheck: operand mismatch")
+          "keep the original brand"
+          secondary
+          "brand introduced here"))]
+    (for [index (iterator.range 0 2)]
+      (for [route (iterator.range 0 2)]
+        (let
+          [message : String (clone (array-ref messages index))]
+          [diag : cdiag.CompilerDiagnostic
+            (if (= route 0)
+              (lower.lower-diagnostic message)
+              (lower.lower-diagnostic-at-expr-with-pools
+                pools
+                (owned_view.compiler-owned-shared-view expr)
+                message))]
+          [labels : cdiag.CompilerDiagnosticLabelList
+            (cdiag.compiler-diagnostic-secondary-spans (& diag))]
+          (test.assert-true
+            (and
+              (= (cdiag.compiler-diagnostic-line (& diag)) 23)
+              (= (cdiag.compiler-diagnostic-col (& diag)) 7)
+              (string.eq
+                (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                "E0206")
+              (string.eq
+                (cdiag.compiler-diagnostic-message (& diag))
+                "typecheck: operand mismatch")
+              (= (cdiag.compiler-diagnostic-label-list-count (& labels)) index))
+            "lowering preserves the producer's span, code and labels")
+          (when
+            (= index 1)
+            (test.assert-true
+              (match (cdiag.compiler-diagnostic-help (& diag))
+                [(CompilerDiagnosticSomeString text)
+                  (string.eq text "keep the original brand")]
+                [_ false])
+              "lowering preserves typecheck help")))))))
+
 (define (compiler-lower-compound-expression-diagnostic-span-ok?) : bool
   (let
     [span : ast.AstSourceSpan (ast.ast-source-span 17 5 17 12)]

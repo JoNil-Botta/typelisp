@@ -5,6 +5,13 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
+aliases and stored holders at opt0/1/2 on both hosts. The public check/compile
+cases also reject different arena brands and explicit bare annotations with
+E0206 and a located diagnostic. `compiler-lower-typecheck-error-transport`
+passes located and rich errors through both lowering diagnostic entry points,
+checking the original primary span, code, help and secondary labels.
+
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and
 emission on both SIMD widths and target ABIs. Its remapped homes extend beyond

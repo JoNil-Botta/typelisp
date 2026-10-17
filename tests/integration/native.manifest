@@ -822,6 +822,7 @@ mem_copy_fwd_runtime_contract|all|-|tests/integration/mem_copy_fwd_runtime_contr
 arena_atomic_rewind_destroy_safe|all|-|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_aggregate|all|-|tests/integration/arena_branded_atomic_aggregate.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_place_destroy|all|-|tests/integration/arena_branded_atomic_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+arena_branded_operands|all|0,1,2|tests/integration/arena_branded_operands.tl|42|-|-|stdlib/arena.tl|-
 resource_with_order|all|-|tests/integration/resource_with_order.tl|42|-|-|-|-
 resource_with_arg_cycle|all|-|tests/integration/resource_with_arg_cycle.tl|42|-|-|-|-
 sync_channel_thread_runtime|all|-|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-

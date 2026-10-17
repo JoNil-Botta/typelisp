@@ -2737,7 +2737,9 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (lower-diagnostic [message : String]) : cdiag.CompilerDiagnostic
-  (cdiag.compiler-diagnostic-at-start "" message))
+  (if (tc_core.tc-encoded-error? message)
+    (tc_core.tc-diag-at-start message)
+    (cdiag.compiler-diagnostic-at-start "" message)))
 
 (cfg
   (any compile-profile test)
@@ -3313,9 +3315,11 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]
   [message : String]) : cdiag.CompilerDiagnostic
-  (match (lower-ast-expr-span pools expr)
-    [(Some span) (cdiag.compiler-diagnostic-from-ast-span "" span message)]
-    [(No) (lower-diagnostic message)]))
+  (if (tc_core.tc-encoded-error? message)
+    (tc_core.tc-diag-at-start message)
+    (match (lower-ast-expr-span pools expr)
+      [(Some span) (cdiag.compiler-diagnostic-from-ast-span "" span message)]
+      [(No) (lower-diagnostic message)])))
 
 ;; Keep the context owner explicit at diagnostic call sites without repeating
 ;; its pool projection hundreds of times in this already-large lowering unit.
@@ -27896,72 +27900,34 @@
           1
           first-ty)))))
 
-(define (lower-let-binding-result-type-fast
+;; Runtime representation erases regions, while semantic fallback queries
+;; still instantiate calls from the source binding's brands and lifetimes.
+(define (lower-let-binding-source-type
   [ctx : tc_core.TcContext]
-  [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [type-cache : LowerTypeCache]
-  [function-state : CompilerLowerFunctionState]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : tc_core.ResultTcType
-  (match maybe-ty
-    [(Some ty)
-      (Ok (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))]
-    [(No)
-      (if (tc_core.tc-ref-capturing-lambda-init?
-        (tc_core.tc-context-expr-bases ctx)
-        type-env
-        (lower-global-shared-view init))
-        (match (ast.ast-expr-unspan (& init))
-          [(Lambda lambda-box)
-            (match (__tl-box-place lambda-box)
-              [(Lambda params maybe-ret body-box)
-                (let
-                  [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-                  (tc_core.tc-lambda-expr-allow-ref-captures
-                    ctx
-                    type-env
-                    params
-                    maybe-ret
-                    body))])]
-          [_
-            (lower-expr-result-type-fast
-              ctx
-              env
-              type-env
-              type-cache
-              function-state
-              init)])
-        (lower-expr-result-type-fast
+  (let
+    [resolved : ast.AstMaybeType
+      (tc_core.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+    [source-ty : ast.AstType
+      (try
+        (tc_core.tc-let-binding-plain-type
           ctx
-          env
           type-env
-          type-cache
-          function-state
-          init))]))
+          (lower-global-shared-view resolved)
+          init))]
+    (Ok (tc_core.tc-let-binding-plain-bind-type ctx resolved source-ty))))
 
-(define (lower-let-bindings-type-env-fast
+(define (lower-let-bindings-source-env
   [ctx : tc_core.TcContext]
-  [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [type-cache : LowerTypeCache]
-  [function-state : CompilerLowerFunctionState]
   [bindings : (& bindings ast.AstLetBindingList)]) : tc_core.ResultTcEnv
-  (lower-let-bindings-type-env-fast-at
-    ctx
-    env
-    type-env
-    type-cache
-    function-state
-    (& bindings)
-    0))
+  (lower-let-bindings-source-env-at ctx type-env (& bindings) 0))
 
-(define (lower-let-bindings-type-env-fast-at
+(define (lower-let-bindings-source-env-at
   [ctx : tc_core.TcContext]
-  [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [type-cache : LowerTypeCache]
-  [function-state : CompilerLowerFunctionState]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : tc_core.ResultTcEnv
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -27974,27 +27940,21 @@
         (let
           [name-id : i64 name]
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          [binding-ty
+          [source-ty
             (try
-              (lower-let-binding-result-type-fast
+              (lower-let-binding-source-type
                 ctx
-                env
                 type-env
-                (lower-global-shared-view type-cache)
-                function-state
                 maybe-ty
                 (lower-global-shared-view init)))]
-          (lower-let-bindings-type-env-fast-at
+          (lower-let-bindings-source-env-at
             ctx
-            (sym_i64_env.sym-i64-bind-id env name-id 0)
             (tc_core.tc-bind-initialized-value-id
               ctx
               type-env
               name-id
-              binding-ty
+              source-ty
               init)
-            type-cache
-            function-state
             bindings
             (+ index 1)))])))
 
@@ -28386,14 +28346,7 @@
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             [body-type-env
-              (try
-                (lower-let-bindings-type-env-fast
-                  ctx
-                  env
-                  type-env
-                  (lower-global-shared-view type-cache)
-                  function-state
-                  bindings))]
+              (try (lower-let-bindings-source-env ctx type-env bindings))]
             (lower-expr-result-type-fast
               ctx
               (lower-let-bindings-local-env env bindings)
@@ -42291,7 +42244,20 @@
             [(Expr init-state init-value init-ty)
               (let
                 [binding-ty : ast.AstType
-                  (lower-let-binding-type ctx maybe-ty init-ty)]
+                  (lower-let-binding-type
+                    ctx
+                    (lower-global-shared-view maybe-ty)
+                    init-ty)]
+                [source-ty : ast.AstType
+                  (match (lower-let-binding-source-type
+                    ctx
+                    type-env
+                    maybe-ty
+                    (lower-global-shared-view init))
+                    [(Ok ty) ty]
+                    [(Err message)
+                      (return
+                        (Err (box (lower-diagnostic-at-expr ctx init message))))])]
                 [_debug-type : unit
                   (lower-debug-type-root!
                     (lower-state-owner init-state)
@@ -42307,7 +42273,7 @@
                           ctx
                           type-env
                           name-id
-                          binding-ty
+                          source-ty
                           init)]
                       (lower-let-bindings-at
                         ctx

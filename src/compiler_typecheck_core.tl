@@ -40773,8 +40773,8 @@
   [env : TcTypeEnv]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : ResultTcType
-  ;; This path exists only to extend the environment while expression macros
-  ;; are being expanded. The complete expanded let is checked afterward by
+  ;; Extend semantic environments during expression macro expansion and
+  ;; post-check lowering. The complete expanded let is checked by
   ;; `tc-let-bindings-for-body`, which proves concrete closure capability and
   ;; captured-lifetime uses against the rest of the bindings and body. Admit a
   ;; direct lambda here so a macro-produced reference-capturing closure can

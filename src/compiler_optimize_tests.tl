@@ -45867,6 +45867,86 @@
           (& expected)))
       "address forwarding covers both emitted instructions across builder growth without changing input or fresh IDs")))
 
+(define (opt-gep-split-mutable-source-check
+  [base : String]
+  [offset : String]
+  [call? : bool]
+  [split? : bool]
+  [valid? : bool]) : bool
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n%2 = gep "
+          base
+          ", "
+          offset
+          " : i64\n"
+          (if call?
+            "%4 = call mutate() : unit\n"
+            "store @g, %0 : u64\nstore @offset, 2 : i64\n")
+          "%3 = load %2 : i64\nstore_ptr %2, %1 : i64\nreturn %3"))]
+    [function : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "gep_mutable_capture")
+        (irt.params "base=%0:u64, value=%1:i64")
+        (I64)
+        5
+        (clone blocks)
+        Ordinary)]
+    [rewritten : ir.CompilerIrFunction
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        true
+        (& function))]
+    [actual : ir.CompilerIrBlockList (opt.opt-function-blocks (& rewritten))]
+    (and
+      ;; RuntimeGlobal is invalid as an instruction operand: refusal must
+      ;; retain that verifier rejection instead of turning it into a read.
+      (= (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))) valid?)
+      (=
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& rewritten))))
+        valid?)
+      (if split?
+        (=
+          (opt-gep-split-test-gep-count (ir.compiler-ir-block-list-view actual))
+          3)
+        (opt.opt-block-list-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& blocks)
+          (& actual))))))
+
+(test
+  gep-split-mutable-global-capture
+  (let
+    [bases : (Array String 9)
+      (array "@g" "runtime-init@g" "%0" "%0" "@g" "&@g" "4096" "%0" "%0")]
+    [offsets : (Array String 9)
+      (array
+        "0"
+        "0"
+        "@offset"
+        "runtime-init@offset"
+        "@offset"
+        "0"
+        "1"
+        "-1"
+        "%1")]
+    (for [mode (iterator.range 0 9)]
+      (for [effect (iterator.range 0 2)]
+        (test.assert-true
+          (opt-gep-split-mutable-source-check
+            (clone (array-ref bases mode))
+            (clone (array-ref offsets mode))
+            (= effect 1)
+            (>= mode 5)
+            (not (or (= mode 1) (= mode 3))))
+          (str_cat.str-cat
+            "GEP capture keeps mutable operands across effects, case "
+            (string.int->string mode)
+            "/"
+            (string.int->string effect)))))))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : ir.CompilerIrFunction

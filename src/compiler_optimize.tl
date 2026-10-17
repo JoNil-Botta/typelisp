@@ -88785,14 +88785,15 @@
             marks)])]))
 
 ;; A base/index operand is safe to re-evaluate at every use when it is not the
-;; Gep's own dst and has exactly one source (a literal is always fine).
+;; Gep's own dst and has exactly one source, or is a stable literal/address.
+;; Implicit mutable global reads must stay at the original capture point.
 (define (opt-gep-split-source-ok?
   [value : (& ir.CompilerIrValue)]
   [self : i64]
   [defs : (& defs (__tl_dyn-array i64))]) : bool
   (match value
     [(Var v) (and (!= v self) (= (array-ref defs v) 1))]
-    [_ true]))
+    [_ (opt-successor-sink-stable-value? value)]))
 
 (define (opt-gep-split-candidate?
   [v : i64]

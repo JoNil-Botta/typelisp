@@ -27,6 +27,87 @@
 (import stdlib.arena)
 (import compiler_owned_view as owned_view)
 
+(test
+  compiler-lower-let-source-fact-fallback
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [name : i64 (ci.intern "branded-source")]
+    [init : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [inner : i64 (ast.ast-node-pool-context-type-push pools (String))]
+    [source : ast.AstType (Region 77 inner)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (clone source))]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    (ast.ast-node-pool-context-install! pools)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
+        [(Ok ty) (tc_core.tc-type-eq ty (clone source))]
+        [_ false])
+      "missing checked facts infer the source brand")
+    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      name
+      init
+      (I64)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      name
+      init
+      (Bool)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      12
+      0
+      name
+      init
+      (clone source)
+      transition)
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
+        [(Ok ty) (tc_core.tc-type-eq ty (clone source))]
+        [_ false])
+      "inconsistent checked facts infer the source brand")
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type
+        ctx
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))
+        12
+        0
+        name
+        (No)
+        init)
+        [(Ok ty) (tc_core.tc-type-eq ty source)]
+        [_ false])
+      "an exact checked proof retains its semantic type")
+    (tc_core.tc-checked-let-binding-facts-finish! facts)
+    (ast.ast-node-pool-context-install! saved)))
+
 ;; The functions of a successful lowering. Checks match on it and fail on No.
 (defenum LowerTestFunctions
   (No)

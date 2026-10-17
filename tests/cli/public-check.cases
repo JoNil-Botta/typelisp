@@ -749,6 +749,26 @@ exit 0
 stdout contains Wrote
 stderr empty
 
+case compile-branded-arena-batch
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each -
+file caller.tl
+(import arena_branded_operands)
+(define (main) : i64
+  (arena_branded_operands.main))
+end-file
+run compile "{{native-dir}}/caller.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/tests/integration" -o "{{dir}}/cold.s"
+exit 0
+stderr empty
+sh for n in first second; do printf '%s|%s\n' "{{native-dir}}/caller.tl" "{{native-dir}}/$n.s"; done > "{{dir}}/batch.txt"
+run compile --batch "{{dir}}/batch.txt" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/tests/integration"
+exit 0
+stderr empty
+same "{{dir}}/cold.s" "{{dir}}/first.s"
+same "{{dir}}/cold.s" "{{dir}}/second.s"
+
 case check-branded-arena-operand-errors
 target linux-x86_64 windows-x86_64
 opt -

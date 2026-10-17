@@ -72535,7 +72535,7 @@
     [let-facts : tc_core.TcCheckedLetBindingFactState
       (tc_core.tc-job-state-checked-let-binding-facts job-state)]
     [_begin-let-facts : unit
-      (tc_core.tc-checked-let-binding-facts-begin! let-facts false)]
+      (tc_core.tc-checked-let-binding-facts-begin! let-facts)]
     [intern-state : ci.InternCompatState intern-state-input]
     [typecheck-intern-state : ci.InternCompatState
       (ci.intern-global-shared-view intern-state)]

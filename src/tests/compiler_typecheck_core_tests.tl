@@ -437,9 +437,9 @@
       (tc_core.TcCheckedLetBindingTransition 1 -1)]
     [special : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 2 91)]
-    (tc_core.tc-checked-let-binding-facts-begin! a true)
-    (tc_core.tc-checked-let-binding-facts-begin! b true)
-    (tc_core.tc-checked-let-binding-facts-begin! c true)
+    (tc_core.tc-checked-let-binding-facts-begin! a)
+    (tc_core.tc-checked-let-binding-facts-begin! b)
+    (tc_core.tc-checked-let-binding-facts-begin! c)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
     ;; Reused init ids and same-spelled bindings remain distinct by enclosing
     ;; body and ordinal. Re-recording the same proof does not grow the store.
@@ -516,7 +516,7 @@
               [(Missing) true]
               [_ false]))]
         ;; A second generation must not see the first generation's keys.
-        (tc_core.tc-checked-let-binding-facts-begin! a true)
+        (tc_core.tc-checked-let-binding-facts-begin! a)
         (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 8)
         (tc_core.tc-checked-let-binding-fact-record!
           a
@@ -564,10 +564,7 @@
           (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
       [transition : tc_core.TcCheckedLetBindingTransition
         (tc_core.TcCheckedLetBindingTransition 0 -1)]
-      (tc_core.tc-checked-let-binding-facts-begin! facts false)
-      (test.assert-true
-        (not (tc_core.tc-checked-let-binding-facts-complete-required? facts))
-        "optional consumers preserve prefix-cache eligibility")
+      (tc_core.tc-checked-let-binding-facts-begin! facts)
       (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
       (tc_core.tc-checked-let-binding-facts-record-declaration!
         facts
@@ -646,6 +643,29 @@
             (& decl))
           -1)
         "ambiguous source names require inference")
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        (in-arena
+          (arena.Arena scratch)
+          (for [index (iterator.range 0 257)]
+            (tc_core.tc-checked-let-binding-facts-set-current-declaration!
+              facts
+              index)
+            (tc_core.tc-checked-let-binding-facts-record-declaration!
+              facts
+              (+ 100000 index)
+              (& decl))))
+        (unsafe
+          (arena.tl_arena_destroy scratch)))
+      (for [index (iterator.range 0 257)]
+        (test.assert-true
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              (+ 100000 index)
+              (& decl))
+            index)
+          "grown declaration map survives scratch teardown"))
       (tc_core.tc-checked-let-binding-facts-freeze! facts)
       (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
       (tc_core.tc-checked-let-binding-facts-record-declaration!

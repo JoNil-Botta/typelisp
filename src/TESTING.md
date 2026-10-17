@@ -12,6 +12,11 @@ cases also reject different arena brands and explicit bare annotations with
 E0206 and a located diagnostic. `compiler-lower-typecheck-error-transport`
 passes located and rich errors through both lowering diagnostic entry points,
 checking the original primary span, code, help and secondary labels.
+The checked let-binding fact tests cover declaration/body identity, ambiguous
+names, frozen reads, generation reset and growth while a scratch arena is
+active. Both retained maps must remain valid after that scratch is destroyed;
+lowering must use semantic inference when a checked fact is unavailable.
+The branded operand CLI cases also compare cold and repeated batch assembly.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

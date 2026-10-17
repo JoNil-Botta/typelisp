@@ -247,7 +247,6 @@
 
 (defstruct TcCheckedLetBindingFactStateData
   (enabled bool)
-  (complete-required bool)
   (recording bool)
   (current-declaration-ordinal i64)
   (facts (__tl_dyn-array TcCheckedLetBindingFact))
@@ -781,7 +780,6 @@
     (set!
       (array-ref cell 0)
       (TcCheckedLetBindingFactStateData
-        false
         false
         false
         -1
@@ -1676,7 +1674,6 @@
       (if (= payload 0)
         (begin
           (set! (deref data).enabled false)
-          (set! (deref data).complete-required false)
           (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).len 0)
@@ -1696,7 +1693,6 @@
               (deref data).declaration-ordinals
               (tc_i64_i64_map.with-capacity 1)))
           (set! (deref data).enabled false)
-          (set! (deref data).complete-required false)
           (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).capacity 0)
@@ -1707,8 +1703,7 @@
           (arena.tl_arena_destroy payload))))))
 
 (define (tc-checked-let-binding-facts-begin!
-  [state : TcCheckedLetBindingFactState]
-  [complete-required : bool]) : unit
+  [state : TcCheckedLetBindingFactState]) : unit
   (tc-checked-let-binding-fact-state-release-storage! state)
   (let
     [return-arena : i64 (arena.tl_arena_current)]
@@ -1720,7 +1715,6 @@
           (tc-checked-let-binding-fact-state-ptr state)]
         (unsafe
           (set! (deref data).enabled true)
-          (set! (deref data).complete-required complete-required)
           (set! (deref data).recording true)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).facts (__tl_make-array TcCheckedLetBindingFact 64))
@@ -1742,13 +1736,6 @@
   [state : TcCheckedLetBindingFactState]) : bool
   (unsafe
     (deref (tc-checked-let-binding-fact-state-view state)).enabled))
-
-(define (tc-checked-let-binding-facts-complete-required?
-  [state : TcCheckedLetBindingFactState]) : bool
-  (let
-    [data : TcCheckedLetBindingFactStateData
-      (tc-checked-let-binding-fact-state-data state)]
-    (and data.enabled data.complete-required)))
 
 (define (tc-checked-let-binding-facts-freeze!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -117107,7 +117094,7 @@
           (or
             (= tc-semantic-observed-jobs 0)
             (= (tc-context-semantic-observer ctx).address 0)))
-        (tc-checked-let-binding-facts-complete-required?
+        (tc-checked-let-binding-facts-enabled?
           (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))))
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
     [(surface_facts.surface-typecheck-facts-active?)

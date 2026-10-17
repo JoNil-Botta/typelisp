@@ -78765,3 +78765,260 @@
               (ir.compiler-ir-label "body__bce_fast"))
             -1
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
+
+(define (opt-inline-global-actual-case?
+  [site : String]
+  [body : String]
+  [extra : String]
+  [expected : String]
+  [level : i64]) : bool
+  (match (irt.program
+    (str_cat.str-cat
+      "global @capture_a : i64 = 7\nglobal @capture_b : i64 = 11\n"
+      "function @main(x=%0:i64) -> i64 vars 2 {\nentry:\n"
+      site
+      "\n}\nfunction @touch(y=%0:i64, x=%1:i64) -> i64 vars 4 {\nentry:\n"
+      body
+      "\n}\n"
+      extra))
+    [(Program globals functions _)
+      (let
+        [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new 0 0)]
+        [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+        (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
+          (&mut input)
+          bases
+          (& globals)
+          functions
+          level
+          (ir.compiler-source-spans-empty))
+          [(Program result _)
+            (match (opt-function-seq-find (& result) "main")
+              [(Some func)
+                (and
+                  (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+                  (string.eq
+                    (irt.blocks-text (opt.opt-function-blocks func))
+                    (irt.blocks-text (irt.blocks expected))))]
+              [(No) false])]))]))
+
+(test
+  inline-global-actual-direct-opt1
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  %1 = mov %4 : i64
+  return %1
+"
+      1)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-direct-opt2
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  %1 = mov %4 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-tail-opt2
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "tailcall touch(@capture_a, %0) : i64"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  return %4
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-non-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = add @capture_a, %0 : i64
+  %1 = mov %2 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-different-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_b, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  store @capture_b, 9 : i64
+  %2 = add @capture_a, %0 : i64
+  %1 = mov %2 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-transitive
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_a() : unit\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_a() -> unit vars 0 {\nentry:\nstore @capture_a, 9 : i64\nreturn\n}"
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = mov unit : unit
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-unknown-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call unknown_write() : unit\n%3 = add %0, %1 : i64\nreturn %3"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  %4 = call unknown_write() : unit
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-conditional
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "branch %1, yes, no\nyes:\nstore @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2\nno:\nreturn %0"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  jump inl.entry.0.entry
+
+inl.entry.0.entry:
+  branch %0, inl.entry.0.yes, inl.entry.0.no
+
+inl.entry.0.yes:
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  jump inl.entry.0.cont
+
+inl.entry.0.no:
+  jump inl.entry.0.cont
+
+inl.entry.0.cont:
+  %1 = phi [%4, inl.entry.0.yes], [%2, inl.entry.0.no] : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-call-non-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call inspect_args() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @inspect_args() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nreturn %0\n}"
+      "entry:
+  %2 = call inspect_args() : i64
+  %3 = add @capture_a, %0 : i64
+  %1 = mov %3 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-call-different-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_b() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_b() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nstore @capture_b, 9 : i64\nreturn %0\n}"
+      "entry:
+  %2 = call write_b() : i64
+  %3 = add @capture_a, %0 : i64
+  %1 = mov %3 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-call-same-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_a() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_a() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nstore @capture_a, 9 : i64\nreturn %0\n}"
+      "entry:
+  %2 = mov @capture_a : i64
+  %4 = call write_a() : i64
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-address-and-arity
+  (let
+    [params (irt.params "a=%0:u64, x=%1:i64")]
+    [blocks (irt.blocks "entry:\nstore @capture_a, 9 : i64\nreturn %0")]
+    [name (ir.compiler-ir-symbol "capture_a")]
+    [args : (Array ir.CompilerIrCallArgs 3)
+      (array (Nil) (One (Global name)) (Two (GlobalAddr name) (I64 10)))]
+    (for [index (iterator.range 0 (array-length args))]
+      (let
+        [plan
+          (opt.opt-inline-arg-staging
+            (& params)
+            (& (array-ref args index))
+            (& blocks)
+            false
+            false)]
+        (test.assert-i64-eq
+          plan.count
+          0
+          "invalid arity and global addresses are never captured")
+        (test.assert-i64-eq
+          (array-length plan.globals)
+          0
+          "no snapshot slots allocated")))))

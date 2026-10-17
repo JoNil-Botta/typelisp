@@ -1,5 +1,6 @@
 (import stdlib.arena)
 (import stdlib.iterator)
+(import stdlib.string)
 (import stdlib.test)
 
 (defstruct Holder
@@ -17,6 +18,9 @@
 
 (define (sum [left : i64] [right : i64]) : i64
   (+ left right))
+
+(define (scoped-count [owner : (& a (arena.Arena r))] [text : (in r String)]) : i64
+  2)
 
 (define (operand-case [kind : i64]) : i64
   (let
@@ -51,6 +55,12 @@
         (let
           [holder (Holder owner)]
           (+ 40 (holder-count holder)))]
+      [12
+        (in-arena
+          owner
+          (let
+            [text (string.append "inside" "-scope")]
+            (+ 40 (scoped-count (& owner) text))))]
       [_
         (holder-answer
           (let
@@ -58,7 +68,7 @@
             holder))])))
 
 (define (main) : i64
-  (for [kind (iterator.range 0 12)]
+  (for [kind (iterator.range 0 13)]
     (test.assert-true
       (= (operand-case kind) 42)
       "operand position preserves arena brands"))

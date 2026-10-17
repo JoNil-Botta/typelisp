@@ -42622,9 +42622,20 @@
           (lower-state-emit
             saved-allocated
             (Call saved-var (lower-tl-arena-current-symbol) Nil (I64)))]
+        [source-arena-ty : ast.AstType
+          (match (tc_core.tc-expr ctx type-env (lower-global-shared-view arena))
+            [(Ok ty) ty]
+            [(Err message)
+              (return (Err (box (lower-diagnostic-at-expr ctx arena message))))])]
         [arena-lowered : LowerExpr
           (try
-            (lower-arena-handle ctx saved-state env type-env arena "in-arena"))]
+            (lower-arena-handle
+              ctx
+              saved-state
+              env
+              type-env
+              (lower-global-shared-view arena)
+              "in-arena"))]
         (match arena-lowered
           [(Expr arena-state arena-value _)
             (let
@@ -42646,7 +42657,11 @@
                     [body-type-env : tc_core.TcTypeEnv
                       (lower-type-env-push-arena-restore
                         set-state
-                        type-env
+                        (tc_core.tc-in-arena-body-env
+                          ctx
+                          type-env
+                          arena
+                          source-arena-ty)
                         hidden-name-id)]
                     [body-lowered : LowerExpr
                       (try

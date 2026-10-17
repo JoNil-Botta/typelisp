@@ -6,7 +6,8 @@ are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
-aliases and stored holders at opt0/1/2 on both hosts. The public check/compile
+aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
+public check/compile
 cases also reject different arena brands and explicit bare annotations with
 E0206 and a located diagnostic. `compiler-lower-typecheck-error-transport`
 passes located and rich errors through both lowering diagnostic entry points,

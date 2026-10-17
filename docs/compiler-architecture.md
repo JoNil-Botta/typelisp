@@ -1922,6 +1922,11 @@ prints the registry and `typelisp explain --search <term>` searches its titles
 and prose. The code list, with owners and construction sites, is in
 [diagnostic-codes.md](../docs/diagnostic-codes.md).
 
+Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
+source context is attached. Resolver helpers keep plain internal messages;
+forwarded parser/typechecker diagnostics retain their own codes and provenance.
+The `E03..` inventory lists every loader conversion, including package imports.
+
 ## Async process ownership
 
 Async process start reserves a generation-tagged, boxed registry authority before

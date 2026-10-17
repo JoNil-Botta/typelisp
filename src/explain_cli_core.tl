@@ -669,6 +669,158 @@ See also:
     SPEC.md, \"Global places\"; E0207 (borrow violation).
 ")
 
+(define (diagnostic-explain-e0301) : String
+  "E0301: cannot read source module
+
+Description:
+    Loading an entry or imported module could not find its source file or an
+    embedded standard-library source. The primary path is the resolved file.
+
+Minimal failing example:
+    ; main.tl, with no missing_module.tl beside it or in the source roots:
+    (import missing_module)
+    (define (main) : i64 0)
+
+Fix:
+    Create the module, correct its dotted name, or supply its source root with
+    --stdlib-root. Check the resolved path, including its case. An error inside
+    an existing imported file instead keeps that file's parse/typecheck code.
+
+See also:
+    SPEC.md, section 4.4 (modules and imports); E0303 (import resolution).
+")
+
+(define (diagnostic-explain-e0302) : String
+  "E0302: cannot read included file
+
+Description:
+    An include-str, include-str-comptime, include-str-lzss or include-bin form
+    could not find the file whose bytes it must embed. The diagnostic names
+    both the importing file and the resolved include path.
+
+Minimal failing example:
+    ; main.tl, with no missing.txt beside it:
+    (include-str contents \"missing.txt\")
+    (define (main) : i64 0)
+
+Fix:
+    Supply the file or correct the path relative to the including source.
+    A file with zero bytes is valid; an absent file is not an empty include.
+
+See also:
+    SPEC.md, sections 4.4.6 and 4.4.7 (include forms); E0301 (source modules).
+")
+
+(define (diagnostic-explain-e0303) : String
+  "E0303: cannot resolve import
+
+Description:
+    The loader cannot resolve the requested module or selected-import shape
+    under the current source roots and package dependency declarations. The
+    primary span is the import; the message states the resolution constraint.
+
+Minimal failing example:
+    ; helper.tl defines answer, but answer.extra is not a supported selection:
+    (import helper.answer.extra)
+    (define (main) : i64 0)
+
+Fix:
+    Import a module or one item from a loadable module, using its dotted name.
+    Declare package aliases and prepare dependency sources before using them.
+    Ordinary import cycles are valid and terminate through load-once handling.
+
+See also:
+    SPEC.md, section 4.4 (modules and imports); E0304 (missing selected item).
+")
+
+(define (diagnostic-explain-e0304) : String
+  "E0304: missing selected import item
+
+Description:
+    A module loaded successfully but does not declare the selected item. A
+    pending module generator is completed before absence is diagnosed.
+
+Minimal failing example:
+    ; helper.tl defines answer, but not absent:
+    (import helper.absent)
+    (define (main) : i64 0)
+
+Fix:
+    Correct the selected item's name or define it in the imported module.
+    The primary span is the selecting import, rather than the loaded file.
+
+See also:
+    SPEC.md, section 4.4 (selected imports); E0303 (import resolution).
+")
+
+(define (diagnostic-explain-e0305) : String
+  "E0305: ambiguous import binding
+
+Description:
+    Distinct imports bind the same name, or an unqualified import collides with
+    a local declaration. The primary span is the import; a recorded local
+    declaration also receives a secondary label, with its own source path.
+
+Minimal failing example:
+    (import stdlib.byte_le.byte-le-byte)
+    (define (byte-le-byte) : i64 0)
+    (define (main) : i64 0)
+
+Fix:
+    Give the import a distinct name with as, rename the local declaration, or
+    import the module and use qualified access. This rule applies even when
+    the conflicting name is unused and regardless of declaration order.
+
+See also:
+    SPEC.md, section 4.4 (import namespaces); E0304 (selected imports).
+")
+
+(define (diagnostic-explain-e0306) : String
+  "E0306: module identity mismatch
+
+Description:
+    A loader operation with an explicit expected module identity loaded a
+    different identity. The primary path identifies that file; the message
+    shows both the expected and actual dotted identities.
+
+Minimal failing example:
+    ; Compiler loader API, with compiler_load imported as load:
+    (load.compiler-load-check-expected-module
+      \"helper.tl\"
+      (Some (load.compiler-load-parse-context-name-id \"expected\"))
+      \"actual\"
+      (load.compiler-load-parse-context-name-id \"actual\"))
+
+Fix:
+    Give the loader the intended canonical identity, or correct the loaded
+    declaration when the expectation is intentional. An explicit module
+    declaration can override an inferred file identity; it is not a duplicate.
+
+See also:
+    SPEC.md, section 4.4.1 (module identities); E0307 (duplicate modules).
+")
+
+(define (diagnostic-explain-e0307) : String
+  "E0307: duplicate module declaration
+
+Description:
+    A source has multiple module headers or repeats a nested module body with
+    the same identity. Loading one module through several imports is valid and
+    does not create a second declaration.
+
+Minimal failing example:
+    (module first)
+    (module second)
+    (define (main) : i64 0)
+
+Fix:
+    Keep one file-level module header. Give separate nested module bodies
+    distinct identities, or combine their declarations in one body.
+
+See also:
+    SPEC.md, section 4.4 (modules and load-once imports); E0306 (identity).
+")
+
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
@@ -832,6 +984,34 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-parse-invalid-pattern))
       (DiagnosticExplainDetailed (diagnostic-explain-e0104))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-source-read))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0301))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-include-read))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0302))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-import-resolution))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0303))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-selected-item))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0304))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-ambiguous-import))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0305))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-module-identity))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0306))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-load-duplicate-module))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0307))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

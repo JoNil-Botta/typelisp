@@ -424,6 +424,13 @@ stays live. Run these at opt0/1/2. Lower-test helpers that keep function IR copy
 it into their test arena before releasing the source lower owner; an extracted
 sequence must not outlive its arena. Keep buffered output alive through its
 final render/write and preserve the mainless-module opt0 symbol check.
+The reader-context smoke optimizes both jobs at opt0/1/2 with explicit
+retirement authority and an unrelated empty reader pool installed. Opt2 must
+clear A's lower-IR cell while B's source remains live, then clear B's cell;
+post-opt cleanup is idempotent and both backends still emit identical assembly.
+The optimizer's `optimizer-input-retirement-*` tests cover absent authority,
+empty functions, all levels, and nested Func/Tuple/Array/Box/reference/lifetime
+payloads beyond a pool segment with empty and conflicting ambient pools.
 `backend-owned-object-payload-lifetime` checks returned Linux and Windows
 object strings and rendered bytes after lower IR retirement and a subsequent
 source compilation. It also retires the input arena of both shared literal

@@ -65,10 +65,12 @@ ABI registers keep their separate contract.
 `inline-global-actual-*` compares verified IR before and after inline staging
 for direct and tail calls, conditional and transitive writes, opaque calls,
 non-writers and different-global writers that remain out of line. The address
-and arity cases distinguish storage operands from captured values.
+and arity cases distinguish storage operands from captured values. Pointer-write
+cases distinguish unescaped cell words and reference handles from aggregate
+payloads; taking a cell address withdraws the no-alias proof.
 `inline_global_by_value.tl` runs at opt0/1/2 on both hosts, covering scalar,
 one-/two-word structs and enums, the memory-class boundary, forwarding,
-duplicate arguments, single evaluation and raw-pointer aliases.
+duplicate arguments, single evaluation, mutable-reference and raw-pointer aliases.
 
 ## Packed field receivers
 

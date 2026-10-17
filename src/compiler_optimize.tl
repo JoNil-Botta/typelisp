@@ -105323,7 +105323,9 @@
                 opt-global-snapshot-global-killed?
                 (& compiler-opt-owned-state.inline-state.global-mod-ref)
                 (& opt-pure-call-inline-memory)
-                name)
+                name
+                (match (ir.compiler-ir-param-seq-borrow params index)
+                  [(Param _ ty _) (opt-global-cell-word-type? (& ty))]))
               (when (= count 0) (set! globals (__tl_make-array bool np)))
               (set! (array-ref globals index) true)
               (+= count 1))]
@@ -123849,6 +123851,7 @@
   [mod-ref : (& mod-ref OptGlobalModRef)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [name : i64]
+  [cell-value? : bool]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
     [(Store target _ _) (= target name)]
@@ -123861,6 +123864,7 @@
             [(LookupFound summary) (= summary 0)]
             [(LookupMissing) false]))
         (or
+          (not cell-value?)
           (not
             (opt_i64_i64_map.contains?
               (& mod-ref.writes)
@@ -123869,7 +123873,19 @@
             mod-ref.index
             (opt-global-mod-ref-call-mask mod-ref target)
             name)))]
-    [_ (opt-alias-instr-clears-all? instr)]))
+    [_
+      (and
+        (opt-alias-instr-clears-all? instr)
+        ;; A built cell table proves no pointer can name a global cell.
+        ;; Aggregate values still need their payload saved; a reference or
+        ;; descriptor handle only retains the cell word, not its pointee.
+        (not
+          (and
+            cell-value?
+            mod-ref.built?
+            (match (ir.compiler-ir-instr-effect instr)
+              [(MemoryWrite) true]
+              [_ false]))))]))
 
 (define (opt-global-snapshot-entry-killed?
   [cell : (& cell OptGlobalCellSummary)]
@@ -123882,6 +123898,7 @@
         (& cell.mod-ref)
         call-memory
         name
+        true
         instr)]
     [_ true]))
 

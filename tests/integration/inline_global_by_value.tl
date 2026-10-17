@@ -98,6 +98,13 @@
   (write-word!)
   (+ copied.value n))
 
+(define (write-borrowed-word! [target : (&mut r Word)]) : unit
+  (set! target.value 99))
+
+(define (borrowed-alias [target : (&mut r Word)] [copied : Word]) : i64
+  (write-borrowed-word! target)
+  copied.value)
+
 (unsafe
   (define (aliased [ptr : (MutPtr Word)] [copied : Word]) : i64
     (unsafe
@@ -137,7 +144,10 @@
             (aliased (ptr-addr-of word) word))
           n)
         (return 12))
-      (unless (= word.value 99) (return 13))))
+      (unless (= word.value 99) (return 13))
+      (set! word (Word n))
+      (unless (= (borrowed-alias (&mut word) word) n) (return 14))
+      (unless (= word.value 99) (return 15))))
   42)
 
 (define (main) : i64

@@ -1260,10 +1260,15 @@ existing private-copy and inline-admission rules.
 
 The staging scan reuses global-snapshot write barriers and the existing
 interprocedural global may-write facts. Proven non-writers and writers of other
-cells keep direct operands; missing summaries and unknown pointer writes are
-conservative. Per-program facts live with the inline stage and are unpublished
-when it finishes. Later snapshot rematerialization must respect the same write
-barriers, so it cannot undo the call-entry capture. This does not replace the
+cells keep direct operands. When the cell table proves that no global cell
+address exists, pointer stores cannot change a captured scalar, reference or
+descriptor handle. Aggregate payload copies still require a snapshot across
+possible pointer writes, including writes in direct callees: a cell-only
+summary does not prove their payload unchanged. Missing summaries and escaped
+cell addresses remain conservative. Per-program facts live with the inline
+stage and are unpublished when it finishes. Later snapshot rematerialization
+must respect the same write barriers, so it cannot undo the call-entry capture.
+This does not replace the
 lowering rule for writes by later argument expressions described above.
 
 The multiblock inliner admits known one-word nominal results and register groups

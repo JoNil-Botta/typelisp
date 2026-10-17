@@ -79024,3 +79024,83 @@ inl.entry.0.cont:
           (array-length plan.globals)
           0
           "no snapshot slots allocated")))))
+
+(test
+  inline-global-actual-pointer-write
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store_ptr %1, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:\nstore_ptr %0, 9 : i64\n%2 = add @capture_a, %0 : i64\n%1 = mov %2 : i64\nreturn %1"
+      2)
+    "a pointer write cannot change a scalar cell whose address never exists"))
+
+(test
+  inline-global-actual-aliased-pointer-write
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, &@capture_a) : i64\nreturn %1"
+      "store_ptr %1, 9 : i64\nreturn %0"
+      ""
+      "entry:\n%2 = mov @capture_a : i64\nstore_ptr &@capture_a, 9 : i64\n%1 = mov %2 : i64\nreturn %1"
+      2)
+    "taking the scalar cell address retains its call-entry snapshot"))
+
+(test
+  inline-global-actual-cell-and-payload
+  (let
+    [types (array "i64" "(&mut r Cell)" "Cell")]
+    [bodies
+      (array
+        "store_ptr %1, 9 : i64\nreturn %0"
+        "store @capture_a, 9 : i64\nreturn %0"
+        "%2 = call mutate(%1) : unit\nreturn %0"
+        "%2 = call opaque(%1) : unit\nreturn %0")]
+    [expected : (Array i64 12) (array 0 0 1 1 1 1 0 0 1 1 1 1)]
+    (for [escaped (iterator.range 0 2)]
+      (for [ty (iterator.range 0 (array-length types))]
+        (match (irt.program
+          (str_cat.str-cat
+            (if (= ty 0)
+              "global @capture_a : i64 = 7\n"
+              "global @capture_a : Cell = runtime-init@init\n")
+            "function @mutate(p=%0:u64) -> unit vars 1 {\nentry:\nstore_ptr %0, 9 : i64\nreturn\n}\n"
+            (if (= escaped 0)
+              ""
+              "function @address() -> u64 vars 0 {\nentry:\nreturn &@capture_a\n}\n")))
+          [(Program globals functions _)
+            (let
+              [index (opt.opt-function-index-build (& functions))]
+              (opt.opt-inline-owned-state-install! (& index) (& globals))
+              (for [body (iterator.range 0 (array-length bodies))]
+                (let
+                  [params
+                    (irt.params
+                      (str_cat.str-cat
+                        "value=%0:"
+                        (clone (array-ref types ty))
+                        ", ptr=%1:u64"))]
+                  [blocks
+                    (irt.blocks
+                      (str_cat.str-cat
+                        "entry:\n"
+                        (clone (array-ref bodies body))))]
+                  [args
+                    (ir.CompilerIrCallArgs.Two
+                      (Global (ir.compiler-ir-symbol "capture_a"))
+                      (Var 0))]
+                  [plan
+                    (opt.opt-inline-arg-staging
+                      (& params)
+                      (& args)
+                      (& blocks)
+                      false
+                      false)]
+                  (test.assert-i64-eq
+                    plan.count
+                    (if (= escaped 1)
+                      1
+                      (array-ref expected (+ (* body 3) ty)))
+                    "cell facts spare word and reference values; payload copies and escaped cells retain snapshots")))
+              (opt.opt-inline-owned-state-reset! true))])))))

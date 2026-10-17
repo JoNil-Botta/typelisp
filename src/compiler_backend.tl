@@ -21423,7 +21423,7 @@
   [backend-state : CompilerBackendState]) : String
   ;; Aggregate word copies are internal compiler sequences, not ABI returns.
   ;; Select their SSE staging registers through the interval-aware scavenger so
-  ;; allocator-owned XMM0/XMM1 homes cannot be silently clobbered.
+  ;; source words and allocator-owned SSE homes cannot be silently clobbered.
   (compiler-backend-scavenge-xmm-reg
     dst
     (__tl_make-array src0 src1 dst0 dst1 sibling)
@@ -21445,6 +21445,34 @@
     fallback
     backend-state))
 
+(define (compiler-backend-group-copy-destination
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : (& dst compiler_ir_types.CompilerIrValue)]
+  [word : i64]
+  [vars : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (match dst
+    [(Var var)
+      (compiler-backend-group-word-operand-with-backend-state
+        assignments
+        var
+        word
+        vars
+        backend-state)]
+    [(Global name)
+      (Ok
+        (str_cat.str-cat
+          (compiler-backend-state-user-symbol-id backend-state name)
+          (if (= word 0)
+            "(%rip)"
+            "+8(%rip)")))]
+    [_
+      (Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            ""
+            "backend: register-group copy requires variable or global destination")))]))
+
 ;; Copy an internal two-word aggregate without treating it as an ABI return.
 ;; Use the split-register sequence when its second register is free. A true
 ;; cross-word alias loads both words before either store; the
@@ -21452,7 +21480,7 @@
 (define (compiler-backend-emit-group-copy
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
+  [dst : (& dst compiler_ir_types.CompilerIrValue)]
   [src : compiler_ir_types.CompilerIrValue]
   [vars : i64]
   [ty : compiler_ast_types.AstType]
@@ -21479,7 +21507,7 @@
               backend-state))]
         [dst0
           (try
-            (compiler-backend-group-word-operand-with-backend-state
+            (compiler-backend-group-copy-destination
               assignments
               dst
               0
@@ -21487,12 +21515,16 @@
               backend-state))]
         [dst1
           (try
-            (compiler-backend-group-word-operand-with-backend-state
+            (compiler-backend-group-copy-destination
               assignments
               dst
               1
               vars
               backend-state))]
+        [dst-var : i64
+          (match dst
+            [(Var var) var]
+            [_ (- 0 1)])]
         [sse0? : bool
           (compiler-backend-group-word-sse?
             type-segment-bases
@@ -21508,7 +21540,7 @@
         [reg0 : String
           (if sse0?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (compiler-backend-global-shared-view src0)
               (compiler-backend-global-shared-view src1)
               (compiler-backend-global-shared-view dst0)
@@ -21527,7 +21559,7 @@
         [reg1 : String
           (if sse1?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (compiler-backend-global-shared-view src0)
               (compiler-backend-global-shared-view src1)
               (compiler-backend-global-shared-view dst0)
@@ -43067,7 +43099,7 @@
                   (compiler-backend-emit-group-copy
                     type-segment-bases
                     assignments
-                    dst
+                    (& (Var dst))
                     value
                     vars
                     ty
@@ -43077,7 +43109,7 @@
               (compiler-backend-emit-group-copy
                 type-segment-bases
                 assignments
-                dst
+                (& (Var dst))
                 value
                 vars
                 ty
@@ -45500,7 +45532,7 @@
       (compiler-backend-emit-group-copy
         type-segment-bases
         assignments
-        dst
+        (& (Var dst))
         (compiler-backend-global-shared-view src)
         vars
         ty
@@ -49519,67 +49551,19 @@
               ctx.type-segment-bases
               ctx.program-index
               ty)
-              ;; Storing a register-group into a global writes both words
-              ;; inline (word0 at sym, word1 at sym+8).
-              (let
-                [reg0 : String
-                  (compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (compiler-backend-global-shared-view ty)
-                    0)]
-                [reg1 : String
-                  (compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (compiler-backend-global-shared-view ty)
-                    1)]
-                [sym0 : String
-                  (str_cat.str-cat
-                    (compiler-backend-state-user-symbol-id
-                      ctx.backend-state
-                      name)
-                    "(%rip)"
-                    "")]
-                [sym1 : String
-                  (str_cat.str-cat
-                    (compiler-backend-state-user-symbol-id
-                      ctx.backend-state
-                      name)
-                    "+8(%rip)"
-                    "")]
-                (match (compiler-backend-emit-group-load
+              ;; A global store is an internal copy: ABI return registers may
+              ;; still hold unrelated live values across this instruction.
+              (compiler-backend-with-instr-diagnostic
+                (compiler-backend-emit-group-copy
                   ctx.type-segment-bases
                   ctx.assignments
+                  (& (Global name))
                   value
-                  reg0
-                  reg1
                   ctx.vars
-                  (compiler-backend-global-shared-view ty)
+                  ty
                   ctx.program-index
                   ctx.backend-state)
-                  [(Ok load)
-                    (Ok
-                      (str_cat.str-cat
-                        load
-                        (compiler-backend-emit-group-word-move
-                          reg0
-                          sym0
-                          (compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            0))
-                        (compiler-backend-emit-group-word-move
-                          reg1
-                          sym1
-                          (compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            1))))]
-                  [(Err message)
-                    (compiler-backend-instr-error-from instr-diag message)]))
+                instr-diag)
               (let
                 [no-exclude : (__tl_dyn-array String)
                   (__tl_make-array String 0)]

@@ -1,5 +1,7 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.io)
+(import stdlib.iterator)
+(import stdlib.test)
 (import stdlib.arena)
 (import compiler_object as cobj)
 (import compiler_object_asm as object_asm)
@@ -41492,3 +41494,163 @@ user_fn:
   (unless
     (compiler-backend-spmd-source-site-retention-ok?)
     (io.panic "backend remapping lost a source SPMD site or origin")))
+
+(define (compiler-backend-global-pair-store-live-case?
+  [mask : i64]
+  [homes : String]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [type-name : String
+      (str_cat.str-cat
+        "__tl_internal_abi_group_m"
+        (string.int->string mask)
+        "__store_test")]
+    [func : ir.CompilerIrFunction
+      (irt.func
+        (str_cat.str-cat
+          "function @global_pair_store() -> i64 vars 1 {\nentry:\n%0 = pack ["
+          (if (= (bit-and mask 1) 0)
+            "1"
+            "float-bits:4607182418800017408")
+          ", "
+          (if (= (bit-and mask 2) 0)
+            "2"
+            "float-bits:4611686018427387904")
+          "] : "
+          type-name
+          "\n"
+          "store @pair_sink, %0 : "
+          type-name
+          "\nreturn 0\n}"))]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-prepend
+          (& func)
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq-empty))]
+    [state : backend.CompilerBackendState index.backend-state]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [assignments : regalloc.CompilerRegAssignmentTable (reg-homes homes)]
+    [occupied : i64
+      (compiler-backend-test-register-mask
+        (__tl_make-array
+          cabi.compiler-reg-id-rax
+          cabi.compiler-reg-id-rdx
+          (cabi.compiler-abi-xmm-register-id 2)
+          (cabi.compiler-abi-xmm-register-id 3)))]
+    [_setup : unit
+      (begin
+        (backend.compiler-backend-set-current-fn-abi!
+          state
+          (backend.compiler-backend-target-abi target))
+        (backend.compiler-backend-current-slot-vars-set! state 1)
+        (backend.compiler-backend-group-vars-enable!
+          state
+          (compiler_liveness.compiler-live-set1 0)
+          (compiler_liveness.compiler-live-set-empty))
+        (backend.compiler-backend-set-scavenge-ctx-ready!
+          function-state
+          (__tl_make-array 0)
+          (__tl_make-array 3)
+          assignments
+          (if (backend.compiler-backend-target-windows? target)
+            backend.compiler-backend-scavenge-plan-win64-bit
+            0)
+          (__tl_make-array occupied occupied occupied occupied)
+          1)
+        (set-state-emit-instr-post-base! state 0)
+        (set-state-emit-current-count! state 0))]
+    [result : backend.ResultCompilerBackend
+      (match func
+        [(Function name _ _ _ blocks _)
+          (backend.compiler-backend-emit-instr
+            (backend.CompilerBackendEmissionContext
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (backend.compiler-backend-target-policy-new target)
+              "_tl_global_pair_store"
+              name
+              blocks
+              (ir.compiler-ir-label "entry")
+              assignments
+              1
+              (regalloc.compiler-reg-var-types-empty)
+              (Empty)
+              (I64)
+              (compiler-backend-runtime-helper-full-plan)
+              (ir.compiler-ir-function-seq-empty)
+              (ir.compiler-ir-extern-seq-empty)
+              index
+              (ir.compiler-source-spans-empty)
+              (compiler-backend-source-span-index-build
+                (ir.compiler-source-spans-empty))
+              (cdiag.compiler-diagnostic-at-start "" "")
+              (__tl_make-array 1)
+              state
+              function-state)
+            (No)
+            (ir.compiler-ir-instr-seq-ref
+              (irt.instrs (str_cat.str-cat "store @pair_sink, %0 : " type-name))
+              0))])]
+    (backend.compiler-backend-group-vars-disable! state)
+    (asm-ok?
+      result
+      (has "_tl_pair_sink(%rip)" "_tl_pair_sink+8(%rip)")
+      (lacks ", %rax\n" ", %rdx\n" ", %xmm2\n" ", %xmm3\n"))))
+
+(test
+  backend-global-pair-store-live-homes
+  (let
+    [registers
+      (array "%0=%r12/%r13" "%0=%xmm4/%r12" "%0=%r12/%xmm4" "%0=%xmm4/%xmm5")]
+    [overlapping
+      (array "%0=%rdx/%rax" "%0=%xmm0/%rax" "%0=%rax/%xmm0" "%0=%xmm1/%xmm0")]
+    [targets
+      (array
+        backend.CompilerBackendTarget.Linux
+        backend.CompilerBackendTarget.Windows)]
+    (for [host (iterator.range 0 (array-length targets))]
+      (for [mask (iterator.range 0 4)]
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            (clone (array-ref registers mask))
+            (array-ref targets host))
+          "register pair store preserves GP and SSE live homes")
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            (clone (array-ref overlapping mask))
+            (array-ref targets host))
+          "source words in ABI registers are not overwritten during staging")
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            "%0=spill:-8"
+            (array-ref targets host))
+          "spill pair store preserves GP and SSE live homes")))))
+
+(test
+  backend-global-pair-store-errors
+  (let
+    [index (compiler-backend-register-group-test-index)]
+    [assignments (reg-homes "%0=%r12/%r13")]
+    [name (ir.compiler-ir-symbol "pair_sink")]
+    [destinations : (Array ir.CompilerIrValue 2)
+      (array (Global name) (GlobalAddr name))]
+    [sources : (Array ir.CompilerIrValue 2) (array (I64 7) (Var 0))]
+    (for [at (iterator.range 0 2)]
+      (test.assert-true
+        (match (backend.compiler-backend-emit-group-copy
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (clone assignments)
+          (& (array-ref destinations at))
+          (clone (array-ref sources at))
+          1
+          (compiler-backend-register-group-test-type)
+          index
+          index.backend-state)
+          [(Err _) true]
+          [(Ok _) false])
+        "malformed group-copy operands fail before emitting assembly"))))

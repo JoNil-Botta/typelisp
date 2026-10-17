@@ -15176,7 +15176,7 @@
 (define (lower-state-storage-derive!
   [state : LowerState]
   [derived : i64]
-  [source : ir.CompilerIrValue]) : unit
+  [source : (& source ir.CompilerIrValue)]) : unit
   (match source
     [(ir.CompilerIrValue.Var source-var)
       (let
@@ -27412,8 +27412,12 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [writebacks : LowerArgWritebacks]
-  [result-ty : ast.AstType]) : LowerState
-  (when (tc_core.tc-never-type? result-ty) (return state))
+  [result-ty : (& result-ty ast.AstType)]) : LowerState
+  (when
+    (match result-ty
+      [(Never) true]
+      [_ false])
+    (return state))
   (match writebacks
     [(None) state]
     [(Some items)
@@ -31476,8 +31480,7 @@
                                                     (lower-state-storage-derive!
                                                       assign-state
                                                       id
-                                                      (lower-global-shared-view
-                                                        assign-ir))
+                                                      (& assign-ir))
                                                     (lower-state-storage-root-name-note!
                                                       assign-state
                                                       (lower-state-storage-root
@@ -32034,7 +32037,7 @@
                     (lower-state-storage-derive!
                       allocated
                       view-var
-                      (lower-global-shared-view ptr-value))
+                      (& ptr-value))
                     (lower-state-storage-raw-view-note! allocated view-var)
                     (ResultLowerExpr.Ok
                       (LowerExpr.Expr
@@ -36563,7 +36566,7 @@
     (lower-state-storage-derive!
       state
       result-var
-      (ir.compiler-ir-value-seq-ref values (- values.len 1)))
+      (ir.compiler-ir-value-seq-borrow values (- values.len 1)))
     unit))
 
 ;; Keep the ownership role on the IR argument carrier. The ABI still sees the
@@ -37015,7 +37018,7 @@
                   ctx
                   call-state
                   writebacks
-                  (lower-global-shared-view call-ty))
+                  (& call-ty))
                 call-value
                 call-ty))]))]
     [(Err message) (Err message)]))
@@ -37378,7 +37381,7 @@
                           ctx
                           call-state
                           writebacks
-                          (lower-global-shared-view call-ty))
+                          (& call-ty))
                         call-value
                         call-ty))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
@@ -37399,7 +37402,7 @@
                           ctx
                           call-state
                           writebacks
-                          (lower-global-shared-view call-ty))
+                          (& call-ty))
                         call-value
                         call-ty))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
@@ -39144,7 +39147,7 @@
                                   ctx
                                   call-state
                                   writebacks
-                                  (lower-global-shared-view ty))
+                                  (& ty))
                                 value
                                 ty))])])]))])))]
     [_
@@ -39285,7 +39288,7 @@
                                                 ctx
                                                 call-state
                                                 writebacks
-                                                (lower-global-shared-view ty))
+                                                (& ty))
                                               value
                                               ty))])]
                                     [(ResultLowerExpr.Err message)
@@ -40560,7 +40563,7 @@
   (match (lower-state-alloc-var state)
     [(Alloc s v)
       ;; A bounds-checked projection stays inside its base's storage.
-      (lower-state-storage-derive! s v (lower-global-shared-view base))
+      (lower-state-storage-derive! s v (& base))
       (Expr
         (lower-state-emit
           s
@@ -45230,7 +45233,7 @@
         false))
       [(ResultLowerExpr.Ok (LowerExpr.Expr stored _ stored-ty))
         (when
-          (tc_core.tc-never-type? (lower-global-shared-view stored-ty))
+          (tc_core.tc-never-type? stored-ty)
           (return (Ok (Expr stored Unit (Never)))))
         (match (lower-refresh-register-resident-root-after-store
           ctx
@@ -46480,7 +46483,7 @@
                                   (lower-state-storage-derive!
                                     allocated
                                     var-id
-                                    (lower-global-shared-view init-value))
+                                    (& init-value))
                                   (lower-state-storage-root-name-note!
                                     allocated
                                     root
@@ -46490,7 +46493,7 @@
                                     (lower-state-storage-derive!
                                       allocated
                                       var-id
-                                      (lower-global-shared-view init-value))
+                                      (& init-value))
                                     (if (lower-state-storage-raw-view?
                                       allocated
                                       (match (& init-value)
@@ -71115,63 +71118,62 @@
                     [(ResultLowerCallArgs.Exit exit-state)
                       (LowerSlotStore.Exit exit-state)]
                     [(ResultLowerCallArgs.Ok args-state values writebacks)
-                      (match (lower-slot-dest-value
-                        args-state
-                        (lower-global-shared-view slot))
-                        [(LowerExpr.Expr slot-state slot-value _)
-                          (match (lower-state-alloc-var slot-state)
-                            [(LowerAlloc.Alloc allocated call-var)
-                              (let
-                                [result-ir-ty : ast.AstType
-                                  (lower-one-word-register-storage-type
-                                    ctx
-                                    ret-ty)]
-                                [sret-values : ir.CompilerIrValueSeq
-                                  (lower-value-seq-append-one
-                                    values
-                                    (lower-global-shared-view slot-value))]
-                                [_derived : unit
-                                  (lower-call-result-derive-return-slot!
-                                    ctx
-                                    allocated
-                                    call-var
-                                    (& sret-values)
-                                    (lower-global-shared-view ret-ty))]
-                                [call-name : i64
-                                  (lower-resolve-call-name-id-with-display
-                                    allocated
-                                    env
-                                    name-id
-                                    name)]
-                                [call-state : LowerState
-                                  (lower-state-emit-at-expr
-                                    ctx
-                                    allocated
-                                    (ir.CompilerIrInstr.Call
+                      (let
+                        [given? : bool
+                          (match (& slot)
+                            [(LowerSlotDest.Given _) true]
+                            [(LowerSlotDest.NewBox _ _) false])]
+                        (match (lower-slot-dest-value args-state slot)
+                          [(LowerExpr.Expr slot-state slot-value _)
+                            (match (lower-state-alloc-var slot-state)
+                              [(LowerAlloc.Alloc allocated call-var)
+                                (let
+                                  [result-ir-ty : ast.AstType
+                                    (lower-one-word-register-storage-type
+                                      ctx
+                                      ret-ty)]
+                                  [sret-values : ir.CompilerIrValueSeq
+                                    (ir.compiler-ir-value-seq-append-one
+                                      (& values)
+                                      (& slot-value))]
+                                  [_derived : unit
+                                    (lower-state-storage-derive!
+                                      allocated
                                       call-var
-                                      call-name
-                                      (match slot
-                                        [(LowerSlotDest.Given _)
+                                      (& slot-value))]
+                                  [call-name : i64
+                                    (lower-resolve-call-name-id-with-display
+                                      allocated
+                                      env
+                                      name-id
+                                      name)]
+                                  [call-state : LowerState
+                                    (lower-state-emit-at-expr
+                                      ctx
+                                      allocated
+                                      (ir.CompilerIrInstr.Call
+                                        call-var
+                                        call-name
+                                        (if given?
                                           (lower-call-args-with-nominal-sret
                                             ctx
                                             sret-values
-                                            (lower-global-shared-view ret-ty))]
-                                        ;; Heap storage is not a frame-output
-                                        ;; range for the Sret ownership role.
-                                        [(LowerSlotDest.NewBox _ _)
+                                            (lower-global-shared-view ret-ty))
+                                          ;; Heap storage is not a frame-output
+                                          ;; range for the Sret ownership role.
                                           (ir.compiler-ir-call-args-from-seq
-                                            sret-values)])
-                                      (lower-global-shared-view result-ir-ty))
-                                    origin)]
-                                [writeback-state : LowerState
-                                  (lower-apply-arg-writebacks
-                                    ctx
-                                    call-state
-                                    writebacks
-                                    (lower-global-shared-view result-ir-ty))]
-                                (LowerSlotStore.Stored
-                                  writeback-state
-                                  slot-value))])])]
+                                            sret-values))
+                                        (lower-global-shared-view result-ir-ty))
+                                      origin)]
+                                  [writeback-state : LowerState
+                                    (lower-apply-arg-writebacks
+                                      ctx
+                                      call-state
+                                      writebacks
+                                      (& result-ir-ty))]
+                                  (LowerSlotStore.Stored
+                                    writeback-state
+                                    slot-value))])]))]
                     [(ResultLowerCallArgs.Err message)
                       (LowerSlotStore.Err message)])]
                 [(tc_core.ResultTcTypeList.Err message)

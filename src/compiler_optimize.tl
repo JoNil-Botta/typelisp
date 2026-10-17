@@ -11984,7 +11984,7 @@
               (match proof.abi
                 [(ir.CompilerIrFunctionAbi.ReturnStorage boxed)
                   (let
-                    [abi (ir.compiler-ir-box-shared-view boxed)]
+                    [abi boxed]
                     (and
                       (>= abi.index 0)
                       (< abi.index proof.params.len)
@@ -16947,7 +16947,7 @@
     [count : i64 instrs.len]
     [out : OptLabelSet set]
     (for [index (iterator.range 0 count)]
-      (match (compiler-opt-global-array-element-shared-view instrs.slots index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Switch _ _ _ _)
              (TotalEnumSwitch _ _ _ _ _))
           (set!
@@ -16978,10 +16978,7 @@
       true
       (not
         (let
-          [instr
-            (compiler-opt-global-array-element-shared-view
-              instrs.slots
-              (- count 1))]
+          [instr (ir.compiler-ir-instr-seq-borrow instrs (- count 1))]
           (opt-cfg-terminator-instr? instr))))))
 
 (define (opt-cfg-block-successors-with-next

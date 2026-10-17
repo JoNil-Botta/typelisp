@@ -283,7 +283,7 @@
   [depth : i64]) : bool
   (if (<= depth 0)
     false
-    (match (ir.compiler-ir-global-shared-view left)
+    (match (& left)
       [(ast.AstType.StructArgs name lifetimes)
         (match right
           [(ast.AstType.StructArgs other arguments)

@@ -98,8 +98,8 @@
   (write-word!)
   (+ copied.value n))
 
-(define (write-borrowed-word! [target : (&mut r Word)]) : unit
-  (set! target.value 99))
+(define (write-borrowed-word! [_target : (&mut r Word)]) : unit
+  (set! _target.value 99))
 
 (define (borrowed-alias [target : (&mut r Word)] [copied : Word]) : i64
   (write-borrowed-word! target)

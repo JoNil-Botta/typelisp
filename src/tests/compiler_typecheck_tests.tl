@@ -2786,10 +2786,10 @@
 (define (main) : i64
   (array-length (leak)))"
       "error[E0205]: typecheck: scratch-allocated value cannot leave with-scratch or with-escape through return; the form reclaims it on exit
-  --> :2:17
+  --> :2:25
    |
  2 |   (with-scratch (return (__tl_make-array i64 4)) 0)
-   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                         ^^^^^^^^^^^^^^^^^^^^^^
   --> :2:25
    |
  2 |   (with-scratch (return (__tl_make-array i64 4)) 0)

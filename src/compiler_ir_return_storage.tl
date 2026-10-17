@@ -513,8 +513,8 @@
 
 (define (storage-equal?
   [bases : i64]
-  [left : ir.CompilerIrReturnStorage]
-  [right : ir.CompilerIrReturnStorage]) : bool
+  [left : (& ir.CompilerIrReturnStorage)]
+  [right : (& ir.CompilerIrReturnStorage)]) : bool
   (match left
     [(ir.CompilerIrReturnStorage.None)
       (match right
@@ -522,8 +522,7 @@
         [_ false])]
     [(ir.CompilerIrReturnStorage.Some a)
       (match right
-        [(ir.CompilerIrReturnStorage.Some b)
-          (contract-equal? bases (deref a) (deref b))]
+        [(ir.CompilerIrReturnStorage.Some b) (contract-equal? bases a b)]
         [_ false])]))
 
 (define (function-abi-equal?

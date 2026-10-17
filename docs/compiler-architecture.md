@@ -1044,6 +1044,17 @@ analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
 
+LICM also proves that loop writes cannot change the loaded word. Same-root
+stores can be separated by non-overlapping constant byte ranges, using the
+shared load-CSE range predicate. Copies and constant-offset geps retain a root
+coordinate; unknown offsets, casts and bitcasts discard that range proof.
+An `AddrOf` keeps the coordinate only for an original frame allocation. The
+home of a scalar heap-result variable is separate from the returned object.
+Coordinate insertion is restricted to parameters and supported SSA definitions.
+Other destinations stay unknown across both scans; entry verification rejects
+duplicate definitions.
+Distinct checked-reference parameter roots still do not imply disjointness.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before
@@ -1110,6 +1121,14 @@ the cursor. Otherwise the loop is offered to the counter-free shape as before;
 a hash probe's `walked` cursor is that case. The
 `bce-version-mb-monotone-cursor` optimizer test and
 `tests/integration/bce_monotone_cursor.tl` cover it.
+
+Dense IR sequences expose `compiler-ir-*-seq-borrow` for read-only consumers.
+It returns a reference into existing slots and checks the physical array bound;
+callers also maintain `0 <= index < seq.len` because shared storage can exceed the
+logical prefix. Phi inputs include their stored start offset. A borrow must end
+before any alias mutates the same slot or retires its storage. The existing
+by-value `-seq-ref` accessors retain their shallow-copy contract while owned-value
+consumers migrate; checked readers do not create an ownership view.
 
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.

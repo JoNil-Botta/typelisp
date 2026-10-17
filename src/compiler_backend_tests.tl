@@ -30980,14 +30980,16 @@ f:
             (ci.intern "known_target")
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var arg))
             (ast.AstType.I64))))]
+    [block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        (ci.intern "entry")
+        (ir.compiler-ir-instr-builder-to-seq body))]
     (backend.compiler-backend-identity-tail-forwarder-block?
       (ast.ast-node-pool-reader-type-segment-bases)
       (backend.CompilerBackendTarget.Linux)
       (ci.intern "snapshot_forwarder")
       params
-      (ir.CompilerIrBlock.Block
-        (ci.intern "entry")
-        (ir.compiler-ir-instr-builder-to-seq body))
+      (& block)
       (compiler-backend-known-function-call-index))))
 
 (define (compiler-backend-identity-snapshot-proof-ok?) : bool
@@ -34417,9 +34419,9 @@ f:
                   (& blocks))]
               (and
                 (= (ir.compiler-ir-block-seq-count seq) 6)
-                (match (ir.compiler-ir-block-seq-ref seq 0)
+                (match (ir.compiler-ir-block-seq-borrow seq 0)
                   [(Block _ instrs)
-                    (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                    (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                       [(Branch _ yes no)
                         (and
                           (=
@@ -34429,7 +34431,7 @@ f:
                             no
                             (ir.compiler-ir-label "entry__shrinkwrap_bare0")))]
                       [_ false])])
-                (match (ir.compiler-ir-block-seq-ref seq 4)
+                (match (ir.compiler-ir-block-seq-borrow seq 4)
                   [(Block label instrs)
                     (and
                       (= label (ir.compiler-ir-label "loop"))
@@ -34441,12 +34443,11 @@ f:
                             (if (<= phi-inputs-at-49077-29.len 0)
                               false
                               (let
-                                [phi-input-at-49077-29 : ir.CompilerIrPhiInput
-                                  (ir.compiler-ir-phi-input-seq-ref
+                                [phi-input-at-49077-29
+                                  (ir.compiler-ir-phi-input-seq-borrow
                                     phi-inputs-at-49077-29
                                     0)]
-                                [value : ir.CompilerIrValue
-                                  phi-input-at-49077-29.value]
+                                [value (& phi-input-at-49077-29.value)]
                                 [input-label : i64 phi-input-at-49077-29.label]
                                 (and
                                   (=

@@ -892,7 +892,7 @@
     [index : i64 0]
     [out : CompilerLiveLabelSet set]
     (while (< index cases.len)
-      (match (ir.compiler-ir-switch-case-seq-ref cases index)
+      (match (ir.compiler-ir-switch-case-seq-borrow cases index)
         [(Case _ label) (set! out (compiler-live-label-set-insert out label))])
       (set! index (+ index 1)))
     out))
@@ -1037,8 +1037,7 @@
   (if (<= inputs.len 0)
     n
     (let
-      [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref inputs 0)]
+      [input (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [rest : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq
           inputs.slots
@@ -1392,7 +1391,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [index : i64 0]
     (while (< index count)
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(Phi _ _ _) (set! index (+ index 1))]
         [_ (return index)]))
     index))
@@ -1408,7 +1407,7 @@
       (let
         [def-var : i64
           (let
-            [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+            [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
             (ir.compiler-ir-instr-dst instr))]
         (when
           (>= def-var 0)
@@ -1443,7 +1442,7 @@
     (compiler-live-scratch-clear! (& defs))
     (while (< index count)
       (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
         [id-count : i64
           (if edge-precise?
@@ -1535,7 +1534,7 @@
     [index : i64 0]
     (while (< index count)
       (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
         [id-count : i64 (compiler-live-instr-use-ids! (& instr))]
         [id : i64 0]
@@ -1573,8 +1572,7 @@
               [phi : i64 0]
               (while (< phi phi-end)
                 (let
-                  [phi-instr : ir.CompilerIrInstr
-                    (ir.compiler-ir-instr-seq-ref instrs phi)]
+                  [phi-instr (ir.compiler-ir-instr-seq-borrow instrs phi)]
                   (compiler-live-def-id!
                     def-at
                     block
@@ -1937,7 +1935,7 @@
     [active-count : i64 (compiler-live-scratch-copy-set! (& words) live-out)]
     (while (>= index 0)
       (let
-        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
         [id-count : i64
           (if edge-precise?
@@ -2060,15 +2058,10 @@
     (if (<= phi-inputs-at-2533-3.len 0)
       unit
       (let
-        [phi-input-at-2533-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2533-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-2533-3.value]
+        [phi-input-at-2533-3
+          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-2533-3 0)]
+        [value (& phi-input-at-2533-3.value)]
         [label : i64 phi-input-at-2533-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-2533-3.slots
-            (+ phi-inputs-at-2533-3.start 1)
-            (- phi-inputs-at-2533-3.len 1))]
         (match value
           [(Var v)
             (let
@@ -2083,7 +2076,13 @@
                   unit)
                 unit))]
           [_ unit])
-        (compiler-live-phi-out-add-inputs! rest ids phi-out)))))
+        (compiler-live-phi-out-add-inputs!
+          (ir.CompilerIrPhiInputSeq
+            phi-inputs-at-2533-3.slots
+            (+ phi-inputs-at-2533-3.start 1)
+            (- phi-inputs-at-2533-3.len 1))
+          ids
+          phi-out)))))
 
 (define (compiler-live-phi-out-add-seq!
   [instrs : ir.CompilerIrInstrSeq]
@@ -2309,7 +2308,7 @@
     [i : i64 0]
     (while (< i count)
       (let
-        [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref blocks i)]
+        [block (ir.compiler-ir-block-seq-ref blocks i)]
         (match (compiler-live-shared-view block)
           [(Block _ instrs)
             (set!
@@ -2425,7 +2424,7 @@
       (set!
         (array-ref blocks i)
         (compiler-live-fill-instr-after-block
-          (& (ir.compiler-ir-block-seq-ref ir-blocks i))
+          (ir.compiler-ir-block-seq-borrow ir-blocks i)
           (compiler-live-array-element-shared-view blocks i)
           (& words)
           edge-precise?))

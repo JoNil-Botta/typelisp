@@ -361,6 +361,15 @@ every element after source-arena retirement and checks tail mutation isolation.
 The three `clone-boxed-production-tail-opt{0,1,2}` public-tool cases compile,
 link and execute both clone tests on Linux and Windows without a test filter.
 
+## IR sequence borrows
+
+The existing IR type, optimizer, lowerer, liveness and register-allocation
+smokes exercise `compiler-ir-*-seq-borrow` through read-only consumers.
+`ir_sequence_borrow_bounds.tl` checks valid instruction and offset phi reads,
+negative and past-storage indices, and empty block storage at opt0/1/2.
+Bounds are physical; callers still prove the logical live-prefix index and end
+each borrow before slot mutation or source-owner retirement.
+
 ## Compiler arena ownership
 
 `compiler_driver_base_transients_smoke.tl` checks lazy lower scratch/IR roots,

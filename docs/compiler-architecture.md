@@ -1347,6 +1347,15 @@ late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
 the verifier's canonical instruction classifier.
 
+The SSA verifier traces marked sret operands to inline aggregate `Alloc`
+storage through address-preserving aliases. Every phi/select input must prove
+storage, and an address-taken pointer variable cannot supply that proof. The
+definition index reads the current body even when a pass reuses CFG topology.
+Memoized provenance stays in the verification call's scratch lifetime. This
+storage-origin check does not establish the callee's return convention or the
+output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
+those proofs and their enforcement before stack coloring, including mutable IR.
+
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or

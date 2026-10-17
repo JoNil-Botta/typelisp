@@ -11791,9 +11791,161 @@
         use-pos
         (+ index 1)))))
 
+;; Resolve the definition against the actual body, not the CFG's cached block
+;; values: passes may retain a topology context while replacing instructions.
+(define (opt-verify-definition
+  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [body : (& body ir.CompilerIrBlockList)]
+  [var : i64]) : OptMaybeInstr
+  (match (opt-var-def-lookup defs var)
+    [(Some (Def _ block pos))
+      (match body
+        [(Array seq)
+          (if (or (< block 0) (>= block seq.len))
+            (No)
+            (match (& (array-ref seq.slots block))
+              [(Block _ instrs)
+                (if (> pos 0)
+                  (if (<= pos instrs.len)
+                    (Some (ir.compiler-ir-instr-seq-ref (& instrs) (- pos 1)))
+                    (No))
+                  ;; Phi definitions use position zero, as do parameters.
+                  (let
+                    [found : OptMaybeInstr (No)]
+                    (for [i (iterator.range 0 instrs.len)]
+                      (match (ir.compiler-ir-instr-seq-ref (& instrs) i)
+                        [(Phi dst _ _)
+                          (when
+                            (= dst var)
+                            (set!
+                              found
+                              (Some (ir.compiler-ir-instr-seq-ref (& instrs) i))))]
+                        [_ unit]))
+                    found))]))])]
+    [_ (No)]))
+
+(define (opt-verify-inline-storage-type? [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
+         (Array _ _))
+      true]
+    [_ false]))
+
+;; Scratch facts for one immutable function body. The tables are created only
+;; when a call requests a storage proof and are shared by all such calls.
+(defstruct OptSretStorageProof
+  (body ir.CompilerIrBlockList)
+  (marks (__tl_dyn-array bool))
+  (memo (__tl_dyn-array i64)))
+
+;; An integer-shaped value is not evidence of storage. Follow only operations
+;; that preserve the base address of an allocated inline aggregate. Every arm
+;; of a join must prove storage; bounded recursion refuses ungrounded cycles.
+;; Callee/result ABI and extent checks are separate obligations of #7738.
+(define (opt-verify-sret-storage-pointer?
+  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [proof : (&mut proof OptSretStorageProof)]
+  [value : (& value ir.CompilerIrValue)]
+  [fuel : i64]) : bool
+  (when (<= fuel 0) (return false))
+  (match value
+    [(Var var)
+      (when (or (< var 0) (>= var (array-length defs))) (return false))
+      (when (opt-addr-taken-var? (& proof.marks) var) (return false))
+      (when
+        (!= (array-ref proof.memo var) 0)
+        (return (= (array-ref proof.memo var) 2)))
+      (set! (array-ref proof.memo var) 1)
+      (let
+        [valid : bool
+          (match (opt-verify-definition defs (& proof.body) var)
+            [(Some instr)
+              (match instr
+                [(AddrOf _ src)
+                  (match (opt-verify-definition defs (& proof.body) src)
+                    [(Some (Alloc _ ty))
+                      (opt-verify-inline-storage-type? (& ty))]
+                    [_ false])]
+                [(Mov _ source ty)
+                  (and
+                    (or
+                      (match (& ty)
+                        [(U64) true]
+                        [_ false])
+                      (opt-verify-inline-storage-type? (& ty)))
+                    (opt-verify-sret-storage-pointer?
+                      defs
+                      proof
+                      (& source)
+                      (- fuel 1)))]
+                [(Gep _ source (I64 0) _)
+                  (opt-verify-sret-storage-pointer?
+                    defs
+                    proof
+                    (& source)
+                    (- fuel 1))]
+                [(Cast _ source from-ty to-ty)
+                  (and
+                    (reg.compiler-reg-color-structural-sret-cast?
+                      (& from-ty)
+                      (& to-ty))
+                    (opt-verify-sret-storage-pointer?
+                      defs
+                      proof
+                      (& source)
+                      (- fuel 1)))]
+                [(Phi _ inputs ty)
+                  (let
+                    [valid : bool
+                      (and
+                        (> inputs.len 0)
+                        (or
+                          (match (& ty)
+                            [(U64) true]
+                            [_ false])
+                          (opt-verify-inline-storage-type? (& ty))))]
+                    (for [i (iterator.range 0 inputs.len)]
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref inputs i)]
+                        (unless
+                          (opt-verify-sret-storage-pointer?
+                            defs
+                            proof
+                            (& input.value)
+                            (- fuel 1))
+                          (set! valid false))))
+                    valid)]
+                [(Select payload)
+                  (and
+                    (= (deref payload).lanes 0)
+                    (match (& (deref payload).ty)
+                      [(U64) true]
+                      [_ false])
+                    (opt-verify-sret-storage-pointer?
+                      defs
+                      proof
+                      (& (deref payload).on-true)
+                      (- fuel 1))
+                    (opt-verify-sret-storage-pointer?
+                      defs
+                      proof
+                      (& (deref payload).on-false)
+                      (- fuel 1)))]
+                [_ false])]
+            [_ false])]
+        (set!
+          (array-ref proof.memo var)
+          (if valid
+            2
+            3))
+        valid)]
+    [_ false]))
+
 (define (opt-verify-call-args-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [args : (& ir.CompilerIrCallArgs)]
   [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -11810,14 +11962,31 @@
       (if (or (< index 0) (>= index (array-length values)))
         (Err "optimizer verify: sret argument index out of bounds")
         (match (compiler-opt-global-array-element-shared-view values index)
-          [(Var _)
-            (opt-verify-call-args-array-uses
-              defs
-              doms
-              (& values)
-              use-block
-              use-pos
-              0)]
+          [(Var var)
+            (let
+              [_
+                (try
+                  (opt-verify-call-args-array-uses
+                    defs
+                    doms
+                    (& values)
+                    use-block
+                    use-pos
+                    0))]
+              (when
+                (= (array-length proof.memo) 0)
+                (set!
+                  proof.marks
+                  (opt-addr-taken-vars (array-length defs) (& proof.body)))
+                (set! proof.memo (__tl_make-array i64 (array-length defs))))
+              (if (opt-verify-sret-storage-pointer?
+                defs
+                proof
+                (& (Var var))
+                (array-length defs))
+                (Ok)
+                (Err
+                  "optimizer verify: sret argument must address inline output storage")))]
           [_ (Err "optimizer verify: sret argument must be a pointer variable")]))]))
 
 (define (opt-verify-call-sret-result
@@ -11903,6 +12072,7 @@
 (define (opt-verify-instr-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [block-id : i64]
   [pos : i64]
   [instr : (& ir.CompilerIrInstr)]) : ResultCompilerOptimizeVerify
@@ -11917,23 +12087,23 @@
     [(or (Syscall _ args) (TailCall _ args _))
       (opt-verify-two
         (& (opt-verify-no-sret-call-args args))
-        (opt-verify-call-args-uses defs doms (& args) block-id pos))]
+        (opt-verify-call-args-uses defs doms proof (& args) block-id pos))]
     [(Call _ _ args ty)
       (opt-verify-two
         (& (opt-verify-call-sret-result args (& ty)))
-        (opt-verify-call-args-uses defs doms (& args) block-id pos))]
+        (opt-verify-call-args-uses defs doms proof (& args) block-id pos))]
     [(or (CallIndirect _ func args ty) (CallIndirectC _ func args ty))
       (opt-verify-two
         (& (opt-verify-value-use defs doms (& func) block-id pos))
         (opt-verify-two
           (& (opt-verify-call-sret-result args (& ty)))
-          (opt-verify-call-args-uses defs doms (& args) block-id pos)))]
+          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
     [(CallCAbiStoreResult (box (fields base args)))
       (opt-verify-two
         (& (opt-verify-value-use defs doms (& base) block-id pos))
         (opt-verify-two
           (& (opt-verify-no-sret-call-args args))
-          (opt-verify-call-args-uses defs doms (& args) block-id pos)))]
+          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
     [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
       (opt-verify-two
         (& (opt-verify-value-use defs doms (& base) block-id pos))
@@ -11947,7 +12117,7 @@
               pos))
           (opt-verify-two
             (& (opt-verify-no-sret-call-args args))
-            (opt-verify-call-args-uses defs doms (& args) block-id pos))))]
+            (opt-verify-call-args-uses defs doms proof (& args) block-id pos))))]
     [(SpmdCall payload-box)
       (let
         [payload : ir.CompilerIrInstrSpmdCallPayload (deref payload-box)]
@@ -11962,12 +12132,13 @@
         (& (opt-verify-value-use defs doms (& func) block-id pos))
         (opt-verify-two
           (& (opt-verify-no-sret-call-args args))
-          (opt-verify-call-args-uses defs doms (& args) block-id pos)))]
+          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
     [_ (opt-verify-uses defs doms block-id pos instr)]))
 
 (define (opt-verify-instr-seq-uses-from
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
@@ -11983,6 +12154,7 @@
             (opt-verify-instr-uses
               defs
               doms
+              proof
               block-id
               p
               (ir.compiler-ir-instr-seq-borrow instrs i)))]
@@ -12177,6 +12349,7 @@
 (define (opt-verify-block-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -12190,15 +12363,17 @@
                 (opt-verify-instr-seq-uses-from
                   defs
                   doms
+                  proof
                   block-id
                   (& instrs)
                   0
                   1))]
-            (opt-verify-block-uses defs doms rest (+ block-id 1)))])]))
+            (opt-verify-block-uses defs doms proof rest (+ block-id 1)))])]))
 
 (define (opt-verify-instr-seq-uses-contextual
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [pos : i64]) : ResultCompilerOptimizeVerify
@@ -12206,6 +12381,7 @@
     (match (opt-verify-instr-uses
       defs
       doms
+      proof
       block-id
       pos
       (ir.compiler-ir-instr-seq-borrow instrs index))
@@ -12226,6 +12402,7 @@
 (define (opt-verify-block-uses-contextual
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
+  [proof : (&mut proof OptSretStorageProof)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -12239,10 +12416,16 @@
                 (opt-verify-instr-seq-uses-contextual
                   defs
                   doms
+                  proof
                   block-id
                   (& instrs)
                   1))]
-            (opt-verify-block-uses-contextual defs doms rest (+ block-id 1)))])]))
+            (opt-verify-block-uses-contextual
+              defs
+              doms
+              proof
+              rest
+              (+ block-id 1)))])]))
 
 (define (opt-verify-function-body-with-context
   [func : (& ir.CompilerIrFunction)]
@@ -12256,9 +12439,15 @@
             [doms (& context.doms)]
             [pred-map (& context.pred-map)]
             [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+            [proof : OptSretStorageProof
+              (OptSretStorageProof
+                (owned_view.compiler-owned-reference-shared-view blocks)
+                (__tl_make-array bool 0)
+                (__tl_make-array i64 0))]
             (opt-verify-block-uses
               defs
               doms
+              (&mut proof)
               (ir.compiler-ir-block-list-view blocks)
               0))])]))
 
@@ -12277,9 +12466,15 @@
         [pred-map : OptPredMap
           (owned_view.compiler-owned-reference-shared-view (& context.pred-map))]
         [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+        [proof : OptSretStorageProof
+          (OptSretStorageProof
+            (owned_view.compiler-owned-reference-shared-view blocks)
+            (__tl_make-array bool 0)
+            (__tl_make-array i64 0))]
         (opt-verify-block-uses-contextual
           defs
           doms
+          (&mut proof)
           (ir.compiler-ir-block-list-view blocks)
           0))]))
 

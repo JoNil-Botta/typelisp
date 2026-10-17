@@ -80636,3 +80636,135 @@
               (ir.compiler-ir-label "body__bce_fast"))
             -1
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
+
+(define (opt-le-snapshot-constructor [case : i64]) : ir.CompilerIrFunction
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [b (ir.compiler-ir-instr-builder-with-capacity 24)]
+    [allocator : i64
+      (cond
+        [(= case 9) (opt-test-symbol "foreign_allocator")]
+        [(= case 18) cbi.compiler-builtin-id-tl-alloc-global]
+        [else cbi.compiler-builtin-id-tl-alloc])]
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (Call
+        2
+        allocator
+        (One
+          (I64
+            (if (= case 10)
+              8
+              16)))
+        (DynArray 0)))
+    (ir.compiler-ir-instr-builder-push! (&mut b) (Gep 3 (Var 2) (I64 0) (U8)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (StorePtr (Var 3) (I64 0) (U64)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (Gep
+        4
+        (Var 2)
+        (I64
+          (if (= case 20)
+            4
+            8))
+        (U8)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (StorePtr (Var 4) (Var 0) (I64)))
+    (unless
+      (= case 15)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut b)
+        (if (= case 17)
+          (Bitcast 7 (Var 2) (DynArray 0) (U64))
+          (Mov
+            7
+            (Var 2)
+            (if (= case 7)
+              (U32)
+              (DynArray 0))))))
+    (when
+      (= case 16)
+      (ir.compiler-ir-instr-builder-push! (&mut b) (Mov 8 (Var 7) (DynArray 0))))
+    (ir.compiler-ir-instr-builder-push! (&mut b) (Gep 5 (Var 1) (I64 0) (U8)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (StoreOwned
+        (Var 5)
+        (Var (cond [(= case 15) 2] [(= case 16) 8] [else 7]))
+        (DynArray 0)))
+    (ir.compiler-ir-instr-builder-push! (&mut b) (Gep 6 (Var 1) (I64 8) (U8)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut b)
+      (StorePtr
+        (Var 6)
+        (if (= case 19)
+          (I64 0)
+          (Var 0))
+        (I64)))
+    (cond
+      [(or (= case 1) (= case 2) (= case 3) (= case 11) (= case 12))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Call
+            20
+            (opt-test-symbol "expose")
+            (One
+              (Var
+                (cond
+                  [(= case 1) 2]
+                  [(= case 2) 7]
+                  [(= case 3) 4]
+                  [(= case 11) 1]
+                  [else 5])))
+            (Unit)))]
+      [(= case 4)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (StorePtr (Var 4) (I64 0) (I64)))]
+      [(= case 5)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Mov 7 (I64 0) (DynArray 0)))]
+      [(= case 6)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Mov 2 (I64 0) (DynArray 0)))]
+      [(= case 8) (ir.compiler-ir-instr-builder-push! (&mut b) (AddrOf 20 7 1))]
+      [(= case 13)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Gep 20 (Var 7) (I64 8) (U8)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (StorePtr (Var 20) (I64 0) (I64)))]
+      [(= case 14)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (Mov 20 (Var 2) (DynArray 0)))]
+      [(= case 21)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut b)
+          (CallIndirect 20 (Var 0) (One (Var 7)) (Unit)))]
+      [else unit])
+    (ir.compiler-ir-instr-builder-push! (&mut b) (Return (Some (Var 1))))
+    (opt-le-function
+      (opt-test-symbol "snapshot_constructor")
+      (opt-le-params 2)
+      (ir.compiler-ir-instr-builder-to-seq b))))
+
+(test
+  len-eq-descriptor-snapshot-provenance
+  (for [case (iterator.range 0 22)]
+    (test.assert-i64-eq
+      (opt.opt-len-eq-ctor-summary 0 (& (opt-le-snapshot-constructor case)))
+      (cond
+        [(or (= case 0) (= case 15) (= case 18)) 2]
+        [(= case 19) 1]
+        [else 0])
+      (str_cat.str-cat
+        "descriptor snapshot provenance case "
+        (string.int->string case)))))

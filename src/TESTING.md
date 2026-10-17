@@ -268,6 +268,14 @@ prefix cases and unsupported-byte fixtures ensure incomplete or invalid operands
 cannot resolve a valid prefix. The existing parser and LSP smokes retain alias,
 wildcard, string-path diagnostics, and editor integration coverage.
 
+## Descriptor snapshots
+
+`len-eq-descriptor-snapshot-provenance` checks fresh descriptor transfer and
+refuses direct/indirect call escapes, aliases, extra stores, address-taking,
+redefined values and narrower moves. Existing `arg_global_len_eq_pair.tl`
+and `arg_global_len_eq_split.tl` retain the matching-length behavior and
+mismatched-length bounds failure through actual optimized code.
+
 ## Optimizer dense block scans
 
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`

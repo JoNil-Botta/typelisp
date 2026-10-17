@@ -122000,6 +122000,7 @@
 ;; `arg?` marks a var handed to a call.
 (defstruct OptLenEqDefs
   (defs (__tl_dyn-array OptBoolBranchDef))
+  (uses (__tl_dyn-array i64))
   (w0 (__tl_dyn-array ir.CompilerIrValue))
   (w1 (__tl_dyn-array ir.CompilerIrValue))
   (n0 (__tl_dyn-array i64))
@@ -122018,7 +122019,7 @@
   ;; before its region began.
   (rdef (__tl_dyn-array i64)))
 
-(define (opt-len-eq-defs-new [frame : i64]) : OptLenEqDefs
+(define (opt-len-eq-defs-new [frame : i64] [uses : (__tl_dyn-array i64)]) : OptLenEqDefs
   (let
     [size : i64
       (if (> frame 0)
@@ -122026,6 +122027,7 @@
         1)]
     (OptLenEqDefs
       (__tl_make-array OptBoolBranchDef size)
+      uses
       (__tl_make-array ir.CompilerIrValue size)
       (__tl_make-array ir.CompilerIrValue size)
       (__tl_make-array i64 size)
@@ -122239,7 +122241,8 @@
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLenEqDefs
   (let
-    [tables : OptLenEqDefs (opt-len-eq-defs-new frame)]
+    [tables : OptLenEqDefs
+      (opt-len-eq-defs-new frame (opt-collect-blocks-uses-array frame blocks))]
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-blocks-visit
       blocks
@@ -122382,6 +122385,84 @@
         (opt-len-eq-canonical tables (opt-len-eq-resolve tables len 4))
         fits?)]))
 
+;; Two initialized words and one consuming use form a closed pointer-use set.
+;; Each field address is used only by its counted store. Extra aliases, calls,
+;; address-taking, duplicate definitions and stores therefore refuse the proof.
+(define (opt-len-eq-private-word-pair?
+  [tables : (& tables OptLenEqDefs)]
+  [var : i64]) : bool
+  (if (or
+    (< var 0)
+    (>= var (array-length tables.uses))
+    (!= (array-ref tables.uses var) 3)
+    (!= (array-ref tables.n0 var) 1)
+    (!= (array-ref tables.n1 var) 1)
+    (!= (array-ref tables.ncopy var) 0)
+    (!= (array-ref tables.arg? var) 0))
+    false
+    (let
+      [fields : i64 0]
+      [addresses : i64 0]
+      (for [at (iterator.range 0 (array-length tables.defs))]
+        (match (opt-len-eq-def tables at)
+          [(Some instruction _)
+            (match instruction
+              [(Gep _ (Var base) (I64 offset) (U8))
+                (when
+                  (and
+                    (= base var)
+                    (= (array-ref tables.uses at) 1)
+                    (or (= offset 0) (= offset 8)))
+                  (+= addresses 1)
+                  (set!
+                    fields
+                    (bit-or
+                      fields
+                      (if (= offset 0)
+                        1
+                        2))))]
+              [_ unit])]
+          [_ unit]))
+      (and (= addresses 2) (= fields 3)))))
+
+;; A descriptor snapshot preserves the pointer bits, but following arbitrary
+;; aliases would hide writes and escapes from the word table. Admit only a fresh
+;; two-word allocation whose sole transfer is this snapshot into a closed
+;; two-word container; the snapshot itself has exactly that one use.
+(define (opt-len-eq-stored-descriptor
+  [tables : (& tables OptLenEqDefs)]
+  [container : i64]
+  [snapshot : i64]) : i64
+  (if (or (< snapshot 0) (>= snapshot (array-length tables.n1)))
+    (- 0 1)
+    (if (= (array-ref tables.n1 snapshot) 1)
+      snapshot
+      (match (opt-len-eq-def tables snapshot)
+        [(Some instruction _)
+          (match instruction
+            [(Mov _ (Var source) (DynArray _))
+              (if (and
+                (= (array-ref tables.uses snapshot) 1)
+                (opt-len-eq-private-word-pair? tables container)
+                (opt-len-eq-private-word-pair? tables source)
+                (match (opt-len-eq-def tables source)
+                  [(Some definition _)
+                    (match definition
+                      [(Call _ name (One (I64 16)) _)
+                        (or
+                          (ir.compiler-ir-symbol-eq?
+                            name
+                            cbi.compiler-builtin-id-tl-alloc)
+                          (ir.compiler-ir-symbol-eq?
+                            name
+                            cbi.compiler-builtin-id-tl-alloc-global))]
+                      [_ false])]
+                  [_ false]))
+                source
+                (- 0 1))]
+            [_ (- 0 1)])]
+        [_ (- 0 1)]))))
+
 (define (opt-len-eq-vec-length
   [tables : (& tables OptLenEqDefs)]
   [ctors : (& opt_i64_i64_map.Map)]
@@ -122391,33 +122472,36 @@
     (No)
     (if (and (= (array-ref tables.n0 var) 1) (= (array-ref tables.n1 var) 1))
       (match (compiler-opt-global-array-element-shared-view tables.w0 var)
-        [(Var slots-var)
-          (if (or
-            (< slots-var 0)
-            (>= slots-var (array-length tables.n1))
-            (not (= (array-ref tables.n1 slots-var) 1)))
-            (No)
-            (if (not (= (array-ref tables.arg? slots-var) 0))
+        [(Var stored-var)
+          (let
+            [slots-var : i64
+              (opt-len-eq-stored-descriptor tables var stored-var)]
+            (if (or
+              (< slots-var 0)
+              (>= slots-var (array-length tables.n1))
+              (not (= (array-ref tables.n1 slots-var) 1)))
               (No)
-              (let
-                [slots-len : ir.CompilerIrValue
-                  (opt-len-eq-resolve
-                    tables
-                    (compiler-opt-global-array-element-shared-view
-                      tables.w1
-                      slots-var)
-                    4)]
-                (Some
-                  (compiler-opt-global-shared-view slots-len)
-                  (opt-value-eq
-                    (&
-                      (opt-len-eq-resolve
-                        tables
-                        (compiler-opt-global-array-element-shared-view
-                          tables.w1
-                          var)
-                        4))
-                    (& slots-len))))))]
+              (if (not (= (array-ref tables.arg? slots-var) 0))
+                (No)
+                (let
+                  [slots-len : ir.CompilerIrValue
+                    (opt-len-eq-resolve
+                      tables
+                      (compiler-opt-global-array-element-shared-view
+                        tables.w1
+                        slots-var)
+                      4)]
+                  (Some
+                    (compiler-opt-global-shared-view slots-len)
+                    (opt-value-eq
+                      (&
+                        (opt-len-eq-resolve
+                          tables
+                          (compiler-opt-global-array-element-shared-view
+                            tables.w1
+                            var)
+                          4))
+                      (& slots-len)))))))]
         [_ (No)])
       (match (opt-len-eq-def tables var)
         [(Some instr _)

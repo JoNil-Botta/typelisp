@@ -1446,6 +1446,13 @@ late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
 the verifier's canonical instruction classifier.
 
+Global length facts may cross a dynamic-array descriptor snapshot only when
+its pointer uses are closed: a fresh two-word allocation, two uniquely used
+field addresses, one snapshot transfer, and one consuming container use. The
+shared operand-use census accounts for every instruction. Extra aliases,
+calls, address-taking, duplicate definitions and stores refuse the proof;
+the existing length-token and family checks remain authoritative.
+
 The SSA verifier traces marked sret operands to inline aggregate `Alloc`
 storage, explicitly sized physical slots, or the declared incoming result
 parameter through address-preserving aliases. Every phi/select input must prove

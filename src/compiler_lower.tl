@@ -73656,7 +73656,26 @@
                   "lower: invalid certified selected result")))
             (when
               (typed.typed-handle-equal? (& output.root.handle) (& node.handle))
-              (set! root? true))
+              (set! root? true)
+              (let
+                [span : ast.AstSourceSpan
+                  (ast.ast-source-span
+                    node.source.line
+                    node.source.column
+                    node.source.line
+                    node.source.column)]
+                (set!
+                  state.spans
+                  (if (ir.compiler-debug-info-enabled?)
+                    (ir.compiler-source-spans-insert-located
+                      (replace! state.spans (ir.compiler-source-spans-empty))
+                      (ir.compiler-ir-symbol-typed-id state.function)
+                      state.path-id
+                      span)
+                    (ir.compiler-source-spans-insert
+                      (replace! state.spans (ir.compiler-source-spans-empty))
+                      (ir.compiler-ir-symbol-typed-id state.function)
+                      span)))))
             (when
               (match (& node.operation)
                 [(norm.NormalizeOperation.Literal _) true]

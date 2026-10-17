@@ -16329,3 +16329,32 @@
           (compiler-lower-spmd-unlocated-text case.source)
           case.expected
           "fully unspanned API syntax retains every source site")))))
+
+(test
+  compiler-lower-packed-field-receiver
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source
+        "(defstruct Pair (a i64) (b i64))
+(define (plain [x : i64]) : i64
+  (let [p : Pair (Pair x 2)] (set! p.a 7) (+ p.a p.b)))
+(define (sibling [x : i64]) : i64
+  (let [p : Pair (Pair x 2)]
+    (set! p.a (begin (set! p.b 20) 7)) (+ p.a p.b)))
+(define (rebound [x : i64] [change : bool]) : i64
+  (let [p : Pair (Pair x 2)]
+    (set! p.a (begin (when change (set! p (Pair 7 8))) 5)) (+ p.a p.b)))
+(define (main) : i64 (+ (plain 1) (sibling 1) (rebound 1 true)))"))
+      [(Some functions)
+        (and
+          (= (lower-test-count functions "plain" (AddrOf)) 1)
+          (= (lower-test-count functions "plain" (Branch)) 0)
+          (= (lower-test-count functions "sibling" (AddrOf)) 4)
+          (= (lower-test-count functions "rebound" (AddrOf)) 3)
+          (= (lower-test-count functions "sibling" (Branch)) 1)
+          (= (lower-test-count functions "rebound" (Branch)) 2)
+          (= (lower-test-function-call-count functions "plain" "tl_alloc") 0)
+          (= (lower-test-function-call-count functions "sibling" "tl_alloc") 0)
+          (= (lower-test-function-call-count functions "rebound" "tl_alloc") 0))]
+      [_ false])
+    "pure fields keep the packed path; effectful receivers guard their real frame home"))

@@ -561,7 +561,7 @@ cwd {{dir}}/tree
 exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 2560 --timeout-seconds 600 --report "{{dir}}/memory.txt" -- "{{compiler}}" check src/main.tl --stdlib-root "{{root}}/stdlib" --stdlib-root src
 exit 1
 stderr count = 4 ^error\[
-stderr count = 3 ^error\[E0211\]
+stderr count = 3 ^error\[E0208\]
 stderr count = 1 ^error\[E0205\]
 case check-global-call-borrow-diagnostic
 file main.tl

@@ -304,7 +304,7 @@
   [name : String]
   [kind : sem.CompilerSemanticSymbolKind]) : bool
   (let
-    [span : sem.CompilerSemanticSpan record.span]
+    [span : (& record sem.CompilerSemanticSpan) (& record.span)]
     [start : i64 span.start-byte]
     [end : i64 span.end-byte]
     (and
@@ -453,7 +453,7 @@
   [record : (& record sem.CompilerSemanticRecord)]
   [expected : String]) : bool
   (let
-    [span : sem.CompilerSemanticSpan record.span]
+    [span : (& record sem.CompilerSemanticSpan) (& record.span)]
     [start : i64 span.start-byte]
     [end : i64 span.end-byte]
     (and

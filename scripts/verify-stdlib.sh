@@ -502,11 +502,7 @@ stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would
 stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
 stdlib/tests/vector_native_slice_split_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
 stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot immutably borrow mutably borrowed place `items`
-stdlib/tests/string_raw_copy_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_owned_copy_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_borrowed_copy_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_copy_alias_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_copy_function_value_reject.tl|fail|is an unsafe callable and cannot be used as a plain function value
 EOF
 }
 

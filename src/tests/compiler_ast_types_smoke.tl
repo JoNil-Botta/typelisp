@@ -3073,16 +3073,22 @@
       (= live.segment-count active.segment-count)
       (= live.span-slot-segment-bases active.span-slot-segment-bases)
       (= live.canonical-span-records active.canonical-span-records)
-      (= (ast.ast-expr-span-table-count live.canonical-span-records) (ast.ast-expr-span-table-count active.canonical-span-records))
+      (=
+        (ast.ast-expr-span-table-count live.canonical-span-records)
+        (ast.ast-expr-span-table-count active.canonical-span-records))
       (= live.respan-records active.respan-records)
-      (= (ast.ast-expr-span-table-count live.respan-records) (ast.ast-expr-span-table-count active.respan-records))
+      (=
+        (ast.ast-expr-span-table-count live.respan-records)
+        (ast.ast-expr-span-table-count active.respan-records))
       (=
         (ast.ast-expr-span-table-capacity live.canonical-span-records)
         (ast.ast-expr-span-table-capacity active.canonical-span-records))
       (=
         (ast.ast-expr-span-table-capacity live.respan-records)
         (ast.ast-expr-span-table-capacity active.respan-records))
-      (= (ast.ast-expr-span-table-monotonic? live.canonical-span-records) (ast.ast-expr-span-table-monotonic? active.canonical-span-records)))))
+      (=
+        (ast.ast-expr-span-table-monotonic? live.canonical-span-records)
+        (ast.ast-expr-span-table-monotonic? active.canonical-span-records)))))
 
 (define (compiler-ast-installed-span-capture?) : bool
   (let

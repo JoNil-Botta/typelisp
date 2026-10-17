@@ -2856,7 +2856,8 @@
 
 (define (compiler-lower-never-function-ok?
   [functions : (& functions ir.CompilerIrFunctionSeq)]
-  [name : String]) : bool
+  [name : String]
+  [expected-allocs : i64]) : bool
   (match (lower-test-function-seq-find
     (lower.lower-global-shared-view functions)
     name)
@@ -2868,15 +2869,16 @@
         (match func
           [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
             (let
-              [dense : ir.CompilerIrBlockSeq
-                (ir.compiler-ir-block-list-seq blocks)]
-              [b : i64 0]
-              [seen : i64 0]
               [ok? : bool
                 (and
                   verified
                   (lower-test-block-exits?
                     (ir.compiler-ir-block-list-view blocks)))]
+              [dense : ir.CompilerIrBlockSeq
+                (ir.compiler-ir-block-list-seq blocks)]
+              [b : i64 0]
+              [seen : i64 0]
+              [allocs : i64 0]
               (while (< b dense.len)
                 (begin
                   (match (ir.compiler-ir-block-seq-ref dense b)
@@ -2888,13 +2890,38 @@
                           (ir.compiler-ir-instr-seq-count instructions))
                           (begin
                             (match (ir.compiler-ir-instr-seq-ref instructions i)
-                              [(ir.CompilerIrInstr.Call _ _ args ty)
-                                (set! seen (+ seen 1))
-                                (set!
-                                  ok?
-                                  (and
-                                    ok?
-                                    (compiler-lower-never-call-args-ok? args ty)))]
+                              [(ir.CompilerIrInstr.Call _ name args ty)
+                                (if (ir.compiler-ir-symbol-eq?
+                                  name
+                                  cbi.compiler-builtin-id-tl-alloc)
+                                  (begin
+                                    ;; The packed mutable argument has one
+                                    ;; two-word home before the terminal call.
+                                    (set! allocs (+ allocs 1))
+                                    (set!
+                                      ok?
+                                      (and
+                                        ok?
+                                        (match args
+                                          [(ir.CompilerIrCallArgs.One
+                                              (ir.CompilerIrValue.I64 16))
+                                            true]
+                                          [_ false])
+                                        (match ty
+                                          [(ast.AstType.MutRef _ element)
+                                            (match (ast.ty-node-get element)
+                                              [(ast.AstType.I64) true]
+                                              [_ false])]
+                                          [_ false]))))
+                                  (begin
+                                    (set! seen (+ seen 1))
+                                    (set!
+                                      ok?
+                                      (and
+                                        ok?
+                                        (compiler-lower-never-call-args-ok?
+                                          args
+                                          ty)))))]
                               [(ir.CompilerIrInstr.CallIndirect _ _ args ty)
                                 (set! seen (+ seen 1))
                                 (set!
@@ -2912,7 +2939,7 @@
                               [_ unit])
                             (set! i (+ i 1)))))])
                   (set! b (+ b 1))))
-              (and ok? (= seen 1)))]))]))
+              (and ok? (= seen 1) (= allocs expected-allocs)))]))]))
 
 (define (compiler-lower-never-aggregate-call-shape-ok?) : bool
   (match (lower.lower-compiler-source
@@ -2924,14 +2951,24 @@
           (match program
             [(ir.CompilerIrProgram.Program _ functions _ _)
               (and
-                (compiler-lower-never-function-ok? functions "foreign-direct")
-                (compiler-lower-never-function-ok? functions "internal-direct")
+                (compiler-lower-never-function-ok? functions "foreign-direct" 0)
                 (compiler-lower-never-function-ok?
                   functions
-                  "internal-indirect")
-                (compiler-lower-never-function-ok? functions "foreign-indirect")
-                (compiler-lower-never-function-ok? functions "foreign-tuple")
-                (compiler-lower-never-function-ok? functions "writeback-never"))])]
+                  "internal-direct"
+                  0)
+                (compiler-lower-never-function-ok?
+                  functions
+                  "internal-indirect"
+                  0)
+                (compiler-lower-never-function-ok?
+                  functions
+                  "foreign-indirect"
+                  0)
+                (compiler-lower-never-function-ok? functions "foreign-tuple" 0)
+                (compiler-lower-never-function-ok?
+                  functions
+                  "writeback-never"
+                  1))])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))
         ok)]))

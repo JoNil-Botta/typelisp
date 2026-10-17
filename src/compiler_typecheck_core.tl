@@ -2933,18 +2933,22 @@
   (No)
   (Some bool i64 TcTypeEnv i64))
 
-(define tc-unbound-suggestion-snapshot : TcUnboundSuggestionSnapshot
-  (No))
+;; Only the latest diagnostic snapshot is live. Mutate one stable container so
+;; recording and clearing names do not retain a new global container each time.
+(define tc-unbound-suggestion-snapshot : (Array TcUnboundSuggestionSnapshot 1)
+  (array (No)))
 
 (define (tc-unbound-suggestion-snapshot-reset!) : unit
-  (set! tc-unbound-suggestion-snapshot (TcUnboundSuggestionSnapshot.No)))
+  (set!
+    (array-ref tc-unbound-suggestion-snapshot 0)
+    (TcUnboundSuggestionSnapshot.No)))
 
 (define (tc-unbound-suggestion-snapshot-record!
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : unit
   (set!
-    tc-unbound-suggestion-snapshot
+    (array-ref tc-unbound-suggestion-snapshot 0)
     (TcUnboundSuggestionSnapshot.Some
       (> (string.string-length (tc-context-module ctx)) 0)
       (tc-unbound-suggestion-scope-module-id ctx name-id)
@@ -33684,7 +33688,7 @@
             clean-start
             (- (string.string-length message) clean-start))]
         (if (tc-unbound-name-message? clean-message)
-          (match tc-unbound-suggestion-snapshot
+          (match (array-ref tc-unbound-suggestion-snapshot 0)
             [(Some module-qualified module-id env name-id)
               (let
                 [name : String

@@ -31906,6 +31906,45 @@ f:
       "    movq %rax, %r10\n    addq $16, %r10\n"
       "    movq %r8, 16(%r8)\n")))
 
+(define (compiler-backend-inline-global-alloc-target-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [bound : String
+      (match target
+        [(Linux) "    cmpq 24(%r9), %r8\n"]
+        [(Windows) "    cmpq 64(%r9), %r8\n"])]
+    [slow : String
+      (match target
+        [(Linux) "_slow:\n    movl $16, %edi\n    call tl_alloc_global\n"]
+        [(Windows) "_slow:\n    movl $16, %ecx\n    call tl_alloc_global\n"])]
+    (asm-ok?
+      (compiler-backend-emit-source-opt2-for-target
+        "(define values : (Array i64 2) (array 0 0))
+(define (replace [x : i64]) : unit
+  (with-scratch (set! values (array x (+ x 1)))))
+(define (main) : i64
+  (set! (array-ref values 0) (begin (replace 41) -1))
+  (array-ref values 1))"
+        target)
+      (has
+        "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
+        "_retry:\n    leaq 16(%rax), %r8\n"
+        bound
+        "    lock cmpxchgq %r8, 16(%r9)\n    jne "
+        slow)
+      (lacks "_slow:\n    call .L_tl_alloc16\n"))))
+
+(test
+  backend-inline-global-alloc
+  (unless
+    (and
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic
+      "global container allocation must reserve atomically and grow through its private root")))
+
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
     (= (backend.compiler-backend-fast-alloc-size (One (I64 1))) 8)
@@ -41454,13 +41493,15 @@ user_fn:
             false
             false
             backtrace
-            31)))]
+            63)))]
     (and
       (asm-has?
         rewritten
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
+        "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
         "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
@@ -41471,8 +41512,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          7
-          5))
+          9
+          7))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

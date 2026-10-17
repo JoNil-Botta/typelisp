@@ -35986,9 +35986,19 @@
   [dst : i64]
   [size : i64]
   [profile : bool]
+  [global-storage? : bool]
   [backend-state : CompilerBackendState]) : String
   (let
     [size-text : String (string.int->string size)]
+    [retry-label : String
+      (if global-storage?
+        (compiler-backend-fast-alloc-site-label
+          (compiler-backend-global-shared-view function)
+          current-label
+          site
+          dst
+          "_retry")
+        "")]
     [slow-label : String
       (compiler-backend-fast-alloc-site-label
         (compiler-backend-global-shared-view function)
@@ -36032,30 +36042,39 @@
         "%rax")]
     [head-reg : String
       (compiler-backend-scavenge-reg dst head-exclude 2 "%r9" backend-state)]
-    ;; The inline path advances the bump pointer with a plain store. Shared
-    ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
+    ;; Ordinary storage uses a plain bump only after excluding shared arenas.
+    ;; The private global root is always atomic; its segments are never freed,
+    ;; so a CAS may finish on an older head even if another thread grows it.
     ;; The shared flag is bit 0 of the arena's flag word and only `jnz` reads
     ;; the result, so testing the flag word's low byte is exact; `testb` takes
     ;; an 8-bit immediate where `testq` on memory needs 32 bits. The slot is
     ;; never 0: with no arena it holds the null-arena sentinel, whose shared
     ;; bit sends this path to the helper (`compiler-backend-runtime-null-arena-data`).
     (str_cat.str-cat
-      (compiler-backend-current-arena-load
-        target
-        (compiler-backend-global-shared-view scav))
-      (str_cat.str-cat
-        "    testb $1, 48("
-        scav
-        ")\n    jnz "
-        slow-label
-        "\n    movq 56("
-        scav
-        "), "
-        head-reg
-        "\n    movq 16("
-        head-reg
-        "), %rax"
-        "\n")
+      (if global-storage?
+        (str_cat.str-cat
+          "    movq .L_tl_global_aggregate_arena+56(%rip), "
+          head-reg
+          "\n    movq 16("
+          head-reg
+          "), %rax\n"
+          retry-label
+          ":\n")
+        (str_cat.str-cat
+          (compiler-backend-current-arena-load
+            target
+            (compiler-backend-global-shared-view scav))
+          "    testb $1, 48("
+          scav
+          ")\n    jnz "
+          slow-label
+          "\n    movq 56("
+          scav
+          "), "
+          head-reg
+          "\n    movq 16("
+          head-reg
+          "), %rax\n"))
       (str_cat.str-cat "    leaq " size-text "(%rax), " scav "\n")
       ;; No wrap guard: `size` is a fixed 8..64 byte literal (the
       ;; fast-alloc admission gate) and the bump cursor is a canonical
@@ -36074,11 +36093,16 @@
       (str_cat.str-cat
         "    ja "
         slow-label
-        "\n    movq "
-        scav
-        ", 16("
-        head-reg
-        ")\n")
+        (if global-storage?
+          (str_cat.str-cat
+            "\n    lock cmpxchgq "
+            scav
+            ", 16("
+            head-reg
+            ")\n    jne "
+            retry-label
+            "\n")
+          (str_cat.str-cat "\n    movq " scav ", 16(" head-reg ")\n")))
       (let
         [size-reg (str_cat.str-cat "$" size-text)]
         (runtime_common.compiler-backend-runtime-profile-alloc-account-with-scratch
@@ -36088,9 +36112,18 @@
           scav))
       (str_cat.str-cat "    jmp " done-label "\n" slow-label ":\n")
       (str_cat.str-cat
-        "    call "
-        (compiler-backend-fast-alloc-label size)
-        "\n"
+        (if global-storage?
+          (str_cat.str-cat
+            (compiler-backend-emit-load-i64-immediate
+              size
+              (match target
+                [(Linux) "%rdi"]
+                [(Windows) "%rcx"]))
+            "    call tl_alloc_global\n")
+          (str_cat.str-cat
+            "    call "
+            (compiler-backend-fast-alloc-label size)
+            "\n"))
         done-label
         ":\n"))))
 
@@ -46342,7 +46375,11 @@
           (compiler-backend-plan-provides-id?
             plan
             cbi.compiler-builtin-id-tl-alloc)
-          (string.eq call-symbol "tl_alloc"))
+          (or
+            (string.eq call-symbol "tl_alloc")
+            (and
+              (= name cbi.compiler-builtin-id-tl-alloc-global)
+              (string.eq call-symbol "tl_alloc_global"))))
         (Ok
           (str_cat.str-cat
             (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
@@ -46356,6 +46393,7 @@
                 (compiler-backend-plan-provides-id?
                   plan
                   cbi.compiler-builtin-id-tl-profile-alloc-total)
+                (= name cbi.compiler-builtin-id-tl-alloc-global)
                 backend-state)
               (str_cat.str-cat
                 "    call "
@@ -75599,7 +75637,10 @@
           cbi.compiler-builtin-id-tl-alloc)
         (compiler-backend-runtime-index-defines?
           index
-          cbi.compiler-builtin-id-tl-alloc-aligned))]
+          cbi.compiler-builtin-id-tl-alloc-aligned)
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-alloc-global))]
     [defines-substring : bool
       (compiler-backend-runtime-index-defines?
         index
@@ -75714,7 +75755,10 @@
           cbi.compiler-builtin-id-tl-alloc)
         (compiler-backend-runtime-index-calls?
           index
-          cbi.compiler-builtin-id-tl-alloc-aligned))]
+          cbi.compiler-builtin-id-tl-alloc-aligned)
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-alloc-global))]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls?
         index
@@ -76002,6 +76046,7 @@
       [(string.eq text "tl_mem_copy_fwd") 4]
       [(string.eq text "tl_mem_copy8_fwd") 8]
       [(string.eq text "tl_mem_fill8") 16]
+      [(string.eq text "tl_alloc_global") 32]
       [else 0])))
 
 (define (compiler-backend-runtime-used-leaf-mask
@@ -76062,18 +76107,21 @@
   (let
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
-    (match target
-      [(CompilerBackendTarget.Linux)
-        (when
-          emit-entry
-          (set!
-            features.leaf-mask
-            (compiler-backend-runtime-used-leaf-mask
-              backend-state
-              runtime-index
-              referenced
-              externs)))]
-      [_ unit])
+    (when
+      emit-entry
+      (let
+        [used : i64
+          (compiler-backend-runtime-used-leaf-mask
+            backend-state
+            runtime-index
+            referenced
+            externs)]
+        (set!
+          features.leaf-mask
+          (match target
+            [(CompilerBackendTarget.Linux) used]
+            [(CompilerBackendTarget.Windows)
+              (bit-or features.leaf-mask (bit-and used 32))]))))
     features))
 
 (define (compiler-backend-current-arena-load
@@ -76295,6 +76343,7 @@ tl_shared_object_init:
         (string.eq function "tl_arena_set")
         (string.eq function "tl_backtrace_stack_set"))
       "%rax"]
+    [(string.eq function "tl_alloc_global") "%r11"]
     [(string.eq function "tl_region_reset") "%rbx"]
     [(string.eq function "tl_thread_init") "%rdi"]
     [(string.is-string-prefix-at function "tl_" 0) ""]

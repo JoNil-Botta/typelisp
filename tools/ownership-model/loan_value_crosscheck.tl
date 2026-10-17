@@ -10,8 +10,11 @@
 ;; Terminator cases use one Boolean branch/return operand; both branch edges
 ;; are modeled, and a selected successor can retain the condition's loan.
 (import loan_model as model)
+(import loan_cases as cases)
+(import loan_crosscheck as trace)
 (import compiler_ownership_core as core)
 (import stdlib.io)
+(import stdlib.iterator)
 
 (define (id) : core.OwnershipBodyId
   (core.OwnershipBodyId (cast 8449 : u64) (cast 6 : u64) (cast 1 : u64)))
@@ -244,23 +247,37 @@
 ;; successful memory result; no permission decision comes from this replay.
 (define (successful-state?
   [body : (& body core.OwnershipBody)]
+  [path : (& path (__tl_dyn-array i64))]
   [left : bool]
   [right : bool]) : bool
   (let
-    [state : (__tl_dyn-array i64) (__tl_make-array 1 1 1)]
-    [index : i64 0]
+    [state : (__tl_dyn-array i64)
+      (__tl_make-array i64 (array-length body.places))]
     (begin
-      (while (< index (array-length (array-ref body.blocks 0).instructions))
-        (begin
-          (match (core.ownership-transfer!
-            body
-            (&mut state)
-            (& (array-ref (array-ref body.blocks 0).instructions index))
-            0
-            index)
-            [(core.OwnershipResult.Err _) (return false)]
-            [_ unit])
-          (set! index (+ index 1))))
+      (for [slot (iterator.range 0 (array-length state))]
+        (set!
+          (array-ref state slot)
+          (if (and
+            (match (array-ref body.places slot).projection
+              [(core.OwnershipProjection.Root) true]
+              [_ false])
+            (array-ref body.locals (array-ref body.places slot).local.index).parameter?)
+            2
+            1)))
+      (for [step (iterator.range 0 (array-length path))]
+        (let
+          [at : i64 (array-ref path step)]
+          [instructions : (& body (__tl_dyn-array core.OwnershipInstruction))
+            (& (array-ref body.blocks at).instructions)]
+          (for [index (iterator.range 0 (array-length instructions))]
+            (match (core.ownership-transfer!
+              body
+              (&mut state)
+              (& (array-ref instructions index))
+              at
+              index)
+              [(core.OwnershipResult.Err _) (return false)]
+              [_ unit]))))
       (and
         (=
           (array-ref state 1)
@@ -354,7 +371,7 @@
             (match (& actual)
               [(core.OwnershipResult.Ok) true]
               [_ false])
-            (successful-state? (& fixture) left right))]))))
+            (successful-state? (& fixture) (& (__tl_make-array 0)) left right))]))))
 
 (define (value-campaign?) : bool
   (let
@@ -653,11 +670,410 @@
     ;; Exclusive loan expires at return.
     (authored-terminator? false false 0 0 false)))
 
+;; Three holder identities form a finite origin graph. This is serialization
+;; metadata for production, not the concrete oracle's value/expiry decisions.
+(define (reference-origins [program : (& program model.ReferenceProgram)]) : (Array
+    i64
+    3)
+  (let
+    [seeds : (Array i64 3) (array 0 0 0)]
+    [reach : (Array i64 3) (array 1 2 4)]
+    [origins : (Array i64 3) (array 0 0 0)]
+    (for [index (iterator.range 0 (array-length program.events))]
+      (match (array-ref program.events index)
+        [(model.ReferenceEvent.Bind holder site)
+          (when
+            (and (model.reference-slot? holder) (model.reference-slot? site))
+            (set!
+              (array-ref seeds holder)
+              (bit-or (array-ref seeds holder) (shl 1 site))))]
+        [(or (model.ReferenceEvent.Copy source destination)
+             (model.ReferenceEvent.Move source destination))
+          (when
+            (and
+              (model.reference-slot? source)
+              (model.reference-slot? destination))
+            (set!
+              (array-ref reach destination)
+              (bit-or (array-ref reach destination) (shl 1 source))))]
+        [_ unit]))
+    (for [via (iterator.range 0 3)]
+      (for [holder (iterator.range 0 3)]
+        (when
+          (flag? (array-ref reach holder) via)
+          (set!
+            (array-ref reach holder)
+            (bit-or (array-ref reach holder) (array-ref reach via))))))
+    (for [holder (iterator.range 0 3)]
+      (for [from (iterator.range 0 3)]
+        (when
+          (flag? (array-ref reach holder) from)
+          (set!
+            (array-ref origins holder)
+            (bit-or (array-ref origins holder) (array-ref seeds from))))))
+    origins))
+
+(define (reference-loan-count [program : (& program model.ReferenceProgram)]) : i64
+  (let
+    [count : i64 0]
+    (for [index (iterator.range 0 (array-length program.events))]
+      (match (array-ref program.events index)
+        [(model.ReferenceEvent.Intrinsic (model.Event.Borrow site))
+          (when
+            (and (model.reference-slot? site) (>= site count))
+            (set! count (+ site 1)))]
+        [_ unit]))
+    count))
+
+(define (reference-uses!
+  [instructions
+    : (&mut instructions (__tl_dyn-array core.OwnershipInstruction))]
+  [origins : (& origins (Array i64 3))]
+  [count : i64]
+  [holder : i64]) : unit
+  (when
+    (model.reference-slot? holder)
+    (for [site (iterator.range 0 count)]
+      (when
+        (flag? (array-ref origins holder) site)
+        (__tl_array-push!
+          instructions
+          (instruction
+            (core.OwnershipOperation.MayUseLoan
+              (loan site)
+              (place (+ holder 3)))
+            (array-length instructions)))))))
+
+(defstruct ReferenceFixture
+  (body core.OwnershipBody)
+  (starts (__tl_dyn-array i64))
+  (ends (__tl_dyn-array i64)))
+
+(define (reference-body
+  [program : (& program model.ReferenceProgram)]
+  [loans : (& loans (Array model.Loan 3))]
+  [count : i64]) : ReferenceFixture
+  (let
+    [instructions : (__tl_dyn-array core.OwnershipInstruction) (prefix 0 3)]
+    [origins : (Array i64 3) (reference-origins program)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (for [index (iterator.range 0 (array-length program.events))]
+      (__tl_array-push! starts (array-length instructions))
+      (match (array-ref program.events index)
+        [(model.ReferenceEvent.Intrinsic event)
+          (__tl_array-push!
+            instructions
+            (instruction
+              (trace.loan-cross-event (id) (clone event))
+              (array-length instructions)))]
+        [(model.ReferenceEvent.Bind holder site)
+          (__tl_array-push!
+            instructions
+            (instruction
+              (core.OwnershipOperation.UseLoan (loan site))
+              (array-length instructions)))
+          (__tl_array-push!
+            instructions
+            (instruction
+              (core.OwnershipOperation.Assign (place (+ holder 3)))
+              (array-length instructions)))]
+        [(or (model.ReferenceEvent.Copy source destination)
+             (model.ReferenceEvent.Move source destination))
+          (reference-uses! (&mut instructions) (& origins) count source)
+          (__tl_array-push!
+            instructions
+            (instruction
+              (if (= source destination)
+                ;; Source self-assignment reads its captured value. Core Move
+                ;; deliberately requires disjoint source/destination storage.
+                (core.OwnershipOperation.Read (place (+ source 3)))
+                (match (array-ref program.events index)
+                  [(model.ReferenceEvent.Copy _ _)
+                    (core.OwnershipOperation.Copy
+                      (place (+ source 3))
+                      (place (+ destination 3)))]
+                  [_
+                    (core.OwnershipOperation.Move
+                      (place (+ source 3))
+                      (place (+ destination 3)))]))
+              (array-length instructions)))]
+        [(model.ReferenceEvent.Clear holder)
+          (__tl_array-push!
+            instructions
+            (instruction
+              (core.OwnershipOperation.Invalidate (place (+ holder 3)))
+              (array-length instructions)))]
+        [(model.ReferenceEvent.Use holder)
+          (reference-uses! (&mut instructions) (& origins) count holder)
+          (__tl_array-push!
+            instructions
+            (instruction
+              (core.OwnershipOperation.Read (place (+ holder 3)))
+              (array-length instructions)))])
+      (__tl_array-push! ends (array-length instructions)))
+    (let
+      [fixture : core.OwnershipBody
+        (body
+          loans
+          count
+          false
+          (__tl_make-array
+            (core.OwnershipBlock instructions (return-empty) (source 1))))]
+      (__tl_array-push!
+        fixture.types
+        (core.OwnershipType core.OwnershipTypeKind.Scalar program.copy?))
+      (for [holder (iterator.range 0 3)]
+        (__tl_array-push!
+          fixture.locals
+          (core.OwnershipLocal (type-id 2) false (source 1)))
+        (__tl_array-push!
+          fixture.places
+          (core.OwnershipPlace
+            (core.OwnershipLocalId (id) (+ holder 1))
+            (type-id 2)
+            core.OwnershipProjection.Root
+            (source 1))))
+      (ReferenceFixture fixture starts ends))))
+
+(define (reference-failure-at?
+  [actual : (& actual core.OwnershipResult)]
+  [fixture : (& fixture ReferenceFixture)]
+  [at : i64]
+  [kind : i64]) : bool
+  (match actual
+    [(core.OwnershipResult.Ok) false]
+    [(core.OwnershipResult.Err error)
+      (and
+        (= error.block 0)
+        (>= error.instruction (array-ref fixture.starts at))
+        (< error.instruction (array-ref fixture.ends at))
+        (= error.source.line (+ 10 error.instruction))
+        (match error.kind
+          [(core.OwnershipFailureKind.Loan) (= kind 0)]
+          [(core.OwnershipFailureKind.Uninitialized) (= kind 1)]
+          [(core.OwnershipFailureKind.Structural) (= kind 2)]
+          [_ false]))]))
+
+(define (reference-linear-case? [mode : i64]) : bool
+  (let
+    [program : model.ReferenceProgram (cases.reference-program mode)]
+    [loans : (Array model.Loan 3) (cases.reference-loans program.copy?)]
+    [count : i64 (reference-loan-count (& program))]
+    [fixture : ReferenceFixture (reference-body (& program) (& loans) count)]
+    [expected : model.Outcome
+      (model.execute-references (& loans) count (& program) true true)]
+    [actual : core.OwnershipResult
+      (core.ownership-check (& fixture.body) (core.ownership-default-limits))]
+    [ok? : bool
+      (match expected
+        [(model.Outcome.Accepted left right)
+          (and
+            (match (& actual)
+              [(core.OwnershipResult.Ok) true]
+              [_ false])
+            (successful-state?
+              (& fixture.body)
+              (& (__tl_make-array 0))
+              left
+              right))]
+        [(model.Outcome.Rejected at)
+          (reference-failure-at?
+            (& actual)
+            (& fixture)
+            at
+            (if (or (= mode 7) (= mode 15))
+              1
+              0))]
+        [(model.Outcome.InvalidInput)
+          (and
+            (or (= mode 11) (= mode 14))
+            (reference-failure-at?
+              (& actual)
+              (& fixture)
+              (if (= mode 11)
+                0
+                2)
+              2))])]
+    (unless
+      ok?
+      (io.println "ownership-loan-reference mismatch: linear={}" mode))
+    ok?))
+
+(define (reference-linear-campaign?) : bool
+  ;; These cases contain each static borrow once. Reissued borrow sites need
+  ;; CFG cycles, not duplicate definitions in a linear ownership body.
+  (let
+    [modes : (Array i64 12) (array 3 4 5 6 7 8 10 11 12 13 14 15)]
+    (for [index (iterator.range 0 12)]
+      (unless (reference-linear-case? (array-ref modes index)) (return false)))
+    true))
+
+(defstruct ReferenceCFG
+  (fixture ReferenceFixture)
+  (loop-start i64)
+  (body-events i64))
+
+(define (reference-instruction-range
+  [instructions : (& instructions (__tl_dyn-array core.OwnershipInstruction))]
+  [start : i64]
+  [end : i64]) : (__tl_dyn-array core.OwnershipInstruction)
+  (let
+    [out : (__tl_dyn-array core.OwnershipInstruction)
+      (__tl_make-array core.OwnershipInstruction 0)]
+    (for [index (iterator.range start end)]
+      (__tl_array-push! out (clone (array-ref instructions index))))
+    out))
+
+(define (reference-cfg-body [kind : i64]) : ReferenceCFG
+  (let
+    [program : model.ReferenceProgram (cases.reference-cfg-program kind 1)]
+    [loans : (Array model.Loan 3) (cases.reference-loans program.copy?)]
+    [fixture : ReferenceFixture (reference-body (& program) (& loans) 2)]
+    [all : (__tl_dyn-array core.OwnershipInstruction)
+      (replace!
+        (array-ref fixture.body.blocks 0).instructions
+        (__tl_make-array core.OwnershipInstruction 0))]
+    [body-events : i64 (- (array-length program.events) 3)]
+    [loop-start : i64 (array-ref fixture.starts 2)]
+    [loop-end : i64 (array-ref fixture.starts (+ 2 body-events))]
+    [entry : (__tl_dyn-array core.OwnershipInstruction)
+      (reference-instruction-range (& all) 0 loop-start)]
+    [trip : (__tl_dyn-array core.OwnershipInstruction)
+      (reference-instruction-range (& all) loop-start loop-end)]
+    [exit : (__tl_dyn-array core.OwnershipInstruction)
+      (reference-instruction-range (& all) loop-end (array-length all))]
+    ;; Assign provides a fresh unknown Boolean at each header visit. No
+    ;; reference or modeled memory cell supplies the nondeterministic choice.
+    (__tl_array-push!
+      fixture.body.types
+      (core.OwnershipType core.OwnershipTypeKind.Boolean true))
+    (__tl_array-push!
+      fixture.body.locals
+      (core.OwnershipLocal (type-id 3) false (source 1)))
+    (__tl_array-push!
+      fixture.body.places
+      (core.OwnershipPlace
+        (core.OwnershipLocalId (id) 4)
+        (type-id 3)
+        core.OwnershipProjection.Root
+        (source 1)))
+    (set!
+      fixture.body.blocks
+      (__tl_make-array
+        (core.OwnershipBlock
+          entry
+          (core.OwnershipTerminator.Goto (block 1))
+          (source 1))
+        (core.OwnershipBlock
+          (__tl_make-array
+            (instruction (core.OwnershipOperation.Assign (place 6)) 100))
+          (core.OwnershipTerminator.Branch (place 6) (block 2) (block 3))
+          (source 2))
+        (core.OwnershipBlock
+          trip
+          (core.OwnershipTerminator.Goto (block 1))
+          (source 3))
+        (core.OwnershipBlock exit (return-empty) (source 4))))
+    (ReferenceCFG fixture loop-start body-events)))
+
+(define (reference-cfg-failure?
+  [actual : (& actual core.OwnershipResult)]
+  [cfg : (& cfg ReferenceCFG)]
+  [event : i64]) : bool
+  (and
+    (>= event 2)
+    (let
+      [site : i64 (+ 2 (% (- event 2) cfg.body-events))]
+      (match actual
+        [(core.OwnershipResult.Ok) false]
+        [(core.OwnershipResult.Err error)
+          (and
+            (= error.block 2)
+            (>=
+              error.instruction
+              (- (array-ref cfg.fixture.starts site) cfg.loop-start))
+            (<
+              error.instruction
+              (- (array-ref cfg.fixture.ends site) cfg.loop-start))
+            (= error.source.line (+ 10 cfg.loop-start error.instruction))
+            (match error.kind
+              [(core.OwnershipFailureKind.Loan) true]
+              [_ false]))]))))
+
+(define (reference-cfg-case? [kind : i64]) : bool
+  (let
+    [cfg : ReferenceCFG (reference-cfg-body kind)]
+    [actual : core.OwnershipResult
+      (core.ownership-check
+        (& cfg.fixture.body)
+        (core.ownership-default-limits))]
+    [all-accepted? : bool true]
+    (for [trips (iterator.range 0 4)]
+      (let
+        [program : model.ReferenceProgram
+          (cases.reference-cfg-program kind trips)]
+        [loans : (Array model.Loan 3) (cases.reference-loans program.copy?)]
+        [expected : model.Outcome
+          (model.execute-references (& loans) 2 (& program) true true)]
+        (match expected
+          [(model.Outcome.InvalidInput)
+            (io.println
+              "ownership-loan-reference invalid CFG input: kind={} trips={}"
+              kind
+              trips)
+            (return false)]
+          [(model.Outcome.Rejected event)
+            (set! all-accepted? false)
+            (unless
+              (reference-cfg-failure? (& actual) (& cfg) event)
+              (io.println
+                "ownership-loan-reference CFG mismatch: kind={} trips={} event={}"
+                kind
+                trips
+                event)
+              (return false))]
+          [(model.Outcome.Accepted left right)
+            ;; A graph rejection may be justified by another concrete path.
+            ;; Only an accepted graph authorizes replay of its successful state.
+            (when
+              (match (& actual)
+                [(core.OwnershipResult.Ok) true]
+                [_ false])
+              (let
+                [path : (__tl_dyn-array i64) (__tl_make-array 0 1)]
+                (for [_trip (iterator.range 0 trips)]
+                  (__tl_array-push! path 2)
+                  (__tl_array-push! path 1))
+                (__tl_array-push! path 3)
+                (unless
+                  (successful-state? (& cfg.fixture.body) (& path) left right)
+                  (io.println
+                    "ownership-loan-reference CFG state mismatch: kind={} trips={}"
+                    kind
+                    trips)
+                  (return false))))])))
+    (=
+      all-accepted?
+      (match (& actual)
+        [(core.OwnershipResult.Ok) true]
+        [_ false]))))
+
+(define (reference-cfg-campaign?) : bool
+  (for [kind (iterator.range 0 4)]
+    (unless (reference-cfg-case? kind) (return false)))
+  true)
+
 ;; Return still requires initialization.
 (define (main) : i64
-  (if (and (value-campaign?) (terminator-campaign?) (authored-controls?))
+  (if (and
+    (value-campaign?)
+    (terminator-campaign?)
+    (authored-controls?)
+    (reference-linear-campaign?)
+    (reference-cfg-campaign?))
     (begin
       (io.println
-        "ownership-loan-value-crosscheck-v1: values=1160 branch=20 return=12 controls=10 passed")
+        "ownership-loan-value-crosscheck-v2: values=1160 branch=20 return=12 controls=10 reference-linear=12 reference-graphs=4 reference-paths=16 passed")
       0)
     1))

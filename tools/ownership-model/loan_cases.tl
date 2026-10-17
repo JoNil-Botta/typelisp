@@ -3,6 +3,7 @@
 ;; Parent modes are structurally valid; invalid mode relationships have their
 ;; own malformed-input tests rather than being hidden in execution comparisons.
 (import loan_model as model)
+(import stdlib.iterator)
 
 (define (side [right? : bool]) : model.Cell
   (if right?
@@ -183,3 +184,142 @@
         (model.Event.Borrow 2)
         (model.Event.Keep 1)
         (model.Event.Keep 2))]))
+
+(define (reference-program [mode : i64]) : model.ReferenceProgram
+  (let
+    [copy? : bool
+      (not
+        (or (= mode 0) (= mode 1) (= mode 4) (= mode 7) (= mode 13) (= mode 14)))]
+    [events : (__tl_dyn-array model.ReferenceEvent)
+      (match mode
+        [0
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Use 0))]
+        [1
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Clear 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Use 0))]
+        [2
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 1 0)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Use 1))]
+        [3
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1)
+            (model.ReferenceEvent.Clear 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [4
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [5
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 1))
+            (model.ReferenceEvent.Bind 1 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Move 1 0)
+            (model.ReferenceEvent.Use 0))]
+        [6
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1)
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 1))
+            (model.ReferenceEvent.Bind 2 1)
+            (model.ReferenceEvent.Move 2 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.Write model.Cell.Left))
+            (model.ReferenceEvent.Use 1))]
+        [7
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Use 0))]
+        [8
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 1)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Use 1))]
+        [9
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.End 0))
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 1 0)
+            (model.ReferenceEvent.Use 0))]
+        [10
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Use 0)
+            (model.ReferenceEvent.Intrinsic (model.Event.End 0)))]
+        [11 (__tl_make-array (model.ReferenceEvent.Use 3))]
+        [12 (__tl_make-array model.ReferenceEvent 0)]
+        [13
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Move 0 0)
+            (model.ReferenceEvent.Use 0))]
+        [14
+          (__tl_make-array
+            (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0))
+            (model.ReferenceEvent.Bind 0 0)
+            (model.ReferenceEvent.Copy 0 1))]
+        [_ (__tl_make-array (model.ReferenceEvent.Use 0))])]
+    (model.ReferenceProgram copy? events)))
+
+(define (reference-loans [copy? : bool]) : (Array model.Loan 3)
+  (array
+    (model.Loan model.Cell.Left (not copy?) -1)
+    (model.Loan model.Cell.Right (not copy?) -1)
+    (model.Loan model.Cell.Whole false -1)))
+
+;; Concrete paths through a loop with one static borrow site. Prev initially
+;; names the disjoint right cell, so even the first trip reads a real reference.
+(define (reference-cfg-program [kind : i64] [trips : i64]) : model.ReferenceProgram
+  (let
+    [copy? : bool (or (= kind 1) (= kind 3))]
+    [events : (__tl_dyn-array model.ReferenceEvent)
+      (__tl_make-array
+        (model.ReferenceEvent.Intrinsic (model.Event.Borrow 1))
+        (model.ReferenceEvent.Bind 0 1))]
+    (for [_trip (iterator.range 0 trips)]
+      (when (= kind 2) (__tl_array-push! events (model.ReferenceEvent.Clear 0)))
+      (__tl_array-push!
+        events
+        (model.ReferenceEvent.Intrinsic (model.Event.Borrow 0)))
+      (__tl_array-push! events (model.ReferenceEvent.Bind 1 0))
+      (unless (= kind 2) (__tl_array-push! events (model.ReferenceEvent.Use 0)))
+      (__tl_array-push! events (model.ReferenceEvent.Move 1 0))
+      (when
+        (= kind 3)
+        (__tl_array-push!
+          events
+          (model.ReferenceEvent.Intrinsic (model.Event.End 0)))))
+    (__tl_array-push!
+      events
+      (model.ReferenceEvent.Intrinsic (model.Event.Consume model.Cell.Left)))
+    (model.ReferenceProgram copy? events)))

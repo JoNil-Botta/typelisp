@@ -31,42 +31,46 @@
     [(model.Cell.Left) 1]
     [(model.Cell.Right) 2]))
 
-(define (loan-cross-event [event : model.Event]) : core.OwnershipOperation
+(define (loan-cross-event
+  [body-id : core.OwnershipBodyId]
+  [event : model.Event]) : core.OwnershipOperation
   (match event
     [(model.Event.Read cell)
-      (core.OwnershipOperation.Read (loan-cross-place (loan-cross-cell cell)))]
+      (core.OwnershipOperation.Read
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell)))]
     [(model.Event.Write cell)
-      (core.OwnershipOperation.Assign (loan-cross-place (loan-cross-cell cell)))]
+      (core.OwnershipOperation.Assign
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell)))]
     [(model.Event.Consume cell)
       (core.OwnershipOperation.Consume
-        (loan-cross-place (loan-cross-cell cell)))]
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell)))]
     [(model.Event.Invalidate cell)
       (core.OwnershipOperation.Invalidate
-        (loan-cross-place (loan-cross-cell cell)))]
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell)))]
     [(model.Event.Borrow id)
-      (core.OwnershipOperation.Borrow (loan-cross-loan id))]
+      (core.OwnershipOperation.Borrow (core.OwnershipLoanId body-id id))]
     [(model.Event.Reborrow id)
-      (core.OwnershipOperation.Reborrow (loan-cross-loan id))]
+      (core.OwnershipOperation.Reborrow (core.OwnershipLoanId body-id id))]
     [(model.Event.Keep id)
-      (core.OwnershipOperation.UseLoan (loan-cross-loan id))]
+      (core.OwnershipOperation.UseLoan (core.OwnershipLoanId body-id id))]
     [(model.Event.MayKeep id)
       ;; The traces have no Copy or Move, so no holder is ever overwritten
       ;; and the demand behaves as a plain one.
       (core.OwnershipOperation.MayUseLoan
-        (loan-cross-loan id)
-        (loan-cross-place 0))]
+        (core.OwnershipLoanId body-id id)
+        (core.OwnershipPlaceId body-id 0))]
     [(model.Event.ReadThrough id cell)
       (core.OwnershipOperation.AccessThrough
-        (loan-cross-loan id)
-        (loan-cross-place (loan-cross-cell cell))
+        (core.OwnershipLoanId body-id id)
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell))
         core.OwnershipAccess.Read)]
     [(model.Event.WriteThrough id cell)
       (core.OwnershipOperation.AccessThrough
-        (loan-cross-loan id)
-        (loan-cross-place (loan-cross-cell cell))
+        (core.OwnershipLoanId body-id id)
+        (core.OwnershipPlaceId body-id (loan-cross-cell cell))
         core.OwnershipAccess.Write)]
     [(model.Event.End id)
-      (core.OwnershipOperation.EndLoan (loan-cross-loan id))]))
+      (core.OwnershipOperation.EndLoan (core.OwnershipLoanId body-id id))]))
 
 (define (loan-cross-instructions
   [trace : (& trace (__tl_dyn-array model.Event))]
@@ -99,7 +103,7 @@
           (set!
             (array-ref out (+ prefix i))
             (core.OwnershipInstruction
-              (loan-cross-event (array-ref trace i))
+              (loan-cross-event (loan-cross-id) (array-ref trace i))
               (loan-cross-source (+ i 10))))
           (set! i (+ i 1))))
       out)))

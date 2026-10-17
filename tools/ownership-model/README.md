@@ -159,11 +159,11 @@ post-move state (13/13), joined state (13/15), failed cleanup after a partial
 move, and failed use on a later loop iteration. Each mutant must compile and
 then exit normally with its exact named mismatch and empty stderr. Together
 the initialization programs contribute nine positive runs and seven mutations.
-The loan programs below contribute another fifteen runs and twenty-five mutations.
+The loan programs below contribute another fifteen runs and thirty-one mutations.
 The cleanup programs contribute twelve runs and sixteen mutations, and the
 allocation program three runs and five mutations.
-The whole campaign requires 184 enforced build/run reports: 39 positive runs,
-31 production mutants and 22 model mutants, each with a separate build and run.
+The whole campaign requires 196 enforced build/run reports: 39 positive runs,
+34 production mutants and 25 model mutants, each with a separate build and run.
 These checks do not cover application runtime obligations.
 
 ## Concrete loan executions
@@ -225,10 +225,22 @@ and exclusive reissues, explicit ending with an older reference still used,
 unavailable references and malformed holder/type metadata. Three more controls
 reject negative/excessive loan counts and an over-limit trace before indexing.
 
-The production adapters still use the original trace representation. Their
-reference-value correspondence, CFG/path expansion and targeted mutations
-remain incomplete; the new concrete controls alone do not establish production
-soundness. The production rules remain witnessed by the core cases
+`loan_value_crosscheck.tl` serializes twelve of these reference programs into
+typed root holders and actual Copy/Move operations. A finite possible-origin
+graph supplies MayUseLoan metadata; it contains no expected permission result.
+Self-assignment reads the captured reference value rather than constructing a
+structurally forbidden overlapping core Move. Each concrete rejection must match
+the production failure kind, event's instruction range and source line. The
+malformed holder and non-Copy Copy controls require structural rejection.
+Successful programs independently compare the final two-cell initialization
+state. Four additional CFGs use one static borrow instruction on a loop and
+enumerate zero through three iterations (sixteen paths): retained exclusive
+reissue, shared reissue, clearing the previous reference before reissue, and
+ending a shared issue while an older reference remains used on a later trip.
+Every failing concrete path must match the graph's static loan-failure point;
+all paths must accept before graph acceptance is required. These are bounded
+authored comparisons, not an exhaustive reference-value or loop proof.
+The production rules are also witnessed by the core cases
 `ownership-loan-holder-overwrite` and `ownership-loan-reissue` and by the
 safety fixtures `mir_nll_loop_if_join_reference_*`,
 `mir_reference_copy_then_write_reject`,
@@ -286,11 +298,20 @@ write the destination; non-Copy Move consumes the source; Copy Consume reads
 without ending ownership. Retention occurs after the complete core operation.
 Successful transfers also check both leaf initialization states and their
 product summary. The exact summary is
-`ownership-loan-value-crosscheck-v1: values=1160 branch=20 return=12 controls=10 passed`.
+`ownership-loan-value-crosscheck-v2: values=1160 branch=20 return=12 controls=10 reference-linear=12 reference-graphs=4 reference-paths=16 passed`.
 Five production mutations weaken Copy destination permission, incorrectly
 require exclusive authority for Copy Consume, weaken non-Copy Move source
 permission, omit branch loan access, or omit the returned-value initialization
 check. Each has a distinct, independently derived mismatch witness.
+Three further production mutations retain overwritten holder demands, discard
+the source loan at a reference transfer, or end older holder demands at a cyclic
+borrow definition. They require the exact overwrite, surviving-copy or later
+exclusive-reissue mismatch. Three concrete-model mutations lose a copied value,
+retain a moved source, or forget an older reference when its site is reissued.
+The independent mutation driver requires the original exact rejection event.
+These fixture serialization and path/failure-location checks account for the
+adapter's size; they stay separate from the concrete interpreter and reuse the
+existing primitive-event serializer.
 
 ## Concrete cleanup executions
 

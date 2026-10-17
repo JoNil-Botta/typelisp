@@ -3,6 +3,7 @@
 (import loan_model as model)
 (import loan_cases as cases)
 (import stdlib.io)
+(import stdlib.iterator)
 
 (define (rejects-at? [outcome : model.Outcome] [index : i64]) : bool
   (match outcome
@@ -82,6 +83,37 @@
         (begin
           (io.println
             "ownership-loan-model mutation mismatch: ancestor-retention")
+          (return 1)))
+      (for [index (iterator.range 0 2)]
+        (let
+          [mode : i64
+            (if (= index 0)
+              3
+              7)]
+          [program : model.ReferenceProgram (cases.reference-program mode)]
+          [references : (Array model.Loan 3)
+            (cases.reference-loans program.copy?)]
+          (unless
+            (rejects-at?
+              (model.execute-references (& references) 1 (& program) true true)
+              (if (= mode 3)
+                4
+                3))
+            (io.println
+              "ownership-loan-model mutation mismatch: reference-{}"
+              (if (= mode 3)
+                "copy"
+                "move"))
+            (return 1))))
+      (let
+        [program : model.ReferenceProgram (cases.reference-cfg-program 0 2)]
+        [references : (Array model.Loan 3) (cases.reference-loans false)]
+        (unless
+          (rejects-at?
+            (model.execute-references (& references) 2 (& program) true true)
+            6)
+          (io.println
+            "ownership-loan-model mutation mismatch: reference-generation")
           (return 1)))
       (io.println "ownership-loan-model mutation controls passed")
       0)))

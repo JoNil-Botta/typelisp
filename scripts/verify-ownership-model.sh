@@ -199,7 +199,7 @@ for opt in 0 1 2; do
         fi
         if [ "$program" = loan-value ]; then
             source=$SOURCE_LOAN_VALUE
-            expected='ownership-loan-value-crosscheck-v1: values=1160 branch=20 return=12 controls=10 passed'
+            expected='ownership-loan-value-crosscheck-v2: values=1160 branch=20 return=12 controls=10 reference-linear=12 reference-graphs=4 reference-paths=16 passed'
         fi
         if [ "$program" = allocation-model ]; then
             source=$SOURCE_ALLOCATION_MODEL
@@ -469,11 +469,14 @@ for mutation in parent-retention shared-write end-demand loan-join second-succes
     printf '%s\n' "$phase detected"
 done
 
-for mutation in copy-destination consume-copy move-source branch return; do
+for mutation in copy-destination consume-copy move-source branch return holder-overwrite holder-transfer holder-generation; do
     mutant_dir="$WORKDIR/loan-value-mutation-$mutation"
     mkdir -p "$mutant_dir"
     cp "$SOURCE_LOAN_MODEL" "$mutant_dir/loan_model.tl"
     cp "$SOURCE_LOAN_VALUE" "$mutant_dir/loan_value_crosscheck.tl"
+    cp "$SOURCE_LOAN_CASES" "$mutant_dir/loan_cases.tl"
+    cp "$SOURCE_LOAN_COMPARE" "$mutant_dir/loan_crosscheck.tl"
+    cp "$SOURCE_LOAN_MAIN" "$mutant_dir/loan_main.tl"
     case "$mutation" in
         copy-destination)
             original='[(OwnershipOperation.Copy source dest)
@@ -564,6 +567,30 @@ for mutation in copy-destination consume-copy move-source branch return; do
             obligation='Returned values must be initialized'
             expected='ownership-loan-value terminator mismatch: kind=1 case=0'
             ;;
+        holder-overwrite)
+            original='(when
+        (ownership-loan-bit? state 0 (+ loans p))
+        (ownership-loan-bit-set! state 0 (+ loans p) false)'
+            replacement='(when
+        (ownership-loan-bit? state 0 (+ loans p))
+        (ownership-loan-bit-set! state 0 (+ loans p) true)'
+            obligation='Overwriting a reference holder ends demands of its previous value'
+            expected='ownership-loan-reference mismatch: linear=5'
+            ;;
+        holder-generation)
+            original='(array-ref demands.reissued definition)'
+            replacement='false'
+            obligation='A cyclic borrow definition retains demands through older reference values'
+            expected='ownership-loan-reference CFG mismatch: kind=0 trips=2 event=6'
+            ;;
+        holder-transfer)
+            original='(when
+                        (= used.index loan)'
+            replacement='(when
+                        false'
+            obligation='Reference transfers retain the demanded loan across their source read'
+            expected='ownership-loan-reference mismatch: linear=3'
+            ;;
     esac
     mutate_literal "$SOURCE_CORE" "$mutant_dir/compiler_ownership_core.tl" "$original" "$replacement"
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
@@ -583,7 +610,7 @@ for mutation in copy-destination consume-copy move-source branch return; do
     printf '%s\n' "$phase detected"
 done
 
-for mutation in shared-write parent-retention end-demand expiry issue-conflict ancestor-retention; do
+for mutation in shared-write parent-retention end-demand expiry issue-conflict ancestor-retention reference-copy reference-move reference-generation; do
     mutant_dir="$WORKDIR/loan-model-mutation-$mutation"
     mkdir -p "$mutant_dir"
     cp "$SOURCE_LOAN_MUTATION" "$mutant_dir/loan_mutation_witness.tl"
@@ -624,6 +651,22 @@ for mutation in shared-write parent-retention end-demand expiry issue-conflict a
               (set! current (- 0 1))'
             replacement='              (set! current (if (= current child) parent -1))
               (set! current (- 0 1))'
+            ;;
+        reference-copy)
+            original='(set! (array-ref values destination) value)'
+            replacement='(set! (array-ref values destination) (ReferenceValue -1 0))'
+            ;;
+        reference-move)
+            original='(set! (array-ref values source) (ReferenceValue -1 0))'
+            replacement='unit'
+            ;;
+        reference-generation)
+            original='[(Event.Borrow site) (set! (array-ref carriers site) false)]'
+            replacement='[(Event.Borrow site)
+              (set! (array-ref carriers site) false)
+              (for [holder (iterator.range 0 3)]
+                (when (= (array-ref values holder).loan site)
+                  (set! (array-ref holders holder) false)))]'
             ;;
     esac
     mutate_literal "$SOURCE_LOAN_MODEL" "$mutant_dir/loan_model.tl" "$original" "$replacement"

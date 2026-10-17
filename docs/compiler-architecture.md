@@ -1250,6 +1250,22 @@ its operands directly only when those operands are literals or have one
 definition; otherwise the edge extracts the original group value. Escaping
 group joins retain their aggregate representation.
 
+A direct `Global` actual names the value read at call entry. Before substituting
+it into an inline body that can overwrite that cell, argument staging emits a
+typed `Mov` into a fresh local. Ordinary calls, tail-call sites, tiny leaves and
+multiblock sites share this staging decision. Reserved parameter slots precede
+the cloned frame, and admission includes the added capture instructions.
+`GlobalAddr` continues to name storage. Memory-class parameters keep their
+existing private-copy and inline-admission rules.
+
+The staging scan reuses global-snapshot write barriers and the existing
+interprocedural global may-write facts. Proven non-writers and writers of other
+cells keep direct operands; missing summaries and unknown pointer writes are
+conservative. Per-program facts live with the inline stage and are unpublished
+when it finishes. Later snapshot rematerialization must respect the same write
+barriers, so it cannot undo the call-entry capture. This does not replace the
+lowering rule for writes by later argument expressions described above.
+
 The multiblock inliner admits known one-word nominal results and register groups
 within the group splitter's word limit, using the installed program
 representation index. Unknown representations stay out of line. CFG cleanup

@@ -238,6 +238,53 @@
       [_ false])
     "scalar snapshots and loop edges emit from the checked graph"))
 
+(test
+  compiler-lower-normalized-scalar-calls
+  (let
+    [bodies : (Array String 8)
+      (array
+        "(pair 20 22)"
+        "(let [value : i64 42] (pair value (begin (set! value 99) 0)))"
+        "(pair (pair 10 10) (pair 11 11))"
+        "(recursive 6)"
+        "(let [value : i64 0] (while (< value 6) (set! value (pair value 1))) (pair value 36))"
+        "(if (= (pair 1 1) 2) (pair 20 22) (pair 1 0))"
+        "(foreign 20 22)"
+        "(begin (sink 7) (pair 20 22))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(define (pair [a : i64] [b : i64]) : i64 (+ a b))
+             (define (recursive [n : i64]) : i64 (if (= n 0) 0 (+ 7 (recursive (- n 1)))))
+             (extern (foreign [a : i64] [b : i64]) : i64 (:symbol \"foreign_add\"))
+             (extern (sink [value : i64]) : unit (:symbol \"sink\"))
+             (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        (test.assert-true
+          (match (lower-test-functions
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "call case {}: {}"
+                  index
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                (lower.ResultCompilerLower.Err diagnostic)]
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (lower.ResultCompilerLower.Ok program spans owner)]))
+            [(Some functions)
+              (=
+                (lower-test-function-label-load-count
+                  (& functions)
+                  "main"
+                  "checked.0")
+                0)]
+            [_ false])
+          (str_cat.str-cat
+            "direct scalar call emits from checked graph, case "
+            (string.int->string index)))))))
+
 (define (compiler-lower-smoke-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)

@@ -1760,7 +1760,114 @@
     (typed.typed-store-retire! (&mut store))
     (and read-only replacement wrong-owner exhaustion stale no-restamp)))
 
+(define (typed-test-declared-call-authority?) : bool
+  (let
+    [name : i64 (ci.intern "checked-callee")]
+    [foreign-name : i64 (ci.intern "checked-foreign")]
+    [module : i64 (ci.intern "checked-module")]
+    [key : i64 (symbols.compiler-symbol-module-key-id-by-id module name)]
+    [foreign-key : i64
+      (symbols.compiler-symbol-module-key-id-by-id module foreign-name)]
+    [declarations : symbols.CompilerSymbols
+      (symbols.compiler-symbols-index-decl
+        (symbols.compiler-symbols-empty-with-decls 2)
+        (&
+          (ast.ast-decl-def-fn-id
+            name
+            (ast.AstParamList (__tl_make-array ast.AstParam 0) 0)
+            ast.AstType.I64
+            0))
+        0
+        module
+        0)]
+    [_extern : unit
+      (set!
+        declarations
+        (symbols.compiler-symbols-index-decl
+          declarations
+          (&
+            (ast.ast-decl-extern-id
+              foreign-name
+              ast.AstExternKind.Function
+              (ast.AstExternMetadata.Metadata
+                ast.AstExternAbi.C
+                (ci.intern-id-from-raw foreign-name)
+                (ast.AstExternLinkInputList
+                  (__tl_make-array ast.AstExternLinkInput 0)
+                  0)
+                0
+                ast.AstImportedSpmdMetadata.No)
+              (ast.ast-ty-func (ast.ast-type-list-new) (& ast.AstType.I64))))
+          1
+          module
+          0))]
+    [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [registries : symbols.CompilerRegistries
+      (symbols.compiler-registries-empty)]
+    [lease : (typed.TypedBodyLease registries)
+      (typed-test-resolution-lease
+        (& state)
+        (& declarations)
+        (& registries)
+        (cast 89 : u64))]
+    [store : typed.TypedStore (typed-test-store (& lease))]
+    [signature : typed.TypedTypeId
+      (typed-test-type!
+        (&mut store)
+        (& lease)
+        (ast.ast-ty-func (ast.ast-type-list-new) (& ast.AstType.I64)))]
+    [valid : bool
+      (and
+        (typed.typed-declared-call-valid? (& lease) 0 key false)
+        (typed.typed-declared-call-valid? (& lease) 1 foreign-key true)
+        (not (typed.typed-declared-call-valid? (& lease) 0 key true))
+        (not (typed.typed-declared-call-valid? (& lease) 1 foreign-key false))
+        (not (typed.typed-declared-call-valid? (& lease) 0 foreign-key false))
+        (not (typed.typed-declared-call-valid? (& lease) -1 key false))
+        (not (typed.typed-declared-call-valid? (& lease) 2 key false))
+        (not
+          (typed.typed-declared-call-valid?
+            (& lease)
+            9223372036854775807
+            key
+            false))
+        (match (typed.typed-call-add!
+          (&mut store)
+          (& lease)
+          (typed.TypedTypeId (typed.typed-handle-copy (& signature.handle)))
+          (typed.TypedCallKind.Declared 0 key)
+          0)
+          [(typed.TypedCallResult.Ok _) true]
+          [_ false])
+        (match (typed.typed-call-add!
+          (&mut store)
+          (& lease)
+          signature
+          (typed.TypedCallKind.Declared 0 foreign-key)
+          0)
+          [(typed.TypedCallResult.Err (typed.TypedError.Unknown)) true]
+          [_ false]))]
+    [_changed : symbols.CompilerSymbols
+      (symbols.compiler-symbols-index-decl
+        (symbols.compiler-symbols-shared-view (& declarations))
+        (&
+          (ast.ast-decl-def-fn-id
+            foreign-name
+            (ast.AstParamList (__tl_make-array ast.AstParam 0) 0)
+            ast.AstType.I64
+            0))
+        0
+        module
+        0)]
+    [stale : bool
+      (not (typed.typed-declared-call-valid? (& lease) 0 key false))]
+    (typed.typed-store-retire! (&mut store))
+    (and valid stale)))
+
 (define (compiler-typed-occurrence-self-test) : i64
+  (test.assert-true
+    (typed-test-declared-call-authority?)
+    "typed call: canonical target, declaration kind, bounds and live authority")
   (test.assert-true
     (typed-test-selected-occurrences?)
     "typed occurrence: contextual/generated selected children")

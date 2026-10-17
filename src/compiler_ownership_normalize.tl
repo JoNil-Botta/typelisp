@@ -912,6 +912,14 @@
   ;; have no positions; their binders derive from that reference.
   (Slice))
 
+;; Runtime call facts are owned before the selected store retires. The name
+;; in `kind` remains a lookup key; lowering must resolve it through its live
+;; symbol map. Signature children use the certificate's guarded type pool.
+(defstruct NormalizeCall
+  (kind typed.TypedCallKind)
+  (signature ast.AstType)
+  (record i64))
+
 (defenum NormalizeOperation
   ;; Own the selected runtime payload before the inference lease is retired.
   ;; Neither lowering nor a certificate reader may recover it from source IDs.
@@ -928,16 +936,17 @@
   (Continue)
   ;; Whether the return propagates a `try` failure (a generated return).
   (Return bool)
-  ;; A call through its checked signature; the key is the declared callee's
-  ;; canonical name key, or -1 for a callee value. Arguments are its children.
+  ;; A call through its checked signature; the first word names the declared
+  ;; callee in effect analysis (-1 for a callee value). The owned call facts
+  ;; retain its separate canonical name key. Arguments are its children.
   ;; The first flag marks a call of the declared cleanup function of its
   ;; argument's type: it discharges a cleanup obligation. The second marks a
   ;; call through a function value, its child 0. Last, the typed type record
   ;; of the callee's signature (-1 when not yet read): the call relates its
   ;; operands and result through it (`normalize-region-edges`). Then the
-  ;; typed call record's index (-1 when not yet read), which names the globals
-  ;; the call may assign (`OwnershipNormalizeGlobalWrites`).
-  (Call i64 i64 bool bool i64 i64)
+  ;; owned runtime call facts, including the typed call record's identity for
+  ;; the globals the call may assign (`OwnershipNormalizeGlobalWrites`).
+  (Call i64 i64 bool bool i64 NormalizeCall)
   (Primitive typed.TypedPrimitive)
   ;; A formed place: it evaluates nothing itself. Only whole binders are
   ;; represented; projections stay outside the normalized subset.
@@ -1112,7 +1121,13 @@
     ;; The record is read after the occurrence view ends (`normalize-header!`).
     [(typed.TypedOperation.Call _)
       (NormalizeOperationResult.Ok
-        (NormalizeOperation.Call -1 -1 false false -1 -1))]
+        (NormalizeOperation.Call
+          -1
+          -1
+          false
+          false
+          -1
+          (NormalizeCall typed.TypedCallKind.Construct ast.AstType.Unit -1)))]
     [(typed.TypedOperation.Primitive primitive)
       (NormalizeOperationResult.Ok
         (NormalizeOperation.Primitive (normalize-primitive-copy primitive)))]
@@ -1208,6 +1223,31 @@
   ;; (`OwnershipNormalizeGlobalWrites`).
   (borrowed-globals (__tl_dyn-array i64)))
 
+(define (normalize-scalar-call? [call : (& call NormalizeCall)]) : bool
+  (unless
+    (match (& call.kind)
+      [(or (typed.TypedCallKind.Declared _ key)
+           (typed.TypedCallKind.Foreign _ key))
+        (>= key 0)]
+      [_ false])
+    (return false))
+  (match (& call.signature)
+    [(ast.AstType.Func params result)
+      (unless
+        (match (normalize-type-code (& (ast.ty-node-get result)))
+          [(NormalizeInt.Ok code) (< code 13)]
+          [_ false])
+        (return false))
+      (for [index (iterator.range 0 params.len)]
+        (unless
+          (match (normalize-type-code
+            (& (ast.ty-node-get (ast.ast-type-list-get params index -1))))
+            [(NormalizeInt.Ok code) (< code 13)]
+            [_ false])
+          (return false)))
+      true]
+    [_ false]))
+
 ;; This classifies an executable lowering representation, after the complete
 ;; ownership check. It never changes admission or retries a failed analysis.
 (define (ownership-normalized-scalar-emission?
@@ -1238,6 +1278,7 @@
              (NormalizeOperation.While) (NormalizeOperation.Break)
              (NormalizeOperation.Continue) (NormalizeOperation.Return _))
           true]
+        [(NormalizeOperation.Call _ _ _ _ _ call) (normalize-scalar-call? call)]
         [_ false])
       (return false)))
   (for [block (iterator.range 0 (array-length output.body.blocks))]
@@ -1248,6 +1289,7 @@
         (unless
           (match (& (array-ref instructions index).operation)
             [(or (own.OwnershipOperation.Read _)
+                 (own.OwnershipOperation.Consume _)
                  (own.OwnershipOperation.Assign _)
                  (own.OwnershipOperation.Copy _ _))
               true]
@@ -1633,10 +1675,11 @@
         (NormalizeHeader
           header.type
           header.origin
-          (try (normalize-call-operation! store lease id))
+          (try (normalize-call-operation! state store lease id))
           header.children)))))
 
 (define (normalize-call-operation!
+  [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedOccurrenceId]) : NormalizeOperationResult
@@ -1656,43 +1699,59 @@
           (return
             (NormalizeOperationResult.Err
               (OwnershipNormalizeFailure.Typed error)))])]
-    (match (typed.typed-call-get! store lease record)
-      [(typed.TypedCallView.Ok call)
-        (let
-          [key : i64
-            (match (& call.kind)
-              [(typed.TypedCallKind.Declared key) key]
-              [(typed.TypedCallKind.Foreign key) key]
-              [(typed.TypedCallKind.Discharge key) key]
-              [_ -1])]
-          ;; A call through a function value has the callee as child 0.
-          [indirect? : bool
-            (match (& call.kind)
-              [(typed.TypedCallKind.Indirect _) true]
-              [_ false])]
-          ;; A constructor takes owners over into its value, as the declared
-          ;; cleanup function discharges them.
-          [discharge? : bool
-            (match (& call.kind)
-              [(typed.TypedCallKind.Discharge _) true]
-              [(typed.TypedCallKind.Construct) true]
-              [_ false])]
-          ;; The call's children: its arguments, after the callee if any.
-          [count : i64
+    (let
+      [call : typed.TypedCall
+        (match (typed.typed-call-get! store lease record)
+          [(typed.TypedCallView.Ok call) (clone (deref call))]
+          [(typed.TypedCallView.Err error)
+            (return
+              (NormalizeOperationResult.Err
+                (OwnershipNormalizeFailure.Typed error)))])]
+      [signature : ast.AstType
+        (match (typed.typed-type-get! store lease call.signature)
+          [(typed.TypedTypeResult.Ok signature) (clone (deref signature))]
+          [(typed.TypedTypeResult.Err error)
+            (return
+              (NormalizeOperationResult.Err
+                (OwnershipNormalizeFailure.Typed error)))])]
+      [key : i64
+        (match (& call.kind)
+          [(typed.TypedCallKind.Declared key _) key]
+          [(typed.TypedCallKind.Foreign key _) key]
+          [(typed.TypedCallKind.Discharge key) key]
+          [_ -1])]
+      [indirect? : bool
+        (match (& call.kind)
+          [(typed.TypedCallKind.Indirect _) true]
+          [_ false])]
+      [discharge? : bool
+        (match (& call.kind)
+          [(typed.TypedCallKind.Discharge _) true]
+          [(typed.TypedCallKind.Construct) true]
+          [_ false])]
+      (try
+        (normalize-charge!
+          state
+          1
+          1
+          (+
+            (comptime (size-of (type NormalizeCall)))
+            (match (& signature)
+              [(ast.AstType.Func params _)
+                (+ (comptime (size-of (type ast.AstTypeList))) (* params.len 8))]
+              [_ 0]))))
+      (NormalizeOperationResult.Ok
+        (NormalizeOperation.Call
+          key
+          (+
+            call.argument-count
             (if indirect?
-              (+ call.argument-count 1)
-              call.argument-count)]
-          [signature-index : i64 call.signature.handle.index]
-          (NormalizeOperationResult.Ok
-            (NormalizeOperation.Call
-              key
-              count
-              discharge?
-              indirect?
-              signature-index
-              record.handle.index)))]
-      [(typed.TypedCallView.Err error)
-        (NormalizeOperationResult.Err (OwnershipNormalizeFailure.Typed error))])))
+              1
+              0))
+          discharge?
+          indirect?
+          call.signature.handle.index
+          (NormalizeCall call.kind signature record.handle.index))))))
 
 (define (normalize-node!
   [state : (&mut state NormalizeState)]
@@ -6466,7 +6525,8 @@
     ;; operands (#7904); a safe spawn (form 136) is keyed by its occurrence.
     (match (& node.operation)
       [(NormalizeOperation.Call _ _ _ _ _ record)
-        (try (normalize-global-writes! state active record (& node.source)))]
+        (try
+          (normalize-global-writes! state active record.record (& node.source)))]
       [_
         (when
           (normalize-builtin-code? node 136)

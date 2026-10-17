@@ -160,20 +160,19 @@
 
 (defenum TypedCallKind
   (Direct TypedResolvedGlobal)
-  ;; A direct call to the function declaration with this canonical
-  ;; module-qualified name key, selected before resolver authority exists for
-  ;; calls. The key identifies the callee in dumps and diagnostics only; the
-  ;; call's ownership contract is its checked signature type. No consumer may
-  ;; treat it as a resolved symbol.
-  (Declared i64)
+  ;; A checked function declaration's symbol-table index and canonical name
+  ;; key. The index names effects and diagnostics. The key is re-resolved by
+  ;; lowering; it is never a backend symbol. A model-only lease may omit the
+  ;; key (-1), which cannot select executable call emission.
+  (Declared i64 i64)
   ;; A struct or enum variant constructor named directly: like a Declared
   ;; call, its children are the operands alone, moved into a fresh value.
   (Construct)
-  ;; A direct call to the extern function declaration with this key (dumps
-  ;; only, like Declared). A foreign declaration carries no ownership effect
+  ;; An extern declaration index and canonical key, validated as for Declared.
+  ;; A foreign declaration carries no ownership effect
   ;; (SPEC 4.3): its children are the operands alone, each read for the call
   ;; (a non-Copy place is lent as a shared borrow), and its result is fresh.
-  (Foreign i64)
+  (Foreign i64 i64)
   ;; A call through a function value, its child 0. The expression id of the
   ;; callee when its name resolves at module level (a dispatcher, an extern,
   ;; a module value of function type), naming its effects (#7904); -1 for a
@@ -1431,6 +1430,41 @@
       (set! store.place-count (+ store.place-count 1))
       (TypedPlaceResult.Ok (TypedPlaceId handle)))))
 
+(define (typed-declared-call-valid?
+  [lease : (& lease (TypedBodyLease intern))]
+  [index : i64]
+  [key : i64]
+  [foreign? : bool]) : bool
+  (and
+    (>= index 0)
+    (match (& lease.resolution-authority)
+      [(TypedResolutionAuthority.None) (= key -1)]
+      [(TypedResolutionAuthority.Symbols authority)
+        (and
+          (symbols.compiler-resolution-lease-current? authority)
+          (>= key 0)
+          (< index (symbols.compiler-symbols-decl-count authority.symbols))
+          (=
+            key
+            (symbols.compiler-symbol-module-key-id-by-id
+              (symbols.compiler-symbols-owner-module-id-at-index-or
+                authority.symbols
+                index
+                -1)
+              (symbols.compiler-symbols-decl-name-id-at-index
+                authority.symbols
+                index)))
+          (match (symbols.compiler-symbols-decl-at-index
+            authority.symbols
+            index)
+            [(Ok declaration)
+              (match declaration
+                [(ast.AstDecl.DefFn _ _ _ _ _ _) (not foreign?)]
+                [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Function) _ _)
+                  foreign?]
+                [_ false])]
+            [_ false]))])))
+
 (define (typed-call-add!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
@@ -1449,11 +1483,15 @@
       (unless
         (typed-global-valid? lease global)
         (return (TypedCallResult.Err TypedError.Unknown)))]
-    [(TypedCallKind.Declared key)
-      (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))]
+    [(TypedCallKind.Declared index key)
+      (unless
+        (typed-declared-call-valid? lease index key false)
+        (return (TypedCallResult.Err TypedError.Unknown)))]
     [(TypedCallKind.Construct) unit]
-    [(TypedCallKind.Foreign key)
-      (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))]
+    [(TypedCallKind.Foreign index key)
+      (unless
+        (typed-declared-call-valid? lease index key true)
+        (return (TypedCallResult.Err TypedError.Unknown)))]
     [(TypedCallKind.Indirect _) unit]
     [(TypedCallKind.Discharge key)
       (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))])
@@ -1522,9 +1560,9 @@
               (+
                 call.argument-count
                 (match (& call.kind)
-                  [(TypedCallKind.Declared _) 0]
+                  [(TypedCallKind.Declared _ _) 0]
                   [(TypedCallKind.Construct) 0]
-                  [(TypedCallKind.Foreign _) 0]
+                  [(TypedCallKind.Foreign _ _) 0]
                   [(TypedCallKind.Discharge _) 0]
                   [_ 1]))))]
         [(TypedOperation.Unary _) (= count 1)]

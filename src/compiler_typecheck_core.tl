@@ -10305,7 +10305,7 @@
                 (if (= args.len 0)
                   (tc-selected-publish-call
                     (ResultTcType.Ok ty)
-                    (typed.TypedCallKind.Declared key)
+                    (tc-selected-declared-call-kind ctx key false)
                     fn-ty
                     syntax
                     source
@@ -10334,7 +10334,7 @@
                           [(TcSelectedOccurrence.Selected child)
                             (tc-selected-publish-call
                               (ResultTcType.Ok ty)
-                              (typed.TypedCallKind.Declared key)
+                              (tc-selected-declared-call-kind ctx key false)
                               fn-ty
                               syntax
                               source
@@ -10711,7 +10711,7 @@
                         [(TcSelectedOccurrence.Selected child)
                           (match (tc-selected-publish-call
                             (ResultTcType.Ok (tc-global-shared-view ty))
-                            (typed.TypedCallKind.Declared key)
+                            (tc-selected-declared-call-kind ctx key false)
                             fn-ty
                             typed.TypedSyntax.Generated
                             (tc-global-shared-view source)
@@ -13847,6 +13847,20 @@
     [info : TcCallBuiltinName (tc-call-builtin-name ctx env raw-name arg-count)]
     (and (= info.arm 0) (not (tc-call-variant-name-id? ctx info.name-id)))))
 
+(define (tc-selected-declared-call-kind
+  [ctx : TcContext]
+  [index : i64]
+  [foreign? : bool]) : typed.TypedCallKind
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [key : i64
+      (csym.compiler-symbol-module-key-id-by-id
+        (csym.compiler-symbols-owner-module-id-at-index-or symbols index -1)
+        (csym.compiler-symbols-decl-name-id-at-index symbols index))]
+    (if foreign?
+      (typed.TypedCallKind.Foreign index key)
+      (typed.TypedCallKind.Declared index key))))
+
 ;; The symbol index of the function definition or extern this callee name
 ;; denotes, or -1. Lexical storage shadows declarations exactly as for `set!`
 ;; (`tc-set-function-declaration?`). The index names the callee in dumps only:
@@ -14568,6 +14582,7 @@
             ctx
             env
             args
+            (& (ast.ast-type-list-new))
             0
             (__tl_make-array typed.TypedOccurrenceId args.len)
             (tc-global-shared-view source)
@@ -14590,6 +14605,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : (& args ast.AstExprList)]
+  [parameters : (& parameters ast.AstTypeList)]
   [index : i64]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [source : ownership.OwnershipSource]
@@ -14600,12 +14616,37 @@
     bind)
   (if (>= index args.len)
     (TcSelectedArgsResult.Ok children true sink)
-    (match (tc-infer-selected-operand
-      ctx
-      env
-      (ast.ast-expr-list-get args index 0)
-      (tc-global-shared-view source)
-      sink)
+    (match (let
+      [formal : ast.AstMaybeType
+        (if (< index parameters.len)
+          (let
+            [type : ast.AstType
+              (tc-resolve-type
+                ctx
+                (tc-context-type-get
+                  ctx
+                  (ast.ast-type-list-get parameters index -1)))]
+            (if (tc-selected-primitive-type? (& type))
+              (ast.AstMaybeType.Some type)
+              ast.AstMaybeType.No))
+          ast.AstMaybeType.No)]
+      (match formal
+        [(ast.AstMaybeType.Some type)
+          (tc-infer-selected-sequence-child
+            ctx
+            env
+            (ast.ast-expr-list-get args index 0)
+            (ast.AstMaybeType.Some type)
+            (tc-global-shared-view source)
+            true
+            sink)]
+        [(ast.AstMaybeType.No)
+          (tc-infer-selected-operand
+            ctx
+            env
+            (ast.ast-expr-list-get args index 0)
+            (tc-global-shared-view source)
+            sink)]))
       [(TcSelectedResult.Err message next)
         (TcSelectedArgsResult.Err message next)]
       [(TcSelectedResult.Ok _ occurrence next)
@@ -14616,6 +14657,7 @@
               ctx
               env
               args
+              parameters
               (+ index 1)
               children
               source
@@ -14669,6 +14711,7 @@
                     ctx
                     env
                     args
+                    (& (ast.ast-type-list-new))
                     1
                     children
                     (tc-global-shared-view source)
@@ -14735,6 +14778,7 @@
                     ctx
                     env
                     args
+                    (& (ast.ast-type-list-new))
                     1
                     children
                     (tc-global-shared-view source)
@@ -14847,26 +14891,32 @@
             TcSelectedOccurrence.Unrepresented
             TcSelectedSink.Query)]
         [(TcSelectedSink.Capture store lease bindings)
-          (match (tc-infer-selected-builtin-operands
-            ctx
-            env
-            args
-            0
-            (__tl_make-array typed.TypedOccurrenceId args.len)
-            (tc-global-shared-view source)
-            (TcSelectedSink.Capture store lease bindings))
-            [(TcSelectedArgsResult.Err message next)
-              (TcSelectedResult.Err message next)]
-            [(TcSelectedArgsResult.Ok children represented? next)
-              (tc-selected-publish-call
-                (ResultTcType.Ok ty)
-                (typed.TypedCallKind.Foreign key)
-                fn-ty
-                syntax
-                source
-                children
-                represented?
-                next)])])]))
+          (let
+            [parameters : ast.AstTypeList
+              (match (& fn-ty)
+                [(ast.AstType.Func params _) (clone (deref params))]
+                [_ (ast.ast-type-list-new)])]
+            (match (tc-infer-selected-builtin-operands
+              ctx
+              env
+              args
+              (& parameters)
+              0
+              (__tl_make-array typed.TypedOccurrenceId args.len)
+              (tc-global-shared-view source)
+              (TcSelectedSink.Capture store lease bindings))
+              [(TcSelectedArgsResult.Err message next)
+                (TcSelectedResult.Err message next)]
+              [(TcSelectedArgsResult.Ok children represented? next)
+                (tc-selected-publish-call
+                  (ResultTcType.Ok ty)
+                  (tc-selected-declared-call-kind ctx key true)
+                  fn-ty
+                  syntax
+                  source
+                  children
+                  represented?
+                  next)]))])]))
 
 ;; A read operand formed as a place: a named place, or an array element (lent
 ;; whole for the read when its element cannot be named).
@@ -16456,7 +16506,10 @@
                                               (typed.TypedCallKind.Discharge
                                                 key)]
                                             [else
-                                              (typed.TypedCallKind.Declared key)])
+                                              (tc-selected-declared-call-kind
+                                                ctx
+                                                key
+                                                false)])
                                           (tc-global-shared-view fn-ty)
                                           syntax
                                           source
@@ -120001,8 +120054,8 @@
                           global.index
                           false
                           indirect)]
-                      [(or (typed.TypedCallKind.Declared key)
-                           (typed.TypedCallKind.Foreign key))
+                      [(or (typed.TypedCallKind.Declared key _)
+                           (typed.TypedCallKind.Foreign key _))
                         (tc-global-effect-declared-node ctx key false indirect)]
                       ;; A declared cleanup is keyed by its symbol handle.
                       [(typed.TypedCallKind.Discharge key)

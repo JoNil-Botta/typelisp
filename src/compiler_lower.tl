@@ -73577,6 +73577,9 @@
     [else (LowerNormalizedType.Err "lower: invalid certified scalar type")]))
 
 (defstruct LowerNormalizedState
+  (ctx tc_core.TcContext)
+  (names LowerNameCache)
+  (types LowerTypeCache)
   (producers (__tl_dyn-array i64))
   (bindings (__tl_dyn-array bool))
   (labels (__tl_dyn-array i64))
@@ -73680,6 +73683,7 @@
               (match (& node.operation)
                 [(norm.NormalizeOperation.Literal _) true]
                 [(norm.NormalizeOperation.Unary _) true]
+                [(norm.NormalizeOperation.Call _ _ _ _ _ _) true]
                 [(norm.NormalizeOperation.Binary op)
                   (match op
                     [(ast.AstBinOp.And) false]
@@ -73722,6 +73726,98 @@
             (set! index (+ index 1)))))
       (LowerNormalizedUnit.Ok unit))))
 
+(define (lower-normalized-call!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]
+  [instrs : (&mut instrs ir.CompilerIrInstrBuilder)]
+  [node : (& node norm.NormalizeNode)]
+  [call : (& call norm.NormalizeCall)]) : LowerNormalizedUnit
+  (let
+    [ctx : tc_core.TcContext (clone state.ctx)]
+    [key : i64
+      (match (& call.kind)
+        [(typed.TypedCallKind.Declared _ key) key]
+        [(typed.TypedCallKind.Foreign _ key) key]
+        [_
+          (return
+            (LowerNormalizedUnit.Err "lower: invalid certified direct call"))])]
+    ;; A typed declaration key is not a symbol. Resolve through the same
+    ;; name cache as ordinary lowering, and require the current declaration's
+    ;; signature to match the retained checked contract.
+    [display : String
+      (tc_core.tc-nominal-name-id-display-for-session
+        (tc_core.tc-context-structural-session ctx)
+        key)]
+    [symbol : i64
+      (lower-name-cache-ir-symbol (& state.names) key key (clone display))]
+    [declaration : ast.AstType
+      (match (lower-type-cache-lookup-id
+        (owned_view.compiler-owned-reference-shared-view (& state.types))
+        key
+        display)
+        [(tc_core.ResultTcType.Ok type) type]
+        [(tc_core.ResultTcType.Err _)
+          (return (LowerNormalizedUnit.Err "lower: missing certified callee"))])]
+    [values : ir.CompilerIrValueBuilder
+      (ir.compiler-ir-value-builder-with-capacity (array-length node.operands))]
+    (unless
+      (norm.normalize-scalar-call? call)
+      (return (LowerNormalizedUnit.Err "lower: invalid certified call form")))
+    (unless
+      (ast.ast-type-eq-with-pools?
+        (tc_core.tc-context-pools ctx)
+        (& declaration)
+        (& call.signature))
+      (return
+        (LowerNormalizedUnit.Err "lower: certified callee signature changed")))
+    (match (& call.signature)
+      [(ast.AstType.Func params result)
+        (unless
+          (and
+            (= params.len (array-length node.operands))
+            (match (norm.normalize-type-code
+              (& (tc_core.tc-context-type-get ctx result)))
+              [(norm.NormalizeInt.Ok code) (= code node.type)]
+              [_ false]))
+          (return
+            (LowerNormalizedUnit.Err "lower: invalid certified call signature")))
+        (for [index (iterator.range 0 params.len)]
+          (let
+            [place : i64 (array-ref node.operands index)]
+            (unless
+              (and
+                (lower-normalized-place? (& output.body) place)
+                (match (norm.normalize-type-code
+                  (&
+                    (tc_core.tc-context-type-get
+                      ctx
+                      (ast.ast-type-list-get params index -1))))
+                  [(norm.NormalizeInt.Ok code)
+                    (= code (array-ref output.body.places place).type.index)]
+                  [_ false]))
+              (return
+                (LowerNormalizedUnit.Err
+                  "lower: invalid certified call operand")))
+            (ir.compiler-ir-value-builder-push!
+              (&mut values)
+              (ir.CompilerIrValue.Var place))))]
+      [_
+        (return
+          (LowerNormalizedUnit.Err "lower: invalid certified call signature"))])
+    (let
+      [args : ir.CompilerIrValueSeq
+        (ir.compiler-ir-value-builder-to-seq values)]
+      (lower-normalized-emit!
+        state
+        instrs
+        (& node.source)
+        (ir.CompilerIrInstr.Call
+          node.result-place
+          symbol
+          (ir.compiler-ir-call-args-from-seq (& args))
+          (try (lower-normalized-type node.type)))))
+    (LowerNormalizedUnit.Ok unit)))
+
 (define (lower-normalized-assign!
   [output : (& output norm.OwnershipNormalizedBody)]
   [state : (&mut state LowerNormalizedState)]
@@ -73753,6 +73849,8 @@
                       (clone (deref literal))
                       (clone type))
                     type))]
+              [(norm.NormalizeOperation.Call _ _ _ _ _ call)
+                (try (lower-normalized-call! output state instrs node call))]
               [(norm.NormalizeOperation.Unary op)
                 (begin
                   (unless
@@ -73853,6 +73951,9 @@
     (LowerNormalizedUnit.Ok unit)))
 
 (define (lower-normalized
+  [ctx : tc_core.TcContext]
+  [names : LowerNameCache]
+  [types : LowerTypeCache]
   [output : (& output norm.OwnershipNormalizedBody)]
   [name : i64]
   [source-names : ci.InternSourceNameSessionHandle]
@@ -73875,6 +73976,9 @@
       [blocks : i64 (array-length output.body.blocks)]
       [state : LowerNormalizedState
         (LowerNormalizedState
+          ctx
+          names
+          types
           (__tl_make-array i64 0)
           (__tl_make-array bool 0)
           (__tl_make-array i64 0)
@@ -73943,7 +74047,9 @@
                       (try (lower-normalized-charge! (&mut state) 1))
                       (match (&
                         (array-ref block.instructions instruction).operation)
-                        [(own.OwnershipOperation.Read _) unit]
+                        [(or (own.OwnershipOperation.Read _)
+                             (own.OwnershipOperation.Consume _))
+                          unit]
                         [(own.OwnershipOperation.Assign place)
                           (try
                             (lower-normalized-assign!
@@ -74101,6 +74207,9 @@
             (ResultLowerFunction.Err
               (box (lower-diagnostic "lower: checked body signature changed")))))
         (match (lower-normalized
+          ctx
+          names
+          type-cache
           (& output)
           logical-name
           (tc_core.tc-context-source-names ctx)

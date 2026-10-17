@@ -1681,7 +1681,14 @@ graph or emission failure is a hard error, never an AST retry.
 Other bodies retain the existing explicit `Legacy` emission entry after the
 same complete ownership check. This is a lowering migration boundary, not a
 second admission engine or an acceptance certificate for the whole migration.
-Calls, nonprimitive places, loans, cleanup and arena emission still need to move
+Direct scalar calls now retain their checked signature and distinct declaration
+index/name key before the inference lease retires. The live resolver validates
+the index, declaration kind and key at publication; lowering resolves the key
+through its existing name cache and checks the current declaration signature.
+Arguments use the graph's already captured places in source order. Foreign
+primitive operands retain the formal parameter's contextual type through the
+same operand walker used by read-only forms. Calls returning Never, indirect
+calls, nonprimitive places, loans, cleanup and arena emission still need to move
 to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
 required. The scalar source fixture covers snapshots, argument ABI, loop exits
 and returns; direct graph selection additionally has a lowering assertion.

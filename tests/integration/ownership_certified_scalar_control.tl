@@ -63,9 +63,44 @@
 (define (unsigned [_unused : i64] [value : u64]) : bool
   (> value 9223372036854775807))
 
+(define (sum [left : i64] [right : i64]) : i64
+  (+ left right))
+
+(define (captured-call [value : i64]) : i64
+  (sum
+    value
+    (begin
+      (set! value 99)
+      0)))
+
+(define (nested-calls) : i64
+  (sum (sum 10 10) (sum 11 11)))
+
+(define (recursive-call [remaining : i64]) : i64
+  (if (= remaining 0)
+    0
+    (+ 7 (recursive-call (- remaining 1)))))
+
+(define (ordered-calls) : bool
+  (let
+    [value : i64 0]
+    (=
+      (sum
+        (begin
+          (set! value 20)
+          value)
+        (begin
+          (set! value (+ value 2))
+          value))
+      42)))
+
 (define (main) : i64
   (if (and
     (= (captured-left 42) 42)
+    (= (captured-call 42) 42)
+    (= (nested-calls) 42)
+    (= (recursive-call 6) 42)
+    (ordered-calls)
     (ordered-comparison 42)
     (= (control 9 3) 36)
     (= (short-circuit true) 10)

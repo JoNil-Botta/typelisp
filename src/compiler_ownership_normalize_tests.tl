@@ -411,7 +411,7 @@
         (&mut store)
         (& lease)
         signature
-        (typed.TypedCallKind.Declared 5)
+        (typed.TypedCallKind.Declared 5 -1)
         1)
         [(typed.TypedCallResult.Ok id) id]
         [_ (io.panic "normalize fixture call")])]
@@ -420,7 +420,7 @@
         (&mut store)
         (& lease)
         signature
-        (typed.TypedCallKind.Declared 5)
+        (typed.TypedCallKind.Declared 5 -1)
         1)
         [(typed.TypedCallResult.Ok id) id]
         [_ (io.panic "normalize fixture call")])]
@@ -578,7 +578,7 @@
         store
         lease
         signature
-        (typed.TypedCallKind.Declared key)
+        (typed.TypedCallKind.Declared key -1)
         (array-length arguments))
         [(typed.TypedCallResult.Ok id) id]
         [_ (io.panic "normalize fixture call")])]

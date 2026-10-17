@@ -26,6 +26,20 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+## Packed field receivers
+
+`packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
+and two-word sibling writes, mutable-reference calls and whole-referent writes,
+conditional and equal-content rebinding, nested stores, loops, shadowing,
+zero-sized fields, and tuple/memory-class controls. A scalar transition oracle
+checks both packed widths across 99 input/action combinations. The lowerer test
+pins the pure packed path, guarded frame homes, and absence of runtime heap
+allocation. The paired safety fixtures retain rejection of live borrowed roots
+and immutable field access.
+The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
+fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
+sub-word integer and floating fields, and move-only boxed field values.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

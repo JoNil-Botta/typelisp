@@ -1749,6 +1749,18 @@
         (lower-spmd-publish-spans state))
       (Err diagnostic)]))
 
+(defenum LowerRebindGuards
+  (No)
+  (Some (Box LowerRebindGuard)))
+
+;; An active packed-field receiver still denotes its selected value only
+;; until a whole assignment replaces that local binding. Flags are runtime
+;; state; compiler-side guard links are immutable while lowering the RHS.
+(defstruct LowerRebindGuard
+  (root i64)
+  (flag i64)
+  (previous LowerRebindGuards))
+
 ;; Lowering threads one state through every expression in a function. Keep the
 ;; public carrier to one word and mutate its function-owned cell in place:
 ;; returning the former wide value from every variable allocation, emission,
@@ -1772,6 +1784,7 @@
   (function-state CompilerLowerFunctionState)
   (mode CompilerLowerMode)
   (address-taken lower_i64_i64_map.Map)
+  (rebind-guards LowerRebindGuards)
   ;; Tail-call-safe current function parameter var range: [start, end).
   (tail-param-start i64)
   (tail-param-end i64)
@@ -1842,6 +1855,7 @@
         function-state
         mode
         address-taken
+        (LowerRebindGuards.No)
         tail-param-start
         tail-param-end
         (No)
@@ -1858,6 +1872,50 @@
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower-state-from-box (box (__tl-box-place data)))))
+
+(define (lower-rebind-guard-push!
+  [state : LowerState]
+  [root : i64]
+  [flag : i64]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [previous : LowerRebindGuards
+      (replace! (deref data).rebind-guards (LowerRebindGuards.No))]
+    (set!
+      (deref data).rebind-guards
+      (LowerRebindGuards.Some (box (LowerRebindGuard root flag previous))))))
+
+(define (lower-rebind-guard-pop! [state : LowerState]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (match (replace! (deref data).rebind-guards (LowerRebindGuards.No))
+      [(LowerRebindGuards.Some guard)
+        (set!
+          (deref data).rebind-guards
+          (replace! (deref guard).previous (LowerRebindGuards.No)))]
+      [(LowerRebindGuards.No) (io.panic "lower: missing packed receiver guard")])))
+
+(define (lower-rebind-guards-invalidate-at
+  [state : LowerState]
+  [guards : (& guards LowerRebindGuards)]
+  [root : i64]) : LowerState
+  (match guards
+    [(LowerRebindGuards.No) state]
+    [(LowerRebindGuards.Some guard)
+      (let
+        [next : LowerState
+          (if (= guard.root root)
+            (lower-state-emit state (Mov guard.flag (Bool false) (Bool)))
+            state)]
+        (lower-rebind-guards-invalidate-at next (& guard.previous) root))]))
+
+(define (lower-rebind-guards-invalidate [state : LowerState] [root : i64]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (lower-rebind-guards-invalidate-at
+      state
+      (& (deref data).rebind-guards)
+      root)))
 
 (defenum LowerMaybeArrayVar
   (No)
@@ -29611,7 +29669,9 @@
                                   (Expr
                                     (lower-state-emit-at-expr
                                       ctx
-                                      assign-state
+                                      (lower-rebind-guards-invalidate
+                                        assign-state
+                                        id)
                                       (Mov id assign-ir target-ir-ty)
                                       origin)
                                     Unit
@@ -29754,7 +29814,16 @@
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-struct-set ctx state env type-env receiver field value origin))]
+        (lower-struct-set
+          ctx
+          state
+          env
+          type-env
+          receiver
+          field
+          value
+          value-box
+          origin))]
     [(FixedMakeArray _ _)
       (lower-init-expr
         ctx
@@ -41091,17 +41160,83 @@
     ctx
     state
     storage-ptr
-    (lower-global-shared-view receiver-ir-ty))
-    [(Expr load-state loaded _)
+    receiver-ir-ty)
+    [(Expr load-state loaded loaded-ty)
       (Ok
         (Expr
           (lower-state-emit-at-expr
             ctx
             load-state
-            (Mov local-id loaded receiver-ir-ty)
+            (Mov local-id loaded loaded-ty)
             origin)
           Unit
           (Unit)))]))
+
+;; A packed receiver shares its real local home with RHS field/borrow writes.
+;; Whole local assignment replaces the selected value instead. A guard tracks
+;; that identity change, independently of the replacement's contents. The old
+;; unaliased value is then dead, so its final unit-valued field store is omitted.
+(define (lower-store-rebind-guarded-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [local-id : i64]
+  [field-ptr : ir.CompilerIrValue]
+  [field-ir-ty : ast.AstType]
+  [value : ast.AstExpr]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(Alloc flag-state flag)
+      (let
+        [guard-state : LowerState
+          (lower-state-emit flag-state (Mov flag (Bool true) (Bool)))]
+        (lower-rebind-guard-push! guard-state local-id flag)
+        (match (lower-expr-expected
+          ctx
+          guard-state
+          env
+          type-env
+          value
+          field-ir-ty
+          origin)
+          [(Err message)
+            (lower-rebind-guard-pop! guard-state)
+            (Err message)]
+          [(Ok lowered)
+            (match lowered
+              [(Expr value-state value-ir value-ty)
+                (lower-rebind-guard-pop! value-state)
+                (match (lower-state-fresh-label value-state "receiver_live")
+                  [(Label live-state live-label)
+                    (match (lower-state-fresh-label live-state "receiver_done")
+                      [(Label labels-state done-label)
+                        (let
+                          [store-state : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                labels-state
+                                (Branch (Var flag) live-label done-label))
+                              live-label)]
+                          [written
+                            (try
+                              (lower-struct-field-store-result
+                                ctx
+                                store-state
+                                field-ptr
+                                value-ir
+                                value-ty))]
+                          (match written
+                            [(Expr written-state _ _)
+                              (Ok
+                                (Expr
+                                  (lower-state-finish-block
+                                    (lower-state-emit
+                                      written-state
+                                      (Jump done-label))
+                                    done-label)
+                                  Unit
+                                  (Unit)))]))])])])]))]))
 
 (define (lower-struct-set-register-resident-local
   [ctx : tc_core.TcContext]
@@ -41113,6 +41248,7 @@
   [field : String]
   [field-ir-ty : ast.AstType]
   [value : ast.AstExpr]
+  [value-box : i64]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (ast.ast-expr-unspan (& receiver))
     [(Var name)
@@ -41128,16 +41264,34 @@
               (tc_core.tc-type-without-regions
                 (tc_core.tc-resolve-type ctx receiver-ty))]
             [receiver-size : i64 (lower-type-size ctx receiver-ir-ty)]
-            (match (lower-reserve-inline-storage
-              state
-              (if (= receiver-size 0)
-                1
-                receiver-size)
-              receiver-ir-ty)
-              [(Expr storage-state storage-ptr _)
+            [retained : bool
+              (or
+                (not (= (lower-call-arg-expr-write-code ctx -1 value-box) 0))
+                (and
+                  (lower-state-address-taken-var? state local-id)
+                  (not (lower-call-arg-expr-reads-only? ctx value-box))))]
+            [storage
+              (try
+                (if retained
+                  (lower-mutable-var-storage-address-id
+                    ctx
+                    state
+                    env
+                    name
+                    receiver-ir-ty
+                    (lower-global-shared-view origin))
+                  (ResultLowerExpr.Ok
+                    (lower-reserve-inline-storage
+                      state
+                      (if (= receiver-size 0)
+                        1
+                        receiver-size)
+                      receiver-ir-ty))))]
+            (match storage
+              [(Expr storage-state storage-ptr storage-ty)
                 (let
                   [stored-root-state : LowerState
-                    (if (= receiver-size 0)
+                    (if (or retained (= receiver-size 0))
                       storage-state
                       (lower-store-inline-value-at-offset
                         ctx
@@ -41145,7 +41299,7 @@
                         storage-ptr
                         0
                         (Var local-id)
-                        (lower-global-shared-view receiver-ir-ty)
+                        (lower-global-shared-view storage-ty)
                         receiver-size))]
                   [place-lowered
                     (try
@@ -41153,23 +41307,36 @@
                         ctx
                         stored-root-state
                         (lower-global-shared-view storage-ptr)
-                        (lower-global-shared-view receiver-ir-ty)
+                        (lower-global-shared-view storage-ty)
                         field
                         (lower-global-shared-view origin)))]
                   (match place-lowered
                     [(Expr place-state field-ptr _)
                       (let
+                        [value-origin : ast.AstExpr
+                          (lower-global-shared-view value)]
                         [stored-field
                           (try
-                            (lower-store-expr-into-address-result
-                              ctx
-                              place-state
-                              env
-                              type-env
-                              field-ptr
-                              (lower-global-shared-view value)
-                              field-ir-ty
-                              value))]
+                            (if retained
+                              (lower-store-rebind-guarded-expr
+                                ctx
+                                place-state
+                                env
+                                type-env
+                                local-id
+                                field-ptr
+                                field-ir-ty
+                                value
+                                value-origin)
+                              (lower-store-expr-into-address-result
+                                ctx
+                                place-state
+                                env
+                                type-env
+                                field-ptr
+                                value
+                                field-ir-ty
+                                value-origin)))]
                         (match stored-field
                           [(Expr store-state _ _)
                             (lower-reload-register-resident-local-from-storage
@@ -41177,7 +41344,7 @@
                               store-state
                               storage-ptr
                               local-id
-                              receiver-ir-ty
+                              storage-ty
                               origin)]))]))]))
           (Err
             (box
@@ -41265,6 +41432,7 @@
   [receiver : ast.AstExpr]
   [field-id : i64]
   [value : ast.AstExpr]
+  [value-box : i64]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (match (lower-expr-result-type-or-check
     ctx
@@ -41316,6 +41484,7 @@
                   field
                   field-ir-ty
                   value
+                  value-box
                   origin)
                 (let
                   [place-lowered

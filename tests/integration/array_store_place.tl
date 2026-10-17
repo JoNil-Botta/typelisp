@@ -219,6 +219,22 @@
         40)
       (= (array-ref items 0) 40))))
 
+(define (boxed-fixed-rebind?) : bool
+  (let
+    [p : (Box (Array i64 2)) (box (array 10 20))]
+    [q : (Box (Array i64 2)) (box (array 30 40))]
+    [visits : i64 0]
+    (set!
+      (array-ref (deref p) 0)
+      (begin
+        (set! p q)
+        (set! visits (+ visits 1))
+        99))
+    (and
+      (= (array-ref (deref p) 0) 30)
+      (= (array-ref (deref p) 1) 40)
+      (= visits 1))))
+
 (define (main) : i64
   (cond
     [(not (grow?)) 1]
@@ -233,4 +249,5 @@
     [(not (let-storage?)) 10]
     [(not (return-receiver? true)) 11]
     [(not (return-receiver? false)) 12]
+    [(not (boxed-fixed-rebind?)) 13]
     [else 42]))

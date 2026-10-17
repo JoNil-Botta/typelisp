@@ -1797,7 +1797,7 @@
                   0)
                 0
                 ast.AstImportedSpmdMetadata.No)
-              (ast.ast-ty-func (ast.ast-type-list-new) (& ast.AstType.I64))))
+              (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64)))))
           1
           module
           0))]
@@ -1815,7 +1815,7 @@
       (typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func (ast.ast-type-list-new) (& ast.AstType.I64)))]
+        (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64))))]
     [valid : bool
       (and
         (typed.typed-declared-call-valid? (& lease) 0 key false)
@@ -1845,7 +1845,10 @@
           signature
           (typed.TypedCallKind.Declared 0 foreign-key)
           0)
-          [(typed.TypedCallResult.Err (typed.TypedError.Unknown)) true]
+          [(typed.TypedCallResult.Err error)
+            (match error
+              [(typed.TypedError.Unknown) true]
+              [_ false])]
           [_ false]))]
     [_changed : symbols.CompilerSymbols
       (symbols.compiler-symbols-index-decl

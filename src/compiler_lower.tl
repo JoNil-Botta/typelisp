@@ -29053,7 +29053,11 @@
                 env
                 type-env
                 (lower-global-shared-view expr)
-                expr
+                ;; Match ordinary array reads: blame the index, including its
+                ;; caller span when it was substituted into a macro body.
+                (match (ast.ast-expr-unspan (& expr))
+                  [(ArrayRef _ index) (lower-context-expr-get ctx index)]
+                  [_ expr])
                 (tc_core.tc-type-without-regions ty)))
             (lower-expr ctx state env type-env expr))]
         [(Err message) (Err (box (lower-diagnostic-at-expr ctx expr message)))])

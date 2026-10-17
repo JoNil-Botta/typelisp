@@ -2075,7 +2075,9 @@
     [items1 : (__tl_dyn-array String) (__tl_make-array String n)]
     [items2 : (__tl_dyn-array String) (__tl_make-array String n)]
     [items3 : (__tl_dyn-array String) (__tl_make-array String n)]
+    [wide : CloneWide (CloneWide 1 2 3 4)]
     (begin
+      (clone-projection (& wide))
       (clone-tuple items1)
       (clone-dyn items2)
       (clone-holder items3)

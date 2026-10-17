@@ -3392,6 +3392,172 @@
         (>= (opt-input-arena-leaf-calls (& functions) "main") 0)
         "main survives")]))
 
+;; The callback context lives outside the source function arena.
+(defstruct OptInputRetirementTestState
+  (source (__tl_dyn-array i64))
+  (calls (__tl_dyn-array i64)))
+
+(define (opt-test-retire-input! [address : i64]) : unit
+  (let
+    [state : OptInputRetirementTestState
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr OptInputRetirementTestState))))]
+    [source : i64 (array-ref state.source 0)]
+    (test.assert-true (> source 0) "input retirement runs only once")
+    (test.assert-false
+      (= (arena.tl_arena_current) source)
+      "the source arena is not current at the handoff")
+    (+= (array-ref state.calls 0) 1)
+    (set! (array-ref state.source 0) 0)
+    (unsafe
+      (arena.tl_arena_destroy source))))
+
+(define (opt-test-input-retirement
+  [pools : ast.AstNodePoolContext]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]
+  [authority? : bool]) : unit
+  (let
+    [source : i64 (arena.tl_arena_make)]
+    [source-functions : ir.CompilerIrFunctionSeq
+      (in-arena
+        (arena.Arena source)
+        (ir.compiler-ir-clone-function-seq pools (& functions)))]
+    [function-count : i64 functions.len]
+    [control : ir.CompilerIrProgram
+      (match (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          functions
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        (opt.optimize-request pools level))
+        [(Program result _) result])]
+    [state : OptInputRetirementTestState
+      (OptInputRetirementTestState (__tl_make-array source) (__tl_make-array 0))]
+    [request : opt.OptimizeRequest (opt.optimize-request pools level)]
+    (when
+      authority?
+      (set!
+        request.input-retirement
+        (opt.OptInputRetirement.Retire
+          (unsafe
+            (cast (ptr->int (ptr-addr-of state)) : i64))
+          opt-test-retire-input!)))
+    (match (opt.optimize-program
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (in-arena
+          (arena.Arena source)
+          (ir.compiler-ir-clone-function-seq pools (& source-functions)))
+        (ir.compiler-ir-extern-seq-empty))
+      (ir.compiler-source-spans-empty)
+      request)
+      [(Program result _)
+        (test.assert-i64-eq
+          (array-ref state.calls 0)
+          (if (and authority? (= level 2))
+            1
+            0)
+          "only level 2 consumes explicit retirement authority")
+        (test.assert-true
+          (opt-test-program-eq
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (clone control)
+            (clone result))
+          "retirement preserves the complete optimized program")
+        (unless
+          (= (array-ref state.source 0) 0)
+          (test.assert-i64-eq
+            source-functions.len
+            function-count
+            "retained source functions remain readable")
+          (set! (array-ref state.source 0) 0)
+          (unsafe
+            (arena.tl_arena_destroy source)))
+        (when
+          (>= level 1)
+          (test.assert-true
+            (opt-test-program-eq
+              (ast.ast-node-pool-context-type-segment-bases pools)
+              control
+              result)
+            "optimized output survives source retirement"))])))
+
+(test
+  optimizer-input-retirement-authority-and-levels
+  (for [level (iterator.range 0 3)]
+    (for [authority (iterator.range 0 2)]
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (opt-input-arena-functions)
+        level
+        (= authority 1))
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (ir.compiler-ir-function-seq-empty)
+        level
+        (= authority 1)))))
+
+(define (opt-test-input-retirement-pools) : unit
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [job : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [filler : i64 (ast.ast-node-pool-context-type-push job (Bool))]
+    (for [i (iterator.range 0 1100)]
+      (set!
+        filler
+        (ast.ast-node-pool-context-type-push job (Array filler (+ i 1)))))
+    (test.assert-true
+      (> filler ast.ast-type-node-pool-segment-size)
+      "job types cross a segment")
+    (for [collision (iterator.range 0 2)]
+      (let
+        [lifetimes : ast.AstLifetimeList
+          (ast.ast-lifetime-cons 71 (& (ast.ast-lifetime-list-new)))]
+        [nominal : ast.AstType
+          (StructArgs (opt-test-symbol "retained") (box lifetimes))]
+        [array : ast.AstType (ast.ast-ty-array-with-pools job (& nominal) 4)]
+        [boxed : ast.AstType (ast.ast-ty-box-with-pools job (& array))]
+        [reference : ast.AstType (ast.ast-ty-ref-with-pools job 71 (& boxed))]
+        [tuple : ast.AstType
+          (Tuple
+            (box
+              (ast.ast-type-cons-with-pools
+                job
+                (& reference)
+                (& (ast.ast-type-list-new)))))]
+        [function : ast.AstType
+          (ast.ast-ty-func-with-pools
+            job
+            (ast.ast-type-cons-with-pools
+              job
+              (& tuple)
+              (& (ast.ast-type-list-new)))
+            (& tuple))]
+        [body : ir.CompilerIrFunction
+          (opt-inline-job-pool-function "main" function (irt.instrs "return 7"))]
+        [ambient : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 4 16)]
+        (when
+          (= collision 1)
+          (for [i (iterator.range 0 1200)]
+            (ast.ast-node-pool-context-type-push ambient (Array 0 (+ i 1)))))
+        (ast.ast-node-pool-context-install! ambient)
+        (opt-test-input-retirement
+          job
+          (ir.compiler-ir-function-seq-prepend
+            (& body)
+            (& (ir.compiler-ir-function-seq-empty)))
+          2
+          true)))
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
+  optimizer-input-retirement-explicit-pool-nested-types
+  (opt-test-input-retirement-pools))
+
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten
 ;; callers: six rewritten callers add exactly six times the rows one adds.

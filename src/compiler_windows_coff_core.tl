@@ -452,7 +452,10 @@
           opt-level
           profile-state
           false
-          (compiler_ir_types.compiler-ir-representation-index-empty)))
+          (compiler_ir_types.compiler-ir-representation-index-empty)
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler_driver_core.compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg

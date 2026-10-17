@@ -130,6 +130,25 @@ stdout contains Minimal failing example:
 stdout contains Fix:
 stdout contains See also:
 
+case loader-generated-error-codes
+target linux-x86_64 windows-x86_64
+each check compile
+step generated-missing-import
+run {{each}} tests/safety/decls_generated_missing_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+step generated-missing-selection
+run {{each}} tests/safety/decls_generated_missing_selected_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'decls_generated_conflict_left' has no selected item 'missing'
+step generated-alias-collision
+run {{each}} tests/safety/decls_generated_conflicting_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0305]: compiler-load: ambiguous import alias 'dep'
+
 case check-parser-recovery-diagnostics
 file main.tl
 (define)

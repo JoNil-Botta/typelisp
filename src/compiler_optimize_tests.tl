@@ -620,6 +620,8 @@
       dst
       (& ret)
       (& sa)
+      (& (ir.compiler-ir-param-seq-empty))
+      (& (opt.OptInlineArgStaging false false (__tl_make-array bool 0) 0))
       np
       base
       label-prefix

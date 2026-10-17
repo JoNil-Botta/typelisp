@@ -16377,7 +16377,7 @@
 (test
   compiler-lower-store-exits
   (let
-    [bodies : (Array String 26)
+    [bodies : (Array String 28)
       (array
         "(let [n : i64 1] (set! n (return 42)) 1)"
         "(let [p : Pair (Pair 1 2)] (set! p (return 42)) 1)"
@@ -16404,7 +16404,9 @@
         "(let [n : i64 1] [m : i64 2] (set! n (use-ref (&mut m) (return 42))) 1)"
         "(let [n : i64 1] [f : (-> i64 i64 i64) add] (set! n (f 1 (return 42))) 1)"
         "(let [n : i64 1] (set! n (c-add 1 (return 42))) 1)"
-        "(let [n : i64 1] (set! n (unsafe (syscall 39 (ann (return 42) : i64)))) 1)")]
+        "(let [n : i64 1] (set! n (unsafe (syscall 39 (ann (return 42) : i64)))) 1)"
+        "(let [p : (Box i64) (box 1)] (set! p (box (return 42))) 1)"
+        "(let [p : (Tuple i64 i64) (tuple 1 2)] (set! p (tuple 1 (return 42))) 1)")]
     (for [index (iterator.range 0 (array-length bodies))]
       (let
         [source : String
@@ -16434,6 +16436,7 @@
           (str_cat.str-cat
             "store exit must terminate its block, case "
             (string.int->string index)))))))
+
 (test
   compiler-lower-literal-constructor-exits
   (let

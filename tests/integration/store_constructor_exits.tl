@@ -122,7 +122,39 @@
         [f : (-> i64 i64 i64) sum]
         (set! _n (f (mark 1) (return 42)))
         1)]
+    [12
+      (let
+        [_p : (Box i64) (box 1)]
+        (set!
+          _p
+          (box
+            (begin
+              (mark 1)
+              (return 42))))
+        1)]
+    [13
+      (let
+        [_p : (Tuple i64 i64 i64) (tuple 1 2 3)]
+        (set! _p (tuple (mark 1) (return 42) (mark 9)))
+        1)]
     [_ 0]))
+
+(define (tuple-store-continue) : i64
+  (let
+    [p : (Tuple i64 i64) (tuple 1 2)]
+    [i : i64 0]
+    [n : i64 2]
+    (while (< i 3)
+      (+= i 1)
+      (set!
+        p
+        (tuple
+          (begin
+            (+= n 10)
+            (continue))
+          (mark 9)))
+      (set! n 0))
+    (+ n 1)))
 
 (define (conditional [leave : bool]) : i64
   (let
@@ -140,7 +172,7 @@
 (define (main) : i64
   (let
     [mode : i64 0]
-    (while (< mode 12)
+    (while (< mode 14)
       (set! trace 0)
       (test.assert-i64-eq (run-case mode) 42 "operand exit skips store")
       (test.assert-i64-eq trace 1 "only operands before the exit run")
@@ -150,4 +182,7 @@
     (conditional false)
     42
     "constructor commits on fallthrough")
+  (set! trace 0)
+  (test.assert-i64-eq (tuple-store-continue) 33 "tuple RHS continue")
+  (test.assert-i64-eq trace 0 "tuple RHS continue skips later operands")
   42)

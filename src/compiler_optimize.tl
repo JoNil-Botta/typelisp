@@ -11834,7 +11834,8 @@
 ;; Scratch facts for one immutable function body. The tables are created only
 ;; when a call requests a storage proof and are shared by all such calls.
 (defstruct OptSretStorageProof
-  (body ir.CompilerIrBlockList)
+  (:lifetimes body)
+  (body (& body ir.CompilerIrBlockList))
   (marks (__tl_dyn-array bool))
   (memo (__tl_dyn-array i64)))
 
@@ -11844,7 +11845,7 @@
 ;; Callee/result ABI and extent checks are separate obligations of #7738.
 (define (opt-verify-sret-storage-pointer?
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [value : (& value ir.CompilerIrValue)]
   [fuel : i64]) : bool
   (when (<= fuel 0) (return false))
@@ -11858,11 +11859,11 @@
       (set! (array-ref proof.memo var) 1)
       (let
         [valid : bool
-          (match (opt-verify-definition defs (& proof.body) var)
+          (match (opt-verify-definition defs proof.body var)
             [(Some instr)
               (match instr
                 [(AddrOf _ src)
-                  (match (opt-verify-definition defs (& proof.body) src)
+                  (match (opt-verify-definition defs proof.body src)
                     [(Some (Alloc _ ty))
                       (opt-verify-inline-storage-type? (& ty))]
                     [_ false])]
@@ -11945,7 +11946,7 @@
 (define (opt-verify-call-args-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [args : (& ir.CompilerIrCallArgs)]
   [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
@@ -11977,7 +11978,7 @@
                 (= (array-length proof.memo) 0)
                 (set!
                   proof.marks
-                  (opt-addr-taken-vars (array-length defs) (& proof.body)))
+                  (opt-addr-taken-vars (array-length defs) proof.body))
                 (set! proof.memo (__tl_make-array i64 (array-length defs))))
               (if (opt-verify-sret-storage-pointer?
                 defs
@@ -12072,7 +12073,7 @@
 (define (opt-verify-instr-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [pos : i64]
   [instr : (& ir.CompilerIrInstr)]) : ResultCompilerOptimizeVerify
@@ -12138,7 +12139,7 @@
 (define (opt-verify-instr-seq-uses-from
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
@@ -12349,7 +12350,7 @@
 (define (opt-verify-block-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -12373,7 +12374,7 @@
 (define (opt-verify-instr-seq-uses-contextual
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [pos : i64]) : ResultCompilerOptimizeVerify
@@ -12402,7 +12403,7 @@
 (define (opt-verify-block-uses-contextual
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof OptSretStorageProof)]
+  [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-id : i64]) : ResultCompilerOptimizeVerify
   (match blocks
@@ -12428,7 +12429,7 @@
               (+ block-id 1)))])]))
 
 (define (opt-verify-function-body-with-context
-  [func : (& ir.CompilerIrFunction)]
+  [func : (& func ir.CompilerIrFunction)]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
     [(Function _ params _ vars blocks _)
@@ -12439,9 +12440,9 @@
             [doms (& context.doms)]
             [pred-map (& context.pred-map)]
             [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
-            [proof : OptSretStorageProof
+            [proof : (OptSretStorageProof func)
               (OptSretStorageProof
-                (owned_view.compiler-owned-reference-shared-view blocks)
+                blocks
                 (__tl_make-array bool 0)
                 (__tl_make-array i64 0))]
             (opt-verify-block-uses
@@ -12466,9 +12467,9 @@
         [pred-map : OptPredMap
           (owned_view.compiler-owned-reference-shared-view (& context.pred-map))]
         [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
-        [proof : OptSretStorageProof
+        [proof : (OptSretStorageProof func)
           (OptSretStorageProof
-            (owned_view.compiler-owned-reference-shared-view blocks)
+            blocks
             (__tl_make-array bool 0)
             (__tl_make-array i64 0))]
         (opt-verify-block-uses-contextual

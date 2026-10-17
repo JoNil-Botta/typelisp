@@ -62199,7 +62199,8 @@
   (grow i64)
   (pass-c i64)
   (reader i64)
-  (nop i64))
+  (nop i64)
+  (allocator i64))
 
 (define (opt-le-test-symbols) : OptLeTestSymbols
   (OptLeTestSymbols
@@ -62228,7 +62229,8 @@
     (opt-test-symbol "le_grow")
     (opt-test-symbol "le_pass_c")
     (opt-test-symbol "le_reader")
-    (opt-test-symbol "le_nop")))
+    (opt-test-symbol "le_nop")
+    cbi.compiler-builtin-id-tl-alloc))
 
 (define (opt-le-function
   [name : i64]
@@ -62295,6 +62297,7 @@
 ;; into a fresh box, and hand the box to `tail` (a `Store` or a `Return`).
 ;; `first` is the first of five var ids.
 (define (opt-le-build-instrs
+  [allocator : i64]
   [ctor : i64]
   [first : i64]
   [length : ir.CompilerIrValue]
@@ -62306,7 +62309,7 @@
       (opt-test-instr-seq-prepend
         (Call (+ first 2) ctor (Two length (Var (+ first 1))) (I64))
         (opt-test-instr-seq-prepend
-          (opt-le-alloc16 (+ first 3))
+          (Call (+ first 3) allocator (One (I64 16)) (I64))
           (opt-test-instr-seq-prepend
             (CopyBytes (Var (+ first 3)) (Var (+ first 2)) 16)
             tail))))))
@@ -62318,15 +62321,22 @@
   (opt-le-function
     name
     (opt-le-params 0)
-    (opt-le-build-instrs ctor 1 (I64 1) (opt-fz-return-var 4))))
+    (opt-le-build-instrs
+      cbi.compiler-builtin-id-tl-alloc
+      ctor
+      1
+      (I64 1)
+      (opt-fz-return-var 4))))
 
 ;; One cell write inside a reset region.
 (define (opt-le-reset-step
+  [allocator : i64]
   [ctor : i64]
   [first : i64]
   [cell : i64]
   [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-le-build-instrs
+    allocator
     ctor
     first
     (Var 0)
@@ -62340,14 +62350,21 @@
     symbols.reset
     (opt-le-params 1)
     (opt-le-reset-step
+      symbols.allocator
       symbols.ctor
       1
       symbols.a
       (opt-le-reset-step
+        symbols.allocator
         symbols.ctor
         11
         symbols.b
-        (opt-le-reset-step symbols.ctor 21 symbols.c (opt-mr-return-zero))))))
+        (opt-le-reset-step
+          symbols.allocator
+          symbols.ctor
+          21
+          symbols.c
+          (opt-mr-return-zero))))))
 
 ;; The same two stores with `between` called in the middle.
 (define (opt-le-reset-pair-function
@@ -62360,18 +62377,29 @@
     name
     (opt-le-params 1)
     (opt-le-reset-step
+      symbols.allocator
       symbols.ctor
       1
       first-cell
       (opt-test-instr-seq-prepend
         (opt-le-call-instr 30 between)
-        (opt-le-reset-step symbols.ctor 11 second-cell (opt-mr-return-zero))))))
+        (opt-le-reset-step
+          symbols.allocator
+          symbols.ctor
+          11
+          second-cell
+          (opt-mr-return-zero))))))
 
 (define (opt-le-reset-h-function [symbols : OptLeTestSymbols]) : ir.CompilerIrFunction
   (opt-le-function
     symbols.reset-h
     (opt-le-params 1)
-    (opt-le-reset-step symbols.ctor-short 1 symbols.h (opt-mr-return-zero))))
+    (opt-le-reset-step
+      symbols.allocator
+      symbols.ctor-short
+      1
+      symbols.h
+      (opt-mr-return-zero))))
 
 ;; `push-ref!`'s grow, reduced to the one instruction that matters: the `.slots`
 ;; word of a `&mut` parameter written through.
@@ -64313,9 +64341,15 @@
       7]
     [else 42]))
 
-(define (compiler-optimize-len-eq-families-self-test) : i64
+(define (compiler-optimize-len-eq-families-self-test [global-storage? : bool]) : i64
   (let
-    [symbols : OptLeTestSymbols (opt-le-test-symbols)]
+    [symbols : OptLeTestSymbols
+      (let
+        [symbols (opt-le-test-symbols)]
+        (when
+          global-storage?
+          (set! symbols.allocator cbi.compiler-builtin-id-tl-alloc-global))
+        symbols)]
     [cells : opt.OptGlobalCellSummary (opt-le-test-cells symbols)]
     [family-a : i64 (opt-le-family cells symbols.a)]
     [fused : ir.CompilerIrBlockList
@@ -66645,9 +66679,16 @@
 (test
   len-eq-static-length-equality-families
   (test.assert-i64-eq
-    (compiler-optimize-len-eq-families-self-test)
+    (compiler-optimize-len-eq-families-self-test false)
     42
     "two global Vec cells reset together in one straight-line region with one length are proven length-equal, and a dominating check on one retires the check on the other; a member whose box reaches a parameter-writing callee is dropped, a call that may read a member between the two stores breaks the region, the Vec.len field invariant discharges the unsigned check against the array length, and a constructor whose .len word is not its array length refuses it"))
+
+(test
+  len-eq-global-storage-length-equality-families
+  (test.assert-i64-eq
+    (compiler-optimize-len-eq-families-self-test true)
+    42
+    "private global container copies preserve length families and field bounds; escaped boxes and intervening readers still refuse the proof"))
 
 (test
   cfg-straighten-below-threader
@@ -78379,7 +78420,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block block-label instrs)
           (if (= block-label label)
             (opt-count-storeptr-instrs instrs)

@@ -34,6 +34,22 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+`global_aggregate_storage_lifetime.tl` checks shallow global container storage
+after scratch and explicit arena destruction, nested scopes, repeated writes,
+large arrays, MoveOnly Box payloads, and local/global receivers retained across
+conditional, transitive and recursive whole-global replacement.
+It also checks that the allocator restores the caller's arena and remains
+visible to allocation profiling. `global_aggregate_storage_threads.tl` races
+first use from two workers writing distinct globals and reads the results only
+after join. `global_aggregate_storage_boundary.tl` fills the private static page
+exactly and retains an old receiver across the first growth. All three fixtures
+run at opt0/1/2 on both hosts. The existing
+`scratch_body_global_store_reject.tl` keeps source allocation escape illegal.
+The arena-debug gate repeats all three fixtures with debug, profile, and backtrace
+instrumentation together, using a test-enabled emitter and checking that each
+runtime feature is present. The shared-object backend test pins both TLS
+switches and their scratch register, which must preserve the allocation result.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
@@ -510,8 +526,10 @@ job retirement releases those owners after the last reset.
 `test_cli_entry_memory_smoke.tl` exercises twelve ordinary inline entries in
 one process and checks retained bytes after four warm-up entries. The small
 leaf still compiles and executes its test each time; all eight measured entries
-must retain at most 1 MiB in total; the native integration manifest runs it on
-both hosts. `test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
+must retain at most 1 MiB in total. This also covers repeated unbound-name
+snapshot recording and clearing after implicit global storage copies acquire
+program lifetime; the snapshot container must be reused. The native integration
+manifest runs it on both hosts. `test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
 bindings after success/error scalar results, and verifies copied cache hits and
 misses survive cache reset after the caller scratch arena has been destroyed.
 Macro hygiene retirement requires no active root; the debug runtime permits that explicit

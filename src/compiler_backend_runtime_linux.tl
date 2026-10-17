@@ -1466,6 +1466,16 @@ tl_backtrace_stack_set:
             profile
             debug-text)))
       (compiler-backend-runtime-linux-render
+        (and
+          features.alloc
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (LinuxRuntimeGlobalAlloc)
+        (runtime_common.compiler-backend-runtime-global-alloc-functions
+          (compiler-backend-current-arena-load "%r13")
+          (compiler-backend-current-arena-store "%rbx")
+          (compiler-backend-current-arena-store "%r13")
+          true))
+      (compiler-backend-runtime-linux-render
         features.region-mark
         (LinuxRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))

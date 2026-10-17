@@ -5136,6 +5136,37 @@
       (ptr-read (ast-expr-pool-cell-ptr pools.expr-pool)))
     segment-bases))
 
+;; The prepared owner's rows remain stable throughout this read-only scan.
+;; A segment walk loads its biased base once and reads only live row tags;
+;; no row or view survives a pool mutation or generation handoff.
+(define (ast-node-pool-context-has-spmd? [pools : (& pools AstNodePoolContext)]) : bool
+  (let
+    [bases : i64 (ast-node-pool-context-expr-segment-bases pools)]
+    [count : i64 (ast-node-pool-context-expr-len pools)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [end : i64
+          (if (< (+ index ast-expr-node-pool-segment-size) count)
+            (+ index ast-expr-node-pool-segment-size)
+            count)]
+        [base : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr bases : (Ptr i64)) (shr index 16))))]
+        [address : i64 (+ base (* index (ast-expr-node-bytes)))]
+        [remaining : i64 (- end index)]
+        (while (> remaining 0)
+          (match (unsafe
+            (ptr-read (int->ptr address : (Ptr AstExpr))))
+            [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+                 (SpmdBroadcast _ _) (SpmdShuffle _ _))
+              (return true)]
+            [_ unit])
+          (+= address (ast-expr-node-bytes))
+          (-= remaining 1))
+        (set! index end)))
+    false))
+
 ;; Segment-bases pointer of the process-global (installed) expression pool, the
 ;; one `ast-node-get` reads.
 (define (ast-node-pool-active-expr-segment-bases) : i64

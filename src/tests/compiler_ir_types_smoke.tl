@@ -1755,6 +1755,73 @@
 ;; kept pointing at the destroyed arena's storage faults or reads garbage here.
 ;; This is the ownership boundary `optimize-program-with-spans-...` relies on
 ;; when it runs the inliner in its own arena.
+(define (compiler-ir-smoke-spmd-spans
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [function : compiler_ir_types.CompilerIrSymbolId]) : compiler_ir_types.CompilerSourceSpans
+  (let
+    [facts : compiler_ir_types.CompilerSpmdDecisions
+      (compiler_ir_types.compiler-spmd-decisions-empty)]
+    (compiler_ir_types.compiler-spmd-decision-list-append!
+      (&mut facts.decisions)
+      (compiler_ir_types.CompilerSpmdDecision
+        (compiler_ir_types.CompilerSpmdSiteId function 2)
+        -1
+        (Foreach)
+        (Avx2)
+        4
+        (NativeGangs)
+        (DirectMap)
+        (compiler_ir_types.CompilerSourceLocation
+          3
+          (ast.ast-source-span 8 1 8 9))
+        (compiler_ir_types.CompilerSourceLocation
+          4
+          (ast.ast-source-span 9 2 9 8))
+        0
+        1
+        false))
+    (compiler_ir_types.compiler-spmd-macro-frame-list-append!
+      (&mut facts.frames)
+      (compiler_ir_types.CompilerSpmdMacroFrame
+        19
+        (compiler_ir_types.CompilerSourceLocation
+          5
+          (ast.ast-source-span 4 1 4 6))
+        6))
+    (compiler_ir_types.compiler-source-spans-set-spmd spans facts)))
+
+(define (compiler-ir-smoke-spmd-spans-ok?
+  [spans : (& spans compiler_ir_types.CompilerSourceSpans)]) : bool
+  (let
+    [cleared : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-clear-instrs
+        (compiler_ir_types.compiler-source-spans-escape spans))]
+    [facts : (& cleared compiler_ir_types.CompilerSpmdDecisions)
+      (compiler_ir_types.compiler-source-spans-spmd (& cleared))]
+    (and
+      (= facts.decisions.len 1)
+      (= facts.frames.len 1)
+      (let
+        [item : compiler_ir_types.CompilerSpmdDecision
+          (clone (array-ref facts.decisions.slots 0))]
+        [frame : compiler_ir_types.CompilerSpmdMacroFrame
+          (clone (array-ref facts.frames.slots 0))]
+        (and
+          (= item.site.ordinal 2)
+          (= item.parent-ordinal -1)
+          (= item.lanes 4)
+          (= item.primary.path-id 3)
+          (= item.actionable.path-id 4)
+          (= (ast.ast-source-span-start-line item.primary.span) 8)
+          (= (ast.ast-source-span-start-line item.actionable.span) 9)
+          (= item.frame-start 0)
+          (= item.frame-count 1)
+          (not item.frames-truncated)
+          (= frame.name-id 19)
+          (= frame.invocation.path-id 5)
+          (= frame.origin-path-id 6)
+          (= (ast.ast-source-span-start-line frame.invocation.span) 4))))))
+
 (define (compiler-ir-smoke-source-spans-escape-ok?) : bool
   (let
     [enclosing : i64 (arena.tl_arena_current)]
@@ -1791,15 +1858,18 @@
         store-key
         6
         (ast.ast-source-span 130 140 150 160))]
+    [with-spmd : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-spmd-spans built first)]
     [_leave : unit
       (unsafe
         (arena.tl_arena_set enclosing))]
     [escaped : compiler_ir_types.CompilerSourceSpans
-      (compiler_ir_types.compiler-source-spans-escape (& built))]
+      (compiler_ir_types.compiler-source-spans-escape (& with-spmd))]
     [_destroy : unit
       (unsafe
         (arena.tl_arena_destroy scratch))]
     (and
+      (compiler-ir-smoke-spmd-spans-ok? (& escaped))
       (= (compiler_ir_types.compiler-source-spans-count (& escaped)) 2)
       (= (compiler_ir_types.compiler-source-spans-instr-count (& escaped)) 2)
       (match (compiler_ir_types.compiler-source-spans-lookup-location
@@ -1818,7 +1888,7 @@
           (and (= path-id 4) (= (ast.ast-source-span-start-line span) 50))]
         [_ false])
       (match escaped
-        [(Spans _ instr-entries _)
+        [(Spans _ instr-entries _ _)
           (and
             (match (compiler_ir_types.compiler-source-spans-instr-entry-list-lookup
               (& instr-entries)
@@ -3978,7 +4048,7 @@
       (= (array-length grown-entries.slots) 8)
       (match (compiler_ir_types.compiler-ir-global-shared-view
         grown-instr-spans)
-        [(Spans _ grown-instr-entries grown-instr-count)
+        [(Spans _ grown-instr-entries grown-instr-count _)
           (and
             (= grown-instr-count 6)
             (= grown-instr-entries.len 6)

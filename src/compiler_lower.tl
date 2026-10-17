@@ -28351,7 +28351,9 @@
           function-state
           then-branch
           else-branch))]
-    [(Begin exprs)
+    ;; Allocation scopes retain their body's physical type after source-region
+    ;; checking; lowered bindings intentionally no longer carry those regions.
+    [(or (Begin exprs) (InArena _ exprs))
       (lower-expr-list-result-type-fast
         ctx
         env
@@ -28819,6 +28821,14 @@
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
+    [(InArena arena-box body)
+      (lower-in-arena
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx arena-box)
+        body)]
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -42619,7 +42629,25 @@
   [arena : ast.AstExpr]
   [form : String]) : ResultLowerExpr
   (let
-    [lowered : LowerExpr (try (lower-expr ctx state env type-env arena))]
+    [target : LowerExpr (try (lower-expr ctx state env type-env arena))]
+    [lowered : LowerExpr
+      (match target
+        [(Expr target-state target-value target-ty)
+          (if (tc_core.tc-arena-phase-type?
+            ctx
+            (lower-global-shared-view target-ty))
+            (let
+              [resolved : ast.AstType (tc_core.tc-resolve-type ctx target-ty)]
+              (try
+                (lower-struct-get-named
+                  ctx
+                  target-state
+                  target-value
+                  (lower-struct-type-name-id-or resolved -1)
+                  (lower-struct-type-name-or-empty resolved)
+                  "arena"
+                  (Struct cbi.compiler-builtin-id-arena-type))))
+            (Expr target-state target-value target-ty))])]
     (match lowered
       [(Expr arena-state arena-value arena-ty)
         (if (tc_core.tc-arena-type? ctx (lower-global-shared-view arena-ty))

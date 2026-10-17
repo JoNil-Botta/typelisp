@@ -74091,7 +74091,9 @@
             (ResultLowerFunction.Err (box (lower-diagnostic message)))]
           [(LowerNormalizedResult.Ok function next-spans)
             (ResultLowerFunction.Ok
-              (ir.CompilerIrFunctionSeq (__tl_make-array function) 1)
+              (lower-function-seq-escape-to-ir-arena
+                lower-state
+                (ir.CompilerIrFunctionSeq (__tl_make-array function) 1))
               next-spans)]))]
     [(tc_core.TcSelectedLookup.Legacy)
       (lower-function-escaping

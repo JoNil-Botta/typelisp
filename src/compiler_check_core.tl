@@ -487,7 +487,7 @@
     [job : tc.TcJobState request.job-state]
     [parse-state : parser.CompilerParseState (parser.compiler-parse-state-new)]
     [_binding-tokens : unit
-      (parser.compiler-parse-state-set-binding-origins! (& parse-state) true)]
+      (parser.compiler-parse-state-set-binding-origins! (&mut parse-state) true)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (parser.compiler-parse-state-cfgs (& parse-state) request.cfgs)]
     [previous : tc.TcSemanticObserver (tc.tc-job-state-semantic-observer job)]

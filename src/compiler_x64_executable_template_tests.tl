@@ -11,6 +11,97 @@
 (import stdlib.string)
 (import stdlib.test)
 
+(test
+  compiler-x64-template-arena-sanitizer-variants
+  (let
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [features : runtime_common.CompilerBackendRuntimeFeatures
+          (runtime_common.CompilerBackendRuntimeFeatures
+            true
+            true
+            true
+            (!= (bit-and mode 1) 0)
+            (!= (bit-and mode 2) 0)
+            false
+            false
+            false
+            127)]
+        [linux : String
+          (runtime_linux.compiler-backend-runtime-functions (& features))]
+        [windows : String
+          (runtime_windows.compiler-backend-runtime-functions (& features))]
+        ;; Each call above passes the exact registered payload identity for
+        ;; its target/profile/debug combination before reaching these checks.
+        (test.assert-true
+          (string.contains (& linux) "tl_arena_sanitize_enable:")
+          "Linux selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& linux) "movq $28, %rax")
+          "Linux quarantine discards resident pages")
+        (test.assert-true
+          (string.contains (& linux) "movq $10, %rax")
+          "Linux quarantine makes retired mappings inaccessible")
+        (test.assert-false
+          (string.contains (& linux) "movq $11, %rax")
+          "Linux retirement never releases quarantined address ranges")
+        (test.assert-true
+          (string.contains (& windows) "tl_arena_sanitize_enable:")
+          "Windows selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& windows) "movq $0x4000, %r8")
+          "Windows quarantine decommits without releasing the reservation")
+        (test.assert-true
+          (string.contains (& windows) "rep stosb")
+          "Windows poisons in-segment rewind ranges")
+        (set! mode (+ mode 1))))))
+
+(test
+  compiler-x64-template-global-allocator-sanitizer-independence
+  (let
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [optional : i64 0]
+        (while (< optional 4)
+          (let
+            [features : runtime_common.CompilerBackendRuntimeFeatures
+              (runtime_common.CompilerBackendRuntimeFeatures
+                true
+                true
+                true
+                (!= (bit-and mode 1) 0)
+                (!= (bit-and mode 2) 0)
+                false
+                false
+                false
+                (bit-or 31 (* optional 32)))]
+            [linux : String
+              (runtime_linux.compiler-backend-runtime-functions (& features))]
+            [windows : String
+              (runtime_windows.compiler-backend-runtime-functions (& features))]
+            [global? : bool (!= (bit-and optional 1) 0)]
+            [sanitize? : bool (!= (bit-and optional 2) 0)]
+            (test.assert-bool-eq
+              (string.contains (& linux) "tl_alloc_global:")
+              global?
+              "Linux selects permanent allocation independently")
+            (test.assert-bool-eq
+              (string.contains (& windows) "tl_alloc_global:")
+              global?
+              "Windows selects permanent allocation independently")
+            (test.assert-bool-eq
+              (string.contains (& linux) "tl_arena_sanitize_enable:")
+              sanitize?
+              "Linux selects sanitizer independently")
+            (test.assert-bool-eq
+              (string.contains (& windows) "tl_arena_sanitize_enable:")
+              sanitize?
+              "Windows selects sanitizer independently")
+            (set! optional (+ optional 1)))))
+      (set! mode (+ mode 1)))))
+
 (define (compiler-x64-template-test-kind-eq?
   [left : x64_events.CompilerX64TemplateEventKind]
   [right : x64_events.CompilerX64TemplateEventKind]) : bool
@@ -76,7 +167,7 @@
         extra-features
         startup-profile
         extra-features
-        63)]
+        127)]
     [linux : String
       (runtime_linux.compiler-backend-runtime-functions (& features))]
     [windows : String
@@ -146,22 +237,22 @@
               [(Err _) (set! events-valid false)])
             (set! event-at (+ event-at 1)))
           (set! at (+ at 1))))
-      (test.assert-i64-eq ids.len 86 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 102 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
-        96
+        112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        3241
+        4285
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        19186
+        26028
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        73
+        89
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly
@@ -188,7 +279,7 @@
             false
             false
             false
-            63)]
+            127)]
         [full : x64_selection.CompilerX64TemplateFeatures
           (x64_selection.CompilerX64TemplateFeatures
             true
@@ -199,7 +290,7 @@
             true
             true
             true
-            63)]
+            127)]
         [linux-min : x64_selection.CompilerX64ExecutableTemplateIdList
           (x64_selection.compiler-x64-runtime-template-selection
             (LinuxX64)

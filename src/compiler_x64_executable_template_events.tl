@@ -76,7 +76,7 @@
   (if (or (< index 0) (>= index events.count))
     (Err "x64 executable template: event index out of bounds")
     (let
-      [text : String events.transcript]
+      [text : (& events str) (& events.transcript)]
       [n : i64 (string.string-length text)]
       [at : i64 0]
       [row : i64 0]

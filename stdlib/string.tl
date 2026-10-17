@@ -30,7 +30,8 @@
 
 ;; Caller contract: `n >= 0`; `src` points at at least `n` initialized readable
 ;; bytes; `dst` points at at least `n` writable bytes; and both ranges remain
-;; live for the call.
+;; live for the call. The ordinary runtime handles overlapping ranges. The
+;; compiler-build forward-only entry additionally requires disjoint ranges.
 ;; Stage2+ compiler builds use the backend's forward-only entry. All callers of
 ;; `str-copy-bytes-into` below write a fresh allocation or growth buffer.
 (cfg
@@ -70,12 +71,13 @@
   (__tl_string_ref text index))
 
 ;: Write one ASCII byte into an active-arena buffer.
-(define (int->string-write-byte!
-  [dst : (MutPtr u8)]
-  [offset : i64]
-  [byte : i64]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset dst offset) (cast byte : u8))))
+(unsafe
+  (define (int->string-write-byte!
+    [dst : (MutPtr u8)]
+    [offset : i64]
+    [byte : i64]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset dst offset) (cast byte : u8)))))
 
 ;: Count decimal digits for a non-positive value without negating i64-min.
 ;: A comparison ladder instead of a division loop: emitted assembly text
@@ -105,21 +107,24 @@
     [else 19]))
 
 ;: Write decimal digits for a non-positive value at `base` in `dst`.
-(define (int->string-write-negative-digits!
-  [dst : (MutPtr u8)]
-  [base : i64]
-  [value : i64]
-  [digits : i64]) : unit
-  (let
-    [cursor : i64 value]
-    [index : i64 (- digits 1)]
-    (while (>= index 0)
-      (let
-        [next : i64 (/ cursor 10)]
-        [digit : i64 (- (* next 10) cursor)]
-        (int->string-write-byte! dst (+ base index) (+ 48 digit))
-        (set! cursor next)
-        (set! index (- index 1))))))
+(unsafe
+  (define (int->string-write-negative-digits!
+    [dst : (MutPtr u8)]
+    [base : i64]
+    [value : i64]
+    [digits : i64]) : unit
+    (let
+      [cursor : i64 value]
+      [index : i64 (- digits 1)]
+      (while (>= index 0)
+        (let
+          [next : i64 (/ cursor 10)]
+          [digit : i64 (- (* next 10) cursor)]
+          (begin
+            (unsafe
+              (int->string-write-byte! dst (+ base index) (+ 48 digit)))
+            (set! cursor next)
+            (set! index (- index 1))))))))
 
 ;: Return the decimal spelling of `value` in fresh active-arena String storage.
 (define (int->string [value : i64]) : String
@@ -136,15 +141,17 @@
         digits)]
     [buf : (MutPtr u8) (string-runtime-alloc len)]
     (if negative
-      (int->string-write-byte! buf 0 45)
+      (unsafe
+        (int->string-write-byte! buf 0 45))
       unit)
-    (int->string-write-negative-digits!
-      buf
-      (if negative
-        1
-        0)
-      magnitude
-      digits)
+    (unsafe
+      (int->string-write-negative-digits!
+        buf
+        (if negative
+          1
+          0)
+        magnitude
+        digits))
     (unsafe
       (string-from-bytes (ptr-cast buf : (Ptr u8)) len))))
 
@@ -165,8 +172,9 @@
 
 ;: Copy `n` initialized bytes from `src` into `dst` at byte offset `doff`.
 ;:
-;: Requires unsafe context. Callers must uphold the
-;: `string-runtime-copy-bytes!` range contract above.
+;: Unsafe callers must uphold the `string-runtime-copy-bytes!` range contract
+;: above, including a non-overflowing destination offset. Compiler-build copies
+;: additionally require disjoint ranges; the ordinary runtime permits overlap.
 (unsafe
   (define (str-copy-bytes-into
     [src : (Ptr u8)]
@@ -214,7 +222,8 @@
     [else unit]))
 
 ;: Copy `n` bytes from owned `chunk` into `dst` at byte offset `start`.
-;: Requires unsafe context: the source prefix and destination range must be live.
+;: Unsafe: `0 <= n <= string-length(chunk)` and the destination range must be
+;: live, writable and disjoint from the source, without offset overflow.
 (unsafe
   (define (str-copy-owned-bytes-into
     [chunk : String]
@@ -228,7 +237,8 @@
         (string-bytes-copy! dp src n)))))
 
 ;: Copy `n` bytes from borrowed `chunk` into `dst` at byte offset `start`.
-;: Requires unsafe context: the source prefix and destination range must be live.
+;: Unsafe: `0 <= n <= string-length(chunk)` and the destination range must be
+;: live, writable and disjoint from the source, without offset overflow.
 (unsafe
   (define (str-copy-borrowed-bytes-into
     [chunk : (& chunk str)]
@@ -242,16 +252,27 @@
         (string-bytes-copy! dp src n)))))
 
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
-(define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
-  (let
-    [src : (Ptr u8)
-      (unsafe
-        (string-data text))]
-    [dst : (MutPtr u8) (string-runtime-alloc len)]
-    (unsafe
-      (str-copy-bytes-into (ptr-offset src start) dst 0 len))
-    (unsafe
-      (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))
+;: Unsafe: the caller must first validate `start` and `len` against `text`.
+(unsafe
+  (define (substring-copy-checked
+    [text : (& text str)]
+    [start : i64]
+    [len : i64]) : String
+    (let
+      [src : (Ptr u8)
+        (unsafe
+          (string-data text))]
+      [dst : (MutPtr u8) (string-runtime-alloc len)]
+      (begin
+        (unsafe
+          (str-copy-bytes-into
+            (unsafe
+              (ptr-offset src start))
+            dst
+            0
+            len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
 
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
 (define (append [left : (& left str)] [right : (& right str)]) : String
@@ -470,7 +491,8 @@
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring [text : (& text str)] [start : i64] [len : i64]) : String
   (substring-bounds-check text start len)
-  (substring-copy-checked text start len))
+  (unsafe
+    (substring-copy-checked text start len)))
 
 ;: Return a checked borrowed substring view without copying bytes.
 (define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&

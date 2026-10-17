@@ -220,8 +220,13 @@
             (if (>= first-tombstone 0)
               first-tombstone
               empty-index))
+          ;; A slot read in place (callers keep `index` below the capacity): the
+          ;; set keeps owning its key, which a by-value match would move out.
+          (define (slot-at [set : (& set Set)] [index : i64]) : Slot
+            (unsafe
+              (ptr-read (ptr-offset (__tl_array-data set.slots) index))))
           (define (,probe-from-name
-            [slots : (& slots (__tl_dyn-array Slot))]
+            [set : (& set Set)]
             [capacity : i64]
             [key : ,key-param-type]
             [hash : i64]
@@ -230,11 +235,11 @@
             [first-tombstone : i64]) : Probe
             (if (>= seen capacity)
               (Probe.Full)
-              (match (array-ref slots index)
+              (match (slot-at set index)
                 [Slot.Empty (Probe.Absent (insert-slot first-tombstone index))]
                 [Slot.Tombstone
                   (,probe-from-name
-                    slots
+                    set
                     capacity
                     key
                     hash
@@ -249,7 +254,7 @@
                     false)
                     (Probe.Found index)
                     (,probe-from-name
-                      slots
+                      set
                       capacity
                       key
                       hash
@@ -257,12 +262,12 @@
                       (+ seen 1)
                       first-tombstone))])))
           (define (,probe-name
-            [slots : (& slots (__tl_dyn-array Slot))]
+            [set : (& set Set)]
             [capacity : i64]
             [key : ,key-param-type]
             [hash : i64]) : Probe
             (,probe-from-name
-              slots
+              set
               capacity
               key
               hash
@@ -283,7 +288,8 @@
             set.len)
           (define (capacity [set : (& set Set)]) : i64
             (array-length set.slots))
-          (define (capacity-mut [set : (&mut set Set)]) : i64
+          ;; A read: callers pass it alongside a shared borrow of the slots.
+          (define (capacity-mut [set : (& set Set)]) : i64
             (array-length set.slots))
           (define (needs-grow? [set : (&mut set Set)]) : bool
             (> (* (+ set.len 1) 4) (* (capacity-mut set) 3)))
@@ -298,7 +304,7 @@
                 (__tl_make-array Slot new-capacity)]
               [scan : i64 0]
               (while (< scan old-capacity)
-                (match (array-ref set.slots scan)
+                (match (slot-at set scan)
                   [(Slot.Occupied key hash)
                     (let
                       [index : i64 (bucket-index hash new-capacity)]
@@ -307,7 +313,8 @@
                       (while (if placed
                         false
                         (< seen new-capacity))
-                        (match (array-ref fresh index)
+                        (match (unsafe
+                          (ptr-read (ptr-offset (__tl_array-data fresh) index)))
                           [Slot.Empty
                             (set!
                               (array-ref fresh index)
@@ -321,7 +328,7 @@
               (set! set.slots fresh)
               (set! set.deleted 0)))
           (define (,contains-name [set : (& set Set)] [key : ,key-param-type]) : bool
-            (match (,probe-name (& set.slots) (capacity set) key (hash-key key))
+            (match (,probe-name set (capacity set) key (hash-key key))
               [(Probe.Found _) true]
               [_ false]))
           ,@owned-contains
@@ -331,16 +338,12 @@
               unit)
             (let
               [hash : i64 (hash-key ,key-arg)]
-              (match (,probe-name
-                (& set.slots)
-                (capacity-mut set)
-                ,key-arg
-                hash)
+              (match (,probe-name set (capacity-mut set) ,key-arg hash)
                 [(Probe.Found _) unit]
                 [(Probe.Absent index)
                   (let
                     [was-tombstone : bool
-                      (match (array-ref set.slots index)
+                      (match (slot-at set index)
                         [Slot.Tombstone true]
                         [_ false])]
                     (set! (array-ref set.slots index) (Slot.Occupied key hash))
@@ -352,11 +355,7 @@
                   (grow set)
                   (insert-ref! set key)])))
           (define (,remove-name [set : (&mut set Set)] [key : ,key-param-type]) : unit
-            (match (,probe-name
-              (& set.slots)
-              (capacity-mut set)
-              key
-              (hash-key key))
+            (match (,probe-name set (capacity-mut set) key (hash-key key))
               [(Probe.Found index)
                 (set! (array-ref set.slots index) (Slot.Tombstone))
                 (set! set.len (- set.len 1))
@@ -374,7 +373,7 @@
               (while (if found
                 false
                 (< index cap))
-                (match (array-ref set.slots index)
+                (match (slot-at set index)
                   [(Slot.Occupied _ _) (set! found true)]
                   [_ (set! index (+ index 1))]))
               index))
@@ -382,7 +381,7 @@
             (if (if (>= index 0)
               (< index (capacity set))
               false)
-              (match (array-ref set.slots index)
+              (match (slot-at set index)
                 [(Slot.Occupied key _) (Entry.Some ,owned-key)]
                 [_ (Entry.None)])
               (Entry.None)))

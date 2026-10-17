@@ -53,7 +53,7 @@
       (set! (array-ref dst i) (array-ref src i))
       (set! i (+ i 1)))))
 
-;; --- admitted: the propagating overlap --------------------------------------
+;; --- refused shared counter/address step: propagating overlap ---------------
 ;; Destination one element ABOVE the source, same array: every write lands on an
 ;; element a later read consumes, so `a[1..n]` all end up holding `a[0]`.
 (define (shift-up [a : (__tl_dyn-array i64)] [n : i64]) : unit
@@ -63,7 +63,7 @@
       (set! (array-ref a (+ i 1)) (array-ref a i))
       (set! i (+ i 1)))))
 
-;; --- admitted: the other overlap direction ----------------------------------
+;; --- refused shared counter/address step: the other overlap direction -------
 ;; Destination BELOW the source: reads run ahead of the writes that could clobber
 ;; them, so this is the ordinary shift and the wide arm reproduces it.
 (define (shift-down [a : (__tl_dyn-array i64)] [n : i64]) : unit

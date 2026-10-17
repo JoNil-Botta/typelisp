@@ -8400,7 +8400,7 @@
         (compiler-spmd-decisions-escape spmd))]))
 
 (define (compiler-source-spans-instr-entry-array-lookup-location
-  [slots : (& (__tl_dyn-array CompilerSourceSpansInstrEntry))]
+  [slots : (& slots (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [index : i64]
   [function : i64]
   [id : i64]
@@ -8408,12 +8408,14 @@
   (if (< index 0)
     (No)
     (let
-      [span-entry : CompilerSourceSpansInstrEntry (array-ref slots index)]
+      [span-entry : (& slots CompilerSourceSpansInstrEntry)
+        (& (array-ref slots index))]
       (if (and
         (= span-entry.id id)
         (= span-entry.function.value function)
         (= span-entry.kind kind))
-        (Some (CompilerSourceLocation span-entry.path-id span-entry.span))
+        (Some
+          (CompilerSourceLocation span-entry.path-id (clone span-entry.span)))
         (compiler-source-spans-instr-entry-array-lookup-location
           slots
           (- index 1)

@@ -1,4 +1,4 @@
-;; A direct aggregate read through a borrowed vector rvalue remains move-only.
+;; A non-Copy aggregate read through a borrowed vector rvalue remains move-only.
 ;; The diagnostic must blame the caller's borrowed vector, not the macro body.
 (import stdlib.comptime)
 (import stdlib.vector)
@@ -12,7 +12,7 @@
       (set! idx (+ idx 1)))))
 
 (defstruct Ball
-  (x i64)
+  (x String)
   (y i64))
 
 (defstruct World

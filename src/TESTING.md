@@ -50,6 +50,33 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+`reference_copy_read.tl` runs at opt0/1/2 on both hosts. It checks shared and
+mutable aggregate reads through returns, bindings, calls, constructors and
+stores; independent memory-class copies; nested field/array/tuple reads;
+single evaluation; a 17-input scalar oracle for shared/mutable snapshots;
+zero-sized local values; no runtime allocation; and a copy
+read after its source arena is destroyed by an `:invalidate` callee. Its lowerer
+shape test keeps scalar and nested field reads copy-free on both target ABIs.
+The paired safety fixtures retain stored-reference and intrinsic region facts,
+reject escaping borrows, preserve a reference's loan lifetime under outer region
+annotations, and preserve non-Copy and shared-store diagnostics.
+The arena-debug gate also runs the fixture with debug, allocation profiling
+and backtrace instrumentation enabled, so its allocation-counter assertion
+observes the active allocator.
+Zero-sized tuple/array call transport keeps the existing ABI rejection.
+
+`reference_copy_consumer.tl` adds opt0/1/2 coverage on both hosts for pure scalar
+matches, mutation after scalar and aggregate pattern binding, aggregate match
+results, early returns, explicit return transport and clone independence.
+Lowerer shape checks on both ABIs require one return copy and no snapshot for
+pure scalar matches; calls and escaping aggregate results retain a snapshot.
+The prelude-aware clone shape fixture requires a single copy of a projected
+memory-class value.
+
+`set_place_eval_order.tl`, `raw_pointer_field_place.tl` and
+`by_value_aggregate_abi.tl` keep nested array-store receivers attached to their
+original places while whole projection reads copy independently.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

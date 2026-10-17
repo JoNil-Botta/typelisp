@@ -1505,12 +1505,17 @@
         (compiler-lower-tuple-inline-storage-frame? functions "leaf"))]
     [_ false]))
 
+(define (compiler-lower-scalar-test-mode [windows : bool]) : lower.CompilerLowerMode
+  (if windows
+    (lower.CompilerLowerMode.WindowsScalar)
+    (lower.CompilerLowerMode.LinuxScalar)))
+
 (define (compiler-lower-tuple-inline-storage-ok?) : bool
   (and
     (compiler-lower-tuple-inline-storage-mode-ok?
-      (lower.CompilerLowerMode.LinuxScalar))
+      (compiler-lower-scalar-test-mode false))
     (compiler-lower-tuple-inline-storage-mode-ok?
-      (lower.CompilerLowerMode.WindowsScalar))))
+      (compiler-lower-scalar-test-mode true))))
 
 (define (compiler-lower-mut-ref-array-access-source) : String
   "(define (len [a : (& a (__tl_dyn-array i64))]) : i64 (array-length a))
@@ -2067,12 +2072,17 @@
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
 (define (clone-tree [tree : StringTree]) : StringTree
   (clone tree))
+(defstruct CloneWide (a i64) (b i64) (c i64) (d i64))
+(define (clone-projection [p : (& p CloneWide)]) : i64
+  (let [value (clone (deref p))] value.a))
 (define (main [n : i64] [tree : StringTree]) : i64
   (let
     [items1 : (__tl_dyn-array String) (__tl_make-array String n)]
     [items2 : (__tl_dyn-array String) (__tl_make-array String n)]
     [items3 : (__tl_dyn-array String) (__tl_make-array String n)]
+    [wide : CloneWide (CloneWide 1 2 3 4)]
     (begin
+      (clone-projection (& wide))
       (clone-tuple items1)
       (clone-dyn items2)
       (clone-holder items3)
@@ -2195,6 +2205,7 @@
     (compiler-lower-clone-source-with-prelude (compiler-lower-clone-source)))
     [(Some functions)
       (and
+        (= (lower-test-count functions ".::clone-projection" (CopyBytes)) 1)
         (>
           (lower-test-function-call-count
             functions
@@ -16358,3 +16369,68 @@
           (= (lower-test-function-call-count functions "rebound" "tl_alloc") 0))]
       [_ false])
     "pure fields keep the packed path; effectful receivers guard their real frame home"))
+
+(test
+  compiler-lower-reference-copy-read
+  (let
+    [modes : (Array lower.CompilerLowerMode 2)
+      (array
+        (compiler-lower-scalar-test-mode false)
+        (compiler-lower-scalar-test-mode true))]
+    (for [index (iterator.range 0 2)]
+      (test.assert-true
+        (match (lower-test-functions
+          (lower.lower-compiler-source-with-mode
+            "(defstruct Pair (a i64) (b i64))
+(defstruct Wide (a i64) (b i64) (c i64) (d i64))
+(defstruct Outer (item Wide) (tail i64))
+(define (field [p : (& p Wide)]) : i64 (deref p).a)
+(define (nested [p : (& p Outer)]) : i64 (deref p).item.a)
+(define (tuple-field [p : (& p (Tuple String i64))]) : i64 (tuple-ref (deref p) 1))
+(define (whole [p : (& p Wide)]) : Wide (deref p))
+(define (pair [p : (& p Pair)]) : Pair (deref p))
+(defenum Row (Fields i64 i64 i64) (Empty))
+(defenum Wrapped (Item Wide) (Absent))
+(define (touch) : i64 0)
+(define (pure-tail [p : (& p Row)] [first : bool]) : i64
+  (match (deref p) [(Fields a b c) (if first a b)] [(Empty) 0]))
+(define (pure-value [p : (& p Row)]) : i64
+  (+ 1 (match (deref p) [(Fields a b c) a] [(Empty) 0])))
+(define (effectful [p : (& p Row)]) : i64
+  (match (deref p) [(Fields a b c) (+ (touch) a)] [(Empty) 0]))
+(define (escape [p : (& p Wrapped)]) : Wide
+  (match (deref p) [(Item value) value] [(Absent) (Wide 0 0 0 0)]))
+(define (exit-escape [p : (& p Wrapped)]) : Wide
+  (match (deref p) [(Item value) (return value)] [(Absent) 0])
+  (Wide 0 0 0 0))
+"
+            (array-ref modes index)))
+          [(Some functions)
+            (and
+              (= (lower-test-count functions "field" (CopyBytes)) 0)
+              (= (lower-test-count functions "field" (AddrOf)) 0)
+              (= (lower-test-count functions "field" (Load)) 1)
+              (= (lower-test-count functions "nested" (CopyBytes)) 0)
+              (= (lower-test-count functions "nested" (AddrOf)) 0)
+              (= (lower-test-count functions "nested" (Load)) 1)
+              (= (lower-test-count functions "tuple-field" (CopyBytes)) 0)
+              (= (lower-test-count functions "tuple-field" (AddrOf)) 0)
+              (= (lower-test-count functions "tuple-field" (Load)) 1)
+              (= (lower-test-count functions "whole" (CopyBytes)) 1)
+              (= (lower-test-count functions "pure-tail" (CopyBytes)) 0)
+              (= (lower-test-count functions "pure-value" (CopyBytes)) 0)
+              (> (lower-test-count functions "effectful" (CopyBytes)) 0)
+              (> (lower-test-count functions "escape" (CopyBytes)) 0)
+              (> (lower-test-count functions "exit-escape" (CopyBytes)) 0)
+              (= (lower-test-count functions "pair" (CopyBytes)) 0)
+              (=
+                (lower-test-function-call-count functions "whole" "tl_alloc")
+                0)
+              (=
+                (lower-test-function-call-count functions "field" "tl_alloc")
+                0)
+              (=
+                (lower-test-function-call-count functions "nested" "tl_alloc")
+                0))]
+          [_ false])
+        "whole Copy reads own their frame bytes; scalar and nested projections load only their field"))))

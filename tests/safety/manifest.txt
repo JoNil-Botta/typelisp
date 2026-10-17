@@ -1518,3 +1518,9 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Literal exits preserve return and unreachable-element type checking.
+literal_exit_return_type_reject|check-fail|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+literal_exit_return_type_reject-windows|check-fail-windows|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+tuple_exit_unreachable_type_reject|check-fail|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch

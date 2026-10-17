@@ -50,6 +50,14 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+## Literal constructor exits
+
+`literal_constructor_exits.tl` runs at opt0/1/2 on both hosts. It checks Box and
+tuple return/break/continue, nested and zero-sized elements, skipped later
+effects and conditional fallthrough. `compiler-lower-literal-constructor-exits`
+also rejects unoptimized instructions after a terminator. The paired safety
+fixtures keep invalid returns and unreachable tuple elements type-checked.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

@@ -7,6 +7,10 @@ caller passes the original expression provenance rather than inventing a span
 for a helper call. Short-circuiting remains control flow, and eager operands
 consume the state returned by the preceding operand.
 
+Box and tuple construction propagate actual `Never` flow before allocating or
+storing a child, evaluating later elements or materializing a literal result.
+The tuple element builder returns `ResultLowerExpr` to retain that distinction.
+
 Requested pointer-proof capture runs at the specialized, checked function
 boundary before expression dispatch erases pointer semantics. It uses the shared
 AST child IDs and existing type and symbol authorities; disabled lowering does

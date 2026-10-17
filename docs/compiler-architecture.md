@@ -279,6 +279,11 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
+Box and tuple literals preserve an operand's actual flow independently of its
+contextual value type. A `Never` child cancels allocation, stores, later elements
+and result materialization after the exit. Tuple element builders carry that
+flow in `ResultLowerExpr`; a state-only result cannot represent this boundary.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

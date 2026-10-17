@@ -404,6 +404,16 @@ every element after source-arena retirement and checks tail mutation isolation.
 The three `clone-boxed-production-tail-opt{0,1,2}` public-tool cases compile,
 link and execute both clone tests on Linux and Windows without a test filter.
 
+## IR source spans
+
+`compiler_source_spans_tests.tl`, also called by the IR smoke, checks newest
+bindings, misses, colliding full-width keys, shared prefixes, replay, divergent
+overwrites, growth, clear and independent tables. It pins packed-index limits
+and singleton escape/growth. The existing IR smoke destroys the source arena
+before reading an escaped table; optimizer bounds-span tests retain LICM,
+unroll and bounds-clone suffix retries. Before/after assembly comparisons must
+include plain, debug and backtrace builds at all three optimization levels.
+
 ## IR sequence borrows
 
 The existing IR type, optimizer, lowerer, liveness and register-allocation

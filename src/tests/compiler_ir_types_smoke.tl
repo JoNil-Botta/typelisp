@@ -3,6 +3,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
+(import compiler_source_spans_tests as span_tests)
 (import compiler_owned_view as owned_view)
 
 (define (compiler-ir-types-smoke-instr-seq-prepend
@@ -4665,6 +4666,7 @@
   (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
   (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
   (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
+  (span_tests.source-spans-self-test)
   (unless (compiler-ir-smoke-label-table-growth-ok?) (return 28))
   (let
     [representation-failure : i64

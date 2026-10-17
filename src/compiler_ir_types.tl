@@ -7998,15 +7998,21 @@
 (define (compiler-source-spans-instr-key-size) : i64
   (comptime (size-of (type CompilerSourceSpansInstrKey))))
 
-;; An instruction's span. The key is stored flat -- its function, its value,
-;; name or label id, and its variant as `kind` -- so the record's 44 bytes of
-;; fields fill a 48-byte slot instead of a 24-byte tagged key plus the rest.
+;; The low two bits of `kind-chain` are the key variant; the remaining bits
+;; hold the preceding bucket entry plus one. `bucket` occupies the record's
+;; otherwise unused word. Both fields describe the array, not an owned entry:
+;; moving an entry to another array must rebuild them. Key ids stay full-width.
 (defstruct CompilerSourceSpansInstrEntry
   (function CompilerIrSymbolId)
   (id i64)
   (path-id i64)
   (span ast.AstSourceSpan)
-  (kind i32))
+  (kind-chain u32)
+  (bucket u32))
+
+(define (compiler-source-spans-instr-entry-kind
+  [entry : (& CompilerSourceSpansInstrEntry)]) : i32
+  (cast (bit-and entry.kind-chain 3) : i32))
 
 ;; `kind` values of the key variants.
 (define (compiler-source-spans-instr-kind-value) : i32
@@ -8029,28 +8035,35 @@
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-value))]
+        (cast (compiler-source-spans-instr-kind-value) : u32)
+        0)]
     [(Store function id)
       (CompilerSourceSpansInstrEntry
         function
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-store))]
+        (cast (compiler-source-spans-instr-kind-store) : u32)
+        0)]
     [(Bounds function id)
       (CompilerSourceSpansInstrEntry
         function
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-bounds))]))
+        (cast (compiler-source-spans-instr-kind-bounds) : u32)
+        0)]))
 
 (define (compiler-source-spans-instr-entry-key
   [entry : (& entry CompilerSourceSpansInstrEntry)]) : CompilerSourceSpansInstrKey
   (cond
-    [(= entry.kind (compiler-source-spans-instr-kind-value))
+    [(=
+        (compiler-source-spans-instr-entry-kind entry)
+        (compiler-source-spans-instr-kind-value))
       (Value (CompilerIrSymbolId entry.function.value) entry.id)]
-    [(= entry.kind (compiler-source-spans-instr-kind-store))
+    [(=
+        (compiler-source-spans-instr-entry-kind entry)
+        (compiler-source-spans-instr-kind-store))
       (Store (CompilerIrSymbolId entry.function.value) entry.id)]
     [else (Bounds (CompilerIrSymbolId entry.function.value) entry.id)]))
 
@@ -8332,6 +8345,66 @@
   (for [i (iterator.range index count)]
     (set! (array-ref dst i) (array-ref src i))))
 
+;; Bucket heads occupy all but the last slot's spare word. The last word
+;; records the indexed prefix shared by every list over this array. Chains
+;; descend strictly by entry index. An older list skips newer chain entries;
+;; a divergent append unlinks the overwritten suffix, leaving longer lists'
+;; remaining entries visible through a linear tail. Replaying an identical
+;; entry keeps the index intact. Appending with spare capacity never allocates.
+;; Arrays beyond the packed index range use the same correct linear lookup.
+(define (compiler-source-spans-instr-index-capacity? [capacity : i64]) : bool
+  (and (> capacity 1) (<= capacity 1073741823)))
+
+(define (compiler-source-spans-instr-entry-bucket
+  [entry : (& CompilerSourceSpansInstrEntry)]
+  [buckets : i64]) : i64
+  (%
+    (hash.combine-normalized
+      (hash.combine-normalized
+        (hash.i64 entry.function.value)
+        (hash.i64 entry.id))
+      (cast (compiler-source-spans-instr-entry-kind entry) : i64))
+    buckets))
+
+(define (compiler-source-spans-instr-entry-key-eq?
+  [left : (& CompilerSourceSpansInstrEntry)]
+  [right : (& CompilerSourceSpansInstrEntry)]) : bool
+  (and
+    (= left.id right.id)
+    (= left.function.value right.function.value)
+    (=
+      (compiler-source-spans-instr-entry-kind left)
+      (compiler-source-spans-instr-entry-kind right))))
+
+(define (compiler-source-spans-instr-entry-index!
+  [slots : (&mut slots (__tl_dyn-array CompilerSourceSpansInstrEntry))]
+  [index : i64]) : unit
+  (let
+    [bucket : i64
+      (compiler-source-spans-instr-entry-bucket
+        (& (array-ref slots index))
+        (- (array-length slots) 1))]
+    [head : u32 (array-ref slots bucket).bucket]
+    [kind : u32 (bit-and (array-ref slots index).kind-chain 3)]
+    (set! (array-ref slots index).kind-chain (bit-or (shl head 2) kind))
+    (set! (array-ref slots bucket).bucket (cast (+ index 1) : u32))))
+
+;; Copies and backend key rewrites own their array and rebuild its index in
+;; place. No index storage or reference to the original arena is retained.
+(define (compiler-source-spans-instr-entry-list-from-slots
+  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
+  [len : i64]) : CompilerSourceSpansInstrEntryList
+  (let
+    [capacity : i64 (array-length slots)]
+    (when
+      (compiler-source-spans-instr-index-capacity? capacity)
+      (for [index (iterator.range 0 capacity)]
+        (set! (array-ref slots index).bucket (cast 0 : u32)))
+      (for [index (iterator.range 0 len)]
+        (compiler-source-spans-instr-entry-index! (&mut slots) index))
+      (set! (array-ref slots (- capacity 1)).bucket (cast len : u32)))
+    (CompilerSourceSpansInstrEntryList slots len)))
+
 (define (compiler-source-spans-instr-entry-list-append
   [entries : CompilerSourceSpansInstrEntryList]
   [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
@@ -8339,22 +8412,54 @@
     [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
     [len : i64 entries.len]
     [cap : i64 (array-length slots)]
-    (if (< len cap)
-      (begin
-        (set! (array-ref slots len) entry)
-        (CompilerSourceSpansInstrEntryList slots (+ len 1)))
+    (when
+      (>= len cap)
       (let
-        [new-cap : i64
-          (compiler-source-spans-entry-list-capacity-for (+ len 1))]
         [bigger : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-          (__tl_make-array CompilerSourceSpansInstrEntry new-cap)]
+          (__tl_make-array
+            CompilerSourceSpansInstrEntry
+            (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
         (compiler-source-spans-instr-entry-list-copy-array-range!
           (&mut bigger)
           (& slots)
           0
           len)
-        (set! (array-ref bigger len) entry)
-        (CompilerSourceSpansInstrEntryList bigger (+ len 1))))))
+        (return
+          (compiler-source-spans-instr-entry-list-append
+            (compiler-source-spans-instr-entry-list-from-slots bigger len)
+            entry))))
+    (if (compiler-source-spans-instr-index-capacity? cap)
+      (let
+        [valid : i64 (cast (array-ref slots (- cap 1)).bucket : i64)]
+        (when
+          (< len valid)
+          (let
+            [old : CompilerSourceSpansInstrEntry (array-ref slots len)]
+            (when
+              (and
+                (compiler-source-spans-instr-entry-key-eq? (& old) (& entry))
+                (= old.path-id entry.path-id)
+                (ast.ast-source-span-eq? old.span entry.span))
+              (return (CompilerSourceSpansInstrEntryList slots (+ len 1)))))
+          (while (> valid len)
+            (let
+              [old : CompilerSourceSpansInstrEntry
+                (array-ref slots (- valid 1))]
+              [bucket : i64
+                (compiler-source-spans-instr-entry-bucket (& old) (- cap 1))]
+              (set! (array-ref slots bucket).bucket (shr old.kind-chain 2))
+              (set! valid (- valid 1)))))
+        ;; An entry's spare word may be a bucket head for unrelated keys.
+        (set! entry.bucket (array-ref slots len).bucket)
+        (set! entry.kind-chain (bit-and entry.kind-chain 3))
+        (set! (array-ref slots len) entry)
+        (when
+          (= len valid)
+          (compiler-source-spans-instr-entry-index! (&mut slots) len)
+          (set! valid (+ valid 1)))
+        (set! (array-ref slots (- cap 1)).bucket (cast valid : u32)))
+      (set! (array-ref slots len) entry))
+    (CompilerSourceSpansInstrEntryList slots (+ len 1))))
 
 ;; --- spans escape -----------------------------------------------------------
 ;;
@@ -8388,7 +8493,7 @@
       (& entries.slots)
       0
       entries.len)
-    (CompilerSourceSpansInstrEntryList copy entries.len)))
+    (compiler-source-spans-instr-entry-list-from-slots copy entries.len)))
 
 (define (compiler-source-spans-escape [spans : (& spans CompilerSourceSpans)]) : CompilerSourceSpans
   (match spans
@@ -8399,41 +8504,43 @@
         instr-count
         (compiler-spmd-decisions-escape spmd))]))
 
-(define (compiler-source-spans-instr-entry-array-lookup-location
-  [slots : (& (__tl_dyn-array CompilerSourceSpansInstrEntry))]
-  [index : i64]
-  [function : i64]
-  [id : i64]
-  [kind : i32]) : CompilerMaybeSourceLocation
-  (if (< index 0)
-    (No)
-    (let
-      [span-entry : CompilerSourceSpansInstrEntry (array-ref slots index)]
-      (if (and
-        (= span-entry.id id)
-        (= span-entry.function.value function)
-        (= span-entry.kind kind))
-        (Some (CompilerSourceLocation span-entry.path-id span-entry.span))
-        (compiler-source-spans-instr-entry-array-lookup-location
-          slots
-          (- index 1)
-          function
-          id
-          kind)))))
-
 (define (compiler-source-spans-instr-entry-list-lookup
   [entries : (& CompilerSourceSpansInstrEntryList)]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
-  ;; Flatten the key once; the scan compares scalars.
   (let
+    [cap : i64 (array-length entries.slots)]
+    [valid : i64
+      (if (compiler-source-spans-instr-index-capacity? cap)
+        (cast (array-ref entries.slots (- cap 1)).bucket : i64)
+        0)]
     [probe : CompilerSourceSpansInstrEntry
       (compiler-source-spans-instr-entry key 0 (ast.ast-source-span 0 0 0 0))]
-    (compiler-source-spans-instr-entry-array-lookup-location
-      (& entries.slots)
-      (- entries.len 1)
-      probe.function.value
-      probe.id
-      probe.kind)))
+    [index : i64 (- entries.len 1)]
+    (while (>= index valid)
+      (let
+        [entry : CompilerSourceSpansInstrEntry
+          (clone (array-ref entries.slots index))]
+        (when
+          (compiler-source-spans-instr-entry-key-eq? (& entry) (& probe))
+          (return (Some (CompilerSourceLocation entry.path-id entry.span))))
+        (set! index (- index 1))))
+    (when
+      (> valid 0)
+      (let
+        [bucket : i64
+          (compiler-source-spans-instr-entry-bucket (& probe) (- cap 1))]
+        (set! index (- (cast (array-ref entries.slots bucket).bucket : i64) 1)))
+      (while (>= index 0)
+        (let
+          [entry : CompilerSourceSpansInstrEntry
+            (clone (array-ref entries.slots index))]
+          (when
+            (and
+              (< index entries.len)
+              (compiler-source-spans-instr-entry-key-eq? (& entry) (& probe)))
+            (return (Some (CompilerSourceLocation entry.path-id entry.span))))
+          (set! index (- (cast (shr entry.kind-chain 2) : i64) 1)))))
+    (No)))
 
 ;; Record `name -> span`. Function names are unique in lowered programs. The
 ;; dense list stores new entries at the end, and lookup scans newest-to-oldest,

@@ -709,6 +709,16 @@ spare capacity writes the shared slot and growth copies the live prefix;
 escaping a table copies only that prefix into the current arena, which leaves
 no pointer into the arena that built it.
 
+Instruction-span lookup hashes the full function, kind and id without adding
+storage: bucket heads occupy the spare word of each instruction record, and
+the kind word also holds the preceding bucket entry. The final spare word
+records the indexed prefix shared by all lists over that array. Chains run
+newest first; older prefixes skip newer entries, while divergent appends unlink
+the overwritten suffix. Longer aliases still scan their remaining tail.
+Copies, escapes and backend key remaps rebuild the index in place. Arrays with
+fewer than two slots or more than 30-bit indices retain linear lookup; keys
+are never narrowed.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

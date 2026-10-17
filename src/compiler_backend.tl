@@ -4595,7 +4595,7 @@
           (set! index (+ index 1)))
         (Spans
           entries
-          (compiler_ir_types.CompilerSourceSpansInstrEntryList
+          (compiler_ir_types.compiler-source-spans-instr-entry-list-from-slots
             slots
             instr-entries.len)
           count

@@ -1,6 +1,7 @@
 ;; Receiver and index selection precede the value; store validation follows it.
 (import stdlib.test)
 (import stdlib.string)
+(import stdlib.profile)
 
 (define global-array : (__tl_dyn-array i64)
   (__tl_make-array i64 1))
@@ -76,6 +77,100 @@
       30
       "receiver value precedes index effects")))
 
+(define (receiver-rebind-loop [in-index? : bool] [replace? : bool]) : unit
+  (let
+    [a : (Array i64 2) (array 10 20)]
+    [b : (Array i64 2) (array 30 40)]
+    [i : i64 0]
+    (while (< i 3)
+      (set!
+        (array-ref
+          a
+          (begin
+            (when
+              in-index?
+              (if replace?
+                (set! a b)
+                (set! (array-ref a 1) 77)))
+            0))
+        (begin
+          (unless
+            in-index?
+            (if replace?
+              (set! a b)
+              (set! (array-ref a 1) 77)))
+          7))
+      (test.assert-i64-eq
+        (array-ref a 0)
+        (if replace?
+          30
+          7)
+        "selected receiver survives conditional rebinding in a loop")
+      (test.assert-i64-eq
+        (array-ref a 1)
+        (if replace?
+          40
+          77)
+        "element-only mutation keeps the selected receiver")
+      (test.assert-i64-eq (array-ref b 0) 30 "assignment source first element")
+      (test.assert-i64-eq (array-ref b 1) 40 "assignment source sibling")
+      (+= i 1))))
+
+(define (projected-receiver-rebind-loop) : unit
+  (let
+    [a : Wide (Wide 1 2 3 4)]
+    [b : Wide (Wide 10 20 30 40)]
+    [i : i64 0]
+    (while (< i 3)
+      (set!
+        a.b
+        (begin
+          (set! a b)
+          99))
+      (test.assert-i64-eq a.a 10 "rebound projected receiver first field")
+      (test.assert-i64-eq a.b 20 "projected store retains the old receiver")
+      (test.assert-i64-eq a.d 40 "rebound projected receiver last field")
+      (test.assert-i64-eq b.b 20 "projected assignment source retained")
+      (+= i 1))))
+
+(define (receiver-rebind-scratch-loop) : unit
+  (let
+    [a : (Array i64 2) (array 10 20)]
+    [b : (Array i64 2) (array 30 40)]
+    [i : i64 0]
+    (while (< i 4)
+      (set!
+        (array-ref a 0)
+        (with-scratch
+          (set!
+            (array-ref a 1)
+            (let
+              [j : i64 0]
+              (while (< j 4)
+                (set! a b)
+                (+= j 1))
+              99))
+          7))
+      (let
+        [noise : (Array i64 2) (array 80 90)]
+        (test.assert-i64-eq
+          (+ (array-ref noise 0) (array-ref noise 1))
+          170
+          "frame storage control"))
+      (test.assert-i64-eq
+        (array-ref a 0)
+        30
+        "rebound receiver outlives scratch")
+      (test.assert-i64-eq
+        (array-ref a 1)
+        40
+        "nested selected receiver retained")
+      (test.assert-i64-eq
+        (array-ref b 0)
+        30
+        "scratch assignment source retained")
+      (+= i 1))))
+
 (define (growth-in-value) : unit
   (let
     [a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -126,7 +221,22 @@
   (global-receiver-rebind)
   (aggregate-growth-in-value)
   (growth-in-value)
-  (receiver-index-rebind)
+  (let
+    [before : i64 (profile.alloc-total)]
+    (test.assert-true
+      (> before 0)
+      "allocation counter sees explicit array allocations")
+    (receiver-index-rebind)
+    (receiver-rebind-loop true true)
+    (receiver-rebind-loop true false)
+    (receiver-rebind-loop false true)
+    (receiver-rebind-loop false false)
+    (projected-receiver-rebind-loop)
+    (test.assert-i64-eq
+      (profile.alloc-total)
+      before
+      "retained receiver assignments do not allocate"))
+  (receiver-rebind-scratch-loop)
   (let
     [a : (Array i64 2) (array 10 20)]
     [index : i64 0]

@@ -72,7 +72,10 @@
 ;# For a branded `(Arena owner)`, `in-arena` derives allocation provenance from
 ;# the resolved type. Locals, parameters, and aggregate fields therefore produce
 ;# `(in owner T)` values that calls and matching lifetime-parameterized
-;# aggregates can preserve. Bare `Arena` keeps the legacy direct-local behavior.
+;# aggregates can preserve. Shared or exclusive references to a branded arena
+;# are also `in-arena` targets; their allocation brand comes from the referent,
+;# and entering the extent does not transfer the owner. Bare `Arena` keeps the
+;# legacy direct-local behavior.
 ;#
 ;# Arena handles identify the stable first segment of an arena. Growth appends
 ;# physical segments behind that root, so `current` and stored handles retain
@@ -105,8 +108,10 @@
 ;# moves it, so no copy outlives its safe destroy or rewind (SPEC 5.16). The
 ;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
 ;# low-level code; ordinary user code should use the typed helpers below.
-;: First-class arena handle. The runtime representation is a raw `i64` handle,
-;: but the source type is nominal so raw integers cannot satisfy arena APIs.
+;: First-class arena handle. Constructing this nominal wrapper from a raw `i64`
+;: requires `unsafe`: the handle must identify a live arena throughout every
+;: use. Zero is the runtime's default arena identity. Reading `.handle` is safe;
+;: mutating it or taking an exclusive field reference also requires `unsafe`.
 (defstruct Arena
   (handle i64))
 
@@ -153,18 +158,21 @@
 ;: `with-escape` when the scratch arena should be reused. Direct switching or
 ;: destruction of the handle remains unsafe.
 (define (make) : Arena
-  (Arena (tl_arena_make)))
+  (unsafe
+    (Arena (tl_arena_make))))
 
 ;: Create a fresh independent atomic arena without switching to it. An
 ;: unannotated canonical call receives a fresh move-only checker brand that
 ;: retains the atomic-owner proof through lifetime-parameterized aggregates.
 (define (make-atomic) : Arena
-  (Arena (tl_arena_make_atomic)))
+  (unsafe
+    (Arena (tl_arena_make_atomic))))
 
 ;: Return the stable root handle for the current active arena, or `0` before the
 ;: first allocation. The value remains identical when the arena grows.
 (define (current) : Arena
-  (Arena (tl_arena_current)))
+  (unsafe
+    (Arena (tl_arena_current))))
 
 ;: Return a rewind mark for the current active arena.
 ;:

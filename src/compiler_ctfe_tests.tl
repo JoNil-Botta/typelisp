@@ -1861,13 +1861,21 @@
         (match (ast.ast-node-pool-context-type-get snapshot sentinel-id)
           [(Var name-id) (= name-id sentinel-name)]
           [_ false])]
+      ;; The snapshot shares the installed storage and its single cursor:
+      ;; ids are issued in order and both aliases observe the same nodes, so
+      ;; neither can later overwrite the other's appends.
       [cursor-ok : bool
         (and
           (= sentinel-id installed-cursor)
-          (= (ast.ast-node-pool-context-type-len installed) installed-cursor)
+          (=
+            (ast.ast-node-pool-context-type-len installed)
+            (+ installed-cursor 2))
           (=
             (ast.ast-node-pool-context-type-len snapshot)
-            (+ installed-cursor 2)))]
+            (+ installed-cursor 2))
+          (match (ast.ast-node-pool-context-type-get installed sentinel-id)
+            [(ast.AstType.Var name-id) (= name-id sentinel-name)]
+            [_ false]))]
       (ast.ast-node-pool-compat-context-clear!)
       (and sentinel-ok source-ok cursor-ok))))
 
@@ -4047,6 +4055,124 @@
         (compiler-ctfe-lzss-noise-source 6000 3))
       0)))
 
+;; `source` as an `include-str-lzss` v2 payload, decoded by the runtime decoder:
+;; the coded stream's length, or -1 unless the decoded bytes are exactly
+;; `source`. `damage` rewrites the payload first: 0 none, 1 drop the last
+;; byte, 2 set the last byte's lowest bit (padding when the stream does not
+;; end on a byte boundary).
+(define (compiler-ctfe-lzss-v2-roundtrip-length
+  [source : String]
+  [damage : i64]) : i64
+  (let
+    [envelope : String
+      (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 (& source))]
+    [source-len : i64 (string.string-length source)]
+    [header-len : i64
+      (+
+        (string.string-length (lzss.compiler-lzss-v2-prefix))
+        (string.string-length (string.int->string source-len))
+        1)]
+    [envelope-len : i64
+      (if (= damage 1)
+        (- (string.string-length envelope) 1)
+        (string.string-length envelope))]
+    [payload : (__tl_dyn-array u8) (__tl_make-array u8 envelope-len)]
+    [index : i64 0]
+    (while (< index envelope-len)
+      (set!
+        (array-ref payload index)
+        (cast (string.string-ref envelope index) : u8))
+      (set! index (+ index 1)))
+    (when
+      (and (= damage 2) (> envelope-len header-len))
+      (set!
+        (array-ref payload (- envelope-len 1))
+        (cast
+          (bit-or (cast (array-ref payload (- envelope-len 1)) : i64) 1)
+          : u8)))
+    (match (lzss.compiler-lzss-decode (& payload) source-len)
+      [(Ok bytes)
+        (let
+          [same : bool (= (array-length bytes) source-len)]
+          [cursor : i64 0]
+          (while (and same (< cursor source-len))
+            (unless
+              (=
+                (array-ref bytes cursor)
+                (cast (string.string-ref source cursor) : u8))
+              (set! same false))
+            (set! cursor (+ cursor 1)))
+          (if same
+            (- envelope-len header-len)
+            -1))]
+      [(Err _) -1])))
+
+;; Text with repeats, as the embedded stdlib sources are.
+(define (compiler-ctfe-lzss-text-source) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 4096)]
+    [index : i64 0]
+    (while (< index 40)
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        "(define (stdlib-entry [value : i64]) : i64\n  (let [next : i64 (+ value ")
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (string.int->string (* index 37)))
+      (byte_buf_core.byte-buf-builder-append-string (&mut out) ")] next))\n")
+      (set! index (+ index 1)))
+    (byte_buf_core.byte-buf-builder-to-string (& out))))
+
+;; Every v1 parse boundary decodes exactly through the v2 coding too; text
+;; codes smaller than under v1; a truncated stream and nonzero padding are
+;; rejected rather than decoded.
+(define (compiler-ctfe-lzss-v2-roundtrip-ok?) : bool
+  (let
+    [text : String (compiler-ctfe-lzss-text-source)]
+    (and
+      (= (compiler-ctfe-lzss-v2-roundtrip-length "" 0) 0)
+      (> (compiler-ctfe-lzss-v2-roundtrip-length "ab" 0) 0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length "abcZbcdefghijk_abcdefghijk" 0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          "abcQbcdeRcdefghijkl_abcdefghijkl"
+          0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          "0123456789abcdefgh#0123456789abcdefgh"
+          0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          (compiler-ctfe-lzss-window-source "<marker:0123456789>")
+          0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          (compiler-ctfe-lzss-noise-source 6000 3)
+          0)
+        0)
+      (>
+        (compiler-ctfe-lzss-v2-roundtrip-length
+          (compiler-ctfe-lzss-noise-source 3000 256)
+          0)
+        0)
+      (let
+        [v2 : i64 (compiler-ctfe-lzss-v2-roundtrip-length (clone text) 0)]
+        [v1 : i64 (compiler-ctfe-lzss-roundtrip-length (clone text))]
+        (and (> v2 0) (> v1 0) (< v2 v1)))
+      (= (compiler-ctfe-lzss-v2-roundtrip-length (clone text) 1) -1)
+      (= (compiler-ctfe-lzss-v2-roundtrip-length "abcde" 2) -1))))
+
 (cfg
   test
   (define (compiler-ctfe-captured-list-builders-ok?
@@ -4526,6 +4652,7 @@
     (unless (compiler-ctfe-env-arena-ok?) (return 1))
     (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
     (unless (compiler-ctfe-lzss-roundtrip-ok?) (return 1))
+    (unless (compiler-ctfe-lzss-v2-roundtrip-ok?) (return 1))
     (cfg
       test
       (unless (compiler-ctfe-comptime-structural-fields-ok?) (return 1))

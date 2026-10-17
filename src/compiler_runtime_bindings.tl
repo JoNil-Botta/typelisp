@@ -288,7 +288,7 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
       [result : (__tl_dyn-array String) (__tl_make-array String count)]
       [index : i64 0]
       (while (< index count)
-        (set! (array-ref result index) (array-ref out index))
+        (set! (array-ref result index) (replace! (array-ref out index) ""))
         (set! index (+ index 1)))
       result)))
 

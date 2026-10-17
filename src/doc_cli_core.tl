@@ -450,7 +450,9 @@
     [(Ok source-digest)
       (let
         [target-dir : String
-          (fs.path-join-owned-pair source-set.manifest-dir "target")]
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view source-set.manifest-dir)
+            "target")]
         [output-dir : String
           (fs.path-join-owned-pair
             (owned_view.compiler-owned-shared-view target-dir)
@@ -471,7 +473,8 @@
           (fs.path-join-owned-pair
             (owned_view.compiler-owned-shared-view output-dir)
             "typelisp-docs-search-index.js")]
-        [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
+        [manifest : compiler_load.CompilerPkgManifest
+          (owned_view.compiler-owned-shared-view source-set.manifest)]
         [package-identity : String
           (doc_local_site.doc-local-site-package-identity
             (owned_view.compiler-owned-shared-view manifest.name)

@@ -34,7 +34,8 @@
   (TlciImage)
   (CopyFwd)
   (Copy8Fwd)
-  (MemFill8))
+  (MemFill8)
+  (ArenaSanitizer))
 
 (defenum CompilerX64TemplateContributionKind
   (RuntimeFunctions)
@@ -129,7 +130,7 @@
 (define (compiler-x64-template-feature-from-catalog [value : (& value str)]) : CompilerX64TemplateFeature
   (let
     [tag : i64 (catalog.compiler-x64-template-catalog-tag value)]
-    (if (or (< tag 0) (>= tag 24))
+    (if (or (< tag 0) (>= tag 25))
       (io.panic "x64 executable template: evidence enum tag is out of range")
       (unsafe
         (ptr-read

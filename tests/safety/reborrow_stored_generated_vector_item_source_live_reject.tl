@@ -1,5 +1,5 @@
-;: A generated mutable Vec iterator item retains the vector borrow after the
-;: iterator local has gone out of scope.
+;: A generated mutable Vec iterator item retains the vector borrow through
+;: the iterator while it is live.
 (import stdlib.vector)
 (import (vector.vector i64) as vec)
 
@@ -14,10 +14,8 @@
     (begin
       (vec.push! values 7)
       (let
-        [first : (vec.IterMutNext values)
-          (let
-            [iter : (vec.IterMut values) (vec.iterator-mut (&mut values))]
-            (vec.next-mut (&mut iter)))]
+        [iter : (vec.IterMut values) (vec.iterator-mut (&mut values))]
+        [first : (vec.IterMutNext iter) (vec.next-mut (&mut iter))]
         (begin
           (vec.push! values 9)
           (consume first))))))

@@ -239,7 +239,7 @@
       (run-diff "t.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
     (assert
       (string.eq run.text expected)
-      (str_cat.str-cat (clone name) ": unexpected diff:\n" run.text))
+      (str_cat.str-cat (clone name) ": unexpected diff:\n" (clone run.text)))
     (check-run (clone name) old new (& run))))
 
 ;; --- goldens ----------------------------------------------------------------

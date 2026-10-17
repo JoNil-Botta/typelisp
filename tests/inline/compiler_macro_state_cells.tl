@@ -6,7 +6,8 @@
 
 (define (new-state [owner : i64]) : tc.TcMacroState
   (in-arena
-    (arena.Arena owner)
+    (unsafe
+      (arena.Arena owner))
     (tc.tc-job-state-macro-state (tc.tc-job-state-new))))
 
 (define (initializers) : (Array (-> tc.TcMacroState i64) 11)
@@ -95,7 +96,10 @@
     [scratch : i64 (arena.tl_arena_make)]
     [a : tc.TcMacroState (new-state owner-a)]
     [b : tc.TcMacroState (new-state owner-b)]
-    (in-arena (arena.Arena scratch) (initialize-and-probe a b))
+    (in-arena
+      (unsafe
+        (arena.Arena scratch))
+      (initialize-and-probe a b))
     (unsafe
       ;; lint-allow: raw-arena-op -- exercise retirement of a different owner.
       (arena.destroy (arena.Arena scratch)))

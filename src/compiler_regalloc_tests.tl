@@ -9167,12 +9167,16 @@
       (compiler-reg-function-moves-with-destructive-and-casts
         (ir.compiler-ir-global-shared-view straight)
         false)]
+    [sv-parents : (__tl_dyn-array i64)
+      (compiler-reg-sv-multi-parents-for
+        (reg.compiler-reg-global-shared-view straight))]
     [clobber-eligible : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [clobber-moves : reg.CompilerRegMoveSeq
       (begin
         (reg.compiler-reg-fill-i64-array (&mut clobber-eligible) 1)
         (set! (array-ref clobber-eligible 1) 0)
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
+          (&mut sv-parents)
           (& straight)
           false
           (& clobber-eligible)
@@ -10833,6 +10837,7 @@
     (& (live.compiler-live-analyze-function (& (clone func)))))
     [(Selection _ interval-index)
       (reg.compiler-reg-function-same-value-parents-multi
+        (ast.ast-node-pool-reader-type-segment-bases)
         (& (clone func))
         (let
           [clobber-kind-points
@@ -15039,8 +15044,12 @@
     [(Function _ _ _ vars _ _)
       (let
         [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [sv-parents : (__tl_dyn-array i64)
+          (compiler-reg-sv-multi-parents-for
+            (reg.compiler-reg-global-shared-view func))]
         (reg.compiler-reg-fill-i64-array (&mut eligible) 1)
         (reg.compiler-reg-function-moves-with-destructive-and-casts-eligible
+          (&mut sv-parents)
           (& func)
           strict-pairs
           (& eligible)

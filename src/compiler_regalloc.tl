@@ -1664,6 +1664,23 @@
   [to-ty : (& ast.AstType)]) : bool
   (and (compiler-reg-int-width-64? from-ty) (compiler-reg-int-width-64? to-ty)))
 
+;; Zero-offset GEP preserves the bits of a thin address value. Aggregate
+;; storage and fat references are not scalar address copies. The ordinary
+;; storage-identity and class-interference guards still apply to these pairs.
+(define (compiler-reg-gep-copy-base?
+  [type-segment-bases : i64]
+  [types : CompilerRegVarTypes]
+  [var : i64]) : bool
+  (match (compiler-reg-var-types-lookup types var)
+    [(Some ty)
+      (match ty
+        [(or (Ptr _) (MutPtr _)) true]
+        [(or (Ref _ inner) (MutRef _ inner))
+          (not
+            (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner))]
+        [_ false])]
+    [(No) false]))
+
 ;; Scalar operations whose backend lowering can destructively reuse an operand
 ;; home for the result. Comparisons produce a fresh boolean through cmp/setcc;
 ;; div/mod use fixed rax:rdx and are not ordinary operand ties.
@@ -1937,12 +1954,13 @@
   [var : i64]) : bool
   (and (>= var 0) (< var (array-length flags)) (= (array-ref flags var) 1)))
 
-;; Harvest width-64 int casts as coalescable moves (M-C part 1). Kept SEPARATE
+;; Harvest width-64 int casts and admitted zero-offset address copies. Kept SEPARATE
 ;; from compiler-reg-function-moves so the SIMD/AVX plan path keeps the plain
 ;; move list; only the scalar-opt2 plan-from seeds its move list with these
 ;; (appended BEHIND the real moves so the real moves keep first-wins copy-hint
 ;; priority).
 (define (compiler-reg-cast-move-instr
+  [sv-parents : (&mut sv-parents (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (match instr
@@ -1953,9 +1971,17 @@
             (compiler-reg-move-list-add moves var dst false false)
             moves)]
         [_ moves])]
+    ;; A disjoint late address must not inherit an earlier call-crossing
+    ;; input's constraints merely through an ordinary non-overlap move.
+    ;; The shared relation admits clobber-crossing pairs only when they nest.
+    [(Gep dst (Var var) (I64 0) _)
+      (if (compiler-reg-same-value-class? sv-parents var dst)
+        (compiler-reg-move-list-add moves var dst false false)
+        moves)]
     [_ moves]))
 
 (define (compiler-reg-cast-moves-seq
+  [sv-parents : (&mut sv-parents (__tl_dyn-array i64))]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (let
@@ -1964,11 +1990,17 @@
     [index : i64 (- instrs.len 1)]
     [out : CompilerRegMoveSeq moves]
     (while (>= index 0)
-      (set! out (compiler-reg-cast-move-instr (& (array-ref slots index)) out))
+      (set!
+        out
+        (compiler-reg-cast-move-instr
+          sv-parents
+          (& (array-ref slots index))
+          out))
       (set! index (- index 1)))
     out))
 
 (define (compiler-reg-cast-moves-blocks
+  [sv-parents : (&mut sv-parents (__tl_dyn-array i64))]
   [blocks : (& ir.CompilerIrBlockList)]
   [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (match blocks
@@ -1980,7 +2012,7 @@
         (while (< i count)
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-cast-moves-seq (& instrs) out))])
+              (set! out (compiler-reg-cast-moves-seq sv-parents (& instrs) out))])
           (set! i (+ i 1)))
         out)]))
 
@@ -2315,11 +2347,12 @@
           eligible
           prefer-rhs))]))
 
-;; function-moves with the width-64 cast copies appended at the TAIL (the cast
+;; function-moves with scalar cast/address copies appended at the TAIL (the copy
 ;; list is built first and used as the seed accumulator the real moves are
 ;; prepended onto), so every existing move keeps its first-wins position for
-;; copy-hints and the coalesce pass sees the cast pairs last.
+;; copy-hints and the coalesce pass sees these extra copy pairs last.
 (define (compiler-reg-function-moves-with-destructive-and-casts-eligible
+  [sv-parents : (&mut sv-parents (__tl_dyn-array i64))]
   [func : (& ir.CompilerIrFunction)]
   [strict-pairs : bool]
   [eligible : (& (__tl_dyn-array i64))]
@@ -2331,6 +2364,7 @@
         (compiler-reg-function-destructive-tie-moves
           func
           (compiler-reg-cast-moves-blocks
+            sv-parents
             (& blocks)
             (compiler-reg-move-seq-empty))
           eligible
@@ -7689,6 +7723,9 @@
 ;; single-def-only builder.
 ;; ---------------------------------------------------------------------------
 (defstruct CompilerRegSvMultiCtx
+  (type-segment-bases i64)
+  ;; Copy handle to the type view owned by this planning invocation.
+  (types-address u64)
   (parents (__tl_dyn-array i64))
   (counts (__tl_dyn-array i64))
   (phi-defs (__tl_dyn-array i64))
@@ -7966,7 +8003,7 @@
       (compiler-reg-sv-eligible? ctx.hull-eligible svar)
       (compiler-reg-sv-hull-nested? ctx svar dst))))
 
-;; One copy pair (Mov, or width-64 int Cast). The single-def-src path mirrors
+;; One value-identical copy pair. The single-def-src path mirrors
 ;; the original relation (no type restriction); the mutable-src path is the
 ;; M-C extension, GP-int scalars only.
 (define (compiler-reg-sv-multi-pair!
@@ -8000,6 +8037,13 @@
             (compiler-reg-sv-multi-pair! ctx svar dst)
             unit)]
         [_ unit])]
+    [(Gep dst (Var svar) (I64 0) _)
+      (if (compiler-reg-gep-copy-base?
+        ctx.type-segment-bases
+        (CompilerRegVarTypes ctx.types-address)
+        svar)
+        (compiler-reg-sv-multi-pair! ctx svar dst)
+        unit)]
     [_ unit]))
 
 (define (compiler-reg-sv-multi-seq!
@@ -8030,6 +8074,7 @@
 
 ;; Build the extended same-value relation (scalar-opt2 plan path only).
 (define (compiler-reg-function-same-value-parents-multi
+  [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]
   [eligible : (__tl_dyn-array i64)]
   [hull-eligible : (__tl_dyn-array i64)]
@@ -8094,6 +8139,8 @@
               (& blocks)
               (&
                 (CompilerRegSvMultiCtx
+                  type-segment-bases
+                  type-info.address
                   (compiler-reg-global-shared-view parents)
                   counts
                   phi-defs
@@ -26282,15 +26329,56 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-function-alu-prefer-rhs func)
         (__tl_make-array i64 0))]
+    ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
+    ;; identical value and may coalesce even when their live segments overlap.
+    ;; Vars spanning a modeled caller-clobber point stay out of the same-value
+    ;; relation; their save/restore and regmask constraints are already
+    ;; represented by normal interference and must not be bypassed by an overlap
+    ;; waiver.
+    [sv-parents
+      : (__tl_dyn-array i64)
+      ;; M-C (part 1): the scalar-opt2 path uses the extended relation that also
+      ;; admits copies of mutable (multi-def / phi-def) sources under the
+      ;; def-inside-liveness safety check; other paths keep the single-def-only
+      ;; builder (their coalesce map is empty anyway).
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-same-value-parents-multi
+          type-segment-bases
+          func
+          (compiler-reg-same-value-eligible-vars-excluding
+            interval-index
+            clobber-points
+            storage-identity-vars)
+          ;; P22 nested-pair admission: the same exclusion list MINUS the
+          ;; clobber-span test. Storage-identity values stay out (their address
+          ;; identity, not their bits, is what a consumer reads) and a var with
+          ;; no interval stays out; only the call-crossing refusal is lifted,
+          ;; and only for a pair whose hulls nest.
+          (let
+            [set-empty (live.compiler-live-set-empty)]
+            (compiler-reg-same-value-eligible-vars-excluding
+              interval-index
+              set-empty
+              storage-identity-vars))
+          type-info
+          (owned_view.compiler-owned-reference-shared-view interval-index))
+        (compiler-reg-function-same-value-parents-filtered
+          func
+          (&
+            (compiler-reg-same-value-eligible-vars-excluding
+              interval-index
+              clobber-points
+              storage-identity-vars))))]
     [raw-moves
       : CompilerRegMoveSeq
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
       ;; (then merge into one root via coalescing-by-rename). SIMD passes false
       ;; too; only the scalar-opt2 plan gets the loop coalescing.
       ;; Scalar opt2 additionally harvests bounded destructive-binop chain ties,
-      ;; then width-64 int casts as copies. SIMD/AVX keeps the plain move list.
+      ;; then width-64 casts and admitted address copies. SIMD/AVX keeps the plain move list.
       (if allow-caller-saved-zero-call
         (compiler-reg-function-moves-with-destructive-and-casts-eligible
+          (&mut sv-parents)
           func
           false
           (& destructive-eligible)
@@ -26323,45 +26411,6 @@
     ;; (compiler-reg-ineligible-vars-simd), and XMM-homed values crossing a
     ;; tail-call hull are rare -- so it stays conservative.
     [xmm-call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
-    ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
-    ;; identical value and may coalesce even when their live segments overlap.
-    ;; Vars spanning a modeled caller-clobber point stay out of the same-value
-    ;; relation; their save/restore and regmask constraints are already
-    ;; represented by normal interference and must not be bypassed by an overlap
-    ;; waiver.
-    [sv-parents
-      : (__tl_dyn-array i64)
-      ;; M-C (part 1): the scalar-opt2 path uses the extended relation that also
-      ;; admits copies of mutable (multi-def / phi-def) sources under the
-      ;; def-inside-liveness safety check; other paths keep the single-def-only
-      ;; builder (their coalesce map is empty anyway).
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-same-value-parents-multi
-          func
-          (compiler-reg-same-value-eligible-vars-excluding
-            interval-index
-            clobber-points
-            storage-identity-vars)
-          ;; P22 nested-pair admission: the same exclusion list MINUS the
-          ;; clobber-span test. Storage-identity values stay out (their address
-          ;; identity, not their bits, is what a consumer reads) and a var with
-          ;; no interval stays out; only the call-crossing refusal is lifted,
-          ;; and only for a pair whose hulls nest.
-          (let
-            [set-empty (live.compiler-live-set-empty)]
-            (compiler-reg-same-value-eligible-vars-excluding
-              interval-index
-              set-empty
-              storage-identity-vars))
-          type-info
-          (owned_view.compiler-owned-reference-shared-view interval-index))
-        (compiler-reg-function-same-value-parents-filtered
-          func
-          (&
-            (compiler-reg-same-value-eligible-vars-excluding
-              interval-index
-              clobber-points
-              storage-identity-vars))))]
     ;; LP-1: edge-precise liveness, the SAFE-MODE phi-touched mask, and the EP
     ;; segment rows, built once here and shared by the coalescing hybrid below
     ;; and by the allocation index. `compiler-reg-liveness-handle-edge-precise`

@@ -28969,15 +28969,19 @@
 
 (define (lower-copy-projected-value
   [ctx : tc_core.TcContext]
-  [lowered : LowerExpr]) : ResultLowerExpr
-  (match (lower-global-shared-view lowered)
-    [(Expr state value ty)
-      (if (and
-        (lower-type-inline-storage? ctx ty)
-        (not (lower-type-register-resident? ctx (lower-global-shared-view ty)))
-        (tc_core.tc-type-copyable? ctx (lower-global-shared-view ty)))
-        (lower-copy-inline-aggregate-to-inline ctx state value ty)
-        (Ok lowered))]))
+  [lowered : ResultLowerExpr]) : ResultLowerExpr
+  (match lowered
+    [(Ok value)
+      (match value
+        [(Expr state value ty)
+          (if (and
+            (lower-type-inline-storage? ctx ty)
+            (not
+              (lower-type-register-resident? ctx (lower-global-shared-view ty)))
+            (tc_core.tc-type-copyable? ctx (lower-global-shared-view ty)))
+            (lower-copy-inline-aggregate-to-inline ctx state value ty)
+            (Ok (Expr state value ty)))])]
+    [(Err message) (Err message)]))
 
 ;; A projection or borrow addresses the original place. Whole Copy reads use
 ;; fresh frame storage, but reading a field must not copy its memory-class
@@ -29009,12 +29013,7 @@
             (lower-type-inline-storage? ctx ty)
             (not
               (lower-type-register-resident? ctx (lower-global-shared-view ty))))
-            (if (lower-raw-deref-place?
-              ctx
-              state
-              env
-              type-env
-              (lower-global-shared-view expr))
+            (if (lower-raw-deref-place? ctx state env type-env expr)
               (lower-raw-deref-place-address ctx state env type-env expr)
               (lower-borrow-place-address
                 ctx
@@ -29885,7 +29884,7 @@
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         (lower-copy-projected-value
           ctx
-          (try (lower-field-get ctx state env type-env receiver field expr-ty))))]
+          (lower-field-get ctx state env type-env receiver field expr-ty)))]
     [(StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -29930,7 +29929,7 @@
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-copy-projected-value
           ctx
-          (try (lower-array-ref ctx state env type-env arr index))))]
+          (lower-array-ref ctx state env type-env arr index)))]
     [(ArraySet arr-box index-box value-box)
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
@@ -29965,8 +29964,7 @@
         [tuple-expr : ast.AstExpr (lower-context-expr-get ctx tuple-expr-box)]
         (lower-copy-projected-value
           ctx
-          (try
-            (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty))))]
+          (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty)))]
     [(WithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(WithEscape scratch-box body)
       (let
@@ -29990,7 +29988,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-copy-projected-value
           ctx
-          (try (lower-box-get ctx state env type-env inner expr-ty))))]
+          (lower-box-get ctx state env type-env inner expr-ty)))]
     [(BoxSet inner-box value-box)
       (let
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
@@ -30592,7 +30590,7 @@
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-copy-projected-value
           ctx
-          (try (lower-box-get ctx state env type-env inner expected-ty))))]
+          (lower-box-get ctx state env type-env inner expected-ty)))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
         (tc_core.tc-context-pools ctx)
@@ -30813,12 +30811,7 @@
   [receiver : ast.AstExpr]
   [field : i64]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-raw-deref-place?
-    ctx
-    state
-    env
-    type-env
-    (lower-global-shared-view receiver))
+  (if (lower-raw-deref-place? ctx state env type-env receiver)
     (let
       [lowered : LowerExpr
         (try (lower-raw-deref-place-address ctx state env type-env receiver))]
@@ -30848,15 +30841,12 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [place : ast.AstExpr]) : bool
+  [place : (& place ast.AstExpr)]) : bool
   (match place
     [(or (Spanned inner-box _) (StructGet inner-box _))
-      (lower-raw-deref-place?
-        ctx
-        state
-        env
-        type-env
-        (lower-context-expr-get ctx inner-box))]
+      (let
+        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-raw-deref-place? ctx state env type-env inner))]
     [(BoxTake pointer-box)
       (let
         [pointer : ast.AstExpr (lower-context-expr-get ctx pointer-box)]
@@ -30884,7 +30874,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [place : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-global-shared-view place)
+  (match (& place)
     [(Spanned inner-box _)
       (lower-raw-deref-place-address
         ctx

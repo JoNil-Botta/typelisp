@@ -443,8 +443,39 @@
         want)]
     [(Ok _) false]))
 
+(define (compiler-typecheck-shared-vector-read-source [field-type : String]) : String
+  (str_cat.str-cat
+    "(import stdlib.comptime)
+(defmacro (for-each [vec : Expr] [body : Expr]) : unit
+  `(let
+    [idx : i64 0]
+    (while (< idx (__tl-project-field-name ,vec \"len\"))
+      (,body (array-ref (__tl-project-field-name ,vec \"slots\") idx))
+      (set! idx (+ idx 1)))))
+
+(defstruct Ball
+  (x i64)
+  (y "
+    field-type
+    "))
+
+(defstruct Vec
+  (slots (__tl_dyn-array Ball))
+  (len i64))
+
+(defstruct World
+  (balls Vec))
+
+(define (draw-ball [ball : Ball]) : unit
+  unit)
+
+(define (draw-balls [world : (& a World)]) : unit
+  (for-each (& world.balls) draw-ball))"))
+
 (define (compiler-typecheck-escape-diagnostic-tests-ok?) : bool
   (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-shared-vector-read-source "i64"))
     (compiler-typecheck-error-shape-ok?
       "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))"
@@ -477,30 +508,7 @@
       5
       1)
     (compiler-typecheck-error-shape-ok?
-      "(import stdlib.comptime)
-(defmacro (for-each [vec : Expr] [body : Expr]) : unit
-  `(let
-    [idx : i64 0]
-    (while (< idx (__tl-project-field-name ,vec \"len\"))
-      (,body (array-ref (__tl-project-field-name ,vec \"slots\") idx))
-      (set! idx (+ idx 1)))))
-
-(defstruct Ball
-  (x i64)
-  (y i64))
-
-(defstruct Vec
-  (slots (__tl_dyn-array Ball))
-  (len i64))
-
-(defstruct World
-  (balls Vec))
-
-(define (draw-ball [ball : Ball]) : unit
-  unit)
-
-(define (draw-balls [world : (& a World)]) : unit
-  (for-each (& world.balls) draw-ball))"
+      (compiler-typecheck-shared-vector-read-source "String")
       "typecheck: cannot pass region-tagged value to function parameter; region value would escape; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper"
       24
       13

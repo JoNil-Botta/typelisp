@@ -58,7 +58,8 @@ zero-sized local values; no runtime allocation; and a copy
 read after its source arena is destroyed by an `:invalidate` callee. Its lowerer
 shape test keeps scalar and nested field reads copy-free on both target ABIs.
 The paired safety fixtures retain stored-reference and intrinsic region facts,
-reject escaping borrows, and preserve non-Copy and shared-store diagnostics.
+reject escaping borrows, preserve a reference's loan lifetime under outer region
+annotations, and preserve non-Copy and shared-store diagnostics.
 The arena-debug gate also runs the fixture with debug, allocation profiling
 and backtrace instrumentation enabled, so its allocation-counter assertion
 observes the active allocator.

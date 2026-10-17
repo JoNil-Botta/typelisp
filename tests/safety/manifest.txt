@@ -1526,3 +1526,5 @@ reference_copy_payload_escape_reject|check-fail|tests/safety/reference_copy_payl
 reference_copy_shared_store_reject|check-fail|tests/safety/reference_copy_shared_store_reject.tl|-|error[E0207]: typecheck: set! deref requires mutable access
 reference_copy_mutable_noncopy_reject|check-fail|tests/safety/reference_copy_mutable_noncopy_reject.tl|-|error[E0208]: typecheck: cannot move a `Owned` out of a mutable reference; `Owned` is not Copy
 reference_copy_zero_noncopy_reject|check-fail|tests/safety/reference_copy_zero_noncopy_reject.tl|-|error[E0208]: typecheck: cannot move a `(Array (Box i64) 0)` out of a shared reference; `(Array (Box i64) 0)` is not Copy
+reference_copy_outer_region_deref_reject|check-fail|tests/safety/reference_copy_outer_region_deref_reject.tl|-|error[E0206]: typecheck: return type mismatch
+reference_copy_outer_region_field_reject|check-fail|tests/safety/reference_copy_outer_region_field_reject.tl|-|error[E0206]: typecheck: return type mismatch

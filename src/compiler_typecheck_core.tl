@@ -18318,7 +18318,7 @@
   [ty : ast.AstType]) : bool
   (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions ty)))
 
-(define (tc-type-outer-region [ty : ast.AstType]) : TcMaybeNameId
+(define (tc-type-outer-region [ty : (& ty ast.AstType)]) : TcMaybeNameId
   (match ty
     [(Region region _) (Some region)]
     [_ (No)]))
@@ -18331,16 +18331,19 @@
         region)]
     [_ Nil]))
 
-(define (tc-region-taggable-type? [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region ty)
+(define (tc-region-taggable-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
     [(or (String) (DynArray _) (Box _) (Tuple _) (Struct _) (StructArgs _ _)
          (Enum _) (EnumArgs _ _))
       true]
-    [(Slice _) false]
+    [(Region _ inner)
+      (let
+        [inner-ty : ast.AstType (ast.ty-node-get inner)]
+        (tc-region-taggable-type? inner-ty))]
     [_ false]))
 
 (define (tc-tag-region [region : i64] [ty : ast.AstType]) : ast.AstType
-  (if (tc-region-taggable-type? (tc-global-shared-view ty))
+  (if (tc-region-taggable-type? ty)
     (ast.ast-ty-region region (& ty))
     ty))
 
@@ -18371,33 +18374,34 @@
       (tc-type-list-collect-reference-lifetimes params Nil)
       ret)))
 
-(define (tc-project-from-region-container
+(define (tc-project-from-region
   [ctx : TcContext]
-  [container-ty : ast.AstType]
+  [region : i64]
   [projected-ty : ast.AstType]
   [copy-value : bool]) : ast.AstType
   ;; A reference-free Copy read owns its bytes after lowering. Keep any facts
   ;; intrinsic to the projected type; only omit the container's extra region.
   ;; Patterns, stores and Copy payloads with references keep place provenance.
-  (let
-    [region : TcMaybeNameId
-      (match (tc-type-outer-region (tc-global-shared-view container-ty))
-        [(Some region) (Some region)]
-        [(No)
-          (match (tc-type-strip-region container-ty)
-            [(or (Ref region _) (MutRef region _)) (Some region)]
-            [_ (No)])])]
-    (match region
-      [(Some region)
-        (if (and
-          copy-value
-          (tc-region-taggable-type? (tc-global-shared-view projected-ty))
-          (not
-            (tc-type-contains-reference? (tc-global-shared-view projected-ty)))
-          (tc-type-copyable? ctx (tc-global-shared-view projected-ty)))
-          projected-ty
-          (tc-tag-region region projected-ty))]
-      [(No) projected-ty])))
+  (if (and
+    copy-value
+    (tc-region-taggable-type? projected-ty)
+    (not (tc-type-contains-reference? (tc-global-shared-view projected-ty)))
+    (tc-type-copyable? ctx (tc-global-shared-view projected-ty)))
+    projected-ty
+    (tc-tag-region region projected-ty)))
+
+(define (tc-project-from-region-container
+  [ctx : TcContext]
+  [container-ty : ast.AstType]
+  [projected-ty : ast.AstType]
+  [copy-value : bool]) : ast.AstType
+  (match (tc-type-outer-region container-ty)
+    [(Some region) (tc-project-from-region ctx region projected-ty copy-value)]
+    [(No)
+      (match (tc-type-strip-region container-ty)
+        [(or (Ref region _) (MutRef region _))
+          (tc-project-from-region ctx region projected-ty copy-value)]
+        [_ projected-ty])]))
 
 ;; Region-tagged aggregate flow uses the same lexical owner ordering as
 ;; references, but only considers arena owners. A value from an outer region can
@@ -51173,7 +51177,8 @@
             (if (and
               (tc-regions-have-scratch-body? regions)
               (tc-region-taggable-type?
-                (tc-result-info-err-type (tc-global-shared-view operand-info))))
+                (&
+                  (tc-result-info-err-type (tc-global-shared-view operand-info)))))
               (Err
                 (tc-locate-error-at-expr
                   (tc-context-expr-bases ctx)
@@ -51520,7 +51525,7 @@
               field-id))]
         (Ok
           (tc-project-from-region-container ctx receiver-ty field-ty copy-value)))]
-    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
+    [(or (Ref lifetime referent-ty) (MutRef lifetime referent-ty))
       (let
         [field-ty
           (try
@@ -51529,8 +51534,7 @@
               (tc-context-type-get ctx referent-ty)
               field-id
               copy-value))]
-        (Ok
-          (tc-project-from-region-container ctx receiver-ty field-ty copy-value)))]
+        (Ok (tc-project-from-region ctx lifetime field-ty copy-value)))]
     [(ExprList) (tc-comptime-sequence-field-type "ExprList" (Expr) field-id)]
     [(Var name)
       (cond
@@ -51580,7 +51584,7 @@
             (tc-type-strip-region (tc-resolve-type ctx receiver-ty)))))]))
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
-  (match (tc-type-outer-region (tc-global-shared-view ty))
+  (match (tc-type-outer-region ty)
     [(Some region)
       (Ok (TcBorrowPlace region (tc-borrow-referent-type ty) false))]
     [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty) false))]))
@@ -58534,13 +58538,9 @@
           receiver-ty
           (ast.ty-node-get inner-ty)
           true))]
-    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
+    [(or (Ref lifetime referent-ty) (MutRef lifetime referent-ty))
       (Ok
-        (tc-project-from-region-container
-          ctx
-          receiver-ty
-          (ast.ty-node-get referent-ty)
-          true))]
+        (tc-project-from-region ctx lifetime (ast.ty-node-get referent-ty) true))]
     [(or (Ptr _) (MutPtr _)) (Err (tc-raw-deref-whole-message))]
     [_
       (Err
@@ -59314,7 +59314,7 @@
   [arena : ast.AstExpr]
   [arena-ty : ast.AstType]
   [body-ty : ast.AstType]) : ast.AstType
-  (match (tc-type-outer-region (tc-global-shared-view body-ty))
+  (match (tc-type-outer-region body-ty)
     [(Some _) body-ty]
     [(No)
       (tc-tag-active-region

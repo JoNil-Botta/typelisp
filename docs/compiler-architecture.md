@@ -396,6 +396,60 @@ from its one-word storage slot through the shared slot-reference helper.
 Inline aggregate payloads keep their storage address. Element bounds checks
 precede the handle load, so an invalid outer index cannot read a slot.
 
+SPMD lowering retains source facts in `CompilerSourceSpans`, separately from
+instruction locations. `CompilerSpmdSiteId` is a typed function symbol and a
+function-local source-order ordinal; neither instruction IDs nor rendered
+names participate in identity. Each source `foreach`, reduce, scan, compact,
+broadcast and shuffle has one site. A parent ordinal relates nested cross-lane
+forms to their owning region. Enumeration uses the shared AST child order
+before planners consume expressions or emit scalar tails; lambdas enumerate
+under their own function identity. Captured syntax reused by a macro receives
+a distinct ordinal at each expanded source occurrence. Function scratch keys
+encode binding/type/child-node IDs, so payload copies and unspanned API syntax
+retain their lookup. Occurrence links advance within the source parent's
+subtree, while scalar-tail revisits reuse its entered site. These keys and links
+never escape as identity.
+
+A final decision records the selected backend and lane count, route and first
+typed reason. Routes distinguish native gangs, compiler-limitation fallback,
+language-specified or explicit scalar execution, scalar backend and rejection.
+A source site that lowering never visits is `Inactive/NotLowered`, with zero
+lanes, including code after a return or after an earlier lowering error.
+Scalar loop bodies still emitted for empty ranges retain their selected route.
+Plan selection and terminal completion are separate: only finished records
+escape, so a later rejection cannot leak an earlier scalar fallback.
+`lower-plan-foreach` owns route/failure precedence; emitters consume its plan.
+Reduce and scan planners retain their first structural miss. Bounds, masks,
+empty ranges and tails do not create additional source sites or decisions.
+These records contain facts; warning classification and rendering are consumers.
+
+Provenance enumeration reads raw context nodes before the ordinary lowering
+accessor makes macro wrappers transparent. It snapshots canonical path IDs,
+primary and actionable spans, and up to eight ordered expansion frames, with
+an explicit truncation flag. Traversal borrows one origin; span and macro
+wrappers save and restore only the fields they change. Ordinary children share
+that origin and sites own copied snapshots. A flat scratch prefix holds at most
+eight frames and macro subtrees restore its incoming length; sites copy the
+prefix before siblings overwrite it. The result stores flat frame
+and decision arrays, with no AST or provenance-composite handles. Path/name IDs
+use the compiler job's existing intern/source ownership. Function scratch escape
+copies live record prefixes into the enclosing result arena. Rejected facts
+are retained in the lower owner's `spmd-rejected-spans` result field and escaped
+beside the diagnostic before scratch retirement; entry reset clears them.
+Optimizer instruction-span rebuilding and backend register remapping retain the
+source decisions unchanged. Functions without SPMD allocate no site collection.
+A prepared job scans its owned expression pool once for the six source forms.
+The AST owner walks stable segments and reads only live row tags; no row view
+survives a pool change or handoff.
+If no row contains one, function provenance enumeration can be skipped. The
+scan is conservative over quoted, inactive and retained rows; any such site
+keeps normal enumeration. Entry reset restores the conservative default, and
+standalone function callers also enumerate unless a prepared job proves absence.
+Only the six source forms enter decision bookkeeping from the ordinary
+expression dispatcher. Each expansion frame pairs its invocation span with the
+current origin path, so an imported template's nested call keeps the template
+file while a forwarded caller operand keeps the caller file.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The

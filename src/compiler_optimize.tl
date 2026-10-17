@@ -51988,16 +51988,11 @@
 ;;   * `x * c`, c > 0: admitted under `x >= 0` and `x <= MAX / c`, so the
 ;;     product is at most `(MAX / c) * c <= MAX`.
 ;;
-;; A container length is `< 2^63` (the ubound header argument,
-;; `opt-ubound-len-nonneg?`), so a value some `bounds_check` uses as its LENGTH
-;; is non-negative read as an i64 wherever it is live -- that is what gives a
-;; scanner's `len` operand a sign with no guard at all. Which values those are
-;; is collected once per function (`opt-bounds-dom-var-facts`), and that
-;; collection also reads the length a function never checks with: a `load`
-;; through a `gep base, length-slot` whose base is an array/string descriptor
-;; HANDLE at every definition site is the same `< 2^63` word (see
-;; `opt-bounds-dom-var-fact-length-slot` for why the base premise, and not the
-;; gep shape, is what makes that sound).
+;; A typed container length load is `< 2^63` and therefore nonnegative wherever
+;; live. `opt-bounds-dom-var-facts` recognizes the descriptor HANDLE at every
+;; definition of the Gep's base, not merely the address shape. A bounds check
+;; can separately prove its operands nonnegative after it executes; its later
+;; use of a value as a length cannot decide that value's sign on earlier paths.
 ;;
 ;; NARROWING FORMS, admitted with no fence at all. The three fenced rules above
 ;; are the ones that can LEAVE the range; these cannot, so each is decided by
@@ -52173,7 +52168,7 @@
     [(Var var)
       (or
         (opt-nonneg-phis-member? phis var)
-        ;; A container length: `< 2^63` by the premise the check itself carries.
+        ;; A typed descriptor length load: `< 2^63` at its definition.
         (opt-bounds-dom-length-value? env.var-facts value)
         ;; Derived at its own definition site by the pre-pass below.
         (opt-bounds-dom-var-fact?
@@ -52453,8 +52448,9 @@
 ;; sits INSIDE the loop and dominates nothing the header is above. Collect every
 ;; passed check once per function, keyed on the DEFINITION of the value it
 ;; checked, so a consumer can ask whether one of them holds at some other block.
-;; Each row is a `(length, block)` pair; the consumer's dominance test is what
-;; turns it into an implication. The rows are a CSR indexed by var, so a query
+;; Each row is a `(bound, block)` pair: an index row records its length, and a
+;; length row records Unit for nonnegativity only. The consumer's dominance
+;; test turns it into an implication. The CSR is indexed by var, so a query
 ;; scans only the checks of the value it asks about.
 ;;
 ;; SOUNDNESS. `BoundsCheck` is a trap-or-continue, so reaching any point block B
@@ -52478,7 +52474,7 @@
   (lens (__tl_dyn-array ir.CompilerIrValue))
   (blocks (__tl_dyn-array i64)))
 
-;; The var a check is keyed on: its index operand after copy resolution and the
+;; The var a check is keyed on: either operand after copy resolution and the
 ;; same-width reinterpret strip, which is the spelling every query below speaks.
 ;; -1 when that is not a single-source var -- a var with more than one
 ;; definition names more than one runtime value, so no fact may follow it.
@@ -52515,8 +52511,32 @@
       copies
       (owned_view.compiler-owned-reference-shared-view len))))
 
-;; One block, twice: `fill?` false counts the rows on `cursor[key + 1]`, true
-;; writes them at `cursor[key]` and bumps that cursor.
+;; One row, counted before allocation or filled into its reserved CSR slot.
+;; Unit as the bound means only nonnegativity: this is the LENGTH operand of
+;; a passed check, and must never prove that the length is below itself.
+(define (opt-bounds-dom-checks-row!
+  [cursor : (&mut cursor (__tl_dyn-array i64))]
+  [lens : (&mut lens (__tl_dyn-array ir.CompilerIrValue))]
+  [rows : (&mut rows (__tl_dyn-array i64))]
+  [fill? : bool]
+  [block-id : i64]
+  [key : i64]
+  [bound : ir.CompilerIrValue]) : unit
+  (unless
+    (or (< key 0) (>= (+ key 1) (array-length cursor)))
+    (if fill?
+      (let
+        [slot : i64 (array-ref cursor key)]
+        (unless
+          (or (< slot 0) (>= slot (array-length rows)))
+          (set! (array-ref lens slot) bound)
+          (set! (array-ref rows slot) block-id)
+          (set! (array-ref cursor key) (+ slot 1))))
+      (set! (array-ref cursor (+ key 1)) (+ (array-ref cursor (+ key 1)) 1)))))
+
+;; Each passed check proves its index is in range and its length is positive,
+;; only after the check executes. Keep both facts at that block in the shared
+;; dominance index; neither is a function-wide property of the operand.
 (define (opt-bounds-dom-checks-scan!
   [type-segment-bases : i64]
   [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
@@ -52528,42 +52548,45 @@
   [fill? : bool]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : unit
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (for [pos (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
-        [(BoundsCheck idx len _)
-          (let
-            [key : i64
+  (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+      [(BoundsCheck idx len _)
+        (let
+          [clen : ir.CompilerIrValue
+            (opt-bounds-dom-checks-len
+              type-segment-bases
+              phi-defs
+              copies
+              (& len))]
+          (when
+            (opt-gvn-value-stable? sources clen)
+            (opt-bounds-dom-checks-row!
+              cursor
+              lens
+              rows
+              fill?
+              block-id
               (opt-bounds-dom-checks-key
                 type-segment-bases
                 phi-defs
                 copies
                 sources
-                (& idx))]
-            [clen : ir.CompilerIrValue
-              (opt-bounds-dom-checks-len
+                (& idx))
+              clen)
+            (opt-bounds-dom-checks-row!
+              cursor
+              lens
+              rows
+              fill?
+              block-id
+              (opt-bounds-dom-checks-key
                 type-segment-bases
                 phi-defs
                 copies
-                (& len))]
-            (if (or
-              (< key 0)
-              (not (opt-gvn-value-stable? sources clen))
-              (>= (+ key 1) (array-length cursor)))
-              unit
-              (if fill?
-                (let
-                  [slot : i64 (array-ref cursor key)]
-                  (unless
-                    (or (< slot 0) (>= slot (array-length rows)))
-                    (set! (array-ref lens slot) clen)
-                    (set! (array-ref rows slot) block-id)
-                    (set! (array-ref cursor key) (+ slot 1))))
-                (set!
-                  (array-ref cursor (+ key 1))
-                  (+ (array-ref cursor (+ key 1)) 1)))))]
-        [_ unit]))))
+                sources
+                (& len))
+              (Unit))))]
+      [_ unit])))
 
 (define (opt-bounds-dom-checks-blocks!
   [type-segment-bases : i64]
@@ -52658,7 +52681,7 @@
         (ir.compiler-ir-block-list-view blocks))
       (OptBoundsDomChecks offsets lens rows))))
 
-;; Was `value` the index of a passed `bounds_check` at a block that STRICTLY
+;; Was `value` an operand of a passed `bounds_check` at a block that STRICTLY
 ;; dominates `at-id`? An unsigned check proves the SIGN as firmly as it proves
 ;; the bound, whatever length it used, so this is the non-negativity the lattice
 ;; cannot see: a byte scanner's cursor is checked once per outer character and
@@ -52718,7 +52741,9 @@
               (let
                 [block : i64 (array-ref rows row)]
                 (if (and
-                  (opt-value-eq (& (array-ref lens row)) len)
+                  (match (array-ref lens row)
+                    [(Unit) false]
+                    [_ (opt-value-eq (& (array-ref lens row)) len)])
                   (opt-dom-info-dominates-id? env.doms block at-id)
                   (or end? (not (= block at-id))))
                   (set! found true)
@@ -55143,12 +55168,14 @@
                         (opt-dom-cmp-facts-cons
                           (Fact
                             (Lt)
-                            clen
+                            (compiler-opt-global-shared-view clen)
                             (compiler-opt-global-shared-view cidx)
                             (I64)
                             false
                             block-id)
-                          cur-cmp-facts)))
+                          (opt-dom-cmp-facts-cons
+                            (Fact (Gt) clen (I64 0) (I64) true block-id)
+                            cur-cmp-facts))))
                     (set! cur-facts (opt-bounds-add cur-facts cidx fact-len))))))]
           [_
             (ir.compiler-ir-instr-builder-push!
@@ -55546,20 +55573,12 @@
 
 ;; --- per-var facts the walk reads off the whole function ---------------------
 ;;
-;; Bit 0, CONTAINER LENGTH, collected once before the dominator walk: a var used
-;; as the LENGTH operand of some `bounds_check` in this function. Lowering emits
-;; that operand only from a runtime container's length, which is `< 2^63` --
-;; the premise this pass already states where it records `0 <= idx < len` for a
-;; check that PASSED (see the fact recording in `opt-bounds-dom-instrs-from`)
-;; and the one the ubound narrowing's header argument rests on. The value is
-;; therefore non-negative read as an i64 wherever it is live, which is what
-;; gives a scanner's `len` operand a sign with no guard anywhere.
-;;
-;; Reading the sign off the length's SHAPE instead -- a Load through a Gep at
-;; the descriptor's length slot -- is NOT sound here: that Gep is `offset 1,
-;; i64`, which is also every ordinary struct's second i64 field, and nothing at
-;; the Gep says which of the two it addresses. The `bounds_check` operand says
-;; it.
+;; Bit 0, CONTAINER LENGTH: a stable value loaded from a typed descriptor's
+;; length slot. This definition proves the value is nonnegative wherever live.
+;; A use as a `bounds_check` length proves nothing before the check executes:
+;; GVN may forward a conditional allocation's size to its later length read,
+;; while that size is negative on the path that avoids the allocation. Such
+;; check-derived facts belong to the dominance index and the ordered walk.
 ;;
 ;; The pre-pass below writes bits 1 and 2 into the same array, keyed on the
 ;; instruction that DERIVES a value rather than on a use of it.
@@ -55568,21 +55587,16 @@
 
 ;; Bit 3, LENGTH SLOT: a `Gep` proved to address a descriptor's length word.
 ;;
-;; A length a function only ever divides, compares or copies with -- the
-;; `(string-length s)` that feeds `(/ n 8)` in a copy helper, the
-;; `array-length` that bounds a word loop -- never reaches a `bounds_check`
-;; operand, so bit 0 above never fires for it and the value had no sign at all.
-;; The shape it DOES have is the one `lower-array-length-load-descriptor` emits
-;; and nothing else does:
+;; `lower-array-length-load-descriptor` emits this typed address/load chain,
+;; whether or not the loaded value later reaches a bounds check:
 ;;
 ;;     %h = <a String / str / Bytes / dyn-array descriptor HANDLE>
 ;;     %o = gep %h, 1, i64          ;; or `gep %h, 8, u8`, the byte spelling
 ;;     %n = load %o, i64
 ;;
-;; The refusal recorded above -- that `gep _, 1, i64` alone proves nothing,
-;; because offset 1 at an i64 scale is also every ordinary struct's second word
-;; -- stands, and this rule does not weaken it. What is added is a premise on
-;; the BASE: `opt-load-header-var?` holds only for a var whose declared type at
+;; The Gep shape alone proves nothing: offset 1 at an i64 scale also addresses
+;; every ordinary struct's second word. The proof requires a typed BASE:
+;; `opt-load-header-var?` holds only for a var whose declared type at
 ;; EVERY definition site is an array/string descriptor handle (a redefinition
 ;; with a disagreeing type poisons it), and word 1 of such a descriptor IS its
 ;; length, by the same fixed layout the `bounds_check` lowering reads it with.
@@ -55605,8 +55619,7 @@
     (< var (array-length var-facts))
     (not (= (bit-and (array-ref var-facts var) bit) 0))))
 
-;; Is this value the length operand of a `bounds_check`, and therefore a
-;; container length below 2^63?
+;; Is this value loaded from a typed container's length slot, hence below 2^63?
 (define (opt-bounds-dom-length-value?
   [var-facts : (& var-facts (__tl_dyn-array i64))]
   [value : (& value ir.CompilerIrValue)]) : bool
@@ -55615,43 +55628,9 @@
       (opt-bounds-dom-var-fact? var-facts var (opt-bounds-dom-var-fact-length))]
     [_ false]))
 
-;; A length is recorded under every spelling the walk canonicalizes to: the
-;; operand as written, its copy-resolved form, and the same-width reinterpret
-;; stripped off that -- the three the check's own query uses.
-(define (opt-bounds-dom-var-facts-length!
-  [type-segment-bases : i64]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
-  [sources : (& sources OptValueSources)]
-  [var-facts : (&mut var-facts (__tl_dyn-array i64))]
-  [len : (& ir.CompilerIrValue)]) : unit
-  (let
-    [bit : i64 (opt-bounds-dom-var-fact-length)]
-    [resolved : ir.CompilerIrValue
-      (opt-bounds-dom-resolve
-        copies
-        (owned_view.compiler-owned-reference-shared-view len))]
-    [stripped : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast
-        type-segment-bases
-        phi-defs
-        copies
-        (compiler-opt-global-shared-view resolved))]
-    ;; A var with more than one definition names more than one runtime value,
-    ;; so no fact may follow it; that is the pass-wide stability rule.
-    (unless
-      (not (opt-gvn-value-stable? sources resolved))
-      (opt-bounds-dom-var-facts-set-value! var-facts len bit)
-      (opt-bounds-dom-var-facts-set-value! var-facts (& resolved) bit)
-      (if (opt-gvn-value-stable? sources stripped)
-        (opt-bounds-dom-var-facts-set-value! var-facts (& stripped) bit)
-        unit))))
-
 (define (opt-bounds-dom-var-facts-seq!
   [type-segment-bases : i64]
   [header : (& header OptLoadHeaderSet)]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]
   [instrs : (& ir.CompilerIrInstrSeq)]) : unit
@@ -55659,14 +55638,6 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (for [i (iterator.range 0 count)]
       (match (ir.compiler-ir-instr-seq-borrow instrs i)
-        [(BoundsCheck _ len _)
-          (opt-bounds-dom-var-facts-length!
-            type-segment-bases
-            phi-defs
-            copies
-            sources
-            var-facts
-            (& len))]
         ;; The ADDRESS half of a descriptor length load (bit 3).
         [(Gep dst base offset gep-ty)
           (match base
@@ -55686,8 +55657,7 @@
         ;; ...and its VALUE half: the word loaded through such an address is
         ;; a container length, so it carries bit 0 wherever it is live. A var
         ;; with more than one definition names more than one runtime value,
-        ;; so the pass-wide stability rule gates it exactly as bit 0's other
-        ;; producer does.
+        ;; so the pass-wide stability rule gates the value fact.
         [(Load dst src load-ty)
           (match src
             [(Var src-var)
@@ -55711,8 +55681,6 @@
 (define (opt-bounds-dom-var-facts-blocks!
   [type-segment-bases : i64]
   [header : (& header OptLoadHeaderSet)]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
   [var-facts : (&mut var-facts (__tl_dyn-array i64))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : unit
@@ -55724,22 +55692,17 @@
           (opt-bounds-dom-var-facts-seq!
             type-segment-bases
             header
-            phi-defs
-            copies
             sources
             var-facts
             (& instrs))])
       (opt-bounds-dom-var-facts-blocks!
         type-segment-bases
         header
-        phi-defs
-        copies
         sources
         var-facts
         rest)]))
 
-;; A check's length operand is a length wherever it is live, so that half needs
-;; no propagation. The descriptor rule is a two-instruction chain (`gep` then
+;; The descriptor rule is a two-instruction chain (`gep` then
 ;; `load`), and BLOCK ORDER is not a topological order of the dominator tree --
 ;; a `gep` hoisted into a preheader that the list holds AFTER the block loading
 ;; through it would be missed by a single sweep. Two identical sweeps close it:
@@ -55748,8 +55711,6 @@
 (define (opt-bounds-dom-var-facts
   [type-segment-bases : i64]
   [header : (& OptLoadHeaderSet)]
-  [phi-defs : (& phi-defs (__tl_dyn-array OptBoolBranchDef))]
-  [copies : (& copies opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array i64)
@@ -55758,16 +55719,12 @@
     (opt-bounds-dom-var-facts-blocks!
       type-segment-bases
       header
-      phi-defs
-      copies
       sources
       (&mut var-facts)
       (ir.compiler-ir-block-list-view blocks))
     (opt-bounds-dom-var-facts-blocks!
       type-segment-bases
       header
-      phi-defs
-      copies
       sources
       (&mut var-facts)
       (ir.compiler-ir-block-list-view blocks))
@@ -55821,14 +55778,6 @@
   (if (or (< var 0) (>= var (array-length var-facts)))
     unit
     (set! (array-ref var-facts var) (bit-or (array-ref var-facts var) bit))))
-
-(define (opt-bounds-dom-var-facts-set-value!
-  [var-facts : (&mut var-facts (__tl_dyn-array i64))]
-  [value : (& ir.CompilerIrValue)]
-  [bit : i64]) : unit
-  (match value
-    [(Var var) (opt-bounds-dom-var-facts-set! var-facts var bit)]
-    [_ unit]))
 
 ;; `x * c` for a positive literal c, fenced against wrapping: `x <= MAX / c`
 ;; keeps the product at or below `(MAX / c) * c <= MAX`.
@@ -55950,8 +55899,16 @@
               (set!
                 cur
                 (opt-dom-cmp-facts-cons
-                  (Fact (Lt) cidx clen (I64) true block-id)
-                  cur))
+                  (Fact
+                    (Lt)
+                    cidx
+                    (compiler-opt-global-shared-view clen)
+                    (I64)
+                    true
+                    block-id)
+                  (opt-dom-cmp-facts-cons
+                    (Fact (Gt) clen (I64 0) (I64) true block-id)
+                    cur)))
               unit))]
         [_ unit]))
     cur))
@@ -56216,10 +56173,8 @@
   ;; upper block is dominated by the lower one, so the walk always marks before
   ;; it reads.
   (force-true (__tl_dyn-array bool))
-  ;; Values this function can read as non-negative wherever they are live: the
-  ;; ones it hands a `bounds_check` as its LENGTH operand, and the reads of a
-  ;; global the whole-program walk proved non-negative. See
-  ;; opt-bounds-dom-range-known-nonneg.
+  ;; Reads of globals proved nonnegative by the whole-program walk. These
+  ;; values need no dominance proof; see opt-bounds-dom-range-known-nonneg.
   (known-nonneg (__tl_dyn-array bool))
   ;; Scalar `i64` globals the whole-program walk proved non-negative
   ;; (opt-nonneg-globals-build). Reading a cell in this set yields a
@@ -56353,24 +56308,10 @@
               true
               (opt-bounds-length-checked? rest length))]))]))
 
-;; Values this function can read as non-negative wherever they are live. Two
-;; sources, both about the VALUE rather than about a path to it, so unlike the
-;; dominating-fact sources they need no dominance -- one linear scan marks them
-;; and a guard written against a marked value merges wherever it sits.
-;;
-;; (a) A `bounds_check` LENGTH operand. `bounds_check` is an UNSIGNED
-;;     `idx < len`, and it is a bounds check at all only because `len` is a
-;;     runtime container length below 2^63: a negative length reads as a huge
-;;     unsigned bound, the compare passes for every index and the instruction
-;;     guards nothing. This is what closes the ordinary accessor shape --
-;;     `(and (>= i 0) (< i (array-length a)))` in front of `(array-ref a i)`,
-;;     where the guard's bound and the check's length are one SSA value.
-;;
-;; (b) A read of a scalar global `opt-nonneg-globals-build` proved non-negative
-;;     at every program point. `%v = mov @g : i64` is what the cached-length
-;;     idiom leaves behind once `global_cell`/GVN have hoisted the read out of
-;;     the guard, and the operand the guard compares against is then the copy,
-;;     not the global.
+;; Reads of scalar globals `opt-nonneg-globals-build` proved nonnegative at
+;; every program point. `%v = mov @g : i64` remains when global_cell/GVN hoists
+;; a cached length read out of a guard. The copied value retains the global's
+;; proof without relying on a later bounds check or a particular path.
 (define (opt-bounds-dom-range-known-nonneg?
   [known : (& known (__tl_dyn-array bool))]
   [value : (& value ir.CompilerIrValue)]) : bool
@@ -56386,34 +56327,7 @@
     (set! (array-ref known var) true)
     unit))
 
-(define (opt-bounds-dom-range-value-var [value : (& value ir.CompilerIrValue)]) : i64
-  (match value
-    [(Var var) var]
-    [_ (- 0 1)]))
-
-(define (opt-bounds-dom-range-known-add!
-  [env : (& env OptBoundsDomEnv)]
-  [known : (&mut known (__tl_dyn-array bool))]
-  [value : (& ir.CompilerIrValue)]) : unit
-  (let
-    [canon : ir.CompilerIrValue
-      (opt-bounds-dom-resolve
-        env.copies
-        (owned_view.compiler-owned-reference-shared-view value))]
-    [canon-var : i64 (opt-bounds-dom-range-value-var canon)]
-    [stripped : ir.CompilerIrValue
-      (opt-bounds-dom-strip-int-cast
-        env.type-segment-bases
-        env.phi-defs
-        env.copies
-        canon)]
-    (opt-bounds-dom-range-known-mark! known canon-var)
-    (opt-bounds-dom-range-known-mark!
-      known
-      (opt-bounds-dom-range-value-var stripped))))
-
 (define (opt-bounds-dom-range-known-instrs!
-  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [known : (&mut known (__tl_dyn-array bool))]
   [instrs : (& ir.CompilerIrInstrSeq)]) : unit
@@ -56421,8 +56335,6 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (for [pos (iterator.range 0 count)]
       (match (ir.compiler-ir-instr-seq-borrow instrs pos)
-        [(BoundsCheck _ length _)
-          (opt-bounds-dom-range-known-add! env known (& length))]
         [(Mov dst src _)
           (if (opt-nonneg-global? nonneg src)
             (opt-bounds-dom-range-known-mark! known dst)
@@ -56431,7 +56343,6 @@
     unit))
 
 (define (opt-bounds-dom-range-known-blocks!
-  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [known : (&mut known (__tl_dyn-array bool))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : unit
@@ -56440,26 +56351,24 @@
     [(slice block & rest)
       (match block
         [(Block _ instrs)
-          (opt-bounds-dom-range-known-instrs! env nonneg known (& instrs))
-          (opt-bounds-dom-range-known-blocks! env nonneg known rest)])]))
+          (opt-bounds-dom-range-known-instrs! nonneg known (& instrs))
+          (opt-bounds-dom-range-known-blocks! nonneg known rest)])]))
 
 (define (opt-bounds-dom-range-known-nonneg
-  [env : (& env OptBoundsDomEnv)]
   [nonneg : (& nonneg opt_i64_i64_map.Map)]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
   (let
     [known : (__tl_dyn-array bool) (__tl_make-array bool frame)]
     (opt-bounds-dom-range-known-blocks!
-      env
       nonneg
       (&mut known)
       (ir.compiler-ir-block-list-view blocks))
     known))
 
 ;; The whole legality question: is the upper bound non-negative where the merge
-;; is placed? Six sources, cheapest first -- a length the FUNCTION checks against
-;; anywhere, a scalar global the whole-program walk proved non-negative, a
+;; is placed? Six sources, cheapest first -- a copy of a nonnegative global,
+;; a scalar global the whole-program walk proved non-negative, a
 ;; literal or an induction the nonneg walk already recognizes, a dominating
 ;; `len >= 1` guard, a passed `bounds_check` that used it as a length, and
 ;; finally the transitive hop that reads `0 <= i` and `i < n` from an EARLIER
@@ -57564,8 +57473,6 @@
       (opt-bounds-dom-var-facts
         type-segment-bases
         (& length-header)
-        phi-defs
-        copies
         sources
         frame
         blocks)]
@@ -57601,7 +57508,7 @@
       (OptRangeMergeState
         (opt-collect-blocks-uses-array frame blocks)
         (__tl_make-array bool frame)
-        (opt-bounds-dom-range-known-nonneg env nonneg frame blocks)
+        (opt-bounds-dom-range-known-nonneg nonneg frame blocks)
         nonneg
         (compiler-opt-global-shared-view next-var))]
     ;; The loop set is a property of THIS function's CFG, so it is computed

@@ -1145,6 +1145,15 @@ it records one plan per read during the loop walk and builds the diamonds
 afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
 cover it.
 
+`bounds_dom` distinguishes definition proofs from facts established by a passed
+check. A stable load from a typed container's length slot is nonnegative wherever
+live. A value merely used as a check's length has that proof only after the check:
+GVN can forward an allocation's size into a later length read even though the
+size is negative on a path that avoids the allocation. The existing check CSR
+records index bounds and length nonnegativity separately, with dominance checked
+at each use. The ordered block walk supplies facts after a check in the same
+block. A length's nonnegativity never proves it is below itself.
+
 The multi-block bounds-check versioner clones a loop behind one entry guard
 and drops the checks the guard proves. Its derivations read a counter's value
 range `[seed, bound)`. A top-tested loop's counter may be a monotone cursor:

@@ -10348,9 +10348,8 @@
     [(= kind 2) (irt.instr "%3 = le 0, %0 : i64")]
     [else (irt.instr "%3 = lt -1, %0 : i64")]))
 
-;; 0 `lt i bound`, 1 `gt bound i`. `bound` is `len` (%1), which the true arm
-;; bounds-checks against, or `probe` (%2), which nothing ever checks -- the
-;; negative case for the non-negativity gate.
+;; 0 `lt i bound`, 1 `gt bound i`. `bound` is `len` (%1), whose sign the entry
+;; guard proves, or unconstrained `probe` (%2), the negative case for the gate.
 (define (opt-range-merge-high-instr [kind : i64] [bound : i64]) : ir.CompilerIrInstr
   (if (= kind 0)
     (BinOp 4 (Lt) (Var 0) (Var bound) (I64))
@@ -10398,8 +10397,10 @@
         (ir.compiler-ir-block-list-empty))]
     (ir.compiler-ir-blocks-with-tail
       tail
-      (irt.block "entry:
-           jump low")
+      (irt.block
+        "entry:
+           %15 = ge %1, 0 : i64
+           branch %15, low, fail")
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "low")
         (opt-range-merge-low-instrs low-kind extra-use? low-fail))
@@ -70976,7 +70977,7 @@
 ;; compute the same bool, but `ubound` and `lftr` below match loop shapes on the
 ;; signed one, so the pass does not touch it; the compare with an unconstrained
 ;; operand is untouched for the plainer reason that nothing is proved about it.
-;; (e) The length itself is non-negative, so `len >= 0` is a constant.
+;; (e) After the check passes, its length is nonnegative, so `len >= 0` is constant.
 (define (opt-nn-length-blocks) : ir.CompilerIrBlockList
   (irt.blocks
     "entry:
@@ -71068,6 +71069,112 @@
     (compiler-optimize-bounds-dom-nonneg-self-test)
     42
     "the non-negativity lattice proves a counter reassigned through an inner loop, a difference under a dominating lower bound and a fenced increment, refuses an unfenced increment and a phi with one open input, folds `>= 0` on a proved value, and leaves every comparison's signed spelling alone"))
+
+(test
+  bounds-dom-conditional-length-scope
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = lt %1, 0 : i64
+             branch %0, checked, sibling
+           checked:
+             bounds_check %2, %1 message \"first\"
+             %11 = ge %1, 0 : i64
+             jump merge
+           sibling:
+             %12 = ge %1, 0 : i64
+             jump merge
+           merge:
+             %13 = phi [%1, checked], [-1, sibling] : i64
+             %14 = ge %13, 0 : i64
+             return %10"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 0 10)
+        (opt-nn-folded? out "checked" 1 11 true)
+        (opt-nn-compare-signed? out "sibling" 0 12)
+        (opt-nn-compare-signed? out "merge" 1 14))
+      true
+      "a conditional check proves its length only after execution, never before it, in a sibling or across a phi with a negative input")))
+
+(test
+  bounds-dom-length-definition-order
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = sub %1, 1 : i64
+             %11 = ge %10, 0 : i64
+             %12 = mov %1 : i64
+             %13 = cast %12 : i64 to u64
+             bounds_check %2, %13 message \"first\"
+             %14 = ge %1, 0 : i64
+             %15 = sub %1, 1 : i64
+             %16 = ge %15, 0 : i64
+             jump next
+           next:
+             %17 = ge %1, 0 : i64
+             bounds_check %1, %1 message \"self\"
+             return %11"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 1 11)
+        (opt-nn-folded? out "entry" 5 14 true)
+        (opt-nn-folded? out "entry" 7 16 true)
+        (opt-nn-folded? out "next" 0 17 true)
+        (= (opt-nn-count out "next") 3))
+      true
+      "copy/cast length facts respect definition order and strict dominance, and cannot prove length below itself")))
+
+(test
+  bounds-dom-later-length-keeps-signed-range
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = ge %2, 0 : i64
+             branch %10, upper, miss
+           upper:
+             %11 = lt %2, %1 : i64
+             branch %11, hit, miss
+           hit:
+             bounds_check %2, %1 message \"later\"
+             return 1
+           miss:
+             return 0"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 0 10)
+        (opt-nn-compare-signed? out "upper" 0 11))
+      true
+      "a later bounds check cannot justify replacing a signed range guard with an unsigned comparison")))
+
+(test
+  bounds-dom-loop-length-entry
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             jump header
+           header:
+             %10 = phi [%1, entry], [%12, body] : i64
+             %11 = lt %10, 0 : i64
+             branch %11, exit, body
+           body:
+             bounds_check 0, %10 message \"body\"
+             %12 = sub %10, 1 : i64
+             jump header
+           exit:
+             return %10"))]
+    (test.assert-bool-eq
+      (opt-nn-compare-signed? out "header" 1 11)
+      true
+      "a loop body's length check cannot erase the header's negative seed or decrement exit")))
 
 ;; --- UNR-1: length reads, narrowing forms, and the unsigned power-of-two divide
 ;;
@@ -71935,12 +72042,12 @@
 ;; induction (`post <= len`); the copying loop below it reads
 ;; `out[(post - 1) - i]` under `0 <= i < post`, which the decreasing rule
 ;; discharges from it. The fill's own check has nothing to stand on -- nothing
-;; says the length is positive -- and stays.
-(define (opt-abcd-cursor-blocks) : ir.CompilerIrBlockList
-  (irt.blocks
-    "entry:
-       jump fill_header
-     fill_header:
+;; says the length is positive -- and stays. An entry guard supplies the
+;; nonnegative length premise; without it the zero seed has no upper bound.
+(define (opt-abcd-cursor-blocks [known-length? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "fill_header:
        %20 = phi [0, entry], [%21, fill_body] : i64
        branch %0, fill_body, after
      fill_body:
@@ -71960,7 +72067,14 @@
        %27 = add %24, 1 : i64
        jump copy_header
      exit:
-       return %2"))
+       return %2")
+    (opt-nn-block
+      "entry"
+      (if known-length?
+        (opt-test-instrs
+          (irt.instr "%4 = ge %1, 0 : i64")
+          (opt-nn-branch 4 "fill_header" "exit"))
+        (opt-test-instrs (opt-nn-jump "fill_header"))))))
 
 ;; (e) THE WORKLIST POP. `pending - 1` is checked on the arm the header's own
 ;; test guards. With `pending >= 1` the difference is in [0, pending] and the
@@ -72038,7 +72152,9 @@
     [open-seed : ir.CompilerIrBlockList
       (opt-nn-run (opt-abcd-stack-blocks (Var 2)))]
     [split : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-stack-split-blocks))]
-    [cursor : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-cursor-blocks))]
+    [cursor : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-cursor-blocks true))]
+    [cursor-open : ir.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-cursor-blocks false))]
     [guarded : ir.CompilerIrBlockList
       (opt-nn-run (opt-abcd-decrease-blocks (Ge)))]
     [unguarded : ir.CompilerIrBlockList
@@ -72069,6 +72185,8 @@
       ;; through three phis; and the same shape with the inner step unfenced.
       [(not (= (opt-nn-count scan "inner_body") 1)) 10]
       [(not (= (opt-nn-count scan-open "inner_body") 2)) 11]
+      ;; Without an entry length proof, a skipped fill cannot prove 0 <= len.
+      [(not (= (opt-nn-count cursor-open "copy_body") 4)) 12]
       [else 42])))
 
 (test

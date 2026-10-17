@@ -1235,7 +1235,7 @@ A direct `Global` actual names the value read at call entry. Before substituting
 it into an inline body that can overwrite that cell, argument staging emits a
 typed `Mov` into a fresh local. Ordinary calls, tail-call sites, tiny leaves and
 multiblock sites share this staging decision. Reserved parameter slots precede
-the cloned frame, and admission includes the added capture instructions.
+the cloned frame. Level-2 site pricing includes the added capture instructions.
 `GlobalAddr` continues to name storage. Memory-class parameters keep their
 existing private-copy and inline-admission rules.
 

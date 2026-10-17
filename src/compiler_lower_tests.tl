@@ -16375,6 +16375,7 @@
 (defstruct Outer (item Wide) (tail i64))
 (define (field [p : (& p Wide)]) : i64 (deref p).a)
 (define (nested [p : (& p Outer)]) : i64 (deref p).item.a)
+(define (tuple-field [p : (& p (Tuple String i64))]) : i64 (tuple-ref (deref p) 1))
 (define (whole [p : (& p Wide)]) : Wide (deref p))
 (define (pair [p : (& p Pair)]) : Pair (deref p))"
             (array-ref modes index)))
@@ -16386,6 +16387,9 @@
               (= (lower-test-count functions "nested" (CopyBytes)) 0)
               (= (lower-test-count functions "nested" (AddrOf)) 0)
               (= (lower-test-count functions "nested" (Load)) 1)
+              (= (lower-test-count functions "tuple-field" (CopyBytes)) 0)
+              (= (lower-test-count functions "tuple-field" (AddrOf)) 0)
+              (= (lower-test-count functions "tuple-field" (Load)) 1)
               (> (lower-test-count functions "whole" (CopyBytes)) 0)
               (= (lower-test-count functions "pair" (CopyBytes)) 0)
               (=

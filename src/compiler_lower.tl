@@ -29022,7 +29022,7 @@
                 type-env
                 (lower-global-shared-view expr)
                 expr
-                ty))
+                (tc_core.tc-type-without-regions ty)))
             (lower-expr ctx state env type-env expr))]
         [(Err message) (Err (box (lower-diagnostic-at-expr ctx expr message)))])
       (lower-expr ctx state env type-env expr))))

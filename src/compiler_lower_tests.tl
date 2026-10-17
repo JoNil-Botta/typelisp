@@ -16366,7 +16366,7 @@
   (match blocks
     [(slice) true]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block _ instrs)
           (for [index (iterator.range 0 (- instrs.len 1))]
             (when

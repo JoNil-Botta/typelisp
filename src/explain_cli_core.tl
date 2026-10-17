@@ -683,7 +683,7 @@ Minimal failing example:
 
 Fix:
     Create the module, correct its dotted name, or supply its source root with
-    --stdlib-root. Check the resolved path, including its case. An error inside
+    `--stdlib-root`. Check the resolved path, including its case. An error inside
     an existing imported file instead keeps that file's parse/typecheck code.
 
 See also:

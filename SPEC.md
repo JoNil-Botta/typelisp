@@ -547,7 +547,10 @@ arena-owned handles.
 `(deref value)` projects through safe indirection. For `(Box T)`, `(& r T)`,
 and `(&mut r T)` receivers the result is `T` (with the receiver's region or
 lifetime provenance retained where applicable). Copyable values are read
-without consuming the receiver. Moving a non-Copy value from an owned Box
+without consuming the receiver. A reference-free Copy aggregate read by value
+gets independent storage and does not inherit the receiver's lifetime; lifetime
+or region facts intrinsic to the value remain checked. A field projection or
+borrow still addresses the original place. Moving a non-Copy value from an owned Box
 consumes the Box handle; moving a non-Copy value through either reference kind
 is rejected unless a future replacement operation explicitly supports it.
 

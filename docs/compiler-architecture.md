@@ -264,6 +264,15 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+Whole Copy reads through dereferences, fields, tuple slots and array elements
+use `lower-copy-projected-value`: register values are already independent, and
+memory-class values are copied into frame storage. `lower-projection-receiver`
+reuses place addressing when a projection or borrow needs the original storage,
+so a scalar field read does not copy its parent. Type projection distinguishes
+these reads from pattern/store places: reference-free Copy reads omit the
+container's extra region, while intrinsic region facts and stored-reference
+lifetimes remain checked. These rules do not change plain variable bindings.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit

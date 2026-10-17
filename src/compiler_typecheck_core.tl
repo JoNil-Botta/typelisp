@@ -18372,15 +18372,32 @@
       ret)))
 
 (define (tc-project-from-region-container
+  [ctx : TcContext]
   [container-ty : ast.AstType]
-  [projected-ty : ast.AstType]) : ast.AstType
-  (match (tc-type-outer-region (tc-global-shared-view container-ty))
-    [(Some region) (tc-tag-region region projected-ty)]
-    [(No)
-      (match (tc-type-strip-region container-ty)
-        [(or (Ref region _) (MutRef region _))
-          (tc-tag-region region projected-ty)]
-        [_ projected-ty])]))
+  [projected-ty : ast.AstType]
+  [copy-value : bool]) : ast.AstType
+  ;; A reference-free Copy read owns its bytes after lowering. Keep any facts
+  ;; intrinsic to the projected type; only omit the container's extra region.
+  ;; Patterns, stores and Copy payloads with references keep place provenance.
+  (let
+    [region : TcMaybeNameId
+      (match (tc-type-outer-region (tc-global-shared-view container-ty))
+        [(Some region) (Some region)]
+        [(No)
+          (match (tc-type-strip-region container-ty)
+            [(or (Ref region _) (MutRef region _)) (Some region)]
+            [_ (No)])])]
+    (match region
+      [(Some region)
+        (if (and
+          copy-value
+          (tc-region-taggable-type? (tc-global-shared-view projected-ty))
+          (not
+            (tc-type-contains-reference? (tc-global-shared-view projected-ty)))
+          (tc-type-copyable? ctx (tc-global-shared-view projected-ty)))
+          projected-ty
+          (tc-tag-region region projected-ty))]
+      [(No) projected-ty])))
 
 ;; Region-tagged aggregate flow uses the same lexical owner ordering as
 ;; references, but only considers arena owners. A value from an outer region can
@@ -27876,7 +27893,7 @@
         (match (tc-type-strip-region
           (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
           [(or (Struct _) (StructArgs _ _))
-            (tc-struct-get-result-type-id ctx receiver-ty field)]
+            (tc-struct-get-result-type-id ctx receiver-ty field true)]
           [_
             (Err
               "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))]
@@ -29341,11 +29358,13 @@
       (& (tc-tag-type-list-regions-at regions types (+ index 1))))))
 
 (define (tc-project-type-list-from-region-container
+  [ctx : TcContext]
   [container-ty : ast.AstType]
   [types : ast.AstTypeList]) : ast.AstTypeList
-  (tc-project-type-list-from-region-container-at container-ty (& types) 0))
+  (tc-project-type-list-from-region-container-at ctx container-ty (& types) 0))
 
 (define (tc-project-type-list-from-region-container-at
+  [ctx : TcContext]
   [container-ty : ast.AstType]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : ast.AstTypeList
@@ -29354,11 +29373,14 @@
     (ast.ast-type-cons
       (&
         (tc-project-from-region-container
+          ctx
           (tc-global-shared-view container-ty)
           (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          false))
       (&
         (tc-project-type-list-from-region-container-at
+          ctx
           container-ty
           types
           (+ index 1))))))
@@ -51458,27 +51480,35 @@
 (define (tc-struct-get-result-type-id
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
-  [field-id : i64]) : ResultTcType
+  [field-id : i64]
+  [copy-value : bool]) : ResultTcType
   (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
-    (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)
+    (tc-struct-get-result-type-checked-id ctx receiver-ty field-id copy-value)
     (match (tc-opaque-representation-ok
       ctx
       (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
       "cannot access a field of the")
-      [(Ok) (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)]
+      [(Ok)
+        (tc-struct-get-result-type-checked-id
+          ctx
+          receiver-ty
+          field-id
+          copy-value)]
       [(Err message) (Err message)])))
 
 (define (tc-struct-get-result-type-checked-id
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
-  [field-id : i64]) : ResultTcType
+  [field-id : i64]
+  [copy-value : bool]) : ResultTcType
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
     [(Struct struct-name)
       (let
         [field-ty (try (tc-struct-field-type-id ctx struct-name field-id))]
-        (Ok (tc-project-from-region-container receiver-ty field-ty)))]
+        (Ok
+          (tc-project-from-region-container ctx receiver-ty field-ty copy-value)))]
     [(StructArgs struct-name lifetimes)
       (let
         [field-ty
@@ -51488,16 +51518,19 @@
               struct-name
               (ast.ast-lifetime-list-box-shared-view lifetimes)
               field-id))]
-        (Ok (tc-project-from-region-container receiver-ty field-ty)))]
-    [(or (Ref lifetime referent-ty) (MutRef lifetime referent-ty))
+        (Ok
+          (tc-project-from-region-container ctx receiver-ty field-ty copy-value)))]
+    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
       (let
         [field-ty
           (try
             (tc-struct-get-result-type-id
               ctx
               (tc-context-type-get ctx referent-ty)
-              field-id))]
-        (Ok (tc-tag-region lifetime field-ty)))]
+              field-id
+              copy-value))]
+        (Ok
+          (tc-project-from-region-container ctx receiver-ty field-ty copy-value)))]
     [(ExprList) (tc-comptime-sequence-field-type "ExprList" (Expr) field-id)]
     [(Var name)
       (cond
@@ -53065,6 +53098,7 @@
     [(Tuple elem-types-box)
       (Ok
         (tc-project-type-list-from-region-container
+          ctx
           tuple-ty
           (ast.ast-type-list-box-shared-view elem-types-box)))]
     [_
@@ -53083,8 +53117,10 @@
     [(Array elem-id count)
       (Ok
         (tc-project-from-region-container
+          ctx
           array-ty
-          (tc-context-type-get ctx elem-id))
+          (tc-context-type-get ctx elem-id)
+          false)
         count)]
     [_
       (Err
@@ -53701,9 +53737,12 @@
                 (ast.ast-lifetime-list-box-shared-view lifetimes)))]
           (Ok
             (tc-project-type-list-from-region-container
+              ctx
               scrut-ty
               (tc-lifetime-subst-type-list subst field-types))))]
-      [_ (Ok (tc-project-type-list-from-region-container scrut-ty field-types))])))
+      [_
+        (Ok
+          (tc-project-type-list-from-region-container ctx scrut-ty field-types))])))
 
 (define (tc-bind-struct-pattern
   [ctx : TcContext]
@@ -58436,7 +58475,11 @@
       [(Box inner-ty)
         (tc-opaque-by-value-result
           ctx
-          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))
+          (tc-project-from-region-container
+            ctx
+            box-ty
+            (ast.ty-node-get inner-ty)
+            true)
           "cannot read out of a box the")]
       [_
         (Err
@@ -58462,7 +58505,11 @@
       [(Box inner-ty)
         (let
           [projected : ast.AstType
-            (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))]
+            (tc-project-from-region-container
+              ctx
+              box-ty
+              (ast.ty-node-get inner-ty)
+              true)]
           (tc-opaque-by-value-result
             ctx
             (if (tc-type-compatible?
@@ -58483,10 +58530,17 @@
     [(Box inner-ty)
       (Ok
         (tc-project-from-region-container
+          ctx
           receiver-ty
-          (ast.ty-node-get inner-ty)))]
-    [(or (Ref lifetime referent-ty) (MutRef lifetime referent-ty))
-      (Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+          (ast.ty-node-get inner-ty)
+          true))]
+    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
+      (Ok
+        (tc-project-from-region-container
+          ctx
+          receiver-ty
+          (ast.ty-node-get referent-ty)
+          true))]
     [(or (Ptr _) (MutPtr _)) (Err (tc-raw-deref-whole-message))]
     [_
       (Err
@@ -58624,7 +58678,12 @@
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-global-shared-view box-ty)))
     [(Box inner-ty)
-      (Ok (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+      (Ok
+        (tc-project-from-region-container
+          ctx
+          box-ty
+          (ast.ty-node-get inner-ty)
+          false))]
     [(MutRef _ referent-ty) (Ok (ast.ty-node-get referent-ty))]
     [(Ref _ _)
       (Err
@@ -59854,7 +59913,7 @@
         [elem-ty
           (try
             (tc-type-list-ref (ast.ast-type-list-box-shared-view elems) index))]
-        (Ok (tc-project-from-region-container receiver-ty elem-ty)))]
+        (Ok (tc-project-from-region-container ctx receiver-ty elem-ty false)))]
     [(MutRef _ referent-ty)
       (let
         [referent : ast.AstType (tc-context-type-get ctx referent-ty)]
@@ -59883,7 +59942,7 @@
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
       [(or (Struct _) (StructArgs _ _) (MutRef _ _))
-        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+        (tc-struct-get-result-type-id ctx receiver-ty field-id false)]
       [(Ref _ _)
         (Err
           (tc-kind-message
@@ -60589,7 +60648,7 @@
                   (tc-type-list-ref
                     (ast.ast-type-list-box-shared-view tys)
                     index))]
-              (Ok (tc-project-from-region-container tuple-ty elem-ty)))]
+              (Ok (tc-project-from-region-container ctx tuple-ty elem-ty true)))]
           [_ (Err "typecheck: tuple-ref requires tuple type")]))]
     [(Array exprs)
       (let
@@ -60658,7 +60717,12 @@
             [receiver (try (tc-array-readable-receiver ctx array-ty))]
             (match receiver
               [(TcArrayReceiver container-ty elem-ty)
-                (Ok (tc-project-from-region-container container-ty elem-ty))]))
+                (Ok
+                  (tc-project-from-region-container
+                    ctx
+                    container-ty
+                    elem-ty
+                    true))]))
           (Err "typecheck: array index must be integer")))]
     [(ArraySet array-box index-box value-box)
       (let
@@ -61205,7 +61269,8 @@
             (tc-match-expr ctx env scrut-ty arms No))])]
     [(StructGet receiver-box field)
       (match (tc-expr-id ctx env receiver-box)
-        [(Ok receiver-ty) (tc-struct-get-result-type-id ctx receiver-ty field)]
+        [(Ok receiver-ty)
+          (tc-struct-get-result-type-id ctx receiver-ty field true)]
         [(Err message)
           (let
             [receiver-ty
@@ -61215,7 +61280,7 @@
                   env
                   (tc-context-expr-get ctx receiver-box)
                   message))]
-            (tc-struct-get-result-type-id ctx receiver-ty field))])]
+            (tc-struct-get-result-type-id ctx receiver-ty field true))])]
     [(StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -71218,7 +71283,7 @@
             ctx
             receiver-id)
             [(TcBodyTypeFact.Hit receiver-ty)
-              (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+              (tc-struct-get-result-type-id ctx receiver-ty field-id true)]
             [(TcBodyTypeFact.Miss) (tc-expr ctx env projection)])]
         [_ (tc-expr ctx env projection)])
         [(ResultTcType.Ok projected-ty)
@@ -81783,7 +81848,7 @@
     [(StructGet base field)
       (match (tc-global-effect-known-type ctx collector base limit)
         [(Some ty)
-          (match (tc-struct-get-result-type-id ctx ty field)
+          (match (tc-struct-get-result-type-id ctx ty field true)
             [(Ok result) (Some result)]
             [_ (No)])]
         [(No) (No)])]

@@ -1518,3 +1518,11 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+reference_copy_borrow_escape_reject|check-fail|tests/safety/reference_copy_borrow_escape_reject.tl|-|error[E0205]: typecheck: reference value would escape lexical scope
+reference_copy_intrinsic_region_reject|check-fail|tests/safety/reference_copy_intrinsic_region_reject.tl|-|error[E0205]: typecheck: cannot store region-tagged value into return value
+reference_copy_invalidate_payload_reject|check-fail|tests/safety/reference_copy_invalidate_payload_reject.tl|-|error[E0207]: typecheck: cannot assign to borrowed place `cell`
+reference_copy_noncopy_reject|check-fail|tests/safety/reference_copy_noncopy_reject.tl|-|error[E0208]: typecheck: cannot move a `Owned` out of a shared reference; `Owned` is not Copy
+reference_copy_payload_escape_reject|check-fail|tests/safety/reference_copy_payload_escape_reject.tl|-|error[E0205]: typecheck: cannot store region-tagged value into return value
+reference_copy_shared_store_reject|check-fail|tests/safety/reference_copy_shared_store_reject.tl|-|error[E0207]: typecheck: set! deref requires mutable access
+reference_copy_mutable_noncopy_reject|check-fail|tests/safety/reference_copy_mutable_noncopy_reject.tl|-|error[E0208]: typecheck: cannot move a `Owned` out of a mutable reference; `Owned` is not Copy
+reference_copy_zero_noncopy_reject|check-fail|tests/safety/reference_copy_zero_noncopy_reject.tl|-|error[E0208]: typecheck: cannot move a `(Array (Box i64) 0)` out of a shared reference; `(Array (Box i64) 0)` is not Copy

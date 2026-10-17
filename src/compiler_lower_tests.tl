@@ -16358,3 +16358,44 @@
           (= (lower-test-function-call-count functions "rebound" "tl_alloc") 0))]
       [_ false])
     "pure fields keep the packed path; effectful receivers guard their real frame home"))
+
+(test
+  compiler-lower-reference-copy-read
+  (let
+    [modes : (Array lower.CompilerLowerMode 2)
+      (array
+        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.WindowsScalar))]
+    (for [index (iterator.range 0 2)]
+      (test.assert-true
+        (match (lower-test-functions
+          (lower.lower-compiler-source-with-mode
+            "(defstruct Pair (a i64) (b i64))
+(defstruct Wide (a i64) (b i64) (c i64) (d i64))
+(defstruct Outer (item Wide) (tail i64))
+(define (field [p : (& p Wide)]) : i64 (deref p).a)
+(define (nested [p : (& p Outer)]) : i64 (deref p).item.a)
+(define (whole [p : (& p Wide)]) : Wide (deref p))
+(define (pair [p : (& p Pair)]) : Pair (deref p))"
+            (array-ref modes index)))
+          [(Some functions)
+            (and
+              (= (lower-test-count functions "field" (CopyBytes)) 0)
+              (= (lower-test-count functions "field" (AddrOf)) 0)
+              (= (lower-test-count functions "field" (Load)) 1)
+              (= (lower-test-count functions "nested" (CopyBytes)) 0)
+              (= (lower-test-count functions "nested" (AddrOf)) 0)
+              (= (lower-test-count functions "nested" (Load)) 1)
+              (> (lower-test-count functions "whole" (CopyBytes)) 0)
+              (= (lower-test-count functions "pair" (CopyBytes)) 0)
+              (=
+                (lower-test-function-call-count functions "whole" "tl_alloc")
+                0)
+              (=
+                (lower-test-function-call-count functions "field" "tl_alloc")
+                0)
+              (=
+                (lower-test-function-call-count functions "nested" "tl_alloc")
+                0))]
+          [_ false])
+        "whole Copy reads own their frame bytes; scalar and nested projections load only their field"))))

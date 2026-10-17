@@ -26,6 +26,12 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+`gep_global_capture.tl` retains a raw pointer's selected global base and offset
+across rebinding and checks the old pointee alongside the new global value at
+opt0/1/2 on both hosts. The `gep-split-mutable-global-capture` optimizer test
+covers implicit `Global` and `RuntimeGlobal` reads in both GEP operands across
+stores and calls, with stable literal, address and SSA splitting controls.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

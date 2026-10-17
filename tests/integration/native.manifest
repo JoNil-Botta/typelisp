@@ -969,3 +969,5 @@ global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|
 
 packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
 packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+
+gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-

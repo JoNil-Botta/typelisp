@@ -795,6 +795,12 @@
   [lease : (& lease (TypedBodyLease intern))]
   [units : i64]) : TypedResult
   (try (typed-lease-ok (& store) lease))
+  (typed-work-charge! store units))
+
+;; Entry points validate the lease and table extents before charging work.
+;; Repeated charges within that checked operation may reuse the validation:
+;; intervening scalar updates and table growth preserve all checked bounds.
+(define (typed-work-charge! [store : (&mut store TypedStore)] [units : i64]) : TypedResult
   (cond
     [store.failed? (TypedResult.Err (typed-resource-error (& store.failure)))]
     [(or (< units 0) (> units (- store.limits.work store.work)))
@@ -866,7 +872,7 @@
         ;; initialization and movement are charged before any allocation.
         [charged : TypedLimits (TypedLimits (+ capacity old) 0 0 0)]
         [units : i64 (typed-setup-work (& charged))]
-        (try (typed-charge! store lease units))
+        (try (typed-work-charge! store units))
         (let
           [occurrences : (__tl_dyn-array TypedOccurrence)
             (__tl_make-array TypedOccurrence capacity)]
@@ -984,9 +990,8 @@
       (let
         [capacity : i64 (typed-grown-capacity old needed store.limits.children)]
         (try
-          (typed-charge!
+          (typed-work-charge!
             store
-            lease
             (*
               (+ capacity store.child-count)
               (comptime (size-of (type TypedOccurrenceId))))))
@@ -1019,9 +1024,8 @@
       (let
         [capacity : i64 (typed-grown-capacity old needed store.limits.attempts)]
         (try
-          (typed-charge!
+          (typed-work-charge!
             store
-            lease
             (*
               (+ capacity store.attempt-count)
               (comptime (size-of (type TypedCheckpoint))))))
@@ -1233,18 +1237,17 @@
   (try (typed-lease-ok (& store) lease))
   (match literal
     [(ast.AstLiteral.Int _ text)
-      (typed-charge! store lease (string.string-length text))]
+      (typed-work-charge! store (string.string-length text))]
     [(ast.AstLiteral.Float text)
-      (typed-charge! store lease (string.string-length text))]
+      (typed-work-charge! store (string.string-length text))]
     [(ast.AstLiteral.String id)
       (if (or
         (and
           (>= id 0)
           (< id (ci.intern-compat-state-pool-len lease.intern-state)))
         (ci.intern-compat-state-generated-id-active? lease.intern-state id))
-        (typed-charge!
+        (typed-work-charge!
           store
-          lease
           (string.string-length
             (ci.intern-compat-state-str lease.intern-state id)))
         (TypedResult.Err TypedError.Unknown))]
@@ -1275,8 +1278,8 @@
   (unless
     (own.ownership-source-valid? (& source))
     (return (TypedOriginResult.Err TypedError.Shape)))
-  (try (typed-charge! store lease (string.string-length (& source.path))))
-  (try (typed-charge! store lease (string.string-length (& source.expansion))))
+  (try (typed-work-charge! store (string.string-length (& source.path))))
+  (try (typed-work-charge! store (string.string-length (& source.expansion))))
   (let
     [handle : TypedHandle (typed-fresh! store store.origin-count)]
     (set!

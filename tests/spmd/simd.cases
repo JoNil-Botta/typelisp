@@ -936,6 +936,27 @@ end-if
 
 # ---------------------------------------------------------- masked control
 
+case float-comparisons-run
+source tests/spmd/float_comparisons.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case float-comparisons-shape
+source tests/spmd/float_comparisons.tl
+target linux-x86_64 windows-x86_64
+mode avx2 avx512
+opt 0 1 2
+in asm
+contains vcmpps $13,
+contains vcmpps $14,
+contains vcmppd $13,
+contains vcmppd $14,
+not-match vcmp(ps|pd) \$[56],
+
 case varying-while-avx2
 source tests/spmd/varying_while_i64.tl
 mode avx2

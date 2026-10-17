@@ -6450,6 +6450,8 @@ region-tagged value escape its scope:
 - Propagated by `try` through its error payload. The check applies to the
   payload that leaves the function: a scalar error or payload-free `None`
   may propagate even when the carrier was allocated inside the region.
+  Nonempty fixed-array payloads also transport their elements' allocations;
+  empty arrays and arrays containing only scalar values need no arena storage.
 - Passed to a function call (function parameters carry no region tag).
 
 **Nested regions:** Inner and outer regions are distinct. A value allocated in

@@ -955,6 +955,8 @@ scoped arena while retaining input-tied arena results. `try` checks only its
 error payload, tagged with the carrier's allocation regions; the successful
 payload stays in the current scope. Scalar errors and payload-free `None`
 do not carry the carrier's allocation.
+Fixed arrays transport their elements recursively; zero-length arrays carry
+no element allocation.
 
 `AstType.Invalidate` retains a parameter's lifetime destruction effect through
 callable identity, substitution, reflection and surface serialization (schema

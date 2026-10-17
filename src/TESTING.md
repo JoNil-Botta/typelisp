@@ -94,6 +94,8 @@ returns, returns from caller-owned arenas, values allocated before a scoped
 arena, scalar error propagation, and payload-free Option propagation. The
 `arena_return_*_reject` and `arena_try_*_reject` safety rows reject String,
 Box, tuple, and outer-region escapes through early exits on both targets.
+Array residual cases distinguish nested arrays containing allocations from
+scalar-element and zero-length arrays.
 Diagnostics locate the returned value or the try operand and retain E0205
 and clone-out help. Keep the outer-region cases: checking only the active
 innermost arena misses an allocation that dies in an enclosing scope.

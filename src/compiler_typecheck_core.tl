@@ -51170,6 +51170,23 @@
       (set! regions (tc-name-id-list-rest regions))))
   Ok)
 
+;; Fixed arrays do not allocate their own container, but a nonempty residual
+;; still transports every element across the arena reset.
+(define (tc-early-exit-allocated-payload? [ty : ast.AstType]) : bool
+  (let
+    [child : i64
+      (match (& ty)
+        [(Array elem len)
+          (if (> len 0)
+            elem
+            -2)]
+        [(or (Region _ inner) (Invalidate _ inner)) inner]
+        [_ -1])]
+    (cond
+      [(>= child 0) (tc-early-exit-allocated-payload? (ast.ty-node-get child))]
+      [(= child -2) false]
+      [else (tc-region-taggable-type? ty)])))
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
     [operand-ty : ast.AstType
@@ -51182,7 +51199,7 @@
           [(TcTryQueryCompatible operand-info _)
             (let
               [allocated-payload : bool
-                (tc-region-taggable-type?
+                (tc-early-exit-allocated-payload?
                   (tc-result-info-err-type (tc-global-shared-view operand-info)))]
               (if (and
                 (tc-regions-have-scratch-body? regions)

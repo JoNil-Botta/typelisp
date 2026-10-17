@@ -211,12 +211,16 @@ arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|-|reg
 arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_try_string_reject|check-fail|tests/safety/arena_try_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
+arena_try_array_reject|check-fail|tests/safety/arena_try_array_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_nested_array_reject|check-fail|tests/safety/arena_try_nested_array_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_return_string_reject_windows|check-fail-windows|tests/safety/arena_return_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_return_outer_reject_windows|check-fail-windows|tests/safety/arena_return_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
 arena_return_box_reject_windows|check-fail-windows|tests/safety/arena_return_box_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_return_nested_tuple_reject_windows|check-fail-windows|tests/safety/arena_return_nested_tuple_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_try_string_reject_windows|check-fail-windows|tests/safety/arena_try_string_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 arena_try_outer_reject_windows|check-fail-windows|tests/safety/arena_try_outer_reject.tl|-|region-tagged value cannot escape with-arena 'outer'
+arena_try_array_reject_windows|check-fail-windows|tests/safety/arena_try_array_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_try_nested_array_reject_windows|check-fail-windows|tests/safety/arena_try_nested_array_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items[0]`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
 mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot read mutably borrowed place `bags.left[0]`

@@ -279,6 +279,15 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
+Store lowering uses the operand's actual flow type independently of its
+contextual value type. `Never` from a receiver, index or value stops evaluation
+before further operands, bounds checks, writes or packed-local refreshes.
+Annotations preserve that flow. Argument collectors carry an explicit `Exit`
+state, which callers propagate without snapshots, remaining arguments, calls
+or writebacks. Direct constructors and array-literal builders return their
+flow type so an exit cannot become a successful store through a state-only
+result. Conditional exits still leave the surviving path available to commit.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

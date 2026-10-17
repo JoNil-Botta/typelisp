@@ -40,6 +40,16 @@ The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
 sub-word integer and floating fields, and move-only boxed field values.
 
+`store_operand_exits.tl` and `store_constructor_exits.tl` run at opt0/1/2 on
+both hosts. They cover scalar, aggregate, field, tuple, box, reference, raw
+pointer, global and array stores; return, break and continue; skipped bounds
+checks and later constructor arguments; zero-sized values; and conditional
+fallthrough. `compiler-lower-store-exits` inspects unoptimized blocks for any
+instruction after a terminator, including annotation, replacement, constructor,
+direct/indirect call, C ABI and syscall paths. The paired safety cases retain
+canonical rejection of immutable receivers, wrong return types and invalid
+unreachable tails.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

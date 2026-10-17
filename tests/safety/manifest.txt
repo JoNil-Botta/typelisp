@@ -1518,3 +1518,11 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Store exits retain canonical validation of receivers, returns and unreachable tails.
+store_rhs_unreachable_reject|check-fail|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_unreachable_reject-windows|check-fail-windows|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_return_type_reject|check-fail|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_return_type_reject-windows|check-fail-windows|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_immutable_reject|check-fail|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+store_rhs_immutable_reject-windows|check-fail-windows|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access

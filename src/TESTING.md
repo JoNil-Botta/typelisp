@@ -5,6 +5,15 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+The `bounds-dom-conditional-length-scope`, `bounds-dom-length-definition-order`
+and `bounds-dom-later-length-keeps-signed-range` optimizer tests distinguish
+typed length definitions from path-local bounds-check facts. They cover earlier
+and sibling uses, copies, casts, phi inputs, ordered derivations and range
+merging; `bounds-dom-loop-length-entry` preserves a loop's negative exit.
+`tests/integration/process_empty_step.tl` checks empty through eight-item
+process lists at opt0/1/2 on both hosts, including GVN forwarding an allocation's
+size into a later bounds check.
+
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and
 emission on both SIMD widths and target ABIs. Its remapped homes extend beyond

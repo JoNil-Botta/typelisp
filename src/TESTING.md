@@ -53,7 +53,8 @@ switches and their scratch register, which must preserve the allocation result.
 `reference_copy_read.tl` runs at opt0/1/2 on both hosts. It checks shared and
 mutable aggregate reads through returns, bindings, calls, constructors and
 stores; independent memory-class copies; nested field/array/tuple reads;
-single evaluation; zero-sized local values; no runtime allocation; and a copy
+single evaluation; a 17-input scalar oracle for shared/mutable snapshots;
+zero-sized local values; no runtime allocation; and a copy
 read after its source arena is destroyed by an `:invalidate` callee. Its lowerer
 shape test keeps scalar and nested field reads copy-free on both target ABIs.
 The paired safety fixtures retain stored-reference and intrinsic region facts,

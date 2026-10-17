@@ -239,6 +239,23 @@
         (test.assert-i64-eq first.a 20 "first read snapshot")
         (test.assert-i64-eq second.a 7 "second read snapshot")))))
 
+(define (snapshot-oracle [n : i64]) : bool
+  (let
+    [source : Wide (Wide n (+ n 1) (+ n 2) (+ n 3))]
+    [shared (deref (& source))]
+    (set! source.b (+ n 5))
+    (let
+      [mutable (deref (&mut source))]
+      (set! shared.a (- 0 n))
+      (set! source.b 0)
+      (and
+        (= shared.a (- 0 n))
+        (= shared.b (+ n 1))
+        (= mutable.a n)
+        (= mutable.b (+ n 5))
+        (= source.a n)
+        (= source.b 0)))))
+
 (define (main) : i64
   (let
     [source : Pair (Pair 20 22)]
@@ -263,6 +280,13 @@
   (check-projections)
   (check-other-aggregates)
   (check-evaluation)
+  (let
+    [n : i64 -8]
+    (while (<= n 8)
+      (test.assert-true
+        (snapshot-oracle n)
+        "shared/mutable copies agree with scalar oracle")
+      (+= n 1)))
   (let
     [owner (arena.make)]
     [initial : Wide (Wide 20 2 3 22)]

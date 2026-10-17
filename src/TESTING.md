@@ -17,6 +17,10 @@ names, frozen reads, generation reset and growth while a scratch arena is
 active. Both retained maps must remain valid after that scratch is destroyed;
 lowering must use semantic inference when a checked fact is unavailable.
 The branded operand CLI cases also compare cold and repeated batch assembly.
+They also compile `thread_safe_i64_vec.tl` for both targets at every opt level:
+captured atomic owners must retain their semantic markers when a checked local
+type carries that owner's allocation region. Conflicting checked proofs with
+different regions must leave unrelated bindings available.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

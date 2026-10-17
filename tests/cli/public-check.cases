@@ -743,8 +743,8 @@ case compile-branded-arena-operands
 do none
 target linux-x86_64 windows-x86_64
 opt 0 1 2
-each -
-run compile "{{root}}/tests/integration/arena_branded_operands.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/operands.s"
+each arena_branded_operands thread_safe_i64_vec
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/operands.s"
 exit 0
 stdout contains Wrote
 stderr empty

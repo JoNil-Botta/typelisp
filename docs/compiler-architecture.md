@@ -21,10 +21,14 @@ arguments, in its semantic `TcTypeEnv`. It reuses frozen checked let-binding
 facts keyed by original declaration, enclosing body, binding ordinal, name and
 initializer. The declaration map uses source module/name identity so pruning
 cannot change the selected proof; ambiguous names require inference. These
-facts follow the existing cold declaration walk used for clone roots. Missing
-or inconsistent facts and generated dispatch bodies use the shared let-binding
+proofs compare exact structural types, including allocation regions. A conflict
+invalidates only the affected binding.
+The retained facts follow the existing cold declaration walk used for clone
+roots. Missing or inconsistent facts and generated dispatch bodies use the shared let-binding
 rules for annotations and inferred values. The job owns the retained payload arena
 through lowering and releases it on both success and failure.
+Closure capture loads retain the inherited semantic bindings and owner markers;
+their slot types describe only runtime storage.
 Physical IR storage types are derived separately with regions erased.
 Semantic queries for operands and nested calls therefore receive the same
 brands as the original checked binding. An `in-arena` body also retains its

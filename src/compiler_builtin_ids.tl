@@ -24,6 +24,8 @@
   -1)
 (define compiler-builtin-id-tl-alloc-aligned : i64
   -1)
+(define compiler-builtin-id-tl-alloc-global : i64
+  -1)
 (define compiler-builtin-id-tl-region-mark : i64
   -1)
 (define compiler-builtin-id-tl-region-reset : i64
@@ -856,6 +858,7 @@
           (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
           ;; Append-only slot for the compiler-private aligned allocator.
           (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
+          (id compiler-builtin-id-tl-alloc-global 324 "tl_alloc_global")
           (id compiler-builtin-id-tl-region-mark 1 "tl_region_mark")
           (id compiler-builtin-id-tl-region-reset 2 "tl_region_reset")
           (id compiler-builtin-id-tl-arena-make 3 "tl_arena_make")
@@ -2649,6 +2652,7 @@
       compiler-builtin-id-tl-region-reset
       compiler-builtin-id-tl-arena-make)
     (= name-id compiler-builtin-id-tl-alloc-aligned)
+    (= name-id compiler-builtin-id-tl-alloc-global)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-arena-make-small
@@ -2760,7 +2764,8 @@
   (compiler-builtin-refresh!)
   (or
     (= name-id compiler-builtin-id-tl-alloc)
-    (= name-id compiler-builtin-id-tl-alloc-aligned)))
+    (= name-id compiler-builtin-id-tl-alloc-aligned)
+    (= name-id compiler-builtin-id-tl-alloc-global)))
 
 (define (compiler-builtin-backend-tl-region-mark-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)

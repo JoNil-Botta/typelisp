@@ -27,7 +27,7 @@ src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	adapter	abi	
 src/compiler_backend.tl	compiler-backend-object-image-for-target	adapter	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Selects the ELF or COFF object-image leaf.
 src/compiler_backend.tl	compiler-backend-runtime-data-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's data section.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's externs.
-src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	The Linux runtime prunes every leaf function by use; the Windows runtime keeps its fixed leaves and prunes only the arena sanitizer's.
+src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes every runtime leaf by use; Windows keeps its fixed leaves and selects the global allocator and arena sanitizer independently by use.
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's functions.
 src/compiler_backend.tl	compiler-backend-runtime-usable-end-offset	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's segment bound for inline allocation.
 src/compiler_backend.tl	compiler-backend-target-entry-text-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform entry section text.
@@ -38,7 +38,7 @@ src/compiler_backend.tl	compiler-backend-state-authorize-return-storage!	policy	
 src/compiler_backend_object_target_linux.tl	compiler-backend-object-target-linux-image	leaf	object-format	target-linux	1	The Linux leaf owns ELF entry and image policy.
 src/compiler_backend_object_target_tests.tl	*	test	test-only	target-linux|target-windows	4	Object-target tests name the targets they exercise.
 src/compiler_backend_object_target_windows.tl	compiler-backend-object-target-windows-image	leaf	object-format	target-windows	1	The Windows leaf owns COFF entry, unwind, and manifest policy.
-src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	409	Backend tests name the targets they exercise.
+src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	411	Backend tests name the targets they exercise.
 src/compiler_backend_tests.tl	compiler-backend-spmd-source-site-retention-ok?	test	test-only	CompilerLowerMode[.]LinuxAvx2	1	SPMD source-site retention fixture exercises SIMD backend register remapping.
 src/compiler_lower.tl	enum:CompilerLowerMode	lower	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes preserve host ABI while selecting scalar or SIMD lowering.
 src/compiler_lower.tl	lower-c-abi-aggregate-class-from-layout	lower	abi	lower-mode-(linux|windows)-c-abi[?]	3	System V and Win64 C aggregate layout classes intentionally differ.

@@ -8721,6 +8721,13 @@ low-level exception and carry no safety guarantees.
   Compiler-generated over-aligned storage may explicitly select the private
   `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
   implied.
+- Replacing a global inline aggregate may require a shallow container copy.
+  That implicit storage has program lifetime, independent of the active arena,
+  so leaving a scratch scope cannot invalidate the stored value. The copy does
+  not clone payloads or extend their lifetimes: source-level allocations and
+  borrowed references still obey the ordinary ownership and escape checks.
+  A previously captured assignment receiver continues to designate the old
+  aggregate storage after whole-global replacement (section 5.10).
 - Fatal page-allocation failures terminate with status 134 without allocating
   while reporting the failure. On Windows, `VirtualAlloc` failures include the
   ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,

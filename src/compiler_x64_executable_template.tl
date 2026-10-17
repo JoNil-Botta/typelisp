@@ -95,6 +95,8 @@
   (WindowsObjectOverflowFilterContribution)
   (LinuxRuntimeCopyFwd)
   (LinuxRuntimeCopy8Fwd)
+  (LinuxRuntimeGlobalAlloc)
+  (WindowsRuntimeGlobalAlloc)
   (LinuxRuntimeArenaSanitize)
   (LinuxRuntimeArenaDebugSanitize)
   (LinuxRuntimeArenaProfileSanitize)

@@ -81,7 +81,7 @@ tl_backtrace_stack_high:
           (runtime_common.compiler-backend-runtime-arena-debug-text?
             features.arena-debug)
           features.backtrace))]
-    (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
       (sanitize.runtime-sanitize-data data)
       data)))
 
@@ -1447,8 +1447,8 @@ tl_backtrace_stack_set:
             (LinuxRuntimeArenaProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-linux-arena
             (compiler-backend-runtime-linux-arena-functions profile debug-text))
           (compiler-backend-runtime-linux-arena-functions profile debug-text)))
@@ -1477,6 +1477,16 @@ tl_backtrace_stack_set:
             profile
             debug-text)))
       (compiler-backend-runtime-linux-render
+        (and
+          features.alloc
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (LinuxRuntimeGlobalAlloc)
+        (runtime_common.compiler-backend-runtime-global-alloc-functions
+          (compiler-backend-current-arena-load "%r13")
+          (compiler-backend-current-arena-store "%rbx")
+          (compiler-backend-current-arena-store "%r13")
+          true))
+      (compiler-backend-runtime-linux-render
         features.region-mark
         (LinuxRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
@@ -1490,8 +1500,8 @@ tl_backtrace_stack_set:
             (LinuxRuntimeRegionResetProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-linux-reset
             (compiler-backend-runtime-region-reset-functions profile debug-text))
           (compiler-backend-runtime-region-reset-functions profile debug-text))))))

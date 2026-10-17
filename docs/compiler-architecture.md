@@ -1044,6 +1044,25 @@ are popped in lowering order. This rule is specific to unit-valued field stores;
 `replace!`, which returns the old value, retains its separate place lowering.
 
 Memory-class aggregate expressions carry addresses into inline storage.
+Whole-global assignment copies the shallow container through the private
+`tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
+store preserves the backend's global-writer and inline-storage eligibility
+analysis; mutating one permanent home would incorrectly retarget a receiver
+captured before the replacement. A private atomic arena starts with one static
+page and uses ordinary arena growth after it fills. Constant allocations up to
+64 bytes reserve space with an inline compare-and-swap; other allocations
+temporarily select the private root, then restore the caller's current arena.
+Every segment has program lifetime, so an allocation can finish on an older
+head while another thread grows the arena. The root and its segments are never
+exposed to source reset or destruction. Payloads retain their checked source lifetimes;
+this transport does not clone them. Global initialization and ordinary heap
+allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
+this helper and its private arena only when referenced on either target. Each
+platform wrapper has its own catalog row; ordinary allocator variants keep
+their original payloads. Internal mutable diagnostic state keeps its latest
+unbound-name snapshot in one fixed array slot, avoiding a new retained global
+container for every lookup and reset.
+
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,
 enum payload, fixed-array projection, conditional merge, or nested loop; the

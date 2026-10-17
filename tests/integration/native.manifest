@@ -1068,3 +1068,6 @@ ownership_certified_scalar_control|all|0,1,2|tests/integration/ownership_certifi
 
 # Shared Box views, exclusive access, owned moves, and independent deep clones.
 box_view_access|all|0,1,2|tests/integration/box_view_access.tl|42|-|-|-|-
+global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
+global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-

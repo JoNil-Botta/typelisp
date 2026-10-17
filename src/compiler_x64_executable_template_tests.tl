@@ -27,7 +27,7 @@
             false
             false
             false
-            63)]
+            127)]
         [linux : String
           (runtime_linux.compiler-backend-runtime-functions (& features))]
         [windows : String
@@ -56,6 +56,51 @@
           (string.contains (& windows) "rep stosb")
           "Windows poisons in-segment rewind ranges")
         (set! mode (+ mode 1))))))
+
+(test
+  compiler-x64-template-global-allocator-sanitizer-independence
+  (let
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [optional : i64 0]
+        (while (< optional 4)
+          (let
+            [features : runtime_common.CompilerBackendRuntimeFeatures
+              (runtime_common.CompilerBackendRuntimeFeatures
+                true
+                true
+                true
+                (!= (bit-and mode 1) 0)
+                (!= (bit-and mode 2) 0)
+                false
+                false
+                false
+                (bit-or 31 (* optional 32)))]
+            [linux : String
+              (runtime_linux.compiler-backend-runtime-functions (& features))]
+            [windows : String
+              (runtime_windows.compiler-backend-runtime-functions (& features))]
+            [global? : bool (!= (bit-and optional 1) 0)]
+            [sanitize? : bool (!= (bit-and optional 2) 0)]
+            (test.assert-bool-eq
+              (string.contains (& linux) "tl_alloc_global:")
+              global?
+              "Linux selects permanent allocation independently")
+            (test.assert-bool-eq
+              (string.contains (& windows) "tl_alloc_global:")
+              global?
+              "Windows selects permanent allocation independently")
+            (test.assert-bool-eq
+              (string.contains (& linux) "tl_arena_sanitize_enable:")
+              sanitize?
+              "Linux selects sanitizer independently")
+            (test.assert-bool-eq
+              (string.contains (& windows) "tl_arena_sanitize_enable:")
+              sanitize?
+              "Windows selects sanitizer independently")
+            (set! optional (+ optional 1)))))
+      (set! mode (+ mode 1)))))
 
 (define (compiler-x64-template-test-kind-eq?
   [left : x64_events.CompilerX64TemplateEventKind]
@@ -122,7 +167,7 @@
         extra-features
         startup-profile
         extra-features
-        31)]
+        127)]
     [linux : String
       (runtime_linux.compiler-backend-runtime-functions (& features))]
     [windows : String
@@ -192,22 +237,22 @@
               [(Err _) (set! events-valid false)])
             (set! event-at (+ event-at 1)))
           (set! at (+ at 1))))
-      (test.assert-i64-eq ids.len 100 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 102 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
         112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        4269
+        4285
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        25924
+        26028
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        87
+        89
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly
@@ -234,7 +279,7 @@
             false
             false
             false
-            31)]
+            127)]
         [full : x64_selection.CompilerX64TemplateFeatures
           (x64_selection.CompilerX64TemplateFeatures
             true
@@ -245,7 +290,7 @@
             true
             true
             true
-            31)]
+            127)]
         [linux-min : x64_selection.CompilerX64ExecutableTemplateIdList
           (x64_selection.compiler-x64-runtime-template-selection
             (LinuxX64)
@@ -263,14 +308,14 @@
             (WindowsX64)
             (& full))]
         (test.assert-i64-eq linux-min.len 8 "minimal Linux template selection")
-        (test.assert-i64-eq linux-full.len 15 "full Linux template selection")
+        (test.assert-i64-eq linux-full.len 16 "full Linux template selection")
         (test.assert-i64-eq
           windows-min.len
           8
           "minimal Windows template selection")
         (test.assert-i64-eq
           windows-full.len
-          15
+          16
           "full Windows template selection")
         (test.assert-i64-eq
           (array-length linux-full.slots)

@@ -32126,6 +32126,45 @@ f:
       "    movq %rax, %r10\n    addq $16, %r10\n"
       "    movq %r8, 16(%r8)\n")))
 
+(define (compiler-backend-inline-global-alloc-target-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [bound : String
+      (match target
+        [(Linux) "    cmpq 24(%r9), %r8\n"]
+        [(Windows) "    cmpq 64(%r9), %r8\n"])]
+    [slow : String
+      (match target
+        [(Linux) "_slow:\n    movl $16, %edi\n    call tl_alloc_global\n"]
+        [(Windows) "_slow:\n    movl $16, %ecx\n    call tl_alloc_global\n"])]
+    (asm-ok?
+      (compiler-backend-emit-source-opt2-for-target
+        "(define values : (Array i64 2) (array 0 0))
+(define (replace [x : i64]) : unit
+  (with-scratch (set! values (array x (+ x 1)))))
+(define (main) : i64
+  (set! (array-ref values 0) (begin (replace 41) -1))
+  (array-ref values 1))"
+        target)
+      (has
+        "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
+        "_retry:\n    leaq 16(%rax), %r8\n"
+        bound
+        "    lock cmpxchgq %r8, 16(%r9)\n    jne "
+        slow)
+      (lacks "_slow:\n    call .L_tl_alloc16\n"))))
+
+(test
+  backend-inline-global-alloc
+  (unless
+    (and
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic
+      "global container allocation must reserve atomically and grow through its private root")))
+
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
     (= (backend.compiler-backend-fast-alloc-size (One (I64 1))) 8)
@@ -37701,11 +37740,8 @@ b_keep:
 (define (read-len) : i64 (+ (peek (& cell)) (+ cell.len triple.c)))
 (define (main) : i64 (begin (install! 3) (install3! 4) (read-len)))")
 
-;; The t2 shape: `observe` holds a reference to `cell` (a safe borrow, or a raw
-;; pointer) across a call that rebinds it. The safe form is rejected with E0222
-;; before reaching the backend (#7904). The raw form shares the inline-home
-;; assertions: the rebind copies into the global's one home, so the alias reads
-;; the new value.
+;; A raw alias can observe box identity across a rebind. The corresponding
+;; safe reference program must be rejected before reaching the backend.
 (define (compiler-backend-inline-aggregate-global-escape-source
   [raw-alias : bool]) : String
   (str_cat.str-cat
@@ -37722,7 +37758,7 @@ b_keep:
 (define (main) : i64 (observe (& cell)))")))
 
 ;; `through` reads `cell` and calls through a function VALUE, so its callee set
-;; is not enumerable; the global still has its one inline home.
+;; is not enumerable and the global must stay boxed.
 (define (compiler-backend-inline-aggregate-global-indirect-source) : String
   "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
 (define cell : Cell (Cell (__tl_make-array i64 4) 4))
@@ -37757,14 +37793,13 @@ b_keep:
           (asm-has?
             asm
             "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
-          ;; (iii) and `(set! g v)` copies the complete right-hand value once
-          ;; into the same home: the home address, then 16 and 24 bytes.
-          (and
-            (asm-has? asm "    leaq _tl_cell(%rip), %r10\n")
-            (asm-has? asm "    leaq _tl_triple(%rip), %r10\n"))
+          ;; (iii) and `(set! g v)` copies the same bytes at the rebind.
           (asm-has?
             asm
-            "    movups %xmm2, (%r10)\n    movq 16(%r9), %r8\n    movq %r8, 16(%r10)\n")
+            "    movq (%r10), %r11\n    movq %r11, _tl_cell(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_cell+8(%rip)\n")
+          (asm-has?
+            asm
+            "    movq (%r10), %r11\n    movq %r11, _tl_triple(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_triple+8(%rip)\n    movq 16(%r10), %r11\n    movq %r11, _tl_triple+16(%rip)\n")
           (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")))]
     [(Err _) false]))
 
@@ -37782,32 +37817,32 @@ b_keep:
         (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
         (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
         (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
-        (asm-has? asm "    movq %r10, _tl_triple+16(%rip)\n")
+        (asm-has? asm "    movq %r11, _tl_triple+16(%rip)\n")
         (asm-lacks? asm "    movq _tl_cell(%rip), %"))]
     [(Err _) false]))
 
-;; (v) SPEC 4.x: an initialized aggregate global is one storage home whose
-;; assignment keeps that home. Globals a reader's call graph can rebind, or
-;; that are read through an unenumerable indirect callee, therefore use the
-;; same inline home as any other: a whole-aggregate reservation, the home's
-;; address for a read, and a byte copy (never a box-pointer store) for the
-;; rebind. The escape program's safe borrow held across such a rebind is
-;; rejected (E0222, #7904); its raw-pointer form reads the updated home at
-;; every optimization level.
+;; A global whose raw alias or indirect reader can observe a rebind retains
+;; the boxed cell, pointer store, and cell load at every use.
 (define (compiler-backend-inline-aggregate-global-excluded-shape-ok?
   [src : String]) : bool
   (match (backend.compiler-backend-emit-source src)
     [(Ok asm)
       (and
         (backend.backend-and4
-          (asm-has? asm "    .comm _tl_cell, 16, 8\n")
-          (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
-          (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")
-          (asm-lacks? asm "    .comm _tl_cell, 8, 8\n"))
+          ;; The cell is one word and holds a POINTER to the arena box.
+          (asm-has? asm "    .comm _tl_cell, 8, 8\n")
+          (asm-has? asm "    movq %rax, _tl_cell(%rip)\n")
+          ;; ... which the rebind replaces with a pointer store, never a byte
+          ;; copy, so the box identity the program can observe is preserved.
+          (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)\n")
+          (asm-lacks? asm "    .comm _tl_cell, 16, 8\n"))
         (backend.backend-and4
-          (asm-has? asm "    leaq _tl_cell(%rip), ")
-          (asm-lacks? asm "    movq _tl_cell(%rip), ")
-          true
+          ;; No inline-cell spelling anywhere: no field displacement operand,
+          ;; and no address materialisation standing in for a cell read.
+          (asm-lacks? asm "_tl_cell+8(%rip)")
+          (asm-lacks? asm "    leaq _tl_cell(%rip), ")
+          ;; ... and every read of the global is still the cell LOAD.
+          (asm-has? asm "    movq _tl_cell(%rip), ")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
@@ -41738,13 +41773,15 @@ user_fn:
             false
             false
             backtrace
-            31)))]
+            63)))]
     (and
       (asm-has?
         rewritten
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
+        "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
         "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
@@ -41755,8 +41792,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          7
-          5))
+          9
+          7))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

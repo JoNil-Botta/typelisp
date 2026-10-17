@@ -1460,8 +1460,10 @@
             [(Ok declaration)
               (match declaration
                 [(ast.AstDecl.DefFn _ _ _ _ _ _) (not foreign?)]
+                ;; An extern returning a borrowed view uses an ordinary
+                ;; lifetime contract; opaque foreign calls only read operands.
                 [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Function) _ _)
-                  foreign?]
+                  true]
                 [_ false])]
             [_ false]))])))
 

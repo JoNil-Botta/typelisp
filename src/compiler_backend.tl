@@ -1942,7 +1942,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendDebugFileIndex
   (if (compiler_ir_types.compiler-debug-info-enabled?)
     (match spans
-      [(Spans entries instr-entries _)
+      [(Spans entries instr-entries _ _)
         (let
           [capacity : i64 (+ entries.len instr-entries.len)]
           [build : CompilerBackendDebugFileBuildState
@@ -4446,7 +4446,7 @@
   [backend-state : CompilerBackendState]
   [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match (compiler-backend-global-shared-view spans)
-    [(Spans entries _ _)
+    [(Spans entries _ _ _)
       (let
         [count : i64 (compiler_ir_types.compiler-source-spans-count (& spans))]
         [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
@@ -4510,7 +4510,7 @@
   (if (<= vars 0)
     (compiler_liveness.compiler-live-set-empty)
     (match spans
-      [(Spans _ instr-entries _)
+      [(Spans _ instr-entries _ _)
         (if (= instr-entries.len 0)
           (compiler_liveness.compiler-live-set-empty)
           (let
@@ -4566,7 +4566,7 @@
   [function : i64]
   [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpans
   (match spans
-    [(Spans entries instr-entries count)
+    [(Spans entries instr-entries count spmd)
       (let
         [slots : (__tl_dyn-array
           compiler_ir_types.CompilerSourceSpansInstrEntry)
@@ -4598,7 +4598,8 @@
           (compiler_ir_types.CompilerSourceSpansInstrEntryList
             slots
             instr-entries.len)
-          count))]))
+          count
+          spmd))]))
 
 ;; An emission error reported at the instruction (or function) being emitted.
 (define (compiler-backend-instr-error
@@ -73735,7 +73736,7 @@
   [collections : CompilerBackendProgramCollections]
   [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendProgramCollections
   (match spans
-    [(Spans _ instr-entries _)
+    [(Spans _ instr-entries _ _)
       (let
         [slots : (__tl_dyn-array
           compiler_ir_types.CompilerSourceSpansInstrEntry)

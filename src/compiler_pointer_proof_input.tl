@@ -327,7 +327,7 @@
   (match program
     [(Program globals functions externs)
       (match spans
-        [(Spans entries instructions _)
+        [(Spans entries instructions _ _)
           (PointerProofProgramIdentity
             (unsafe
               (ptr->int (__tl_array-data globals.slots)))

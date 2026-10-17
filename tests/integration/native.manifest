@@ -121,6 +121,7 @@ ptr_offset_inline_aggregate_stride|all|-|tests/integration/ptr_offset_inline_agg
 ptr_addr_of_places|all|-|tests/integration/ptr_addr_of_places.tl|0|-|-|-|-
 ptr_aggregate_copy|all|-|tests/integration/ptr_aggregate_copy.tl|0|-|-|-|-
 raw_pointer_register_addr_of|all|-|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
+raw_pointer_register_addr_of_levels|all|0,2|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
 raw_pointer_field_place|all|0,1,2|tests/integration/raw_pointer_field_place.tl|42|-|-|stdlib/string.tl|-
 auto_borrow_call|all|-|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl|-
 stdlib_string_to_int|all|-|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl|-
@@ -670,6 +671,7 @@ string_length|all|-|tests/integration/string_length.tl|5|-|-|stdlib/string.tl|-
 string_record_extent|all|-|tests/integration/string_record_extent.tl|42|-|-|-|-
 string_match|all|-|tests/integration/string_match.tl|42|-|-|-|-
 struct_field_set|all|-|tests/integration/struct_field_set.tl|42|-|-|-|-
+struct_field_set_levels|all|0,2|tests/integration/struct_field_set.tl|42|-|-|-|-
 substring|all|-|tests/integration/substring.tl|55|-|-|stdlib/string.tl|-
 sym_i64_env|all|-|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: empty-lookup-or\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: bound-miss-lookup-or\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: fork-parent-no-left\nPASS: fork-parent-no-right\nPASS: fork-left-sees-left\nPASS: fork-left-no-right\nPASS: fork-right-sees-right\nPASS: fork-right-no-left\nPASS: computed-key-hit\nPASS: second-computed-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-value\nPASS: deep-newest\nPASS: deep-middle\nPASS: deep-oldest\nPASS: deep-miss\nPASS: deep-view-count\nPASS: arena-growth-parent\nPASS: arena-growth-child\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl|-
 tail_self_loop|all|-|tests/integration/tail_self_loop.tl|42|-|-|-|-
@@ -943,4 +945,5 @@ linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_ar
 
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
 
-packed_field_receiver|all|0,1,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-

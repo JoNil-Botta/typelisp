@@ -36,6 +36,9 @@ checks both packed widths across 99 input/action combinations. The lowerer test
 pins the pure packed path, guarded frame homes, and absence of runtime heap
 allocation. The paired safety fixtures retain rejection of live borrowed roots
 and immutable field access.
+The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
+fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
+sub-word integer and floating fields, and move-only boxed field values.
 
 ## Runtime byte search
 

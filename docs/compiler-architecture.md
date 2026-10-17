@@ -23,10 +23,12 @@ initializer. The declaration map uses source module/name identity so pruning
 cannot change the selected proof; ambiguous names require inference. These
 proofs compare exact structural types, including allocation regions. A conflict
 invalidates only the affected binding.
-The retained facts follow the existing cold declaration walk used for clone
-roots. Missing or inconsistent facts and generated dispatch bodies use the shared let-binding
-rules for annotations and inferred values. The job owns the retained payload arena
-through lowering and releases it on both success and failure.
+Semantic indexing requires complete facts and uses a cold declaration walk.
+Lowering retains available facts without disabling trusted surface hydration.
+Missing cached-prefix facts, inconsistent facts and generated dispatch bodies
+use the shared let-binding rules for annotations and inferred values. The job
+owns the retained payload arena through lowering and releases it on both success
+and failure.
 Closure capture loads retain the inherited semantic bindings and owner markers;
 their slot types describe only runtime storage.
 Physical IR storage types are derived separately with regions erased.

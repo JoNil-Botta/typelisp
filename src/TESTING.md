@@ -20,7 +20,11 @@ The branded operand CLI cases also compare cold and repeated batch assembly.
 They also compile `thread_safe_i64_vec.tl` for both targets at every opt level:
 captured atomic owners must retain their semantic markers when a checked local
 type carries that owner's allocation region. Conflicting checked proofs with
-different regions must leave unrelated bindings available.
+different regions must leave unrelated bindings available. The compile-profile
+verifier pins trusted prelude hydration at zero declaration checks, checks
+assembly parity with forced source, and rejects source/producer
+mismatches. Semantic-index smoke tests with `--cfg test` assert that building
+the index does not typecheck let initializers again.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

@@ -1013,4 +1013,4 @@ done
 input_identities > "$WORKDIR/identities.after.sha256"
 cmp "$WORKDIR/identities.before.sha256" "$WORKDIR/identities.after.sha256" >/dev/null \
     || fail "compiler or source changed during campaign"
-printf '%s\n' "ownership model: thirty-nine complete bounded native runs, thirty-one production mutations and twenty-two model mutations passed; artifacts: $WORKDIR"
+printf '%s\n' "ownership model: thirty-nine complete bounded native runs, thirty-four production mutations and twenty-five model mutations passed; artifacts: $WORKDIR"

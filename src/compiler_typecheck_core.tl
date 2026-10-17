@@ -2503,10 +2503,12 @@
   (type-stamp ast.AstTypePoolStamp)
   (intern-table i64)
   (intern-generation i64)
-  ;; Zero: an explicitly checked body lowered by the ordinary lowerer.
+  ;; Zero selects the ordinary lowerer. A nonzero address is an owned,
+  ;; immutable normalized body in the job arena, guarded by this certificate.
   (address u64))
 
 (defenum TcSelectedLookup
+  (Normalized u64)
   (Legacy)
   (Err String))
 
@@ -20128,7 +20130,9 @@
           (= entry.expression expression)
           (tc-selected-certificate-session? ctx (& data) entry))
         (return (TcSelectedLookup.Err "lower: stale checked source body entry")))
-      TcSelectedLookup.Legacy)))
+      (if (= entry.address (cast 0 : u64))
+        TcSelectedLookup.Legacy
+        (TcSelectedLookup.Normalized entry.address)))))
 
 ;; The checked clone handoff is the sole post-check producer of named runtime
 ;; declarations. Register those appended declarations explicitly; a missing
@@ -117748,9 +117752,16 @@
                 (& output))))
           (cond
             [(not data.selected-lowering?) (TcSelectedAdmission.Ok true)]
-            ;; Checked here; the ordinary lowerer emits the body. Its entry
-            ;; records that lowering route, never a different ownership
-            ;; verdict.
+            [(ownership_normalize.ownership-normalized-scalar-emission?
+                (& output))
+              (match (tc-selected-publish-normalized
+                ctx
+                name
+                expression
+                lease
+                (& output))
+                [(ResultTcUnit.Ok) (TcSelectedAdmission.Ok true)]
+                [(ResultTcUnit.Err message) (TcSelectedAdmission.Err message)])]
             [else
               (match (tc-selected-publish-legacy ctx name expression lease)
                 [(ResultTcUnit.Ok) (TcSelectedAdmission.Ok true)]
@@ -117783,6 +117794,35 @@
             lease
             id
             return-type)])]))
+
+(define (tc-selected-publish-normalized
+  [ctx : TcContext]
+  [name : i64]
+  [expression : i64]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [output : (& output ownership_normalize.OwnershipNormalizedBody)]) : ResultTcUnit
+  (in-arena
+    (unsafe
+      (arena.Arena
+        (tc-job-state-field (tc-context-job-state ctx) owner-arena i64)))
+    (match (tc-selected-certificate-charge!
+      (tc-context-body-state ctx)
+      output.charged-records
+      output.charged-work
+      output.charged-bytes)
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+      [(ResultTcUnit.Ok)
+        (let
+          [cell : (__tl_dyn-array ownership_normalize.OwnershipNormalizedBody)
+            (__tl_make-array ownership_normalize.OwnershipNormalizedBody 1)]
+          (set! (array-ref cell 0) (clone (deref output)))
+          (tc-selected-certificate-publish!
+            ctx
+            name
+            expression
+            lease
+            (unsafe
+              (ptr->int (__tl_array-data cell)))))])))
 
 (define (tc-selected-publish-legacy
   [ctx : TcContext]

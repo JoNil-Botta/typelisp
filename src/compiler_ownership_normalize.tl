@@ -8,6 +8,7 @@
 (cfg ownership-mir-dump (import compiler_ownership_dump as ownership_dump))
 (cfg ownership-mir-dump (import stdlib.io))
 (import stdlib.string)
+(import stdlib.iterator)
 
 (defstruct OwnershipNormalizeLimits
   (records i64)
@@ -1206,6 +1207,61 @@
   ;; global can conflict with a call's effect on it
   ;; (`OwnershipNormalizeGlobalWrites`).
   (borrowed-globals (__tl_dyn-array i64)))
+
+;; This classifies an executable lowering representation, after the complete
+;; ownership check. It never changes admission or retries a failed analysis.
+(define (ownership-normalized-scalar-emission?
+  [output : (& output OwnershipNormalizedBody)]) : bool
+  (unless
+    (and
+      (>= output.return-type 0)
+      (< output.return-type normalize-first-value-type)
+      (= (array-length output.body.loans) 0)
+      (= (array-length output.body.cleanups) 0)
+      (= (array-length output.body.obligations) 0))
+    (return false))
+  (for [place (iterator.range 0 (array-length output.body.places))]
+    (unless
+      (and
+        (< (array-ref output.body.places place).type.index 13)
+        (match (array-ref output.body.places place).projection
+          [(own.OwnershipProjection.Root) true]
+          [_ false]))
+      (return false)))
+  (for [node (iterator.range 0 (array-length output.nodes))]
+    (unless
+      (match (& (array-ref output.nodes node).operation)
+        [(or (NormalizeOperation.Literal _) (NormalizeOperation.Read _)
+             (NormalizeOperation.Initialize _) (NormalizeOperation.Assign _)
+             (NormalizeOperation.Unary _) (NormalizeOperation.Binary _)
+             (NormalizeOperation.Sequence) (NormalizeOperation.If)
+             (NormalizeOperation.While) (NormalizeOperation.Break)
+             (NormalizeOperation.Continue) (NormalizeOperation.Return _))
+          true]
+        [_ false])
+      (return false)))
+  (for [block (iterator.range 0 (array-length output.body.blocks))]
+    (let
+      [instructions : (& output (__tl_dyn-array own.OwnershipInstruction))
+        (& (array-ref output.body.blocks block).instructions)]
+      (for [index (iterator.range 0 (array-length instructions))]
+        (unless
+          (match (& (array-ref instructions index).operation)
+            [(or (own.OwnershipOperation.Read _)
+                 (own.OwnershipOperation.Assign _)
+                 (own.OwnershipOperation.Copy _ _))
+              true]
+            [_ false])
+          (return false))))
+    (unless
+      (match (& (array-ref output.body.blocks block).terminator)
+        [(or (own.OwnershipTerminator.Goto _)
+             (own.OwnershipTerminator.Branch _ _ _)
+             (own.OwnershipTerminator.Return _))
+          true]
+        [_ false])
+      (return false)))
+  true)
 
 (defstruct NormalizeState
   (body own.OwnershipBody)

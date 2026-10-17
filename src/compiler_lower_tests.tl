@@ -203,6 +203,41 @@
     (lower.CompilerLowerMode.Scalar)))
 
 ;; --- self-test ---------------------------------------------------------------
+(test
+  compiler-lower-normalized-scalar-control
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source
+        "(define (snapshot [value : i64]) : i64
+          (+ value (begin (set! value 99) 0)))
+        (define (looping [limit : i64]) : i64
+          (let [index : i64 0] [total : i64 0]
+            (begin
+              (while (< index limit)
+                (begin
+                  (set! index (+ index 1))
+                  (if (= index 2) (continue) unit)
+                  (if (> index 6) (break) unit)
+                  (set! total (+ total index))))
+              total)))
+        (define (main) : i64 (+ (snapshot 42) (looping 7)))"))
+      [(Some functions)
+        (and
+          (=
+            (lower-test-function-label-load-count
+              (& functions)
+              "snapshot"
+              "checked.0")
+            0)
+          (=
+            (lower-test-function-label-load-count
+              (& functions)
+              "looping"
+              "checked.0")
+            0))]
+      [_ false])
+    "scalar snapshots and loop edges emit from the checked graph"))
+
 (define (compiler-lower-smoke-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)

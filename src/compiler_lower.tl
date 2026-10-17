@@ -9,6 +9,9 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
+(import compiler_ownership_normalize as norm)
+(import compiler_ownership_core as own)
+(import compiler_typed_occurrence as typed)
 (import compiler_symbols as csym)
 (import compiler_specialize as spec)
 (import compiler_parse_core as parser)
@@ -73541,6 +73544,508 @@
       (ast.ast-node-pool-reader-context-current)
       (& functions))))
 
+;; Direct emission from the owned checked graph. Value producers and effect
+;; points share place identities; the source AST is never read on this route.
+(defenum LowerNormalizedResult
+  (Ok ir.CompilerIrFunction ir.CompilerSourceSpans)
+  (Err String))
+
+(defenum LowerNormalizedUnit
+  (Ok unit)
+  (Err String))
+
+(defenum LowerNormalizedType
+  (Ok ast.AstType)
+  (Err String))
+
+(define (lower-normalized-type [code : i64]) : LowerNormalizedType
+  (cond
+    [(= code 0) (LowerNormalizedType.Ok ast.AstType.Unit)]
+    [(= code 1) (LowerNormalizedType.Ok ast.AstType.Bool)]
+    [(= code 2) (LowerNormalizedType.Ok ast.AstType.I8)]
+    [(= code 3) (LowerNormalizedType.Ok ast.AstType.I16)]
+    [(= code 4) (LowerNormalizedType.Ok ast.AstType.I32)]
+    [(= code 5) (LowerNormalizedType.Ok ast.AstType.I64)]
+    [(= code 6) (LowerNormalizedType.Ok ast.AstType.U8)]
+    [(= code 7) (LowerNormalizedType.Ok ast.AstType.U16)]
+    [(= code 8) (LowerNormalizedType.Ok ast.AstType.U32)]
+    [(= code 9) (LowerNormalizedType.Ok ast.AstType.U64)]
+    [(= code 10) (LowerNormalizedType.Ok ast.AstType.F32)]
+    [(= code 11) (LowerNormalizedType.Ok ast.AstType.F64)]
+    [(= code 12) (LowerNormalizedType.Ok ast.AstType.Char)]
+    [(= code 13) (LowerNormalizedType.Ok ast.AstType.Never)]
+    [else (LowerNormalizedType.Err "lower: invalid certified scalar type")]))
+
+(defstruct LowerNormalizedState
+  (producers (__tl_dyn-array i64))
+  (bindings (__tl_dyn-array bool))
+  (labels (__tl_dyn-array i64))
+  (reachable (__tl_dyn-array bool))
+  (work i64)
+  (function i64)
+  (source-names ci.InternSourceNameSessionHandle)
+  (spans ir.CompilerSourceSpans)
+  (path-id i64))
+
+(define (lower-normalized-emit!
+  [state : (&mut state LowerNormalizedState)]
+  [instructions : (&mut instructions ir.CompilerIrInstrBuilder)]
+  [source : (& source own.OwnershipSource)]
+  [instruction : ir.CompilerIrInstr]) : unit
+  (when
+    (ir.compiler-debug-info-enabled?)
+    (set!
+      state.spans
+      (ir.compiler-source-spans-insert-instr-located
+        (replace! state.spans (ir.compiler-source-spans-empty))
+        (ir.compiler-ir-symbol-typed-id state.function)
+        (& instruction)
+        state.path-id
+        (ast.ast-source-span
+          source.line
+          source.column
+          source.line
+          source.column))))
+  (ir.compiler-ir-instr-builder-push! instructions instruction))
+
+(define (lower-normalized-charge!
+  [state : (&mut state LowerNormalizedState)]
+  [units : i64]) : LowerNormalizedUnit
+  (if (and (>= units 0) (<= units (- 4194304 state.work)))
+    (begin
+      (set! state.work (+ state.work units))
+      (LowerNormalizedUnit.Ok unit))
+    (LowerNormalizedUnit.Err "lower: certified body work budget exhausted")))
+
+(define (lower-normalized-place?
+  [body : (& body own.OwnershipBody)]
+  [place : i64]) : bool
+  (and (>= place 0) (< place (array-length body.places))))
+
+(define (lower-normalized-index!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]) : LowerNormalizedUnit
+  (let
+    [index : i64 0]
+    [root? : bool false]
+    (begin
+      (while (< index (array-length output.nodes))
+        (let
+          [node : (& output norm.NormalizeNode)
+            (& (array-ref output.nodes index))]
+          (begin
+            (try
+              (lower-normalized-charge!
+                state
+                (+ 1 (array-length node.operands))))
+            (unless
+              (and
+                (own.ownership-body-id-equal?
+                  (& output.body.id)
+                  (& node.handle.body))
+                (= (array-length node.children) (array-length node.operands))
+                (or
+                  (= node.type 13)
+                  (and
+                    (lower-normalized-place? (& output.body) node.result-place)
+                    (=
+                      node.type
+                      (array-ref output.body.places node.result-place).type.index))))
+              (return
+                (LowerNormalizedUnit.Err
+                  "lower: invalid certified selected result")))
+            (when
+              (typed.typed-handle-equal? (& output.root.handle) (& node.handle))
+              (set! root? true))
+            (when
+              (match (& node.operation)
+                [(norm.NormalizeOperation.Literal _) true]
+                [(norm.NormalizeOperation.Unary _) true]
+                [(norm.NormalizeOperation.Binary op)
+                  (match op
+                    [(ast.AstBinOp.And) false]
+                    [(ast.AstBinOp.Or) false]
+                    [_ true])]
+                [_ false])
+              (begin
+                (unless
+                  (and
+                    (lower-normalized-place? (& output.body) node.result-place)
+                    (= (array-ref state.producers node.result-place) -1))
+                  (return
+                    (LowerNormalizedUnit.Err
+                      "lower: duplicate certified value definition")))
+                (set! (array-ref state.producers node.result-place) index)))
+            (set! index (+ index 1)))))
+      (unless
+        root?
+        (return (LowerNormalizedUnit.Err "lower: missing certified root")))
+      (set! index 0)
+      (while (< index (array-length output.binders))
+        (let
+          [binder : (& output norm.NormalizeBinder)
+            (& (array-ref output.binders index))]
+          (begin
+            (try (lower-normalized-charge! state 1))
+            (unless
+              (and
+                (lower-normalized-place? (& output.body) binder.place)
+                (own.ownership-body-id-equal?
+                  (& output.body.id)
+                  (& binder.handle.body))
+                (=
+                  binder.type
+                  (array-ref output.body.places binder.place).type.index)
+                (not (array-ref state.bindings binder.place)))
+              (return
+                (LowerNormalizedUnit.Err "lower: invalid certified binder")))
+            (set! (array-ref state.bindings binder.place) true)
+            (set! index (+ index 1)))))
+      (LowerNormalizedUnit.Ok unit))))
+
+(define (lower-normalized-assign!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]
+  [instrs : (&mut instrs ir.CompilerIrInstrBuilder)]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : LowerNormalizedUnit
+  (let
+    [type : ast.AstType
+      (try
+        (lower-normalized-type (array-ref output.body.places place).type.index))]
+    [producer : i64 (array-ref state.producers place)]
+    (cond
+      [(array-ref state.bindings place) (LowerNormalizedUnit.Ok unit)]
+      [(>= producer 0)
+        (let
+          [node : (& output norm.NormalizeNode)
+            (& (array-ref output.nodes producer))]
+          (begin
+            (match (& node.operation)
+              [(norm.NormalizeOperation.Literal literal)
+                (lower-normalized-emit!
+                  state
+                  instrs
+                  source
+                  (ir.CompilerIrInstr.Mov
+                    place
+                    (lower-literal-value-with-type
+                      (clone state.source-names)
+                      (clone (deref literal))
+                      (clone type))
+                    type))]
+              [(norm.NormalizeOperation.Unary op)
+                (begin
+                  (unless
+                    (and
+                      (= (array-length node.operands) 1)
+                      (lower-normalized-place?
+                        (& output.body)
+                        (array-ref node.operands 0)))
+                    (return
+                      (LowerNormalizedUnit.Err
+                        "lower: invalid certified unary operand")))
+                  (lower-normalized-emit!
+                    state
+                    instrs
+                    source
+                    (ir.CompilerIrInstr.UnOp
+                      place
+                      (lower-unop (norm.normalize-unary-copy op))
+                      (ir.CompilerIrValue.Var (array-ref node.operands 0))
+                      type)))]
+              [(norm.NormalizeOperation.Binary op)
+                (begin
+                  (unless
+                    (and
+                      (= (array-length node.operands) 2)
+                      (lower-normalized-place?
+                        (& output.body)
+                        (array-ref node.operands 0))
+                      (lower-normalized-place?
+                        (& output.body)
+                        (array-ref node.operands 1)))
+                    (return
+                      (LowerNormalizedUnit.Err
+                        "lower: invalid certified binary operands")))
+                  (let
+                    [left : i64 (array-ref node.operands 0)]
+                    [right : i64 (array-ref node.operands 1)]
+                    [right-type : ast.AstType
+                      (try
+                        (lower-normalized-type
+                          (array-ref output.body.places right).type.index))]
+                    [operation : ir.CompilerIrBinOp
+                      (lower-binop (norm.normalize-binary-copy op) right-type)]
+                    [instruction-type : ast.AstType
+                      (if (ir.compiler-ir-binop-compare? (& operation))
+                        (try
+                          (lower-normalized-type
+                            (array-ref output.body.places left).type.index))
+                        type)]
+                    (lower-normalized-emit!
+                      state
+                      instrs
+                      source
+                      (ir.CompilerIrInstr.BinOp
+                        place
+                        operation
+                        (ir.CompilerIrValue.Var left)
+                        (ir.CompilerIrValue.Var right)
+                        instruction-type))))]
+              [_
+                (return
+                  (LowerNormalizedUnit.Err
+                    "lower: invalid certified value producer"))])
+            (LowerNormalizedUnit.Ok unit)))]
+      [(= (array-ref output.body.places place).type.index 0)
+        (begin
+          (lower-normalized-emit!
+            state
+            instrs
+            source
+            (ir.CompilerIrInstr.Mov place ir.CompilerIrValue.Unit type))
+          (LowerNormalizedUnit.Ok unit))]
+      [else (LowerNormalizedUnit.Err "lower: missing certified value producer")])))
+
+(define (lower-normalized-reach!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]) : LowerNormalizedUnit
+  (let
+    [pending : (__tl_dyn-array i64) (__tl_make-array output.body.entry.index)]
+    (set! (array-ref state.reachable output.body.entry.index) true)
+    (let
+      [next : i64 0]
+      (while (< next (array-length pending))
+        (let
+          [at : i64 (array-ref pending next)]
+          (for [edge (iterator.range 0 2)]
+            (try (lower-normalized-charge! state 1))
+            (let
+              [target : i64
+                (own.ownership-successor
+                  (& (array-ref output.body.blocks at).terminator)
+                  edge)]
+              (when
+                (and (>= target 0) (not (array-ref state.reachable target)))
+                (set! (array-ref state.reachable target) true)
+                (__tl_array-push! pending target)))))
+        (set! next (+ next 1))))
+    (LowerNormalizedUnit.Ok unit)))
+
+(define (lower-normalized
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [name : i64]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [spans : ir.CompilerSourceSpans]
+  [path-id : i64]) : LowerNormalizedResult
+  (begin
+    ;; This is a consumer of the canonical normalizer's owned result. Recheck
+    ;; its public structural/effect boundary before allocating indexed tables.
+    (match (own.ownership-check (& output.body) (own.ownership-default-limits))
+      [(own.OwnershipResult.Ok) unit]
+      [(own.OwnershipResult.Err _)
+        (return
+          (LowerNormalizedResult.Err "lower: invalid ownership certificate"))])
+    (unless
+      (= output.body.entry.index 0)
+      (return
+        (LowerNormalizedResult.Err "lower: invalid certified entry order")))
+    (let
+      [places : i64 (array-length output.body.places)]
+      [blocks : i64 (array-length output.body.blocks)]
+      [state : LowerNormalizedState
+        (LowerNormalizedState
+          (__tl_make-array i64 0)
+          (__tl_make-array bool 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array bool 0)
+          0
+          name
+          source-names
+          spans
+          path-id)]
+      [params : ir.CompilerIrParamBuilder
+        (ir.compiler-ir-param-builder-with-capacity 0)]
+      [result : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
+      [index : i64 0]
+      (begin
+        (try
+          (lower-normalized-charge! (&mut state) (+ (* 2 places) (* 2 blocks))))
+        (while (< index places)
+          (begin
+            (__tl_array-push! state.producers -1)
+            (__tl_array-push! state.bindings false)
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index blocks)
+          (begin
+            ;; Built outside the builtin push: the macro expander does not
+            ;; descend into `__tl_array-push!` arguments.
+            (let
+              [label-text : String
+                (str_cat.str-cat "checked." (string.int->string index))]
+              (__tl_array-push! state.labels (ir.compiler-ir-label label-text)))
+            (__tl_array-push! state.reachable false)
+            (set! index (+ index 1))))
+        (try (lower-normalized-index! output (&mut state)))
+        (try (lower-normalized-reach! output (&mut state)))
+        (set! index 0)
+        (while (< index (array-length output.binders))
+          (let
+            [binder : (& output norm.NormalizeBinder)
+              (& (array-ref output.binders index))]
+            (begin
+              (when
+                binder.parameter?
+                (ir.compiler-ir-param-builder-push!
+                  (&mut params)
+                  (ir.CompilerIrParam.Param
+                    (str_cat.str-cat
+                      "parameter."
+                      (string.int->string params.len))
+                    (try (lower-normalized-type binder.type))
+                    binder.place)))
+              (set! index (+ index 1)))))
+        (set! index 0)
+        (while (< index blocks)
+          (begin
+            (when
+              (array-ref state.reachable index)
+              (let
+                [block : (& output own.OwnershipBlock)
+                  (& (array-ref output.body.blocks index))]
+                [instrs : ir.CompilerIrInstrBuilder
+                  (ir.compiler-ir-instr-builder-new)]
+                [instruction : i64 0]
+                (begin
+                  (while (< instruction (array-length block.instructions))
+                    (begin
+                      (try (lower-normalized-charge! (&mut state) 1))
+                      (match (&
+                        (array-ref block.instructions instruction).operation)
+                        [(own.OwnershipOperation.Read _) unit]
+                        [(own.OwnershipOperation.Assign place)
+                          (try
+                            (lower-normalized-assign!
+                              output
+                              (&mut state)
+                              (&mut instrs)
+                              place.index
+                              (&
+                                (array-ref block.instructions instruction).source)))]
+                        [(own.OwnershipOperation.Copy source dest)
+                          (lower-normalized-emit!
+                            (&mut state)
+                            (&mut instrs)
+                            (&
+                              (array-ref block.instructions instruction).source)
+                            (ir.CompilerIrInstr.Mov
+                              dest.index
+                              (ir.CompilerIrValue.Var source.index)
+                              (try
+                                (lower-normalized-type
+                                  (array-ref output.body.places dest.index).type.index))))]
+                        [_
+                          (return
+                            (LowerNormalizedResult.Err
+                              "lower: unsupported certified effect"))])
+                      (set! instruction (+ instruction 1))))
+                  (match (& block.terminator)
+                    [(own.OwnershipTerminator.Goto target)
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut instrs)
+                        (ir.CompilerIrInstr.Jump
+                          (array-ref state.labels target.index)))]
+                    [(own.OwnershipTerminator.Branch value yes no)
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut instrs)
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var value.index)
+                          (array-ref state.labels yes.index)
+                          (array-ref state.labels no.index)))]
+                    [(own.OwnershipTerminator.Return operands)
+                      (begin
+                        (unless
+                          (and
+                            (<= (array-length operands.items) 1)
+                            (or
+                              (= output.return-type 0)
+                              (= (array-length operands.items) 1))
+                            (or
+                              (= (array-length operands.items) 0)
+                              (=
+                                output.return-type
+                                (array-ref
+                                  output.body.places
+                                  (array-ref operands.items 0).index).type.index)))
+                          (return
+                            (LowerNormalizedResult.Err
+                              "lower: invalid certified return arity")))
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut instrs)
+                          (ir.CompilerIrInstr.Return
+                            (if (or
+                              (= output.return-type 0)
+                              (= (array-length operands.items) 0))
+                              ir.CompilerIrMaybeValue.No
+                              (ir.CompilerIrMaybeValue.Some
+                                (ir.CompilerIrValue.Var
+                                  (array-ref operands.items 0).index))))))]
+                    [_
+                      (return
+                        (LowerNormalizedResult.Err
+                          "lower: unsupported certified termination"))])
+                  (ir.compiler-ir-block-builder-push!
+                    (&mut result)
+                    (ir.CompilerIrBlock.Block
+                      (array-ref state.labels index)
+                      (ir.compiler-ir-instr-builder-to-seq instrs))))))
+            (set! index (+ index 1))))
+        (LowerNormalizedResult.Ok
+          (ir.CompilerIrFunction.Function
+            name
+            (ir.compiler-ir-param-builder-to-seq params)
+            (try (lower-normalized-type output.return-type))
+            places
+            (ir.compiler-ir-block-builder-to-list result)
+            ir.CompilerIrFunctionAbi.Ordinary)
+          state.spans)))))
+
+(define (lower-normalized-signature?
+  [ctx : tc_core.TcContext]
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [params : (& params ast.AstParamList)]
+  [ret : (& ret ast.AstType)]) : bool
+  (let
+    [result : ast.AstType (tc_core.tc-resolve-type ctx (clone (deref ret)))]
+    [at : i64 0]
+    (unless
+      (match (norm.normalize-type-code (& result))
+        [(norm.NormalizeInt.Ok code) (= code output.return-type)]
+        [_ false])
+      (return false))
+    (for [index (iterator.range 0 (array-length output.binders))]
+      (let
+        [binder : (& output norm.NormalizeBinder)
+          (& (array-ref output.binders index))]
+        (when
+          binder.parameter?
+          (when (>= at params.len) (return false))
+          (match (ast.ast-param-list-get params at (ast.ast-param-fallback))
+            [(ast.AstParam.Param name type _)
+              (let
+                [actual : ast.AstType (tc_core.tc-resolve-type ctx type)]
+                (unless
+                  (and
+                    (= name binder.name)
+                    (match (norm.normalize-type-code (& actual))
+                      [(norm.NormalizeInt.Ok code) (= code binder.type)]
+                      [_ false]))
+                  (return false)))])
+          (set! at (+ at 1)))))
+    (= at params.len)))
+
 (define (lower-checked-named-function
   [ctx : tc_core.TcContext]
   [declaration-name : i64]
@@ -73563,6 +74068,31 @@
     body-id)
     [(tc_core.TcSelectedLookup.Err message)
       (ResultLowerFunction.Err (box (lower-diagnostic message)))]
+    [(tc_core.TcSelectedLookup.Normalized address)
+      ;; Publication deep-copied this immutable body to the live job arena;
+      ;; lookup validated its pool/interner/body authority before this read.
+      (let
+        [output : norm.OwnershipNormalizedBody
+          (tc_core.tc-state-cell-read address norm.OwnershipNormalizedBody)]
+        [lower-state : CompilerLowerState
+          (compiler-lower-state-from-name-cache names)]
+        (unless
+          (lower-normalized-signature? ctx (& output) (& params) (& ret))
+          (return
+            (ResultLowerFunction.Err
+              (box (lower-diagnostic "lower: checked body signature changed")))))
+        (match (lower-normalized
+          (& output)
+          logical-name
+          (tc_core.tc-context-source-names ctx)
+          spans
+          (compiler-lower-state-current-source-path-id lower-state))
+          [(LowerNormalizedResult.Err message)
+            (ResultLowerFunction.Err (box (lower-diagnostic message)))]
+          [(LowerNormalizedResult.Ok function next-spans)
+            (ResultLowerFunction.Ok
+              (ir.CompilerIrFunctionSeq (__tl_make-array function) 1)
+              next-spans)]))]
     [(tc_core.TcSelectedLookup.Legacy)
       (lower-function-escaping
         ctx

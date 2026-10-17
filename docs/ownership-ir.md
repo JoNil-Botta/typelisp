@@ -9,9 +9,10 @@ and the core checks initialization, moves, loans, cleanup obligations and
 arena invalidation (`src/compiler_ownership_core.tl`). The legacy AST move and
 borrow walkers are deleted; there is no unchecked fallback (see
 [Production cutover](#production-cutover-m5)). The independent bounded model
-lives under `tools/ownership-model/`. Lowering still emits IR from the AST of
-a certified body; MIR-to-IR checked lowering, the remaining M3/M4 validation
-and the items under the cutover's known limits are open. Later sections also
+lives under `tools/ownership-model/`. Scalar/control bodies retain their owned
+checked graph for direct emission in `compiler_lower.tl`; other certified
+bodies still use AST emission. The complete MIR-to-IR migration, its acceptance,
+the remaining M3/M4 validation and the cutover's known limits are open. Later sections also
 record the design and inventory as each slice landed; where one of them says a
 part is not yet implemented, the cutover section and the code take precedence.
 
@@ -1665,12 +1666,25 @@ body from its AST; it is a lowering route, not an ownership verdict. Named
 clone declarations appended by the checked clone handoff receive explicit
 `Legacy` entries.
 
-The MIR-to-IR emitter (`compiler_ownership_lower.tl`), its exact source
-witness and the retained normalized bodies were removed at the cutover: the
-route covered only primitive scalar bodies and was disabled. Lowering from the
-ownership MIR instead of the certified body's AST remains future work and
-would retain the selected facts per body again. The scalar source fixture runs
-at opt0/1/2 through the ordinary lowerer.
+The earlier disabled scalar emitter and its source witness were removed at the
+cutover. The current scalar/control route is a consumer in the ordinary lowerer,
+using its literal and operator emitters and the core's successor helper. After
+the canonical ownership check succeeds, the producer classifies its executable
+representation. Scalar roots with Read/Assign/Copy effects and Goto/Branch/Return
+edges are deep-copied, including selected value producers and provenance, into
+the job arena. The certificate's nonzero address identifies this immutable
+owned graph; its existing owner/revision/pool/interner checks guard lookup.
+Lowering verifies the current declaration signature and emits the graph's
+actual effects and edges without reading its source AST. A malformed retained
+graph or emission failure is a hard error, never an AST retry.
+
+Other bodies retain the existing explicit `Legacy` emission entry after the
+same complete ownership check. This is a lowering migration boundary, not a
+second admission engine or an acceptance certificate for the whole migration.
+Calls, nonprimitive places, loans, cleanup and arena emission still need to move
+to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
+required. The scalar source fixture covers snapshots, argument ABI, loop exits
+and returns; direct graph selection additionally has a lowering assertion.
 
 The concrete producer boundary spans both `tc-expr`/`tc-expr-id` and
 `tc-expr-with-expected-or-actual-core`/`tc-expr-with-expected-or-actual-core-id`.

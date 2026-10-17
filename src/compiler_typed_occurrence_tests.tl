@@ -1764,13 +1764,16 @@
   (let
     [name : i64 (ci.intern "checked-callee")]
     [foreign-name : i64 (ci.intern "checked-foreign")]
+    [value-name : i64 (ci.intern "checked-value")]
     [module : i64 (ci.intern "checked-module")]
     [key : i64 (symbols.compiler-symbol-module-key-id-by-id module name)]
     [foreign-key : i64
       (symbols.compiler-symbol-module-key-id-by-id module foreign-name)]
+    [value-key : i64
+      (symbols.compiler-symbol-module-key-id-by-id module value-name)]
     [declarations : symbols.CompilerSymbols
       (symbols.compiler-symbols-index-decl
-        (symbols.compiler-symbols-empty-with-decls 2)
+        (symbols.compiler-symbols-empty-with-decls 3)
         (&
           (ast.ast-decl-def-fn-id
             name
@@ -1801,6 +1804,15 @@
           1
           module
           0))]
+    [_value : unit
+      (set!
+        declarations
+        (symbols.compiler-symbols-index-decl
+          declarations
+          (& (ast.ast-decl-def-id value-name ast.AstMaybeType.No 0))
+          2
+          module
+          0))]
     [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [registries : symbols.CompilerRegistries
       (symbols.compiler-registries-empty)]
@@ -1821,10 +1833,12 @@
         (typed.typed-declared-call-valid? (& lease) 0 key false)
         (typed.typed-declared-call-valid? (& lease) 1 foreign-key true)
         (not (typed.typed-declared-call-valid? (& lease) 0 key true))
-        (not (typed.typed-declared-call-valid? (& lease) 1 foreign-key false))
+        (typed.typed-declared-call-valid? (& lease) 1 foreign-key false)
+        (not (typed.typed-declared-call-valid? (& lease) 2 value-key false))
+        (not (typed.typed-declared-call-valid? (& lease) 2 value-key true))
         (not (typed.typed-declared-call-valid? (& lease) 0 foreign-key false))
         (not (typed.typed-declared-call-valid? (& lease) -1 key false))
-        (not (typed.typed-declared-call-valid? (& lease) 2 key false))
+        (not (typed.typed-declared-call-valid? (& lease) 3 key false))
         (not
           (typed.typed-declared-call-valid?
             (& lease)

@@ -1106,6 +1106,11 @@ analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
 
+GEP use splitting may re-evaluate only stable literals, addresses and
+single-definition variables. `Global` and `RuntimeGlobal` are implicit mutable
+reads, so a GEP containing either operand retains its original capture point
+across intervening writes and calls.
+
 LICM also proves that loop writes cannot change the loaded word. Same-root
 stores can be separated by non-overlapping constant byte ranges, using the
 shared load-CSE range predicate. Copies and constant-offset geps retain a root

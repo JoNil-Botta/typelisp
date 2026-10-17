@@ -7,19 +7,19 @@
   (:lifetimes owner)
   (arena (arena.Arena owner)))
 
-(define (count [owner : (arena.Arena r)]) : i64
+(define (count [_owner : (arena.Arena r)]) : i64
   2)
 
-(define (holder-count [holder : (Holder r)]) : i64
+(define (holder-count [_holder : (Holder r)]) : i64
   2)
 
-(define (holder-answer [holder : (Holder r)]) : i64
+(define (holder-answer [_holder : (Holder r)]) : i64
   42)
 
 (define (sum [left : i64] [right : i64]) : i64
   (+ left right))
 
-(define (scoped-count [owner : (& a (arena.Arena r))] [text : (in r String)]) : i64
+(define (scoped-count [_owner : (& a (arena.Arena r))] [_text : (in r String)]) : i64
   2)
 
 (define (operand-case [kind : i64]) : i64

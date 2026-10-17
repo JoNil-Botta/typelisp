@@ -78936,6 +78936,7 @@
 
 (test
   const-env-index-shadow-and-independent-states
+  (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "entry:\n return 0")))
   (let
     [env : opt.OptConstEnv (Nil)]
     [other : opt.OptConstEnv (Nil)]
@@ -78993,6 +78994,7 @@
 
 (test
   const-env-index-growth-and-block-clear
+  (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "entry:\n return 0")))
   (let
     [env : opt.OptConstEnv (Nil)]
     [capacity : i64 0]

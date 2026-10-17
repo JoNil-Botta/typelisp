@@ -5567,7 +5567,7 @@
       "typecheck: call `arg` argument 1 (parameter `x`) type mismatch: expected f64, found f32")
     (compiler-typecheck-error-ok?
       "(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))"
-      "typecheck: if branches must match")
+      "typecheck: return type mismatch: expected f64, found f32")
     (compiler-typecheck-error-ok?
       "(define (main [x : f64]) : f32 x)"
       "typecheck: return type mismatch: expected f32, found f64")

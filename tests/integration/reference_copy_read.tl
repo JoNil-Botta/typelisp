@@ -103,7 +103,8 @@
 (define (change-nested [p : (&mut p Outer)]) : unit
   (let
     [q : (&mut p Wide) (&mut (deref p).item)]
-    (set! q.a 42)))
+    (set! q.a 42)
+    (test.assert-i64-eq q.a 42 "nested borrowed write")))
 
 (define (release-and-read
   [value : Wide]
@@ -148,6 +149,7 @@
     [copy (deref (& source)).item]
     [constructed : Outer (Outer (deref (& source.item)) 9)]
     [stored : Wide (Wide 0 0 0 0)]
+    (test.assert-i64-eq (wide-sum stored) 0 "initial store value")
     (set! stored (deref (& source.item)))
     (set! source.item.a 100)
     (set! copy.d 40)

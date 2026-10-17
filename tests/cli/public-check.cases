@@ -557,11 +557,20 @@ case check-type-errors-memory
 hosts linux
 sh mkdir -p "{{dir}}/tree" && cp -R src "{{dir}}/tree/src"
 sh sed -E 's/^  \(compiler-ir-array-shared-view (seq|values|cases|params)\.slots index\)\)$/  (array-ref \1.slots index))/' src/compiler_ir_types.tl > "{{dir}}/tree/src/compiler_ir_types.tl"
+# A reference-free switch case copies out legally. Keep an invalid intrinsic
+# region on that same Copy type so the poison set still has four diagnostics.
+file poison-copy-region.tl
+
+(define (poison-copy-region [p : (& loan (in payload CompilerIrSwitchCase))]) : CompilerIrSwitchCase
+  (deref p))
+end-file
+sh cat "{{dir}}/poison-copy-region.tl" >> "{{dir}}/tree/src/compiler_ir_types.tl"
 cwd {{dir}}/tree
 exec "{{root}}/scripts/run-memory-bounded.sh" --limit-mib 2560 --timeout-seconds 600 --report "{{dir}}/memory.txt" -- "{{compiler}}" check src/main.tl --stdlib-root "{{root}}/stdlib" --stdlib-root src
 exit 1
 stderr count = 4 ^error\[
 stderr count = 3 ^error\[E0208\]
+stderr count = 1 ^error\[E0205\]
 case check-global-call-borrow-diagnostic
 file main.tl
 (defstruct Big (a i64) (b i64) (c i64) (d i64))

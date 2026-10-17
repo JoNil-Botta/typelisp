@@ -29860,9 +29860,7 @@
         (lower-with-escape ctx state env type-env scratch body))]
     [(WithScratch body) (lower-with-scratch ctx state env type-env body)]
     [(InArena arena-box body)
-      (let
-        [arena : ast.AstExpr (lower-context-expr-get ctx arena-box)]
-        (lower-in-arena ctx state env type-env arena body))]
+      (lower-in-arena ctx state env type-env arena-box body)]
     [(WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(WithResource bindings body)
@@ -42613,7 +42611,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [arena : ast.AstExpr]
+  [arena-id : i64]
   [body : ast.AstExprList]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(Alloc saved-allocated saved-var)
@@ -42623,10 +42621,16 @@
             saved-allocated
             (Call saved-var (lower-tl-arena-current-symbol) Nil (I64)))]
         [source-arena-ty : ast.AstType
-          (match (tc_core.tc-expr ctx type-env (lower-global-shared-view arena))
+          (match (tc_core.tc-expr-id ctx type-env arena-id)
             [(Ok ty) ty]
             [(Err message)
-              (return (Err (box (lower-diagnostic-at-expr ctx arena message))))])]
+              (return
+                (Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      ctx
+                      (lower-context-expr-get ctx arena-id)
+                      message))))])]
         [arena-lowered : LowerExpr
           (try
             (lower-arena-handle
@@ -42634,7 +42638,7 @@
               saved-state
               env
               type-env
-              (lower-global-shared-view arena)
+              (lower-context-expr-get ctx arena-id)
               "in-arena"))]
         (match arena-lowered
           [(Expr arena-state arena-value _)
@@ -42660,7 +42664,7 @@
                         (tc_core.tc-in-arena-body-env
                           ctx
                           type-env
-                          arena
+                          (lower-context-expr-get ctx arena-id)
                           source-arena-ty)
                         hidden-name-id)]
                     [body-lowered : LowerExpr

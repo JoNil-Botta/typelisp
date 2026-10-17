@@ -947,12 +947,11 @@
     [primary : ast.AstSourceSpan (ast.ast-source-span 23 7 23 11)]
     [secondary : ast.AstSourceSpan (ast.ast-source-span 19 2 19 8)]
     [outer : ast.AstSourceSpan (ast.ast-source-span 41 3 41 16)]
+    [expr-id : i64
+      (ast.ast-expr-spanned
+        (ast.ast-node-push (Literal (ast.AstLiteral.Int 0 "0")))
+        outer)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [expr : ast.AstExpr
-      (ast.ast-node-get
-        (ast.ast-expr-spanned
-          (ast.ast-node-push (Literal (ast.AstLiteral.Int 0 "0")))
-          outer))]
     [messages : (Array String 2)
       (array
         (tc_core.tc-located-error
@@ -973,7 +972,7 @@
               (lower.lower-diagnostic message)
               (lower.lower-diagnostic-at-expr-with-pools
                 pools
-                (owned_view.compiler-owned-shared-view expr)
+                (ast.ast-node-get expr-id)
                 message))]
           [labels : cdiag.CompilerDiagnosticLabelList
             (cdiag.compiler-diagnostic-secondary-spans (& diag))]

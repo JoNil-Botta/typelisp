@@ -3447,7 +3447,9 @@
     (match (opt.optimize-program
       (Program
         (ir.compiler-ir-global-seq-empty)
-        (owned_view.compiler-owned-shared-view source-functions)
+        (in-arena
+          (arena.Arena source)
+          (ir.compiler-ir-clone-function-seq pools (& source-functions)))
         (ir.compiler-ir-extern-seq-empty))
       (ir.compiler-source-spans-empty)
       request)

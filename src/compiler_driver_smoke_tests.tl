@@ -693,47 +693,88 @@
   [backend-state-b : compiler_backend.CompilerBackendState]
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
-  [base-arena : i64]) : bool
-  (match (compiler_optimize.optimize-program
-    program-a
-    spans-a
-    (compiler_optimize.optimize-request pools-a 1))
-    [(Program optimized-a optimized-spans-a)
-      (if (not
-        (compiler-driver-reader-context-smoke-installed?
-          expr-segment-bases
-          type-segment-bases
-          base-arena))
-        (compiler-driver-reader-context-smoke-fail
-          "reader changed during state A optimization")
-        (match (compiler_optimize.optimize-program
-          program-b
-          spans-b
-          (compiler_optimize.optimize-request pools-b 1))
-          [(Program optimized-b optimized-spans-b)
-            (if (not
-              (compiler-driver-reader-context-smoke-installed?
-                expr-segment-bases
-                type-segment-bases
-                base-arena))
-              (compiler-driver-reader-context-smoke-fail
-                "reader changed during state B optimization")
-              (compiler-driver-reader-context-smoke-backends-ok?
-                pools-a
-                optimized-a
-                optimized-spans-a
-                pools-b
-                optimized-b
-                optimized-spans-b
-                backend-state-a
-                backend-state-b
-                expr-segment-bases
-                type-segment-bases
-                base-arena))]))]))
+  [base-arena : i64]
+  [lower-a : lower.CompilerLowerState]
+  [lower-b : lower.CompilerLowerState]
+  [level : i64]) : bool
+  (let
+    [arenas-a : lower.CompilerLowerArenaState
+      (lower.compiler-lower-state-arenas lower-a)]
+    [arenas-b : lower.CompilerLowerArenaState
+      (lower.compiler-lower-state-arenas lower-b)]
+    [source-a : i64 (lower.compiler-lower-arena-state-ir-arena arenas-a)]
+    [source-b : i64 (lower.compiler-lower-arena-state-ir-arena arenas-b)]
+    [request-a : compiler_optimize.OptimizeRequest
+      (compiler_optimize.optimize-request pools-a level)]
+    [request-b : compiler_optimize.OptimizeRequest
+      (compiler_optimize.optimize-request pools-b level)]
+    (set!
+      request-a.input-retirement
+      (compiler_optimize.OptInputRetirement.Retire
+        lower-a.address
+        driver.compiler-driver-retire-lowered-input!))
+    (set!
+      request-b.input-retirement
+      (compiler_optimize.OptInputRetirement.Retire
+        lower-b.address
+        driver.compiler-driver-retire-lowered-input!))
+    (match (compiler_optimize.optimize-program program-a spans-a request-a)
+      [(Program optimized-a optimized-spans-a)
+        (if (not
+          (and
+            (compiler-driver-reader-context-smoke-installed?
+              expr-segment-bases
+              type-segment-bases
+              base-arena)
+            (=
+              (lower.compiler-lower-arena-state-ir-arena arenas-a)
+              (if (= level 2)
+                0
+                source-a))
+            (= (lower.compiler-lower-arena-state-ir-arena arenas-b) source-b)))
+          (compiler-driver-reader-context-smoke-fail
+            "reader or source owner changed during state A optimization")
+          (match (compiler_optimize.optimize-program
+            program-b
+            spans-b
+            request-b)
+            [(Program optimized-b optimized-spans-b)
+              (if (not
+                (and
+                  (compiler-driver-reader-context-smoke-installed?
+                    expr-segment-bases
+                    type-segment-bases
+                    base-arena)
+                  (=
+                    (lower.compiler-lower-arena-state-ir-arena arenas-b)
+                    (if (= level 2)
+                      0
+                      source-b))))
+                (compiler-driver-reader-context-smoke-fail
+                  "reader or source owner changed during state B optimization")
+                (begin
+                  ;; Production's later cleanup remains idempotent. Opt0 still
+                  ;; borrows its source until the backend consumes it.
+                  (driver.compiler-driver-release-lowered-ir! level lower-a)
+                  (driver.compiler-driver-release-lowered-ir! level lower-a)
+                  (driver.compiler-driver-release-lowered-ir! level lower-b)
+                  (compiler-driver-reader-context-smoke-backends-ok?
+                    pools-a
+                    optimized-a
+                    optimized-spans-a
+                    pools-b
+                    optimized-b
+                    optimized-spans-b
+                    backend-state-a
+                    backend-state-b
+                    expr-segment-bases
+                    type-segment-bases
+                    base-arena)))]))])))
 
 (define (compiler-driver-reader-context-smoke-lowered-ok?
   [lowered-a : driver.ResultCompilerDriverLowered]
-  [lowered-b : driver.ResultCompilerDriverLowered]) : bool
+  [lowered-b : driver.ResultCompilerDriverLowered]
+  [level : i64]) : bool
   (match lowered-a
     [(Ok
         program-a
@@ -742,7 +783,7 @@
         _profile-a
         backend-state-a
         _typecheck-a
-        _lower-owner)
+        lower-a)
       (match lowered-b
         [(Ok
             program-b
@@ -751,7 +792,7 @@
             _profile-b
             backend-state-b
             _typecheck-b
-            _lower-owner)
+            lower-b)
           (let
             [intern-a : ci.InternCompatState
               (compiler_backend.compiler-backend-state-exact-intern
@@ -795,7 +836,10 @@
                     backend-state-b
                     expr-segment-bases
                     type-segment-bases
-                    base-arena)))]
+                    base-arena
+                    lower-a
+                    lower-b
+                    level)))]
             (ast.ast-node-pool-reader-use! restore-reader)
             ok)]
         [(Err diag _)
@@ -938,7 +982,7 @@
     (driver.compiler-driver-state-reset-file-state! state)
     unit))
 
-(define (compiler-driver-reader-context-smoke-ok?) : bool
+(define (compiler-driver-reader-context-smoke-ok? [level : i64]) : bool
   (let
     [state-a : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
@@ -1017,7 +1061,8 @@
                     (driver.compiler-driver-state-profile state-b)
                     (driver.compiler-driver-state-backend state-b)
                     (driver.compiler-driver-state-typecheck state-b)
-                    (driver.compiler-driver-state-owned-lower-state state-b))))]
+                    (driver.compiler-driver-state-owned-lower-state state-b))
+                  level))]
             [(Err diag _)
               (compiler-driver-reader-context-smoke-fail
                 (str_cat.str-cat
@@ -1096,12 +1141,12 @@
       (compiler-driver-generated-cfg-job-ok? state-b Windows true)]
     (and a-enabled b-disabled a-unchanged a-reused a-disabled b-enabled)))
 
-(define (compiler-driver-reader-context-smoke-main) : i64
+(define (compiler-driver-reader-context-smoke-main [level : i64]) : i64
   (cbi.compiler-builtin-reset!)
   (cbi.compiler-builtin-initialize-for-parse!)
   (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
   (unless
-    (compiler-driver-reader-context-smoke-ok?)
+    (compiler-driver-reader-context-smoke-ok? level)
     (io.panic "compiler-driver: reader context isolation failed"))
   42)
 
@@ -1437,6 +1482,27 @@
               (unsafe
                 (ptr-read (int->ptr b-word : (Ptr i64))))
               93)))]
+      [callback-isolated? : bool
+        (begin
+          (in-arena
+            (arena.Arena (lower.compiler-lower-arena-state-ensure-ir! lower-a))
+            (compiler-driver-smoke-runtime-alloc 67108800)
+            (compiler-driver-smoke-runtime-alloc 8))
+          (in-arena
+            (arena.Arena b-scratch)
+            (let
+              [owner : lower.CompilerLowerState
+                (driver.compiler-driver-state-owned-lower-state state-a)]
+              (driver.compiler-driver-retire-lowered-input! owner.address)
+              (driver.compiler-driver-retire-lowered-input! owner.address))
+            (and
+              (= (arena.tl_arena_current) b-scratch)
+              (= (lower.compiler-lower-arena-state-ir-arena lower-a) 0)
+              (= (lower.compiler-lower-arena-state-ir-arena lower-b) b-ir)
+              (=
+                (unsafe
+                  (ptr-read (int->ptr b-word : (Ptr i64))))
+                93))))]
       [isolated? : bool
         (in-arena
           (arena.Arena b-scratch)
@@ -1498,6 +1564,7 @@
             failure-cleaned?
             opt0-kept?
             opt1-isolated?
+            callback-isolated?
             opt2-isolated?
             isolated?
             reused?

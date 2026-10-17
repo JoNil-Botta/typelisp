@@ -2065,9 +2065,9 @@
 
 ;; The lowered IR functions live in a dedicated arena
 ;; owned by the lower job; at opt levels >= 1 the optimizer deep-clones every
-;; surviving function out of it, so the arena is dead weight once optimization
-;; returns. At level 0 the lowered program flows to the backend unchanged and
-;; the arena must stay alive.
+;; surviving function out of it. Level 2 retires it at the carrier handoff;
+;; this post-optimize cleanup also covers level 1 and is idempotent. At level 0
+;; the lowered program flows to the backend unchanged and stays alive.
 (define (compiler-driver-release-lowered-ir!
   [opt-level : i64]
   [lower-state : compiler_lower.CompilerLowerState]) : unit
@@ -2075,6 +2075,13 @@
     (compiler_lower.compiler-lower-arena-state-release-ir!
       (& (compiler_lower.compiler-lower-state-arenas lower-state)))
     unit))
+
+;; The optimizer receives the exact job's stable address, never an ambient
+;; lower owner. Its callback runs only after the level-2 input handoff.
+(define (compiler-driver-retire-lowered-input! [owner-address : i64]) : unit
+  (compiler-driver-release-lowered-ir!
+    2
+    (compiler_lower.compiler-lower-state-from-address owner-address)))
 
 ;; Once lowering has produced IR, optimizer/backend no longer consult the full
 ;; typecheck/macro CTFE caches. Drop them before the backend's large assembly
@@ -2162,7 +2169,10 @@
           opt-level
           profile-state
           true
-          representations))
+          representations
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2265,7 +2275,10 @@
           opt-level
           profile-state
           true
-          representations))
+          representations
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2384,7 +2397,10 @@
           opt-level
           profile-state
           true
-          representations))
+          representations
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2548,7 +2564,10 @@
           opt-level
           profile-state
           true
-          representations))
+          representations
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2755,7 +2774,10 @@
           opt-level
           profile-state
           true
-          representations))
+          representations
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -5351,7 +5373,10 @@
           opt-level
           profile-state
           false
-          (compiler_ir_types.compiler-ir-representation-index-empty)))
+          (compiler_ir_types.compiler-ir-representation-index-empty)
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized _)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
@@ -5508,7 +5533,10 @@
           opt-level
           profile-state
           false
-          (compiler_ir_types.compiler-ir-representation-index-empty)))
+          (compiler_ir_types.compiler-ir-representation-index-empty)
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler-driver-retire-lowered-input!)))
         [(Program optimized _)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)

@@ -8505,7 +8505,7 @@
         (compiler-spmd-decisions-escape spmd))]))
 
 (define (compiler-source-spans-instr-entry-list-lookup
-  [entries : (& CompilerSourceSpansInstrEntryList)]
+  [entries : (& entries CompilerSourceSpansInstrEntryList)]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
   (let
     [cap : i64 (array-length entries.slots)]
@@ -8518,11 +8518,12 @@
     [index : i64 (- entries.len 1)]
     (while (>= index valid)
       (let
-        [entry : CompilerSourceSpansInstrEntry
-          (clone (array-ref entries.slots index))]
+        [entry : (& entries CompilerSourceSpansInstrEntry)
+          (& (array-ref entries.slots index))]
         (when
-          (compiler-source-spans-instr-entry-key-eq? (& entry) (& probe))
-          (return (Some (CompilerSourceLocation entry.path-id entry.span))))
+          (compiler-source-spans-instr-entry-key-eq? entry (& probe))
+          (return
+            (Some (CompilerSourceLocation entry.path-id (clone entry.span)))))
         (set! index (- index 1))))
     (when
       (> valid 0)
@@ -8532,13 +8533,14 @@
         (set! index (- (cast (array-ref entries.slots bucket).bucket : i64) 1)))
       (while (>= index 0)
         (let
-          [entry : CompilerSourceSpansInstrEntry
-            (clone (array-ref entries.slots index))]
+          [entry : (& entries CompilerSourceSpansInstrEntry)
+            (& (array-ref entries.slots index))]
           (when
             (and
               (< index entries.len)
-              (compiler-source-spans-instr-entry-key-eq? (& entry) (& probe)))
-            (return (Some (CompilerSourceLocation entry.path-id entry.span))))
+              (compiler-source-spans-instr-entry-key-eq? entry (& probe)))
+            (return
+              (Some (CompilerSourceLocation entry.path-id (clone entry.span)))))
           (set! index (- (cast (shr entry.kind-chain 2) : i64) 1)))))
     (No)))
 

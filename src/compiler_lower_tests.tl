@@ -60,7 +60,7 @@
         [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
         [_ false])
       "missing checked facts infer the source brand")
-    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (tc_core.tc-checked-let-binding-fact-record!
       facts
@@ -85,7 +85,7 @@
         [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
         [_ false])
       "inconsistent checked facts infer the source brand")
-    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (tc_core.tc-checked-let-binding-fact-record!
       facts

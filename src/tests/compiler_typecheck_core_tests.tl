@@ -437,9 +437,9 @@
       (tc_core.TcCheckedLetBindingTransition 1 -1)]
     [special : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 2 91)]
-    (tc_core.tc-checked-let-binding-facts-begin! a)
-    (tc_core.tc-checked-let-binding-facts-begin! b)
-    (tc_core.tc-checked-let-binding-facts-begin! c)
+    (tc_core.tc-checked-let-binding-facts-begin! a true)
+    (tc_core.tc-checked-let-binding-facts-begin! b true)
+    (tc_core.tc-checked-let-binding-facts-begin! c true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
     ;; Reused init ids and same-spelled bindings remain distinct by enclosing
     ;; body and ordinal. Re-recording the same proof does not grow the store.
@@ -516,7 +516,7 @@
               [(Missing) true]
               [_ false]))]
         ;; A second generation must not see the first generation's keys.
-        (tc_core.tc-checked-let-binding-facts-begin! a)
+        (tc_core.tc-checked-let-binding-facts-begin! a true)
         (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 8)
         (tc_core.tc-checked-let-binding-fact-record!
           a
@@ -564,7 +564,10 @@
           (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
       [transition : tc_core.TcCheckedLetBindingTransition
         (tc_core.TcCheckedLetBindingTransition 0 -1)]
-      (tc_core.tc-checked-let-binding-facts-begin! facts)
+      (tc_core.tc-checked-let-binding-facts-begin! facts false)
+      (test.assert-true
+        (not (tc_core.tc-checked-let-binding-facts-complete-required? facts))
+        "lowering consumers preserve trusted surface hydration")
       (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
       (tc_core.tc-checked-let-binding-facts-record-declaration!
         facts
@@ -711,7 +714,7 @@
     [inner : i64 (ast.ast-node-pool-reader-type-push (& (String)))]
     [transition : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 0 -1)]
-    (tc_core.tc-checked-let-binding-facts-begin! facts)
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (tc_core.tc-checked-let-binding-fact-record!
       facts

@@ -2,6 +2,11 @@
 (import stdlib.profile)
 (import stdlib.test)
 
+(cfg
+  compiler-arena-debug
+  (unsafe
+    (extern (debug-layout [owner : i64]) : unit (:symbol "tl_arena_debug_assert_pool_install"))))
+
 (defstruct Pair
   (a i64)
   (b i64))
@@ -259,6 +264,10 @@
         (= source.b 0)))))
 
 (define (main) : i64
+  (cfg
+    compiler-arena-debug
+    (unsafe
+      (debug-layout 0)))
   (let
     [source : Pair (Pair 20 22)]
     (test.assert-i64-eq

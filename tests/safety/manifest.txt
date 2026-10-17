@@ -1087,7 +1087,7 @@ mut_borrow_through_shared_buffer_element_reject|check-fail|tests/safety/mut_borr
 mut_borrow_through_shared_buffer_handle_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_handle_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_mutable_paths_ok|run-exit|tests/safety/mut_borrow_mutable_paths_ok.tl|42|-
 vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
-vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
+vector_aggregate_ref_rvalue_workarounds_ok|run-exit|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|42|-
 consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`
 consume_parameter_borrow_live_reject|check-fail|tests/safety/consume_parameter_borrow_live_reject.tl|-|cannot move borrowed place `text`
 consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values

@@ -9420,7 +9420,7 @@
               (if (<= len 0)
                 1
                 (compiler-reg-loop-nest-succ-bound-instr
-                  (& (ir.compiler-ir-instr-seq-borrow instrs (- len 1)))))))]))
+                  (ir.compiler-ir-instr-seq-borrow instrs (- len 1))))))]))
     total))
 
 ;; A label with no block of its own is written as -1 and skipped by every walk;

@@ -6908,7 +6908,7 @@
     [let-facts : tc.TcCheckedLetBindingFactState
       (tc.tc-job-state-checked-let-binding-facts job-state)]
     (begin
-      (tc.tc-checked-let-binding-facts-begin! let-facts)
+      (tc.tc-checked-let-binding-facts-begin! let-facts true)
       (tc.tc-macro-call-site-state-set-enabled! macro-sites true)
       (cfg compile-profile (check_core.compiler-check-profile-start))
       (match (tc_api.typecheck-compiler-program-with-paths-checked-cache

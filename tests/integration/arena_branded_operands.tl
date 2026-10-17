@@ -61,6 +61,10 @@
           (let
             [text (string.append "inside" "-scope")]
             (+ 40 (scoped-count (& owner) text))))]
+      [13
+        (let
+          [value (count owner)]
+          (+ 40 value))]
       [_
         (holder-answer
           (let
@@ -68,7 +72,7 @@
             holder))])))
 
 (define (main) : i64
-  (for [kind (iterator.range 0 13)]
+  (for [kind (iterator.range 0 14)]
     (test.assert-true
       (= (operand-case kind) 42)
       "operand position preserves arena brands"))

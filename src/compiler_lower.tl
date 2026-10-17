@@ -27905,30 +27905,50 @@
 (define (lower-let-binding-source-type
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
+  [body-id : i64]
+  [binding-ordinal : i64]
+  [name-id : i64]
   [maybe-ty : ast.AstMaybeType]
-  [init : ast.AstExpr]) : tc_core.ResultTcType
+  [init-id : i64]) : tc_core.ResultTcType
   (let
-    [resolved : ast.AstMaybeType
-      (tc_core.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
-    [source-ty : ast.AstType
-      (try
-        (tc_core.tc-let-binding-plain-type
-          ctx
-          type-env
-          (lower-global-shared-view resolved)
-          init))]
-    (Ok (tc_core.tc-let-binding-plain-bind-type ctx resolved source-ty))))
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts
+        (tc_core.tc-context-job-state ctx))]
+    [data : tc_core.TcCheckedLetBindingFactStateData
+      (tc_core.tc-checked-let-binding-fact-state-data facts)]
+    (match (tc_core.tc-checked-let-binding-fact-lookup
+      facts
+      data.current-declaration-ordinal
+      body-id
+      binding-ordinal
+      name-id
+      init-id)
+      [(Hit ty _) (return (Ok ty))]
+      [_ unit])
+    (let
+      [resolved : ast.AstMaybeType
+        (tc_core.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+      [source-ty : ast.AstType
+        (try
+          (tc_core.tc-let-binding-plain-type
+            ctx
+            type-env
+            (lower-global-shared-view resolved)
+            (lower-context-expr-get ctx init-id)))]
+      (Ok (tc_core.tc-let-binding-plain-bind-type ctx resolved source-ty)))))
 
 (define (lower-let-bindings-source-env
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [bindings : (& bindings ast.AstLetBindingList)]) : tc_core.ResultTcEnv
-  (lower-let-bindings-source-env-at ctx type-env (& bindings) 0))
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [body-id : i64]) : tc_core.ResultTcEnv
+  (lower-let-bindings-source-env-at ctx type-env (& bindings) body-id 0))
 
 (define (lower-let-bindings-source-env-at
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
+  [body-id : i64]
   [index : i64]) : tc_core.ResultTcEnv
   (if (>= index (ast.ast-let-binding-list-len bindings))
     (Ok type-env)
@@ -27945,8 +27965,11 @@
               (lower-let-binding-source-type
                 ctx
                 type-env
+                body-id
+                index
+                name-id
                 maybe-ty
-                (lower-global-shared-view init)))]
+                init-box))]
           (lower-let-bindings-source-env-at
             ctx
             (tc_core.tc-bind-initialized-value-id
@@ -27956,6 +27979,7 @@
               source-ty
               init)
             bindings
+            body-id
             (+ index 1)))])))
 
 (define (lower-let-bindings-local-env
@@ -28346,7 +28370,8 @@
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             [body-type-env
-              (try (lower-let-bindings-source-env ctx type-env bindings))]
+              (try
+                (lower-let-bindings-source-env ctx type-env bindings body-box))]
             (lower-expr-result-type-fast
               ctx
               (lower-let-bindings-local-env env bindings)
@@ -28861,7 +28886,7 @@
         [(Let bindings body-box)
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-let-bindings ctx state env type-env bindings)
+            (match (lower-let-bindings ctx state env type-env bindings body-box)
               [(Ok binding-state body-env body-type-env)
                 (lower-expr ctx binding-state body-env body-type-env body)]
               [(Err message) (Err message)]))])]
@@ -29530,7 +29555,7 @@
         [(Let bindings body-box)
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-let-bindings ctx state env type-env bindings)
+            (match (lower-let-bindings ctx state env type-env bindings body-box)
               [(Ok binding-state body-env body-type-env)
                 (lower-expr-expected
                   ctx
@@ -42209,8 +42234,9 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [bindings : ast.AstLetBindingList]) : ResultLowerEnv
-  (lower-let-bindings-at ctx state env type-env (& bindings) 0))
+  [bindings : ast.AstLetBindingList]
+  [body-id : i64]) : ResultLowerEnv
+  (lower-let-bindings-at ctx state env type-env (& bindings) body-id 0))
 
 (define (lower-let-bindings-at
   [ctx : tc_core.TcContext]
@@ -42218,6 +42244,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
+  [body-id : i64]
   [index : i64]) : ResultLowerEnv
   (if (>= index (ast.ast-let-binding-list-len bindings))
     (Ok state env type-env)
@@ -42250,8 +42277,11 @@
                   (match (lower-let-binding-source-type
                     ctx
                     type-env
+                    body-id
+                    index
+                    name-id
                     maybe-ty
-                    (lower-global-shared-view init))
+                    init-box)
                     [(Ok ty) ty]
                     [(Err message)
                       (return
@@ -42281,6 +42311,7 @@
                         (sym_i64_env.sym-i64-bind-id env name-id var-id)
                         next-type-env
                         bindings
+                        body-id
                         (+ index 1)))]))]))])))
 
 (define (lower-resource-bindings
@@ -67480,7 +67511,7 @@
         [(Let bindings body-box)
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-let-bindings ctx state env type-env bindings)
+            (match (lower-let-bindings ctx state env type-env bindings body-box)
               [(Ok binding-state body-env body-type-env)
                 (lower-tail-expr
                   ctx
@@ -70467,42 +70498,59 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (match decl
-    [(DefFn decl-meta _ params ret body-box _)
-      (let
-        [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-        (lower-function-escaping
-          ctx
-          top-env
-          type-cache
-          internal-name
-          params
-          ret
-          body
-          (tc_core.tc-body-param-write-fact
-            (tc_core.tc-context-body-state ctx)
-            body-box)
-          spans
-          names
-          (lower-dispatch-lower-mode isa mode)))]
-    [(Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (deref inner-box)]
-        (lower-dispatch-lower-variant-decl
-          ctx
-          top-env
-          type-cache
-          internal-name
-          isa
-          inner
-          spans
-          names
-          mode))]
-    [_
-      (Err
-        (box
-          (lower-diagnostic
-            "lower: defdispatch variants must be local functions")))]))
+  (let
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts
+        (tc_core.tc-context-job-state ctx))]
+    [original : i64
+      (__tl-project-field
+        (tc_core.tc-checked-let-binding-fact-state-data facts)
+        current-declaration-ordinal)]
+    ;; A dispatcher can lower bodies from other declarations. Missing facts
+    ;; must take source inference rather than borrow the dispatcher's identity.
+    [_select-generated : unit
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts -1)]
+    [result : ResultLowerFunction
+      (match decl
+        [(DefFn decl-meta _ params ret body-box _)
+          (let
+            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+            (lower-function-escaping
+              ctx
+              top-env
+              type-cache
+              internal-name
+              params
+              ret
+              body
+              (tc_core.tc-body-param-write-fact
+                (tc_core.tc-context-body-state ctx)
+                body-box)
+              spans
+              names
+              (lower-dispatch-lower-mode isa mode)))]
+        [(Unsafe inner-box)
+          (let
+            [inner : ast.AstDecl (deref inner-box)]
+            (lower-dispatch-lower-variant-decl
+              ctx
+              top-env
+              type-cache
+              internal-name
+              isa
+              inner
+              spans
+              names
+              mode))]
+        [_
+          (Err
+            (box
+              (lower-diagnostic
+                "lower: defdispatch variants must be local functions")))])]
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration!
+      facts
+      original)
+    result))
 
 (define (lower-dispatch-lower-variant
   [ctx : tc_core.TcContext]
@@ -70978,6 +71026,16 @@
         [(Cons decl rest)
           (let
             [rest : ast.AstDeclList rest]
+            [let-facts : tc_core.TcCheckedLetBindingFactState
+              (tc_core.tc-job-state-checked-let-binding-facts
+                (tc_core.tc-context-job-state ctx))]
+            [_select-checked-let-declaration : unit
+              (tc_core.tc-checked-let-binding-facts-set-current-declaration!
+                let-facts
+                (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+                  let-facts
+                  cur-module-id
+                  (& decl)))]
             [decl-path : String
               (ast.ast-decl-path-list-get
                 (& cur-paths)
@@ -72474,6 +72532,10 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state-input : ci.InternCompatState]) : ResultCompilerLower
   (let
+    [let-facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job-state)]
+    [_begin-let-facts : unit
+      (tc_core.tc-checked-let-binding-facts-begin! let-facts false)]
     [intern-state : ci.InternCompatState intern-state-input]
     [typecheck-intern-state : ci.InternCompatState
       (ci.intern-global-shared-view intern-state)]
@@ -72491,6 +72553,8 @@
         typecheck-intern-state)
         [(Ok summary source-ctx source-top-env _)
           (let
+            [_freeze-let-facts : unit
+              (tc_core.tc-checked-let-binding-facts-freeze! let-facts)]
             [clone-roots : clone_support.CloneRootEntries
               (tc_core.tc-clone-root-collection-finish! source-ctx)]
             [source-decl-count : i64
@@ -72728,6 +72792,7 @@
             (Err (box (cdiag.compiler-diagnostic-list-first (deref diag)))))])]
     (ast.ast-node-pool-context-capture-active! pools)
     (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+    (tc_core.tc-checked-let-binding-facts-finish! let-facts)
     result))
 
 ;; Serial/test compatibility adapter.  Production lower jobs pass the

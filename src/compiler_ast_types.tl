@@ -1433,13 +1433,12 @@
           (cond
             [(not (= old-slot 0)) old-slot]
             [(not (= free 0))
-              (begin
-                (ast-expr-span-table-word-set!
-                  table
-                  free-index
-                  (unsafe
-                    (ptr-read (int->ptr free : (Ptr i64)))))
-                free)]
+              (ast-expr-span-table-word-set!
+                table
+                free-index
+                (unsafe
+                  (ptr-read (int->ptr free : (Ptr i64)))))
+              free]
             [else
               (let
                 [owner : i64

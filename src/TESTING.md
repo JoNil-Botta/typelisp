@@ -50,6 +50,16 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+## Global pair stores
+
+`global_pair_store_live.tl` runs at opt0/1/2 on both hosts. It preserves live
+local pointers and floating values across integer, floating, mixed-word and
+enum global stores, checking both stored words over several inputs. The
+`backend-global-pair-store-live-homes` IR-text test forces live RAX/RDX and
+XMM2/XMM3 homes with register and spill sources for both target ABIs. Internal
+copy staging must respect current instruction occupancy; return and call-result
+ABI registers keep their separate contract.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

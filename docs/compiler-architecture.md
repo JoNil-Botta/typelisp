@@ -1331,6 +1331,13 @@ borrows live only for the current fold; block storage keeps its input IR owner.
 Literal facts do not depend on global initialization or infer constancy for
 writable runtime strings.
 
+Internal two-word copies accept either a variable home or a global cell as
+their destination. Both use the existing GP/SSE scavenger and exclude source
+words, destination words and sibling staging registers. A global store does
+not end the lifetime of unrelated register homes, so it cannot use ABI return
+registers as unconditional scratch. Actual returns and incoming call results
+continue to use their ABI registers.
+
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
 using division to avoid multiplication overflow. Small analyses allocate in the

@@ -384,7 +384,7 @@
 (define (driver-state-smoke-status) : i64
   (if (not
     (=
-      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main)
+      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main 1)
       42))
     (begin
       (io.print-format

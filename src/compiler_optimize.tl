@@ -88815,20 +88815,35 @@
   [bases : (& (__tl_dyn-array ir.CompilerIrValue))]
   [offsets : (& (__tl_dyn-array ir.CompilerIrValue))]
   [tys : (& (__tl_dyn-array ast.AstType))]
+  [rewrite : (& OptOperandRewrite)]
+  [rename? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [index (iterator.range 0 count)]
-      (opt-gep-split-push-instr!
-        (ir.compiler-ir-instr-seq-borrow instrs index)
-        cands
-        bases
-        offsets
-        tys
-        cell
-        (&mut builder)))
+      (let
+        [start : i64 builder.len]
+        (opt-gep-split-push-instr!
+          (ir.compiler-ir-instr-seq-borrow instrs index)
+          cands
+          bases
+          offsets
+          tys
+          cell
+          (&mut builder))
+        ;; Only freshly appended output slots are rewritten; the input and
+        ;; recipe-selection operands remain unchanged throughout the walk.
+        (when
+          rename?
+          (for [slot (iterator.range start builder.len)]
+            (let
+              [next : ir.CompilerIrInstr
+                (opt-rewrite-operands
+                  rewrite
+                  (& (array-ref builder.slots slot)))]
+              (set! (array-ref builder.slots slot) next))))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-gep-split-rewrite-blocks
@@ -88837,6 +88852,8 @@
   [bases : (& (__tl_dyn-array ir.CompilerIrValue))]
   [offsets : (& (__tl_dyn-array ir.CompilerIrValue))]
   [tys : (& (__tl_dyn-array ast.AstType))]
+  [rewrite : (& OptOperandRewrite)]
+  [rename? : bool]
   [cell : (&mut cell (__tl_dyn-array i64))]) : ir.CompilerIrBlockList
   (match blocks
     ;; The array arm scans the sequence in place and writes a dense output
@@ -88860,6 +88877,8 @@
                     bases
                     offsets
                     tys
+                    rewrite
+                    rename?
                     cell)))]))
         (Array (ir.CompilerIrBlockSeq slots count)))]))
 
@@ -88919,71 +88938,41 @@
 ;; An explicit address result keeps its identity when its pointee changes.
 ;; Forward only single-definition zero-offset copies whose source and result
 ;; cannot themselves be rewritten through an address-taken home.
-(define (opt-gep-split-forward-address-instrs
-  [rewrite : (& OptOperandRewrite)]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity count)]
-    (for [index (iterator.range 0 count)]
-      (ir.compiler-ir-instr-builder-push!
-        (&mut builder)
-        (opt-rewrite-operands
-          rewrite
-          (ir.compiler-ir-instr-seq-borrow instrs index))))
-    (ir.compiler-ir-instr-builder-to-seq builder)))
-
-(define (opt-gep-split-forward-addresses
+(define (opt-gep-split-address-renames
   [marks : (& (__tl_dyn-array i64))]
   [defs : (& (__tl_dyn-array i64))]
   [bases : (& (__tl_dyn-array ir.CompilerIrValue))]
   [offsets : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (& func)
-    [(Function _ _ _ frame blocks _)
-      (let
-        [count : i64 (array-length marks)]
-        [addr-taken : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
-        [renames : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [found : bool false]
-        (for [v (iterator.range 0 count)]
-          (set! (array-ref renames v) -1)
-          (when
-            (and
-              (= (array-ref marks v) 1)
-              (= (array-ref defs v) 1)
-              (not (opt-addr-taken-var? (& addr-taken) v)))
-            (match (& (array-ref offsets v))
-              [(I64 0)
-                (match (& (array-ref bases v))
-                  [(Var source)
-                    (when
-                      (and
-                        (>= source 0)
-                        (< source count)
-                        (= (array-ref marks source) 2)
-                        (= (array-ref defs source) 1)
-                        (not (opt-addr-taken-var? (& addr-taken) source)))
-                      (set! (array-ref renames v) source)
-                      (set! found true))]
-                  [_ unit])]
-              [_ unit])))
-        (if (not found)
-          func
-          (let
-            [rewrite : OptOperandRewrite (Rename renames)]
-            [next : ir.CompilerIrFunction
-              (opt-function-with-frame-blocks
-                (& func)
-                frame
-                (opt-blocks-map-seq
-                  blocks
-                  opt-gep-split-forward-address-instrs
-                  (& rewrite)))]
-            (match (opt-verify-function (& next))
-              [(Ok) next]
-              [(Err _) func]))))]))
+  [addr-taken : (& (__tl_dyn-array bool))]) : (__tl_dyn-array i64)
+  (let
+    [count : i64 (array-length marks)]
+    [renames : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [found : bool false]
+    (for [v (iterator.range 0 count)]
+      (set! (array-ref renames v) -1)
+      (when
+        (and
+          (= (array-ref marks v) 1)
+          (= (array-ref defs v) 1)
+          (not (opt-addr-taken-var? addr-taken v)))
+        (match (& (array-ref offsets v))
+          [(I64 0)
+            (match (& (array-ref bases v))
+              [(Var source)
+                (when
+                  (and
+                    (>= source 0)
+                    (< source count)
+                    (= (array-ref marks source) 2)
+                    (= (array-ref defs source) 1)
+                    (not (opt-addr-taken-var? addr-taken source)))
+                  (set! (array-ref renames v) source)
+                  (set! found true))]
+              [_ unit])]
+          [_ unit])))
+    (if found
+      renames
+      (__tl_make-array i64 0))))
 
 (define (opt-gep-split-function
   [type-segment-bases : i64]
@@ -89044,48 +89033,56 @@
             (& offsets)
             (- frame 1)
             false)]
-        [split : ir.CompilerIrFunction
-          (if (not any?)
-            func
-            (let
-              [_flatten : unit
-                (when
-                  flatten?
-                  (opt-gep-split-flatten-recipes!
-                    (& cands)
-                    (&mut bases)
-                    (&mut offsets)
-                    (&mut tys)
-                    (& (opt-addr-taken-vars frame (& blocks)))))]
-              [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-              [_cell : unit (set! (array-ref cell 0) frame)]
-              [next-blocks : ir.CompilerIrBlockList
-                (opt-gep-split-rewrite-blocks
-                  (& blocks)
-                  (& cands)
-                  (& bases)
-                  (& offsets)
-                  (& tys)
-                  (&mut cell))]
-              [next : ir.CompilerIrFunction
-                (Function
-                  name
-                  params
-                  ret-ty
-                  (array-ref cell 0)
-                  next-blocks
-                  function-abi)]
-              (match (opt-verify-function (& next))
-                [(Ok) next]
-                [(Err _) func])))]
-        (if flatten?
-          (opt-gep-split-forward-addresses
-            (& marks)
-            (& defs)
-            (& bases)
-            (& offsets)
-            split)
-          split))]))
+        [addr-taken : (__tl_dyn-array bool)
+          (if flatten?
+            (opt-addr-taken-vars frame (& blocks))
+            (__tl_make-array bool 0))]
+        [_flatten : unit
+          (when
+            (and flatten? any?)
+            (opt-gep-split-flatten-recipes!
+              (& cands)
+              (&mut bases)
+              (&mut offsets)
+              (&mut tys)
+              (& addr-taken)))]
+        [renames : (__tl_dyn-array i64)
+          (if flatten?
+            (opt-gep-split-address-renames
+              (& marks)
+              (& defs)
+              (& bases)
+              (& offsets)
+              (& addr-taken))
+            (__tl_make-array i64 0))]
+        [rename? : bool (> (array-length renames) 0)]
+        (if (and (not any?) (not rename?))
+          func
+          (let
+            [rewrite : OptOperandRewrite (Rename renames)]
+            [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+            [_cell : unit (set! (array-ref cell 0) frame)]
+            [next-blocks : ir.CompilerIrBlockList
+              (opt-gep-split-rewrite-blocks
+                (& blocks)
+                (& cands)
+                (& bases)
+                (& offsets)
+                (& tys)
+                (& rewrite)
+                rename?
+                (&mut cell))]
+            [next : ir.CompilerIrFunction
+              (Function
+                name
+                params
+                ret-ty
+                (array-ref cell 0)
+                next-blocks
+                function-abi)]
+            (match (opt-verify-function (& next))
+              [(Ok) next]
+              [(Err _) func]))))]))
 
 ;; Sink a compare whose only block-local use is the block's final Branch to
 ;; the instruction right before that Branch. The backend fuses a

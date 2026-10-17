@@ -45580,6 +45580,49 @@
       false)
     "multiple result definitions cannot be forwarded"))
 
+(test
+  gep-split-fresh-output-address-rewrite
+  (let
+    [source
+      "entry:\n%2 = addr_of %0\n%3 = gep %2, 0 : u8\n%4 = gep %3, %1 : i64\n%5 = load %4 : i64\nstore_ptr %4, %5 : i64\nreturn %5"]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "split-address-output")
+        (irt.params "value=%0:i64, index=%1:i64")
+        (I64)
+        8
+        (irt.blocks (clone source))
+        Ordinary)]
+    [next
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        true
+        (& func))]
+    [blocks (opt.opt-function-blocks (& next))]
+    [actual
+      (opt.opt-dce-block-list-array-fixpoint
+        (opt.opt-function-frame (& next))
+        (& blocks)
+        8)]
+    [expected
+      (irt.blocks
+        "entry:\n%2 = addr_of %0\n%8 = gep %2, %1 : i64\n%5 = load %8 : i64\n%9 = gep %2, %1 : i64\nstore_ptr %9, %5 : i64\nreturn %5")]
+    [original (opt.opt-function-blocks (& func))]
+    [unchanged (irt.blocks source)]
+    (test.assert-true
+      (and
+        (= (opt.opt-function-frame (& next)) 10)
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))
+        (opt.opt-block-list-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& original)
+          (& unchanged))
+        (opt.opt-block-list-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& actual)
+          (& expected)))
+      "address forwarding covers both emitted instructions across builder growth without changing input or fresh IDs")))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : ir.CompilerIrFunction

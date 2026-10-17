@@ -5885,6 +5885,10 @@
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-alloc)
 
+(define (lower-tl-alloc-global-symbol) : i64
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-tl-alloc-global)
+
 (define (lower-tl-oob-abort-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-oob-abort)
@@ -15825,7 +15829,8 @@
 (define (lower-reserve-heap-storage
   [state : LowerState]
   [size : i64]
-  [ty : (& ty ast.AstType)]) : LowerExpr
+  [ty : (& ty ast.AstType)]
+  [allocator : i64]) : LowerExpr
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (lower-state-alloc-var state)
@@ -15835,7 +15840,7 @@
             allocated
             (Call
               var-id
-              (lower-tl-alloc-symbol)
+              allocator
               (One (I64 size))
               (lower-global-shared-view ty)))
           (Var var-id)
@@ -17150,10 +17155,11 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
+  [ty : ast.AstType]
+  [allocator : i64]) : ResultLowerExpr
   (match (lower-inline-aggregate-copy-size ctx (lower-global-shared-view ty))
     [(Ok size)
-      (match (lower-reserve-heap-storage state size ty)
+      (match (lower-reserve-heap-storage state size ty allocator)
         [(Expr copy-state copy-value _)
           (Ok
             (Expr
@@ -17194,11 +17200,12 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
+  [ty : ast.AstType]
+  [allocator : i64]) : ResultLowerExpr
   (if (lower-inline-aggregate-abi-copy-needed?
     ctx
     (lower-global-shared-view ty))
-    (lower-copy-inline-aggregate-to-heap ctx state value ty)
+    (lower-copy-inline-aggregate-to-heap ctx state value ty allocator)
     (Ok (Expr state value ty))))
 
 (define (lower-local-assignment-value
@@ -17299,7 +17306,7 @@
               (Var sret-var)
               ret-ty))]
         [(Err message) (Err (box (lower-diagnostic message)))])
-      (lower-return-abi-value ctx state value ret-ty))))
+      (lower-return-abi-value ctx state value ret-ty (lower-tl-alloc-symbol)))))
 
 (define (lower-prepare-internal-return-value
   [ctx : tc_core.TcContext]
@@ -18248,7 +18255,8 @@
       (if (= size 0)
         1
         size)
-      result-ty)
+      result-ty
+      (lower-tl-alloc-symbol))
       [(Expr base-state base _)
         (Expr
           (if (> size 0)
@@ -21798,7 +21806,7 @@
   [elem-size : i64]
   [buf-var : i64]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-reserve-heap-storage state 16 result-ty)
+  (match (lower-reserve-heap-storage state 16 result-ty (lower-tl-alloc-symbol))
     [(Expr arr-state arr-value _)
       (let
         [copied-state : LowerState
@@ -21992,7 +22000,8 @@
   (match (lower-reserve-heap-storage
     state
     (lower-type-list-storage-size ctx (lower-global-shared-view elem-tys))
-    result-ty)
+    result-ty
+    (lower-tl-alloc-symbol))
     [(Expr dst-state dst _)
       (let
         [done-state
@@ -22096,7 +22105,8 @@
         ctx
         (lower-global-shared-view elem-ty)
         count)
-      result-ty)
+      result-ty
+      (lower-tl-alloc-symbol))
       [(Expr dst-state dst _)
         (let
           [done-state
@@ -22141,7 +22151,8 @@
             (lower-type-list-storage-size
               ctx
               (lower-global-shared-view field-types))
-            result-ty)
+            result-ty
+            (lower-tl-alloc-symbol))
             [(Expr dst-state dst _)
               (let
                 [done-state
@@ -22249,7 +22260,8 @@
       (match (lower-reserve-heap-storage
         state
         (lower-enum-storage-size ctx enum-name-id enum-name)
-        result-ty)
+        result-ty
+        (lower-tl-alloc-symbol))
         [(Expr dst-state dst _)
           (match (lower-load-at-offset dst-state value 0 (I64))
             [(Expr tag-state tag _)
@@ -22449,7 +22461,7 @@
   [lambda-name : i64]
   [env-value : ir.CompilerIrValue]
   [expr-ty : ast.AstType]) : LowerExpr
-  (match (lower-reserve-heap-storage state 16 expr-ty)
+  (match (lower-reserve-heap-storage state 16 expr-ty (lower-tl-alloc-symbol))
     [(Expr desc-state desc-value _)
       (Expr
         (lower-store-at-offset
@@ -22477,7 +22489,7 @@
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (match (let
     [ty (ast.AstType.U64)]
-    (lower-reserve-heap-storage state capture-size ty))
+    (lower-reserve-heap-storage state capture-size ty (lower-tl-alloc-symbol)))
     [(Expr env-state env-value _)
       (let
         [captured-state
@@ -24655,7 +24667,7 @@
   [byte-count : ir.CompilerIrValue]
   [buf-var : i64]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-reserve-heap-storage state 16 result-ty)
+  (match (lower-reserve-heap-storage state 16 result-ty (lower-tl-alloc-symbol))
     [(Expr arr-state arr-value _)
       (let
         [copied-state
@@ -24764,7 +24776,8 @@
             (match (lower-reserve-heap-storage
               clone-state
               (lower-type-size ctx inner-ty)
-              result-ty)
+              result-ty
+              (lower-tl-alloc-symbol))
               [(Expr box-state box-value _)
                 (Ok
                   (Expr
@@ -29683,7 +29696,8 @@
                                 ctx
                                 value-state
                                 value-ir
-                                target-ty))]
+                                target-ty
+                                (lower-tl-alloc-global-symbol)))]
                           (match store-copy
                             [(Expr store-state store-ir _)
                               (let
@@ -30983,7 +30997,8 @@
             (match (lower-reserve-heap-storage
               inner-state
               (lower-type-size ctx inner-ty)
-              result-ty)
+              result-ty
+              (lower-tl-alloc-symbol))
               [(Expr base-state base _)
                 ;; A register-resident inner value is a word; store it
                 ;; scalar into the box rather than byte-copying from a pointer.
@@ -37943,7 +37958,11 @@
                 [(Expr len-i-state len-i-value _)
                   (match (let
                     [ty (ast.AstType.String)]
-                    (lower-reserve-heap-storage len-i-state 16 ty))
+                    (lower-reserve-heap-storage
+                      len-i-state
+                      16
+                      ty
+                      (lower-tl-alloc-symbol)))
                     [(Expr base-state base-value _)
                       (let
                         [with-ptr : LowerState
@@ -39157,7 +39176,7 @@
   [arr-ty : ast.AstType]
   [buf-var : i64]
   [len-i64 : ir.CompilerIrValue]) : ResultLowerExpr
-  (match (lower-reserve-heap-storage state 16 arr-ty)
+  (match (lower-reserve-heap-storage state 16 arr-ty (lower-tl-alloc-symbol))
     [(Expr arr-state arr-value _)
       (Ok
         (Expr
@@ -40221,7 +40240,8 @@
                                       (match (lower-reserve-heap-storage
                                         index-state
                                         result-storage-size
-                                        result-ty)
+                                        result-ty
+                                        (lower-tl-alloc-symbol))
                                         [(Expr result-state result-base _)
                                           (lower-array-take-after-result-flag
                                             ctx

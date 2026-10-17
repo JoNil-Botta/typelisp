@@ -119853,8 +119853,8 @@
 
 ;; The length of the array a var's Vec box names. Three shapes, in the order the
 ;; IR produces them: a box whose two words this function itself wrote, a fresh
-;; `tl_alloc` filled by one `copy_bytes`, and a call to a constructor whose
-;; summary names the parameter its `make-array` length came from.
+;; runtime allocation filled by one `copy_bytes`, and a call to a constructor
+;; whose summary names the parameter its `make-array` length came from.
 ;; A length value in its canonical spelling: the lowering emits a `mov` of the
 ;; literal or of the caller's variable before the constructor call, so two
 ;; writes of one length carry different vars until the movs are followed.
@@ -120003,9 +120003,13 @@
         [(Some instr _)
           (match instr
             [(Call _ name args _)
-              (if (ir.compiler-ir-symbol-eq?
-                name
-                cbi.compiler-builtin-id-tl-alloc)
+              (if (or
+                (ir.compiler-ir-symbol-eq?
+                  name
+                  cbi.compiler-builtin-id-tl-alloc)
+                (ir.compiler-ir-symbol-eq?
+                  name
+                  cbi.compiler-builtin-id-tl-alloc-global))
                 (if (and
                   (= (array-ref tables.ncopy var) 1)
                   (> (array-ref tables.copy var) 0))

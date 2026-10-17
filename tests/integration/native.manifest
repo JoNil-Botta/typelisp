@@ -1071,3 +1071,7 @@ box_view_access|all|0,1,2|tests/integration/box_view_access.tl|42|-|-|-|-
 global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
 global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
+
+
+store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
+store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-

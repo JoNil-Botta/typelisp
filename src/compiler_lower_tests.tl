@@ -16706,3 +16706,80 @@
           (= (lower-test-function-call-count functions "rebound" "tl_alloc") 0))]
       [_ false])
     "pure fields keep the packed path; effectful receivers guard their real frame home"))
+
+;; A lowered exit ends its block immediately; even dead stores can otherwise
+;; be moved across the exit by later CFG and scheduling passes.
+(define (lower-test-block-exits?
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
+  (match blocks
+    [(slice) true]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (for [index (iterator.range 0 (- instrs.len 1))]
+            (when
+              (optimize.opt-cfg-terminator-instr?
+                (& (array-ref instrs.slots index)))
+              (return false)))])
+      (lower-test-block-exits? rest)]))
+
+(test
+  compiler-lower-store-exits
+  (let
+    [bodies : (Array String 26)
+      (array
+        "(let [n : i64 1] (set! n (return 42)) 1)"
+        "(let [p : Pair (Pair 1 2)] (set! p (return 42)) 1)"
+        "(let [p : Pair (Pair 1 2)] (set! p.a (begin (set! p.b 20) (return 42))) 1)"
+        "(let [p : (Tuple i64 i64) (tuple 1 2)] (set! (tuple-ref p 0) (return 42)) 1)"
+        "(let [p : (Box i64) (box 1)] (set! (deref p) (return 42)) 1)"
+        "(let [p : (Array i64 1) (array 1)] (set! (array-ref p 0) (return 42)) 1)"
+        "(let [p : (Array i64 1) (array 1)] (set! (array-ref p (ann (return 42) : i64)) 7) 1)"
+        "(let [p : Pair (Pair 1 2)] (replace! p.a (return 42)) 1)"
+        "(let [n : i64 1] [p : (MutPtr i64) (unsafe (ptr-addr-of n))] (unsafe (ptr-write! p (return 42))) 1)"
+        "(let [n : i64 2] [i : i64 0] (while (< i 3) (set! i (+ i 1)) (set! n (begin (set! n (+ n 10)) (continue))) (set! n 0)) (+ n 1))"
+        "(let [p : Pair (Pair 1 2)] [a : (Array i64 1) (array 3)] (while true (set! (array-ref a 0) (begin (set! p.b (+ p.b 6)) (break))) (set! p.b 0)) (+ p.a (+ p.b (array-ref a 0))))"
+        "(let [p : Holder (Holder (Wide 1 2 3))] (set! p.wide (Wide 1 (return 42) 3)) 1)"
+        "(let [p : Wide (Wide 1 2 3)] (set! p (return 42)) 1)"
+        "(let [p : Zero (Zero unit)] (set! p.z (return 42)) 1)"
+        "(let [p : Zero (Zero unit)] (set! p (return 42)) 1)"
+        "(set! (array-ref (ann (return 42) : (Array i64 1)) 0) 7) 1"
+        "(unsafe (ptr-write! (ann (return 42) : (MutPtr i64)) 7)) 1"
+        "(let [p : (Array i64 1) (array 1)] (replace! (array-ref p (ann (return 42) : i64)) 7) 1)"
+        "(let [p : (Array Wide 1) (array (Wide 1 2 3))] (set! (array-ref p 0) (Wide 1 (return 42) 3)) 1)"
+        "(let [p : Choice (Full (Wide 1 2 3))] (set! p (Full (Wide 1 (return 42) 3))) 1)"
+        "(let [p : (Array i64 2) (array 1 2)] (set! p (array 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (add 1 (return 42))) 1)"
+        "(let [n : i64 1] [m : i64 2] (set! n (use-ref (&mut m) (return 42))) 1)"
+        "(let [n : i64 1] [f : (-> i64 i64 i64) add] (set! n (f 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (c-add 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (unsafe (syscall 39 (ann (return 42) : i64)))) 1)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defstruct Holder (wide Wide)) (defstruct Zero (z unit)) (defenum Choice (Full Wide) (Blank)) (define (add [a : i64] [b : i64]) : i64 (+ a b)) (define (use-ref [p : (&mut p i64)] [v : i64]) : i64 (+ (deref p) v)) (extern (c-add [a : i64] [b : i64]) : i64 (:symbol \"c_add\")) (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        (test.assert-true
+          (match (lower.lower-compiler-source source)
+            [(Ok (Program _ functions _ _authority) _ owner)
+              (let
+                [valid : bool
+                  (match (lower-test-function-seq-find functions "main")
+                    [(Some (Function _ _ _ _ blocks _))
+                      (lower-test-block-exits?
+                        (ir.compiler-ir-block-list-view blocks))]
+                    [_ false])]
+                (lower.compiler-lower-arena-state-release!
+                  (lower.compiler-lower-state-arenas owner))
+                valid)]
+            [(Err diagnostic)
+              (io.println
+                "lowering failed in store-exit case {}: {}"
+                index
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+              false])
+          (str_cat.str-cat
+            "store exit must terminate its block, case "
+            (string.int->string index)))))))

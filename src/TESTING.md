@@ -43,11 +43,10 @@ sub-word integer and floating fields, and move-only boxed field values.
 
 ## Store RHS control flow
 
-`store_rhs_control_flow.tl` covers returns through local, projected, array,
-box, reference, slice, global, raw-pointer and replacement stores, including
-receiver/index effects, conditional fallthrough, loop breaks and continues.
-It runs at opt0/1/2 on both hosts. Its paired safety cases require unreachable
-tails, return types and immutable targets to retain their canonical errors.
+`store_rhs_control_flow.tl` retains the tail-call borrowed-argument case.
+The shared scalar/projected store matrix lives in `store_operand_exits.tl`;
+both fixtures run at opt0/1/2 on both hosts. Their paired safety cases require
+unreachable tails, return types and immutable targets to retain canonical errors.
 The selected-inference test checks canonical Unit versus intrinsic Never,
 executed-prefix selection and hard stale-identity failures. The normalizer
 checks no write or exclusive activation after an exit and rejects an incorrectly
@@ -68,6 +67,16 @@ The arena-debug gate repeats all three fixtures with debug, profile, and backtra
 instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
+
+`store_operand_exits.tl` and `store_constructor_exits.tl` run at opt0/1/2 on
+both hosts. They cover scalar, aggregate, field, tuple, box, reference, raw
+pointer, global and array stores; return, break and continue; skipped bounds
+checks and later constructor arguments; zero-sized values; and conditional
+fallthrough. `compiler-lower-store-exits` inspects unoptimized blocks for any
+instruction after a terminator, including annotation, replacement, constructor,
+direct/indirect call, C ABI and syscall paths. The paired safety cases retain
+canonical rejection of immutable receivers, wrong return types and invalid
+unreachable tails.
 
 ## Runtime byte search
 

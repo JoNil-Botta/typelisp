@@ -1910,6 +1910,9 @@ mir_copied_box_store_reject|check-fail|tests/safety/mir_copied_box_store_reject.
 mir_copied_box_store_reject_windows|check-fail-windows|tests/safety/mir_copied_box_store_reject.tl|tests/safety/mir_copied_box_store_reject.tl:6:11|cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 
 # Diverging store RHSs preserve canonical checking, including unreachable tails.
+
+
+# Store exits retain canonical validation of receivers, returns and unreachable tails.
 store_rhs_unreachable_reject|check-fail|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
 store_rhs_unreachable_reject-windows|check-fail-windows|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
 store_rhs_return_type_reject|check-fail|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch

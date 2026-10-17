@@ -11904,7 +11904,7 @@
           (match (opt-verify-definition defs proof.body var)
             [(Some instr)
               (match instr
-                [(AddrOf _ src)
+                [(AddrOf _ src _)
                   (match (opt-verify-definition defs proof.body src)
                     [(Some (Alloc _ ty))
                       (opt-verify-inline-storage-type? (& ty))]
@@ -89095,40 +89095,37 @@
         (let
           [remaining : i64 count]
           (while (> remaining 0)
-            (match (& (array-ref offsets v))
-              [(I64 0)
-                (match (& (array-ref bases v))
-                  [(Var parent)
-                    (if (and
-                      (>= parent 0)
-                      (< parent count)
-                      (!= parent v)
-                      (= (array-ref cands parent) 1)
-                      (not (opt-addr-taken-var? addr-taken parent))
-                      (not
-                        (opt-addr-taken-value?
-                          addr-taken
-                          (& (array-ref bases parent))))
-                      (not
-                        (opt-addr-taken-value?
-                          addr-taken
-                          (& (array-ref offsets parent))))
-                      (opt-successor-sink-stable-value?
-                        (& (array-ref bases parent)))
-                      (opt-successor-sink-stable-value?
-                        (& (array-ref offsets parent))))
-                      (begin
-                        (set!
-                          (array-ref bases v)
-                          (clone (array-ref bases parent)))
-                        (set!
-                          (array-ref offsets v)
-                          (clone (array-ref offsets parent)))
-                        (set! (array-ref tys v) (clone (array-ref tys parent)))
-                        (-= remaining 1))
-                      (set! remaining 0))]
-                  [_ (set! remaining 0)])]
-              [_ (set! remaining 0)]))))))
+            (let
+              [parent : i64
+                (opt-aggregate-split-value-var-or (& (array-ref bases v)) -1)]
+              (if (and
+                (=
+                  (opt-aggregate-split-literal-or (& (array-ref offsets v)) -1)
+                  0)
+                (>= parent 0)
+                (< parent count)
+                (!= parent v)
+                (= (array-ref cands parent) 1)
+                (not (opt-addr-taken-var? addr-taken parent))
+                (not
+                  (opt-addr-taken-value?
+                    addr-taken
+                    (& (array-ref bases parent))))
+                (not
+                  (opt-addr-taken-value?
+                    addr-taken
+                    (& (array-ref offsets parent))))
+                (opt-successor-sink-stable-value? (& (array-ref bases parent)))
+                (opt-successor-sink-stable-value?
+                  (& (array-ref offsets parent))))
+                (begin
+                  (set! (array-ref bases v) (clone (array-ref bases parent)))
+                  (set!
+                    (array-ref offsets v)
+                    (clone (array-ref offsets parent)))
+                  (set! (array-ref tys v) (clone (array-ref tys parent)))
+                  (-= remaining 1))
+                (set! remaining 0))))))))
   unit)
 
 ;; An explicit address result keeps its identity when its pointee changes.

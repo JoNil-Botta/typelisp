@@ -1082,6 +1082,10 @@ size is negative on a path that avoids the allocation. The existing check CSR
 records index bounds and length nonnegativity separately, with dominance checked
 at each use. The ordered block walk supplies facts after a check in the same
 block. A length's nonnegativity never proves it is below itself.
+An unsigned guard proving a stable value at most `2^63 - 1` also supplies a
+signed nonnegative fact on that edge. Typed comparison masks preserve unsigned
+ordering at the sign-bit boundary; only transparent, stable casts carry it back
+to the source value.
 
 The multi-block bounds-check versioner clones a loop behind one entry guard
 and drops the checks the guard proves. Its derivations read a counter's value

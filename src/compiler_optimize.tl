@@ -51273,9 +51273,48 @@
                   (opt-integer-type? ty)
                   (opt-gvn-value-stable? env.sources clhs)
                   (opt-gvn-value-stable? env.sources crhs))
-                  (opt-dom-cmp-facts-cons
-                    (Fact (opt-dom-cmp-canon-op op) clhs crhs ty taken? block)
-                    facts)
+                  (let
+                    [canon-op : ir.CompilerIrBinOp (opt-dom-cmp-canon-op op)]
+                    [next : OptDomCmpFacts
+                      (match (if (opt-type-eq
+                        env.type-segment-bases
+                        (& ty)
+                        (& (U64)))
+                        (opt-dom-cmp-var-lit (& clhs) (& crhs))
+                        (OptDomCmpVarLit.No))
+                        [(Some var _ _)
+                          ;; An unsigned upper bound below 2^63 proves a clear
+                          ;; sign bit on this edge. Use the typed implication
+                          ;; masks so reversed, false and boundary guards keep
+                          ;; their unsigned order. A transparent cast may carry
+                          ;; that proof back only to a stable source value.
+                          (let
+                            [base : ir.CompilerIrValue
+                              (opt-bounds-dom-strip-int-cast
+                                env.type-segment-bases
+                                env.phi-defs
+                                env.copies
+                                (Var var))]
+                            (if (and
+                              (opt-gvn-value-stable? env.sources base)
+                              (match (opt-dom-cmp-literal-verdict
+                                (& canon-op)
+                                taken?
+                                (& clhs)
+                                (& crhs)
+                                (opt-dom-cmp-op-mask (& (Le)))
+                                (Some var 9223372036854775807 true)
+                                (& ty))
+                                [(Some decided) decided]
+                                [(No) false]))
+                              (opt-dom-cmp-facts-cons
+                                (Fact (Ge) base (I64 0) (I64) true block)
+                                facts)
+                              facts))]
+                        [(No) facts])]
+                    (opt-dom-cmp-facts-cons
+                      (Fact canon-op clhs crhs ty taken? block)
+                      next))
                   facts))]
             [_ facts])])]
     [_ facts]))

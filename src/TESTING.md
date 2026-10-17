@@ -13,6 +13,9 @@ merging; `bounds-dom-loop-length-entry` preserves a loop's negative exit.
 `tests/integration/process_empty_step.tl` checks empty through eight-item
 process lists at opt0/1/2 on both hosts, including GVN forwarding an allocation's
 size into a later bounds check.
+The `bounds-dom-unsigned-sign-*` cases preserve sign proofs from unsigned
+allocation guards, including reversed/false edges and the `2^63` boundary,
+while refusing redefined sources and values changed by narrowing.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

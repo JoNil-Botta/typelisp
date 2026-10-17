@@ -71032,6 +71032,113 @@
       true
       "a loop body's length check cannot erase the header's negative seed or decrement exit")))
 
+(define (opt-nn-unsigned-sign?
+  [op : ir.CompilerIrBinOp]
+  [limit : i64]
+  [var-left? : bool]
+  [taken? : bool]
+  [proved? : bool]) : bool
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (ir.compiler-ir-blocks-with-tail
+          (irt.blocks
+            "hot:
+               %12 = ge %1, 0 : i64
+               return %12
+             cold:
+               %13 = ge %1, 0 : i64
+               return %13")
+          (opt-nn-block
+            "entry"
+            (opt-test-instrs
+              (irt.instr "%10 = cast %1 : i64 to u64")
+              (BinOp
+                11
+                op
+                (if var-left?
+                  (Var 10)
+                  (I64 limit))
+                (if var-left?
+                  (I64 limit)
+                  (Var 10))
+                (U64))
+              (opt-nn-branch 11 "hot" "cold")))))]
+    [label : String
+      (if taken?
+        "hot"
+        "cold")]
+    [dst : i64
+      (if taken?
+        12
+        13)]
+    (if proved?
+      (opt-nn-folded? out label 0 dst true)
+      (opt-nn-compare-signed? out label 0 dst))))
+
+(test
+  bounds-dom-unsigned-sign-edge
+  (test.assert-bool-eq
+    (and
+      (opt-nn-unsigned-sign? (Le) 9223372036854775807 true true true)
+      (opt-nn-unsigned-sign? (Le) 9223372036854775807 true false false)
+      (opt-nn-unsigned-sign? (Gt) 9223372036854775807 true false true)
+      (opt-nn-unsigned-sign? (Ge) 9223372036854775807 false true true)
+      (opt-nn-unsigned-sign?
+        (Lt)
+        (- (- 0 9223372036854775807) 1)
+        true
+        true
+        true)
+      (opt-nn-unsigned-sign?
+        (Le)
+        (- (- 0 9223372036854775807) 1)
+        true
+        true
+        false)
+      (opt-nn-unsigned-sign? (Lt) (- 0 1) true true false)
+      (opt-nn-unsigned-sign? (Gt) 0 true true false)
+      (opt-nn-unsigned-sign? (Eq) 7 true true true)
+      (opt-nn-unsigned-sign? (Eq) 7 true false false))
+    true
+    "only an edge proving the unsigned value below 2^63 supplies a signed sign fact, including reversed and false edges"))
+
+(test
+  bounds-dom-unsigned-sign-source-stability
+  (let
+    [changed : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = cast %1 : i64 to u64
+             %1 = mov %2 : i64
+             %11 = le %10, 9223372036854775807 : u64
+             branch %11, hot, exit
+           hot:
+             %12 = ge %1, 0 : i64
+             return %12
+           exit:
+             return 0"))]
+    [narrowed : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = cast %1 : i64 to u32
+             %11 = cast %10 : u32 to u64
+             %12 = le %11, 9223372036854775807 : u64
+             branch %12, hot, exit
+           hot:
+             %13 = ge %1, 0 : i64
+             return %13
+           exit:
+             return 0"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? changed "hot" 0 12)
+        (opt-nn-compare-signed? narrowed "hot" 0 13))
+      true
+      "an unsigned guard cannot prove the sign of a redefined source or a value changed by narrowing")))
+
 ;; --- UNR-1: length reads, narrowing forms, and the unsigned power-of-two divide
 ;;
 ;; One straight-line block over two parameters -- `text`, a String descriptor

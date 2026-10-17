@@ -25058,6 +25058,7 @@
 (define (lower-snapshot-effect-free?
   [ctx : tc_core.TcContext]
   [expr-id : i64]
+  [borrow-address? : bool]
   [budget : (&mut budget i64)]) : bool
   (if (or (< expr-id 0) (<= (deref budget) 0))
     false
@@ -25081,7 +25082,11 @@
             [(ast.AstExpr.Begin _) true]
             [(ast.AstExpr.Ann _ _) true]
             [(ast.AstExpr.Cast _ _) true]
-            [(ast.AstExpr.Borrow mutable? _ _) (not mutable?)]
+            [(ast.AstExpr.Borrow mutable? _ _)
+              ;; Forming a borrow does not change a previously read address.
+              ;; A by-value operand still needs its storage isolated from a
+              ;; mutable argument that the callee can write through.
+              (or borrow-address? (not mutable?))]
             [(ast.AstExpr.StructGet _ _) true]
             [(ast.AstExpr.TypeLiteral _) true]
             [(ast.AstExpr.Init _) true]
@@ -25094,12 +25099,14 @@
             ctx
             (ast.ast-expr-child-ids (lower-global-shared-view expr))
             0
+            borrow-address?
             budget))))))
 
 (define (lower-snapshot-effect-free-children?
   [ctx : tc_core.TcContext]
   [children : ast.AstExprList]
   [index : i64]
+  [borrow-address? : bool]
   [budget : (&mut budget i64)]) : bool
   (if (>= index children.len)
     true
@@ -25107,8 +25114,14 @@
       (lower-snapshot-effect-free?
         ctx
         (ast.ast-expr-list-get (& children) index -1)
+        borrow-address?
         budget)
-      (lower-snapshot-effect-free-children? ctx children (+ index 1) budget))))
+      (lower-snapshot-effect-free-children?
+        ctx
+        children
+        (+ index 1)
+        borrow-address?
+        budget))))
 
 ;; Whether `name` can denote the local binding `root`: the same identity, or a
 ;; dotted local-field spelling whose leading segment may be `root`. Structural
@@ -25231,6 +25244,11 @@
           (lower-snapshot-local-root ctx env type-env inner (+ depth 1))]
         [(ast.AstExpr.Ann inner _)
           (lower-snapshot-local-root ctx env type-env inner (+ depth 1))]
+        ;; A borrow's value is an address into this same owned place. A later
+        ;; operand that can change its owner still names that root and keeps
+        ;; the snapshot; borrowed/heap roots fail the ownership proof below.
+        [(ast.AstExpr.Borrow _ _ place)
+          (lower-snapshot-local-root ctx env type-env place (+ depth 1))]
         [(ast.AstExpr.Var name)
           (if (and
             (<
@@ -25336,6 +25354,7 @@
   [ctx : tc_core.TcContext]
   [args : (& args ast.AstExprList)]
   [index : i64]
+  [borrow-address? : bool]
   [budget : (&mut budget i64)]) : bool
   (if (>= index args.len)
     true
@@ -25343,8 +25362,14 @@
       (lower-snapshot-effect-free?
         ctx
         (ast.ast-expr-list-get args index -1)
+        borrow-address?
         budget)
-      (lower-snapshot-later-effect-free? ctx args (+ index 1) budget))))
+      (lower-snapshot-later-effect-free?
+        ctx
+        args
+        (+ index 1)
+        borrow-address?
+        budget))))
 
 (define (lower-snapshot-later-mention-root?
   [ctx : tc_core.TcContext]
@@ -25915,7 +25940,7 @@
     [effect-budget : i64 lower-snapshot-scan-budget]
     (if (or
       (lower-snapshot-constant? ctx operand)
-      (lower-snapshot-effect-free? ctx later (&mut effect-budget)))
+      (lower-snapshot-effect-free? ctx later false (&mut effect-budget)))
       false
       (let
         [root : i64
@@ -25940,7 +25965,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
-  [index : i64]) : bool
+  [index : i64]
+  [operand-ty : (& ast.AstType)]) : bool
   (if (>= (+ index 1) args.len)
     false
     (let
@@ -25951,6 +25977,9 @@
           ctx
           args
           (+ index 1)
+          (match operand-ty
+            [(or (Ref _ _) (MutRef _ _)) true]
+            [_ false])
           (&mut effect-budget)))
         false
         (let
@@ -26458,7 +26487,8 @@
                         env
                         type-env
                         args
-                        index))
+                        index
+                        (& arg-ty)))
                     (lower-call-argument-unstable? ctx arg-state value arg-ty)))
                   [(ResultLowerExpr.Ok
                       (LowerExpr.Expr snapshot-state snapshot-value _))
@@ -26972,7 +27002,8 @@
                               env
                               type-env
                               args
-                              index))
+                              index
+                              (& value-ty)))
                           (and
                             (not snapshot-final?)
                             (lower-call-argument-unstable?
@@ -70016,7 +70047,15 @@
                 (lower-state-storage-root-kind state root)
                 lower-storage-kind-param)))]
         [_ false])
-      (not (lower-argument-snapshot-needed? ctx state env type-env exprs index)))))
+      (not
+        (lower-argument-snapshot-needed?
+          ctx
+          state
+          env
+          type-env
+          exprs
+          index
+          (& ty))))))
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : tc_core.TcContext]

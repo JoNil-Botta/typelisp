@@ -45308,6 +45308,7 @@
   [other-use : bool]) : ir.CompilerIrFunction
   (opt.opt-gep-split-function
     (ast.ast-node-pool-reader-type-segment-bases)
+    true
     (&
       (Function
         (opt-test-symbol "gep_split_chain")
@@ -45343,11 +45344,109 @@
               false)])]
       [_ false])))
 
+(define (opt-gep-split-nested-check
+  [inner : String]
+  [wrapper : String]
+  [effect : String]
+  [flatten? : bool]
+  [kept : String]
+  [recipe : String]) : bool
+  (let
+    [source
+      (str_cat.str-cat
+        "entry:\n%2 = gep "
+        inner
+        "\n%3 = gep %2, "
+        wrapper
+        "\n%4 = gep %3, 0 : u8\n"
+        (clone effect)
+        "branch %1, yes, no\nyes:\nstore_ptr %4, 11 : i64\nreturn 11\n"
+        "no:\nstore_ptr %4, 22 : i64\nreturn 22")]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "nested-gep")
+        (irt.params "p=%0:i64, flag=%1:bool, index=%6:i64")
+        (I64)
+        8
+        (irt.blocks source)
+        Ordinary)]
+    [next
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        flatten?
+        (& func))]
+    [blocks (opt.opt-function-blocks (& next))]
+    [actual
+      (opt.opt-dce-block-list-array-fixpoint
+        (opt.opt-function-frame (& next))
+        (& blocks)
+        8)]
+    [expected
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n"
+          kept
+          effect
+          "branch %1, yes, no\nyes:\n%8 = gep "
+          (clone recipe)
+          "\nstore_ptr %8, 11 : i64\nreturn 11\nno:\n%9 = gep "
+          recipe
+          "\nstore_ptr %9, 22 : i64\nreturn 22"))]
+    (and
+      (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))
+      (opt.opt-block-list-eq
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& actual)
+        (& expected)))))
+
+(test
+  gep-split-nested-address-recipes
+  (test.assert-true
+    (and
+      (opt-gep-split-nested-check "%0, 8 : u8" "0 : u8" "" true "" "%0, 8 : u8")
+      (opt-gep-split-nested-check
+        "%0, -8 : u8"
+        "0 : u8"
+        ""
+        true
+        ""
+        "%0, -8 : u8")
+      (opt-gep-split-nested-check
+        "%0, %6 : i64"
+        "0 : u8"
+        ""
+        true
+        ""
+        "%0, %6 : i64")
+      (opt-gep-split-nested-check
+        "%0, 8 : u8"
+        "0 : u8"
+        ""
+        false
+        "%3 = gep %0, 8 : u8\n"
+        "%3, 0 : u8")
+      (opt-gep-split-nested-check
+        "%0, 8 : u8"
+        "1 : i64"
+        ""
+        true
+        "%2 = gep %0, 8 : u8\n"
+        "%2, 1 : i64")
+      (opt-gep-split-nested-check
+        "%0, 8 : u8"
+        "0 : u8"
+        "%7 = addr_of %0\nstore_ptr %7, 2048 : i64\n"
+        true
+        "%2 = gep %0, 8 : u8\n"
+        "%2, 0 : u8"))
+    "nested address recipes preserve offsets, element scales, frozen pricing, and exposed base values"))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : ir.CompilerIrFunction
       (opt.opt-gep-split-function
         (ast.ast-node-pool-reader-type-segment-bases)
+        true
         (&
           (Function
             (opt-test-symbol "gep_split_shared")
@@ -45360,6 +45459,7 @@
     [untouched : ir.CompilerIrFunction
       (opt.opt-gep-split-function
         (ast.ast-node-pool-reader-type-segment-bases)
+        true
         (&
           (Function
             (opt-test-symbol "gep_split_other_use")

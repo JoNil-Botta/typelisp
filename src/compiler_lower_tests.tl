@@ -1350,6 +1350,47 @@
     (compiler-lower-operand-snapshot-shape-ok?)
     "snapshot only storage that later evaluation can write"))
 
+;; Checked-reference arguments pass their address, even when the next
+;; argument lends mutable access. By-value storage must still be isolated.
+(define (compiler-lower-borrow-snapshot-source) : String
+  "(defstruct Triple (a i64) (b i64) (c i64))
+(define counter : i64 0)
+(define (bump!) : unit (set! counter (+ counter 1)))
+(define (read-two [a : (& a Triple)] [b : (&mut b Triple)]) : i64 (+ a.a b.b))
+(define (write-two [a : (&mut a Triple)] [b : (&mut b Triple)]) : i64
+  (set! a.a (+ a.a 1)) (+ a.a b.b))
+(define (copy-and-write [a : Triple] [b : (&mut b Triple)]) : i64
+  (set! b.a 99) a.a)
+(define (plain-shared [a : (& a Triple)] [b : (&mut b Triple)]) : i64
+  (read-two a (&mut b)))
+(define (plain-mut [a : (&mut a Triple)] [b : (&mut b Triple)]) : i64
+  (write-two (&mut a) (&mut b)))
+(define (owned-call [a : Triple] [b : (&mut b Triple)]) : i64
+  (read-two (& a) (begin (bump!) (&mut b))))
+(define (reference-call [a : (& a Triple)] [b : (&mut b Triple)]) : i64
+  (read-two a (begin (bump!) (&mut b))))
+(define (effect [a : (& a Triple)] [b : (&mut b Triple)]) : i64
+  (read-two a (begin (set! b.b 12) (&mut b))))
+(define (value-copy) : i64
+  (let [a : Triple (Triple 7 8 9)] (copy-and-write a (&mut a))))
+(define (main) : i64 0)")
+
+(test
+  compiler-lower-borrow-snapshot-shape
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source (compiler-lower-borrow-snapshot-source)))
+      [(Some functions)
+        (and
+          (= (lower-test-count functions "plain-shared" (CopyMov)) 0)
+          (= (lower-test-count functions "plain-mut" (CopyMov)) 0)
+          (= (lower-test-count functions "owned-call" (CopyMov)) 0)
+          (= (lower-test-count functions "reference-call" (CopyMov)) 1)
+          (= (lower-test-count functions "effect" (CopyMov)) 1)
+          (= (lower-test-count functions "value-copy" (CopyBytes)) 1))]
+      [_ false])
+    "borrow addresses avoid copies; writes and by-value aliases retain snapshots"))
+
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String

@@ -287,6 +287,15 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+A reference argument captures an address, so forming a later mutable borrow
+alone does not require a second address snapshot. The same later operand still
+requires a snapshot of an earlier by-value aggregate. Explicit borrows can use
+the owned-local-root proof when later operands do not name that owner and the
+body takes no raw address; a reference parameter does not satisfy that proof.
+Actual writes and calls keep the conservative snapshot path unless the local
+root proof independently excludes interference. The call-borrow snapshot tests
+cover both address identity and by-value isolation.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit
@@ -1108,6 +1117,14 @@ and then reads an invariant address, which a syntactic scan finds first, and
 it records one plan per read during the loop walk and builds the diamonds
 afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
 cover it.
+
+Gep use splitting resolves admitted zero-offset wrapper chains before cloning
+an address at its memory users. Each clone retains the inner offset and element
+scale, so it computes the same address without keeping intermediate wrappers
+live. Nonzero wrappers, exposed base/index storage and implicit mutable global
+reads stop this resolution. The inliner's frozen pricing pipeline keeps its
+original recipes. The nested-address IR tests cover shared users in different
+blocks, signed offsets, dynamic indices and an address-exposed base.
 
 The multi-block bounds-check versioner clones a loop behind one entry guard
 and drops the checks the guard proves. Its derivations read a counter's value

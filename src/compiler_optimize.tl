@@ -88533,15 +88533,71 @@
                     cell)))]))
         (Array (ir.CompilerIrBlockSeq slots count)))]))
 
+;; Resolve zero-offset wrappers before cloning recipes. Otherwise splitting
+;; both a field address and its wrapper simultaneously clones the old wrapper
+;; recipe and leaves the field address live across all of its users.
+(define (opt-gep-split-flatten-recipes!
+  [cands : (& (__tl_dyn-array i64))]
+  [bases : (&mut bases (__tl_dyn-array ir.CompilerIrValue))]
+  [offsets : (&mut offsets (__tl_dyn-array ir.CompilerIrValue))]
+  [tys : (&mut tys (__tl_dyn-array ast.AstType))]
+  [addr-taken : (& (__tl_dyn-array bool))]) : unit
+  (let
+    [count : i64 (array-length cands)]
+    (for [v (iterator.range 0 count)]
+      (when
+        (= (array-ref cands v) 1)
+        (let
+          [remaining : i64 count]
+          (while (> remaining 0)
+            (match (& (array-ref offsets v))
+              [(I64 0)
+                (match (& (array-ref bases v))
+                  [(Var parent)
+                    (if (and
+                      (>= parent 0)
+                      (< parent count)
+                      (!= parent v)
+                      (= (array-ref cands parent) 1)
+                      (not (opt-addr-taken-var? addr-taken parent))
+                      (not
+                        (opt-addr-taken-value?
+                          addr-taken
+                          (& (array-ref bases parent))))
+                      (not
+                        (opt-addr-taken-value?
+                          addr-taken
+                          (& (array-ref offsets parent))))
+                      (opt-successor-sink-stable-value?
+                        (& (array-ref bases parent)))
+                      (opt-successor-sink-stable-value?
+                        (& (array-ref offsets parent))))
+                      (begin
+                        (set!
+                          (array-ref bases v)
+                          (clone (array-ref bases parent)))
+                        (set!
+                          (array-ref offsets v)
+                          (clone (array-ref offsets parent)))
+                        (set! (array-ref tys v) (clone (array-ref tys parent)))
+                        (-= remaining 1))
+                      (set! remaining 0))]
+                  [_ (set! remaining 0)])]
+              [_ (set! remaining 0)]))))))
+  unit)
+
 (define (opt-gep-split-function
   [type-segment-bases : i64]
+  [flatten? : bool]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (opt-gep-split-function-inner
     type-segment-bases
+    flatten?
     (owned_view.compiler-owned-reference-shared-view func)))
 
 (define (opt-gep-split-function-inner
   [type-segment-bases : i64]
+  [flatten? : bool]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
@@ -88592,6 +88648,15 @@
         (if (not any?)
           func
           (let
+            [_flatten : unit
+              (when
+                flatten?
+                (opt-gep-split-flatten-recipes!
+                  (& cands)
+                  (&mut bases)
+                  (&mut offsets)
+                  (&mut tys)
+                  (& (opt-addr-taken-vars frame (& blocks)))))]
             [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_cell : unit (set! (array-ref cell 0) frame)]
             [next-blocks : ir.CompilerIrBlockList
@@ -101237,7 +101302,10 @@
         (if run-heavy?
           (opt-pass-with-cfg-func
             (&
-              (opt-gep-split-function type-segment-bases (& (opt-pass-func s))))
+              (opt-gep-split-function
+                type-segment-bases
+                (not s.priced?)
+                (& (opt-pass-func s))))
             s)
           s))]
     ;; Second rotation round. `flag_exit` is what makes a guarded compare loop

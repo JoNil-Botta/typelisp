@@ -435,8 +435,7 @@ stderr match vendor[/\\]math[/\\]src[/\\]missing\.tl
 # (`AstExternAbi.TypeLisp`, #8485): two, six and eight scalar arguments must
 # cross the call boundary intact and in order. Each argument is weighted by its
 # position, so a swap changes the result, and eight arguments reach the stack on
-# both hosts. Struct arguments and results do not agree across packages yet
-# (#8532).
+# both hosts.
 case package-dependency-call-abi
 file typelisp.pkg
 (package
@@ -479,6 +478,90 @@ stderr empty
 test -x "{{dir}}/target/release/dep_abi_pkg{{exe}}"
 step dep-abi-run
 exec "{{dir}}/target/release/dep_abi_pkg{{exe}}"
+exit 42
+
+# Saved aggregates cross another call before being passed onward, so stale
+# argument/result registers cannot make an incorrect convention appear to work.
+case package-dependency-aggregate-abi
+opt 0 1 2
+file typelisp.pkg
+(package (name "aggregate_consumer") (version "0.1.0") (kind "bin")
+  (entry "src/main.tl") (dependencies (depabi "vendor/depabi")))
+end-file
+file vendor/depabi/typelisp.pkg
+(package (name "depabi") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/depabi/src/lib.tl
+(defstruct Word (x i64))
+(defstruct Pair (x i64) (y i64))
+(defstruct Triple (x i64) (y i64) (z i64))
+(defstruct FloatWord (x f64))
+(defstruct FloatPair (x f64) (y f64))
+(defstruct Mixed (x i64) (y f64))
+(define (make-word [x : i64]) : Word (Word x))
+(define (make-pair [x : i64] [y : i64]) : Pair (Pair x y))
+(define (make-triple [x : i64]) : Triple (Triple x (+ x 1) (+ x 2)))
+(define (word-value [p : Word]) : i64 p.x)
+(define (pair-value [p : Pair]) : i64 (+ p.x (* 2 p.y)))
+(define (pair-boundaries [p : Pair]) : bool
+  (and (= p.x -9223372036854775808) (= p.y 9223372036854775807)))
+(define (triple-value [p : Triple]) : i64 (+ p.x p.y p.z))
+(define (triple-ref [p : (& Triple)]) : i64 (+ p.x p.y p.z))
+(define (pair-after-five
+  [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [p : Pair] [tail : i64]) : i64
+  (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e) (* 6 p.x) (* 7 p.y) (* 8 tail)))
+(define (triple-after-six
+  [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : Triple
+  (Triple (+ a d) (+ b e) (+ c f)))
+(define (make-float-word [x : f64]) : FloatWord (FloatWord x))
+(define (make-float-pair [x : f64]) : FloatPair (FloatPair x (+ x 1.0)))
+(define (make-mixed [x : i64] [y : f64]) : Mixed (Mixed x y))
+(define (float-word-value [p : FloatWord]) : i64 (cast p.x : i64))
+(define (float-pair-value [p : FloatPair]) : i64
+  (+ (cast p.x : i64) (* 2 (cast p.y : i64))))
+(define (mixed-value [first : f64] [a : i64] [p : Mixed] [last : f64]) : i64
+  (+ (cast first : i64) a p.x (cast p.y : i64) (cast last : i64)))
+(define (clobber [x : f64]) : f64 x)
+(define (length [s : (& str)]) : i64 (__tl_string_length s))
+(define (make-tuple [x : i64]) : (Tuple i64 i64) (tuple x (+ x 1)))
+end-file
+file src/main.tl
+(import depabi.src.lib)
+(define (main) : i64
+  (let
+    [word : lib.Word (lib.make-word 19)]
+    [pair : lib.Pair (lib.make-pair 10 11)]
+    [bounds : lib.Pair (lib.make-pair -9223372036854775808 9223372036854775807)]
+    [triple : lib.Triple (lib.make-triple 2)]
+    [wide-result : lib.Triple (lib.triple-after-six 1 2 3 4 5 6)]
+    [float-word : lib.FloatWord (lib.make-float-word 10.0)]
+    [float-pair : lib.FloatPair (lib.make-float-pair 10.0)]
+    [mixed : lib.Mixed (lib.make-mixed 3 4.0)]
+    [tuple-result : (Tuple i64 i64) (lib.make-tuple 10)]
+    [noise : f64 (lib.clobber 123.0)]
+    (cond
+      [(not (= (lib.word-value word) 19)) 1]
+      [(not (= (lib.pair-value pair) 32)) 2]
+      [(not (lib.pair-boundaries bounds)) 3]
+      [(not (= (lib.triple-value triple) 9)) 4]
+      [(not (= (lib.triple-ref (& triple)) 9)) 5]
+      [(not (= (lib.triple-value wide-result) 21)) 6]
+      [(not (= (lib.pair-after-five 1 2 3 4 5 pair 8) 256)) 7]
+      [(not (= (lib.float-word-value float-word) 10)) 8]
+      [(not (= (lib.float-pair-value float-pair) 32)) 9]
+      [(not (= (lib.mixed-value 1.0 2 mixed 5.0) 15)) 10]
+      [(not (= (+ (tuple-ref tuple-result 0) (tuple-ref tuple-result 1)) 21)) 12]
+      [(not (= (cast noise : i64) 123)) 13]
+      [(not (= (lib.length "hello") 5)) 14]
+      [(not (= (lib.length "") 0)) 15]
+      [else 42])))
+end-file
+step aggregate-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+test -x "{{dir}}/target/release/aggregate_consumer{{exe}}"
+step aggregate-run
+exec "{{dir}}/target/release/aggregate_consumer{{exe}}"
 exit 42
 
 case package-global-call-borrow-callback

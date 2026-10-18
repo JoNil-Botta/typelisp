@@ -8287,18 +8287,26 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(No) message])])))
 
-;; Ordinary lifetime names stay on the direct intern lookup. Legacy diagnostics
-;; without a TcContext may render fresh/template identities only from the
-;; validated active owner; malformed and foreign ids take the total fallback.
+;; Ordinary lifetime names stay on the direct intern lookup. Diagnostics without
+;; a TcContext decode syntax identities through the installed source-name owner;
+;; malformed and foreign ids take the total fallback.
 (defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
   `(let
     [lifetime-name-id : i64 ,name]
     (if (ci.intern-renderable-id? lifetime-name-id)
       (ci.intern-str lifetime-name-id)
       (let
+        [intern-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state intern-state))]
         [source-name-id : i64
-          (ci.intern-active-syntax-source-name-id-or lifetime-name-id -1)]
-        (if (>= source-name-id 0)
+          (cis.intern-structural-session-syntax-source-name-id-or
+            session
+            lifetime-name-id
+            -1)]
+        (if (ci.intern-renderable-id? source-name-id)
           (ci.intern-str source-name-id)
           (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
 

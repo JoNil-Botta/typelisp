@@ -28337,9 +28337,7 @@
           function-state
           then-branch
           else-branch))]
-    ;; Allocation scopes retain their body's physical type after source-region
-    ;; checking; lowered bindings intentionally no longer carry those regions.
-    [(or (Begin exprs) (InArena _ exprs))
+    [(Begin exprs)
       (lower-expr-list-result-type-fast
         ctx
         env
@@ -28801,14 +28799,6 @@
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
-    [(InArena arena-box body)
-      (lower-in-arena
-        ctx
-        state
-        env
-        type-env
-        (lower-context-expr-get ctx arena-box)
-        body)]
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]

@@ -36,6 +36,9 @@ generation data through nested holders. Keep an unrelated-owner positive
 control and a helper that returns its owner/token together. Owner-only helper
 calls during a live phase must fail before they can hide a base-branded
 allocation from rewind. Preserve the bare legacy phase rows beside these tests.
+The parameter fixture also checks that public type reflection retains both
+generation arguments and that unsafe allocation targets retain their original
+checked expression fact.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

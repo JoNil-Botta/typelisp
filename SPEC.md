@@ -6546,6 +6546,8 @@ parameter. `in-arena` on the token tags allocations `(in g T)`. While the phase
 is live, allocation through any owner place of brand `r` and opening another
 phase for `r` are rejected. Opening a phase also conflicts with a live borrow
 of its owner. Borrowed and global owners cannot establish this local proof.
+An abstract owner parameter cannot open a phase in this slice; allocation helpers
+receive an already opened `(arena.ArenaPhase r g)` instead.
 
 A direct canonical `arena.rewind-safe!` consumes a local token or local-rooted
 field whose generation matches the phase opened in the current function. It

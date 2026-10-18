@@ -1,6 +1,16 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import stdlib.test)
+(import stdlib.comptime)
+
+(defmacro (phase-param-keys-code [f : type]) : i64
+  (let
+    [first : String (type-key (function-param-type f 0))]
+    [second : String (type-key (function-param-type f 1))]
+    (comptime.expr-int
+      (if (string.eq first second)
+        1
+        42))))
 
 (defstruct ArenaView
   (handle i64))
@@ -44,6 +54,12 @@
     [restored-owner routed.owner]
     [restored-phase routed.phase]
     [length : i64 (release-other other (& restored-phase) text)]
+    (test.assert-true
+      (=
+        (phase-param-keys-code
+          (type (-> (arena.ArenaPhase r g) (arena.ArenaPhase r h) unit)))
+        42)
+      "reflection retains distinct generation arguments")
     (test.assert-true
       (= context 42)
       "unsafe target retains its checked type fact")

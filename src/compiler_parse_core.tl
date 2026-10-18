@@ -394,18 +394,18 @@
   1)
 (define compiler-parse-semantic-origin-lookup-order : i64
   0)
-(define compiler-parse-semantic-origin-lookup-indexed-len : i64
-  0)
 (define compiler-parse-semantic-origin-lookup-reader-reset-generation : i64
   0)
 
 ;; Cache identity only; these words do not own or retain parser storage.
-(define compiler-parse-semantic-origin-lookup-storage : i64
-  0)
-(define compiler-parse-semantic-origin-lookup-run-count : i64
-  0)
-(define compiler-parse-semantic-origin-lookup-run-serial : i64
-  0)
+(defstruct CompilerParseSemanticOriginLookupCursor
+  (storage i64)
+  (indexed-len i64)
+  (run-count i64)
+  (run-serial i64))
+
+(define compiler-parse-semantic-origin-lookup-cursor : CompilerParseSemanticOriginLookupCursor
+  (CompilerParseSemanticOriginLookupCursor 0 0 0 0))
 (define compiler-parse-origin-alias-runs : (__tl_dyn-array
     CompilerParseOriginAliasRun)
   (__tl_make-array CompilerParseOriginAliasRun 0))
@@ -812,9 +812,9 @@
   (set! compiler-parse-origin-alias-run-len 0)
   (set! compiler-parse-origin-alias-head-len 0)
   (set! compiler-parse-origin-segment-len 0)
-  (set! compiler-parse-semantic-origin-lookup-indexed-len 0)
-  (set! compiler-parse-semantic-origin-lookup-run-count 0)
-  (set! compiler-parse-semantic-origin-lookup-run-serial 0))
+  (set! compiler-parse-semantic-origin-lookup-cursor.indexed-len 0)
+  (set! compiler-parse-semantic-origin-lookup-cursor.run-count 0)
+  (set! compiler-parse-semantic-origin-lookup-cursor.run-serial 0))
 
 (define (compiler-parse-semantic-origin-lookup-prepare! [storage : i64]) : unit
   (let
@@ -829,30 +829,30 @@
         (and
           (!= storage 0)
           (or
-            (!= storage compiler-parse-semantic-origin-lookup-storage)
-            (< runs compiler-parse-semantic-origin-lookup-run-count)
+            (!= storage compiler-parse-semantic-origin-lookup-cursor.storage)
+            (< runs compiler-parse-semantic-origin-lookup-cursor.run-count)
             (and
-              (> compiler-parse-semantic-origin-lookup-run-count 0)
+              (> compiler-parse-semantic-origin-lookup-cursor.run-count 0)
               (!=
-                compiler-parse-semantic-origin-lookup-run-serial
+                compiler-parse-semantic-origin-lookup-cursor.run-serial
                 (compiler-parse-origin-run-word
                   storage
-                  (- compiler-parse-semantic-origin-lookup-run-count 1)
+                  (- compiler-parse-semantic-origin-lookup-cursor.run-count 1)
                   5)))))
         (!=
           reader-generation
           compiler-parse-semantic-origin-lookup-reader-reset-generation)
-        (< pool-len compiler-parse-semantic-origin-lookup-indexed-len))
+        (< pool-len compiler-parse-semantic-origin-lookup-cursor.indexed-len))
       (compiler-parse-semantic-origin-lookup-cache-reset!)
       (unless
         (= storage 0)
-        (set! compiler-parse-semantic-origin-lookup-storage storage))
+        (set! compiler-parse-semantic-origin-lookup-cursor.storage storage))
       (set!
         compiler-parse-semantic-origin-lookup-reader-reset-generation
         reader-generation))
     (if (or
-      (< compiler-parse-semantic-origin-lookup-indexed-len pool-len)
-      (< compiler-parse-semantic-origin-lookup-run-count runs))
+      (< compiler-parse-semantic-origin-lookup-cursor.indexed-len pool-len)
+      (< compiler-parse-semantic-origin-lookup-cursor.run-count runs))
       (compiler-parse-semantic-origin-lookup-build! storage)
       unit)))
 
@@ -1353,9 +1353,9 @@
 
 (define (compiler-parse-semantic-origin-lookup-build! [storage : i64]) : unit
   (let
-    [cursor : i64 compiler-parse-semantic-origin-lookup-indexed-len]
+    [cursor : i64 compiler-parse-semantic-origin-lookup-cursor.indexed-len]
     [limit : i64 (reader.sp-node-pool-len)]
-    [run : i64 compiler-parse-semantic-origin-lookup-run-count]
+    [run : i64 compiler-parse-semantic-origin-lookup-cursor.run-count]
     [runs : i64
       (if (= storage 0)
         0
@@ -1406,7 +1406,7 @@
             [else unit])]
         [_ unit])
       (set! cursor (+ cursor 1)))
-    (set! compiler-parse-semantic-origin-lookup-indexed-len limit)
+    (set! compiler-parse-semantic-origin-lookup-cursor.indexed-len limit)
     (unless
       (= storage 0)
       (while (< run runs)
@@ -1427,9 +1427,9 @@
             0
             0))
         (+= run 1))
-      (set! compiler-parse-semantic-origin-lookup-run-count run)
+      (set! compiler-parse-semantic-origin-lookup-cursor.run-count run)
       (set!
-        compiler-parse-semantic-origin-lookup-run-serial
+        compiler-parse-semantic-origin-lookup-cursor.run-serial
         (if (= run 0)
           0
           (compiler-parse-origin-run-word storage (- run 1) 5))))))

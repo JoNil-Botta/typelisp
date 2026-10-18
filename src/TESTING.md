@@ -94,6 +94,20 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+## Loader diagnostic codes
+
+The `loader-error-codes` public CLI case checks source-facing loader failures
+through check/compile on both targets, including cross-file parse forwarding,
+explicit module identity overrides, and a local collision's secondary label.
+`compiler_load_tests.tl` checks explicit loader-API identity mismatches and
+code/category parity between ordinary and package walkers, legal import cycles,
+pending generators and missing text/binary includes. Registry and explain
+tests require every published loader code to remain documented.
+`loader-package-include-resolution` checks E0303 and the include's source span
+for an unknown package alias on both targets. `loader-unpublished-identity-code`
+keeps E0306 out of the public registry and explanations; explicit API identity
+constraints remain tested as E0303 resolution errors.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word

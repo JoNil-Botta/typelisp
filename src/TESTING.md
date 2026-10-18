@@ -339,6 +339,24 @@ checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
 
+The public-check `check-invalidated-parameter-*` cases retain read locations,
+invalidation secondary labels, ownership help and decoded E0208 diagnostics
+for multi-expression functions, lambdas and nested lets. Both direct safe
+destroy and imported invalidation helpers run through `check` and `compile`
+on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
+`tc-copy-projection-source-views-reuse-checked-receiver-facts` also keeps the
+checked receiver lookup through source and macro views, with non-Copy and
+unknown fields retaining their consuming dereference.
+`check-invalidated-parameter-field-read-span` locates dotted field reads
+(`pair.count`, `pair.text`) at the read in multi-expression, `begin` and
+single-expression bodies; `compiler-check-invalidated-field-read-spans-ok?`
+pins the same primaries and origin labels through the virtual-source checker,
+and `tc-move-located-view-names-the-enclosing-read` the view itself.
+`check-foreign-global-write-locations` keeps #7976 writes at the `set!` target,
+and an owner macro's write at its invocation in the importer's file;
+`check-with-owner-invalidation-location` keeps E0212 at the arena or phase
+argument.
+
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,
 branches, nested shadowing, loops and an unused reference payload. Its native

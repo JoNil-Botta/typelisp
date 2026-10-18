@@ -2956,7 +2956,7 @@
     (compiler-typecheck-error-ok?
       "(define (main) : i64
   (in-arena true 1))"
-      "typecheck: in-arena arena must be Arena")
+      "typecheck: in-arena arena must be Arena or a branded ArenaPhase; found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-arena-source
         "(define (main) : String
@@ -6854,7 +6854,7 @@
   (let
     [owner : arena.Arena (arena.make)]
     (in-arena owner 42)))"
-      "typecheck: in-arena arena must be Arena")
+      "typecheck: in-arena arena must be Arena or a branded ArenaPhase; found fake.arena/Arena")
     (compiler-typecheck-ok?
       (compiler-typecheck-with-arena-source
         "(define (main) : unit

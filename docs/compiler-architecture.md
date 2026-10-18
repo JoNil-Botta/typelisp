@@ -1408,13 +1408,22 @@ Global-cell and global-storage write summaries treat arbitrary extern calls as
 possibly writing every global: an extern can invoke a callback or an exported
 function without receiving a global address. Direct queries and call-graph
 closure use the same rule, including tail calls and recursive components.
-Only compiler-owned runtime helpers with known effects or a proven non-reentrant
-byte-copy implementation exclude this re-entry. Their pointer writes still obey
-the analyses' address and escape preconditions. Lowered runtime copies carry the
-source builtin identity that supplies this proof.
-Extern aliases use their declared link identity for this proof. Exported entries
-retain their function bodies' write rows; conflicting extern effects join.
-These private-global masks do not describe arbitrary memory writes.
+Only compiler-owned runtime helpers (the backend runtime, stdlib runtime and
+fault-helper builtin sets, and the byte copies) exclude this re-entry; atomic
+helpers do not, because they order other threads' writes. Their pointer writes
+still obey the analyses' address and escape preconditions: an extern's storage
+row keeps every escaped global. Lowered runtime copies carry the source builtin
+identity that supplies this proof.
+
+A call names an extern by its language identity; the optimizer maps it to the
+declared link identity (`opt-effect-callee`) before classifying it. The re-entry
+proof reads the link. A runtime effect class (memory read, memory write,
+non-returning) applies only when the call's identity is the helper itself, so a
+declaration spelled like a helper but linked elsewhere keeps the unknown effect
+in load reuse, transitive call summaries, trap detection and builtin seeds.
+Declarations that disagree on the link classify as unknown. Exported entries
+retain their function bodies' summaries. These private-global masks do not
+describe arbitrary memory writes.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a

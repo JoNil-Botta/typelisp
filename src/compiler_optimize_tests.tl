@@ -64167,6 +64167,383 @@ return 0" true)
                       (and (not (= index 0)) (not provided)))
                     "the storage table uses the same link identity and preserves provided function bodies"))))])))))
 
+;; Externs spelled like trusted runtime helpers. `link` is where each one goes;
+;; a matching program links every spelling to itself instead.
+(define (opt-alias-test-externs [link : i64] [matching? : bool]) : ir.CompilerIrExternSeq
+  (let
+    [names
+      (array
+        cbi.compiler-builtin-id-tl-region-mark
+        cbi.compiler-builtin-id-tl-oob-abort
+        cbi.compiler-builtin-id-tl-alloc)]
+    [builder (ir.compiler-ir-extern-builder-with-capacity 3)]
+    (for [at (iterator.range 0 (array-length names))]
+      (let
+        [name (array-ref names at)]
+        (ir.compiler-ir-extern-builder-push!
+          (&mut builder)
+          (opt-mod-ref-test-extern
+            name
+            (if matching?
+              name
+              link)
+            false))))
+    (ir.compiler-ir-extern-builder-snapshot-seq (& builder))))
+
+;; `(set! mr_a 0)`, a read, a call, a second read: the second may reuse the
+;; stored value only if the call writes no cell.
+(define (opt-alias-test-reader-blocks
+  [symbols : OptMrTestSymbols]
+  [callee : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (Store symbols.a (I64 0) (I64))
+        (Mov 1 (Global symbols.a) (I64))
+        (Call 2 callee Nil (I64))
+        (BinOp 3 (Sub) (Global symbols.a) (Var 1) (I64))
+        (irt.instr "return %3")))))
+
+;; The same shape through a pointer: the second load may reuse the first only if
+;; the call writes no memory.
+(define (opt-alias-test-pointer-blocks [callee : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (irt.instr "%2 = load %1 : i64")
+        (Call 3 callee Nil (I64))
+        (irt.instr "%4 = load %1 : i64")
+        (irt.instr "%5 = sub %4, %2 : i64")
+        (irt.instr "return %5")))))
+
+;; The tail-call wrapper the transitive reader goes through.
+(define (opt-alias-test-wrapper [name : i64]) : ir.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (opt-test-instrs
+      (TailCall cbi.compiler-builtin-id-tl-region-mark Nil (I64)))))
+
+(define (opt-alias-test-summaries
+  [symbols : OptMrTestSymbols]
+  [wrapper : i64]
+  [externs : ir.CompilerIrExternSeq]) : opt.OptProgramSummaries
+  (opt.opt-build-program-summaries
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (& (opt-mr-test-globals symbols))
+    (& externs)
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-alias-test-wrapper wrapper))
+        (& (opt-mr-test-functions symbols))))
+    2))
+
+;; `blocks` after load GVN under the program's summaries.
+(define (opt-alias-test-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (opt.opt-cfg-context-build (clone blocks))
+    params
+    (clone summaries.call-memory)
+    (clone summaries.global-cell)
+    blocks))
+
+;; Cell operands left in the reader after load GVN.
+(define (opt-alias-test-reads-after-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [out (opt-alias-test-gvn summaries (ir.compiler-ir-param-seq-empty) blocks)]
+    (opt-lp-count-label
+      (ir.compiler-ir-block-list-view out)
+      (ir.compiler-ir-label "entry")
+      false)))
+
+;; Pointer loads left in the reader after load GVN.
+(define (opt-alias-test-loads-after-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [out (opt-alias-test-gvn summaries (opt-gvn-pointer-params) blocks)]
+    (opt-count-load-blocks (ir.compiler-ir-block-list-view out))))
+
+;; A declaration spelled like a runtime helper but linked to code that may
+;; re-enter TypeLisp is classified by its link everywhere a direct callee's
+;; effect is read: load reuse in straight-line code and through a tail-call
+;; wrapper, loop promotion, transitive summaries, trap detection and builtin
+;; seeds. The matching program shows each check still proves the real helper.
+(test
+  extern-runtime-spelling-uses-link-effects
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [symbols (opt-mr-test-symbols)]
+    [wrapper (opt-test-symbol "alias_wrapper")]
+    [opaque (opt-test-symbol "alias_reentering_link")]
+    [mark cbi.compiler-builtin-id-tl-region-mark]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [matching? (= variant 1)]
+        [summaries
+          (opt-alias-test-summaries
+            symbols
+            wrapper
+            (opt-alias-test-externs opaque matching?))]
+        [cells summaries.global-cell]
+        [none (opt.opt-global-mod-ref-none)]
+        [empty (opt_i64_i64_map.with-capacity 1)]
+        [label
+          (if matching?
+            "a declaration linked to its own runtime spelling keeps the helper's proof"
+            "a runtime spelling linked elsewhere has the unknown external effect")]
+        (test.assert-true
+          (=
+            (ir.compiler-ir-effect-eq?
+              (opt.opt-direct-call-effect mark)
+              (ir.CompilerIrEffect.MemoryRead))
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-direct-call-noreturn? cbi.compiler-builtin-id-tl-oob-abort)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-licm-store-summary-for-direct-call (& empty) mark).call-or-unknown?
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-load-call-table-row (& empty) (& none) mark))
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-guard-dedup-call-clean? (& empty) (& none) mark)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt_i64_i64_map.contains?
+              (& summaries.call-memory)
+              cbi.compiler-builtin-id-tl-alloc)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-call-memory-summary-unknown?
+              (opt_i64_i64_map.get-value-or (& summaries.call-memory) wrapper 0))
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-global-mod-ref-call-mask (& cells.mod-ref) mark))
+            (not matching?))
+          (clone label))
+        ;; straight-line reuse, directly and through the wrapper
+        (test.assert-i64-eq
+          (opt-alias-test-reads-after-gvn
+            (& summaries)
+            (opt-alias-test-reader-blocks symbols mark))
+          (if matching?
+            0
+            1)
+          (clone label))
+        (test.assert-i64-eq
+          (opt-alias-test-reads-after-gvn
+            (& summaries)
+            (opt-alias-test-reader-blocks symbols wrapper))
+          (if matching?
+            0
+            1)
+          (clone label))
+        (test.assert-i64-eq
+          (opt-alias-test-loads-after-gvn
+            (& summaries)
+            (opt-alias-test-pointer-blocks mark))
+          (if matching?
+            1
+            2)
+          (clone label))
+        ;; loop promotion
+        (test.assert-i64-eq
+          (opt-lp-loop-body-cell-operands
+            (&
+              (opt-mr-promoted (& cells) (opt-mr-call-body-blocks symbols mark))))
+          (if matching?
+            0
+            2)
+          (clone label))))))
+
+;; One program that may pass `esc_obj`'s storage to an extern and one that
+;; does not. Both store a cell so the tables are built.
+(define (opt-escape-test-program [escapes? : bool]) : ir.CompilerIrProgram
+  (irt.program
+    (str_cat.str-cat
+      "global @esc_cell : i64 = 0
+       global @esc_obj : (__tl_dyn-array i64) = unit
+       function @esc_writer() -> i64 vars 2 {
+       entry:
+         store @esc_cell, 1 : i64
+"
+      (if escapes?
+        "         %1 = call esc_sink(@esc_obj) : i64
+"
+        "         %1 = call esc_sink(0) : i64
+")
+      "         return %1
+       }")))
+
+;; Escaped storage stays writable through a runtime-linked extern's pointer
+;; arguments: its storage row must carry the escaped bit even though its link
+;; cannot re-enter TypeLisp.
+(test
+  global-obj-extern-row-keeps-escaped-storage
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [copy (opt-test-symbol "esc_copy")]
+    [object (opt-test-symbol "esc_obj")]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [escapes? (= variant 0)]
+        [builder (ir.compiler-ir-extern-builder-with-capacity 1)]
+        [_copy
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              copy
+              cbi.compiler-builtin-id-tl-memcpy
+              false))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        (match (opt-escape-test-program escapes?)
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cells summaries.global-cell.mod-ref]
+              [storage summaries.global-cell.obj-mod-ref]
+              (test.assert-true
+                (and cells.built? storage.built?)
+                "both tables are available")
+              (test.assert-i64-eq
+                (opt.opt-global-mod-ref-call-mask (& cells) copy)
+                0
+                "a runtime copy cannot re-enter a cell writer")
+              (test.assert-true
+                (not (opt_i64_i64_map.contains? (& cells.writes) copy))
+                "an extern whose row would be empty has none")
+              (test.assert-true
+                (=
+                  (opt.opt-global-mod-ref-mask-may-write?
+                    storage.index
+                    (opt.opt-global-mod-ref-call-mask (& storage) copy)
+                    object)
+                  escapes?)
+                "only escaped storage is writable through the runtime copy"))])))))
+
+;; Declarations of one name that disagree on the link classify as no runtime
+;; helper, whichever comes first; agreeing duplicates keep the helper's proof.
+(test
+  extern-conflicting-links-either-order
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [alias (opt-test-symbol "conflict_alias")]
+    [opaque (opt-test-symbol "conflict_opaque")]
+    [mark cbi.compiler-builtin-id-tl-region-mark]
+    [cell (opt-test-symbol "conflict_cell")]
+    (for [order (iterator.range 0 3)]
+      (let
+        [builder (ir.compiler-ir-extern-builder-with-capacity 2)]
+        [_first
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              alias
+              (if (= order 1)
+                opaque
+                mark)
+              false))]
+        [_second
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              alias
+              (if (= order 0)
+                opaque
+                mark)
+              false))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        (match (irt.program
+          "global @conflict_cell : i64 = 0
+           function @conflict_writer() -> i64 vars 1 {
+           entry:
+             store @conflict_cell, 1 : i64
+             %0 = call conflict_alias() : i64
+             return %0
+           }")
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cells summaries.global-cell.mod-ref]
+              (test.assert-true cells.built? "cell table is available")
+              (test.assert-true
+                (=
+                  (opt.opt-global-mod-ref-mask-may-write?
+                    cells.index
+                    (opt.opt-global-mod-ref-call-mask (& cells) alias)
+                    cell)
+                  (< order 2))
+                "conflicting links join to the unknown effect in either order"))])))))
+
+;; Compiler-owned runtime helpers never call user code. The atomic helpers keep
+;; their effect, and a generated lookalike is no helper at all.
+(test
+  runtime-helpers-exclude-reentry
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [helpers
+      (array
+        cbi.compiler-builtin-id-tl-str-view
+        cbi.compiler-builtin-id-tl-substring
+        cbi.compiler-builtin-id-tl-arena-current
+        cbi.compiler-builtin-id-tl-arena-set
+        cbi.compiler-builtin-id-tl-arena-make
+        cbi.compiler-builtin-id-tl-arena-destroy
+        cbi.compiler-builtin-id-tl-alloc-global
+        cbi.compiler-builtin-id-tl-mem-copy-fwd)]
+    (for [at (iterator.range 0 (array-length helpers))]
+      (test.assert-i64-eq
+        (opt.opt-global-mod-ref-external-mask (array-ref helpers at))
+        0
+        "a runtime helper cannot re-enter a global writer"))
+    (test.assert-true
+      (and
+        (opt.opt-global-mod-ref-any?
+          (opt.opt-global-mod-ref-external-mask
+            cbi.compiler-builtin-id-tl-atomic-i64-load-ptr))
+        (opt.opt-global-mod-ref-any?
+          (opt.opt-global-mod-ref-external-mask (opt-test-symbol "tl_str_view"))))
+      "atomic helpers and generated lookalikes keep the external effect")))
+
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64
   (let
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]

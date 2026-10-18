@@ -2060,6 +2060,10 @@ The cutover retired the authoritative `tc-move-check-*` and
 cutover, above). Definitions that keep the `tc-borrow-*`, `tc-move-*` and
 `tc-moved-*` prefixes are place typing, diagnostic text shared with the
 graph's messages, and state the typechecker still threads; none decides a move
-or borrow verdict. Source/entry-point, seed-regression, unsafe-wrapper,
+or borrow verdict. Live compatibility consumers include lambda capture typing
+and cleanup-owner selection. The old move-pass note, borrowed-root, closure-fact
+and moved-set mutation APIs have no consumers and are removed; canonical body
+facts carry those checking and lowering contracts. Source/entry-point,
+seed-regression, unsafe-wrapper,
 mutation, instrumentation, performance and target-route evidence accompanies
 the pull request that lands this work.

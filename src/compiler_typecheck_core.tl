@@ -11649,9 +11649,6 @@
 (define (tc-selected-form-code-box) : i64
   109)
 
-(define (tc-selected-form-code-box-get) : i64
-  110)
-
 (define (tc-selected-form-code-box-set) : i64
   111)
 
@@ -20567,82 +20564,8 @@
         (set! (deref data).early-exit-current true)
         unit))))
 
-;; Note a name for the current move check (see TcBodyStateData).
-(define (tc-body-move-note-push! [state : TcBodyState] [entry : i64]) : unit
-  (let
-    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
-    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
-    [arena-id : i64
-      (unsafe
-        (deref view).param-write-arena)]
-    (when
-      (!= arena-id 0)
-      (in-arena
-        (unsafe
-          (arena.Arena arena-id))
-        (let
-          [count : i64
-            (unsafe
-              (deref view).param-writes-count)]
-          [notes : tc_i64_i64_map.Map
-            (unsafe
-              (deref view).param-facts)]
-          (tc_i64_i64_map.insert-ref!
-            (&mut notes)
-            (tc-body-param-note-key count)
-            entry)
-          (unsafe
-            (set! (deref ptr).param-facts notes)
-            (set! (deref ptr).param-writes-count (+ count 1))))))))
-
-;; The `param-facts` key of the move check's noted name at `index`: bits 61
-;; and 60 are 11 (see tc-body-mut-borrow-key).
-(define (tc-body-param-note-key [index : i64]) : i64
-  (bit-or index 3458764513820540928))
-
-;; A by-value parameter's storage written in place, by name; see
-;; tc-param-storage-note-write.
-(define (tc-body-param-write-note! [state : TcBodyState] [name-id : i64]) : unit
-  (tc-body-move-note-push! state name-id))
-
-;; The `param-facts` key of a body's borrowed root name, or with name -1 of the
-;; body itself, present when it borrows any root. Its bits 61 and 60 are 01,
-;; where a body's node id has 00, tc-body-memory-class-key 10 and
-;; tc-body-param-note-key 11 (node and name ids and note indexes stay below
-;; 2^60), so entries of different kinds never collide. The map's
-;; bucket index sees only a key's low bits, so the body id is spread over all
-;; of them; were two root keys to collide, a call would only copy more often.
-(define (tc-body-mut-borrow-key [body-id : i64] [name-id : i64]) : i64
-  (bit-or
-    (bit-and (+ (* body-id -7046029254386353131) name-id) 1152921504606846975)
-    1152921504606846976))
-
 (define (tc-body-memory-class-key [name-id : i64]) : i64
   (bit-or name-id 2305843009213693952))
-
-;; Which roots of a body lowering treats as borrowed `&mut` there: -1 for
-;; every root (no recorded body, or before the facts start), -2 for none (the
-;; body borrows no root), or the body id, for the roots recorded with it.
-(define (tc-body-mut-borrow-scope [state : TcBodyState] [body-id : i64]) : i64
-  (let
-    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
-    (cond
-      [(or
-          (=
-            (unsafe
-              (deref view).param-write-arena)
-            0)
-          (< body-id 0))
-        -1]
-      [(let
-          [roots : tc_i64_i64_map.Map
-            (unsafe
-              (deref view).param-facts)]
-          (tc_i64_i64_map.contains?
-            (& roots)
-            (tc-body-mut-borrow-key body-id -1)))
-        body-id]
-      [else -2])))
 
 (defenum TcBodyParamWriteFact
   (Known i64 i64)
@@ -20952,37 +20875,6 @@
             (tc-semantic-recorded-type ctx inner)]
           [_ (Miss)])
         (Miss)))))
-
-;; Concrete closure facts use the same per-body slot index as inferred types.
-;; They are written during the move pass, while type facts are being consumed,
-;; and remain available to the immediately following borrow pass. Lambda body
-;; ids synthesized after source typecheck simply miss and retain the
-;; conservative recomputation path.
-(define (tc-body-closure-fact-code [state : TcBodyState] [body-id : i64]) : i64
-  (let
-    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
-    [slot : i64 (tc-body-type-fact-slot state body-id)]
-    (unsafe
-      (if (and
-        (deref data).type-facts-consuming
-        (>= slot 0)
-        (< slot (deref data).type-fact-count))
-        (array-ref (deref data).type-fact-closure-codes slot)
-        0))))
-
-(define (tc-body-closure-fact-record!
-  [state : TcBodyState]
-  [body-id : i64]
-  [code : i64]) : unit
-  (let
-    [data : TcBodyStateData (tc-body-state-data-value state)]
-    [slot : i64 (tc-body-type-fact-slot state body-id)]
-    (if (and
-      data.type-facts-consuming
-      (>= slot 0)
-      (< slot data.type-fact-count))
-      (set! (array-ref data.type-fact-closure-codes slot) code)
-      unit)))
 
 (defenum TcBorrowPlace
   ;; The borrow's lifetime, the referent type, whether the path to the
@@ -52402,89 +52294,6 @@
                 expr-id)))]
         [_ (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)]))))
 
-(define (tc-body-type-fact-lookup-profiled
-  [_site : String]
-  [ctx : TcContext]
-  [expr-id : i64]) : TcBodyTypeFact
-  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
-    [(Hit ty)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-context-job-state ctx) _site))
-        (Hit ty))]
-    [(Miss)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-miss (tc-context-job-state ctx) _site))
-        (Miss))]))
-
-(define (tc-body-type-fact-expr-id
-  [site : String]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr-id : i64]) : ResultTcType
-  (match (tc-body-type-fact-lookup-profiled
-    (tc-global-shared-view site)
-    ctx
-    expr-id)
-    [(Hit ty) (Ok ty)]
-    [(Miss)
-      (compiler-tc-reinfer-profiled ctx site (tc-expr-id ctx env expr-id))]))
-
-(define (tc-body-type-fact-list-types-into-at
-  [state : TcBodyState]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index exprs.len)
-    Ok
-    (match (tc-body-type-fact-lookup
-      state
-      (ast.ast-expr-list-get exprs index 0))
-      [(Hit ty)
-        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))
-        (tc-body-type-fact-list-types-into-at state exprs (+ index 1) out)]
-      [(Miss) (Err "")])))
-
-(define (tc-body-type-fact-list-types
-  [state : TcBodyState]
-  [exprs : (& exprs ast.AstExprList)]) : ResultTcTypeList
-  (if (unsafe
-    (deref (tc-body-state-view state)).type-facts-consuming)
-    (let
-      [out : ast.AstTypeList (ast.ast-type-list-new)]
-      [_
-        (try
-          (tc-body-type-fact-list-types-into-at state (& exprs) 0 (&mut out)))]
-      (Ok out))
-    (Err "")))
-
-(define (tc-body-type-fact-expr-list-types
-  [_site : String]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcTypeList
-  (match (tc-body-type-fact-list-types (tc-context-body-state ctx) exprs)
-    [(Ok types)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-context-job-state ctx) _site))
-        (Ok types))]
-    [(Err _)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-miss
-            (tc-context-job-state ctx)
-            (tc-global-shared-view _site)))
-        (compiler-tc-reinfer-profiled
-          ctx
-          _site
-          (tc-expr-list-types ctx env exprs)))]))
-
 ;; Contextual typing is deliberately separate from non-contextual `tc-expr-id`:
 ;; the same node can produce a different result type when an expected type
 ;; guides literal, array, tuple, borrow, or call-argument typing.
@@ -55031,15 +54840,6 @@
     [(No) false]
     [_ true]))
 
-(define (tc-call-mutable-ref-formal? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-global-shared-view ty))
-    [(MutRef _ _) true]
-    [(or (Var _) (VarArgs _ _))
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
-        [(MutRef _ _) true]
-        [_ false])]
-    [_ false]))
-
 (define (tc-call-actual-immutable-reference?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
@@ -55060,24 +54860,6 @@
     (match (tc-type-strip-region got)
       [(String) true]
       [_ false])))
-
-(define (tc-call-type-list-has-immutable-ref-formal?
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]) : bool
-  (tc-call-type-list-has-immutable-ref-formal-at? ctx (& types) 0))
-
-(define (tc-call-type-list-has-immutable-ref-formal-at?
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (if (tc-call-immutable-ref-formal?
-      ctx
-      (ast.ty-node-get
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      true
-      (tc-call-type-list-has-immutable-ref-formal-at? ctx types (+ index 1)))))
 
 (define (tc-call-auto-borrow-type
   [ctx : TcContext]
@@ -57941,26 +57723,6 @@
         Ok)]
     [(No) Ok]))
 
-(define (tc-thread-channel-send-function-result?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
-  (match (tc-expr ctx env func)
-    [(Ok fn-ty)
-      (match (tc-type-strip-region fn-ty)
-        [(Func _ ret-box)
-          (tc-thread-channel-send-result-type? ctx (ast.ty-node-get ret-box))]
-        [_ false])]
-    [(Err _) false]))
-
-(define (tc-thread-channel-send-call?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
-  (match (tc-thread-channel-send-call-name ctx (tc-global-shared-view func))
-    [(Some _) (tc-thread-channel-send-function-result? ctx env func)]
-    [(No) false]))
-
 (define (tc-thread-safe-spawn-call-signature?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -60538,60 +60300,6 @@
       (tc-source-value-bound-id? ctx env name-id))
       (None)
       kind)))
-
-(define (tc-slice-view-call-kind
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : TcSliceViewCallKind
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& func))
-    [(Var raw-name)
-      (let
-        [raw-text : String
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            raw-name)]
-        [hygiene-global : bool
-          (tc-hygiene-global-name-id?
-            (tc-context-structural-session ctx)
-            raw-name)]
-        [name : String
-          (if (and
-            hygiene-global
-            (not
-              (macro-hygiene-global-id?
-                (tc-context-structural-session ctx)
-                raw-name)))
-            (tc-hygiene-global-call-name raw-text)
-            raw-text)]
-        [name-id : i64
-          (tc-builtin-call-name-id
-            (tc-context-structural-session ctx)
-            raw-name
-            hygiene-global)]
-        (tc-slice-view-call-kind-name ctx env name-id name))]
-    [_ (None)]))
-
-(define (tc-slice-view-call-spelling?
-  [expr-bases : i64]
-  [session : cis.InternStructuralSessionHandle]
-  [func : ast.AstExpr]) : bool
-  ;; Borrow gating runs before a complete type environment is available.  It
-  ;; therefore recognizes the raw spelling conservatively; the real
-  ;; classifier above still performs shadowing checks before interception.
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
-    [(Var raw-name)
-      (let
-        [raw-text : String
-          (tc-hygiene-name-text-id-for-session session raw-name)]
-        [name : String
-          (if (tc-hygiene-global-name-id? session raw-name)
-            (tc-hygiene-global-call-name raw-text)
-            raw-text)]
-        (not
-          (= (tc-slice-view-spelling-kind (& name)) TcSliceViewCallKind.None)))]
-    [_ false]))
 
 (define (tc-slice-call-mutable? [kind : TcSliceViewCallKind]) : bool
   (or
@@ -78005,19 +77713,6 @@
         [(Err _) (Err message)])]
     [(Err _) (Err message)]))
 
-;; The `deref` operand at the root of a field and tuple-element projection
-;; chain such as `(deref b).leaf.w`, or -1 when the chain has no `deref` root.
-(define (tc-projection-deref-root-operand
-  [expr-bases : i64]
-  [receiver : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& receiver))
-    [(or (ast.AstExpr.StructGet inner-box _) (ast.AstExpr.TupleRef inner-box _))
-      (tc-projection-deref-root-operand
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BoxTake inner-box) inner-box]
-    [_ -1]))
-
 (define (tc-raw-deref-place?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -87180,11 +86875,6 @@
   (One TcMovedPathFact)
   (Dense (Box TcMovedPathFactStoreData) i64 i64))
 
-(defstruct TcParamStorageOriginNode
-  (name-id i64)
-  (parameter-id i64)
-  (parent i64))
-
 (defstruct TcMovedSet
   (roots tc_i64_i64_map.Map)
   (partials tc_i64_i64_map.Map)
@@ -87250,14 +86940,6 @@
   (No)
   (Some TcMovePath))
 
-(defenum TcMaybeMoveName
-  (No)
-  (Some i64 String))
-
-(defenum TcMaybeSliceSplitProjection
-  (No)
-  (Some i64 i64))
-
 (defenum TcMoveConflict
   (No)
   (Some String i64))
@@ -87289,17 +86971,6 @@
 (define tc-moved-shared-empty-id-map : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 1))
 
-(define (tc-moved-id-map-shared-empty? [map : (& map tc_i64_i64_map.Map)]) : bool
-  (= (tc_i64_i64_map.capacity map) 1))
-
-;; Give an inserting writer private storage when it holds the shared empty map.
-;; The replacement starts at the private-map birth capacity, so only the shared
-;; alias pays an allocation here.
-(define (tc-moved-id-map-own [map : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  (if (tc-moved-id-map-shared-empty? (& map))
-    (tc_i64_i64_map.with-capacity 8)
-    map))
-
 (define (tc-moved-empty) : TcMovedSet
   (TcMovedSet
     (tc-global-shared-view tc-moved-shared-empty-id-map)
@@ -87322,13 +86993,6 @@
   [index : i64]) : TcMovedPathFactNode
   (unsafe
     (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
-
-(define (tc-moved-path-facts-have-globals? [facts : TcMovedPathFacts]) : bool
-  (match facts
-    [(Nil) false]
-    [(One fact) (< fact.path.root 0)]
-    [(Dense store tail _)
-      (array-ref (__tl-box-place store).nodes tail).has-globals]))
 
 (define (tc-moved-path-facts-empty-impl [facts : TcMovedPathFacts]) : bool
   (match facts
@@ -87369,37 +87033,6 @@
 (defmacro (tc-moved-path-facts-rest [facts : Expr]) : Expr
   `(tc-moved-path-facts-rest-impl (tc-global-shared-view ,facts)))
 
-(define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
-  set.hidden-atomic-users)
-
-(define (tc-moved-param-storage-origins [set : TcMovedSet]) : i64
-  set.param-storage-origins)
-
-(define (tc-param-storage-origin-node-read [address : i64]) : TcParamStorageOriginNode
-  (unsafe
-    (ptr-read (int->ptr (cast address : u64) : (Ptr TcParamStorageOriginNode)))))
-
-(define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
-  (let
-    [cursor : i64 head]
-    [result : TcMaybeNameId No]
-    [done : bool false]
-    (while (and (not done) (not (= cursor 0)))
-      (let
-        [node : TcParamStorageOriginNode
-          (tc-param-storage-origin-node-read cursor)]
-        (if (= node.name-id name-id)
-          (begin
-            (if (>= node.parameter-id 0)
-              (set! result (Some node.parameter-id))
-              unit)
-            (set! done true))
-          (set! cursor node.parent))))
-    result))
-
-(define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
-  (tc-param-storage-origin-lookup (tc-moved-param-storage-origins set) name-id))
-
 (define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   ;; Counting down the entry count skips the scan-to-capacity tail entirely;
   ;; branch moved-sets are usually empty or tiny, so a full-capacity walk
@@ -87432,33 +87065,6 @@
     [set : TcMovedSet (owned_view.compiler-owned-reference-shared-view set)]
     [map : tc_i64_i64_map.Map (tc-moved-roots set)]
     (tc_i64_i64_map.contains? (& map) name-id)))
-
-(define (tc-moved-no-origin-id) : i64
-  -1)
-
-(define (tc-moved-add [set : TcMovedSet] [name-id : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id (tc-moved-no-origin-id))
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
-
-(define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id value)
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -87499,11 +87105,6 @@
   (if (< path.root 0)
     (bit-xor path.root -1)
     path.root))
-
-(define (tc-move-path-capture-owner [path : TcMovePath] [owner : i64]) : TcMovePath
-  (if (and (>= owner 0) (>= path.root 0))
-    (TcMovePath (bit-xor path.root -1) path.segments)
-    path))
 
 (define tc-move-path-segment-kind-field : i64
   0)
@@ -87685,21 +87286,6 @@
 (define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
   fact.origin)
 
-(define (tc-moved-add-partial-value
-  [set : TcMovedSet]
-  [name-id : i64]
-  [origin-id : i64]) : TcMovedSet
-  (let
-    [partials : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-partials (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut partials) name-id origin-id)
-    (TcMovedSet
-      (tc-moved-roots (tc-global-shared-view set))
-      partials
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
-
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
     [partials : tc_i64_i64_map.Map (tc-moved-partials set)]
@@ -87758,31 +87344,6 @@
       (match (tc-moved-root-path-conflict (tc-global-shared-view set) root-id)
         [(Some key origin-id) (Some key origin-id)]
         [No (tc-moved-partial-conflict set root-id)])]))
-
-(define (tc-moved-union-id-loop
-  [a : (& a tc_i64_i64_map.Map)]
-  [index : i64]
-  [out : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
-  ;; branch moved-sets are usually empty or tiny.
-  (let
-    [remaining : i64 (tc_i64_i64_map.len a)]
-    [cursor : i64 index]
-    ;; Only take private storage when there is something to insert; a union with
-    ;; an empty left side leaves the (possibly shared) right side untouched.
-    [result : tc_i64_i64_map.Map
-      (if (> remaining 0)
-        (tc-moved-id-map-own out)
-        out)]
-    (while (> remaining 0)
-      (set! cursor (tc_i64_i64_map.next-occupied a cursor))
-      (match (tc_i64_i64_map.entry-at a cursor)
-        [(EntrySome key value)
-          (tc_i64_i64_map.insert-ref! (&mut result) key value)]
-        [(EntryNone) unit])
-      (+= cursor 1)
-      (-= remaining 1))
-    result))
 
 ;; A direct local owner tracked from `arena.make`/`arena.make-atomic`. A bare
 ;; `arena.Arena` handle is Copy, but a copy stored in another binding, an
@@ -87998,98 +87559,6 @@
                       (set! (deref ptr).param-facts grown)))))
               memory?)]
           [(Err _) (tc-type-copyable? ctx ty)])])))
-
-(define (tc-param-storage-fixed-array-type?
-  [ctx : TcContext]
-  [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Array _ _) true]
-    [_ false]))
-
-(define (tc-param-storage-tuple-type? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Tuple _) true]
-    [_ false]))
-
-;; Return the original by-value memory-class nominal Struct/Enum parameter
-;; whose ABI backing storage contains this place. Only those nominal
-;; parameters are seeded/tracked here: by-value fixed arrays and tuples have
-;; private callee storage. Tuple and fixed-array projections are inline and
-;; inherit provenance only when rooted in a tracked nominal memory parameter;
-;; dynamic-array/box/reference projections remain shallow handles and do not.
-(define (tc-param-storage-place-origin
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [moved : TcMovedSet]
-  [place : ast.AstExpr]) : TcMaybeNameId
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& place))
-    [(Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
-        (match (tc-dotted-local-field-expr-id-after-check
-          (tc-context-structural-session ctx)
-          name)
-          [(Ok virtual-id)
-            (tc-param-storage-place-origin
-              ctx
-              expr-bases
-              env
-              moved
-              (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
-          [(Err _) No])
-        (tc-param-storage-origin-in-set moved name))]
-    [(or (Ann inner-box _) (Cast inner-box _))
-      (tc-param-storage-place-origin
-        ctx
-        expr-bases
-        env
-        moved
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (match (tc-expr ctx env (tc-global-shared-view receiver))
-          [(Ok receiver-ty)
-            (if (tc-param-storage-type? ctx receiver-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved receiver)
-              No)]
-          [(Err _) No]))]
-    [(ArrayRef array-box _)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (match (tc-expr ctx env (tc-global-shared-view array))
-          [(Ok array-ty)
-            (if (tc-param-storage-fixed-array-type? ctx array-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved array)
-              No)]
-          [(Err _) No]))]
-    [(TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (match (tc-expr ctx env (tc-global-shared-view tuple))
-          [(Ok tuple-ty)
-            (if (tc-param-storage-tuple-type? ctx tuple-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved tuple)
-              No)]
-          [(Err _) No]))]
-    [_ No]))
-
-;; An in-place write through `place` -- a field, element or `replace!` write,
-;; or a `&mut` borrow -- notes the by-value parameter whose storage it reaches,
-;; if any.
-(define (tc-param-storage-note-write
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [moved : TcMovedSet]
-  [place : ast.AstExpr]) : unit
-  (match (tc-param-storage-place-origin ctx expr-bases env moved place)
-    [(Some parameter-id)
-      (tc-body-param-write-note! (tc-context-body-state ctx) parameter-id)]
-    [(No) unit]))
 
 ;; Resolve source, hygiene, and qualified value names through the same immutable
 ;; symbol-table path used for direct calls. Extern values intentionally remain
@@ -88677,19 +88146,6 @@
       owner
       "` defines instead")))
 
-;; Checker-only closure facts never enter AstType or the lowering ABI. Call
-;; capabilities are 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and
-;; 2 = consuming (FnOnce). A local lambda binding stores that capability in a
-;; disjoint Copy/non-Copy range inside the existing locals map; ordinary locals
-;; keep the -1 sentinel. This keeps concrete environment
-;; copyability available after a fact-preserving local alias without making a
-;; plain `(-> ...)` type depend on one particular lambda value.
-(define (tc-closure-call-capability-shared) : i64
-  0)
-
-(define (tc-closure-call-capability-mut) : i64
-  1)
-
 (define (tc-closure-call-capability-once) : i64
   2)
 
@@ -88718,29 +88174,10 @@
           -1)]
       [(LookupMissing) -1])))
 
-(define (tc-closure-local-fact-copyable-code? [code : i64]) : bool
-  (and
-    (>= code (tc-closure-local-fact-copy-base))
-    (<= code (+ (tc-closure-local-fact-copy-base) 2))))
-
 (define (tc-closure-local-fact-move-only-code? [code : i64]) : bool
   (and
     (>= code (tc-closure-local-fact-move-base))
     (<= code (+ (tc-closure-local-fact-move-base) 2))))
-
-(define (tc-closure-local-fact-encode [copyable : bool] [capability : i64]) : i64
-  (+
-    (if copyable
-      (tc-closure-local-fact-copy-base)
-      (tc-closure-local-fact-move-base))
-    capability))
-
-(define (tc-closure-local-fact-capability [code : i64]) : i64
-  (if (tc-closure-local-fact-copyable-code? code)
-    (- code (tc-closure-local-fact-copy-base))
-    (if (tc-closure-local-fact-move-only-code? code)
-      (- code (tc-closure-local-fact-move-base))
-      (tc-closure-call-capability-shared))))
 
 (define (tc-move-local-or-type-move-only?
   [ctx : TcContext]
@@ -119551,17 +118988,6 @@
             (array-ref cells index).cleanup?))
         (set! index (+ index 1)))
       (set! table.classes exact))))
-
-(define (tc-selected-type-classes!
-  [ctx : TcContext]
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]) : (__tl_dyn-array
-    ownership_normalize.OwnershipNormalizeTypeClass)
-  (let
-    [table : TcSelectedTypeTable
-      (tc-selected-type-table-new (typed.typed-arena-regions-copy (& store)))]
-    (tc-selected-classify! ctx store lease (&mut table))
-    table.classes))
 
 ;; A struct's field types and name ids in declaration order, when each field's
 ;; canonical selection agrees with that order (otherwise no shape).

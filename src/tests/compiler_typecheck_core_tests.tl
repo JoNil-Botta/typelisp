@@ -11317,7 +11317,8 @@
                 [_ false]))))]
       [(tc_core.TcSelectedLookup.Err message)
         (and
-          (and (> mode 0) (< mode 7))
+          (> mode 0)
+          (< mode 7)
           (string.eq
             message
             (if (= mode 6)

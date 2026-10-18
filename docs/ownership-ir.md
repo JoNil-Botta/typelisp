@@ -1716,6 +1716,14 @@ The selected producer retains an explicitly cast integer literal with its full
 64-bit pattern, preserving its existing syntax/origin record. Unconstrained
 integer defaults must not truncate that operand to i32 before the cast. The
 ordinary contextual literal range checks still apply outside this operation.
+Before publication the emitter forwards equal-typed temporary copies within
+an IR block and removes unused copy definitions, using the shared IR operand
+mapper/visitor and effect/definition classifications. Binding assignments,
+snapshots still used after a source write and type-changing moves remain.
+Reverse dependencies and a touched-entry reset bound this work linearly; the
+existing lowering budget charges it. The current executable subset exposes
+no local storage addresses. Enabling such an operation must extend the alias
+invalidation rule before admitting it to this representation.
 Scalar casts, raw-pointer values and scalar reads/writes, null tests, pointer
 conversions and pointer offsets also emit from their captured operands. Pointer
 offsets use the existing layout authority to stride inline aggregates by their

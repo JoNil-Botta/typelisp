@@ -73639,6 +73639,198 @@
   (current-label i64)
   (next-label i64))
 
+(defstruct LowerNormalizedCopyLink
+  (destination i64)
+  (next i64))
+
+(defstruct LowerNormalizedCopies
+  (aliases (__tl_dyn-array i64))
+  (heads (__tl_dyn-array i64))
+  (links (__tl_dyn-array LowerNormalizedCopyLink))
+  (touched (__tl_dyn-array i64))
+  (touched-len i64))
+
+(define (lower-normalized-copy-touch!
+  [copies : (&mut copies LowerNormalizedCopies)]
+  [place : i64]) : unit
+  (if (< copies.touched-len (array-length copies.touched))
+    (set! (array-ref copies.touched copies.touched-len) place)
+    (__tl_array-push! copies.touched place))
+  (set! copies.touched-len (+ copies.touched-len 1)))
+
+(define (lower-normalized-copy-reset!
+  [copies : (&mut copies LowerNormalizedCopies)]) : unit
+  (for [index (iterator.range 0 copies.touched-len)]
+    (let
+      [place : i64 (array-ref copies.touched index)]
+      (set! (array-ref copies.aliases place) -1)
+      (set! (array-ref copies.heads place) -1)))
+  (set! copies.touched-len 0))
+
+(define (lower-normalized-copy-use
+  [aliases : (& aliases (__tl_dyn-array i64))]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (& value)
+    [(ir.CompilerIrValue.Var place)
+      (if (and
+        (>= place 0)
+        (< place (array-length aliases))
+        (>= (array-ref aliases place) 0))
+        (ir.CompilerIrValue.Var (array-ref aliases place))
+        value)]
+    [_ value]))
+
+(define (lower-normalized-copy-count!
+  [counts : (&mut counts (__tl_dyn-array i64))]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (match (& value)
+    [(ir.CompilerIrValue.Var place)
+      (when
+        (and (>= place 0) (< place (array-length counts)))
+        (set! (array-ref counts place) (+ (array-ref counts place) 1)))]
+    [_ unit]))
+
+;; These bodies expose no local storage addresses. Copies may forward within
+;; a block until their source is redefined; reverse links make invalidation
+;; linear in the copies created, including repeated writes. Different canonical
+;; types (notably nullable/non-null C pointers) keep their defining conversion.
+(define (lower-normalized-copy-step!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [bindings : (& bindings (__tl_dyn-array bool))]
+  [copies : (&mut copies LowerNormalizedCopies)]
+  [instruction : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (let
+    [out : ir.CompilerIrInstr
+      (ir.compiler-ir-instr-map-uses
+        instruction
+        lower-normalized-copy-use
+        (& copies.aliases))]
+    [destination : i64 (ir.compiler-ir-instr-dst (& out))]
+    (when
+      (and (>= destination 0) (< destination (array-length copies.aliases)))
+      (set! (array-ref copies.aliases destination) -1)
+      (let
+        [link : i64 (array-ref copies.heads destination)]
+        (while (>= link 0)
+          (let
+            [dependent : i64 (array-ref copies.links link).destination]
+            (when
+              (= (array-ref copies.aliases dependent) destination)
+              (set! (array-ref copies.aliases dependent) -1))
+            (set! link (array-ref copies.links link).next))))
+      (set! (array-ref copies.heads destination) -1))
+    (unless
+      (match (ir.compiler-ir-instr-effect (& out))
+        [(or (ir.CompilerIrEffect.Pure) (ir.CompilerIrEffect.MemoryRead)) true]
+        [_ false])
+      (lower-normalized-copy-reset! copies))
+    (match (& out)
+      [(ir.CompilerIrInstr.Mov dest (ir.CompilerIrValue.Var source) _)
+        (when
+          (and
+            (>= dest 0)
+            (>= source 0)
+            (!= dest source)
+            (< dest (array-length copies.aliases))
+            (< source (array-length copies.aliases))
+            (not (array-ref bindings dest))
+            (=
+              (array-ref output.body.places dest).type.index
+              (array-ref output.body.places source).type.index))
+          (let
+            [link : LowerNormalizedCopyLink
+              (LowerNormalizedCopyLink dest (array-ref copies.heads source))]
+            (lower-normalized-copy-touch! copies dest)
+            (lower-normalized-copy-touch! copies source)
+            (set! (array-ref copies.aliases dest) source)
+            (set! (array-ref copies.heads source) (array-length copies.links))
+            (__tl_array-push! copies.links link)))]
+      [_ unit])
+    out))
+
+;; The builder has one unpublished owner. Rewrite and compact its sequences
+;; in place; keep binding assignments and snapshots still used after a write.
+(define (lower-normalized-elide-copies!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]) : LowerNormalizedUnit
+  (let
+    [places : i64 (array-length output.body.places)]
+    [copies : LowerNormalizedCopies
+      (LowerNormalizedCopies
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array LowerNormalizedCopyLink 0)
+        (__tl_make-array i64 0)
+        0)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (try (lower-normalized-charge! state (* 3 places)))
+    (for [place (iterator.range 0 places)]
+      (__tl_array-push! copies.aliases -1)
+      (__tl_array-push! copies.heads -1)
+      (__tl_array-push! uses 0))
+    (for [block (iterator.range 0 state.blocks.len)]
+      (match (replace!
+        (array-ref state.blocks.slots block)
+        (ir.CompilerIrBlock.Block -1 (ir.compiler-ir-instr-seq-empty)))
+        [(ir.CompilerIrBlock.Block label instrs)
+          (try
+            (lower-normalized-charge!
+              state
+              (+
+                (* 8 instrs.len)
+                (* 2 (ir.compiler-ir-instr-seq-call-arg-count (& instrs))))))
+          (lower-normalized-copy-reset! (&mut copies))
+          (for [index (iterator.range 0 instrs.len)]
+            (let
+              [instruction : ir.CompilerIrInstr
+                (lower-normalized-copy-step!
+                  output
+                  (& state.bindings)
+                  (&mut copies)
+                  (ir.compiler-ir-instr-seq-ref (& instrs) index))]
+              (ir.compiler-ir-instr-seq-set! (&mut instrs) index instruction)
+              (ir.compiler-ir-instr-visit-uses
+                (ir.compiler-ir-instr-seq-ref (& instrs) index)
+                lower-normalized-copy-count!
+                (&mut uses))))
+          (set!
+            (array-ref state.blocks.slots block)
+            (ir.CompilerIrBlock.Block label instrs))]))
+    (for [block (iterator.range 0 state.blocks.len)]
+      (match (replace!
+        (array-ref state.blocks.slots block)
+        (ir.CompilerIrBlock.Block -1 (ir.compiler-ir-instr-seq-empty)))
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [write : i64 0]
+            (for [index (iterator.range 0 instrs.len)]
+              (let
+                [instruction : ir.CompilerIrInstr
+                  (ir.compiler-ir-instr-seq-ref (& instrs) index)]
+                (unless
+                  (match (& instruction)
+                    [(ir.CompilerIrInstr.Mov dest (ir.CompilerIrValue.Var _) _)
+                      (and
+                        (>= dest 0)
+                        (< dest places)
+                        (not (array-ref state.bindings dest))
+                        (= (array-ref uses dest) 0))]
+                    [_ false])
+                  (when
+                    (!= write index)
+                    (ir.compiler-ir-instr-seq-set!
+                      (&mut instrs)
+                      write
+                      instruction))
+                  (set! write (+ write 1)))))
+            (set! instrs.len write)
+            (set!
+              (array-ref state.blocks.slots block)
+              (ir.CompilerIrBlock.Block label instrs)))]))
+    (LowerNormalizedUnit.Ok unit)))
+
 (define (lower-normalized-emit!
   [state : (&mut state LowerNormalizedState)]
   [instructions : (&mut instructions ir.CompilerIrInstrBuilder)]
@@ -74626,6 +74818,7 @@
                           "lower: unsupported certified termination"))])
                   (lower-normalized-finish-block! (&mut state) (&mut instrs) -1))))
             (set! index (+ index 1))))
+        (try (lower-normalized-elide-copies! output (&mut state)))
         (LowerNormalizedResult.Ok
           (ir.CompilerIrFunction.Function
             name

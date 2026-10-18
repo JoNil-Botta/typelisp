@@ -12275,3 +12275,52 @@
         [_ false])
       "a shared AST node remains owning in the prefix and read-only in the tail")
     (ast.ast-node-pool-context-install! saved)))
+
+(test
+  tc-lifetime-diagnostic-name-owner-and-elision
+  (let
+    [previous : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [left : ci.InternCompatState (ci.intern-compat-state-new)]
+    [right : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source : i64 (ci.intern-compat-state-intern (&mut left) "a")]
+    [other : i64 (ci.intern-compat-state-intern (&mut right) "other")]
+    [left-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& left)))]
+    [right-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& right)))]
+    [caller : i64 (tc_core.tc-caller-lifetime-identity left-session source)]
+    [foreign : i64 (tc_core.tc-caller-lifetime-identity right-session other)]
+    [_install : unit (ci.intern-compat-state-install! (& left))]
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        source
+        caller
+        (tc_core.tc-elided-lifetime-name 0)
+        (tc_core.tc-elided-lifetime-name 1)
+        cbi.compiler-builtin-id-fix-empty
+        -2
+        foreign)]
+    [expected : (__tl_dyn-array String)
+      (__tl_make-array
+        "a"
+        "a"
+        "<elided 1>"
+        "<elided 2>"
+        "<elided>"
+        "<id:-2>"
+        (str_cat.str-cat "<id:" (string.int->string foreign) ">"))]
+    [actual : (__tl_dyn-array String) (__tl_make-array String 7)]
+    [caller-renderable? : bool (ci.intern-renderable-id? caller)]
+    (for [index (iterator.range 0 (array-length names))]
+      (set!
+        (array-ref actual index)
+        (tc_core.tc-lifetime-diagnostic-name (array-ref names index))))
+    (ci.intern-compat-state-install! (& previous))
+    (test.assert-false caller-renderable? "caller identity is structural")
+    (for [index (iterator.range 0 (array-length names))]
+      (test.assert-string-eq
+        (& (array-ref actual index))
+        (& (array-ref expected index))
+        "lifetime diagnostics preserve elision and validate identity owners"))))

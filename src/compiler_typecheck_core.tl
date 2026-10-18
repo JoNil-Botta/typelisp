@@ -72935,8 +72935,24 @@
           operation)]
       [(No) Ok])))
 
-;; A source assignment (including a macro invocation) supplies its own span.
-;; A virtual assignment without a source view falls back to its value.
+;; The source view that locates an assignment. The parser wraps a `set!` in
+;; its target's span inside the form's span, so the innermost view names the
+;; target. A macro expansion stops the descent: its template spans belong to
+;; the macro's file, and the invocation's view locates the assignment instead.
+(define (tc-move-set-target-view [expr-bases : i64] [view : ast.AstExpr]) : ast.AstExpr
+  (match (& view)
+    [(Spanned inner-id _)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-id)]
+        (match (& inner)
+          [(Spanned _ _) (tc-move-set-target-view expr-bases inner)]
+          [_ view]))]
+    [_ view]))
+
+;; A source assignment is located at its target, and an expanded one at the
+;; macro invocation. A virtual assignment without a source view falls back to
+;; its value.
 (define (tc-move-foreign-global-set-check
   [ctx : TcContext]
   [expr-bases : i64]
@@ -72950,7 +72966,7 @@
     expr-bases
     locals
     (match (tc-expr-maybe-span expr-bases (tc-global-shared-view site))
-      [(Some _) site]
+      [(Some _) (tc-move-set-target-view expr-bases site)]
       [(No) (ast.ast-expr-segment-bases-get expr-bases rhs-box)])
     (if (tc-dotted-place-name-id? ctx env name)
       (ci.intern-leading-dot-id name)

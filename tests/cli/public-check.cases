@@ -852,6 +852,31 @@ stderr order single.tl:13:28 || single.tl:12: || = help: clone the owner
 stderr contains move of `pair` happened here
 stderr not-contains __tl_tc_
 
+# #7976 assignment diagnostics are located at the `set!` target, and an owner
+# macro expanded in the importer at its invocation in the importer's file,
+# never at the macro template's own line.
+case check-foreign-global-write-locations
+target linux-x86_64 windows-x86_64
+step selected
+run check tests/safety/foreign_global_selected_set_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_selected_set_reject.tl:7:11
+step lambda
+run check tests/safety/foreign_global_lambda_set_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_lambda_set_reject.tl:9:15
+step owner-macro
+run check tests/safety/foreign_global_macro_write_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_macro_write_reject.tl:7:5
+stderr not-contains foreign_global_macro_write_reject.tl:24:
+
 # Unsafe callable effects survive type inference, qualification and unsafe scope.
 case check-string-raw-copy-function-values
 target linux-x86_64 windows-x86_64

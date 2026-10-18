@@ -11103,15 +11103,21 @@
   [context : OptCfgContext]) : OptFunctionRewriteResult
   (Result func context false))
 
-(define (opt-function-rewrite-commit
-  [func : ir.CompilerIrFunction]
-  [context : OptCfgContext]
-  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+;; What a rewrite plan commits to: nothing (the plan reports no change), the
+;; rewritten function with its fresh context, or the verifier's rejection.
+(defenum OptRewriteVerdict
+  (Unchanged)
+  (Kept ir.CompilerIrFunction OptCfgContext)
+  (Rejected String))
+
+(define (opt-function-rewrite-verdict
+  [func : (& ir.CompilerIrFunction)]
+  [plan : OptBlockRewriteResult]) : OptRewriteVerdict
   (match plan
     [(Result blocks frame changed?)
       (if (not changed?)
-        (opt-function-rewrite-unchanged func context)
-        (match (compiler-opt-global-shared-view func)
+        (Unchanged)
+        (match (owned_view.compiler-owned-reference-shared-view func)
           [(Function name params ret-ty _ _ function-abi)
             (let
               [next : ir.CompilerIrFunction
@@ -11124,13 +11130,76 @@
                   function-abi)]
               [next-context : OptCfgContext (opt-cfg-context-build blocks)]
               (match (opt-verify-function-with-context next next-context)
-                [(Ok) (Result next next-context true)]
-                [(Err _) (opt-function-rewrite-unchanged func context)]))]))]))
+                [(Ok) (Kept next next-context)]
+                [(Err reason) (Rejected reason)]))]))]))
+
+;; The commit for an input nothing has verified: a rejected rewrite falls back
+;; to the input.
+(define (opt-function-rewrite-commit
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+  (match (opt-function-rewrite-verdict (& func) plan)
+    [(Kept next next-context) (Result next next-context true)]
+    [_ (opt-function-rewrite-unchanged func context)]))
+
+;; #9013. A rewrite the verifier rejects although its input verifies is a bug in
+;; the pass that produced it, so it stops the compile as an internal error
+;; instead of silently keeping the input. The verifier still runs on every
+;; rewrite; only what a rejection means changes.
+(define (opt-rewrite-ice-message
+  [pass : String]
+  [func : (& ir.CompilerIrFunction)]
+  [reason : String]) : String
+  (str_cat.str-cat
+    "optimizer: internal error: pass `"
+    pass
+    "` rewrote verified function `"
+    (ir.compiler-ir-symbol-text (opt-function-name func))
+    "` into IR the verifier rejects: "
+    reason))
+
+;; The optimizer tests capture the internal error instead of aborting, so they
+;; can drive a deliberately broken rewrite through the real commit path. Only a
+;; rejection reads these; every other compile leaves them untouched.
+(define opt-rewrite-ice-capture? : bool
+  false)
+(define opt-rewrite-ice-captured : String
+  "")
+
+(define (opt-rewrite-ice-capture! [on? : bool]) : unit
+  (set! opt-rewrite-ice-capture? on?)
+  (set! opt-rewrite-ice-captured ""))
+
+(define (opt-rewrite-ice-last) : String
+  (string.copy (& opt-rewrite-ice-captured)))
+
+(define (opt-rewrite-ice! [message : String]) : unit
+  (if opt-rewrite-ice-capture?
+    (set! opt-rewrite-ice-captured message)
+    (io.panic message)))
+
+;; The commit for an input `opt-verify-gate` has just accepted: a rejected
+;; rewrite is an internal error naming the pass and the function.
+(define (opt-function-rewrite-commit-verified
+  [pass : String]
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+  (match (opt-function-rewrite-verdict (& func) plan)
+    [(Kept next next-context) (Result next next-context true)]
+    [(Rejected reason)
+      (opt-rewrite-ice! (opt-rewrite-ice-message pass (& func) reason))
+      (opt-function-rewrite-unchanged func context)]
+    [(Unchanged) (opt-function-rewrite-unchanged func context)]))
 
 ;; Static specialization keeps candidate and clone/fuel policy at each pass,
 ;; without closures or indirect calls. The rewrite runs only after admission
 ;; and verification. Mutable transforms must clone before editing their input.
+;; `pass` names the pass in the internal error a rejected rewrite raises: past
+;; the gate the input verifies, so the rejection is the pass's own bug.
 (defmacro (opt-branch-function-rewrite
+  [pass : Expr]
   [func : Expr]
   [context : Expr]
   [verified? : Expr]
@@ -11145,7 +11214,11 @@
         (compiler-opt-global-shared-view original)
         (compiler-opt-global-shared-view original-context))
         [(ResultCompilerOptimizeVerify.Ok)
-          (opt-function-rewrite-commit original original-context ,rewrite)]
+          (opt-function-rewrite-commit-verified
+            ,pass
+            original
+            original-context
+            ,rewrite)]
         [(ResultCompilerOptimizeVerify.Err _)
           (opt-function-rewrite-unchanged original original-context)])
       (opt-function-rewrite-unchanged original original-context))))
@@ -11163,12 +11236,13 @@
 ;; The loop passes' form: no candidate precheck, and the context is handed on
 ;; without the changed flag.
 (defmacro (opt-loop-function-rewrite
+  [pass : Expr]
   [func : Expr]
   [context : Expr]
   [verified? : Expr]
   [rewrite : Expr]) : Expr
   `(opt-function-rewrite-ctx-result
-    (opt-branch-function-rewrite ,func ,context ,verified? true ,rewrite)))
+    (opt-branch-function-rewrite ,pass ,func ,context ,verified? true ,rewrite)))
 
 (define (opt-function-rewrite-ctx-result [result : OptFunctionRewriteResult]) : OptFunctionCtxResult
   (match result
@@ -18094,10 +18168,14 @@
                     ;; post-pass verify, and hand it back for the next pass.
                     [next-context : OptCfgContext
                       (opt-cfg-context-build next-blocks)]
+                    ;; Past the gate the input verifies, so a rejection here is
+                    ;; an internal error (#9013).
                     (match (opt-verify-function-with-context next next-context)
                       [(Ok) (Result next next-context)]
-                      [(Err _)
+                      [(Err reason)
                         (opt-preheader-trace-verify-rejected!)
+                        (opt-rewrite-ice!
+                          (opt-rewrite-ice-message "preheaders" (& func) reason))
                         (Result func context)])))])]
           [(Err _)
             (opt-preheader-trace-entry-verify! context)
@@ -28473,6 +28551,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params _ frame blocks _)
       (opt-loop-function-rewrite
+        "licm"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -30209,6 +30288,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params _ frame blocks _)
       (opt-loop-function-rewrite
+        "licm_unswitch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -32264,6 +32344,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "induction"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -37292,7 +37373,7 @@
 
 ;; `context` must be valid for `func`'s blocks (its entry verify reuses it). The
 ;; rewrite changes the CFG, so a converted function gets a fresh context; a
-;; verifier rejection falls back to the byte-identical input.
+;; verifier rejection of the rewrite is an internal error (#9013).
 (define (opt-flag-exit-function-with-context-result
   [context : (& OptCfgContext)]
   [verified? : bool]
@@ -37300,6 +37381,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "flag_exit"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -38360,6 +38442,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "lftr"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -41216,6 +41299,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bool_branch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -42419,8 +42503,8 @@
             [(Result final _) (Result final true)])]))))
 
 ;; The edge retargeting and the phi repair mutate instruction sequences in
-;; place, so the pass works on a deep block/instruction clone and a rejected
-;; post-pass verify hands back the byte-for-byte input function.
+;; place, so the pass works on a deep block/instruction clone and leaves its
+;; input untouched.
 (define (opt-phi-cmp-fold-blocks
   [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
@@ -42513,6 +42597,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "phi_cmp_fold"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -42674,6 +42759,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bool_branch_chain"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -44697,6 +44783,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "thread_branch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -64409,6 +64496,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "loop_call"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -87307,6 +87395,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "gep_offset"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -96992,6 +97081,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bounds_group"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -97042,13 +97132,17 @@
 (define (opt-bg-function-rounds) : i64
   3)
 
-;; The pipeline entry skips the defensive entry verify: the body arrives
-;; straight out of `optimize-function-with-level-and-summaries-pass`, whose last
-;; rewriting passes each post-verify their own output, and this pass verifies
-;; what it produces before returning it either way. The prescan runs before the
-;; CFG context is built so a function with no candidate shape costs one linear
-;; instruction walk and nothing else.
-(define (opt-bg-function-verified-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+;; One round of the pipeline entry. The body arrives straight out of
+;; `optimize-function-with-level-and-summaries-pass`, which does not promise a
+;; verifying body: a function SSA construction could not rename stays unverified
+;; through every pass that refused it. So the first round's gate verifies the
+;; candidate (#9013); a later round's input is the rewrite the previous round
+;; committed, which its commit verified, so `verified?` skips that check. The
+;; prescan runs before the CFG context is built so a function with no candidate
+;; shape costs one linear instruction walk and nothing else.
+(define (opt-bg-function-verified-pass
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (if (not
     (let
       [blocks (opt-function-blocks func)]
@@ -97056,18 +97150,22 @@
     (Result func false)
     (match (opt-bg-function-changed-result
       (& (opt-cfg-context-build (opt-function-blocks func)))
-      true
+      verified?
       (& func))
       [(Result next _ changed) (Result next changed)])))
 
-(define (opt-bg-function-fixed [func : ir.CompilerIrFunction] [remaining : i64]) : ir.CompilerIrFunction
+(define (opt-bg-function-fixed
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]
+  [remaining : i64]) : ir.CompilerIrFunction
   (if (<= remaining 0)
     func
     (match (opt-bg-function-verified-pass
+      verified?
       (compiler-opt-global-shared-view func))
       [(Result next changed)
         (if changed
-          (opt-bg-function-fixed next (- remaining 1))
+          (opt-bg-function-fixed true next (- remaining 1))
           func)])))
 
 (define (opt-bg-function
@@ -97077,6 +97175,7 @@
     type-segment-bases
     "bounds_group"
     (opt-bg-function-fixed
+      false
       (owned_view.compiler-owned-reference-shared-view func)
       (opt-bg-function-rounds))))
 
@@ -125240,6 +125339,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "scratch_reset"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?

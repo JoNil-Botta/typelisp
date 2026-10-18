@@ -2355,11 +2355,24 @@
   [globals : ir.CompilerIrGlobalSeq]
   [externs : ir.CompilerIrExternSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : opt.OptArgGlobalScan
-  (opt.opt-arg-global-roots
-    (& globals)
-    (& externs)
-    functions
-    (opt.opt-function-index-capacity (opt.opt-function-seq-count functions))))
+  (let
+    [capacity : i64
+      (opt.opt-function-index-capacity (opt.opt-function-seq-count functions))]
+    [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
+    [mod-ref : opt.OptGlobalModRef
+      (opt.opt-global-mod-ref-build
+        (& globals)
+        functions
+        facts.index
+        facts.cells.stores
+        facts.addr-taken
+        capacity)]
+    (opt.opt-arg-global-roots
+      (& globals)
+      (& externs)
+      functions
+      (& mod-ref)
+      capacity)))
 
 ;; IAG-2's storage table over a program with no externs.
 (define (opt-test-global-obj-build
@@ -65124,7 +65137,7 @@
     [externs (ir.compiler-ir-extern-seq-empty)]
     [functions (opt-ag-test-functions symbols with-callers?)]
     [roots : opt.OptArgGlobalScan
-      (opt.opt-arg-global-roots (& globals) (& externs) functions 64)]
+      (opt-test-arg-global-roots globals externs functions)]
     (opt.opt-arg-global-build
       type-segment-bases
       functions
@@ -65243,8 +65256,8 @@
       ;; a self-recursive callee whose recursive site passes the same global
       ;; through keeps the fact...
       [(not (= (opt-ag-fact facts symbols.recur 1) (+ 1 le.a))) 9]
-      ;; ...and one whose recursive site passes its own parameter loses it
-      [(not (= (opt-ag-fact facts symbols.drift 1) 0)) 10]
+      ;; ...including an unchanged parameter forwarded through the recursion.
+      [(not (= (opt-ag-fact facts symbols.drift 1) (+ 1 le.a))) 10]
       ;; a callee named by a call form whose arguments this walk does not read
       ;; positionally -- the C-ABI aggregate-return call -- is refused
       ;; outright, even though its ordinary site passes exactly the globals
@@ -65271,6 +65284,270 @@
       ;; entry-value fact speaks about
       [(not (= reset 2)) 23]
       [else 42])))
+
+(define (opt-ag-forward-program
+  [root : String]
+  [prefix : String]
+  [parameter : String]
+  [argument : String]) : ir.CompilerIrProgram
+  (irt.program
+    (str_cat.str-cat
+      "global @agf_g : i64 = 7\nglobal @agf_h : i64 = 9\n"
+      "function @agf_entry() -> i64 vars 8 {\nentry:\n"
+      root
+      "\nreturn 0\n}\n"
+      "function @agf_forward(p="
+      parameter
+      ":(& agf i64)) -> i64 vars 8 {\nentry:\n"
+      prefix
+      "\n%4 = call agf_leaf("
+      argument
+      ") : i64\nreturn %4\n}\n"
+      "function @agf_leaf(p=%0:(& agf i64)) -> i64 vars 8 {\nentry:\n"
+      "tailcall agf_forward(%0) : i64\n}\n"
+      "function @agf_setter() -> unit vars 0 {\nentry:\nstore @agf_g, @agf_h : i64\nreturn\n}")))
+
+(define (opt-ag-forward-fact [program : ir.CompilerIrProgram]) : i64
+  (match program
+    [(Program globals functions externs)
+      (let
+        [scan : opt.OptArgGlobalScan
+          (opt-test-arg-global-roots globals externs (& functions))]
+        (opt.opt-arg-global-fact (& scan.sites) (opt-test-symbol "agf_leaf") 0))]))
+
+(test
+  arg-global-recursive-forwarding
+  (let
+    [root : String "%0 = call agf_forward(@agf_g) : i64"]
+    [bad-bodies : (Array String 6)
+      (array
+        "%0 = mov @agf_h : (& agf i64)"
+        "%1 = addr_of %0"
+        "store @agf_g, @agf_h : i64"
+        "%1 = call agf_setter() : unit"
+        "%1 = call* 0() : unit"
+        "%1 = mov &@agf_g : u64")]
+    [conflicting-roots : (Array String 5)
+      (array
+        ""
+        (str_cat.str-cat (clone root) "\n%1 = call agf_forward(@agf_h) : i64")
+        (str_cat.str-cat (clone root) "\n%1 = mov fn@agf_forward : u64")
+        (str_cat.str-cat (clone root) "\n%1 = call agf_forward(0) : i64")
+        (str_cat.str-cat (clone root) "\n%1 = call agf_forward() : i64"))]
+    (test.assert-i64-eq
+      (opt-ag-forward-fact (opt-ag-forward-program (clone root) "" "%0" "%0"))
+      (+ 1 (opt-test-symbol "agf_g"))
+      "a literal root reaches both functions in a mutual recursive cycle")
+    (test.assert-i64-eq
+      (opt-ag-forward-fact
+        (opt-ag-forward-program
+          (clone root)
+          "%1 = call unknown_external() : unit"
+          "%0"
+          "%0"))
+      (+ 1 (opt-test-symbol "agf_g"))
+      "an extern without any cell address cannot rebind a private global cell")
+    (match (opt-ag-forward-program (clone root) "" "%0" "%0")
+      [(Program globals functions externs)
+        (let
+          [reversed : ir.CompilerIrFunctionSeq
+            (ir.compiler-ir-function-seq-empty)]
+          (for [i (iterator.range 0 functions.len)]
+            (set!
+              reversed
+              (ir.compiler-ir-function-seq-prepend
+                (ir.compiler-ir-function-seq-borrow (& functions) i)
+                (& reversed))))
+          (test.assert-i64-eq
+            (opt-ag-forward-fact (Program globals reversed externs))
+            (+ 1 (opt-test-symbol "agf_g"))
+            "function ordering does not change the recursive fixed point"))])
+    (for [i (iterator.range 0 (array-length bad-bodies))]
+      (test.assert-i64-eq
+        (opt-ag-forward-fact
+          (opt-ag-forward-program
+            (clone root)
+            (clone (array-ref bad-bodies i))
+            "%0"
+            "%0"))
+        0
+        (str_cat.str-cat
+          "forwarding refuses parameter replacement, exposure or global rebind: "
+          (clone (array-ref bad-bodies i)))))
+    (for [i (iterator.range 0 (array-length conflicting-roots))]
+      (test.assert-i64-eq
+        (opt-ag-forward-fact
+          (opt-ag-forward-program
+            (clone (array-ref conflicting-roots i))
+            ""
+            "%0"
+            "%0"))
+        0
+        "rootless, conflicting, opaque and unreadable incoming paths carry no fact"))
+    (test.assert-i64-eq
+      (opt-ag-forward-fact (opt-ag-forward-program (clone root) "" "%1" "%1"))
+      0
+      "nonpositional caller parameters cannot forward")
+    (match (opt-ag-forward-program (clone root) "" "%0" "%0")
+      [(Program globals functions externs)
+        (let
+          [scan : opt.OptArgGlobalScan
+            (opt.opt-arg-global-roots
+              (& globals)
+              (& externs)
+              (& functions)
+              (& (opt.opt-global-mod-ref-none))
+              16)]
+          (test.assert-i64-eq
+            (opt.opt-arg-global-fact
+              (& scan.sites)
+              (opt-test-symbol "agf_leaf")
+              0)
+            0
+            "an unavailable cell-write table cannot license forwarding"))])))
+
+;; Every position of the hidden ABI parameter survives, even when it is the
+;; only remaining argument. Its original var id and name are not renumbered.
+(define (opt-ag-sret-program [hidden : i64] [tagged? : bool]) : ir.CompilerIrProgram
+  (let
+    [params : String ""]
+    [root-args : String ""]
+    [recursive-args : String ""]
+    (for [i (iterator.range 0 3)]
+      (let
+        [separator : String
+          (if (= i 0)
+            ""
+            ", ")]
+        (set!
+          params
+          (str_cat.str-cat
+            params
+            (clone separator)
+            (if (= i hidden)
+              "\x01__sret"
+              "p")
+            "=%"
+            (string.int->string i)
+            (if (= i hidden)
+              ":u64"
+              ":(& ags i64)")))
+        (set!
+          root-args
+          (str_cat.str-cat
+            root-args
+            (clone separator)
+            (if (= i hidden)
+              "%1"
+              "@ags_g")))
+        (set!
+          recursive-args
+          (str_cat.str-cat
+            recursive-args
+            (clone separator)
+            (if (= i hidden)
+              "%4"
+              (str_cat.str-cat "%" (string.int->string i)))))))
+    (irt.program
+      (str_cat.str-cat
+        "global @ags_g : i64 = 7\n"
+        "function @ags_root() -> u64 vars 3 {\nentry:\n"
+        "%0 = alloc (Array i64 3)\n%1 = addr_of %0\n%2 = call ags_reader("
+        (if tagged?
+          (str_cat.str-cat "[sret arg " (string.int->string hidden) "] ")
+          "")
+        root-args
+        ") : u64\nreturn %2\n}\n"
+        "function @ags_reader("
+        params
+        ") -> u64 vars 6 {\nentry:\n"
+        "%3 = alloc (Array i64 3)\n%4 = addr_of %3\n%5 = call ags_reader([sret arg "
+        (string.int->string hidden)
+        "] "
+        recursive-args
+        ") : u64\nreturn %5\n}"))))
+
+(test
+  arg-global-sret-forwarding-and-reindexing
+  (for [hidden (iterator.range 0 3)]
+    (for [tag (iterator.range 0 2)]
+      (match (opt-ag-sret-program hidden (= tag 1))
+        [(Program globals functions externs)
+          (let
+            [scan : opt.OptArgGlobalScan
+              (opt-test-arg-global-roots
+                (clone globals)
+                (clone externs)
+                (& functions))]
+            [out : ir.CompilerIrFunctionSeq
+              (opt.opt-lga-specialize-program
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& globals)
+                (& externs)
+                functions
+                2)]
+            [reader : i64 (opt-test-symbol "ags_reader")]
+            (for [i (iterator.range 0 3)]
+              (test.assert-i64-eq
+                (opt.opt-arg-global-fact (& scan.sites) reader i)
+                (if (= i hidden)
+                  0
+                  (+ 1 (opt-test-symbol "ags_g")))
+                "only ordinary recursive arguments acquire the global root"))
+            (test.assert-i64-eq
+              (opt-lga-params (& out) reader)
+              1
+              "only the hidden parameter remains")
+            (match (ir.compiler-ir-function-seq-borrow
+              (& out)
+              (opt-lga-find (& out) reader))
+              [(Function _ params _ _ _ _)
+                (match (ir.compiler-ir-param-seq-borrow params 0)
+                  [(Param name _ var)
+                    (test.assert-i64-eq
+                      var
+                      hidden
+                      "the hidden var identity is preserved")
+                    (test.assert-true
+                      (string.eq name (ir.compiler-ir-hidden-sret-param-name))
+                      "the hidden ABI parameter retains its canonical name")])])
+            (match (opt-function-seq-find (& out) "ags_reader")
+              [(Some (Function _ _ _ _ blocks _))
+                (match (ir.compiler-ir-block-list-view blocks)
+                  [(slice (Block _ instrs) & _)
+                    (match (ir.compiler-ir-instr-seq-ref instrs 2)
+                      [(Call _ _ (Sret values index) _)
+                        (test.assert-i64-eq
+                          index
+                          0
+                          "the return-buffer marker moves past removed positions")
+                        (test.assert-i64-eq
+                          (array-length values)
+                          1
+                          "the marker survives the single-argument representation")]
+                      [_
+                        (test.assert-true
+                          false
+                          "recursive call must retain its sret marker")])]
+                  [_ (test.assert-true false "reader body exists")])]
+              [_ (test.assert-true false "reader remains")]))]))))
+
+(test
+  arg-global-malformed-sret-census
+  (for [hidden (array (cast -1 : i64) (cast 3 : i64))]
+    (match (opt-ag-sret-program hidden true)
+      [(Program globals functions externs)
+        (let
+          [scan : opt.OptArgGlobalScan
+            (opt-test-arg-global-roots globals externs (& functions))]
+          (for [i (iterator.range 0 3)]
+            (test.assert-i64-eq
+              (opt.opt-arg-global-fact
+                (& scan.sites)
+                (opt-test-symbol "ags_reader")
+                i)
+              0
+              "an out-of-range return-buffer marker refuses every position")))])))
 
 ;; --- LGA-1: literal-global argument specialization -----------------------------
 ;;
@@ -67007,7 +67284,7 @@
   (test.assert-i64-eq
     (compiler-optimize-arg-global-facts-self-test)
     42
-    "a function whose address is never taken and whose every direct call site passes the same global at a reference parameter position carries that identity as a whole-program fact, so two bounds checks of one index against two members of one length-equality family collapse to one INSIDE the callee, where no global is named at all; a second site passing a local kills that position only, an address-taken callee and a callee nothing calls carry nothing, a self-recursive site passing the parameter back refuses while one passing the global through does not, a callee named by a call form whose arguments are not read positionally is refused outright, and a body that redefines the parameter's own var is refused outright"))
+    "a function whose address is never taken and whose every direct call site passes the same global at a reference parameter position carries that identity as a whole-program fact, so two bounds checks of one index against two members of one length-equality family collapse to one INSIDE the callee, where no global is named at all; a second site passing a local kills that position only, an address-taken callee and a callee nothing calls carry nothing, a self-recursive site forwarding an unchanged parameter retains the rooted identity, a callee named by a call form whose arguments are not read positionally is refused outright, and a body that redefines the parameter's own var is refused outright"))
 
 (test
   lga-literal-global-argument-specialization

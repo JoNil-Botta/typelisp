@@ -53833,9 +53833,14 @@
 ;; initializer and not a runtime-prelude helper the backend may call on its
 ;; own. Every activation of F is then a direct `Call`/`TailCall` naming F, and
 ;; this walk enumerates all of them -- recursive and tail self-calls included.
-;; If every one of those sites passes the same `CompilerIrValue.Global g` at
-;; position k -- the address of g's storage, a link-time constant -- then the
-;; ENTRY value of parameter k is `@g` in every activation. The consumer
+;; Direct global operands seed a finite meet; unchanged positional parameters
+;; may forward those roots through recursive calls. A forwarding caller must
+;; itself be enumerable and its cell-write summary must prove it cannot rebind
+;; that global. Parameter definitions and address exposure refuse forwarding.
+;; A rootless cycle proves nothing, and any conflicting site rejects the fact.
+;; Ordinary arguments of sret calls participate; the hidden output never does.
+;; Thus parameter k has the value read from `Global g` in every activation.
+;; The consumer
 ;; (opt-arg-global-final-sweep) is verifier-gated and the verifier rejects a
 ;; function that defines a parameter's var a second time, so the parameter's
 ;; var IS its entry value there: a `set!` of the parameter defines a different
@@ -116644,7 +116649,12 @@
                 (= (opt_i64_i64_map.len (& cell.addr-taken)) 0)
                 (> (ir.compiler-ir-global-seq-count globals) 0))
               (> (opt_i64_i64_map.len (& cell.len-eq)) 0)))
-            (opt-arg-global-roots globals externs reachable-functions capacity)
+            (opt-arg-global-roots
+              globals
+              externs
+              reachable-functions
+              cell.mod-ref
+              capacity)
             (OptArgGlobalScan
               (opt_i64_i64_map.with-capacity 1)
               (opt_i64_i64_map.with-capacity 1)
@@ -120183,11 +120193,8 @@
 
 ;; --- GAP-1: proving a parameter is a global ----------------------------------
 ;;
-;; One walk of the whole program collects both halves of the proof: the set of
-;; functions an activation can reach WITHOUT a `Call`/`TailCall` site this walk
-;; reads positionally, and, per (callee, argument position), the single
-;; `Global` every such site passes there. See the family header above
-;; opt-arg-global-param-cap for the soundness argument.
+;; The census collects opaque entries and literal roots before resolving
+;; unchanged caller parameters. See opt-arg-global-param-cap for the proof.
 (defstruct OptArgGlobalScan
   ;; Function symbol ids no fact may be recorded for: those whose address is
   ;; taken and those the program can enter without a call site in the IR. An id
@@ -120198,8 +120205,8 @@
   ;; extern, or a function with no parameters or more than the key packing
   ;; admits -- has its arguments scanned for function addresses only.
   (arity opt_i64_i64_map.Map)
-  ;; opt-arg-global-key -> 0 (two sites disagreed, or one passed something that
-  ;; is not a global) or 1 + the global symbol id every site so far passed.
+  ;; opt-arg-global-key -> 0 (conflict or unreadable source), or 1 + the
+  ;; global symbol id. An absent forwarding source has no rooted fact yet.
   (sites opt_i64_i64_map.Map))
 
 (define (opt-arg-global-scan-opaque [scan : OptArgGlobalScan] [name : i64]) : OptArgGlobalScan
@@ -120234,8 +120241,25 @@
     opt-arg-global-scan-use
     (ir.compiler-ir-role-call-arg)))
 
-;; One argument of one direct call site, read positionally: the recorded fact
-;; is the intersection over every site, and 0 means "no fact" for good.
+;; Facts only descend: absent, one global, then conflict (0). An absent
+;; forwarding source contributes nothing until a rooted site reaches it.
+(define (opt-arg-global-site-meet!
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [key : i64]
+  [want : i64]) : bool
+  (match (opt_i64_i64_map.get sites key)
+    [(LookupFound seen)
+      (if (or (= seen want) (= seen 0))
+        false
+        (begin
+          (opt_i64_i64_map.insert-ref! sites key 0)
+          true))]
+    [(LookupMissing)
+      (opt_i64_i64_map.insert-ref! sites key want)
+      true]))
+
+;; Direct globals and conflicts seed the meet. Var operands are resolved by
+;; the caller-aware forwarding walk after every opaque function is known.
 (define (opt-arg-global-scan-site
   [scan : (& OptArgGlobalScan)]
   [name : i64]
@@ -120245,6 +120269,7 @@
     [want : i64
       (match value
         [(Global cell) (+ 1 (ir.compiler-ir-symbol-id cell))]
+        [(Var _) -1]
         [_ 0])]
     (match (opt-arg-global-scan-value
       (owned_view.compiler-owned-reference-shared-view scan)
@@ -120252,13 +120277,11 @@
       [(OptArgGlobalScan opaque arity sites)
         (let
           [key : i64 (opt-arg-global-key name position)]
-          (match (opt_i64_i64_map.get (& sites) key)
-            [(LookupFound seen)
-              (if (= seen want)
-                unit
-                (opt_i64_i64_map.insert-ref! (&mut sites) key 0))]
-            [(LookupMissing)
-              (opt_i64_i64_map.insert-ref! (&mut sites) key want)])
+          (when
+            (>= want 0)
+            (begin
+              (opt-arg-global-site-meet! (&mut sites) key want)
+              unit))
           (OptArgGlobalScan opaque arity sites))])))
 
 (define (opt-arg-global-scan-site-array
@@ -120291,8 +120314,13 @@
         name
         1
         (& b))]
-    [(or (Array values) (Sret values _))
-      (opt-arg-global-scan-site-array scan name (& values) 0)]))
+    [(Array values) (opt-arg-global-scan-site-array scan name (& values) 0)]
+    [(Sret values index)
+      (opt-arg-global-scan-refuse
+        (opt-arg-global-scan-site-array scan name (& values) 0)
+        name
+        index
+        (+ index 1))]))
 
 (define (opt-arg-global-args-count [args : (& args ir.CompilerIrCallArgs)]) : i64
   (match args
@@ -120329,6 +120357,16 @@
     [(LookupFound encoded) (- encoded 1)]
     [(LookupMissing) (- 0 1)]))
 
+(define (opt-arg-global-site-readable?
+  [count : i64]
+  [args : (& ir.CompilerIrCallArgs)]) : bool
+  (and
+    (>= count 0)
+    (= count (opt-arg-global-args-count args))
+    (match args
+      [(Sret _ index) (and (>= index 0) (< index count))]
+      [_ true])))
+
 (define (opt-arg-global-scan-direct
   [scan : (& OptArgGlobalScan)]
   [callee : i64]
@@ -120336,27 +120374,16 @@
   (let
     [name : i64 (ir.compiler-ir-symbol-id callee)]
     [count : i64 (opt-arg-global-arity-of scan name)]
-    (match args
-      [(Sret _ _)
-        ;; Never drop or reindex a hidden output parameter at any call site.
-        (opt-arg-global-scan-refuse
-          (opt-arg-global-scan-args scan args)
-          name
-          0
-          count)]
-      [_
-        (if (< count 0)
-          (opt-arg-global-scan-args scan args)
-          (if (= count (opt-arg-global-args-count args))
-            (opt-arg-global-scan-site-args
-              (owned_view.compiler-owned-reference-shared-view scan)
-              name
-              args)
-            (opt-arg-global-scan-refuse
-              (opt-arg-global-scan-args scan args)
-              name
-              0
-              count)))])))
+    (if (opt-arg-global-site-readable? count args)
+      (opt-arg-global-scan-site-args
+        (owned_view.compiler-owned-reference-shared-view scan)
+        name
+        args)
+      (opt-arg-global-scan-refuse
+        (opt-arg-global-scan-args scan args)
+        name
+        0
+        count))))
 
 ;; Calls come from the total opt-instr-target and operands from the total IR
 ;; operand API, so a new IR instruction cannot let a function address or a
@@ -120393,6 +120420,161 @@
     functions
     (owned_view.compiler-owned-reference-shared-view scan)
     opt-arg-global-scan-instr))
+
+;; Edges are adjacent (source, destination) keys in the existing dense vector.
+;; Only enumerable callers with positional, unchanged parameters may forward.
+;; Taking a parameter's address also refuses it: an indirect write could replace
+;; its value without a definition naming that var.
+(define (opt-arg-global-forward-arg!
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges opt_dense_i64_vec.Vec)]
+  [caller : i64]
+  [unchanged : (& unchanged (__tl_dyn-array bool))]
+  [callee : i64]
+  [position : i64]
+  [value : (& ir.CompilerIrValue)]) : unit
+  (match value
+    [(Var var)
+      (let
+        [key : i64 (opt-arg-global-key callee position)]
+        (if (and
+          (>= var 0)
+          (< var (array-length unchanged))
+          (array-ref unchanged var))
+          (begin
+            (opt_dense_i64_vec.push-ref! edges (opt-arg-global-key caller var))
+            (opt_dense_i64_vec.push-ref! edges key))
+          (begin
+            (opt-arg-global-site-meet! sites key 0)
+            unit)))]
+    [_ unit]))
+
+(define (opt-arg-global-forward-instr!
+  [arity : (& arity opt_i64_i64_map.Map)]
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges opt_dense_i64_vec.Vec)]
+  [caller : i64]
+  [unchanged : (& unchanged (__tl_dyn-array bool))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-target instr)
+    [(Direct name args)
+      (let
+        [callee : i64 (ir.compiler-ir-symbol-id name)]
+        [count : i64 (- (opt-cl-map-count arity callee) 1)]
+        [hidden : i64
+          (match (& args)
+            [(Sret _ index) index]
+            [_ -1])]
+        (when
+          (opt-arg-global-site-readable? count (& args))
+          (for [position (iterator.range 0 count)]
+            (unless
+              (= position hidden)
+              (opt-arg-global-forward-arg!
+                sites
+                edges
+                caller
+                unchanged
+                callee
+                position
+                (& (opt-inline-clone-arg-at (& args) position)))))))]
+    [_ unit]))
+
+(define (opt-arg-global-forward-function!
+  [opaque : (& opaque opt_i64_i64_map.Map)]
+  [arity : (& arity opt_i64_i64_map.Map)]
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges opt_dense_i64_vec.Vec)]
+  [func : (& ir.CompilerIrFunction)]) : unit
+  (match func
+    [(Function name params _ _ blocks _)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [enumerable? : bool
+          (and
+            (>= id 0)
+            (> params.len 0)
+            (not (opt_i64_i64_map.contains? opaque id))
+            (= (opt-cl-map-count arity id) (+ params.len 1))
+            (opt-lga-params-positional? params))]
+        [unchanged : (__tl_dyn-array bool)
+          (__tl_make-array
+            bool
+            (if enumerable?
+              params.len
+              0))]
+        (for [position (iterator.range 0 (array-length unchanged))]
+          (set!
+            (array-ref unchanged position)
+            (opt-blocks-every?
+              blocks
+              opt-licm-return-alias-instr-keeps-param?
+              position)))
+        (opt-blocks-visit
+          blocks
+          opt-arg-global-forward-instr!
+          arity
+          sites
+          edges
+          id
+          (& unchanged)))]))
+
+;; A rootless cycle remains absent and emits no facts. A forwarded value may
+;; replace a global read only while the source function cannot rebind that
+;; global: its parameter otherwise retains the older value of the cell.
+;; Rooted facts propagate until stable; disagreement descends to 0 forever.
+;; The finite lattice and deterministic edge order make the result independent
+;; of which function or root appears first in the program.
+(define (opt-arg-global-resolve-forwards
+  [scan : OptArgGlobalScan]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [mod-ref : (& mod-ref OptGlobalModRef)]) : OptArgGlobalScan
+  (match scan
+    [(OptArgGlobalScan opaque arity sites)
+      (let
+        [edges : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+        [changed? : bool true]
+        (for [index (iterator.range 0 functions.len)]
+          (opt-arg-global-forward-function!
+            (& opaque)
+            (& arity)
+            (&mut sites)
+            (&mut edges)
+            (ir.compiler-ir-function-seq-borrow functions index)))
+        (while changed?
+          (set! changed? false)
+          (let
+            [index : i64 0]
+            (while (< index (opt_dense_i64_vec.len (& edges)))
+              (match (opt_i64_i64_map.get
+                (& sites)
+                (opt_dense_i64_vec.get (& edges) index -1))
+                [(LookupFound value)
+                  (let
+                    [source : i64 (opt_dense_i64_vec.get (& edges) index -1)]
+                    [want : i64
+                      (if (and
+                        (> value 0)
+                        (or
+                          (not mod-ref.built?)
+                          (opt-global-mod-ref-mask-may-write?
+                            mod-ref.index
+                            (opt-lga-row
+                              mod-ref.writes
+                              (/ source (opt-arg-global-param-cap))
+                              (opt-global-mod-ref-any))
+                            (- value 1))))
+                        0
+                        value)]
+                    (when
+                      (opt-arg-global-site-meet!
+                        (&mut sites)
+                        (opt_dense_i64_vec.get (& edges) (+ index 1) -1)
+                        want)
+                      (set! changed? true)))]
+                [(LookupMissing) unit])
+              (+= index 2))))
+        (OptArgGlobalScan opaque arity sites))]))
 
 ;; The roots the reachability walk seeds that are NOT direct call sites, so an
 ;; activation of one of them is an activation this walk cannot account for:
@@ -120433,12 +120615,21 @@
               (opt-arg-global-scan-opaque scan id)
               scan)
               [(OptArgGlobalScan opaque arity sites)
-                (if (and
-                  (>= id 0)
-                  (> params.len 0)
-                  (<= params.len (opt-arg-global-param-cap)))
+                (when
+                  (and
+                    (>= id 0)
+                    (> params.len 0)
+                    (<= params.len (opt-arg-global-param-cap)))
                   (opt_i64_i64_map.insert-ref! (&mut arity) id (+ params.len 1))
-                  unit)
+                  ;; Untagged calls can also carry the hidden ABI parameter.
+                  ;; It never supplies or receives a global identity fact.
+                  (for [position (iterator.range 0 params.len)]
+                    (when
+                      (opt-inline-param-is-sret? (& params) position)
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut sites)
+                        (opt-arg-global-key id position)
+                        0))))
                 (OptArgGlobalScan opaque arity sites)]))])
       functions
       (+ index 1))))
@@ -120564,23 +120755,27 @@
   [globals : (& ir.CompilerIrGlobalSeq)]
   [externs : (& ir.CompilerIrExternSeq)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [mod-ref : (& OptGlobalModRef)]
   [capacity : i64]) : OptArgGlobalScan
-  (opt-arg-global-scan-functions
-    (&
-      (opt-arg-global-seed-globals
-        (opt-arg-global-seed-externs
-          (opt-arg-global-seed-functions
-            (OptArgGlobalScan
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity capacity)
-              (opt_i64_i64_map.with-capacity capacity))
-            functions
+  (opt-arg-global-resolve-forwards
+    (opt-arg-global-scan-functions
+      (&
+        (opt-arg-global-seed-globals
+          (opt-arg-global-seed-externs
+            (opt-arg-global-seed-functions
+              (OptArgGlobalScan
+                (opt_i64_i64_map.with-capacity capacity)
+                (opt_i64_i64_map.with-capacity capacity)
+                (opt_i64_i64_map.with-capacity capacity))
+              functions
+              0)
+            externs
             0)
-          externs
-          0)
-        globals
-        0))
-    functions))
+          globals
+          0))
+      functions)
+    functions
+    mod-ref))
 
 ;; Build the call-site global-argument identity table, or decline. The
 ;; function-count gate is the one every other whole-program summary applies,
@@ -120608,7 +120803,7 @@
 ;; The phase-5 call-boundary packet named CB-1, spelled `opt-lga-`.
 ;;
 ;; WHAT IT DOES. An internal function F whose EVERY direct call site passes the
-;; same `CompilerIrValue.Global g` for a `(& g T)` / `(&mut g T)` parameter p
+;; same proven global value for a `(& g T)` / `(&mut g T)` parameter p
 ;; does not need p: inside F, `Global g` denotes exactly the address the caller
 ;; marshalled. Substituting `Global g` for p's uses and dropping the argument at
 ;; every site is IPSCCP's constant-argument propagation followed by dead
@@ -121235,8 +121430,9 @@
   dropped)
 
 ;; Substitute every argument, then drop the positions the callee no longer
-;; takes. The surviving list takes the same canonical representation the inline
-;; stage's own argument staging builds (opt-inline-staged-args).
+;; takes. Sret keeps its carrier and shifts the hidden index by the number of
+;; removed preceding positions. Other lists use the inline stage's canonical
+;; representation (opt-inline-staged-args).
 (define (opt-lga-rewrite-args
   [removed : (& (__tl_dyn-array i64))]
   [removals : (& removals opt_i64_i64_map.Map)]
@@ -121261,15 +121457,19 @@
                 (owned_view.compiler-owned-reference-shared-view removed)
                 (opt-inline-clone-arg-at args position)))
             (+= filled 1)))
-        (cond
-          [(= kept 0) (Nil)]
-          [(= kept 1)
-            (One (compiler-opt-global-array-element-shared-view slots 0))]
-          [(= kept 2)
-            (Two
-              (compiler-opt-global-array-element-shared-view slots 0)
-              (compiler-opt-global-array-element-shared-view slots 1))]
-          [else (Array slots)])))))
+        (match args
+          [(Sret _ index)
+            (Sret slots (- index (opt-lga-drop-count removals callee index 0)))]
+          [_
+            (cond
+              [(= kept 0) (Nil)]
+              [(= kept 1)
+                (One (compiler-opt-global-array-element-shared-view slots 0))]
+              [(= kept 2)
+                (Two
+                  (compiler-opt-global-array-element-shared-view slots 0)
+                  (compiler-opt-global-array-element-shared-view slots 1))]
+              [else (Array slots)])])))))
 
 ;; The ten forms opt-lga-allowed-use licenses a parameter to appear in, plus the
 ;; two direct-call forms whose argument list may lose a position. Every other
@@ -121503,7 +121703,12 @@
             functions)
           (let
             [scan : OptArgGlobalScan
-              (opt-arg-global-roots globals externs functions capacity)]
+              (opt-arg-global-roots
+                globals
+                externs
+                functions
+                (& mod-ref)
+                capacity)]
             [obj : OptGlobalModRef
               (opt-global-obj-build
                 type-segment-bases

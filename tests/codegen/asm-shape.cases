@@ -7,6 +7,28 @@
 
 args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
+# Dropping the recursive reader's global argument shifts its hidden output
+# from the third to the second internal-ABI argument on both targets.
+case arg-specialize-recursive-sret-linux
+source tests/integration/arg_specialize_recursive_sret.tl
+target linux-x86_64
+in fn _tl_arg_specialize_recursive_sret_read_values
+match ^[[:space:]]+movq %rsi, %r[a-z0-9]+$
+after ^[[:space:]]+leaq [0-9]+\(%rsp\), %rsi$
+next-line ^[[:space:]]+call _tl_arg_specialize_recursive_sret_read_values$
+contains _tl_arg_specialize_recursive_sret_data(%rip)
+count = 1 ^[[:space:]]+call _tl_arg_specialize_recursive_sret_read_values$
+
+case arg-specialize-recursive-sret-windows
+source tests/integration/arg_specialize_recursive_sret.tl
+target windows-x86_64
+in fn _tl_arg_specialize_recursive_sret_read_values
+match ^[[:space:]]+movq %rdx, %r[a-z0-9]+$
+after ^[[:space:]]+leaq [0-9]+\(%rsp\), %rdx$
+next-line ^[[:space:]]+call _tl_arg_specialize_recursive_sret_read_values$
+contains _tl_arg_specialize_recursive_sret_data(%rip)
+count = 1 ^[[:space:]]+call _tl_arg_specialize_recursive_sret_read_values$
+
 case binary-interval-search
 source tests/integration/bce_binary_interval.tl
 in fn _tl_bce_binary_interval_search_div

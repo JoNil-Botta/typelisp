@@ -1313,6 +1313,19 @@ nothing reads a body after its position, so a chunk is released when no survivor
 is in it (before the loop) or once the loop passes its last survivor. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
+The global-argument census resolves literal global roots through unchanged,
+positional caller parameters, including recursive call graphs. Forwarding
+requires an enumerable caller and a complete cell-write summary proving that
+it cannot rebind the global; parameter redefinitions and address exposure refuse
+it. A rootless cycle carries no fact, and conflicting roots remain rejected.
+The late argument-specialization pass consumes this census with its existing
+callee escape, global-address, reachable-rebind and storage-write guards.
+Ordinary arguments of aggregate-return calls participate. The hidden return
+parameter retains its name and var identity, and tagged calls retain their
+return-buffer marker with its index adjusted for removed arguments. The
+optimizer IR tests and `arg_specialize_recursive_sret` native/codegen fixture
+cover these boundaries on both targets.
+
 The checked inliner's literal-argument scan borrows dense block storage directly.
 It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer

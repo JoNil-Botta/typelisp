@@ -52,6 +52,8 @@ inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_n
 cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-
 arg_global_len_eq_pair|all|-|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_specialize_global|all|-|tests/integration/arg_specialize_global.tl|42|36\n2\n64\n108\n80\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+arg_specialize_recursive_sret|all|0,1,2|tests/integration/arg_specialize_recursive_sret.tl|42|-|5|stdlib/iterator.tl stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+arg_specialize_recursive_sret_empty|all|0,1,2|tests/integration/arg_specialize_recursive_sret.tl|22|-|0|stdlib/iterator.tl stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 main_private_stack|all|-|tests/integration/main_private_stack.tl|42|-|-|-|-
 guard_sink_invalidate_walk|all|-|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 guard_sink_store_across_guard|all|-|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl|-

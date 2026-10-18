@@ -41748,7 +41748,9 @@
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (match src
     [(Var src-var)
-      (compiler-backend-vars-same-home? backend-state assignments dst src-var)]
+      (and
+        (< (compiler-backend-forwarded-addr-of-src backend-state src-var) 0)
+        (compiler-backend-vars-same-home? backend-state assignments dst src-var))]
     [_ false]))
 
 (define (compiler-backend-phi-same-home?

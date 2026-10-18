@@ -1381,6 +1381,11 @@
 (defenum One (Only Holder))
 (defstruct W8 (a i64) (b i64) (c i64) (d i64) (e i64) (f i64) (g i64) (h i64))
 (defstruct Wide (w1 W8) (w2 W8) (w3 W8) (w4 W8) (w5 W8) (w6 W8) (w7 W8) (w8 W8) (w9 W8))
+(defstruct Group0 (a i64) (b i64))
+(defstruct Group1 (a f64) (b i64))
+(defstruct Group2 (a i64) (b f64))
+(defstruct Group3 (a f64) (b f64))
+(defstruct MixedWord (a i32) (b f32) (c i64))
 (define (main) : i64 0)")
 
 (define (lower-test-nominal-id
@@ -1420,12 +1425,37 @@
           (=
             (ir.compiler-ir-representation-index-stable-mask
               (&
-                (lower.lower-representation-index-stable-words
+                (lower.lower-representation-index-from-layouts
                   (ast.ast-node-pool-reader-type-segment-bases)
                   (tc_core.tc-context-job-state ctx)
                   (ir.compiler-ir-representation-index-empty)))
               (ast.ast-nominal-name-id-key name-id))
             want)]
+        [(Err _) false]))))
+
+(define (lower-test-layout-group
+  [ctx : tc_core.TcContext]
+  [program : (& program ast.AstProgram)]
+  [name : String]
+  [mask : i64]) : bool
+  (let
+    [name-id : i64 (lower-test-nominal-id program name)]
+    (and
+      (>= name-id 0)
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(Ok _)
+          (match (ir.compiler-ir-representation-index-kind
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (&
+              (lower.lower-representation-index-from-layouts
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (tc_core.tc-context-job-state ctx)
+                (ir.compiler-ir-representation-index-empty)))
+            (& (ast.AstType.Struct name-id)))
+            [(RegisterGroup words found-mask)
+              (and (= words 2) (= found-mask mask))]
+            [(KnownOneWord) (= mask -1)]
+            [_ false])]
         [(Err _) false]))))
 
 (define (compiler-lower-stable-word-masks-ok?) : bool
@@ -1452,7 +1482,13 @@
                   (lower-test-stable-mask ctx (& program) "Holder" 1)
                   (lower-test-stable-mask ctx (& program) "One" 3)
                   (lower-test-stable-mask ctx (& program) "W8" 255)
-                  (lower-test-stable-mask ctx (& program) "Wide" 0)))]
+                  (lower-test-stable-mask ctx (& program) "Wide" 0)
+                  (lower-test-layout-group ctx (& program) "Group0" 0)
+                  (lower-test-layout-group ctx (& program) "Group1" 1)
+                  (lower-test-layout-group ctx (& program) "Group2" 2)
+                  (lower-test-layout-group ctx (& program) "Group3" 3)
+                  (lower-test-layout-group ctx (& program) "MixedWord" -1)
+                  (lower-test-layout-group ctx (& program) "W8" -1)))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))

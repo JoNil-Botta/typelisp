@@ -15526,12 +15526,7 @@
   [index : (&mut index ir.CompilerIrRepresentationIndex)]
   [layout : tc_core.TcInlineAggregateLayout]
   [fuel : i64]) : i64
-  (if (or
-    (<= fuel 0)
-    (>
-      (tc_core.tc-inline-aggregate-layout-size
-        (lower-global-shared-view layout))
-      512))
+  (if (or (<= fuel 0) (> (tc_core.tc-inline-aggregate-layout-size layout) 512))
     0
     (match layout
       [(Struct _ _ fields)
@@ -15621,7 +15616,7 @@
         (ir.compiler-ir-representation-index-set-stable-mask! index key mask)
         mask))))
 
-(define (lower-representation-index-stable-words
+(define (lower-representation-index-from-layouts
   [type-segment-bases : i64]
   [job : tc_core.TcJobState]
   [index : ir.CompilerIrRepresentationIndex]) : ir.CompilerIrRepresentationIndex
@@ -15636,7 +15631,33 @@
           (tc_core.tc-agg-layout-cache-slots state)]
         (for [at (iterator.range 0 (array-length slots))]
           (match (owned_view.compiler-owned-array-element-shared-view slots at)
-            [(Full name _)
+            [(Full name layout)
+              ;; A dependency can supply every value of this nominal type, so
+              ;; no local Pack need exist. Capture the same layout facts used
+              ;; by its body before the typecheck owner is retired.
+              (if (and
+                (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
+                (tc_core.tc-inline-aggregate-layout-register-resident? layout))
+                (set!
+                  index
+                  (ir.compiler-ir-representation-index-merge-group
+                    index
+                    (ast.ast-nominal-name-id-key name)
+                    2
+                    (+
+                      (if (lower-register-word-sse-type?
+                        (lower-register-layout-word-type layout 0))
+                        1
+                        0)
+                      (if (lower-register-word-sse-type?
+                        (lower-register-layout-word-type layout 1))
+                        2
+                        0))))
+                (set!
+                  index
+                  (ir.compiler-ir-representation-index-merge-one-word
+                    index
+                    (ast.ast-nominal-name-id-key name))))
               (lower-representation-stable-nominal-mask
                 type-segment-bases
                 state
@@ -16198,13 +16219,13 @@
     current))
 
 (define (lower-register-struct-word-type-fields
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
   (lower-register-struct-word-type-fields-at fields word-index current 0))
 
 (define (lower-register-struct-word-type-fields-at
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [word-index : i64]
   [current : ast.AstType]
   [index : i64]) : ast.AstType
@@ -16251,13 +16272,13 @@
         (+ index 1)))))
 
 (define (lower-register-enum-word-type-variants
-  [variants : tc_core.TcInlineVariantLayoutList]
+  [variants : (& variants tc_core.TcInlineVariantLayoutList)]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
   (lower-register-enum-word-type-variants-at variants word-index current 0))
 
 (define (lower-register-enum-word-type-variants-at
-  [variants : tc_core.TcInlineVariantLayoutList]
+  [variants : (& variants tc_core.TcInlineVariantLayoutList)]
   [word-index : i64]
   [current : ast.AstType]
   [index : i64]) : ast.AstType
@@ -16274,6 +16295,17 @@
 ;; Register-resident aggregate word type for lowering/backend movement. INTEGER
 ;; words are represented as i64 bit words; SSE eightbytes are represented by f64
 ;; values, including homogeneous packed f32 words carried opaquely in XMM regs.
+(define (lower-register-layout-word-type
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
+  [word-index : i64]) : ast.AstType
+  (match layout
+    [(Struct _ _ fields)
+      (lower-register-struct-word-type-fields fields word-index (I64))]
+    [(Enum _ _ variants)
+      (if (= word-index 0)
+        (I64)
+        (lower-register-enum-word-type-variants variants word-index (I64)))]))
+
 (define (lower-register-word-type
   [ctx : tc_core.TcContext]
   [ty : (& ty ast.AstType)]
@@ -16287,35 +16319,10 @@
             (U64)
             (I64))
           (I64))]
-      [(Struct name)
+      [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
         (match (tc_core.tc-inline-aggregate-layout-for-id ctx name)
-          [(Ok layout)
-            (match layout
-              [(Struct _ _ fields)
-                (lower-register-struct-word-type-fields fields word-index (I64))]
-              [(Enum _ _ _) (I64)])]
+          [(Ok layout) (lower-register-layout-word-type layout word-index)]
           [(Err _) (I64)])]
-      [(StructArgs name _)
-        (let
-          [ty (ast.AstType.Struct name)]
-          (lower-register-word-type ctx ty word-index))]
-      [(Enum name)
-        (if (= word-index 0)
-          (I64)
-          (match (tc_core.tc-inline-aggregate-layout-for-id ctx name)
-            [(Ok layout)
-              (match layout
-                [(Enum _ _ variants)
-                  (lower-register-enum-word-type-variants
-                    variants
-                    word-index
-                    (I64))]
-                [(Struct _ _ _) (I64)])]
-            [(Err _) (I64)]))]
-      [(EnumArgs name _)
-        (let
-          [ty (ast.AstType.Enum name)]
-          (lower-register-word-type ctx ty word-index))]
       [_ (I64)])))
 
 (define (lower-one-word-register-storage-type
@@ -26336,8 +26343,7 @@
           ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
           ;; struct packs each word and combines them with
           ;; CompilerIrInstr.Pack.
-          (if (tc_core.tc-inline-aggregate-layout-register-resident?
-            (lower-global-shared-view layout))
+          (if (tc_core.tc-inline-aggregate-layout-register-resident? layout)
             (if (lower-type-register-group?
               ctx
               (lower-global-shared-view struct-ty))
@@ -26469,8 +26475,7 @@
           ;; A 1-word register-resident enum is nullary, so its single word
           ;; is the discriminant tag. A 2-word register-group enum packs the tag
           ;; into word0 and the variant payload into word1.
-          (if (tc_core.tc-inline-aggregate-layout-register-resident?
-            (lower-global-shared-view layout))
+          (if (tc_core.tc-inline-aggregate-layout-register-resident? layout)
             ;; A register-resident enum is 8 (nullary tag) or 16 bytes (tag
             ;; word0 + payload word1); derive the 2-word group case from the size we
             ;; already have rather than rebuilding the layout (lower-type-register-
@@ -32653,7 +32658,10 @@
           (=
             (csym.compiler-symbol-handle-kind handle)
             (csym.compiler-symbol-kind-extern))
-          (lower-symbol-function-value-id? ctx name-id)))]))
+          (lower-symbol-function-value-id? ctx name-id)
+          (match (tc_core.tc-call-extern-abi-for-name-id ctx name-id)
+            [(Some abi) (ast.ast-extern-abi-c? (& abi))]
+            [(No) false])))]))
 
 (define (lower-c-abi-extern-value-call?
   [ctx : tc_core.TcContext]
@@ -33761,6 +33769,62 @@
     (match (lower-global-shared-view classification)
       [(No) (lower-one-word-register-storage-type ctx resolved)]
       [_ (lower-internal-transport-type ctx resolved classification)])))
+
+;; A package declaration describes the physical signature of the same internal
+;; body. In particular, a one-word floating struct uses SSE and hidden result
+;; pointers have the same position as in function bodies.
+(define (lower-internal-extern-type
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : ast.AstType
+  (match (& ty)
+    [(Func args ret-id)
+      (let
+        [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+        [leading-sret? : bool
+          (match (lower-internal-return-class
+            ctx
+            mode
+            (tc_core.tc-context-type-get ctx ret-id))
+            [(Sret _) true]
+            [_ false])]
+        [params : ast.AstTypeList (ast.ast-type-list-new)]
+        [pointer-id : i64 (ast.ast-node-pool-context-type-push pools (U64))]
+        (when leading-sret? (ast.ast-type-list-push (&mut params) pointer-id))
+        (for [index (iterator.range 0 (ast.ast-type-list-len (& (deref args))))]
+          (ast.ast-type-list-push
+            (&mut params)
+            (ast.ast-node-pool-context-type-push
+              pools
+              (lower-internal-param-physical-type
+                ctx
+                mode
+                (tc_core.tc-context-type-get
+                  ctx
+                  (ast.ast-type-list-get
+                    (& (deref args))
+                    index
+                    (ast.ast-type-id-fallback)))))))
+        (when
+          (and
+            (not leading-sret?)
+            (lower-type-inline-struct-or-enum?
+              ctx
+              (tc_core.tc-context-type-get ctx ret-id))
+            (not
+              (lower-type-register-resident?
+                ctx
+                (tc_core.tc-context-type-get ctx ret-id))))
+          (ast.ast-type-list-push (&mut params) pointer-id))
+        (ast.ast-ty-func-with-pools
+          pools
+          params
+          (&
+            (lower-internal-return-physical-type
+              ctx
+              mode
+              (tc_core.tc-context-type-get ctx ret-id)))))]
+    [_ ty]))
 
 (define (lower-c-abi-register-resident-to-scalar
   [ctx : tc_core.TcContext]
@@ -71367,7 +71431,12 @@
                       (& decl-name-cache)
                       logical-key-id
                       logical-key-id)]
+                  [abi : ast.AstExternAbi
+                    (ast.ast-extern-metadata-abi
+                      (lower-box-shared-view metadata))]
+                  [c-abi? : bool (ast.ast-extern-abi-c? (& abi))]
                   (if (and
+                    c-abi?
                     (tc_core.tc-type-contains-reference?
                       (lower-global-shared-view resolved-ty))
                     (not
@@ -71394,9 +71463,13 @@
                             (lower-box-shared-view metadata))
                           name
                           logical-name
-                          (tc_core.tc-type-without-regions resolved-ty)
-                          (ast.ast-extern-metadata-abi
-                            (lower-box-shared-view metadata))
+                          (if c-abi?
+                            (tc_core.tc-type-without-regions resolved-ty)
+                            (lower-internal-extern-type
+                              decl-ctx
+                              mode
+                              resolved-ty))
+                          abi
                           (ci.intern-id-value
                             (ast.ast-extern-metadata-symbol-id
                               (& (deref metadata))))
@@ -72294,8 +72367,7 @@
   [layout : tc_core.TcInlineAggregateLayout]) : ir.CompilerDebugTypeNode
   (let
     [resident : bool
-      (tc_core.tc-inline-aggregate-layout-register-resident?
-        (lower-global-shared-view layout))]
+      (tc_core.tc-inline-aggregate-layout-register-resident? layout)]
     (match layout
       [(tc_core.TcInlineAggregateLayout.Struct size align fields)
         (let

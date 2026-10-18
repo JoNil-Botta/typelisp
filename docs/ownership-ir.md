@@ -1714,6 +1714,13 @@ The consumer checks the current full type, Copy classification and admitted
 register representation before emitting that read. A compile-time-only target rejects both calls and value
 materialization through that same boundary. Canonical lowering errors carry
 diagnostics, preserving the checked operation's location for phase errors.
+Calls through C pointers retain their complete CFunc signature in the typed
+call record. Its callee is captured first; the shared foreign operand walker
+lends non-Copy arguments for the call instead of moving them. Publication
+checks the callee's complete non-null CFunc type, and the owned call snapshot
+retains its function signature before the inference lease retires. The same
+record excludes TypeLisp global-write effects for that foreign call. Language
+function values keep their ordinary argument moves.
 A call through such a value consumes its already captured callee before its
 arguments; changing the source callable during argument evaluation cannot
 redirect that call. Foreign

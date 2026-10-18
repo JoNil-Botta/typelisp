@@ -13916,7 +13916,8 @@
 ;; the legacy route until their contracts are represented.
 (defenum TcSelectedCallTarget
   (Ordinary i64 ast.AstType bool)
-  ;; An extern function: its key and checked signature.
+  ;; A declared extern, or key -2 and the complete CFunc type of a stored
+  ;; foreign callee. Both read their operands without consuming owners.
   (Foreign i64 ast.AstType)
   ;; A read-only builtin: its dispatch arm.
   (Builtin i64)
@@ -15064,6 +15065,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]
+  [func-id : i64]
   [key : i64]
   [fn-ty : ast.AstType]
   [args : (& args ast.AstExprList)]
@@ -15086,44 +15088,69 @@
             TcSelectedSink.Query)]
         [(TcSelectedSink.Capture store lease bindings)
           (let
-            [parameters : ast.AstTypeList
+            [signature : ast.AstType
               (match (& fn-ty)
+                [(ast.AstType.CFunc id _) (clone (tc-context-type-get ctx id))]
+                [_ (clone fn-ty)])]
+            [parameters : ast.AstTypeList
+              (match (& signature)
                 [(ast.AstType.Func params _) (clone (deref params))]
                 [_ (ast.ast-type-list-new)])]
-            (match (tc-infer-selected-builtin-operands
-              ctx
-              env
-              args
-              (& parameters)
-              0
-              (__tl_make-array typed.TypedOccurrenceId args.len)
-              (tc-global-shared-view source)
-              (TcSelectedSink.Capture store lease bindings))
-              [(TcSelectedArgsResult.Err message next)
+            ;; A stored C callee is captured before its read-only operands.
+            (match (if (= key -2)
+              (tc-infer-selected-callee
+                ctx
+                env
+                func-id
+                (ownership.ownership-source-copy (& source))
+                (TcSelectedSink.Capture store lease bindings))
+              (TcSelectedResult.Ok
+                ast.AstType.Unit
+                TcSelectedOccurrence.Unrepresented
+                (TcSelectedSink.Capture store lease bindings)))
+              [(TcSelectedResult.Err message next)
                 (TcSelectedResult.Err message next)]
-              [(TcSelectedArgsResult.Ok children represented? next)
-                (let
-                  ;; Contextual typing can report the expected result type
-                  ;; for a Never call. Its selected occurrence must preserve
-                  ;; the checked declaration's lack of a continuation.
-                  [actual : ast.AstType
-                    (match (& fn-ty)
-                      [(ast.AstType.Func _ result)
-                        (match (tc-resolve-type
-                          ctx
-                          (tc-context-type-get ctx result))
-                          [(ast.AstType.Never) ast.AstType.Never]
+              [(TcSelectedResult.Ok _ callee callee-sink)
+                (match (tc-infer-selected-builtin-operands
+                  ctx
+                  env
+                  args
+                  (& parameters)
+                  0
+                  (__tl_make-array typed.TypedOccurrenceId args.len)
+                  (ownership.ownership-source-copy (& source))
+                  callee-sink)
+                  [(TcSelectedArgsResult.Err message next)
+                    (TcSelectedResult.Err message next)]
+                  [(TcSelectedArgsResult.Ok children represented? next)
+                    (let
+                      [actual : ast.AstType
+                        (match (& signature)
+                          [(ast.AstType.Func _ result)
+                            (match (tc-resolve-type
+                              ctx
+                              (tc-context-type-get ctx result))
+                              [(ast.AstType.Never) ast.AstType.Never]
+                              [_ ty])]
                           [_ ty])]
-                      [_ ty])]
-                  (tc-selected-publish-call
-                    (ResultTcType.Ok actual)
-                    (tc-selected-declared-call-kind ctx key true)
-                    fn-ty
-                    syntax
-                    source
-                    children
-                    represented?
-                    next))]))])]))
+                      (tc-selected-publish-call
+                        (ResultTcType.Ok actual)
+                        (if (= key -2)
+                          (typed.TypedCallKind.Indirect
+                            (tc-selected-effect-callee-id ctx env func-id))
+                          (tc-selected-declared-call-kind ctx key true))
+                        fn-ty
+                        syntax
+                        source
+                        (tc-selected-with-callee children (& callee))
+                        (and
+                          represented?
+                          (or
+                            (!= key -2)
+                            (match (& callee)
+                              [(TcSelectedOccurrence.Selected _) true]
+                              [_ false])))
+                        next))])]))])]))
 
 ;; A read operand formed as a place: a named place, or an array element (lent
 ;; whole for the read when its element cannot be named).
@@ -15717,53 +15744,60 @@
     [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
     (match (tc-direct-lambda-check ctx env (tc-global-shared-view func))
       [(TcDirectLambdaCheck.No)
-        (match (match (tc-call-target-expr-id ctx env func-id)
-          ;; A C function pointer is called through its value like a `Func`.
-          [(ResultTcType.Ok callee-ty)
-            (match (tc-selected-c-function-signature
-              ctx
-              env
-              (tc-global-shared-view callee-ty))
-              [(ast.AstMaybeType.Some signature) (ResultTcType.Ok signature)]
-              [(ast.AstMaybeType.No) (ResultTcType.Ok callee-ty)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])
+        (match (tc-call-target-expr-id ctx env func-id)
           [(ResultTcType.Err _) TcSelectedCallTarget.Legacy]
           [(ResultTcType.Ok fn-ty)
-            (match (tc-global-shared-view fn-ty)
-              [(ast.AstType.Func params ret)
-                (if (and
-                  (tc-type-copyable? ctx (tc-global-shared-view fn-ty))
-                  (tc-selected-call-signature-ok?
-                    ctx
-                    env
-                    (tc-global-shared-view func)
-                    (ast.ast-type-list-box-shared-view
-                      (tc-global-shared-view params))
-                    (ast.ty-node-get ret)))
-                  (TcSelectedCallTarget.Ordinary
-                    ;; A type's generated cleanup function is named directly:
-                    ;; its symbol handle keys the call.
-                    (if (let
-                      [param-list : ast.AstTypeList
-                        (ast.ast-type-list-box-shared-view
-                          (tc-global-shared-view params))]
-                      (tc-selected-discharge-call?
-                        ctx
-                        (tc-global-shared-view func)
-                        (& param-list)))
-                      (tc-move-value-symbol-handle-id
-                        ctx
-                        (tc-expr-var-name-id
-                          (tc-context-expr-segment-bases ctx)
-                          (tc-global-shared-view func)))
-                      -2)
-                    fn-ty
-                    (tc-call-region-args-allowed-for-func
+            (begin
+              (match (tc-selected-c-function-signature
+                ctx
+                env
+                (tc-global-shared-view fn-ty))
+                [(ast.AstMaybeType.Some signature)
+                  (return
+                    (if (tc-selected-foreign-signature-ok?
+                      ctx
+                      (clone signature)
+                      (typed.typed-function-arity (& signature)))
+                      (TcSelectedCallTarget.Foreign
+                        -2
+                        (tc-resolve-type ctx fn-ty))
+                      TcSelectedCallTarget.Legacy))]
+                [(ast.AstMaybeType.No) unit])
+              (match (tc-global-shared-view fn-ty)
+                [(ast.AstType.Func params ret)
+                  (if (and
+                    (tc-type-copyable? ctx (tc-global-shared-view fn-ty))
+                    (tc-selected-call-signature-ok?
                       ctx
                       env
-                      (tc-global-shared-view func)))
-                  TcSelectedCallTarget.Legacy)]
-              [_ TcSelectedCallTarget.Legacy])])]
+                      (tc-global-shared-view func)
+                      (ast.ast-type-list-box-shared-view
+                        (tc-global-shared-view params))
+                      (ast.ty-node-get ret)))
+                    (TcSelectedCallTarget.Ordinary
+                      ;; A type's generated cleanup function is named directly:
+                      ;; its symbol handle keys the call.
+                      (if (let
+                        [param-list : ast.AstTypeList
+                          (ast.ast-type-list-box-shared-view
+                            (tc-global-shared-view params))]
+                        (tc-selected-discharge-call?
+                          ctx
+                          (tc-global-shared-view func)
+                          (& param-list)))
+                        (tc-move-value-symbol-handle-id
+                          ctx
+                          (tc-expr-var-name-id
+                            (tc-context-expr-segment-bases ctx)
+                            (tc-global-shared-view func)))
+                        -2)
+                      fn-ty
+                      (tc-call-region-args-allowed-for-func
+                        ctx
+                        env
+                        (tc-global-shared-view func)))
+                    TcSelectedCallTarget.Legacy)]
+                [_ TcSelectedCallTarget.Legacy]))])]
       ;; An immediately called lambda (typed as a direct call, where its
       ;; reference captures cannot escape) is called through its closure.
       [(TcDirectLambdaCheck.Ok fn-ty)
@@ -16481,6 +16515,7 @@
         ctx
         env
         expr
+        func-id
         key
         fn-ty
         (& args)
@@ -119682,29 +119717,38 @@
           [callee : i64
             (match (typed.typed-call-at! store lease index)
               [(typed.TypedCallResult.Ok id)
-                (match (typed.typed-call-get! store lease id)
-                  [(typed.TypedCallView.Ok call)
-                    (match (& call.kind)
-                      [(typed.TypedCallKind.Direct global)
-                        (tc-global-effect-declared-node
-                          ctx
-                          global.index
-                          false
-                          indirect)]
-                      [(or (typed.TypedCallKind.Declared key _)
-                           (typed.TypedCallKind.Foreign key _))
-                        (tc-global-effect-declared-node ctx key false indirect)]
-                      ;; A declared cleanup is keyed by its symbol handle.
-                      [(typed.TypedCallKind.Discharge key)
-                        (tc-global-effect-declared-node
-                          ctx
-                          (csym.compiler-symbol-handle-index key)
-                          true
-                          indirect)]
-                      [(typed.TypedCallKind.Indirect callee)
-                        (tc-global-effect-expr-node ctx callee indirect)]
-                      [(typed.TypedCallKind.Construct) -1])]
-                  [(typed.TypedCallView.Err _) -1])]
+                (let
+                  [c-function? : bool
+                    (typed.typed-call-c-function? (& store) (& id))]
+                  (match (typed.typed-call-get! store lease id)
+                    [(typed.TypedCallView.Ok call)
+                      (match (& call.kind)
+                        [(typed.TypedCallKind.Direct global)
+                          (tc-global-effect-declared-node
+                            ctx
+                            global.index
+                            false
+                            indirect)]
+                        [(or (typed.TypedCallKind.Declared key _)
+                             (typed.TypedCallKind.Foreign key _))
+                          (tc-global-effect-declared-node
+                            ctx
+                            key
+                            false
+                            indirect)]
+                        ;; A declared cleanup is keyed by its symbol handle.
+                        [(typed.TypedCallKind.Discharge key)
+                          (tc-global-effect-declared-node
+                            ctx
+                            (csym.compiler-symbol-handle-index key)
+                            true
+                            indirect)]
+                        [(typed.TypedCallKind.Indirect callee)
+                          (if c-function?
+                            -1
+                            (tc-global-effect-expr-node ctx callee indirect))]
+                        [(typed.TypedCallKind.Construct) -1])]
+                    [(typed.TypedCallView.Err _) -1]))]
               [(typed.TypedCallResult.Err _) -1])]
           (tc-selected-global-writes-add!
             ctx

@@ -1088,3 +1088,4 @@ ownership_certified_cfunc|all|0,1,2|tests/integration/ownership_certified_cfunc.
 ownership_certified_primitives|all|0,1,2|tests/integration/ownership_certified_primitives.tl|42|-|-|benchmarks/ownership_certified_primitives/baseline.c|-
 ownership_certified_strings|all|0,1,2|tests/integration/ownership_certified_strings.tl|42|-|-|benchmarks/ownership_certified_strings/baseline.c|stage-stdlib
 ownership_certified_globals|all|0,1,2|tests/integration/ownership_certified_globals.tl|42|-|-|global_reference_initializer_dep.tl,benchmarks/ownership_certified_globals/baseline.c|stage-stdlib
+ownership_certified_cfunc_borrows|all|0,1,2|tests/integration/ownership_certified_cfunc_borrows.tl|42|-|-|benchmarks/ownership_certified_cfunc_borrows/baseline.c|stage-stdlib

@@ -1792,13 +1792,18 @@
           (return
             (NormalizeOperationResult.Err
               (OwnershipNormalizeFailure.Typed error)))])]
-    [signature : ast.AstType
+    [recorded-signature : ast.AstType
       (match (typed.typed-type-get! store lease call.signature)
         [(typed.TypedTypeResult.Ok signature) (clone (deref signature))]
         [(typed.TypedTypeResult.Err error)
           (return
             (NormalizeOperationResult.Err
               (OwnershipNormalizeFailure.Typed error)))])]
+    [signature : ast.AstType
+      (match (& recorded-signature)
+        [(ast.AstType.CFunc id _)
+          (clone (ast.ast-node-pool-context-type-get (& lease.pools) id))]
+        [_ recorded-signature])]
     [key : i64
       (match (& call.kind)
         [(typed.TypedCallKind.Declared key _) key]

@@ -511,6 +511,92 @@
             (string.int->string index)))))))
 
 (test
+  compiler-lower-cfunc-readonly-arguments
+  (let
+    [bodies : (Array String 8)
+      (array
+        "(let [f (get)] [text \"answer\"] (f text) (f text) (begin (identity text) 42))"
+        "(let [text \"answer\"] ((get) text) ((get) text) (begin (identity text) 42))"
+        "(let [text \"answer\"] [holder (Holder (get))] (holder.callback text) (holder.callback text) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (c-fn-check (get-null))] (f text) (f text) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get-unsafe)] (unsafe (f text) (f text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] ((begin (return 42) f) text))"
+        "(let [text \"answer\"] [f (get-never)] (f text))"
+        "(read-through (& g) (get))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower.lower-compiler-source
+          (str_cat.str-cat
+            "(extern (get) : (CFunc non-null (-> String i64)))
+             (extern (get-null) : (CFunc nullable (-> String i64)))
+             (extern (get-unsafe) : (CFunc unsafe-non-null (-> String i64)))
+             (extern (get-never) : (CFunc non-null (-> String never)))
+             (defstruct Holder (callback (CFunc non-null (-> String i64))))
+             (defstruct Big (a i64) (b i64) (c i64) (d i64))
+             (define g : Big (Big 1 2 3 4))
+             (define (rebind! [_text : String]) : i64 (set! g (Big 5 6 7 8)) 42)
+             (define (read-through [r : (& r Big)] [f : (CFunc non-null (-> String i64))]) : i64 (f \"answer\") r.a)
+             (define (read-language [r : (& r Big)] [f : (-> String i64)]) : i64 (f \"answer\") r.a)
+             (define (identity [text : String]) : String text)
+             (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+          [(lower.ResultCompilerLower.Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            true]
+          [(lower.ResultCompilerLower.Err diagnostic)
+            (io.println
+              "C read-only case {}: {}"
+              index
+              (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+            false])
+        (str_cat.str-cat
+          "C pointer arguments are lent, case "
+          (string.int->string index))))))
+
+(test
+  compiler-lower-cfunc-readonly-boundaries
+  (let
+    [bodies : (Array String 4)
+      (array
+        "(let [f (get-null)] [text \"answer\"] (f text))"
+        "(let [f (get-unsafe)] [text \"answer\"] (f text))"
+        "(let [text \"answer\"] [f identity] (f text) (f text) 42)"
+        "(read-language (& g) rebind!)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower.lower-compiler-source
+          (str_cat.str-cat
+            "(extern (get-null) : (CFunc nullable (-> String i64)))
+             (extern (get-unsafe) : (CFunc unsafe-non-null (-> String i64)))
+             (defstruct Big (a i64) (b i64) (c i64) (d i64))
+             (define g : Big (Big 1 2 3 4))
+             (define (rebind! [_text : String]) : i64 (set! g (Big 5 6 7 8)) 42)
+             (define (read-through [r : (& r Big)] [f : (CFunc non-null (-> String i64))]) : i64 (f \"answer\") r.a)
+             (define (read-language [r : (& r Big)] [f : (-> String i64)]) : i64 (f \"answer\") r.a)
+             (define (identity [text : String]) : String text)
+             (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+          [(lower.ResultCompilerLower.Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            false]
+          [(lower.ResultCompilerLower.Err diagnostic)
+            (let
+              [message : String
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic)))]
+              (string.contains
+                (& message)
+                (cond
+                  [(= index 0) "nullable"]
+                  [(= index 1) "unsafe"]
+                  [(= index 2) "use of moved value `text`"]
+                  [else "while global `g` is borrowed"])))])
+        "C pointer read-only operands preserve null, unsafe, and language moves"))))
+
+(test
   compiler-lower-normalized-string-values
   (let
     [bodies : (Array String 8)

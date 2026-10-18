@@ -2008,7 +2008,105 @@
       stale
       (not (typed.typed-value-target-valid? (& lease) 2 value-key)))))
 
+(define (typed-test-c-call-callee?) : bool
+  (let
+    [function : ast.AstType
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64)))]
+    [other : ast.AstType
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.Bool)))]
+    [signature-node : i64 (ast.ty-node-push (& function))]
+    [other-node : i64 (ast.ty-node-push (& other))]
+    [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease state)
+      (typed-test-lease (& state) (cast 97 : u64))]
+    [store : typed.TypedStore (typed-test-store (& lease))]
+    [origin : typed.TypedOriginId (typed-test-origin! (&mut store) (& lease))]
+    [scalar : typed.TypedTypeId
+      (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [never : typed.TypedTypeId
+      (typed-test-type! (&mut store) (& lease) ast.AstType.Never)]
+    [valid : bool true]
+    (for [mode (iterator.range 0 9)]
+      (let
+        [call-type : typed.TypedTypeId
+          (typed-test-type!
+            (&mut store)
+            (& lease)
+            (ast.AstType.CFunc
+              signature-node
+              (cond
+                [(= mode 5) ast.AstCFunctionMode.UnsafeNonNull]
+                [(= mode 8) ast.AstCFunctionMode.Nullable]
+                [else ast.AstCFunctionMode.NonNull])))]
+        [callee-type : typed.TypedTypeId
+          (typed-test-type!
+            (&mut store)
+            (& lease)
+            (cond
+              [(= mode 2) (clone function)]
+              [(or (= mode 6) (= mode 7)) ast.AstType.Never]
+              [else
+                (ast.AstType.CFunc
+                  (if (= mode 3)
+                    other-node
+                    signature-node)
+                  (cond
+                    [(or (= mode 1) (= mode 8)) ast.AstCFunctionMode.Nullable]
+                    [(= mode 5) ast.AstCFunctionMode.UnsafeNonNull]
+                    [else ast.AstCFunctionMode.NonNull]))]))]
+        [binder : typed.TypedBinderId
+          (typed-test-binder!
+            (&mut store)
+            (& lease)
+            callee-type
+            typed.TypedBinderKind.Parameter
+            origin)]
+        [callee : typed.TypedOccurrenceId
+          (typed-test-operation!
+            (&mut store)
+            (& lease)
+            callee-type
+            origin
+            (typed.TypedOperation.Read binder)
+            (& (__tl_make-array typed.TypedOccurrenceId 0)))]
+        [call : typed.TypedCallId
+          (match (typed.typed-call-add!
+            (&mut store)
+            (& lease)
+            call-type
+            (if (= mode 4)
+              typed.TypedCallKind.Construct
+              (typed.TypedCallKind.Indirect -1))
+            0)
+            [(typed.TypedCallResult.Ok id) id]
+            [_ (io.panic "typed C call: fixture signature")])]
+        [accepted : bool
+          (match (typed.typed-occurrence-add!
+            (&mut store)
+            (& lease)
+            (if (= mode 6)
+              never
+              scalar)
+            typed.TypedSyntax.Generated
+            origin
+            (typed.TypedOperation.Call call)
+            (& (__tl_make-array callee)))
+            [(typed.TypedOccurrenceResult.Ok _)
+              (or (= mode 0) (= mode 5) (= mode 6))]
+            [(typed.TypedOccurrenceResult.Err error)
+              (and
+                (not (or (= mode 0) (= mode 5) (= mode 6)))
+                (match error
+                  [(typed.TypedError.Shape) true]
+                  [_ false]))])]
+        (set! valid (and valid accepted))))
+    (typed.typed-store-retire! (&mut store))
+    valid))
+
 (define (compiler-typed-occurrence-self-test) : i64
+  (test.assert-true
+    (typed-test-c-call-callee?)
+    "typed C call: matching non-null callee, unsafe mode, and diverging operand")
   (test.assert-true
     (typed-test-declared-call-authority?)
     "typed call: canonical target, declaration kind, bounds and live authority")

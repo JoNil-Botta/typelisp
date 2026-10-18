@@ -1473,6 +1473,86 @@
         (symbols.compiler-resolution-lease-current? authority)
         (symbols.compiler-symbols-value-target? authority.symbols index key))]))
 
+;; Requires a checked call row. A C signature also owns the call's foreign
+;; effect; a language function signature cannot erase a value's moves.
+(define (typed-call-c-function?
+  [store : (& store TypedStore)]
+  [id : (& id TypedCallId)]) : bool
+  (and
+    (match (typed-call-ok store id)
+      [(TypedResult.Ok _) true]
+      [_ false])
+    (let
+      [call : (& store TypedCall) (& (array-ref store.calls id.handle.index))]
+      (and
+        (match (typed-type-handle-ok store (& call.signature))
+          [(TypedResult.Ok _) true]
+          [_ false])
+        (match (& (array-ref store.types call.signature.handle.index).value)
+          [(ast.AstType.CFunc _ _) true]
+          [_ false])))))
+
+(define (typed-call-callee-ok
+  [store : (& store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [operation : (& operation TypedOperation)]
+  [result : (& result TypedTypeId)]
+  [children : (& children (__tl_dyn-array TypedOccurrenceId))]) : TypedResult
+  (match operation
+    [(TypedOperation.Call id)
+      (let
+        [call : (& store TypedCall) (& (array-ref store.calls id.handle.index))]
+        (try (typed-type-handle-ok store (& call.signature)))
+        (when
+          (typed-call-c-function? store (& id))
+          (unless
+            (and
+              (> (array-length children) 0)
+              (match (& call.kind)
+                [(TypedCallKind.Indirect _) true]
+                [_ false]))
+            (return (TypedResult.Err TypedError.Shape)))
+          (unless
+            (match (& (array-ref store.types call.signature.handle.index).value)
+              [(ast.AstType.CFunc _ mode)
+                (not (ast.ast-c-function-mode-nullable? mode))]
+              [_ false])
+            (return (TypedResult.Err TypedError.Shape)))
+          (let
+            [callee : (& store TypedOccurrence)
+              (&
+                (array-ref
+                  store.occurrences
+                  (array-ref children 0).handle.index))]
+            (try (typed-type-handle-ok store (& callee.type)))
+            (unless
+              (or
+                (and
+                  (match (&
+                    (array-ref store.types callee.type.handle.index).value)
+                    [(ast.AstType.Never) true]
+                    [_ false])
+                  (match (& (array-ref store.types result.handle.index).value)
+                    [(ast.AstType.Never) true]
+                    [_ false]))
+                (and
+                  (match (&
+                    (array-ref store.types call.signature.handle.index).value)
+                    [(ast.AstType.CFunc _ mode)
+                      (not (ast.ast-c-function-mode-nullable? mode))]
+                    [_ false])
+                  (ast.ast-type-eq-with-pools?
+                    (ast.AstNodePoolContext
+                      lease.pools.expr-pool
+                      lease.pools.type-pool
+                      lease.pools.owner-arena)
+                    (& (array-ref store.types callee.type.handle.index).value)
+                    (&
+                      (array-ref store.types call.signature.handle.index).value))))
+              (return (TypedResult.Err TypedError.Shape))))))]
+    [_ unit])
+  (TypedResult.Ok unit))
+
 (define (typed-call-add!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
@@ -1753,6 +1833,7 @@
                   store.occurrences
                   (array-ref children index).handle.index))))
           (set! index (+ index 1)))))
+    (try (typed-call-callee-ok (& store) lease (& operation) (& type) children))
     ;; All checks precede mutation; a rejected parent cannot publish edges.
     (let
       [category : TypedOccurrenceCategory

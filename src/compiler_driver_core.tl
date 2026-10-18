@@ -2109,7 +2109,7 @@
 
 (define (compiler-driver-representation-index-for-backend
   [pools : compiler_ast_types.AstNodePoolContext]
-  [program : compiler_ir_types.CompilerIrProgram]
+  [program : (& compiler_ir_types.CompilerIrProgram)]
   [backend-state : compiler_backend.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
@@ -2121,7 +2121,7 @@
         owner
         (compiler_ir_types.compiler-ir-representation-index-build
           (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-          (& program)
+          program
           (compiler_lower.lower-representation-index-from-layouts
             (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
             typecheck-state
@@ -2154,7 +2154,7 @@
       [representations : compiler_ir_types.CompilerIrRepresentationIndex
         (compiler-driver-representation-index-for-backend
           pools
-          (owned_view.compiler-owned-shared-view program)
+          (& program)
           backend-state
           typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
@@ -2260,7 +2260,7 @@
       [representations : compiler_ir_types.CompilerIrRepresentationIndex
         (compiler-driver-representation-index-for-backend
           pools
-          (owned_view.compiler-owned-shared-view program)
+          (& program)
           backend-state
           typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
@@ -2382,7 +2382,7 @@
       [representations : compiler_ir_types.CompilerIrRepresentationIndex
         (compiler-driver-representation-index-for-backend
           pools
-          (owned_view.compiler-owned-shared-view program)
+          (& program)
           backend-state
           typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
@@ -2549,7 +2549,7 @@
       [representations : compiler_ir_types.CompilerIrRepresentationIndex
         (compiler-driver-representation-index-for-backend
           pools
-          (owned_view.compiler-owned-shared-view program)
+          (& program)
           backend-state
           typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
@@ -2759,7 +2759,7 @@
       [representations : compiler_ir_types.CompilerIrRepresentationIndex
         (compiler-driver-representation-index-for-backend
           pools
-          (owned_view.compiler-owned-shared-view program)
+          (& program)
           backend-state
           typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!

@@ -92,8 +92,11 @@ register classes, stack pressure, hidden result pointers, references and
 borrowed strings. Saved values cross another call before use, including a
 tuple whose physical group appears only in the dependency signature. The
 lowering and IR smoke tests keep layout-only group facts, malformed transport
-types and conflicting group observations covered. Native Slice extern rejection
-remains in the safety corpus.
+types and conflicting group observations covered. The package runtime lifetime
+test compares ordinary and Windows package assembly at all three levels for
+constructor-free nominal groups with all four integer/SSE word masks. It runs
+on either host and checks the retained output after scope cleanup. Native Slice
+extern rejection remains in the safety corpus.
 
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at

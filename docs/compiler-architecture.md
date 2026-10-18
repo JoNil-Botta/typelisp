@@ -197,6 +197,9 @@ Thus a two-word value supplied only by a dependency needs no local `Pack` to
 retain its width and register classes. Encoded structural transport types also
 contribute their group facts when they occur only in an extern signature.
 Conflicting IR evidence stays unknown; no typecheck-owned layout escapes.
+The Windows batch/COFF entry point captures the same index before retiring
+frontend layouts. Its optimizer and object-or-assembly fallback share the
+primary backend's retained index until package scope cleanup.
 
 Borrowed pattern bindings share one type/lowering contract:
 `tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a

@@ -31140,6 +31140,7 @@ f:
         target
         callee-id
         blocks
+        (ir.compiler-ir-label "entry")
         (Var 0)
         (Nil)
         (I64)
@@ -31225,6 +31226,7 @@ f:
           target
           caller-id
           (ir.compiler-ir-block-list-empty)
+          (ir.compiler-ir-label "entry")
           name-id
           args
           ret

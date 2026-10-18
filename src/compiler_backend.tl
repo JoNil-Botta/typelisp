@@ -45282,6 +45282,7 @@
   [target : CompilerBackendTarget]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
+  [current-label : i64]
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
@@ -45341,9 +45342,13 @@
         (compiler-backend-global-shared-view param-types))]
     ;; Both jump paths below retire this frame. A register-only argument can
     ;; still point into it, including through casts, projections or stored
-    ;; aliases, so ABI register placement is not a lifetime proof.
+    ;; aliases, so ABI register placement is not a lifetime proof. Whether a
+    ;; frame address can exist here is a property of this block's paths.
     [frame-safe : bool
-      (not (compiler_ir_types.compiler-ir-blocks-expose-frame? blocks))]
+      (not
+        (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
+          (& blocks)
+          current-label))]
     (if (and
       frame-safe
       (compiler-backend-direct-tail-call?
@@ -49874,6 +49879,7 @@
             ctx.target-policy.target
             ctx.source-function
             ctx.blocks
+            ctx.current-label
             name
             args
             ty
@@ -50121,6 +50127,7 @@
             ctx.target-policy.target
             ctx.source-function
             ctx.blocks
+            ctx.current-label
             func
             args
             ty
@@ -55750,6 +55757,7 @@
   [target : CompilerBackendTarget]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
+  [current-label : i64]
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [ty : compiler_ast_types.AstType]
@@ -55781,7 +55789,10 @@
       (and
         ;; Loading the closure target does not extend outgoing frame-backed
         ;; arguments' lifetime. Keep the frame for an ordinary call instead.
-        (not (compiler_ir_types.compiler-ir-blocks-expose-frame? blocks))
+        (not
+          (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
+            (& blocks)
+            current-label))
         (compiler-backend-indirect-tail-call-register-only?
           type-segment-bases
           target

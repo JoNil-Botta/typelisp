@@ -108,6 +108,14 @@
         (begin
           (set! fn snapshot-callee-second)
           unit))]
+    ;; A later argument replaces the callee through its address.
+    [addressed : i64
+      (begin
+        (set! fn snapshot-callee-first)
+        (fn
+          (unsafe
+            (ptr-write! (ptr-addr-of fn) snapshot-callee-second))))]
+    [addressed-changed : i64 (fn unit)]
     (and
       (= direct 42)
       (= changed 13)
@@ -116,6 +124,8 @@
       (= (owner.function unit) 13)
       (= once 42)
       (= count 1)
+      (= addressed 42)
+      (= addressed-changed 13)
       (= (call-eval-order-tail-callee snapshot-callee-first) 42))))
 
 (define (snapshot-writeback [a : i64] [out : (&mut out i64)]) : i64

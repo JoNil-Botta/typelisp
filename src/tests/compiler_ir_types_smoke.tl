@@ -4718,6 +4718,83 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
   (compiler_ir_types.compiler-ir-instrs-expose-frame? (& instrs)))
 
+;; Per-site exposure: a producer reaches only the blocks a CFG path leads to.
+;;   entry -> alloc | clean; alloc -> after; after -> entry when `loop?`.
+(define (compiler-ir-smoke-frame-site-blocks [loop? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "frame.site.entry")]
+    [alloc : i64 (compiler_ir_types.compiler-ir-label "frame.site.alloc")]
+    [clean : i64 (compiler_ir_types.compiler-ir-label "frame.site.clean")]
+    [after : i64 (compiler_ir_types.compiler-ir-label "frame.site.after")]
+    [done : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 0)))]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (__tl_make-array compiler_ir_types.CompilerIrBlock 4)]
+    (set!
+      (array-ref slots 0)
+      (compiler_ir_types.CompilerIrBlock.Block
+        entry
+        (compiler_ir_types.compiler-ir-instr-seq1
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            alloc
+            clean))))
+    (set!
+      (array-ref slots 1)
+      (compiler_ir_types.CompilerIrBlock.Block
+        alloc
+        (compiler_ir_types.compiler-ir-instr-seq2
+          (compiler_ir_types.CompilerIrInstr.Alloc 1 (ast.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump after))))
+    (set!
+      (array-ref slots 2)
+      (compiler_ir_types.CompilerIrBlock.Block
+        clean
+        (compiler_ir_types.compiler-ir-instr-seq1 (clone done))))
+    (set!
+      (array-ref slots 3)
+      (compiler_ir_types.CompilerIrBlock.Block
+        after
+        (compiler_ir_types.compiler-ir-instr-seq1
+          (if loop?
+            (compiler_ir_types.CompilerIrInstr.Jump entry)
+            done))))
+    (compiler_ir_types.CompilerIrBlockList.Array
+      (compiler_ir_types.CompilerIrBlockSeq slots 4))))
+
+(define (compiler-ir-smoke-frame-site-exposed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : (& name str)]) : bool
+  (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
+    (& blocks)
+    (compiler_ir_types.compiler-ir-label name)))
+
+(define (compiler-ir-smoke-frame-site-failure) : i64
+  (let
+    [acyclic : compiler_ir_types.CompilerIrBlockList
+      (compiler-ir-smoke-frame-site-blocks false)]
+    [cyclic : compiler_ir_types.CompilerIrBlockList
+      (compiler-ir-smoke-frame-site-blocks true)]
+    (when (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.entry")
+      (return 1))
+    (when (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.clean")
+      (return 2))
+    (unless (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.alloc")
+      (return 3))
+    (unless (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.after")
+      (return 4))
+    ;; A label that names no block of the body is not a proof.
+    (unless (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.none")
+      (return 5))
+    ;; The back edge lets the producer's address reach every block.
+    (unless (compiler-ir-smoke-frame-site-exposed? (clone cyclic) "frame.site.entry")
+      (return 6))
+    (unless (compiler-ir-smoke-frame-site-exposed? (clone cyclic) "frame.site.clean")
+      (return 7))
+    0))
+
 (define (compiler-ir-smoke-frame-exposure-failure) : i64
   (let
     [plain : compiler_ir_types.CompilerIrInstrSeq
@@ -4876,7 +4953,9 @@
 (define (main) : i64
   (let
     [frame-failure : i64 (compiler-ir-smoke-frame-exposure-failure)]
-    (unless (= frame-failure 0) (return (+ 150 frame-failure))))
+    [site-failure : i64 (compiler-ir-smoke-frame-site-failure)]
+    (unless (= frame-failure 0) (return (+ 150 frame-failure)))
+    (unless (= site-failure 0) (return (+ 180 site-failure))))
   (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
   (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
   (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))

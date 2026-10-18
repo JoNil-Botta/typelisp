@@ -60377,6 +60377,24 @@
           (+= i 1))
         found)]))
 
+;; Whether no frame address reaches any block holding a convertible self tail
+;; call (`ir.compiler-ir-blocks-expose-frame-at?`).
+(define (opt-tailrec-sites-frame-safe?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [fname : i64]
+  [n : i64]) : bool
+  (match blocks
+    [(Array seq)
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (& (array-ref seq.slots i))
+          [(Block label instrs)
+            (when
+              (and
+                (opt-tailrec-instr-seq-has-convertible? instrs fname n)
+                (ir.compiler-ir-blocks-expose-frame-at? blocks label))
+              (return false))]))
+      true]))
+
 (define (opt-tailrec-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret vars blocks function-abi)
@@ -60385,9 +60403,10 @@
         (if (and
           ;; Re-entering this frame is not recursion when an outgoing argument
           ;; can retain one of its addresses: the next iteration may overwrite
-          ;; the retained storage. Keep the call until provenance proves more.
-          (not (ir.compiler-ir-blocks-expose-frame? blocks))
+          ;; the retained storage. Every rewritten site must be one no frame
+          ;; address reaches.
           (opt-tailrec-blocks-have-convertible? blocks name n)
+          (opt-tailrec-sites-frame-safe? (& blocks) name n)
           (opt-ssa-explicit-entry-available? (& blocks)))
           (let
             [hybrid? : bool
@@ -64978,7 +64997,9 @@
 ;; arithmetic or loads must still observe their first-iteration operands.
 ;; In particular, GVN can share `i + 1` between a shifted address and the step;
 ;; replacing that shared definition would start a copy at `bound`, not at 1.
-;; Both fill and copy emission use this proof before changing any instruction.
+;; Fill emission uses this proof before changing any instruction; copy emission
+;; also admits a step before the store whose gep uses read a copy of the first
+;; iteration's increment instead (`opt-copy-call-exit-ok?`, #8740).
 (define (opt-loop-call-exit-suffix?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [shape : (& shape OptLoopCallShape)]
@@ -65002,6 +65023,87 @@
           [_ (return false)])
         (set! index (+ index 1))))
     true))
+
+;; Whether `var` is read, from `from` to `last`, by nothing but the loop
+;; comparison that defines `cond-var`.
+(define (opt-copy-call-mov-feeds-compare-only?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [from : i64]
+  [last : i64]
+  [var : i64]
+  [cond-var : i64]) : bool
+  (let
+    [index : i64 from]
+    [ok? : bool true]
+    (while (and ok? (< index last))
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (when
+          (opt-load-sink-instr-uses-var? (& instr) var)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp dst _ _ _ _)
+              (unless (= dst cond-var) (set! ok? false))]
+            [_ (set! ok? false)])))
+      (set! index (+ index 1)))
+    ok?))
+
+;; copy_call's rewrite also points a gep that reads the counter's `next` at a
+;; copy of the first iteration's increment (#8740). So in a copy loop the step
+;; may precede the store, provided every instruction from the step through the
+;; store reads `next` only as such a gep's offset; after the store, as in
+;; `opt-loop-call-exit-suffix?`, only moves and the loop comparison follow.
+;; Fill loops keep the stricter rule: their rewrite has no such substitution.
+(define (opt-copy-call-exit-ok?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [shape : (& shape OptLoopCallShape)]
+  [store-index : i64]
+  [last : i64]) : bool
+  (or
+    (opt-loop-call-exit-suffix? instrs shape store-index last)
+    (let
+      [step-index : i64 -1]
+      [index : i64 shape.phi-count]
+      [ok? : bool true]
+      (while (and (< index last) (< step-index 0))
+        (when
+          (opt-loop-call-defines-inext? instrs index shape.inext)
+          (set! step-index index))
+        (set! index (+ index 1)))
+      (when (or (< step-index 0) (>= step-index store-index)) (return false))
+      (while (and ok? (<= index store-index))
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (when
+            (opt-load-sink-instr-uses-var? (& instr) shape.inext)
+            (match instr
+              [(ir.CompilerIrInstr.Gep _ base offset _)
+                (unless
+                  (and
+                    (opt-value-is-var? (& offset) shape.inext)
+                    (not (opt-value-is-var? (& base) shape.inext)))
+                  (set! ok? false))]
+              ;; A copy of `next` that feeds only the loop comparison (or
+              ;; nothing) cannot carry the redefined bound into an address.
+              [(ir.CompilerIrInstr.Mov dst _ _)
+                (unless
+                  (opt-copy-call-mov-feeds-compare-only?
+                    instrs
+                    (+ index 1)
+                    last
+                    dst
+                    shape.cond-var)
+                  (set! ok? false))]
+              [_ (set! ok? false)])))
+        (set! index (+ index 1)))
+      (while (and ok? (< index last))
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
+          [(ir.CompilerIrInstr.Mov _ _ _) unit]
+          [(ir.CompilerIrInstr.BinOp dst _ _ _ _)
+            (unless (= dst shape.cond-var) (set! ok? false))]
+          [_ (set! ok? false)])
+        (set! index (+ index 1)))
+      ok?)))
 
 (define (opt-loop-call-emit-phis!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
@@ -65781,11 +65883,7 @@
                   (if (and
                     (opt-copy-call-count-ok? site.width shape.bound)
                     (opt-loop-call-entry-positive? blocks label shape state)
-                    (opt-loop-call-exit-suffix?
-                      instrs
-                      shape
-                      site.store-index
-                      last)
+                    (opt-copy-call-exit-ok? instrs shape site.store-index last)
                     (let
                       [outside
                         (opt-loop-call-outside-uses
@@ -95293,7 +95391,8 @@
 ;;       it is CONFINED (`opt-slot-fwd-confined?`): every value derived from it
 ;;       is only an address operand of a load, store or byte copy, a hidden
 ;;       result argument (which the callee only fills), a forwarded trailing
-;;       slot whose call result is returned at once, or a returned value --
+;;       slot whose call result (or the slot itself) is returned at once, or a
+;;       returned value --
 ;;       never stored, merged, or passed as an ordinary argument. No other
 ;;       argument of F derives from it (confinement already implies this --
 ;;       only the hidden result position of a marked call is an allowed use --
@@ -95414,14 +95513,23 @@
       (compiler-opt-global-array-element-shared-view values index))
     unit))
 
-;; Whether `next` returns exactly the var `dst`.
-(define (opt-slot-fwd-returns-var? [next : ir.CompilerIrInstr] [dst : i64]) : bool
+;; Whether `next` returns at once what a call forwarding `slot` as its trailing
+;; argument produced: the call result `dst`, or the slot itself, which the
+;; callee hands back by the result-slot ABI.
+(define (opt-slot-fwd-returns-forwarded?
+  [next : (& next ir.CompilerIrInstr)]
+  [dst : i64]
+  [slot : (& slot ir.CompilerIrValue)]) : bool
   (match next
     [(ir.CompilerIrInstr.Return returned)
       (match returned
-        [(ir.CompilerIrMaybeValue.Some value)
-          (= (ir.compiler-ir-value-var-or value -1) dst)]
-        [(ir.CompilerIrMaybeValue.No) false])]
+        [(ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var id))
+          (or
+            (= id dst)
+            (match slot
+              [(ir.CompilerIrValue.Var slot-var) (= id slot-var)]
+              [_ false]))]
+        [_ false])]
     [_ false]))
 
 ;; Count the occurrences of derived vars in the positions confinement allows
@@ -95478,7 +95586,12 @@
                 allowed
                 (compiler-opt-global-shared-view values)
                 1))
-            (if (opt-slot-fwd-returns-var? next dst)
+            (if (and
+              (> (array-length values) 0)
+              (opt-slot-fwd-returns-forwarded?
+                (& next)
+                dst
+                (& (array-ref values (- (array-length values) 1)))))
               (opt-slot-fwd-count-at!
                 derived
                 allowed
@@ -95486,11 +95599,11 @@
                 (- (array-length values) 1))
               unit))]
         [(ir.CompilerIrCallArgs.Two _ b)
-          (if (opt-slot-fwd-returns-var? next dst)
+          (if (opt-slot-fwd-returns-forwarded? (& next) dst (& b))
             (opt-slot-fwd-count! derived allowed b)
             unit)]
         [(ir.CompilerIrCallArgs.One a)
-          (if (opt-slot-fwd-returns-var? next dst)
+          (if (opt-slot-fwd-returns-forwarded? (& next) dst (& a))
             (opt-slot-fwd-count! derived allowed a)
             unit)]
         [(ir.CompilerIrCallArgs.Nil) unit])]
@@ -104837,6 +104950,14 @@
   [states : (&mut states (__tl_dyn-array i64))]
   [names : (&mut names (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]) : unit
+  ;; A var whose address is taken can be rewritten through that address, so
+  ;; its one `Mov` no longer names the value every use reads.
+  (match instr
+    [(AddrOf _ src _)
+      (when
+        (and (>= src 0) (< src (array-length states)))
+        (set! (array-ref states src) 2))]
+    [_ unit])
   (match (opt-instr-def-var instr)
     [(None) unit]
     [(Some dst)

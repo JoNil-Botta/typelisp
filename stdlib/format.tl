@@ -472,28 +472,46 @@
 ;: caller-owned Formatter cell and recover the updated value afterward.
 (unsafe
   (define (formatter-write-string-at! [address : i64] [text : String]) : unit
+    (unsafe
+      (formatter-write-raw-at! address text))))
+
+;: `formatter-write-raw!` on the Formatter stored at `address`. The cell is read
+;: and updated through its fields, in place: reading the whole Formatter into a
+;: value would be a private copy to write back.
+(unsafe
+  (define (formatter-write-raw-at! [address : i64] [data : String]) : unit
     (let
       [slot : (MutPtr Formatter)
         (unsafe
           (int->ptr (cast address : u64) : (MutPtr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read (ptr-cast slot : (Ptr Formatter))))]
-      (formatter-write-string! (&mut formatter) text)
-      (unsafe
-        (ptr-write! slot formatter)))))
+      (if (<= (string.string-length (& data)) 0)
+        unit
+        (if (!= (unsafe (deref slot).status) 0)
+          unit
+          (let
+            [write-raw : (-> i64 String i64)
+              (unsafe
+                (deref slot).write-raw)]
+            [status : i64
+              (write-raw
+                (unsafe
+                  (deref slot).context)
+                data)]
+            (if (= status 0)
+              unit
+              (unsafe
+                (set! (deref slot).status status)))))))))
 
 ;: Read the result of the Formatter stored at `address`.
 (unsafe
   (define (formatter-result-at [address : i64]) : FormatResult
     (let
-      [slot : (Ptr Formatter)
+      [status : i64
         (unsafe
-          (int->ptr (cast address : u64) : (Ptr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read slot))]
-      (formatter-result (& formatter)))))
+          (formatter-status-at address))]
+      (if (= status 0)
+        (FormatOk)
+        (FormatErr status)))))
 
 ;: Read the raw destination status stored at `address`.
 ;:
@@ -505,10 +523,8 @@
       [slot : (Ptr Formatter)
         (unsafe
           (int->ptr (cast address : u64) : (Ptr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read slot))]
-      formatter.status)))
+      (unsafe
+        (deref slot).status))))
 
 ;: Validate one runtime-provided width before allocation or arithmetic.
 (define (format-width-count-runtime [count : i64]) : i64

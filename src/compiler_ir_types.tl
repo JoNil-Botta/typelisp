@@ -6396,6 +6396,77 @@
             (set! index (+ index 1)))
           false))]))
 
+;; Blocks a frame address may have reached: every block holding a producer and
+;; every block a CFG path leads to from one. Each block is pushed once.
+(defstruct CompilerIrFrameWalk
+  (marks (__tl_dyn-array bool))
+  (stack (__tl_dyn-array i64))
+  (depth i64)
+  (unknown bool))
+
+(define (compiler-ir-frame-walk-push!
+  [walk : (&mut walk CompilerIrFrameWalk)]
+  [index : i64]) : unit
+  (unless
+    (array-ref walk.marks index)
+    (set! (array-ref walk.marks index) true)
+    (set! (array-ref walk.stack walk.depth) index)
+    (+= walk.depth 1)))
+
+(define (compiler-ir-frame-walk-visit!
+  [positions : (& positions ir_i64_i64_map.Map)]
+  [walk : (&mut walk CompilerIrFrameWalk)]
+  [label : i64]) : unit
+  (match (ir_i64_i64_map.get positions label)
+    [(ir_i64_i64_map.LookupFound at) (compiler-ir-frame-walk-push! walk at)]
+    [(ir_i64_i64_map.LookupMissing) (set! walk.unknown true)]))
+
+;; The per-site form of the guard above, after LLVM's tail-call marking: a
+;; frame address exists only once an Alloc or AddrOf of this activation has
+;; run, and that state flows forward along CFG edges. A tail transfer in block
+;; `label` may retire the frame when no producer is in that block and no block
+;; holding one reaches it. An edge to an unknown label, an unknown `label` or
+;; an invalid sequence answers true.
+(define (compiler-ir-blocks-expose-frame-at?
+  [blocks : (& blocks CompilerIrBlockList)]
+  [label : i64]) : bool
+  (if (not (compiler-ir-blocks-expose-frame? blocks))
+    false
+    (match blocks
+      [(CompilerIrBlockList.Array seq)
+        (let
+          [count : i64 seq.len]
+          [positions : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity count)]
+          [walk : CompilerIrFrameWalk
+            (CompilerIrFrameWalk
+              (__tl_make-array bool count)
+              (__tl_make-array i64 count)
+              0
+              false)]
+          (for [index (iterator.range 0 count)]
+            (match (& (array-ref seq.slots index))
+              [(CompilerIrBlock.Block block-label _)
+                (ir_i64_i64_map.insert-ref! (&mut positions) block-label index)]))
+          (for [index (iterator.range 0 count)]
+            (when
+              (compiler-ir-block-exposes-frame? (& (array-ref seq.slots index)))
+              (compiler-ir-frame-walk-push! (&mut walk) index)))
+          (while (> walk.depth 0)
+            (-= walk.depth 1)
+            (match (& (array-ref seq.slots (array-ref walk.stack walk.depth)))
+              [(CompilerIrBlock.Block _ instrs)
+                (for [pos (iterator.range 0 instrs.len)]
+                  (compiler-ir-instr-visit-successors
+                    (& (array-ref instrs.slots pos))
+                    compiler-ir-frame-walk-visit!
+                    (& positions)
+                    (&mut walk)))]))
+          (or
+            walk.unknown
+            (match (ir_i64_i64_map.get (& positions) label)
+              [(ir_i64_i64_map.LookupFound at) (array-ref walk.marks at)]
+              [(ir_i64_i64_map.LookupMissing) true])))])))
+
 (define (compiler-ir-instr-seq-phi?
   [instrs : (& instrs CompilerIrInstrSeq)]
   [index : i64]) : bool

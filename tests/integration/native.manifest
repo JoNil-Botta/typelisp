@@ -178,6 +178,7 @@ compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
 call_eval_order|all|-,0,1,2|tests/integration/call_eval_order.tl|42|-|-|-|-
+devirt_address_taken_callee|all|0,1,2|tests/integration/devirt_address_taken_callee.tl|42|-|-|-|-
 # By-value memory-class operands keep the value they had before later operands
 # write their storage (#8433, #7900); each proof that omits a snapshot has a
 # witness here: field/borrow/projection/macro writes, globals, raw addresses.

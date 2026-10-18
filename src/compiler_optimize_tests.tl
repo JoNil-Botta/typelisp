@@ -266,6 +266,8 @@
         [(= mode 7) "store_ptr %0, %1 : u64\n"]
         [(= mode 10) "%12 = load %6 : i64\n"]
         [(= mode 12) "%13 = mov %3 : u64\n"]
+        [(= mode 13) "%14 = call refill(%0, %1) : u64\n"]
+        [(= mode 14) "%14 = call refill(%0, %1) : u64\n%15 = mov %0 : u64\n"]
         [else ""])
       "return %1")))
 
@@ -293,20 +295,23 @@
     blocks
     (ir.CompilerIrFunctionAbi.Ordinary)))
 
-;; Modes 0, 8, 9 and 11 forward (a plain site, a call that cannot reach the
-;; slot, a store that cannot reach it, a destination computed before the call).
-;; The rest keep their copy: 1 a window store into the destination, 2 a window
-;; load from it, 3 the slot passed as an ordinary argument, 4 a copy narrower
-;; than the reserved words, 5 an argument derived from the slot, 6 a second use
-;; of the call result, 7 the slot stored to memory, 10 a second use of the
-;; destination address (moving its definition must not change what reaches
-;; another use), 12 a second use of the temp's address.
+;; Modes 0, 8, 9, 11 and 13 forward (a plain site, a call that cannot reach
+;; the slot, a store that cannot reach it, a destination computed before the
+;; call, a later call handed the slot as its trailing result slot and the slot
+;; returned at once). The rest keep their copy: 1 a window store into the
+;; destination, 2 a window load from it, 3 the slot passed as an ordinary
+;; argument, 4 a copy narrower than the reserved words, 5 an argument derived
+;; from the slot, 6 a second use of the call result, 7 the slot stored to
+;; memory, 10 a second use of the destination address (moving its definition
+;; must not change what reaches another use), 12 a second use of the temp's
+;; address, 14 a trailing slot argument that is not returned at once.
 (define (compiler-optimize-slot-fwd-self-test) : i64
   (let
     [mode : i64 0]
-    (while (<= mode 12)
+    (while (<= mode 14)
       (let
-        [forwards? : bool (or (= mode 0) (= mode 8) (= mode 9) (= mode 11))]
+        [forwards? : bool
+          (or (= mode 0) (= mode 8) (= mode 9) (= mode 11) (= mode 13))]
         [params : ir.CompilerIrParamSeq
           (ir.compiler-ir-param-seq-append-one
             (irt.params "x=%0:u64")
@@ -59195,12 +59200,11 @@
 ;; C16 negative : an i64 store fed by a u8 load. The store fixes the width, and
 ;;                a load that disagrees means the body does not move eight bytes
 ;;                per iteration -- the wide-element twin of C8.
-;; C17 negative : the counter is bumped BEFORE the body, so both geps are
-;;                indexed by its `next` (`%8 = add %4, 1`). A rewrite would
-;;                redefine `%8` as `bound`, so the geps would have to read a
-;;                fresh copy of the increment. `opt-loop-call-exit-suffix?`
-;;                declines any loop whose step precedes its store (#8449), so
-;;                the loop stays as it is, both geps on `%8`.
+;; C17 positive : the counter is bumped BEFORE the body, so both geps are
+;;                indexed by its `next` (`%8 = add %4, 1`). The rewrite redefines
+;;                `%8` as `bound`, so the geps must read a fresh copy of the
+;;                increment instead, the index the FIRST iteration used; left on
+;;                `%8` the call would start `bound` elements past it.
 ;;
 ;; These negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
@@ -59656,9 +59660,12 @@
   (Var 6))
 
 ;; mode 1 shares the step directly with both address offsets, exactly as GVN
-;; does for `dst[i + 1] = src[i + 1]`. The other refused suffixes pin the
-;; retained Gep, arithmetic and Load boundaries independently. Every fixture
-;; is verified before matching, so an invalid input cannot make refusal pass.
+;; does for `dst[i + 1] = src[i + 1]`. A copy loop is rewritten around a copy
+;; of the step, so its geps keep the first iteration's index (#8740); a fill
+;; has no such substitution and stays a loop. The other refused suffixes pin
+;; the retained Gep, arithmetic and Load boundaries independently. Every
+;; fixture is verified before matching, so an invalid input cannot make
+;; refusal pass.
 (define (opt-loop-call-suffix-test-function [fill? : bool] [mode : i64]) : ir.CompilerIrFunction
   (let
     [early? : bool (= mode 1)]
@@ -59737,18 +59744,32 @@
                     (ir.compiler-ir-global-shared-view source))
                   (opt-copy-call-function
                     (ir.compiler-ir-global-shared-view source)))]
-              (if (= mode 0)
-                (unless
-                  (and
-                    (= (opt.opt-function-frame out) 14)
-                    (opt-cc-test-loop-ends-in-jump? out)
-                    (if fill?
-                      (opt-fc-test-loop-has-call? out 2)
-                      (opt-cc-test-loop-has-call8? out 4)))
-                  (return (+ 30 pass)))
-                (unless
-                  (opt.opt-function-eq bases source out)
-                  (return (+ 50 (+ (* pass 10) mode))))))
+              (cond
+                [(= mode 0)
+                  (unless
+                    (and
+                      (= (opt.opt-function-frame out) 14)
+                      (opt-cc-test-loop-ends-in-jump? out)
+                      (if fill?
+                        (opt-fc-test-loop-has-call? out 2)
+                        (opt-cc-test-loop-has-call8? out 4)))
+                    (return (+ 30 pass)))]
+                ;; phi, add(seed copy %13), mov(bound), gep(src), load,
+                ;; gep(dst), call, mov, lt, jump.
+                [(and (= mode 1) (not fill?))
+                  (unless
+                    (and
+                      (= (opt.opt-function-frame out) 15)
+                      (opt-cc-test-loop-ends-in-jump? out)
+                      (opt-cc-test-seed-add? out 1 13)
+                      (= (opt-cc-test-gep-offset out 3) 13)
+                      (= (opt-cc-test-gep-offset out 5) 13)
+                      (opt-cc-test-loop-has-call8? out 6))
+                    (return 41))]
+                [else
+                  (unless
+                    (opt.opt-function-eq bases source out)
+                    (return (+ 50 (+ (* pass 10) mode))))]))
             (set! mode (+ mode 1))))
         (set! pass (+ pass 1))))
     42))
@@ -59893,7 +59914,7 @@
        cc.entry:
          jump while_body.33__bce_guard
        while_body.33__bce_guard:
-         %3 = lt 0, %1 : bool
+         %3 = lt 0, %1 : i64
          branch %3, while_body.33__bce_fast, cc.exit
        while_body.33__bce_fast:
          %4 = phi [0, while_body.33__bce_guard], [%8, while_body.33__bce_fast] : i64
@@ -59902,7 +59923,7 @@
          %6 = load %5 : i64
          %7 = gep %2, %8 : i64
          store_ptr %7, %6 : i64
-         %9 = lt %8, %1 : bool
+         %9 = lt %8, %1 : i64
          branch %9, while_body.33__bce_fast, cc.exit
        cc.exit:
          return 0
@@ -59917,6 +59938,17 @@
     (opt-gc-test-instr-at blocks 2 index))
     [(Gep _ _ (Var offset) _) offset]
     [_ -1]))
+
+;; Whether the loop block's instruction at `index` is `%dst = add %4, 1`.
+(define (opt-cc-test-seed-add?
+  [out : (& out ir.CompilerIrFunction)]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 2 index))
+    [(BinOp d (Add) (Var 4) (I64 1) _) (= d dst)]
+    [_ false]))
 
 (define (compiler-optimize-copy-call-self-test) : i64
   (let
@@ -60132,16 +60164,15 @@
       [(not (opt-cc-test-loop-has-call8-const? c15 4 4)) 151]
       [(not (= (opt-cc-test-loop-store-count c15 0 8) 0)) 152]
       [(not (opt-cc-test-unchanged? c16)) 160]
-      ;; C17: a loop that bumps its counter before the body indexes both
-      ;; geps by the counter's `next`, which the rewrite would redefine as the
-      ;; bound (#8740). `opt-loop-call-exit-suffix?` declines any loop whose
-      ;; step precedes its store, so the block stays the loop with both geps
-      ;; on `next` (#8449 baseline; main rewrites it around a copy of the
-      ;; increment).
-      [(not (opt-cc-test-unchanged? c17)) 170]
-      [(not (= (opt-cc-test-gep-offset c17 2) 8)) 171]
-      [(not (= (opt-cc-test-gep-offset c17 4) 8)) 172]
-      [(not (= (compiler-optimize-loop-call-suffix-self-test) 42)) 170]
+      ;; C17: phi, add(seed copy), mov(inext), gep(src), load, gep(dst), call,
+      ;; lt, jump. The seed copy is %13 and the call %14.
+      [(not (= (opt-cc-test-loop-instr-count c17) 9)) 170]
+      [(not (opt-cc-test-seed-add? c17 1 13)) 171]
+      [(not (= (opt-cc-test-gep-offset c17 3) 13)) 172]
+      [(not (= (opt-cc-test-gep-offset c17 5) 13)) 173]
+      [(not (opt-cc-test-loop-has-call8? c17 6)) 174]
+      [(not (= (opt.opt-function-frame c17) 15)) 175]
+      [(not (= (compiler-optimize-loop-call-suffix-self-test) 42)) 176]
       [else (compiler-optimize-loop-call-entry-proof-self-test)])))
 
 ;; --- latch increment sinking -------------------------------------------------

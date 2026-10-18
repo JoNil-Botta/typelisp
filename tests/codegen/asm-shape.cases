@@ -28,9 +28,9 @@ source tests/integration/short_trip_copy.tl
 in fn _tl_short_trip_copy_copy_fill_bang
 match ^[[:space:]]+shrq \$3, %r
 not-match ^[[:space:]]+sarq \$63, %r
-# #8449 baseline: the word loop unrolls by two (main: by four, `leaq -4`).
-after ^[[:space:]]+leaq -2[(]%r[a-z0-9]+[)], %r
+after ^[[:space:]]+leaq -4[(]%r[a-z0-9]+[)], %r
 next-line ^[[:space:]]+testq %r[a-z0-9]+, %r
+not-match ^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r
 count = 1 __unroll_guard:$
 count = 1 ^[[:space:]]+movzbq[ ]
 
@@ -471,8 +471,7 @@ case global-len-fold
 source tests/integration/global_len_fold.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_global_len_fold_probe_sum
-# #8449 baseline: a second length compare (main: 1).
-count = 2 ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
 after movq _tl_global_len_fold_glf_items[(]%rip[)], %r[a-z0-9]+$
 next-line ^[[:space:]]+cmpq 8[(]%r[a-z0-9]+[)], %r[a-z0-9]+$
 capture handle ^[[:space:]]+cmpq 8\((%r[a-z0-9]+)\), %r.*$
@@ -871,9 +870,8 @@ case global-cell-writer-loop-reads
 source tests/integration/global_cell_writer_loop_reads.tl
 in fn _tl_global_cell_writer_loop_reads_bumped_records
 contains call _tl_global_cell_writer_loop_reads_bump_cursor
-# #8449 baseline: one more cursor reload (main: 2).
-count = 3 ^[[:space:]]+movq _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
-count = 3 ^[[:space:]]+[a-z]+ _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movq _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+[a-z]+ _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
 
 # A 24-byte group copy moves straight from source to destination registers.
 case group-copy-direct
@@ -1175,8 +1173,7 @@ match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\),[ ]
 match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,4\),[ ]
 match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\),[ ]
 in fn tl_sfl_copy
-# #8449 baseline: the index add is a leaq (main: addq).
-match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+(,1)?\), %r[a-z0-9]+$
+match ^[[:space:]]+addq %r[a-z0-9]+, %r[a-z0-9]+$
 
 # Read-modify-write of array words folds into memory-destination ALU ops;
 # shifted, reused, interposed and byte forms refuse.
@@ -1249,23 +1246,20 @@ case copy-call-word
 source tests/integration/copy_call_word.tl
 in fn _tl_copy_call_word_copy_words
 count-fixed = 1 call tl_mem_copy8_fwd
-# #8449 baseline: no checked store before the call (main: 1).
-count = 0 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+\)$
-in fn _tl_copy_call_word_shift_up
-count-fixed = 0 call tl_mem_copy8_fwd
-# #8449 baseline: the shift loops store six words (main: 3).
-count = 6 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
-in fn _tl_copy_call_word_shift_down
-count-fixed = 0 call tl_mem_copy8_fwd
-count = 6 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
-in fn _tl_copy_call_word_copy_fixed8
-# #8449 baseline: copy_fixed8 is inline stores (main: one call passing 8).
-count-fixed = 0 call tl_mem_copy8_fwd
-count = 5 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
-in fn _tl_copy_call_word_copy_fixed4
-# #8449 baseline: copy_fixed4 is inline stores (main: one call).
-count-fixed = 0 call tl_mem_copy8_fwd
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_up
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_down
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_copy_fixed8
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains movl $8, %edx
+in fn _tl_copy_call_word_copy_fixed4
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
 in fn _tl_copy_call_word_copy_fixed3
 not-contains call tl_mem_copy8_fwd
 not-contains call tl_mem_copy_fwd
@@ -1285,15 +1279,13 @@ match [ ]{4}rep movsq
 case copy-call-next-index
 source tests/integration/copy_call_next_index.tl
 in fn _tl_copy_call_next_index_grow
-# #8449 baseline: the grow copy stays a loop (main: one call).
-count-fixed = 0 call tl_mem_copy8_fwd
+count-fixed = 1 call tl_mem_copy8_fwd
 
 case copy-call-word-peephole
 source benchmarks/peephole_lines/bench.tl
 in fn _tl_bench_pl_run_chunk
-count-fixed = 0 call tl_mem_copy8_fwd
-# #8449 baseline: no word-copy call (main: 2 calls passing 25).
-count-fixed = 0 movl $25, %edx
+count-fixed = 2 call tl_mem_copy8_fwd
+count-fixed = 2 movl $25, %edx
 
 # Alias rows: a global read that overflows the alias table stays out of the
 # loop body, which still calls the predicate.
@@ -1307,18 +1299,12 @@ not-contains _tl_alias_row_overflow_aro_edge(%rip)
 not-contains _tl_alias_row_overflow_aro_mark(%rip)
 contains call _tl_alias_row_overflow_aro_marked_question
 
-# Typed-word alias analysis hoists the descriptor loads out of the loop.
+# Typed-word alias analysis hoists the descriptor loads into the preheader.
 case alias-typed-word
 source tests/integration/alias_typed_word.tl
 in fn _tl_alias_typed_word_atw_scan_ints
-narrow block-after:^\.L[A-Za-z0-9_.]*_entry:$
-# #8449 baseline: the three descriptor loads join the text parameter's two in
-# the entry block, ahead of the zero-trip test (main: 2 here, and the three in
-# the rotated preheader).
-count = 5 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
-in fn _tl_alias_typed_word_atw_scan_ints
 narrow block-after:^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$
-count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 3 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
 in fn _tl_alias_typed_word_atw_scan_ints
 narrow after:^\.L[A-Za-z0-9_.]*while_body\.1:$
 count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
@@ -1330,9 +1316,7 @@ contains call tl_oob_abort_at
 case alias-global-shift
 source tests/integration/alias_global_shift.tl
 in fn main
-# #8449 baseline: inlined-call labels split the fast loop into several
-# __bce_fast blocks, so the window is the fast region (main: fast-self-loop).
-narrow fast-region:, 24(
+narrow fast-self-loop:, 24(
 not-contains _tl_alias_global_shift_al_vec(%rip)
 not-contains call tl_oob_abort
 count = 0 ^[[:space:]]+j(ae|b)[ ]

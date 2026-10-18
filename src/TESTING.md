@@ -40,6 +40,16 @@ float and narrow reads against their exact extern metadata symbols. The
 extern spellings and then no extern, resets function caches, and checks a second
 owner's isolation and final retirement.
 
+`indirect_callee_snapshot.tl` retains the callable before argument effects for
+language closures and C pointers, including local, parameter, language and C
+global and field storage, a capturing closure, raw pointer writes,
+conditional/wrapped/factory callees and unchanged-callee controls.
+Factory and invocation counts pin single evaluation. The native manifest runs
+all three optimization levels on both hosts; keep the mixed-float, stack, null
+and unsafe callable ABI families beside this ordering regression. The
+`compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
+tail callees are copied only when an argument writes their storage.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

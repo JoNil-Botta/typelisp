@@ -15275,6 +15275,36 @@
           (Var var-id)
           ty))]))
 
+;; A call uses the callable its callee expression produced (SPEC 5.3). The
+;; value is copied before `args` are lowered only when they can write the
+;; storage it still names, by the argument rule of `lower-operand-snapshot`:
+;; a var at or above `first-var` was allocated by the callee expression itself
+;; (a closure, call result, field load or branch result) and a function name
+;; is immutable, so neither is copied. A local whose address was taken is
+;; copied unless every argument only reads; any other local only when an
+;; argument writes a place rooted at `callee-name` (any place when negative).
+;; Unlike an argument, a global cell is copied unless every argument only
+;; reads, since a call can assign it.
+(define (lower-capture-callable
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [callee-name : i64]
+  [first-var : i64]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [args : (& args ast.AstExprList)]) : ResultLowerExpr
+  (if (match (& value)
+    [(Var var-id)
+      (cond
+        [(>= var-id first-var) false]
+        [(lower-state-address-taken-var? state var-id)
+          (not (lower-call-args-read-only? ctx args 0))]
+        [else (= (lower-call-arg-exprs-write-code ctx callee-name args 0) 2)])]
+    [(Global _) (not (lower-call-args-read-only? ctx args 0))]
+    [_ false])
+    (lower-materialize state value ty)
+    (Ok (Expr state value ty))))
+
 (define (lower-materialize-at-expr
   [ctx : (& ctx tc_core.TcContext)]
   [state : LowerState]
@@ -25833,13 +25863,13 @@
 ;; belongs to the by-value aggregate rules, not to this snapshot (#8433).
 (define (lower-call-arg-place-root-name
   [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]) : i64
+  [expr : (& expr ast.AstExpr)]) : i64
   (match expr
     [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
          (StructGet inner-box _) (TupleRef inner-box _))
       (lower-call-arg-place-root-name
         ctx
-        (lower-context-expr-get ctx inner-box))]
+        (& (lower-context-expr-get ctx inner-box)))]
     [(Var name) name]
     [_ -1]))
 
@@ -25856,7 +25886,9 @@
   [place-box : i64]) : i64
   (lower-call-arg-name-write-code
     name
-    (lower-call-arg-place-root-name ctx (lower-context-expr-get ctx place-box))))
+    (lower-call-arg-place-root-name
+      ctx
+      (& (lower-context-expr-get ctx place-box)))))
 
 ;; Whether evaluating the expression at `expr-box` can write a place: 0 never,
 ;; 1 only places that are not rooted at the variable `name`, 2 a place rooted
@@ -26067,7 +26099,7 @@
                   ctx
                   (lower-call-arg-place-root-name
                     ctx
-                    (lower-context-expr-get ctx origin-box))
+                    (& (lower-context-expr-get ctx origin-box)))
                   tail)])]
           [(Global _)
             (if (and
@@ -35121,6 +35153,9 @@
         [(Ok args-state values) (Ok args-state values (None))]
         [(Err message) (Err message)])]))
 
+;; `callee-name` and `first-var` describe the callee expression for
+;; `lower-capture-callable`: its place root name, and the next var before it
+;; was lowered.
 (define (lower-indirect-call
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -35128,68 +35163,80 @@
   [type-env : tc_core.TcTypeEnv]
   [func-ty : ast.AstType]
   [func-value : ir.CompilerIrValue]
+  [callee-name : i64]
+  [first-var : i64]
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-c-function-type? (lower-global-shared-view func-ty))
-    (lower-indirect-c-abi-call
+  (match (try
+    (lower-capture-callable
       ctx
       state
-      env
-      type-env
-      func-ty
+      callee-name
+      first-var
       func-value
-      args
-      result-ty
-      origin)
-    (match (lower-indirect-call-args-with-writebacks
-      ctx
-      state
-      env
-      type-env
-      args
-      (lower-global-shared-view func-ty))
-      [(Ok args-state values writebacks)
-        (match (tc_core.tc-type-strip-region
-          (tc_core.tc-resolve-type ctx func-ty))
-          [(Func param-types _)
-            (let
-              [lowered
-                (try
-                  (lower-internal-call-values
-                    ctx
-                    args-state
-                    (Indirect func-value)
-                    values
-                    (tc_core.tc-resolve-type-list ctx (deref param-types))
-                    result-ty
-                    origin))]
-              (match lowered
-                [(Expr call-state call-value call-ty)
-                  (Ok
-                    (Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))]))]
-          [_
-            (let
-              [lowered
-                (try
-                  (lower-call-values
-                    ctx
-                    args-state
-                    (Indirect func-value)
-                    values
-                    result-ty
-                    origin))]
-              (match lowered
-                [(Expr call-state call-value call-ty)
-                  (Ok
-                    (Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))]))])]
-      [(Err message) (Err message)])))
+      func-ty
+      (& args)))
+    [(Expr state func-value func-ty)
+      (if (lower-c-function-type? (lower-global-shared-view func-ty))
+        (lower-indirect-c-abi-call
+          ctx
+          state
+          env
+          type-env
+          func-ty
+          func-value
+          args
+          result-ty
+          origin)
+        (match (lower-indirect-call-args-with-writebacks
+          ctx
+          state
+          env
+          type-env
+          args
+          (lower-global-shared-view func-ty))
+          [(Ok args-state values writebacks)
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx func-ty))
+              [(Func param-types _)
+                (let
+                  [lowered
+                    (try
+                      (lower-internal-call-values
+                        ctx
+                        args-state
+                        (Indirect func-value)
+                        values
+                        (tc_core.tc-resolve-type-list ctx (deref param-types))
+                        result-ty
+                        origin))]
+                  (match lowered
+                    [(Expr call-state call-value call-ty)
+                      (Ok
+                        (Expr
+                          (lower-apply-arg-writebacks ctx call-state writebacks)
+                          call-value
+                          call-ty))]))]
+              [_
+                (let
+                  [lowered
+                    (try
+                      (lower-call-values
+                        ctx
+                        args-state
+                        (Indirect func-value)
+                        values
+                        result-ty
+                        origin))]
+                  (match lowered
+                    [(Expr call-state call-value call-ty)
+                      (Ok
+                        (Expr
+                          (lower-apply-arg-writebacks ctx call-state writebacks)
+                          call-value
+                          call-ty))]))])]
+          [(Err message) (Err message)]))]))
 
 (define (lower-indirect-c-abi-call
   [ctx : tc_core.TcContext]
@@ -35244,6 +35291,7 @@
             origin)]
         [(Err message) (Err message)])]
     [_
+      ;; The calling dispatcher already selected the callable.
       (lower-indirect-call
         ctx
         state
@@ -35251,6 +35299,8 @@
         type-env
         func-ty
         func-value
+        -1
+        0
         args
         result-ty
         origin)]))
@@ -36181,6 +36231,7 @@
       lookup-name-id)
       [(Ok fn-ty)
         (let
+          [first-var : i64 (lower-state-next-var state)]
           [lowered-func
             (try
               (lower-var-or-nullary-variant-id
@@ -36199,6 +36250,8 @@
                 type-env
                 fn-ty
                 func-value
+                raw-name-id
+                first-var
                 args
                 result-ty
                 origin)]))]
@@ -37111,6 +37164,7 @@
               (lower-global-shared-view body))
               [(Ok fn-ty)
                 (let
+                  [first-var : i64 (lower-state-next-var state)]
                   [lowered-func
                     (try
                       (lower-lambda
@@ -37133,6 +37187,8 @@
                         type-env
                         fn-ty
                         func-value
+                        -1
+                        first-var
                         args
                         result-ty
                         origin)]))]
@@ -37161,6 +37217,7 @@
             (tc_core.tc-env-key-name-text raw-name))]
         (if (tc_core.tc-dotted-local-field-name-id? type-env raw-name)
           (let
+            [first-var : i64 (lower-state-next-var state)]
             [lowered-func
               (try
                 (lower-expr
@@ -37179,6 +37236,8 @@
                     type-env
                     func-ty
                     func-value
+                    -1
+                    first-var
                     args
                     result-ty
                     origin)
@@ -37205,6 +37264,8 @@
                       type-env
                       fn-ty
                       (Var local-id)
+                      raw-name
+                      (lower-state-next-var state)
                       args
                       result-ty
                       origin)
@@ -37634,6 +37695,7 @@
                     (Err (box (lower-diagnostic-at-expr ctx origin message)))]))))))]
     [_
       (let
+        [first-var : i64 (lower-state-next-var state)]
         [lowered-func
           (try
             (lower-expr ctx state env type-env (lower-global-shared-view func)))]
@@ -37647,6 +37709,8 @@
                 type-env
                 func-ty
                 func-value
+                (lower-call-arg-place-root-name ctx (& func))
+                first-var
                 args
                 result-ty
                 origin)
@@ -66377,8 +66441,22 @@
         (lower-global-shared-view ret-ty)
         sret-var)
         (let
+          [first-var : i64 (lower-state-next-var state)]
+          [callee-name : i64 (lower-call-arg-place-root-name ctx (& callee))]
           [lowered-func (try (lower-expr ctx state env type-env callee))]
-          (match lowered-func
+          [captured-func : LowerExpr
+            (match lowered-func
+              [(Expr func-state func-value func-ty)
+                (try
+                  (lower-capture-callable
+                    ctx
+                    func-state
+                    callee-name
+                    first-var
+                    func-value
+                    func-ty
+                    (& args)))])]
+          (match captured-func
             [(Expr func-state func-value lowered-func-ty)
               (match (lower-indirect-call-args
                 ctx

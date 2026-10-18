@@ -11,7 +11,9 @@
   (second (CFunc nullable (-> i64 i64))))
 
 (define published : Published
-  (init : Published))
+  (Published
+    (ptr-null : (CFunc nullable (-> i64 i64)))
+    (ptr-null : (CFunc nullable (-> i64 i64)))))
 (define ready : i64
   0)
 

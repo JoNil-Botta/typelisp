@@ -48827,7 +48827,8 @@
       (opt.opt-affine-env-new 1100 (__tl_make-array bool 1100))]
     [other : opt.OptAffineEnv
       (opt.opt-affine-env-new 4 (__tl_make-array bool 4))]
-    [empty : opt.OptAffineEnv (init)]
+    [empty : opt.OptAffineEnv
+      (opt.opt-affine-env-new 0 (__tl_make-array bool 0))]
     [binds : i64 0]
     (when
       (not

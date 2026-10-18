@@ -41,7 +41,7 @@
 
 (define (empty-array-score) : i64
   (let
-    [items : (Array i64 0) (init)]
+    [items : (Array i64 0) (make-array i64 0)]
     (match items
       [(array) 42])))
 

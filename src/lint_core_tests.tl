@@ -1171,6 +1171,55 @@
       [(No) (io.panic "lint: spanned nested let should produce a finding")])
     unit))
 
+(define (lint-removed-init-smoke) : unit
+  (let
+    [default-level : lint_core.LintLevel
+      (lint-rule-default-level (lint_core.lint-rule-removed-init-id))]
+    [span : ast.AstSourceSpan (ast.ast-source-span 3 5 3 17)]
+    [typed : i64 (ast.ast-expr-init (I64))]
+    [contextual : i64 (ast.ast-expr-init-maybe (& (No)))]
+    [expressions : (__tl_dyn-array i64)
+      (__tl_make-array
+        typed
+        contextual
+        (lint-test-source-view typed span)
+        (lint-test-source-view contextual span))]
+    [index : i64 0]
+    (while (< index (array-length expressions))
+      (let
+        [node : i64 (array-ref expressions index)]
+        [findings : lint_core.LintFindings
+          (lint-test-walk node 4 (lint_core.lint-findings-empty))]
+        [tail : lint_core.LintFindings
+          (lint-test-walk-tail node 4 (lint_core.lint-findings-empty))]
+        (unless
+          (and (= findings.len 1) (= tail.len 1))
+          (io.panic
+            "lint: both Init forms must be reported once in value and tail position"))
+        (let
+          [finding : lint_core.LintFinding
+            (lint_core.lint-findings-ref findings 0)]
+          [tail-finding : lint_core.LintFinding
+            (lint_core.lint-findings-ref tail 0)]
+          [line : i64
+            (if (< index 2)
+              0
+              3)]
+          (unless
+            (and
+              (string.eq finding.rule-id (lint_core.lint-rule-removed-init-id))
+              (= (ast.ast-source-span-start-line finding.span) line)
+              (= (ast.ast-source-span-start-line tail-finding.span) line))
+            (io.panic "lint: Init must retain its rule id and source span"))))
+      (set! index (+ index 1)))
+    (unless
+      (= (lint_core.lint-level-rank default-level) 1)
+      (io.panic "lint: removed-init must be enabled by default"))
+    (lint-test-expect-registry-text
+      (lint_core.lint-rule-suggestion (lint_core.lint-rule-removed-init-id))
+      "use a literal or constructor, make-array for a zeroed scalar fixed array, or an empty dynamic array literal"
+      "lint: removed-init replacements must be registered")))
+
 ;; Builds the leaf fixtures the families share and runs every family. Each
 ;; family builds its own fixtures beside its assertions, and every assertion
 ;; panics with its own message.
@@ -1198,6 +1247,7 @@
     (lint-no-effect-smoke vx one unit-expr set-ok-false)
     (lint-reachability-smoke vx vy one unit-expr return-one)
     (lint-rule-registry-smoke)
+    (lint-removed-init-smoke)
     42))
 
 ;: Attach a rule-proved fix without inventing a second edit coordinate type.

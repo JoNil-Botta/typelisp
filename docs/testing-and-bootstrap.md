@@ -82,6 +82,14 @@ including the rule ID accepted by `;; lint-allow: <rule-id>` and a suggested
 remedy. Scripts that parse lint output can select the stable
 `path:line:column: message` form with `--format flat`.
 
+The default `removed-init` rule reports contextual and typed `init`, including
+quoted macro templates. Use explicit literals or constructors, `make-array`
+for zeroed scalar fixed arrays, and `(__tl_make-array)` for an empty private
+dynamic array. The source lint gate enforces this migration. Intentional
+semantic tests and the two serialization templates tracked by #7948 retain
+line-local `;; lint-allow: removed-init` directives. #7951 removes the rule
+and those directives together with the syntax.
+
 The default `raw-arena-op` rule rejects direct calls to the raw arena
 set/destroy/rewind helpers and their unsafe `arena` wrappers outside the
 checked-in audited module allowlist. New code should use `in-arena`,

@@ -1282,7 +1282,7 @@
         [error-value : linux.LinuxSockLen
           (unsafe
             (ptr-read (ptr-cast (ptr-addr-of error) : (Ptr linux.LinuxSockLen))))]
-        [peer-storage : (Array u64 14) (init)]
+        [peer-storage : (Array u64 14) (make-array u64 14)]
         [peer-length : linux.LinuxSockLen (linux.LinuxSockLen (cast 112 : u32))]
         [peer-name : i64
           (unsafe

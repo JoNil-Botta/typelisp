@@ -506,8 +506,8 @@
 (define (winsock-check-module-identity [module : u64]) : WinsockIdentityResult
   (let
     [capacity : i64 1024]
-    [module-path : (Array u16 1024) (init : (Array u16 1024))]
-    [system-path : (Array u16 1024) (init : (Array u16 1024))]
+    [module-path : (Array u16 1024) (make-array u16 1024)]
+    [system-path : (Array u16 1024) (make-array u16 1024)]
     [module-length : i64
       (cast
         (winsock-get-module-file-name-w
@@ -564,7 +564,7 @@
   test
   (define (winsock-test-wide [name : (& name str)]) : (Array u16 1024)
     (let
-      [out : (Array u16 1024) (init : (Array u16 1024))]
+      [out : (Array u16 1024) (make-array u16 1024)]
       [index : i64 0]
       (while (< index (string.string-length name))
         (set! (array-ref out index) (cast (string.string-ref name index) : u16))
@@ -1421,8 +1421,8 @@
               (cast 0 : u16)
               (cast 0 : u16)
               (ptr-null : (Ptr u8))
-              (init : (Array u8 257))
-              (init : (Array u8 129)))]
+              (make-array u8 257)
+              (make-array u8 129))]
           [status : i32
             (if (= fault 1)
               (cast 10093 : i32)
@@ -1825,8 +1825,7 @@
     [source-owner : (& lease WinsockLease)]
     [source : u64]) : bool
     (let
-      [info : WinsockProtocolInfoW
-        (WinsockProtocolInfoW (init : (Array u32 157)))]
+      [info : WinsockProtocolInfoW (WinsockProtocolInfoW (make-array u32 157))]
       (match (unsafe
         (winsock-duplicate-protocol-with-lease
           source-owner

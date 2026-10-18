@@ -785,7 +785,7 @@
     ;; operand's produced type, and operand-type-key-eq compares a type
     ;; operand's canonical key. expr-cast pops the type value then the operand
     ;; expression and pushes the cast node the parser produces. expr-init pops
-    ;; one type value and pushes the typed `(init : T)` node. The embedded image
+    ;; one type value and pushes the typed Init node. The embedded image
     ;; and its consumer are always the same source-bound binary.
     compiler-comptime-host-callback-operand-expr-type-kind-eq
     compiler-comptime-host-callback-operand-type-key-eq

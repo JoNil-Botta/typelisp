@@ -97896,7 +97896,7 @@
 ;; The context a fresh state carries until a stage builds one. Nothing reads it
 ;; while `ctx-valid?` is false.
 (define opt-pass-no-context : OptCfgContext
-  (init))
+  (opt-cfg-context-empty))
 
 (define (opt-pass-state
   [type-segment-bases : i64]

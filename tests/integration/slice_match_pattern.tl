@@ -194,7 +194,7 @@
     [items : (Array i64 4) (array 1 2 3 4)]
     (unless (= (sum (& items)) 10) (return 1)))
   (let
-    [empty : (Array i64 0) (init)]
+    [empty : (Array i64 0) (make-array i64 0)]
     (unless (= (sum (& empty)) 0) (return 2)))
   (unless (= (wide-slice-score) 4153) (return 3))
   (let
@@ -257,14 +257,14 @@
     [x : (Array i64 3) (array 1 2 3)]
     [y : (Array i64 3) (array 7 5 0)]
     [z : (Array i64 3) (array 2 2 2)]
-    [units : (Array unit 4) (init)]
+    [units : (Array unit 4) (make-array unit 4)]
     (unless (= (array-literal-score (& x)) 5) (return 29))
     (unless (= (array-literal-score (& y)) 700) (return 30))
     (unless (= (array-literal-score (& z)) -6) (return 31))
     (unless (= (count-units (& units)) 4) (return 32)))
   (let
     [items : (Array i64 3) (array 7 8 9)]
-    [empty : (Array i64 0) (init)]
+    [empty : (Array i64 0) (make-array i64 0)]
     (unless (= (generated-slice-head (slice-view items 1 2)) 8) (return 22))
     (unless (= (generated-slice-head (slice-view empty 0 0)) -1) (return 23))
     (unless (= (generated-sum (& items)) 24) (return 24))

@@ -280,3 +280,49 @@ run lint "{{dir}}/lint_parse_error.tl" --check
 exit nonzero
 stdout empty
 stderr not-empty
+
+case lint-removed-init
+file init.tl
+(define (zero) : i64
+  (init))
+(define (typed-zero) : i64
+  (init : i64))
+end-file
+step lint-removed-init-warn
+run lint "{{dir}}/init.tl"
+stderr empty
+stdout contains warning[removed-init]:
+stdout contains init.tl:2:3
+stdout contains init.tl:4:3
+stdout contains = help: use a literal or constructor, make-array for a zeroed scalar fixed array, or an empty dynamic array literal
+stdout contains lint: 2 finding(s)
+step lint-removed-init-check
+run lint "{{dir}}/init.tl" --check
+exit nonzero
+stderr empty
+stdout contains warning[removed-init]:
+stdout contains lint: 2 finding(s)
+step lint-removed-init-flat
+run lint "{{dir}}/init.tl" --check --format flat
+exit nonzero
+stderr empty
+stdout contains init.tl:2:3: init is being removed
+stdout contains init.tl:4:3: init is being removed
+
+case lint-removed-init-template-allow
+file init_template.tl
+(defmacro (zero [T : type]) : Expr
+  ;; lint-allow: removed-init
+  `(init : ,T))
+end-file
+run lint "{{dir}}/init_template.tl" --check
+stderr empty
+stdout contains lint: 0 finding(s)
+
+case lint-removed-init-invalid
+file malformed_init.tl
+(define (zero) : i64 (init :))
+end-file
+run lint "{{dir}}/malformed_init.tl" --check
+exit nonzero
+stderr contains parse: init expects (init : T)

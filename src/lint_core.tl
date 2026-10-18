@@ -210,6 +210,11 @@
   "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
 
 (deflint-rule
+  removed-init
+  "init is being removed: construct an explicit value"
+  "use a literal or constructor, make-array for a zeroed scalar fixed array, or an empty dynamic array literal")
+
+(deflint-rule
   redundant-begin
   "redundant begin: the enclosing form already evaluates a body sequence"
   "splice the begin forms into the enclosing body")
@@ -366,6 +371,14 @@
           lint-group-compatibility-mask
           lint-group-future-incompatibility-mask))
       (LintRule
+        (lint-rule-removed-init-id)
+        (lint-rule-removed-init-message)
+        (lint-rule-removed-init-suggestion)
+        Warn
+        (bit-or
+          lint-group-compatibility-mask
+          lint-group-future-incompatibility-mask))
+      (LintRule
         (lint-rule-redundant-begin-id)
         (lint-rule-redundant-begin-message)
         (lint-rule-redundant-begin-suggestion)
@@ -481,7 +494,7 @@
         (lint-rule-type-name-case-suggestion)
         Allow
         lint-group-style-mask))
-    28))
+    29))
 
 (define (lint-rule-find-at
   [rules : LintRuleList]
@@ -1883,6 +1896,41 @@
     0
     span
     (lint-fix-unproven)))
+
+(define (lint-add-removed-init [span : ast.AstSourceSpan] [acc : LintFindings]) : LintFindings
+  (lint-findings-add
+    (LintFinding
+      (lint-rule-removed-init-message)
+      (lint-rule-removed-init-id)
+      0
+      span
+      (lint-fix-unproven))
+    acc))
+
+;; Quoted templates must also migrate before Init syntax disappears. Only this
+;; syntax rule descends here: ordinary style rules still ignore quoted code.
+(define (lint-removed-init-template
+  [expr : ast.AstExpr]
+  [span : ast.AstSourceSpan]
+  [acc : LintFindings]) : LintFindings
+  (match (& expr)
+    [(Spanned inner located)
+      (lint-removed-init-template (ast.ast-node-get inner) located acc)]
+    [(Init _) (lint-add-removed-init span acc)]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [index : i64 0]
+        [out : LintFindings acc]
+        (while (< index children.len)
+          (set!
+            out
+            (lint-removed-init-template
+              (ast.ast-node-get (ast.ast-expr-list-get (& children) index 0))
+              span
+              out))
+          (set! index (+ index 1)))
+        out)]))
 
 (define (lint-deprecated-string-concat-token-span
   [tok : token.SpannedToken]
@@ -9551,6 +9599,7 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (match (owned_view.compiler-owned-shared-view inner)
+          [(Init _) (lint-add-removed-init span acc)]
           [(If cond-box then-branch-box else-branch-box)
             (let
               [cond : ast.AstExpr (ast.ast-node-get cond-box)]
@@ -9788,6 +9837,7 @@
       (let
         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
         (match (owned_view.compiler-owned-shared-view inner)
+          [(Init _) (lint-add-removed-init span acc)]
           [(If cond-box then-branch-box else-branch-box)
             (let
               [cond : ast.AstExpr (ast.ast-node-get cond-box)]
@@ -9888,7 +9938,9 @@
             body
             threshold
             (lint-walk-resource-bindings bindings threshold acc))])]
-    [(or (Quote _) (Quasiquote _)) acc]
+    [(Init _) (lint-add-removed-init (lint-no-span) acc)]
+    [(or (Quote inner) (Quasiquote inner))
+      (lint-removed-init-template (ast.ast-node-get inner) (lint-no-span) acc)]
     [_ (lint-walk-expr-list (ast.ast-expr-child-ids expr) threshold acc)]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.

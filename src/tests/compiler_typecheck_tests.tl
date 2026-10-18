@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_typecheck_tests.tl - Self-tests for the compiler typechecker API.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)

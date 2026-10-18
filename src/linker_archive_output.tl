@@ -38,7 +38,7 @@
   [radix : i64]
   [width : i64]) : buf.ByteBuf
   (let
-    [digits : (Array u8 12) (init : (Array u8 12))]
+    [digits : (Array u8 12) (make-array u8 12)]
     [count : i64 0]
     [remaining : i64 value]
     [index : i64 0]

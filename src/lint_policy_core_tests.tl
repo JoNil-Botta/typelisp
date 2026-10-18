@@ -157,7 +157,7 @@
         (lint_core.lint-rule-redundant-begin-id))]
     [index : i64 0]
     (lint-policy-test-expect
-      (= (lint_core.lint-rule-list-count rules) 28)
+      (= (lint_core.lint-rule-list-count rules) 29)
       "lint policy: registry count should remain deterministic")
     (while (< index (lint_core.lint-rule-list-count rules))
       (let
@@ -173,7 +173,7 @@
       "lint policy: first registry decision should be stable")
     (lint-policy-test-expect
       (string.eq
-        (lint_core.lint-rule-list-ref rules 27).rule-id
+        (lint_core.lint-rule-list-ref rules 28).rule-id
         (lint_core.lint-rule-type-name-case-id))
       "lint policy: last registry decision should be stable")
     (lint-policy-test-expect
@@ -187,13 +187,13 @@
       "lint policy: existing default lint should remain warn")
     (lint-policy-test-expect
       (and
-        (= resolution.stats.registry-rules 28)
+        (= resolution.stats.registry-rules 29)
         (= resolution.stats.group-definitions 0)
         (= resolution.stats.group-members 0)
         (= resolution.stats.assignments 0)
         (= resolution.stats.expanded-rule-updates 0)
         (= resolution.stats.trace-entries 0)
-        (= (lint-policy-decisions-count resolution.decisions) 28)
+        (= (lint-policy-decisions-count resolution.decisions) 29)
         (= (lint-policy-resolution-diagnostics-count resolution) 0)
         (= (lint-policy-resolution-trace-count resolution) 0))
       "lint policy: disabled policy work must be one fixed registry pass")))

@@ -2034,8 +2034,8 @@
                   (& ty)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
-;; expr-init: pop a type value and push the typed `(init : T)` node produced by
-;; the parser. Contextual `(init)` remains outside the native template subset.
+;; expr-init: pop a type value and push the typed Init node produced by
+;; the parser. Contextual Init remains outside the native template subset.
 (define (compiler-comptime-host-callback-expr-init
   [session : i64]
   [_arg-a : i64]
@@ -5621,7 +5621,7 @@
   (let
     [batch : CompilerComptimeHostBatch
       (CompilerComptimeHostBatch base len 0 true)]
-    [resolved : (Array i64 64) (init : (Array i64 64))]
+    [resolved : (Array i64 64) (make-array i64 64)]
     [name-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
     [index : i64 0]
     (when

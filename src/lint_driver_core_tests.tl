@@ -310,7 +310,7 @@ end
           (=
             (selfhost-lint-source-finding-count
               "(import pkg.data)
-(define (make) : data.Item (init : data.Item))")
+(define (keep [item : data.Item]) : data.Item item)")
             0))
         37]
       [(not
@@ -1511,7 +1511,77 @@ end
           "transitional core macro qualifier: use when instead of core.when"))]
     [(No) false]))
 
+;; lint-allow: removed-init -- These source strings exercise the migration rule.
+(define (selfhost-lint-removed-init-self-test) : unit
+  (let
+    [cases : (__tl_dyn-array (Tuple String i64))
+      (__tl_make-array
+        (tuple "(define value : i64 (init))" 1)
+        (tuple "(define (value) : i64 (init : i64))" 1)
+        (tuple
+          "(define (value) : i64
+  (let [items : (Array i64 2) (array (init) (init : i64))]
+    (set! (array-ref items 0) (init))
+    (array-ref items 0)))"
+          3)
+        (tuple
+          "(define (value) : i64
+  (if true (ann (init) : i64) (cast (init : u8) : i64)))"
+          2)
+        (tuple "(defmacro (value [T : type]) : Expr
+  `(init : ,T))" 1)
+        (tuple "(defmacro (value [T : type]) : Expr
+  ``(init : ,T))" 1)
+        (tuple "(defmacro (value) : Expr '(init : i64))" 1)
+        (tuple
+          "(defmacro (value) : Expr
+  `(begin ,(init : Expr) (init : i64)))"
+          2)
+        (tuple
+          "(define (init [value : i64]) : i64 value)
+(define (value) : i64 (init 7))"
+          0)
+        (tuple "(define (value) : String \"(init : i64)\")
+;; (init)
+" 0)
+        (tuple
+          "(define (value) : i64
+  ;; lint-allow: removed-init
+  (init : i64))"
+          0)
+        (tuple
+          "(define (value) : i64
+  ;; lint-allow: unused-variable
+  (init))"
+          1)
+        (tuple
+          "(define (value) : i64
+  ;; lint-allow: removed-init
+
+  (init))"
+          1)
+        (tuple
+          "(define (value) : i64
+  ;; lint-allow: removed-init
+  (let [first : i64 (init)]
+    (+ first (init))))"
+          1))]
+    [index : i64 0]
+    (while (< index (array-length cases))
+      (let
+        [row : (& cases (Tuple String i64)) (& (array-ref cases index))]
+        [source : String (string.copy (tuple-ref (deref row) 0))]
+        [expected : i64 (tuple-ref (deref row) 1)]
+        (unless
+          (= (selfhost-lint-source-rule-count source "removed-init") expected)
+          (io.panic
+            (str_cat.str-cat
+              "lint: removed-init source case "
+              (string.int->string index)))))
+      (set! index (+ index 1)))))
+
 (define (compiler-lint-driver-self-test) : i64
+  (selfhost-lint-removed-init-self-test)
   (let
     [reported : lint_core.LintFindings
       (selfhost-lint-source-with-roots

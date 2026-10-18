@@ -28,7 +28,8 @@
 (define (snapshot-digits [count : i64] [route : i64]) : i64
   (let
     [cursor : Cursor (Cursor 0 count 99)]
-    [snapshots : (Array Cursor 4) (init)]
+    [snapshots : (Array Cursor 4)
+      (array (Cursor 0 0 0) (Cursor 0 0 0) (Cursor 0 0 0) (Cursor 0 0 0))]
     [latest : (MutPtr Cursor) (ptr-null : (MutPtr Cursor))]
     [index : i64 0]
     [digits : i64 0]

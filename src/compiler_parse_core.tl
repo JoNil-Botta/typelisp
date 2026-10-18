@@ -8387,6 +8387,7 @@
         (Err (parse-kind-message (MalformedForm) "parse: expected ':' in init")))]
     [_
       (Err
+        ;; lint-allow: removed-init -- Preserve the syntax diagnostic until #7951.
         (parse-kind-message (MalformedForm) "parse: init expects (init : T)"))]))
 
 ;; `(ptr-null? p)` - a single pointer operand.

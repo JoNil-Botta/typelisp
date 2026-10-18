@@ -381,7 +381,7 @@
             (return (ScanFailed (ArchiveError kind identity index offset)))]
           [(Header size special)
             (let
-              [name : (Array u8 16) (init : (Array u8 16))]
+              [name : (Array u8 16) (make-array u8 16)]
               [byte : i64 0]
               [end : i64 (+ (+ at 60) size)]
               (while (< byte 16)

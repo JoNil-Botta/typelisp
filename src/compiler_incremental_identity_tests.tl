@@ -7,7 +7,7 @@
 (import stdlib.string)
 
 (define (incremental-test-zero-digest) : sha256.Sha256Digest
-  (sha256.Sha256Digest (init)))
+  (sha256.Sha256Digest (make-array u8 32)))
 
 (define (incremental-test-build [material-length : i64]) : identity.CompilerIncrementalChildIdentity
   (identity.CompilerIncrementalChildIdentity

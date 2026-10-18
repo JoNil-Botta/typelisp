@@ -42,8 +42,8 @@
 
 (define (main) : i64
   (let
-    [text : (Array u16 64) (init : (Array u16 64))]
-    [other : (Array u16 64) (init : (Array u16 64))]
+    [text : (Array u16 64) (make-array u16 64)]
+    [other : (Array u16 64) (make-array u16 64)]
     (set! (array-ref text 0) (cast 65 : u16))
     (set! (array-ref other 0) (cast 65 : u16))
     (cond

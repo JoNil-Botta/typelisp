@@ -6,7 +6,7 @@
 (import stdlib.string)
 
 (define (trace-test-digest) : sha256.Sha256Digest
-  (sha256.Sha256Digest (init)))
+  (sha256.Sha256Digest (make-array u8 32)))
 
 (define (trace-test-child [domain : String] [length : i64]) : identity.CompilerIncrementalChildIdentity
   (identity.CompilerIncrementalChildIdentity

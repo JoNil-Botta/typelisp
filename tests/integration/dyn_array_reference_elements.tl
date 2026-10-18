@@ -1,7 +1,7 @@
 ;; Private dynamic arrays of shared references: a borrowed element is one
-;; pointer word, so init, push through several reallocations, element reads and
-;; writes, length, struct storage, parameter and return passing, and copying
-;; into a fresh array behave as for any other one-word element.
+;; pointer word, so empty construction, push through several reallocations,
+;; element reads and writes, length, struct storage, parameter and return
+;; passing, and copying into a fresh array behave as for any other one-word element.
 (import stdlib.string)
 
 (defstruct Views
@@ -21,8 +21,7 @@
         (__tl_array-push! items value)
         (Views items (+ len 1)))
       (let
-        [fresh : (__tl_dyn-array (& text str))
-          (init : (__tl_dyn-array (& text str)))]
+        [fresh : (__tl_dyn-array (& text str)) (__tl_make-array)]
         [index : i64 0]
         (while (< index len)
           (__tl_array-push! fresh (array-ref items index))
@@ -44,8 +43,7 @@
 (define (pick-refs [a : (& cell i64)] [b : (& cell i64)]) : (__tl_dyn-array
     (& cell i64))
   (let
-    [refs : (__tl_dyn-array (& cell i64))
-      (init : (__tl_dyn-array (& cell i64)))]
+    [refs : (__tl_dyn-array (& cell i64)) (__tl_make-array)]
     (__tl_array-push! refs a)
     (__tl_array-push! refs a)
     (set! (array-ref refs 1) b)
@@ -54,8 +52,10 @@
 (define (main) : i64
   (let
     [owner : String "abcdefghijklmnopqrstuvwxyz"]
-    [empty : (Views owner) (Views (init : (__tl_dyn-array (& owner str))) 0)]
-    [grown : (Views owner) (Views (init : (__tl_dyn-array (& owner str))) 0)]
+    [empty : (Views owner)
+      (Views (ann (__tl_make-array) : (__tl_dyn-array (& owner str))) 0)]
+    [grown : (Views owner)
+      (Views (ann (__tl_make-array) : (__tl_dyn-array (& owner str))) 0)]
     [index : i64 0]
     [y : i64 2]
     [z : i64 40]

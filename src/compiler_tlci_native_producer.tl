@@ -1769,7 +1769,7 @@
                   "0"
                   "0")
                 (+ value-opened type-opened 1))))))]
-    ;; Typed `(init : T)`: quote the annotation as a type value, then let the
+    ;; Typed Init: quote the annotation as a type value, then let the
     ;; host reconstruct the same Init node as interpreted quasiquote. Refs
     ;; #5606.
     [(Init maybe-ty-id)

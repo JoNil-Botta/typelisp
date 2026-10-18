@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)

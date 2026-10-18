@@ -1010,8 +1010,8 @@
   (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (TypeLiteral i64)
-  ;; Zero/identity initialization. `(init : T)` carries `AstMaybeType.Some T`;
-  ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
+  ;; Zero/identity initialization. Typed Init carries `AstMaybeType.Some T`;
+  ;; contextual Init carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
   (Init i64)
   ;; Compile-time evaluation form `(comptime expr)`. Parsed and

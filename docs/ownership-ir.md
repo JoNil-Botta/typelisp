@@ -1097,7 +1097,9 @@ row names. Each fixture's leading comment states the rule. One of
 them was an accepted case in main's manifest:
 `borrow_call_arg_final_use_before_nested_write_ok` is the same program as
 `borrow_call_arg_nested_write_before_call_reject` (Rust rejects it with
-E0506). The only other verdict change to a case main's manifest lists is the
+E0506). Both historical case identities remain registered, with the sound
+rejection oracle; the old `_ok` suffix is preserved to keep the baseline case
+traceable. The only other verdict change to a case main's manifest lists is the
 Box projection-move relaxation above. Main's integration programs
 `ref_return`, `ref_tuple_return` and `ref_fixed_array_return` returned
 borrows of by-value parameters and now return them through reference

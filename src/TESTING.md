@@ -72,6 +72,16 @@ The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
 
+`package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
+runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
+covers 8/16/24-byte integer structures, signed boundaries, floating and mixed
+register classes, stack pressure, hidden result pointers, references and
+borrowed strings. Saved values cross another call before use, including a
+tuple whose physical group appears only in the dependency signature. The
+lowering and IR smoke tests keep layout-only group facts, malformed transport
+types and conflicting group observations covered. Native Slice extern rejection
+remains in the safety corpus.
+
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at
 opt0/1/2 on both hosts. The `gep-split-mutable-global-capture` optimizer test

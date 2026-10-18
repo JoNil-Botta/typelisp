@@ -2119,12 +2119,13 @@
     [representations : compiler_ir_types.CompilerIrRepresentationIndex
       (in-arena
         owner
-        (compiler_lower.lower-representation-index-stable-words
+        (compiler_ir_types.compiler-ir-representation-index-build
           (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-          typecheck-state
-          (compiler_ir_types.compiler-ir-representation-index-build
+          (& program)
+          (compiler_lower.lower-representation-index-from-layouts
             (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-            (& program))))]
+            typecheck-state
+            (compiler_ir_types.compiler-ir-representation-index-empty))))]
     (compiler_backend.compiler-backend-state-set-representations!
       backend-state
       (owned_view.compiler-owned-shared-view representations))

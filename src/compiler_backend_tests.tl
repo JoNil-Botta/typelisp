@@ -1,4 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import stdlib.iterator)
+(import stdlib.test)
 (import stdlib.io)
 (import stdlib.arena)
 (import compiler_object as cobj)
@@ -37713,6 +37715,91 @@ b_keep:
       (= (array-ref bounds 6) -1)
       (= (array-ref bounds 7) 41)
       (= (array-ref bounds 8) 0))))
+
+(test
+  backend-global-symbol-emission-owner
+  (let
+    [name : i64 (ci.intern "shared-data")]
+    [alpha : i64 (ci.intern "foreign_alpha")]
+    [beta : i64 (ci.intern "foreign_beta")]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [other : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [profile : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
+    (for [mode (iterator.range 0 4)]
+      (let
+        [link : String
+          (if (= mode 0)
+            "foreign_alpha"
+            "foreign_beta")]
+        [_index : backend.CompilerBackendProgramIndex
+          (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+            state
+            bases
+            (ir.compiler-ir-function-seq-empty)
+            (if (= mode 2)
+              (ir.compiler-ir-extern-seq-empty)
+              (ir.compiler-ir-extern-seq1
+                (ir.CompilerIrExtern.Extern
+                  name
+                  name
+                  "shared-data"
+                  ast.AstType.I64
+                  ast.AstExternAbi.C
+                  (if (= mode 0)
+                    alpha
+                    beta)
+                  (ast.ast-extern-link-input-list-new)
+                  false)))
+            profile)]
+        [expected : String
+          (if (= mode 2)
+            "_tl_shared_data(%rip)"
+            (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-value-global-memory-operand
+            state
+            bases
+            (ir.CompilerIrValue.Global name)
+            ast.AstType.I64)
+          (clone expected)
+          "compare folds use the current program's link symbol")
+        (backend.compiler-backend-state-user-symbol-cache-reset! state)
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-remat-global-cell-operand
+            state
+            (ir.CompilerIrValue.Global name))
+          (clone expected)
+          "function cache reset keeps program symbol authority")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-float-value-memory-operand
+            (regalloc.compiler-reg-assignment-table-empty)
+            (ir.CompilerIrValue.Global name)
+            (& (ast.AstType.F32))
+            state)
+          expected
+          "float folds use the same global cell")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-state-global-symbol-id other name)
+          "_tl_shared_data"
+          "another backend job does not inherit extern aliases")
+        (when
+          (= mode 1)
+          (backend.compiler-backend-state-clear-emission-arena! state)
+          (test.assert-owned-string-eq
+            (backend.compiler-backend-state-global-symbol-id state name)
+            "_tl_shared_data"
+            "returning from emission unpublishes symbols"))))
+    (backend.compiler-backend-state-release-final-arenas! state)
+    (test.assert-owned-string-eq
+      (backend.compiler-backend-state-global-symbol-id state name)
+      "_tl_shared_data"
+      "retiring the backend unpublishes program symbol authority")))
 
 (define (compiler-backend-self-test) : i64
   (if (and

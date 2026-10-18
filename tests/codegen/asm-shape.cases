@@ -1415,3 +1415,20 @@ in fn _tl_try_sret_forward_forward
 match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
 not-contains movups
 not-match ^[[:space:]]+call[[:space:]]
+
+case extern-data-memory-symbols
+source tests/integration/extern_data_memory.tl
+target linux-x86_64 windows-x86_64
+not-contains _tl_foreign_word
+not-contains _tl_foreign_float
+not-contains _tl_foreign_byte
+in fn _tl_extern_data_memory_left
+count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, tl_data_word\(%rip\)$
+in fn _tl_extern_data_memory_right
+count = 1 ^[[:space:]]+cmpq tl_data_word\(%rip\), %r[a-z0-9]+$
+in fn _tl_extern_data_memory_add
+match ^[[:space:]]+addq tl_data_word\(%rip\), %r
+in fn _tl_extern_data_memory_fraction
+contains tl_data_float(%rip)
+in fn _tl_extern_data_memory_byte
+contains tl_data_byte(%rip)

@@ -851,8 +851,8 @@
 ;: written, so this is sound for every argument.
 (define (attempt [policy : LocalIpcLinuxPathPolicy] [name : (& name bytes)]) : local_ipc.LocalIpcConnectStep
   (let
-    [address-storage : (Array u64 14) (init)]
-    [status-storage : (Array u64 18) (init)]
+    [address-storage : (Array u64 14) (make-array u64 14)]
+    [status-storage : (Array u64 18) (make-array u64 18)]
     [address : (MutPtr u8)
       (unsafe
         (ptr-cast (ptr-addr-of address-storage) : (MutPtr u8)))]

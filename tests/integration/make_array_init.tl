@@ -48,7 +48,7 @@
     [empty-points : (__tl_dyn-array Point) (__tl_make-array Point 0)]
     [int-score : i64 (+ (array-length ints) (array-ref ints 2))]
     [flag-score : i64 (score-bool (not (array-ref flags 0)))]
-    [char-score : i64 (score-bool (= (array-ref chars 0) (init : char)))]
+    [char-score : i64 (score-bool (= (array-ref chars 0) '\0'))]
     [text-score : i64 (string.string-length (array-ref texts 1))]
     [point-score-value : i64 (point-score (array-ref points 1))]
     [maybe-score-value : i64 (maybe-score (array-ref maybes 1))]

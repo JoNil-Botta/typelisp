@@ -2828,12 +2828,12 @@
         (tc_core.tc-lifetime-coercion-outlives-detail local required)
         (tc_core.tc-lifetime-coercion-invariant-detail
           "mutable reference referent type"
-          (tc_core.tc-global-shared-view want)
-          (tc_core.tc-global-shared-view got))
-        (tc_core.tc-lifetime-coercion-variance-detail
-          "function parameter/result variance"
           want
           got)
+        (tc_core.tc-lifetime-coercion-variance-detail
+          "function parameter/result variance"
+          (ast.ast-ty-ref required (& (I64)))
+          (ast.ast-ty-ref local (& (I64))))
         (tc_core.tc-type-render (ast.ast-ty-ref required (& nested))))]
     [expected-details : (__tl_dyn-array String)
       (__tl_make-array

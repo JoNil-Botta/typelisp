@@ -86917,6 +86917,13 @@ tl_shared_object_init:
 ;; prefixed with the `.loc`/`.cv_loc` line that was in force at its jump, so a
 ;; debug line table attributes it to its check rather than to the function's
 ;; last statement.
+;;
+;; Stubs of one function whose whole body is the same argument-free abort call
+;; (`call tl_oob_abort`, `tl_div_abort`, ...) are emitted once: every such check
+;; jumps to the first one's label (`compiler-backend-cold-shared-body`). The
+;; body runs the same instruction from any check, and the shared stub stays
+;; inside the function, so only the never-used return address differs. A stub
+;; with staged arguments, a site descriptor or a `.loc` line keeps its own.
 (define compiler-backend-cold-stub-scan-limit : i64
   48)
 
@@ -87352,6 +87359,10 @@ tl_shared_object_init:
   (loc (__tl_dyn-array i64))
   (inverse (__tl_dyn-array String))
   (head (__tl_dyn-array String))
+  ;; -1, or the earlier stub of the same function whose identical body this
+  ;; stub's jump reaches instead of emitting its own (`compiler-backend-cold-
+  ;; shared-body`).
+  (share (__tl_dyn-array i64))
   (flushes i64)
   (flush-at (__tl_dyn-array i64))
   (flush-end (__tl_dyn-array i64))
@@ -87365,6 +87376,7 @@ tl_shared_object_init:
     (__tl_make-array i64 0)
     (__tl_make-array String 0)
     (__tl_make-array String 0)
+    (__tl_make-array i64 0)
     0
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
@@ -87606,6 +87618,67 @@ tl_shared_object_init:
             (set! k (- k 1)))))
       result)))
 
+;; The body of the stub between jump `j` and continuation `t` when it is one
+;; argument-free abort call and nothing else, else "". Such a body runs the
+;; same instruction whichever check reaches it, so the stubs of one function
+;; that share it are emitted once and every check jumps there. A stub that
+;; stages arguments, carries a site descriptor or a debug line keeps its own.
+(define (compiler-backend-cold-shared-body
+  [v : (& v CompilerBackendPeepholeLineVec)]
+  [j : i64]
+  [t : i64]) : String
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+    [live : (__tl_dyn-array i64) v.live]
+    [found : i64 (- 0 1)]
+    [count : i64 0]
+    [k : i64 (+ j 1)]
+    (while (< k t)
+      (when (= (array-ref live k) 1) (set! count (+ count 1)) (set! found k))
+      (set! k (+ k 1)))
+    (if (not (= count 1))
+      ""
+      (let
+        [rec : CompilerBackendPeepholeLineRecord
+          (compiler-backend-global-array-element-shared-view recs found)]
+        [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+        [start : i64 (compiler-backend-peephole-record-start rec)]
+        [end : i64 (compiler-backend-peephole-record-end rec)]
+        [first : i64 (compiler-backend-cold-line-first data start end)]
+        [last : i64 (compiler-backend-cold-line-last data first end)]
+        (if (and
+          (=
+            (compiler-backend-peephole-record-kind rec)
+            compiler-backend-sweep-line-kind-instruction)
+          (or
+            (compiler-backend-peephole-range-eq?
+              data
+              first
+              last
+              "call tl_oob_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              first
+              last
+              "call tl_shift_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              first
+              last
+              "call tl_div_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              first
+              last
+              "call tl_region_abort")
+            (compiler-backend-peephole-range-eq?
+              data
+              first
+              last
+              "call tl_oom_abort")))
+          (string.substring rec.src first (- last first))
+          "")))))
+
 ;; Plan COLD-1 for one group (see above) from the walk's candidates alone: each
 ;; abort call locates its stub by a short walk back to the opening jump and a
 ;; checked walk forward to the continuation, and is flushed before the first
@@ -87625,6 +87698,12 @@ tl_shared_object_init:
     [pending-at : i64 count]
     [fallback-label : i64 (- 0 1)]
     [fallback-ord : i64 0]
+    ;; The shareable bodies of the function whose stubs are pending: the body
+    ;; text and the stub that emits it.
+    [share-group : i64 (- 0 1)]
+    [share-bodies : (__tl_dyn-array String) (__tl_make-array String 0)]
+    [share-stubs : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [share-count : i64 0]
     (while (< a abort-count)
       (let
         [call : i64 (array-ref aborts a)]
@@ -87737,7 +87816,15 @@ tl_shared_object_init:
                       (set! (array-ref plan.flush-end plan.flushes) k)
                       (set! plan.flushes (+ plan.flushes 1)))
                     (set! pending-at flush-at)
+                    (unless
+                      (= share-group flush-at)
+                      (set! share-group flush-at)
+                      (set! share-count 0))
                     (set! plan.jcc (compiler-backend-cold-grow-i64 plan.jcc k))
+                    (set!
+                      plan.share
+                      (compiler-backend-cold-grow-i64 plan.share k))
+                    (set! (array-ref plan.share k) (- 0 1))
                     (set!
                       plan.target
                       (compiler-backend-cold-grow-i64 plan.target k))
@@ -87753,8 +87840,72 @@ tl_shared_object_init:
                     (set! (array-ref plan.loc k) loc)
                     (set! (array-ref plan.inverse k) inverse)
                     (set! (array-ref plan.head k) head)
+                    (let
+                      [body : String
+                        (if (< loc 0)
+                          (compiler-backend-cold-shared-body v j t)
+                          "")]
+                      [canonical : i64 (- 0 1)]
+                      [s : i64 0]
+                      (when
+                        (> (string.string-length body) 0)
+                        (while (and (< canonical 0) (< s share-count))
+                          (when
+                            (string.eq
+                              (compiler-backend-global-array-element-shared-view
+                                share-bodies
+                                s)
+                              body)
+                            (set! canonical (array-ref share-stubs s)))
+                          (set! s (+ s 1)))
+                        (if (>= canonical 0)
+                          (let
+                            ;; Jump to the earlier stub's label; this one adds
+                            ;; at most its jump and drops its head and body.
+                            [shared-inverse : String
+                              (str_cat.str-cat
+                                "    "
+                                (compiler-backend-cold-jcc-inverse
+                                  data
+                                  first
+                                  mend)
+                                " "
+                                (string.substring
+                                  (compiler-backend-global-array-element-shared-view
+                                    plan.head
+                                    canonical)
+                                  0
+                                  (-
+                                    (string.string-length
+                                      (compiler-backend-global-array-element-shared-view
+                                        plan.head
+                                        canonical))
+                                    1)))]
+                            (set! (array-ref plan.share k) canonical)
+                            (set!
+                              plan.extra
+                              (+
+                                plan.extra
+                                (+ (string.string-length shared-inverse) 1)))
+                            (set! (array-ref plan.inverse k) shared-inverse))
+                          (begin
+                            (set!
+                              share-bodies
+                              (compiler-backend-cold-grow-strings
+                                share-bodies
+                                share-count))
+                            (set!
+                              share-stubs
+                              (compiler-backend-cold-grow-i64
+                                share-stubs
+                                share-count))
+                            (set! (array-ref share-bodies share-count) body)
+                            (set! (array-ref share-stubs share-count) k)
+                            (set! share-count (+ share-count 1)))))
+                      (when
+                        (< canonical 0)
+                        (set! plan.extra (+ plan.extra added))))
                     (set! plan.stubs (+ k 1))
-                    (set! plan.extra (+ plan.extra added))
                     (set! done-to t)))))))
         (set! a (+ a 1))))
     ;; The last group of stubs lands before its function's closing line, or
@@ -87878,30 +88029,32 @@ tl_shared_object_init:
     (while (< k to)
       (let
         [loc : i64 (array-ref plan.loc k)]
-        (set!
-          pos
-          (compiler-backend-cold-write-line!
-            dst
-            pos
-            (compiler-backend-global-array-element-shared-view plan.head k)))
         (when
-          (>= loc 0)
+          (< (array-ref plan.share k) 0)
           (set!
             pos
-            (compiler-backend-peephole-records-blit-range!
-              v
-              loc
-              (+ loc 1)
+            (compiler-backend-cold-write-line!
+              dst
+              pos
+              (compiler-backend-global-array-element-shared-view plan.head k)))
+          (when
+            (>= loc 0)
+            (set!
+              pos
+              (compiler-backend-peephole-records-blit-range!
+                v
+                loc
+                (+ loc 1)
+                dst
+                pos)))
+          (set!
+            pos
+            (compiler-backend-cold-stub-body!
+              (compiler-backend-global-shared-view v)
+              (+ (array-ref plan.jcc k) 1)
+              (array-ref plan.target k)
               dst
               pos)))
-        (set!
-          pos
-          (compiler-backend-cold-stub-body!
-            (compiler-backend-global-shared-view v)
-            (+ (array-ref plan.jcc k) 1)
-            (array-ref plan.target k)
-            dst
-            pos))
         (set! k (+ k 1))))
     pos))
 

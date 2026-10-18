@@ -11312,6 +11312,43 @@
       (> size-at div-stub-at)
       (asm-lacks? out "    jb .Lf0_bounds_ok.1\n"))))
 
+;; COLD-1 sharing: stubs of one function whose whole body is the same
+;; argument-free abort call are emitted once, and every check jumps there. A
+;; different abort keeps its own stub, and no stub is shared across functions.
+(define (compiler-backend-cold-share-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n"
+    "    cmpq %r9, %rdi\n    jb .Lf0_a\n    call tl_oob_abort\n.Lf0_a:\n"
+    "    cmpq %r9, %rsi\n    jb .Lf0_b\n    call tl_oob_abort\n.Lf0_b:\n"
+    "    testq %r8, %r8\n    jne .Lf0_c\n    call tl_div_abort\n.Lf0_c:\n"
+    "    ret\n    .size f, . - f\n"
+    ".globl g\n    .type g,@function\ng:\n"
+    "    cmpq %r9, %rdi\n    jb .Lf1_a\n    call tl_oob_abort\n.Lf1_a:\n"
+    "    ret\n    .size g, . - g\n"))
+
+(define (compiler-backend-cold-share-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append
+            (text_buf.empty)
+            (compiler-backend-cold-share-source))))]
+    (and
+      (asm-has?
+        out
+        "    cmpq %r9, %rdi\n    jae .Lf0_a.cold\n.Lf0_a:\n    cmpq %r9, %rsi\n    jae .Lf0_a.cold\n.Lf0_b:\n")
+      (asm-has?
+        out
+        "    testq %r8, %r8\n    je .Lf0_c.cold\n.Lf0_c:\n    ret\n")
+      (asm-has?
+        out
+        ".Lf0_a.cold:\n    call tl_oob_abort\n.Lf0_c.cold:\n    call tl_div_abort\n    .size f, . - f\n")
+      (asm-lacks? out ".Lf0_b.cold")
+      (asm-has?
+        out
+        "    jae .Lf1_a.cold\n.Lf1_a:\n    ret\n.Lf1_a.cold:\n    call tl_oob_abort\n    .size g, . - g\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -13262,6 +13299,7 @@ f:
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
+    (compiler-backend-cold-share-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)

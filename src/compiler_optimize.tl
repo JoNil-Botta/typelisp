@@ -11161,23 +11161,34 @@
     reason))
 
 ;; The optimizer tests capture the internal error instead of aborting, so they
-;; can drive a deliberately broken rewrite through the real commit path. Only a
-;; rejection reads these; every other compile leaves them untouched.
-(define opt-rewrite-ice-capture? : bool
-  false)
-(define opt-rewrite-ice-captured : String
-  "")
+;; can drive a deliberately broken rewrite through the real commit path. The
+;; hook exists only under `cfg test`; every other build panics directly.
+(cfg
+  test
+  (define opt-rewrite-ice-capture? : bool
+    false))
+(cfg
+  test
+  (define opt-rewrite-ice-captured : String
+    ""))
 
-(define (opt-rewrite-ice-capture! [on? : bool]) : unit
-  (set! opt-rewrite-ice-capture? on?)
-  (set! opt-rewrite-ice-captured ""))
+(cfg
+  test
+  (define (opt-rewrite-ice-capture! [on? : bool]) : unit
+    (set! opt-rewrite-ice-capture? on?)
+    (set! opt-rewrite-ice-captured "")))
 
-(define (opt-rewrite-ice-last) : String
-  (string.copy (& opt-rewrite-ice-captured)))
+(cfg
+  test
+  (define (opt-rewrite-ice-last) : String
+    (string.copy (& opt-rewrite-ice-captured))))
 
 (define (opt-rewrite-ice! [message : String]) : unit
-  (if opt-rewrite-ice-capture?
-    (set! opt-rewrite-ice-captured message)
+  (cfg
+    test
+    (if opt-rewrite-ice-capture?
+      (set! opt-rewrite-ice-captured message)
+      (io.panic message))
     (io.panic message)))
 
 ;; The commit for an input `opt-verify-gate` has just accepted: a rejected

@@ -74649,6 +74649,7 @@
           (return
             (ResultLowerFunction.Err
               (box (lower-diagnostic "lower: checked body signature changed")))))
+        (lower-debug-function-roots! lower-state ctx params ret)
         (match (lower-normalized
           ctx
           names

@@ -3,12 +3,27 @@
 (define (main) : i32
   (let
     [out : (Array i64 2) (array -1 0)]
+    [scan-out : (Array i64 2) (array -1 0)]
     [slot : i64 1]
     [answer : i64 42]
     (begin
       (foreach ([_i : i64 3 3]) (set! (array-ref out 0) 99))
       (foreach ([_i : i64 5 2]) (set! (array-ref out 0) 99))
       (foreach ([_i : i64 0 9]) (set! (array-ref out slot) answer))
-      (if (and (= (array-ref out 0) -1) (= (array-ref out 1) 42))
+      (spmd-scan
+        sum
+        ([i : i64 0 3] [prefix : i64 0])
+        (+ i 1)
+        (set! (array-ref scan-out 1) prefix))
+      (spmd-scan
+        sum
+        ([_i : i64 0 0] [prefix : i64 99])
+        (array-ref scan-out 99)
+        (set! (array-ref scan-out 99) prefix))
+      (if (and
+        (= (array-ref out 0) -1)
+        (= (array-ref out 1) 42)
+        (= (array-ref scan-out 0) -1)
+        (= (array-ref scan-out 1) 6))
         42
         1))))

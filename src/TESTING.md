@@ -87,6 +87,9 @@ paired safety cases reject a uniform destination when the value is varying,
 including local-class merges, conditionals, bool slices and rank-2 domains.
 Masked branches retain their canonical-index requirement even for uniform
 values; serialized `foreach-active` keeps its existing collision semantics.
+The positive fixture also pins ordered scan writes and skipped empty-range
+bounds checks. Compaction and a `foreach` following a scan reject colliding
+varying stores, so the ordered scan context cannot authorize parallel writes.
 
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.

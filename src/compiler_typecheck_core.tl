@@ -4581,6 +4581,8 @@
   (ForeachCoordinate i64 i64 i64 i64)
   (CompactIndex)
   (CompactSlot)
+  ;; Ordered scans retain scalar semantics for uniform destinations.
+  (ScanBody)
   ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
   ;; bindings the walker pushes. A barrier opens a foreach-active body; an
   ;; opening starts a lane-value operand. Sentinels carry a name no source
@@ -28599,6 +28601,11 @@
     [(ActiveBarrier) true]
     [_ false]))
 
+(define (tc-spmd-env-in-scan-body? [env : TcSpmdEnv]) : bool
+  (match (tc-spmd-env-lookup-id env tc-spmd-env-sentinel-name)
+    [(Found _ _ _ (ScanBody)) true]
+    [_ false]))
+
 ;; A value bound inside the gang that is not a scalar lane value may carry
 ;; per-lane state the SPMD class does not see: a closure can capture varying
 ;; values, and a tuple, struct, array or reference can hold such a closure. A
@@ -45002,7 +45009,9 @@
     [body-env : TcTypeEnv
       (tc-bind-id index-env prefix-id (tc-global-shared-view prefix-ty))]
     [base-spmd-env : TcSpmdEnv
-      (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))]
+      (tc-spmd-env-push-sentinel
+        (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))
+        ScanBody)]
     [index-spmd-env : TcSpmdEnv
       (tc-spmd-env-bind-role-id
         base-spmd-env
@@ -46129,11 +46138,15 @@
                             (tc-spmd-merge-class
                               array-class
                               (tc-spmd-merge-class index-class value-class))]
-                          ;; Varying writes require disjoint destinations even
-                          ;; when the selected index is uniform.
+                          ;; Parallel varying writes require disjoint destinations.
+                          ;; Ordered scan bodies keep their scalar uniform stores.
                           [_
                             (try
-                              (if (tc-spmd-varying? write-class)
+                              (if (or
+                                (tc-spmd-varying? index-class)
+                                (and
+                                  (tc-spmd-varying? write-class)
+                                  (not (tc-spmd-env-in-scan-body? array-env))))
                                 (tc-spmd-foreach-index
                                   ctx
                                   expr-bases

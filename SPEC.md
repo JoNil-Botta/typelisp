@@ -6101,6 +6101,9 @@ Evaluation and empty ranges:
   iteration. The `prefix` binding visible in `body` is the inclusive value
   after combining the current iteration's `value`; `value` and `body` are
   skipped for empty ranges.
+  Ordered scan bodies may store a varying prefix through a uniform destination
+  index; successive iterations follow the scalar scan order. This is distinct
+  from the disjoint-write requirement of a parallel `foreach` body.
 - For `spmd-compact`, `start`, `end`, and `init` are evaluated exactly once in
   that source order. Logical inputs are visited with `i` increasing from
   `start` to `end - 1`. `keep?` is evaluated exactly once per logical input.

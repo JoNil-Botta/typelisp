@@ -687,6 +687,8 @@ spmd_uniform_index_local_value_reject|check-fail|tests/safety/spmd_uniform_index
 spmd_uniform_index_conditional_value_reject|check-fail|tests/safety/spmd_uniform_index_conditional_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
 spmd_uniform_index_slice_value_reject|check-fail|tests/safety/spmd_uniform_index_slice_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
 spmd_foreach2_uniform_index_reject|check-fail|tests/safety/spmd_foreach2_uniform_index_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_compact_uniform_index_reject|check-fail|tests/safety/spmd_compact_uniform_index_reject.tl|-|spmd-compact varying array destination indexes must use the compact slot plus a uniform offset
+spmd_scan_foreach_uniform_index_reject|check-fail|tests/safety/spmd_scan_foreach_uniform_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
 spmd_uniform_index_masked_value_reject|check-fail|tests/safety/spmd_uniform_index_masked_value_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_uniform_index_masked_uniform_reject|check-fail|tests/safety/spmd_uniform_index_masked_uniform_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_uniform_index_write|run-exit|tests/integration/spmd_uniform_index_write.tl|42|-

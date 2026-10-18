@@ -508,6 +508,15 @@ desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
 
+Array-write disjointness uses the merged SPMD class of the receiver, index
+and value: a uniform index cannot authorize a parallel varying write.
+Ordered scan bodies push a `ScanBody` sentinel in the existing SPMD binding
+environment. Only that body may retain a uniform-index store of a varying
+prefix under scalar scan semantics; varying indexes still use the existing
+index proof. The marker stays within the scan body, and ordinary domains and
+helper environments start without it. Masked accesses keep their canonical
+index rule regardless of the stored value's class.
+
 Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same

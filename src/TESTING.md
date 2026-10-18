@@ -307,7 +307,9 @@ single-expression bodies; `compiler-check-invalidated-field-read-spans-ok?`
 pins the same primaries and origin labels through the virtual-source checker,
 and `tc-move-located-view-names-the-enclosing-read` the view itself.
 `check-foreign-global-write-locations` keeps #7976 writes at the `set!` target,
-and an owner macro's write at its invocation in the importer's file.
+and an owner macro's write at its invocation in the importer's file;
+`check-with-owner-invalidation-location` keeps E0212 at the arena or phase
+argument.
 
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,

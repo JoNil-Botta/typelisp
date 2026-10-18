@@ -877,6 +877,23 @@ stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned
 stderr contains foreign_global_macro_write_reject.tl:7:5
 stderr not-contains foreign_global_macro_write_reject.tl:24:
 
+# A safe destroy or rewind blocked by a live `with` cleanup owner is located at
+# its arena or phase argument (#7944).
+case check-with-owner-invalidation-location
+target linux-x86_64 windows-x86_64
+step destroy
+run check tests/safety/with_owner_destroy_use_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+stderr contains with_owner_destroy_use_reject.tl:23:30
+step rewind
+run check tests/safety/with_owner_rewind_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+stderr contains with_owner_rewind_reject.tl:23:29
+
 # Unsafe callable effects survive type inference, qualification and unsafe scope.
 case check-string-raw-copy-function-values
 target linux-x86_64 windows-x86_64

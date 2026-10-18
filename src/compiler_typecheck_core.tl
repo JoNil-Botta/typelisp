@@ -68801,18 +68801,20 @@
         "` while `with` cleanup owner `"
         name
         "` holds values from it; the owner's cleanup runs when its `with` scope ends")]
-    ;; A call node carries no span of its own; its arena argument does.
-    (match (match (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))
+    ;; The invalidating call is located at its arena argument, or at the call's
+    ;; own source view when that argument has no span.
+    (match (match (match (ast.ast-expr-unspan-with-segment-bases
+      expr-bases
+      (& origin))
+      [(Call _ args)
+        (if (ast.ast-expr-list-empty? (& args))
+          TcMaybeAstSourceSpan.No
+          (tc-expr-id-maybe-span
+            expr-bases
+            (ast.ast-expr-list-get (& args) 0 0)))]
+      [_ TcMaybeAstSourceSpan.No])
       [(Some span) (TcMaybeAstSourceSpan.Some span)]
-      [(No)
-        (match origin
-          [(Call _ args)
-            (if (ast.ast-expr-list-empty? (& args))
-              TcMaybeAstSourceSpan.No
-              (tc-expr-id-maybe-span
-                expr-bases
-                (ast.ast-expr-list-get (& args) 0 0)))]
-          [_ TcMaybeAstSourceSpan.No])])
+      [(No) (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))])
       [(Some span)
         (tc-rich-error-with-help
           span

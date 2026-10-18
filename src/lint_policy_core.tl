@@ -13,7 +13,7 @@
 ;# One hashed group index, one three-color dependency walk, and memoized
 ;# group/rule membership keep resolution O(G + M + A) for G group declarations,
 ;# M group members, and A assignments with the fixed registry. Finding lookup
-;# is O(F) with the fixed 28-rule decision table.
+;# is O(F) with the fixed rule decision table.
 (import compiler_owned_view as owned_view)
 (import lint_core)
 (import stdlib.str_cat_runtime as str_cat)

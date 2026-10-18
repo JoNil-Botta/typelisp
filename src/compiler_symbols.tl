@@ -3821,11 +3821,10 @@
       (& (compiler-symbols-program-shared-view program))
       (& symbols))))
 
-(define (compiler-symbols-function-target?
+(define (compiler-symbols-declaration-key?
   [symbols : (& symbols CompilerSymbols)]
   [index : i64]
-  [key : i64]
-  [foreign? : bool]) : bool
+  [key : i64]) : bool
   (and
     (>= index 0)
     (< index (compiler-symbols-decl-count symbols))
@@ -3834,7 +3833,29 @@
       key
       (compiler-symbol-module-key-id-by-id
         (compiler-symbols-owner-module-id-at-index-or symbols index -1)
-        (compiler-symbols-decl-name-id-at-index symbols index)))
+        (compiler-symbols-decl-name-id-at-index symbols index)))))
+
+(define (compiler-symbols-value-target?
+  [symbols : (& symbols CompilerSymbols)]
+  [index : i64]
+  [key : i64]) : bool
+  (and
+    (compiler-symbols-declaration-key? symbols index key)
+    (match (compiler-symbols-decl-at-index symbols index)
+      [(Ok declaration)
+        (match declaration
+          [(ast.AstDecl.Def _ _ _ _) true]
+          [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Value) _ _) true]
+          [_ false])]
+      [_ false])))
+
+(define (compiler-symbols-function-target?
+  [symbols : (& symbols CompilerSymbols)]
+  [index : i64]
+  [key : i64]
+  [foreign? : bool]) : bool
+  (and
+    (compiler-symbols-declaration-key? symbols index key)
     (match (compiler-symbols-decl-at-index symbols index)
       [(Ok declaration)
         (match declaration

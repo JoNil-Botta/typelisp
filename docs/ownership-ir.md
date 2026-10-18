@@ -1706,7 +1706,12 @@ move; the runtime does not clear moved storage. Named function values retain
 their checked declaration index and canonical key as a zero-operand primitive,
 and emit the existing closure-descriptor value. Publication and lowering share
 the symbol table's declaration-kind/key check, then lowering checks the full
-current signature. A compile-time-only target rejects both calls and value
+current signature. Copy module and extern values instead retain a checked
+value-declaration index/key, and emit a snapshot of the global slot through the
+existing IR Global operand. This preserves narrow/float widths and stored
+callable descriptors; a stored function value is distinct from a code target.
+The consumer checks the current full type, Copy classification and admitted
+register representation before emitting that read. A compile-time-only target rejects both calls and value
 materialization through that same boundary. Canonical lowering errors carry
 diagnostics, preserving the checked operation's location for phase errors.
 A call through such a value consumes its already captured callee before its

@@ -287,6 +287,8 @@
   ;; A declaration's closure descriptor, without calling it. The declaration
   ;; index and canonical key obey the same authority as a declared call.
   (FunctionValue i64 i64)
+  ;; A Copy module/extern value, read from its slot at this occurrence.
+  (GlobalValue i64 i64)
   (Cast)
   (PtrNull)
   (PtrNullCheck)
@@ -318,7 +320,7 @@
 
 (define (typed-primitive-arity [primitive : (& primitive TypedPrimitive)]) : i64
   (match primitive
-    [(TypedPrimitive.FunctionValue _ _) 0]
+    [(or (TypedPrimitive.FunctionValue _ _) (TypedPrimitive.GlobalValue _ _)) 0]
     [(TypedPrimitive.Cast) 1]
     [(TypedPrimitive.PtrNull) 0]
     [(TypedPrimitive.PtrNullCheck) 1]
@@ -1273,6 +1275,10 @@
       (if (typed-declared-call-valid? lease index key false)
         (TypedResult.Ok unit)
         (TypedResult.Err TypedError.Unknown))]
+    [(TypedOperation.Primitive (TypedPrimitive.GlobalValue index key))
+      (if (typed-value-target-valid? lease index key)
+        (TypedResult.Ok unit)
+        (TypedResult.Err TypedError.Unknown))]
     [(TypedOperation.Pattern (TypedPattern.Literal literal))
       (typed-literal-ok! store lease literal)]
     ;; The remaining operations carry scalar IDs/operators, not leased bytes.
@@ -1455,6 +1461,17 @@
             index
             key
             foreign?))])))
+
+(define (typed-value-target-valid?
+  [lease : (& lease (TypedBodyLease intern))]
+  [index : i64]
+  [key : i64]) : bool
+  (match (& lease.resolution-authority)
+    [(TypedResolutionAuthority.None) false]
+    [(TypedResolutionAuthority.Symbols authority)
+      (and
+        (symbols.compiler-resolution-lease-current? authority)
+        (symbols.compiler-symbols-value-target? authority.symbols index key))]))
 
 (define (typed-call-add!
   [store : (&mut store TypedStore)]

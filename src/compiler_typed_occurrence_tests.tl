@@ -1774,7 +1774,7 @@
       (symbols.compiler-symbol-module-key-id-by-id module value-name)]
     [declarations : symbols.CompilerSymbols
       (symbols.compiler-symbols-index-decl
-        (symbols.compiler-symbols-empty-with-decls 3)
+        (symbols.compiler-symbols-empty-with-decls 4)
         (&
           (ast.ast-decl-def-fn-id
             name
@@ -1814,6 +1814,30 @@
           2
           module
           0))]
+    [external-value : i64 (ci.intern "checked-external-value")]
+    [external-key : i64
+      (symbols.compiler-symbol-module-key-id-by-id module external-value)]
+    [_external-value : unit
+      (set!
+        declarations
+        (symbols.compiler-symbols-index-decl
+          declarations
+          (&
+            (ast.ast-decl-extern-id
+              external-value
+              ast.AstExternKind.Value
+              (ast.AstExternMetadata.Metadata
+                ast.AstExternAbi.C
+                (ci.intern-id-from-renderable external-value)
+                (ast.AstExternLinkInputList
+                  (__tl_make-array ast.AstExternLinkInput 0)
+                  0)
+                0
+                ast.AstImportedSpmdMetadata.No)
+              ast.AstType.I64))
+          3
+          module
+          0))]
     [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [registries : symbols.CompilerRegistries
       (symbols.compiler-registries-empty)]
@@ -1842,7 +1866,7 @@
               (cond
                 [(= mode 1) 1]
                 [(= mode 3) -1]
-                [(= mode 4) 3]
+                [(= mode 4) 4]
                 [(= mode 5) 2]
                 [(= mode 6) 9223372036854775807]
                 [else 0])]
@@ -1881,6 +1905,51 @@
                         [_ false])))])]
             (set! valid (and valid accepted))))
         valid)]
+    [global-values : bool
+      (let
+        [origin : typed.TypedOriginId
+          (typed-test-origin! (&mut store) (& lease))]
+        [scalar : typed.TypedTypeId
+          (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+        [valid : bool true]
+        (for [mode (iterator.range 0 8)]
+          (let
+            [index : i64
+              (cond
+                [(= mode 0) 2]
+                [(= mode 1) 3]
+                [(= mode 2) -1]
+                [(= mode 3) 4]
+                [(= mode 4) 9223372036854775807]
+                [(= mode 5) 0]
+                [(= mode 6) 1]
+                [else 2])]
+            [target : i64
+              (cond
+                [(= mode 1) external-key]
+                [(= mode 5) key]
+                [(or (= mode 6) (= mode 7)) foreign-key]
+                [else value-key])]
+            [accepted : bool
+              (match (typed.typed-occurrence-add!
+                (&mut store)
+                (& lease)
+                (typed.TypedTypeId (typed.typed-handle-copy (& scalar.handle)))
+                typed.TypedSyntax.Generated
+                (typed.TypedOriginId
+                  (typed.typed-handle-copy (& origin.handle)))
+                (typed.TypedOperation.Primitive
+                  (typed.TypedPrimitive.GlobalValue index target))
+                (& (__tl_make-array typed.TypedOccurrenceId 0)))
+                [(typed.TypedOccurrenceResult.Ok _) (< mode 2)]
+                [(typed.TypedOccurrenceResult.Err error)
+                  (and
+                    (>= mode 2)
+                    (match error
+                      [(typed.TypedError.Unknown) true]
+                      [_ false]))])]
+            (set! valid (and valid accepted))))
+        valid)]
     [valid : bool
       (and
         (typed.typed-declared-call-valid? (& lease) 0 key false)
@@ -1891,7 +1960,7 @@
         (not (typed.typed-declared-call-valid? (& lease) 2 value-key true))
         (not (typed.typed-declared-call-valid? (& lease) 0 foreign-key false))
         (not (typed.typed-declared-call-valid? (& lease) -1 key false))
-        (not (typed.typed-declared-call-valid? (& lease) 3 key false))
+        (not (typed.typed-declared-call-valid? (& lease) 4 key false))
         (not
           (typed.typed-declared-call-valid?
             (& lease)
@@ -1932,7 +2001,12 @@
     [stale : bool
       (not (typed.typed-declared-call-valid? (& lease) 0 key false))]
     (typed.typed-store-retire! (&mut store))
-    (and valid function-values stale)))
+    (and
+      valid
+      function-values
+      global-values
+      stale
+      (not (typed.typed-value-target-valid? (& lease) 2 value-key)))))
 
 (define (compiler-typed-occurrence-self-test) : i64
   (test.assert-true

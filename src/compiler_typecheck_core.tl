@@ -14607,7 +14607,7 @@
     sink))
 
 ;; A declaration value keeps its canonical target before the inference lease
-;; retires. Other Copy module values need a separate global-load representation.
+;; retires. A Copy module value keeps its slot, distinct from a code target.
 (define (tc-selected-global-value-primitive
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -14626,6 +14626,21 @@
               false)
             (return (typed.TypedPrimitive.FunctionValue index key)))]
         [_ unit]))
+    (let
+      [handle : i64 (tc-selected-value-symbol-handle ctx name)]
+      (when
+        (csym.compiler-symbols-handle-found? handle)
+        (let
+          [index : i64 (csym.compiler-symbol-handle-index handle)]
+          (match (tc-selected-declared-call-kind ctx index false)
+            [(typed.TypedCallKind.Declared _ key)
+              (when
+                (csym.compiler-symbols-value-target?
+                  (tc-context-symbols ctx)
+                  index
+                  key)
+                (return (typed.TypedPrimitive.GlobalValue index key)))]
+            [_ unit]))))
     (typed.TypedPrimitive.Builtin (tc-selected-form-code-global) 0)))
 
 ;; A module-qualified value name: a nullary variant is a construction and a

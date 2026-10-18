@@ -456,6 +456,61 @@
     (ir.compiler-debug-info-set-enabled! saved-debug)))
 
 (test
+  compiler-lower-normalized-global-values
+  (let
+    [bodies : (Array String 9)
+      (array
+        "value"
+        "(+ value 1)"
+        "(cast narrow : i64)"
+        "(if flag (cast ratio : i64) 0)"
+        "(first value (change))"
+        "(let [before value] (change) before)"
+        "(let [value : i64 17] (+ value 25))"
+        "(saved 41)"
+        "(saved (begin (replace-saved) 41))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(define value : i64 41)
+             (define narrow : u8 255)
+             (define ratio : f32 42.75)
+             (define flag : bool true)
+             (define (inc [x : i64]) : i64 (+ x 1))
+             (define (dec [x : i64]) : i64 (- x 1))
+             (define saved : (-> i64 i64) inc)
+             (define (change) : unit (set! value 99))
+             (define (replace-saved) : unit (set! saved dec))
+             (define (first [x : i64] [_later : unit]) : i64 x)
+             (define (selected) : i64 "
+            (clone (array-ref bodies index))
+            ") (define (main) : i64 (selected))")]
+        (test.assert-true
+          (match (lower.lower-compiler-source source)
+            [(lower.ResultCompilerLower.Ok program _ owner)
+              (let
+                [count : i64
+                  (match program
+                    [(ir.CompilerIrProgram.Program _ functions _ _authority)
+                      (lower-test-function-label-load-count
+                        (& functions)
+                        "selected"
+                        "checked.0")])]
+                (lower.compiler-lower-arena-state-release!
+                  (lower.compiler-lower-state-arenas owner))
+                (= count 0))]
+            [(lower.ResultCompilerLower.Err diagnostic)
+              (io.println
+                "global case {}: {}"
+                index
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+              false])
+          (str_cat.str-cat
+            "checked global slot read, case "
+            (string.int->string index)))))))
+
+(test
   compiler-lower-normalized-string-values
   (let
     [bodies : (Array String 8)

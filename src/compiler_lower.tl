@@ -74058,10 +74058,13 @@
   [index : i64]
   [key : i64]
   [foreign? : bool]
+  [value? : bool]
   [display : String]
   [source : (& source own.OwnershipSource)]) : LowerNormalizedTargetResult
   (unless
-    (csym.compiler-symbols-function-target? symbols index key foreign?)
+    (if value?
+      (csym.compiler-symbols-value-target? symbols index key)
+      (csym.compiler-symbols-function-target? symbols index key foreign?))
     (return
       (LowerNormalizedTargetResult.Err
         (lower-diagnostic "lower: certified declaration changed"))))
@@ -74185,6 +74188,7 @@
                 index
                 key
                 foreign?
+                false
                 display
                 (& node.source)))]
           (set! symbol target.symbol)
@@ -74311,6 +74315,43 @@
         (LowerNormalizedUnit.Err
           (lower-diagnostic "lower: invalid certified primitive operand")))))
   (match primitive
+    [(typed.TypedPrimitive.GlobalValue index key)
+      (let
+        [ctx : tc_core.TcContext (clone state.ctx)]
+        [type : ast.AstType (try (lower-normalized-type output node.type))]
+        [target : LowerNormalizedTarget
+          (try
+            (lower-normalized-target
+              state
+              (tc_core.tc-context-symbols ctx)
+              index
+              key
+              false
+              true
+              (tc_core.tc-nominal-name-id-display-for-session
+                (tc_core.tc-context-structural-session ctx)
+                key)
+              (& node.source)))]
+        (unless
+          (and
+            (norm.normalize-scalar-value-type? (& type))
+            (tc_core.tc-type-copyable? ctx (clone type))
+            (ast.ast-type-eq-with-pools?
+              (tc_core.tc-context-pools ctx)
+              (& type)
+              (& target.type)))
+          (return
+            (LowerNormalizedUnit.Err
+              (lower-diagnostic "lower: certified global value type changed"))))
+        (lower-normalized-emit!
+          state
+          instrs
+          (& node.source)
+          (ir.CompilerIrInstr.Mov
+            place
+            (ir.CompilerIrValue.Global target.symbol)
+            type))
+        (return (LowerNormalizedUnit.Ok unit)))]
     [(typed.TypedPrimitive.FunctionValue index key)
       (let
         [ctx : tc_core.TcContext (clone state.ctx)]
@@ -74326,6 +74367,7 @@
               (tc_core.tc-context-symbols ctx)
               index
               key
+              false
               false
               display
               (& node.source)))]

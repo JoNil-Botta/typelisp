@@ -92,6 +92,15 @@
         ([held (Pair 5 0) clean-pair]
           [_next (Pair (mark 1) (return 42)) clean-pair])
         (+ held.a (mark 9)))]
+    ;; cast
+    [12
+      (cast
+        (ann
+          (begin
+            (mark 1)
+            (return 42))
+          : i32)
+        : i64)]
     [_ 0]))
 
 ;; The same operands in value position, consumed by an outer binding.
@@ -198,9 +207,39 @@
             (continue))
             (set! n 5)
             (set! n 6))]
+        [9
+          (set!
+            n
+            (cast
+              (ann
+                (begin
+                  (+= n 10)
+                  (continue))
+                : i32)
+              : i64))]
+        [10
+          (set!
+            n
+            (cast
+              (cast
+                (ann
+                  (begin
+                    (+= n 10)
+                    (continue))
+                  : i32)
+                : f64)
+              : i64))]
         [_ unit])
       (set! n 0))
     (+ n 1)))
+
+;; A conditional exit converts the surviving value.
+(define (cast-fallthrough [leave : bool]) : i64
+  (cast
+    (if leave
+      (return 42)
+      (ann 7 : i32))
+    : i64))
 
 ;; A cleanup scope around an exiting binding runs exactly once per iteration.
 (define (cleanup-loop) : i64
@@ -223,7 +262,7 @@
 (define (main) : i64
   (let
     [mode : i64 0]
-    (while (< mode 12)
+    (while (< mode 13)
       (set! trace 0)
       (set! cleaned 0)
       (test.assert-i64-eq (returning mode) 42 "tail operand exit")
@@ -249,9 +288,11 @@
       (+= mode 1)))
   (let
     [mode : i64 0]
-    (while (< mode 9)
+    (while (< mode 11)
       (test.assert-i64-eq (continuing mode) 33 "loop operand continue")
       (+= mode 1)))
+  (test.assert-i64-eq (cast-fallthrough true) 42 "cast operand exit")
+  (test.assert-i64-eq (cast-fallthrough false) 7 "cast fallthrough converts")
   (set! trace 0)
   (set! cleaned 0)
   (test.assert-i64-eq (cleanup-loop) 3 "cleanup loop finishes")

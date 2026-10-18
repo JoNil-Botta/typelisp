@@ -16716,7 +16716,7 @@
 (test
   compiler-lower-operand-consumer-exits
   (let
-    [bodies : (Array String 16)
+    [bodies : (Array String 18)
       (array
         "(let [p : Pair (Pair 1 (return 42))] [q : i64 9] (+ p.a q))"
         "(let [p (Pair 1 (return 42))] p.a)"
@@ -16732,6 +16732,8 @@
         "(deref (box (return 42)))"
         "(if (= (Pair 1 (return 42)).a 1) 2 3)"
         "(match (tuple (ann 1 : i64) (return 42)) [(tuple a _) a])"
+        "(cast (ann (return 42) : i32) : i64)"
+        "(cast (cast (Wide 1 (return 42) 3).c : f64) : i64)"
         "(with ([held (Pair 5 0) drop-pair] [next (Pair 1 (return 42)) drop-pair]) held.a)"
         "(let [n : i64 2] [i : i64 0] (while (< i 3) (set! i (+ i 1)) (let [x : i64 (+ 1 (begin (set! n (+ n 10)) (continue)))] (set! n x))) n)")]
     (for [index (iterator.range 0 (array-length bodies))]

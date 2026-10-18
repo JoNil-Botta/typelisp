@@ -29632,7 +29632,9 @@
           (try (lower-cast-source-expr ctx state env type-env inner origin))]
         (match lowered
           [(Expr inner-state value inner-ty)
-            (Ok (lower-cast-value inner-state value inner-ty expr-ty))]))]
+            (match (& inner-ty)
+              [(Never) (Ok (Expr inner-state Unit (Never)))]
+              [_ (Ok (lower-cast-value inner-state value inner-ty expr-ty))])]))]
     [(Borrow _ _ inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]

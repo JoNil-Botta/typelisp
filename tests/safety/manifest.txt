@@ -1543,3 +1543,7 @@ tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple
 # An exiting let initializer leaves later bindings type-checked.
 let_exit_unreachable_type_reject|check-fail|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch
 let_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch
+
+# A cast of an exiting operand keeps its conversion type-checked.
+cast_exit_unsupported_reject|check-fail|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric
+cast_exit_unsupported_reject-windows|check-fail-windows|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric

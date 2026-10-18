@@ -61755,9 +61755,11 @@
             (let
               [_
                 (try
-                  (tc-check-extern-native-signature
-                    ctx
-                    (tc-global-shared-view resolved)))]
+                  (if (ast.ast-extern-abi-c? (& abi))
+                    (tc-check-extern-native-signature
+                      ctx
+                      (tc-global-shared-view resolved))
+                    ResultTcUnit.Ok))]
               (if (and
                 (ast.ast-extern-abi-c? (& abi))
                 (or explicit-abi (ast.ast-extern-abi-c-varargs? (& abi))))

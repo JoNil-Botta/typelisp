@@ -16,6 +16,29 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Lowering retains source binding types, including arena brands and lifetime
+arguments, in its semantic `TcTypeEnv`. It reuses frozen checked let-binding
+facts keyed by original declaration, enclosing body, binding ordinal, name and
+initializer. The declaration map uses source module/name identity so pruning
+cannot change the selected proof; ambiguous names require inference. These
+proofs compare exact structural types, including allocation regions. A conflict
+invalidates only the affected binding.
+Semantic indexing requires complete facts and uses a cold declaration walk.
+Lowering retains available facts without disabling trusted surface hydration.
+Missing cached-prefix facts, inconsistent facts and generated dispatch bodies
+use the shared let-binding rules for annotations and inferred values. The job
+owns the retained payload arena through lowering and releases it on both success
+and failure.
+Closure capture loads retain the inherited semantic bindings and owner markers;
+their slot types describe only runtime storage.
+Physical IR storage types are derived separately with regions erased.
+Semantic queries for operands and nested calls therefore receive the same
+brands as the original checked binding. An `in-arena` body also retains its
+source allocation region alongside the runtime restore marker.
+Encoded typechecker errors cross the
+lowering boundary through the shared decoder, preserving the producer's code,
+primary span, help and secondary labels.
+
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
 - the lowerer's target-aware C ABI shapes;
@@ -1366,6 +1389,14 @@ original type view retains its job-owned representation index and profiling
 metrics; the trace journal is copied before the planning arena is destroyed.
 Typed scalar reconstruction of split records makes an added owned payload or
 variant require an explicit update to that boundary.
+
+Coalesced register classes gather member live segments into fresh root storage.
+Singletons only retag their interval; already ordered lists bypass sorting.
+Other lists sort once by start/end/variable before compacting the union in place. Overlapping
+segments and shared endpoints merge; even a one-position gap remains a hole.
+The root's coarse bounds remain the minimum start and maximum end of its
+members. Gathering and compaction leave the member indexes and parent map
+unchanged, including when same-value coalescing admits overlapping members.
 
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large

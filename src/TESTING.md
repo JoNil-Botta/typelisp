@@ -5,6 +5,27 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
+aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
+public check/compile
+cases also reject different arena brands and explicit bare annotations with
+E0206 and a located diagnostic. `compiler-lower-typecheck-error-transport`
+passes located and rich errors through both lowering diagnostic entry points,
+checking the original primary span, code, help and secondary labels.
+The checked let-binding fact tests cover declaration/body identity, ambiguous
+names, frozen reads, generation reset and growth while a scratch arena is
+active. Both retained maps must remain valid after that scratch is destroyed;
+lowering must use semantic inference when a checked fact is unavailable.
+The branded operand CLI cases also compare cold and repeated batch assembly.
+They also compile `thread_safe_i64_vec.tl` for both targets at every opt level:
+captured atomic owners must retain their semantic markers when a checked local
+type carries that owner's allocation region. Conflicting checked proofs with
+different regions must leave unrelated bindings available. The compile-profile
+verifier pins trusted prelude hydration at zero declaration checks, checks
+assembly parity with forced source, and rejects source/producer
+mismatches. Semantic-index smoke tests with `--cfg test` assert that building
+the index does not typecheck let initializers again.
+
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and
 emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
@@ -674,6 +695,13 @@ and post-plan trace reasons must match the small fixture after the scratch
 owner retires. `compiler-regalloc-self-test` runs its liveness-census check
 only in a build with `--cfg test`; that flag alone does not run source-local
 inline test declarations.
+
+The root-segment union tests compare gathered/sorted unions against the former
+insertion fold on deterministic generated member sets. They cover empty and
+single-member classes, unsorted and nested ranges, shared endpoints, genuine
+holes, invalid or missing parent entries, absent segment rows and inactive
+members. Exact snapshots preserve the original member arrays; a golden case
+pins endpoint sharing, one-position gaps and the upper i64 boundary.
 
 ### src/ reachability
 

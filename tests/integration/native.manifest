@@ -976,3 +976,4 @@ gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdl
 global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
 global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
+extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib

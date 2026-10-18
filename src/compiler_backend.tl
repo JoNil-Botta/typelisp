@@ -1108,6 +1108,10 @@
 ;; that is safe to share across its emission phases.  Keep the public carrier
 ;; opaque and one machine word; all mutable data lives in the owner arena cell
 ;; behind `address`, just like TcJobState.
+(defenum CompilerBackendEmissionSymbols
+  (None)
+  (Program CompilerBackendProgramIndex))
+
 (defstruct CompilerBackendStateData
   (intern-state ci.InternCompatState)
   (owner-arena i64)
@@ -1174,7 +1178,10 @@
   ;; The requested code model (#8257): true asks every later emission of this
   ;; owner for a Linux shared object. Prepared boundaries read it into the
   ;; emission policy; the direct object route refuses it.
-  (shared-object-code-model bool))
+  (shared-object-code-model bool)
+  ;; The same immutable symbol index ordinary loads use, installed for this
+  ;; emission. Operand folds and rematerialization must name the same cell.
+  (emission-symbols CompilerBackendEmissionSymbols))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1240,7 +1247,8 @@
         (backend_i64_i64_map.with-capacity 1)
         (compiler-backend-target-policy-new CompilerBackendTarget.Linux)
         (compiler_diagnostic.compiler-advisory-sink-new)
-        false))
+        false
+        CompilerBackendEmissionSymbols.None))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1259,6 +1267,7 @@
         (compiler-backend-state-ptr state)]
       [lazy-owner : i64 (deref data).lazy-table-arena]
       [representation-owner : i64 (deref data).representation-arena]
+      (set! (deref data).emission-symbols CompilerBackendEmissionSymbols.None)
       (set! (deref data).lazy-table-arena 0)
       (set! (deref data).slot-cache-values (__tl_make-array String 0))
       (set! (deref data).slot-cache-epochs (__tl_make-array i64 0))
@@ -1655,6 +1664,9 @@
 (define (compiler-backend-state-clear-emission-arena!
   [state : CompilerBackendState]) : unit
   (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).emission-symbols
+      CompilerBackendEmissionSymbols.None)
     (set! (deref (compiler-backend-state-ptr state)).emission-arena 0)))
 
 (define (compiler-backend-state-current-emission-arena
@@ -18952,7 +18964,7 @@
             "    "
             mov
             " "
-            (compiler-backend-state-user-symbol-id backend-state name)
+            (compiler-backend-state-global-symbol-id backend-state name)
             "(%rip), "
             reg
             "\n"))]
@@ -19038,7 +19050,7 @@
         backend-state)]
     [(Global name)
       (str_cat.str-cat
-        (compiler-backend-state-user-symbol-id backend-state name)
+        (compiler-backend-state-global-symbol-id backend-state name)
         "(%rip)")]
     [(F64 bits)
       (str_cat.str-cat (compiler-backend-float-label ty bits) "(%rip)")]
@@ -19197,7 +19209,7 @@
         (if (compiler-backend-inline-aggregate-global? backend-state name)
           "    leaq "
           "    movq ")
-        (compiler-backend-state-user-symbol-id backend-state name)
+        (compiler-backend-state-global-symbol-id backend-state name)
         "(%rip), "
         reg
         "\n")
@@ -19206,7 +19218,7 @@
       (compiler-backend-asm-append5
         out
         "    leaq "
-        (compiler-backend-state-user-symbol-id backend-state name)
+        (compiler-backend-state-global-symbol-id backend-state name)
         "(%rip), "
         reg
         "\n")
@@ -22047,6 +22059,22 @@
           value
           reg
           program-index.backend-state)])))
+
+(define (compiler-backend-state-set-emission-symbols!
+  [state : CompilerBackendState]
+  [symbols : CompilerBackendEmissionSymbols]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).emission-symbols symbols)))
+
+(define (compiler-backend-state-global-symbol-id
+  [state : CompilerBackendState]
+  [name : i64]) : String
+  (unsafe
+    (match (deref (compiler-backend-state-view state)).emission-symbols
+      [(CompilerBackendEmissionSymbols.Program index)
+        (compiler-backend-global-symbol-index index name)]
+      [(CompilerBackendEmissionSymbols.None)
+        (compiler-backend-state-user-symbol-id state name)])))
 
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
@@ -27239,7 +27267,9 @@
                     name)
                     ""
                     (str_cat.str-cat
-                      (compiler-backend-state-user-symbol-id backend-state name)
+                      (compiler-backend-state-global-symbol-id
+                        backend-state
+                        name)
                       "(%rip)"))]
                 [_ ""])]
             [_
@@ -27253,7 +27283,7 @@
       (if (compiler-backend-inline-aggregate-global? backend-state name)
         ""
         (str_cat.str-cat
-          (compiler-backend-state-user-symbol-id backend-state name)
+          (compiler-backend-state-global-symbol-id backend-state name)
           "(%rip)"))]
     [_ (compiler-backend-value-stack-address assignments value backend-state)]))
 
@@ -27286,7 +27316,7 @@
         ""
         (let
           [symbol : String
-            (compiler-backend-state-user-symbol-id backend-state name)]
+            (compiler-backend-state-global-symbol-id backend-state name)]
           (if (string.eq symbol "")
             ""
             (str_cat.str-cat symbol "(%rip)"))))]
@@ -27327,7 +27357,7 @@
         ""
         (let
           [symbol : String
-            (compiler-backend-state-user-symbol-id backend-state name)]
+            (compiler-backend-state-global-symbol-id backend-state name)]
           (if (string.eq symbol "")
             ""
             (str_cat.str-cat symbol "(%rip)"))))]
@@ -32511,7 +32541,7 @@
                     gep-disp)]
                 (if (and (>= disp 0) (< disp size))
                   (compiler-backend-inline-aggregate-symbol-operand
-                    (compiler-backend-state-user-symbol-id backend-state name)
+                    (compiler-backend-state-global-symbol-id backend-state name)
                     disp)
                   ""))]
             [(None) ""])))]
@@ -36796,11 +36826,17 @@
         (ptr-read (ptr-cast (ptr-addr-of tables) : (Ptr u64))))]
     (unsafe
       (ptr-write! (int->ptr address : (MutPtr u64)) address))
-    (CompilerBackendProgramIndex
-      address
-      type-segment-bases
-      profile-state
-      backend-state)))
+    (let
+      [index : CompilerBackendProgramIndex
+        (CompilerBackendProgramIndex
+          address
+          type-segment-bases
+          profile-state
+          backend-state)]
+      (compiler-backend-state-set-emission-symbols!
+        backend-state
+        (CompilerBackendEmissionSymbols.Program index))
+      index)))
 
 ;; Machine-word count for a value's type -- 2 (or more) for a
 ;; register-group aggregate constructed somewhere in the program, else 1.
@@ -77674,6 +77710,9 @@ tl_shared_object_init:
     (compiler-backend-state-set-metrics!
       backend-state
       (profile_state.compiler-profile-state-metrics profile-state))
+    (compiler-backend-state-set-emission-symbols!
+      backend-state
+      CompilerBackendEmissionSymbols.None)
     (compiler-backend-state-user-symbol-cache-reset! backend-state)
     (compiler-backend-state-slot-cache-reset! backend-state)
     (compiler-backend-peephole-carry-safe-reset-with-backend-state!
@@ -77847,9 +77886,7 @@ tl_shared_object_init:
     [(Global name)
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-global-symbol-index program-index name)]
         ;; IAG-1: an inline aggregate global's value is its own address.
         [inline? : bool
           (compiler-backend-inline-aggregate-global?
@@ -77869,9 +77906,7 @@ tl_shared_object_init:
     [(GlobalAddr name)
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-global-symbol-index program-index name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
             parts
@@ -81795,6 +81830,9 @@ tl_shared_object_init:
   (compiler-backend-state-set-metrics!
     backend-state
     (profile_state.compiler-profile-state-metrics profile-state))
+  (compiler-backend-state-set-emission-symbols!
+    backend-state
+    CompilerBackendEmissionSymbols.None)
   (compiler-backend-state-user-symbol-cache-reset! backend-state)
   (compiler-backend-state-slot-cache-reset! backend-state)
   (compiler-backend-state-set-abort-site-counter! backend-state 0)

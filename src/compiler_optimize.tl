@@ -3170,9 +3170,9 @@
 
 (define (opt-collect-instr-seq-uses-array
   [items : (__tl_dyn-array i64)]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [slots (& instrs.slots)]
     [count : i64 instrs.len]
     (for [index (iterator.range 0 count)]
       (opt-collect-instr-uses-array
@@ -8458,7 +8458,8 @@
         env
         group
         index
-        (ir.compiler-ir-value-seq-ref words index))
+        (ir.compiler-ir-clone-value
+          (ir.compiler-ir-value-seq-borrow words index)))
       group
       (+ index 1)
       words)))
@@ -11493,8 +11494,8 @@
 
 (define (opt-def-counts-instr!
   [defs : (&mut defs (__tl_dyn-array i64))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (& instr))
+  [instr : (& instr ir.CompilerIrInstr)]) : unit
+  (match (opt-instr-def-var instr)
     [(Some dst)
       (if (and (>= dst 0) (< dst (array-length defs)))
         (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
@@ -15631,14 +15632,19 @@
             unit
             (for [index (iterator.range 0 words.len)]
               (let
-                [value (ir.compiler-ir-value-seq-ref words index)]
+                [value (ir.compiler-ir-value-seq-borrow words index)]
                 (if (and
                   (opt-copy-safe-source? value)
                   (not (opt-value-is-var? value group))
                   (not (opt-addr-taken-value? addr-taken value)))
                   (opt_global_fact_vec.push-ref!
                     items
-                    (OptGlobalFact.PackWord group index value block-id pos))
+                    (OptGlobalFact.PackWord
+                      group
+                      index
+                      (ir.compiler-ir-clone-value value)
+                      block-id
+                      pos))
                   unit))))]
         [_ unit])]
     [_
@@ -18674,13 +18680,13 @@
     (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
       [(No) (No)]
       [(Some recs)
-        (match (ir.compiler-ir-instr-seq-ref phis index)
+        (match (ir.compiler-ir-instr-seq-borrow phis index)
           [(Phi dst inputs ty)
             (match (opt-phi-edge-values (& inputs) preheader latch)
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value ty)
+                    (Rec dst pre-value latch-value (ast.clone-ast-type ty))
                     recs))]
               [(No) (No)])]
           [_ (No)])])))
@@ -18773,7 +18779,7 @@
                 (if (not
                   (opt-loop-rotation-header-prefix-ok? instrs phi-end last))
                   (No)
-                  (match (ir.compiler-ir-instr-seq-ref instrs last)
+                  (match (ir.compiler-ir-instr-seq-borrow instrs last)
                     [(Branch cond-value true-label false-label)
                       (opt-rotate-ssa-shape-from-branch
                         (& instrs)
@@ -18783,7 +18789,7 @@
                         preheader
                         latch
                         body
-                        cond-value
+                        (ir.compiler-ir-clone-value cond-value)
                         true-label
                         false-label)]
                     [_ (No)])))))])]))
@@ -18878,7 +18884,7 @@
       (ir.compiler-ir-block-list-seq
         (owned_view.compiler-owned-reference-shared-view blocks))]
     (for [i (iterator.range 0 seq.len)]
-      (match (ir.compiler-ir-block-seq-ref seq i)
+      (match (ir.compiler-ir-block-seq-borrow seq i)
         [(Block label instrs)
           (unless
             (= label header)
@@ -18959,7 +18965,7 @@
       (ir.compiler-ir-block-list-seq
         (owned_view.compiler-owned-reference-shared-view blocks))]
     (for [i (iterator.range 0 seq.len)]
-      (match (ir.compiler-ir-block-seq-ref seq i)
+      (match (ir.compiler-ir-block-seq-borrow seq i)
         [(Block label instrs)
           (unless
             (opt-label-contains body label)
@@ -23910,14 +23916,14 @@
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (for [cursor (iterator.range 0 count)]
-          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(BoundsCheck check-index length _)
               (opt-licm-deref-row!
                 (compiler-opt-global-shared-view sink)
                 defs
                 sources
                 (& check-index)
-                length
+                (ir.compiler-ir-clone-value length)
                 id
                 cursor)]
             [(Branch cond true-label false-label)
@@ -25060,14 +25066,14 @@
         (match (opt-cfg-index-block index pred)
           [(Some (Block _ instrs))
             (if (> (ir.compiler-ir-instr-seq-count instrs) 0)
-              (match (ir.compiler-ir-instr-seq-ref
+              (match (ir.compiler-ir-instr-seq-borrow
                 instrs
                 (- (ir.compiler-ir-instr-seq-count instrs) 1))
                 [(Branch cond yes no)
                   (match (opt-licm-deref-resolve
                     facts.defs
                     facts.sources
-                    cond
+                    (ir.compiler-ir-clone-value cond)
                     (opt-licm-deref-fuel))
                     [(Var var)
                       (match (opt-licm-deref-def facts.defs facts.sources var)
@@ -29257,7 +29263,7 @@
   [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : OptMaybeLicmUnswitchShape
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Branch cond true-label false-label)
         (let
           [candidate? : bool
@@ -29313,7 +29319,7 @@
                   (ir.compiler-ir-block-list-empty)
                   label
                   index
-                  cond
+                  (ir.compiler-ir-clone-value cond)
                   true-label
                   false-label
                   (Nil))))))]
@@ -29528,7 +29534,7 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (for [position (iterator.range 0 params.len)]
-    (match (ir.compiler-ir-param-seq-ref params position)
+    (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param _ ty var)
         (let
           [fresh : i64 (array-ref cell 0)]
@@ -29536,7 +29542,7 @@
           (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
           (ir.compiler-ir-instr-builder-push!
             builder
-            (ir.CompilerIrInstr.Mov fresh (Var var) ty))
+            (ir.CompilerIrInstr.Mov fresh (Var var) (ast.clone-ast-type ty)))
           unit)])))
 
 (define (opt-licm-unswitch-clone-param-moves!
@@ -37599,7 +37605,7 @@
                     (opt-lftr-def-index-seq-from latch-instrs next-var)]
                   (if (< step-index 0)
                     (No)
-                    (match (ir.compiler-ir-instr-seq-ref
+                    (match (ir.compiler-ir-instr-seq-borrow
                       latch-instrs
                       step-index)
                       [(Gep _ base offset gep-ty)
@@ -37619,7 +37625,7 @@
                                     phi-var
                                     seed-var
                                     next-var
-                                    gep-ty
+                                    (ast.clone-ast-type gep-ty)
                                     step
                                     step-index))
                                 (No))]
@@ -41773,7 +41779,7 @@
       (No)
       (match (ir.compiler-ir-instr-seq-ref instrs slot)
         [(BinOp cmp-var op lhs rhs cmp-ty)
-          (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (+ slot 1))
             [(Branch (Var cond-var) true-label false-label)
               (let
                 [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
@@ -42961,7 +42967,7 @@
       (set! (array-ref scratch var) 0)
       (opt-collect-instr-seq-uses-array
         (compiler-opt-global-shared-view scratch)
-        (owned_view.compiler-owned-reference-shared-view instrs))
+        instrs)
       (>
         (array-ref scratch var)
         (opt-thread-count-instrs-edge-uses instrs merge-label var 0)))))
@@ -43345,18 +43351,18 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [phi-count : i64]
   [mov-limit : i64]
-  [value : ir.CompilerIrValue]
+  [value : (& value ir.CompilerIrValue)]
   [label : i64]
   [fuel : i64]) : ir.CompilerIrMaybeValue
   (if (<= fuel 0)
     (No)
-    (match (compiler-opt-global-shared-view value)
+    (match value
       [(Var var)
         (let
           [mov-slot : i64
             (opt-thread-mov-slot-for-var instrs phi-count mov-limit var)]
           (if (>= mov-slot 0)
-            (match (ir.compiler-ir-instr-seq-ref instrs mov-slot)
+            (match (ir.compiler-ir-instr-seq-borrow instrs mov-slot)
               [(Mov _ src _)
                 (opt-thread-translate-through-defs
                   instrs
@@ -43369,7 +43375,7 @@
             (let
               [slot : i64 (opt-thread-phi-slot-for-var instrs phi-count var)]
               (if (< slot 0)
-                (Some value)
+                (Some (Var var))
                 (match (ir.compiler-ir-instr-seq-borrow instrs slot)
                   [(Phi _ inputs _)
                     (match (opt-thread-phi-input-value inputs label)
@@ -43379,11 +43385,11 @@
                           instrs
                           phi-count
                           mov-limit
-                          carried
+                          (& carried)
                           label
                           (- fuel 1))])]
                   [_ (No)])))))]
-      [_ (Some value)])))
+      [_ (Some (ir.compiler-ir-clone-value value))])))
 
 (define (opt-thread-translate-fuel [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (+ (ir.compiler-ir-instr-seq-count instrs) 2))
@@ -43438,7 +43444,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view value)
+        value
         origin-label
         (opt-thread-translate-fuel instrs))]
     [(Cons label next-instrs rest)
@@ -43446,7 +43452,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view value)
+        value
         label
         (opt-thread-translate-fuel instrs))
         [(No) (No)]
@@ -43489,7 +43495,7 @@
     instrs
     phi-count
     mov-limit
-    (owned_view.compiler-owned-reference-shared-view left)
+    left
     label
     (opt-thread-translate-fuel instrs))
     [(No) (No)]
@@ -43498,7 +43504,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view right)
+        right
         label
         (opt-thread-translate-fuel instrs))
         [(No) (No)]
@@ -45088,7 +45094,7 @@
       (No)
       (match (ir.compiler-ir-instr-seq-ref instrs 0)
         [(BinOp cmp-var op lhs rhs cmp-ty)
-          (match (ir.compiler-ir-instr-seq-ref instrs 1)
+          (match (ir.compiler-ir-instr-seq-borrow instrs 1)
             [(Branch (Var cond-var) true-label false-label)
               (if (and
                 (= cond-var cmp-var)
@@ -45444,7 +45450,7 @@
         (when (= n 0) (return false))
         (for [i (iterator.range 0 n)]
           (let
-            [input (ir.compiler-ir-phi-input-seq-ref inputs i)]
+            [input (ir.compiler-ir-phi-input-seq-borrow inputs i)]
             [origin : i64 input.label]
             (opt-thread-facts-collect! facts index doms origin merge-label)
             (match (opt-thread-chain-exit
@@ -47141,7 +47147,7 @@
               (match (opt-switch-index-tag-from-values (& lhs) (& rhs))
                 [(Some index-var tag)
                   (match (opt-switch-branch
-                    (ir.compiler-ir-instr-seq-ref instrs 1))
+                    (ir.compiler-ir-instr-seq-borrow instrs 1))
                     [(Some (Var cond-var) arm-label next-label total-enum?)
                       (if (and
                         (= cond-var eq-var)
@@ -47182,10 +47188,11 @@
   (No)
   (Some ir.CompilerIrValue i64 i64 bool))
 
-(define (opt-switch-branch [instr : ir.CompilerIrInstr]) : OptSwitchBranch
+(define (opt-switch-branch [instr : (& instr ir.CompilerIrInstr)]) : OptSwitchBranch
   (match instr
-    [(Branch cond yes no) (Some cond yes no false)]
-    [(TotalEnumBranch cond yes no) (Some cond yes no true)]
+    [(Branch cond yes no) (Some (ir.compiler-ir-clone-value cond) yes no false)]
+    [(TotalEnumBranch cond yes no)
+      (Some (ir.compiler-ir-clone-value cond) yes no true)]
     [_ (No)]))
 
 (define (opt-switch-parse-compare-block-tail
@@ -47198,7 +47205,7 @@
         (if (= count 0)
           (No)
           (match (opt-switch-branch
-            (ir.compiler-ir-instr-seq-ref instrs (- count 1)))
+            (ir.compiler-ir-instr-seq-borrow instrs (- count 1)))
             [(Some (Var cond-var) true-label false-label total-enum?)
               (if (>= count 2)
                 (match (ir.compiler-ir-instr-seq-borrow instrs (- count 2))
@@ -47594,7 +47601,7 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (if (<= count 0)
           (Unchanged block)
-          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
             [(TotalEnumSwitch
                 index
                 base
@@ -47640,7 +47647,7 @@
                               (- count 1)
                               (&
                                 (TotalEnumSwitch
-                                  index
+                                  (ir.compiler-ir-clone-value index)
                                   base
                                   total-cases
                                   trap-label
@@ -48246,7 +48253,7 @@
               (match (opt-switch-index-tag-from-values (& lhs) (& rhs))
                 [(Some _ _)
                   (match (opt-switch-branch
-                    (ir.compiler-ir-instr-seq-ref instrs 1))
+                    (ir.compiler-ir-instr-seq-borrow instrs 1))
                     [(Some (Var cond-var) _ _ _) (= cond-var eq-var)]
                     [_ false])]
                 [(No) false])
@@ -51207,12 +51214,15 @@
                 [(None) unit]
                 [(Some id)
                   (if (and (>= id 0) (< id (array-length terms)))
-                    (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                    (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
                       [(Branch cond true-label false-label)
                         (set!
                           (array-ref terms id)
                           (OptBoolBranchDef.Some
-                            (Branch cond true-label false-label)
+                            (Branch
+                              (ir.compiler-ir-clone-value cond)
+                              true-label
+                              false-label)
                             label))]
                       [_ unit])
                     unit)])))])
@@ -55375,7 +55385,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [cur : OptDomCmpFacts cmp-facts]
     (for [pos (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(BinOp dst op lhs rhs ty)
           (if (opt-type-eq env.type-segment-bases ty (& (I64)))
             (opt-bounds-dom-nonneg-prepass-binop!
@@ -55390,8 +55400,14 @@
             unit)]
         [(BoundsCheck idx len _)
           (let
-            [cidx : ir.CompilerIrValue (opt-bounds-dom-resolve env.copies idx)]
-            [clen : ir.CompilerIrValue (opt-bounds-dom-resolve env.copies len)]
+            [cidx : ir.CompilerIrValue
+              (opt-bounds-dom-resolve
+                env.copies
+                (ir.compiler-ir-clone-value idx))]
+            [clen : ir.CompilerIrValue
+              (opt-bounds-dom-resolve
+                env.copies
+                (ir.compiler-ir-clone-value len))]
             (if (and
               (opt-gvn-value-stable? env.sources cidx)
               (opt-gvn-value-stable? env.sources clen))
@@ -59644,11 +59660,14 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
     unit
-    (match (ir.compiler-ir-param-seq-ref params index)
+    (match (ir.compiler-ir-param-seq-borrow params index)
       [(Param _ ty var-id)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Mov var-id (Var (+ base index)) ty))
+          (ir.CompilerIrInstr.Mov
+            var-id
+            (Var (+ base index))
+            (ast.clone-ast-type ty)))
         (opt-tailrec-push-assign-movs! params base (+ index 1) (&mut builder))])))
 
 (define (opt-tailrec-push-assign-movs-hybrid!
@@ -59661,7 +59680,7 @@
     unit
     (let
       [arg (ir.compiler-ir-value-seq-ref args index)]
-      (match (ir.compiler-ir-param-seq-ref params index)
+      (match (ir.compiler-ir-param-seq-borrow params index)
         [(Param _ ty var-id)
           (if (match arg
             [(Var source) (= source var-id)]
@@ -59669,7 +59688,10 @@
             unit
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
-              (ir.CompilerIrInstr.Mov var-id (Var (+ base index)) ty)))
+              (ir.CompilerIrInstr.Mov
+                var-id
+                (Var (+ base index))
+                (ast.clone-ast-type ty))))
           (opt-tailrec-push-assign-movs-hybrid!
             params
             args
@@ -59688,14 +59710,15 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (or (>= index params.len) (>= index args.len))
     unit
-    (match (ir.compiler-ir-param-seq-ref params index)
+    (match (ir.compiler-ir-param-seq-borrow params index)
       [(Param _ ty _)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.Mov
             (+ base index)
-            (ir.compiler-ir-value-seq-ref args index)
-            ty))
+            (ir.compiler-ir-clone-value
+              (ir.compiler-ir-value-seq-borrow args index))
+            (ast.clone-ast-type ty)))
         (opt-tailrec-push-stage-movs!
           params
           args
@@ -60473,7 +60496,7 @@
   [iphi : i64]) : OptUnrollMaybePhis
   (if (>= index phi-count)
     (Some (Nil))
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst inputs ty)
         (if (= dst iphi)
           (opt-unroll-collect-other-phis
@@ -60495,7 +60518,9 @@
                   iphi)
                   [(Some rest)
                     (Some
-                      (opt-unroll-phi-list-cons (Phi dst init back ty) rest))]
+                      (opt-unroll-phi-list-cons
+                        (Phi dst init back (ast.clone-ast-type ty))
+                        rest))]
                   [(No) (No)])
                 (No))]
             [(No) (No)]))]
@@ -60824,7 +60849,7 @@
     [index : i64 (opt-unroll-def-index (& instrs.slots) phi-count last inext)]
     (if (< index 0)
       (No)
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(BinOp _ op lhs rhs ity)
           (let
             ;; 1 for `Add`, 2 for `Sub`, 0 for any other op.
@@ -60843,7 +60868,7 @@
                         (OptSelfLoopStep
                           (= kind 2)
                           step
-                          ity
+                          (ast.clone-ast-type ity)
                           (opt-unroll-resolve-copy instrs phi-count last src 16)))]
                     [_ (Form (= kind 2))])]
                 [_ (Form (= kind 2))])))]
@@ -60867,7 +60892,7 @@
     [index : i64 (opt-unroll-def-index (& instrs.slots) 0 phi-count iphi)]
     (if (< index 0)
       (No)
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(Phi _ inputs iphi-ty)
           (match (opt-unroll-split-phi-inputs (& inputs) label)
             [(Split seed back pred-label)
@@ -60879,7 +60904,7 @@
                   last
                   (& back)
                   inext))
-                (Some iphi-ty seed pred-label)
+                (Some (ast.clone-ast-type iphi-ty) seed pred-label)
                 (No))]
             [(No) (No)])]
         [_ (No)]))))
@@ -62384,7 +62409,8 @@
             (opt-unroll-remap-set
               remap
               dst
-              (ir.compiler-ir-value-seq-ref values index))
+              (ir.compiler-ir-clone-value
+                (ir.compiler-ir-value-seq-borrow values index)))
             (let
               [others-2 (opt-unroll-phi-list-tail others)]
               (opt-unroll-write-phi-seeds-from
@@ -62762,11 +62788,13 @@
               (ir.CompilerIrInstr.Phi
                 (array-ref ku-ids index)
                 (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.compiler-ir-value-seq-ref inits index)
+                  (ir.compiler-ir-clone-value
+                    (ir.compiler-ir-value-seq-borrow inits index))
                   guard-label
                   (&
                     (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.compiler-ir-value-seq-ref chains index)
+                      (ir.compiler-ir-clone-value
+                        (ir.compiler-ir-value-seq-borrow chains index))
                       unrolled-label
                       (& (ir.compiler-ir-phi-input-seq-empty)))))
                 ty))
@@ -62803,7 +62831,7 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index count)
     unit
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst _ ty)
         (if (= dst iphi)
           (begin
@@ -62824,7 +62852,7 @@
                             inext3)
                           unrolled-label
                           (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                ty))
+                (ast.clone-ast-type ty)))
             (opt-unroll-push-tail-instrs!
               instrs
               (+ index 1)
@@ -62854,9 +62882,10 @@
                       (ir.CompilerIrInstr.Phi
                         dst
                         (ir.compiler-ir-phi-input-seq-prepend
-                          (ir.compiler-ir-value-seq-ref
-                            guard-values
-                            chain-index)
+                          (ir.compiler-ir-clone-value
+                            (ir.compiler-ir-value-seq-borrow
+                              guard-values
+                              chain-index))
                           guard-label
                           (&
                             (ir.compiler-ir-phi-input-seq-prepend
@@ -62864,12 +62893,13 @@
                               loop-label
                               (&
                                 (ir.compiler-ir-phi-input-seq-prepend
-                                  (ir.compiler-ir-value-seq-ref
-                                    chains
-                                    chain-index)
+                                  (ir.compiler-ir-clone-value
+                                    (ir.compiler-ir-value-seq-borrow
+                                      chains
+                                      chain-index))
                                   unrolled-label
                                   (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                        ty))
+                        (ast.clone-ast-type ty)))
                     (opt-unroll-push-tail-instrs!
                       instrs
                       (+ index 1)
@@ -64026,7 +64056,7 @@
   [found : OptFillCallMaybeSite]) : OptFillCallMaybeSite
   (if (>= index last)
     found
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(StorePtr ptr value ty)
         (match found
           [(Some _) (No)]
@@ -64051,7 +64081,7 @@
                                 site.gep-index
                                 site.base
                                 k
-                                ty)))]))]
+                                (ast.clone-ast-type ty))))]))]
                   [_ (No)])]
               [_ (No)])])]
       [(or (Mov _ _ _) (Gep _ _ _ _))
@@ -64086,7 +64116,7 @@
   [iphi : i64]) : OptFillCallMaybeSite
   (if (>= index last)
     (No)
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Gep dst base offset _)
         (if (not (= dst ptr-var))
           (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)
@@ -64103,7 +64133,13 @@
                         last
                         (opt_i64_i64_map.with-capacity 32))]
                     (opt-used-contains set (opt-loop-call-value-var base)))))
-                (Some (OptFillCallSite index index base 0 (I64)))
+                (Some
+                  (OptFillCallSite
+                    index
+                    index
+                    (ir.compiler-ir-clone-value base)
+                    0
+                    (I64)))
                 (No))]
             [_ (No)]))]
       [_ (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)])))
@@ -64628,7 +64664,7 @@
   [found : OptCopyCallMaybeSite]) : OptCopyCallMaybeSite
   (if (>= index last)
     found
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(StorePtr ptr value ty)
         (match found
           [(Some _) (No)]
@@ -64666,7 +64702,11 @@
                               iphi
                               width
                               (Some
-                                (OptCopyCallSite index ptr (Var src-var) width)))
+                                (OptCopyCallSite
+                                  index
+                                  (ir.compiler-ir-clone-value ptr)
+                                  (Var src-var)
+                                  width)))
                             (No))]
                         [_ (No)]))]
                   [_ (No)])]
@@ -65390,7 +65430,7 @@
   [cond-var : i64]
   [exit-label : i64]) : OptUnrollConstMaybeShape
   (for [index (iterator.range 0 phi-count)]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst inputs ity)
         (let
           [iphi-tag : i64 (opt-unroll-const-scalar-ty-tag ity)]
@@ -65458,7 +65498,7 @@
                                             (opt-normalize-int-to-i64 seed ity)
                                             step
                                             trips
-                                            ity
+                                            (ast.clone-ast-type ity)
                                             others
                                             pred-label))))]
                                   [(No) unit])))])])]
@@ -66182,13 +66222,13 @@
   [groupable : i64]) : i64
   (if (>= index last)
     groupable
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(BoundsCheck check-index check-length _)
         (match (opt-unroll-const-guard-length-root
           (owned_view.compiler-owned-reference-shared-view instrs)
           phi-count
           last
-          check-length
+          (ir.compiler-ir-clone-value check-length)
           16)
           [(No)
             (opt-unroll-const-guard-scan
@@ -67187,7 +67227,7 @@
     [(Var next-var)
       (if (< cond-index 2)
         (No)
-        (match (ir.compiler-ir-instr-seq-ref instrs (- cond-index 1))
+        (match (ir.compiler-ir-instr-seq-borrow instrs (- cond-index 1))
           [(BinOp inc-dst inc-op inc-lhs inc-rhs ity)
             (match inc-op
               [(Add)
@@ -67195,7 +67235,7 @@
                   [(Var index-var)
                     (match inc-rhs
                       [(I64 step)
-                        (match (ir.compiler-ir-instr-seq-ref
+                        (match (ir.compiler-ir-instr-seq-borrow
                           instrs
                           (- cond-index 2))
                           [(Mov move-dst move-src move-ty)
@@ -67293,7 +67333,7 @@
                                                     index-var
                                                     next-var
                                                     step
-                                                    ity
+                                                    (ast.clone-ast-type ity)
                                                     bound
                                                     cmp-op
                                                     memory-bases
@@ -72794,7 +72834,8 @@
           (opt-bce-version-and-chain-array
             cell
             (&mut instrs)
-            (ir.compiler-ir-value-seq-ref values 0)
+            (ir.compiler-ir-clone-value
+              (ir.compiler-ir-value-seq-borrow values 0))
             values
             1)]
         (Some (ir.compiler-ir-instr-builder-to-seq instrs) guard-value)))))
@@ -75708,7 +75749,7 @@
               defs
               latch
               preheader
-              (& (ir.compiler-ir-instr-seq-ref instrs index))
+              (ir.compiler-ir-instr-seq-borrow instrs index)
               lhs
               rhs
               bottom?)
@@ -77722,12 +77763,12 @@
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (if (< index phi-count)
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
             [(Phi dst inputs ty)
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-bce-mb-far-rewrite-inputs (& inputs) wire far-labels env)
-                ty)]
+                (ast.clone-ast-type ty))]
             [_ (ir.compiler-ir-instr-seq-ref instrs index)])
           (ir.compiler-ir-instr-seq-ref instrs index))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
@@ -83803,13 +83844,13 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [next (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref checks next)
+      (match (ir.compiler-ir-instr-seq-borrow checks next)
         [(BoundsCheck _ length ok-label)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.BoundsCheck
               (owned_view.compiler-owned-reference-shared-view index)
-              length
+              (ir.compiler-ir-clone-value length)
               (if copy?
                 (ir.compiler-ir-label
                   (&
@@ -89210,7 +89251,8 @@
         (opt-successor-sink-subst-value
           frame
           remap
-          (ir.compiler-ir-value-seq-ref values index))))
+          (ir.compiler-ir-clone-value
+            (ir.compiler-ir-value-seq-borrow values index)))))
     (ir.CompilerIrValueSeq slots values.len)))
 
 (define (opt-successor-sink-subst-instr
@@ -90999,7 +91041,7 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [at (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref instrs at)
+      (match (ir.compiler-ir-instr-seq-borrow instrs at)
         [(Phi dst inputs ty)
           (if (opt-uniform-phi-env-holds? env dst)
             unit
@@ -91008,7 +91050,7 @@
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-uniform-phi-subst-inputs env (& inputs))
-                ty)))]
+                (ast.clone-ast-type ty))))]
         [_
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
@@ -94241,10 +94283,10 @@
   [phi-count : i64]) : OptUboundMaybeCheck
   (if (>= phi-count (ir.compiler-ir-instr-seq-count instrs))
     (No)
-    (match (ir.compiler-ir-instr-seq-ref instrs phi-count)
+    (match (ir.compiler-ir-instr-seq-borrow instrs phi-count)
       [(BoundsCheck idx len ok)
         (match idx
-          [(Var iphi) (Some iphi len ok)]
+          [(Var iphi) (Some iphi (ir.compiler-ir-clone-value len) ok)]
           [_ (No)])]
       [_ (No)])))
 
@@ -94303,14 +94345,19 @@
             (No)
             (match cond
               [(Var cond-var)
-                (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+                (match (ir.compiler-ir-instr-seq-borrow instrs (- count 2))
                   [(BinOp dst op lhs rhs ty)
                     (if (and
                       (= dst cond-var)
                       (opt-binop-eq (& op) (& (Lt)))
                       (opt-type-eq type-segment-bases ty (& (I64))))
                       (match lhs
-                        [(Var back) (Some cond-var back rhs false-label)]
+                        [(Var back)
+                          (Some
+                            cond-var
+                            back
+                            (ir.compiler-ir-clone-value rhs)
+                            false-label)]
                         [_ (No)])
                       (No))]
                   [_ (No)])]
@@ -97370,10 +97417,8 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             (for [j (iterator.range 0 count)]
               (let
-                [instr (ir.compiler-ir-instr-seq-ref instrs j)]
-                (opt-def-counts-instr!
-                  (&mut defs)
-                  (compiler-opt-global-shared-view instr))
+                [instr (ir.compiler-ir-instr-seq-borrow instrs j)]
+                (opt-def-counts-instr! (&mut defs) instr)
                 (opt-collect-instr-uses-array
                   (compiler-opt-global-shared-view uses)
                   (& instr)))))])
@@ -99402,14 +99447,14 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             (for [j (iterator.range 0 count)]
               (let
-                [instr (ir.compiler-ir-instr-seq-ref instrs j)]
+                [instr (ir.compiler-ir-instr-seq-borrow instrs j)]
                 (match (compiler-opt-global-shared-view instr)
                   [(Phi _ inputs _)
                     (let
                       [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
                       (for [k (iterator.range 0 len)]
                         (let
-                          [input (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                          [input (ir.compiler-ir-phi-input-seq-borrow inputs k)]
                           (match input.value
                             [(Var v)
                               (when
@@ -99431,9 +99476,7 @@
                       (set! (array-ref def-block dst) b)
                       (set! (array-ref def-index dst) j))]
                   [_ unit])
-                (opt-def-counts-instr!
-                  (&mut def-count)
-                  (compiler-opt-global-shared-view instr))
+                (opt-def-counts-instr! (&mut def-count) instr)
                 (opt-collect-instr-uses-array
                   (compiler-opt-global-shared-view uses)
                   (& instr)))))]))
@@ -103710,7 +103753,7 @@
 ;; caller invocation, so it only outweighs the retired boundary where that
 ;; boundary is also retired once per caller invocation. See clause 5 of the
 ;; single-site header above opt-inline-single-site-min-params for each side.
-(define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
+(define (opt-inline-instr-call? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
     [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
          (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
@@ -107624,7 +107667,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : i64 0]
     (for [i (iterator.range 0 count)]
-      (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-ref instrs i))
+      (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-borrow instrs i))
         (+= out 1)
         unit))
     out))
@@ -130349,13 +130392,16 @@
                         guard
                         0
                         (- guard.len 1))
-                      (match (ir.compiler-ir-instr-seq-ref
+                      (match (ir.compiler-ir-instr-seq-borrow
                         guard
                         (- guard.len 1))
                         [(Branch cond _ _)
                           (ir.compiler-ir-instr-builder-push!
                             (&mut again)
-                            (ir.CompilerIrInstr.Branch cond prefix exit))]
+                            (ir.CompilerIrInstr.Branch
+                              (ir.compiler-ir-clone-value cond)
+                              prefix
+                              exit))]
                         [_ unit])
                       (ir.compiler-ir-block-builder-push!
                         (&mut out)

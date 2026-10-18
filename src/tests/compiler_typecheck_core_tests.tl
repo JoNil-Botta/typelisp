@@ -11797,6 +11797,90 @@
 ;; marker over the inner node of the initializer's Spanned row. Over a compact
 ;; marker (#8884) it keeps that Spanned row, the compact operand's view.
 (test
+  tc-copy-projection-source-views-reuse-checked-receiver-facts
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 16)]
+    [_ (ast.ast-node-pool-context-install! pools)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    [state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
+    [sources
+      (array
+        "(deref unknown).len"
+        "(deref unknown).items"
+        "(deref unknown).missing")]
+    [bases : i64 (tc_core.tc-context-expr-bases ctx)]
+    (for [index (iterator.range 0 3)]
+      (let
+        [body-id : i64
+          (match (parser.parse-ast-source-with-cfg-and-pools
+            (&
+              (str_cat.str-cat
+                "(define (probe) : i64 "
+                (string.copy (array-ref sources index))
+                ")"))
+            (parser.compiler-cfg-empty)
+            pools)
+            [(Ok (Program decls-box))
+              (match (ast.ast-decl-list-step (deref decls-box))
+                [(Cons (DefFn _ _ _ _ body-box _) _) body-box]
+                [_ -1])]
+            [(Err _) -1])]
+        (test.assert-true (>= body-id 0) "source projection parses")
+        (for [wrapper (iterator.range 0 2)]
+          (let
+            [projection : ast.AstExpr
+              (if (= wrapper 0)
+                (tc_core.tc-context-expr-get ctx body-id)
+                (MacroExpansion body-id 0 0))]
+            (match (ast.ast-expr-unspan-with-segment-bases bases (& projection))
+              [(StructGet receiver-id _)
+                ;; The missing local makes re-inference fail: only the checked
+                ;; receiver fact can prove that .len is a Copy projection.
+                (tc_core.tc-body-type-fact-storage-start!
+                  state
+                  (ast.ast-node-pool-context-expr-len pools))
+                (tc_core.tc-body-type-facts-start-recording! state)
+                (tc_core.tc-body-type-fact-record! state receiver-id (ExprList))
+                (tc_core.tc-body-type-facts-start-consuming! state)
+                (let
+                  [receiver : ast.AstExpr
+                    (tc_core.tc-move-projection-receiver
+                      ctx
+                      env
+                      bases
+                      projection
+                      (tc_core.tc-context-expr-get ctx receiver-id))]
+                  (test.assert-true
+                    (match (ast.ast-expr-unspan-with-segment-bases
+                      bases
+                      (& receiver))
+                      [(Var _) (= index 0)]
+                      [(BoxTake _) (!= index 0)]
+                      [_ false])
+                    (str_cat.str-cat
+                      "checked source projection: "
+                      (string.copy (array-ref sources index)))))
+                (tc_core.tc-body-type-fact-storage-release! state)]
+              [_ (io.panic "expected a parsed field projection")])))))
+    (tc_core.tc-job-state-retire-owned-storage! job)
+    (ast.ast-node-pool-context-install! installed)
+    (ast.ast-node-pool-context-destroy-storage! pools)))
+
+(test
   ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
   (let
     [pools : ast.AstNodePoolContext

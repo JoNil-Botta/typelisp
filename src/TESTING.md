@@ -298,6 +298,9 @@ invalidation secondary labels, ownership help and decoded E0208 diagnostics
 for multi-expression functions, lambdas and nested lets. Both direct safe
 destroy and imported invalidation helpers run through `check` and `compile`
 on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
+`tc-copy-projection-source-views-reuse-checked-receiver-facts` also keeps the
+checked receiver lookup through source and macro views, with non-Copy and
+unknown fields retaining their consuming dereference.
 
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,

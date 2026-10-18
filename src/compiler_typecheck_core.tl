@@ -71366,7 +71366,9 @@
         (tc-global-shared-view receiver))]
     (if (< operand-id 0)
       receiver
-      (match (match (tc-global-shared-view projection)
+      (match (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (& projection))
         [(ast.AstExpr.StructGet receiver-id field-id)
           ;; Consumption uses the intrinsic receiver type recorded for this
           ;; same body and node. Reuse the ordinary field-type resolver; a

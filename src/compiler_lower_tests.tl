@@ -3927,6 +3927,7 @@
   (CopyMov)
   (Cpuid)
   (F64Mov u64)
+  (FloatSplat u64 bool)
   (GepOffset i64)
   (I64Mov i64)
   (IndirectCCall)
@@ -3964,6 +3965,19 @@
     [(CopyMov) (lower-test-instr-copy-mov-count instr)]
     [(Cpuid) (lower-test-instr-cpuid-count instr)]
     [(F64Mov want) (lower-test-instr-f64-mov-count instr want)]
+    [(FloatSplat want is-f32)
+      (match instr
+        [(Splat _ (F64 bits) _ actual-ty)
+          (if (and
+            (= bits want)
+            (tc_core.tc-type-eq
+              actual-ty
+              (if is-f32
+                (F32)
+                (F64))))
+            1
+            0)]
+        [_ 0])]
     [(GepOffset want) (lower-test-instr-gep-offset-count instr want)]
     [(I64Mov want) (lower-test-instr-i64-mov-count instr want)]
     [(IndirectCCall) (lower-test-instr-indirect-c-call-count instr)]
@@ -8114,6 +8128,24 @@
       (> (lower-test-count functions "fill" (PredicatedStore)) 0)]
     [(No) false]))
 
+(define (compiler-lower-masked-literal-bits?
+  [ty-name : String]
+  [is-f32 : bool]
+  [bits : u64]
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-cast-source
+        (clone ty-name)
+        (clone ty-name)
+        (str_cat.str-cat "(cast 3 : " ty-name ")"))
+      mode))
+    [(Some functions)
+      (and
+        (> (lower-test-count functions "fill" (PredicatedStore)) 0)
+        (= (lower-test-count functions "fill" (FloatSplat bits is-f32)) 1))]
+    [(No) false]))
+
 (define (compiler-lower-masked-cast-rows-ok?
   [mode : lower.CompilerLowerMode]
   [backend : String]) : bool
@@ -8131,7 +8163,9 @@
       mode)
     (compiler-lower-masked-cast-vectorized?
       (compiler-lower-masked-cast-source "f32" "f32" "(cast 1 : f32)")
-      mode)))
+      mode)
+    (compiler-lower-masked-literal-bits? "f32" true 0x40400000 mode)
+    (compiler-lower-masked-literal-bits? "f64" false 0x4008000000000000 mode)))
 
 (test
   compiler-lower-spmd-masked-cast-fail-closed

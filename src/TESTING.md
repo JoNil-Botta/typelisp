@@ -51,6 +51,15 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`tests/spmd/masked_float_literal_cast.tl` checks integer-literal casts to
+f32/f64 in stores, arithmetic, comparisons, conditions and typed bindings.
+Fixed IEEE bit patterns cover signed limits, hexadecimal spelling and rounding
+boundaries, including direct i64-to-f32 rounding. Scalar oracles check nested
+masks and sentinels at every length from 0 through 34. The SPMD case table runs
+all three modes at opt0/1/2 and checks packed code on both target ABIs. The
+lowerer test also requires typed float splats with the census bypassed, while
+representation-changing nonliteral casts must retain their located rejection.
+
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.

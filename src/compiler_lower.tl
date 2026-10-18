@@ -48793,12 +48793,47 @@
           (lower-simd-lanes-for-elem mode (lower-global-shared-view target-ty))
           0)
         (tc_core.tc-type-eq (lower-global-shared-view target-ty) dst-elem))
-        (Some
-          (Uniform
-            (lower-literal-value-with-type
-              (tc_core.tc-context-source-names ctx)
-              lit
-              target-ty)))
+        (begin
+          (match (& lit)
+            [(Int n text)
+              ;; Scalar literal casts use their full i64 payload. Round directly
+              ;; to the destination float width before encoding the splat.
+              (let
+                [value : i64 (ast.ast-int-literal-value-or-payload n text)]
+                (match (& target-ty)
+                  [(F32)
+                    (return
+                      (Some
+                        (Uniform
+                          (F64
+                            (cast
+                              (cfloat.compiler-float-f32-bits-from-f64
+                                (cfloat.compiler-finite-cast-int-to-f32-as-f64
+                                  value
+                                  (I64)))
+                              : u64)))))]
+                  [(F64)
+                    (return
+                      (Some
+                        (Uniform
+                          (F64
+                            (cfloat.compiler-float-f64-bits
+                              (cfloat.compiler-finite-cast-int-to-f64
+                                value
+                                (I64)))))))]
+                  [_ unit]))]
+            [(Float _)
+              (match (& target-ty)
+                [(F32) unit]
+                [(F64) unit]
+                [_ (return (No))])]
+            [_ (return (No))])
+          (Some
+            (Uniform
+              (lower-literal-value-with-type
+                (tc_core.tc-context-source-names ctx)
+                lit
+                target-ty))))
         (No))]
     [_ (No)]))
 
@@ -59223,9 +59258,9 @@
 
 ;; Masked SPMD lowering has no vector conversion, so a cast may reach its
 ;; operand only when lanes need no conversion: a cast between identical numeric
-;; lanes, or a casted numeric literal, a constant that keeps its existing
-;; lowering (#7306 leaves literals unchanged). An integer literal cast to a
-;; float lane is not converted here and fails closed in the backend (#8568).
+;; lanes, or a numeric literal folded into the destination representation.
+;; An unfoldable literal is rejected at the cast, never forwarded as raw
+;; source-domain bits.
 ;; Every other cast is rejected at `origin` here, whatever a caller's census
 ;; admitted: lowering its operand would load lanes in the source domain and
 ;; store the same bits in the destination domain (#7306).
@@ -59245,17 +59280,21 @@
   (if (or
     (tc_core.tc-integer-literal-expr? ctx (lower-global-shared-view inner))
     (tc_core.tc-float-literal-expr? ctx (lower-global-shared-view inner)))
-    (lower-avx512-masked-expr
-      ctx
-      state
-      env
-      type-env
-      lane-locals
-      index
-      index-var
-      active-mask
-      lanes
-      inner)
+    (let
+      [destination : ast.AstType
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-resolve-type
+            ctx
+            (tc_core.tc-context-type-get ctx cast-ty-id)))]
+      (match (lower-simple-vector-map-casted-literal
+        ctx
+        (lower-state-mode state)
+        (clone destination)
+        (clone destination)
+        inner)
+        [(Some (Uniform value))
+          (Ok (lower-emit-masked-preheader-splat state value lanes destination))]
+        [_ (lower-avx512-masked-unsupported ctx origin "this literal cast")]))
     (match (lower-masked-spmd-numeric-expr-type
       ctx
       env

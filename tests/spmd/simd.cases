@@ -44,6 +44,21 @@ file call_arg_snapshot_out_of_line.tl
       (if (and (= (array-ref out 0) 1) (= (array-ref out 6) 7)) 42 1))))
 end-file
 
+file masked_literal_float_to_int.tl
+(define (fill [src : (__tl_dyn-array f32)] [out : (__tl_dyn-array i32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (> (array-ref src i) (cast 0.0 : f32))
+      (set! (array-ref out i)
+        (cast 3.5 : i32))
+      unit)))
+(define (main) : i64
+  (let [src : (__tl_dyn-array f32) (__tl_make-array f32 19)]
+       [out : (__tl_dyn-array i32) (__tl_make-array i32 19)]
+    (fill src out 19)
+    42))
+end-file
+
 # SPMD SIMD codegen shapes and trap paths, run by scripts/verify-spmd-simd.sh
 # (gate stage2-spmd-simd-comparison) after its same-exit corpus. Shape cases
 # only compile, so they run on every host; trap cases build and run each mode,
@@ -935,6 +950,46 @@ contains vpcmpud
 end-if
 
 # ---------------------------------------------------------- masked control
+
+case masked-float-literal-unsupported
+source {{work}}/masked_literal_float_to_int.tl
+target linux-x86_64 windows-x86_64
+mode scalar avx2 avx512
+opt 0 1 2
+exit scalar=0 avx2=1 avx512=1
+if-mode avx2 avx512
+in stderr
+contains masked_literal_float_to_int.tl:6:9
+contains this literal cast
+not-contains backend:
+end-if
+
+case masked-float-literal-run
+source tests/spmd/masked_float_literal_cast.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case masked-float-literal-shape
+source tests/spmd/masked_float_literal_cast.tl
+target linux-x86_64 windows-x86_64
+mode avx2 avx512
+opt 0 1 2
+in asm
+contains vaddps
+contains vaddpd
+contains vcmpps
+contains vcmppd
+if-mode avx2
+contains vmaskmovps
+contains vmaskmovpd
+else
+match vmovups.*%k[0-7]
+match vmovupd.*%k[0-7]
+end-if
 
 case float-comparisons-run
 source tests/spmd/float_comparisons.tl

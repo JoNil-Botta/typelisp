@@ -166,6 +166,7 @@ tests/spmd/byte_shift_inactive_invalid.tl
 tests/spmd/word_shift_value_types.tl
 tests/spmd/word_shift_inactive_invalid.tl
 tests/spmd/masked_if_value_types.tl
+tests/spmd/masked_float_literal_cast.tl
 tests/spmd/masked_cast_i32_f32_reject.tl
 tests/spmd/masked_cast_f32_i32_reject.tl
 tests/spmd/masked_cast_u32_f32_reject.tl

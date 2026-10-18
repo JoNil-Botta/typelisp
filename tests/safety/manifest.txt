@@ -840,6 +840,10 @@ or_pattern_slice_rest_binding_reject|check-fail|tests/safety/or_pattern_slice_re
 or_pattern_slice_binding_type_reject|check-fail|tests/safety/or_pattern_slice_binding_type_reject.tl|-|or-pattern binding `x` has type i64 in alternative 1 but (& (Slice i64)) in alternative 2
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
+specialize_for_type_mismatch_reject|check-fail|tests/safety/specialize_for_type_mismatch_reject.tl|-|typecheck: scalar for item annotation mismatch
+specialize_for_type_runtime_reject|check-fail|tests/safety/specialize_for_type_runtime_reject.tl|-|type-valued comptime parameter 'T' cannot be used as a runtime value
+specialize_for_type_length_reject|check-fail|tests/safety/specialize_for_type_length_reject.tl|-|type unquote expects a type expression
+specialize_for_builtin_type_shadow_reject|check-fail|tests/safety/specialize_for_builtin_type_shadow_reject.tl|-|typecheck: scalar for item annotation mismatch: expected i64, found bool
 type_expr_runtime_reject|check-fail|tests/safety/type_expr_runtime_reject.tl|-|typecheck: type-expr is compile-time only; wrap it in (comptime ...)
 type_expr_non_type_reject|check-fail|tests/safety/type_expr_non_type_reject.tl|-|type-expr expects a type argument
 type_expr_zero_arity_reject|check-fail|tests/safety/type_expr_zero_arity_reject.tl|-|type-expr expects exactly one type argument

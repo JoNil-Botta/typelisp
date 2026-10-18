@@ -1533,6 +1533,16 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+Specialization treats an owned `for` step's captured expected-type expression
+as type-denoting syntax outside the item binding's scope. Type parameters become
+type literals through the shared AST child traversal, including beneath parsed
+reference nodes. Primitive names retain their parsed type meaning. The CTFE
+type grammar owns constructor argument roles: array lengths receive value
+substitution, while constructor, lifetime, resolved nominal and C-function mode
+names retain their syntax identity. The typechecker validates the resulting
+annotation and its constructor operands.
+Ordinary runtime expressions continue to reject type-valued parameters.
+
 Bit 1 of the marker word is `(:opaque)` (#6999, surface AST schema 18). The
 typechecker enforces it with E0221 at a few choke points in
 `compiler_typecheck_core.tl`:

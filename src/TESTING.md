@@ -593,6 +593,15 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 ## Coverage layers
 
+`specialize_binder_type.tl` runs owned-loop annotations with comptime type
+parameters at opt0/1/2, including nested arrays, shared/mutable references,
+empty and unit elements, and a binder that shadows its annotation's type
+parameter. It also preserves a primitive annotation when a value parameter has
+the same spelling. The safety corpus retains annotation mismatch, runtime type-use,
+type-as-array-length and primitive type-name substitution rejection.
+`specialize_binder_shadow.tl` retains the
+existing untyped loop and lane shadowing controls.
+
 ### Module-local self-tests
 
 Put small structural checks in the owning module's `*_tests.tl` companion (for

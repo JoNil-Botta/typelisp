@@ -11867,6 +11867,33 @@
               [_ (ctfe-type-expr-error origin)])])))
     (ctfe-type-expr-error origin)))
 
+;; Type syntax has value operands only at fixed-array lengths. Constructor,
+;; lifetime, nominal-name and C-function mode tokens retain their syntax names.
+(defenum CtfeTypeExprRole
+  (TypeSyntax)
+  (ValueSyntax)
+  (NameSyntax))
+
+(define (ctfe-type-expr-argument-role [name : i64] [index : i64] [count : i64]) : CtfeTypeExprRole
+  (cond
+    [(and (= name (ctfe-builtin "Array")) (= count 2) (= index 1))
+      (ValueSyntax)]
+    [(or
+        (= name (ctfe-internal-resolved-struct-type-marker-id))
+        (= name (ctfe-internal-resolved-enum-type-marker-id)))
+      (NameSyntax)]
+    [(and
+        (= count 2)
+        (= index 0)
+        (or
+          (= name (ctfe-builtin "&"))
+          (= name (ctfe-builtin "&mut"))
+          (= name (ctfe-builtin "in"))
+          (= name (cbi.compiler-builtin-ctfe ":invalidate"))
+          (= name (ctfe-builtin "CFunc"))))
+      (NameSyntax)]
+    [else (TypeSyntax)]))
+
 (define (ctfe-expr-to-type
   [expr : (& ast.AstExpr)]
   [origin : (& ast.AstExpr)]

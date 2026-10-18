@@ -5600,6 +5600,84 @@
             (WithResource
               (box (ast.AstWithResource.WithResource out next-body)))))))))
 
+;; A captured annotation is type-denoting syntax, including parsed Borrow
+;; nodes. Primitive type names remain primitive; other type names receive type
+;; substitution. The CTFE type grammar owns argument roles: only value operands
+;; use runtime substitution, while syntax names retain their original identity.
+(define (spec-substitute-type-expr-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [expr-id : i64]
+  [subs : (& subs SpecSubst)]
+  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExpr
+  (match (spec-owner-expr-get owner expr-id)
+    [(Var name)
+      (Ok
+        (ast.ast-expr-type-literal-with-pools
+          (spec-owner-pools owner)
+          (&
+            (spec-substitute-type-with-owner
+              owner
+              (ctfe.ctfe-type-name-id-to-type name)
+              (& subs.types)))))]
+    [(TypeLiteral _)
+      (spec-substitute-walk-with-owner
+        owner
+        (& (spec-owner-expr-get owner expr-id))
+        subs
+        held)]
+    [(Call callee args)
+      (let
+        [name : i64
+          (match (spec-expr-var-name-id-with-owner
+            owner
+            (& (spec-owner-expr-get owner callee)))
+            [(Some id) id]
+            [(None) -1])]
+        [rewritten : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+        (for [index (iterator.range 0 args.len)]
+          (let
+            [arg : i64 (ast.ast-expr-list-get (& args) index 0)]
+            [next : i64
+              (try
+                (match (ctfe.ctfe-type-expr-argument-role name index args.len)
+                  [(TypeSyntax)
+                    (spec-substitute-type-expr-with-owner owner arg subs held)]
+                  [(ValueSyntax)
+                    (spec-substitute-walk-with-owner
+                      owner
+                      (& (spec-owner-expr-get owner arg))
+                      subs
+                      held)]
+                  [(NameSyntax) (ResultSpecSubExpr.Ok arg)]))]
+            (ast.ast-expr-list-push (&mut rewritten) next)))
+        (Ok
+          (ast.ast-expr-call-with-pools
+            (spec-owner-pools owner)
+            callee
+            rewritten)))]
+    [_
+      (let
+        [children : ast.AstExprList
+          (ast.ast-expr-child-ids (spec-owner-expr-get owner expr-id))]
+        [rewritten : ast.AstExprList
+          (ast.ast-expr-list-with-capacity children.len)]
+        (for [index (iterator.range 0 children.len)]
+          (ast.ast-expr-list-push
+            (&mut rewritten)
+            (try
+              (spec-substitute-type-expr-with-owner
+                owner
+                (ast.ast-expr-list-get (& children) index 0)
+                subs
+                held))))
+        (Ok
+          (spec-owner-expr-push
+            owner
+            (&
+              (ast.ast-expr-with-child-ids
+                (spec-owner-expr-get owner expr-id)
+                (& rewritten))))))]))
+
 (define (spec-substitute-walk-with-owner
   [owner : (& owner SpecOwnerContext)]
   [expr : (& ast.AstExpr)]
@@ -6065,9 +6143,9 @@
         [rewritten-expected-type : i64
           (if (>= expected-type 0)
             (try
-              (spec-substitute-walk-with-owner
+              (spec-substitute-type-expr-with-owner
                 owner
-                (& (spec-owner-expr-get owner expected-type))
+                expected-type
                 subs
                 held))
             -1)]

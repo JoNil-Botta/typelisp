@@ -1893,6 +1893,222 @@
 
 (cfg
   test
+  (define (spec-type-expr-matches?
+    [owner : (& owner spec.SpecOwnerContext)]
+    [env : ctfe.CtfeEnv]
+    [expr-id : i64]
+    [subs : (& subs spec.SpecSubst)]
+    [expected : (& expected ast.AstType)]) : bool
+    (let
+      [held : spec.SpecHeldFailure (None)]
+      (match (spec.spec-substitute-type-expr-with-owner
+        owner
+        expr-id
+        subs
+        (&mut held))
+        [(Ok rewritten)
+          (let
+            [expr : ast.AstExpr (spec.spec-owner-expr-get owner rewritten)]
+            (match (ctfe.ctfe-expr-to-type
+              (& expr)
+              (& expr)
+              env
+              (ctfe.ctfe-fuel-limit))
+              [(Ok ty _)
+                (and
+                  (ctfe.ctfe-type-eq-in-env env (& ty) expected)
+                  (match held
+                    [(None) true]
+                    [_ false]))]
+              [(Err _) false]))]
+        [(Err _) false]))))
+
+(cfg
+  test
+  (test
+    specialize-owned-annotation-values
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [intern-state : spec_ci.InternCompatState
+          (spec_ci.intern-compat-state-capture-active)]
+        [owner : spec.SpecOwnerContext
+          (spec.spec-owner-context-new pools intern-state)]
+        [subs : spec.SpecSubst
+          (spec.SpecSubst
+            (spec.spec-type-subst-cons
+              cbi.compiler-builtin-id-fix-T
+              (I64)
+              (spec.spec-type-subst-new))
+            (spec.spec-value-subst-cons
+              (ctfe.ctfe-builtin "i64")
+              (I64 3)
+              (spec.spec-value-subst-cons
+                cbi.compiler-builtin-id-fix-n
+                (I64 3)
+                (spec.spec-value-subst-new))))]
+        [args : ast.AstExprList (ast.ast-expr-list-new)]
+        [env : ctfe.CtfeEnv
+          (spec.spec-owner-ctfe-env
+            owner
+            (& (ctfe.ctfe-reflect-info-list-empty)))]
+        [expected : ast.AstType
+          (ast.ast-ty-ref-with-pools
+            pools
+            cbi.compiler-builtin-id-fix-empty
+            (& (ast.ast-ty-array-with-pools pools (& (I64)) 3)))]
+        (ast.ast-expr-list-push
+          (&mut args)
+          (spec.spec-owner-expr-push
+            owner
+            (& (Var cbi.compiler-builtin-id-fix-T))))
+        (ast.ast-expr-list-push
+          (&mut args)
+          (spec.spec-owner-expr-push
+            owner
+            (& (Var cbi.compiler-builtin-id-fix-n))))
+        (let
+          [annotation : i64
+            (ast.ast-expr-borrow-with-pools
+              pools
+              false
+              (Inferred)
+              (ast.ast-expr-call-with-pools
+                pools
+                (spec.spec-owner-expr-push
+                  owner
+                  (& (Var (ctfe.ctfe-builtin "Array"))))
+                args))]
+          (test.assert-true
+            (spec-type-expr-matches? owner env annotation (& subs) (& expected))
+            "captured (& (Array T n)) substitutes the type and literal length"))
+        (let
+          [primitive-args : ast.AstExprList (ast.ast-expr-list-new)]
+          [shared : i64
+            (spec.spec-owner-expr-push
+              owner
+              (& (Var (ctfe.ctfe-builtin "i64"))))]
+          (ast.ast-expr-list-push (&mut primitive-args) shared)
+          (ast.ast-expr-list-push (&mut primitive-args) shared)
+          (let
+            [annotation : i64
+              (ast.ast-expr-borrow-with-pools
+                pools
+                false
+                (Inferred)
+                (ast.ast-expr-call-with-pools
+                  pools
+                  (spec.spec-owner-expr-push
+                    owner
+                    (& (Var (ctfe.ctfe-builtin "Array"))))
+                  primitive-args))]
+            (test.assert-true
+              (spec-type-expr-matches?
+                owner
+                env
+                annotation
+                (& subs)
+                (& expected))
+              "one shared i64 node retains its type meaning but substitutes its length value")))))))
+
+(cfg
+  test
+  (test
+    specialize-owned-annotation-type-syntax
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [intern-state : spec_ci.InternCompatState
+          (spec_ci.intern-compat-state-capture-active)]
+        [owner : spec.SpecOwnerContext
+          (spec.spec-owner-context-new pools intern-state)]
+        [env : ctfe.CtfeEnv
+          (spec.spec-owner-ctfe-env
+            owner
+            (& (ctfe.ctfe-reflect-info-list-empty)))]
+        [subs : spec.SpecSubst
+          (spec.SpecSubst
+            (spec.spec-type-subst-cons
+              (ctfe.ctfe-builtin "i64")
+              (Bool)
+              (spec.spec-type-subst-cons
+                (ctfe.ctfe-builtin "Array")
+                (Bool)
+                (spec.spec-type-subst-cons
+                  cbi.compiler-builtin-id-fix-T
+                  (I64)
+                  (spec.spec-type-subst-new))))
+            (spec.spec-value-subst-cons
+              (ctfe.ctfe-builtin "nullable")
+              (I64 9)
+              (spec.spec-value-subst-cons
+                cbi.compiler-builtin-id-fix-n
+                (I64 3)
+                (spec.spec-value-subst-new))))]
+        [signature : ast.AstType
+          (ast.ast-ty-func-with-pools
+            pools
+            (ast.ast-type-cons-with-pools
+              pools
+              (& (Var cbi.compiler-builtin-id-fix-T))
+              (& (ast.ast-type-list-new)))
+            (& (Var cbi.compiler-builtin-id-fix-T)))]
+        [types : (Array ast.AstType 11)
+          (array
+            (Var cbi.compiler-builtin-id-fix-T)
+            (I64)
+            (ast.ast-ty-array-with-pools
+              pools
+              (& (Var cbi.compiler-builtin-id-fix-T))
+              3)
+            (ast.ast-ty-ptr-with-pools
+              pools
+              (& (Var cbi.compiler-builtin-id-fix-T)))
+            (ast.ast-ty-ref-with-pools
+              pools
+              cbi.compiler-builtin-id-fix-n
+              (& (Var cbi.compiler-builtin-id-fix-T)))
+            (ast.ast-ty-mut-ref-with-pools
+              pools
+              cbi.compiler-builtin-id-fix-n
+              (& (Var cbi.compiler-builtin-id-fix-T)))
+            (ast.ast-ty-region-with-pools
+              pools
+              cbi.compiler-builtin-id-fix-n
+              (& (Var cbi.compiler-builtin-id-fix-T)))
+            (ast.ast-ty-invalidate-with-pools
+              pools
+              cbi.compiler-builtin-id-fix-n
+              (& (Var cbi.compiler-builtin-id-fix-T)))
+            (CFunc (spec.spec-owner-type-push owner (& signature)) (Nullable))
+            (ast.ast-ty-struct-args
+              cbi.compiler-builtin-id-fix-T
+              (ast.ast-lifetime-cons
+                cbi.compiler-builtin-id-fix-n
+                (& (ast.ast-lifetime-list-new))))
+            (ast.ast-ty-enum-args
+              cbi.compiler-builtin-id-fix-T
+              (ast.ast-lifetime-cons
+                cbi.compiler-builtin-id-fix-n
+                (& (ast.ast-lifetime-list-new)))))]
+        (for [ty types]
+          (let
+            [label : String (spec.spec-type-key-with-owner owner (& ty))]
+            [expr : i64 (ctfe.ctfe-type-to-expr (& ty) env)]
+            [expected : ast.AstType
+              (spec.spec-substitute-type-with-owner owner ty (& subs.types))]
+            (test.assert-true
+              (spec-type-expr-matches? owner env expr (& subs) (& expected))
+              (str_cat.str-cat
+                "type-expression substitution agrees with type AST: "
+                label))))))))
+
+(cfg
+  test
   (test
     specialize-resource-scopes
     (begin

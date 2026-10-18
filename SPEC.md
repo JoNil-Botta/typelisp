@@ -549,7 +549,9 @@ and `(&mut r T)` receivers the result is `T` (with the receiver's region or
 lifetime provenance retained where applicable). Copyable values are read
 without consuming the receiver. Moving a non-Copy value from an owned Box
 consumes the Box handle; moving a non-Copy value through either reference kind
-is rejected unless a future replacement operation explicitly supports it.
+is rejected unless a future replacement operation explicitly supports it. The
+operand of the compiler-special `clone` is the exception: there a non-Copy
+`(deref value)` is read, not moved, and keeps its receiver (section 7.6).
 
 `(set! (deref value) replacement)` writes through an owned Box or mutable
 reference storage place. Shared references are read-only. The replacement must
@@ -9233,18 +9235,24 @@ and not a general manual memory management feature.
   from a generated helper use its generated-decl
   origin and the compiler handoff request location; producer conflicts name
   the conflicting helper explicitly.
-- The transitional `(clone value)` reads the selected value without moving
-  its source. Cloning a supported non-Copy referent, such as
-  `(clone (deref reference))`, produces independent owned storage and preserves
-  the reference or Box receiver. This read demand follows result branches and
-  sequence tails; prefix expressions and binding initializers retain ordinary
-  ownership rules. Cloning a reference itself remains unsupported.
+- The transitional `(clone value)` reads its operand without moving it and
+  returns independent owned storage, so `(clone (deref reference))` and
+  `(clone (deref box))` leave the reference or Box usable. The read reaches
+  through annotation, `cast` and macro-expansion wrappers, both `if` arms,
+  every `match` arm body, the `let` body, the last form of `begin` or
+  `unsafe`, and the receivers of `deref`, field, tuple and array projections.
+  The rest of the operand keeps ordinary ownership rules: `if` conditions,
+  `match` scrutinees, `let` initializers, earlier `begin`/`unsafe` forms,
+  array indices, and call and constructor arguments still move. This applies
+  only when `clone` names the compiler-special form, not a binding, function
+  or constructor of that name.
 - The transitional compiler-special `clone` rejects unsupported
   ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
-  references including borrowed `str`, raw pointers, boxes,
+  references including borrowed `str`, raw pointers,
   compile-time-only values, and named aggregate shapes containing
-  non-cloneable fields.
+  non-cloneable fields. A `(Box T)` operand with a cloneable `T`, owned or read
+  through a reference, clones into a new box.
 
 ---
 

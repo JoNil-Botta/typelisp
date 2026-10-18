@@ -71286,36 +71286,41 @@
           "typecheck: slice-split-at expects exactly two arguments"
           "typecheck: slice-view expects exactly three arguments")))))
 
+;; A one-argument call of the compiler-special `clone` reads its operand. The
+;; builtin test is the call typing's own (hygiene name, then shadowing by a
+;; value bound in scope or owned by the module), so a call of a binding or
+;; function named `clone` keeps its arguments unchanged.
 (define (tc-clone-read-args
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func-id : i64]
   [args : ast.AstExprList]) : ast.AstExprList
-  (let
-    [raw-name : i64
-      (tc-expr-var-name-id
-        (tc-context-expr-bases ctx)
-        (tc-context-expr-get ctx func-id))]
-    [name : i64
-      (tc-builtin-call-name-id
-        (tc-context-structural-session ctx)
-        raw-name
-        (tc-hygiene-global-name-id?
+  (if (= args.len 1)
+    (let
+      [raw-name : i64
+        (tc-expr-var-name-id
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx func-id))]
+      [name : i64
+        (tc-builtin-call-name-id
           (tc-context-structural-session ctx)
-          raw-name))]
-    (if (and
-      (= args.len 1)
-      (cbi.compiler-builtin-typecheck-clone-id? name)
-      (not (tc-source-value-bound-id? ctx env name)))
-      (let
-        [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
-        (ast.ast-expr-list-push
-          (&mut out)
-          (tc-read-value-expr-id
-            (tc-context-expr-bases ctx)
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
-        out)
-      args)))
+          raw-name
+          (tc-hygiene-global-name-id?
+            (tc-context-structural-session ctx)
+            raw-name))]
+      (if (and
+        (cbi.compiler-builtin-typecheck-clone-id? name)
+        (not (tc-source-value-bound-id? ctx env name)))
+        (let
+          [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+          (ast.ast-expr-list-push
+            (&mut out)
+            (tc-read-value-expr-id
+              (tc-context-expr-bases ctx)
+              (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
+          out)
+        args))
+    args))
 
 ;; Clone and place borrows read their result's storage without transferring it.
 ;; Only value-producing paths inherit that demand: conditions, initializers,

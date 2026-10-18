@@ -13639,9 +13639,7 @@
       (and
         (= (lower.lower-type-size ctx ref) 16)
         (= (lower.lower-type-align ctx ref) 8)
-        (lower.lower-type-register-resident?
-          ctx
-          (owned_view.compiler-owned-shared-view ref))
+        (lower.lower-type-register-resident? ctx ref)
         (=
           (lower.lower-type-register-words
             ctx
@@ -13651,36 +13649,25 @@
         (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 1) (I64))
         (= (lower.lower-type-size ctx mut-ref) 16)
         (= (lower.lower-type-align ctx mut-ref) 8)
-        (lower.lower-type-register-resident?
-          ctx
-          (owned_view.compiler-owned-shared-view mut-ref))
+        (lower.lower-type-register-resident? ctx mut-ref)
         (=
           (lower.lower-type-register-words
             ctx
             (owned_view.compiler-owned-shared-view mut-ref))
           2)
         (= (lower.lower-type-size ctx ordinary-ref) 8)
-        (not
-          (lower.lower-type-register-resident?
-            ctx
-            (owned_view.compiler-owned-shared-view ordinary-ref)))
+        (not (lower.lower-type-register-resident? ctx ordinary-ref))
         (=
           (lower.lower-type-register-words
             ctx
             (owned_view.compiler-owned-shared-view ordinary-ref))
           0)
         (= (lower.lower-type-size ctx pointer-ref) 8)
-        (not
-          (lower.lower-type-register-resident?
-            ctx
-            (owned_view.compiler-owned-shared-view pointer-ref)))
+        (not (lower.lower-type-register-resident? ctx pointer-ref))
         (lower.lower-supported-reference-type? ctx pointer-ref)
         (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
         (= (lower.lower-type-size ctx bare-slice) 0)
-        (not
-          (lower.lower-type-register-resident?
-            ctx
-            (owned_view.compiler-owned-shared-view bare-slice)))
+        (not (lower.lower-type-register-resident? ctx bare-slice))
         (lower.lower-supported-reference-type?
           ctx
           (owned_view.compiler-owned-shared-view ref))
@@ -13875,10 +13862,7 @@
         (= (lower.lower-type-size ctx array-string) 16)
         (= (lower.lower-type-size ctx slice-ref-tuple) 16)
         (lower.lower-type-inline-storage? ctx u8-u64)
-        (not
-          (lower.lower-type-register-resident?
-            ctx
-            (ast.ast-global-shared-view u8-u64)))
+        (not (lower.lower-type-register-resident? ctx u8-u64))
         (match (lower.lower-internal-aggregate-class
           ctx
           (lower.CompilerLowerMode.LinuxScalar)

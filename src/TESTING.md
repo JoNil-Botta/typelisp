@@ -33,6 +33,11 @@ the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
 
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

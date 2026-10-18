@@ -37663,6 +37663,9 @@
             (lower-expr ctx state env type-env (lower-global-shared-view func)))]
         (match lowered-func
           [(Expr func-state func-value func-ty)
+            (when
+              (tc_core.tc-never-type? (lower-global-shared-view func-ty))
+              (return (Ok (Expr func-state Unit (Never)))))
             (if (lower-function-type? (lower-global-shared-view func-ty))
               (lower-indirect-call
                 ctx

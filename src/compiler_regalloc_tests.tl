@@ -11052,10 +11052,14 @@
           (reg.compiler-reg-interval-seq-append (& want) (array-ref expected i))))
       (let
         [got : reg.CompilerRegIntervalSeq
-          (reg.compiler-reg-sort-root-segments (& input) 7)]
+          (reg.compiler-reg-sort-root-segments input 7)]
+        [again : reg.CompilerRegIntervalSeq
+          (reg.compiler-reg-sort-root-segments (clone got) 7)]
         (test.assert-true
-          (compiler-reg-root-segments-eq? (& got) (& want))
-          "endpoint sharing merges, one-position gaps and i64 limits do not")))))
+          (and
+            (compiler-reg-root-segments-eq? (& got) (& want))
+            (compiler-reg-root-segments-eq? (& again) (& want)))
+          "sorted and unsorted unions preserve endpoint, gap and i64 rules")))))
 
 (define (compiler-reg-same-value-multi-def-census-ok?) : bool
   (let

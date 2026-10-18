@@ -186,6 +186,11 @@ cell address nor a C code address may enter closure-descriptor dispatch.
 Both ordinary and tail indirect lowering materialize the complete callable
 value before lowering arguments, so argument effects cannot replace the selected
 closure descriptor or C code pointer. The snapshot shares the closure environment.
+
+Scalar global reads, including folds and rematerialized reads, use
+the prepared program's symbol index. That index resolves extern metadata and
+ordinary module symbols identically to unfolded loads, and is replaced at
+each emission boundary and unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.

@@ -1092,3 +1092,5 @@ ownership_certified_cfunc_borrows|all|0,1,2|tests/integration/ownership_certifie
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
 
 indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
+
+extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib

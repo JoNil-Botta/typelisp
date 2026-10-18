@@ -221,14 +221,16 @@ done
 
 # Backend frame-omission state must not change the next entry's inline costs.
 # This subject has enough call-spanning pressure to distinguish the pools.
-POOL_SOURCE="$ROOT/tests/integration/pure_call_join_live.tl"
-POOL_EMPTY="$WORKDIR/pool-empty.tl"
+# Batch-file contents do not receive Git Bash's native argument conversion.
+POOL_WORKDIR=${WORKDIR#"$ROOT/"}
+POOL_SOURCE="tests/integration/pure_call_join_live.tl"
+POOL_EMPTY="$POOL_WORKDIR/pool-empty.tl"
 printf '%s\n' '(define (main) : i64 0)' >"$POOL_EMPTY"
-POOL_INVALID="$WORKDIR/pool-invalid.tl"
+POOL_INVALID="$POOL_WORKDIR/pool-invalid.tl"
 printf '%s\n' '(define (main) : i64 "wrong")' >"$POOL_INVALID"
 for POOL_TARGET in linux-x86_64 windows-x86_64; do
     for POOL_LEVEL in 0 1 2; do
-        POOL_DIR="$WORKDIR/pool-$POOL_TARGET-$POOL_LEVEL"
+        POOL_DIR="$POOL_WORKDIR/pool-$POOL_TARGET-$POOL_LEVEL"
         mkdir -p "$POOL_DIR"
         "$COMPILER" compile "$POOL_SOURCE" --target "$POOL_TARGET" \
             --opt-level "$POOL_LEVEL" --stdlib-root "$ROOT/stdlib" \

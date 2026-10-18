@@ -154,9 +154,12 @@ indirect call site uses that dispatcher; lexical provenance flags cannot choose
 a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
-Both ordinary and tail indirect lowering materialize the complete callable
-value before lowering arguments, so argument effects cannot replace the selected
-closure descriptor or C code pointer. The snapshot shares the closure environment.
+Ordinary and tail indirect lowering copy the selected callable (a closure
+descriptor sharing its environment, or a C code pointer) before lowering
+arguments only when an argument can write the storage it was read from: a local
+by the argument operand snapshot rule, a global cell unless every argument only
+reads. Function names and values the callee expression computed are not
+copied, so their direct-call facts survive.
 Scalar global reads, including folds and rematerialized reads, use
 the prepared program's symbol index. That index resolves extern metadata and
 ordinary module symbols identically to unfolded loads, and is replaced at

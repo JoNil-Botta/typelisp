@@ -15420,13 +15420,13 @@
               [(Phi _ inputs _)
                 (and
                   (= (ir.compiler-ir-phi-input-seq-count inputs) 3)
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.zero"))
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.one"))
-                  (opt.opt-inline-phi-input-label?
+                  (opt.opt-bool-branch-phi-input-has-label?
                     inputs
                     (ir.compiler-ir-label "inl.entry.0.other")))]
               [_ false])
@@ -37965,7 +37965,7 @@
       (match block
         [(Block _ instrs)
           (match (ir.compiler-ir-instr-seq-ref instrs 0)
-            [(Phi _ inputs _) (opt.opt-phi-input-count inputs)]
+            [(Phi _ inputs _) (ir.compiler-ir-phi-input-seq-count inputs)]
             [_ (- 0 1)])])]))
 
 ;; Does the named block hold a BinOp with the given opcode AND the given i64
@@ -43818,7 +43818,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -44555,7 +44555,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -69442,9 +69442,7 @@
         (opt-block-instr-at block 0))
         [(Phi _ inputs _)
           (and
-            (opt.opt-bool-branch-phi-input-has-label?
-              (owned_view.compiler-owned-shared-view inputs)
-              ok)
+            (opt.opt-bool-branch-phi-input-has-label? inputs ok)
             (not (opt.opt-bool-branch-phi-input-has-label? inputs head)))]
         [_ false])
       (return 10))
@@ -72004,7 +72002,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 99)]
     [(Some value)

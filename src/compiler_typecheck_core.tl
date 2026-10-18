@@ -1748,8 +1748,70 @@
       (tc-checked-let-binding-fact-state-data state)]
     (and data.enabled data.complete-required)))
 
+;; Recording grows the fact array and both maps by doubling inside the payload
+;; generation, so every superseded copy stays there next to the live one.
+;; Copy the live facts (exactly sized), their persisted types and both maps
+;; into a fresh generation and destroy the old one; lowering then retains only
+;; the proofs it may look up.
+(define (tc-checked-let-binding-facts-compact!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (unless
+      (or (not data.enabled) (= data.payload-arena 0))
+      (let
+        [fresh : i64 (arena.tl_arena_make)]
+        [compacted : TcCheckedLetBindingFactStateData
+          (in-arena
+            (arena.Arena fresh)
+            (let
+              [count : i64 data.len]
+              [facts : (__tl_dyn-array TcCheckedLetBindingFact)
+                (__tl_make-array
+                  TcCheckedLetBindingFact
+                  (if (< count 1)
+                    1
+                    count))]
+              (for [index (iterator.range 0 count)]
+                (let
+                  [fact (& (array-ref data.facts index))]
+                  (set!
+                    (array-ref facts index)
+                    (TcCheckedLetBindingFact
+                      fact.declaration-ordinal
+                      fact.body-id
+                      fact.binding-ordinal
+                      fact.name-id
+                      fact.init-id
+                      (ast.ty-node-persist (& fact.binding-ty))
+                      fact.inconsistent
+                      (TcCheckedLetBindingTransition
+                        fact.transition.arena-owner-kind
+                        fact.transition.phase-owner-id)
+                      fact.hash-next))))
+              (TcCheckedLetBindingFactStateData
+                data.enabled
+                data.complete-required
+                data.recording
+                data.current-declaration-ordinal
+                facts
+                (if (< count 1)
+                  1
+                  count)
+                count
+                (clone data.by-hash)
+                (clone data.declaration-ordinals)
+                fresh
+                data.return-arena
+                data.owner-arena)))]
+        (tc-checked-let-binding-fact-state-data-set! state compacted)
+        (unsafe
+          (arena.tl_arena_destroy data.payload-arena))))))
+
 (define (tc-checked-let-binding-facts-freeze!
   [state : TcCheckedLetBindingFactState]) : unit
+  (tc-checked-let-binding-facts-compact! state)
   (unsafe
     (let
       [data : (MutPtr TcCheckedLetBindingFactStateData)

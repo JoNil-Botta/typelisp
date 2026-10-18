@@ -25,6 +25,7 @@
 (import token)
 (cfg test (import stdlib.test))
 (cfg test (import stdlib.profile))
+(cfg test (import compiler_allocation_profile as alloc_profile))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
 (import compiler_parse_core as parser)
@@ -704,6 +705,61 @@
             (& decl))
           -1)
         "released generations retain no source identity"))))
+
+;; Freezing copies the live facts, their persisted types and both maps into a
+;; fresh generation, dropping the doubling history of the array and maps.
+(test
+  tc-checked-let-binding-facts-freeze-compacts
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    [func-ty : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+        (& (Bool)))]
+    (tc_core.tc-checked-let-binding-facts-begin! facts false)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 3)
+    (for [index (iterator.range 0 1000)]
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        index
+        0
+        13
+        17
+        (if (= (% index 2) 0)
+          (clone func-ty)
+          (I64))
+        transition))
+    (let
+      [before : i64
+        (alloc_profile.compiler-allocation-profile-arena-bump-bytes
+          (tc_core.tc-checked-let-binding-fact-state-data facts).payload-arena)]
+      [_freeze : unit (tc_core.tc-checked-let-binding-facts-freeze! facts)]
+      [after : i64
+        (alloc_profile.compiler-allocation-profile-arena-bump-bytes
+          (tc_core.tc-checked-let-binding-fact-state-data facts).payload-arena)]
+      (test.assert-true (< after before) "freezing drops the growth history")
+      (for [index (iterator.range 0 1000)]
+        (test.assert-true
+          (match (tc_core.tc-checked-let-binding-fact-lookup
+            facts
+            3
+            index
+            0
+            13
+            17)
+            [(Hit ty _)
+              (ast.ast-type-eq?
+                ty
+                (if (= (% index 2) 0)
+                  (clone func-ty)
+                  (I64)))]
+            [_ false])
+          "every compacted fact keeps its checked type")))
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
 
 (test
   tc-checked-let-binding-facts-region-conflict

@@ -1144,8 +1144,17 @@
 ;; retains the proven grow path for larger legacy callers.
 ;; Plain mutable globals keep the hot compatibility path simple and avoid the
 ;; global-struct reassignment that previously tripped an opt2 miscompile.
+;;
+;; Expression rows live in fixed segments that never relocate (#8863); a row
+;; id splits into `(shr id ast-expr-node-pool-segment-shift)` and its offset.
+;; A segment and its span slots are allocated whole, so the segment size is the
+;; step by which a compile's allocator peak moves as its row count crosses a
+;; segment boundary; segments are kept small so that step stays well inside the
+;; peak-memory budget (#9060).
+(define ast-expr-node-pool-segment-shift : i64
+  14)
 (define ast-expr-node-pool-segment-size : i64
-  65536)
+  16384)
 (define ast-type-node-pool-segment-size : i64
   1024)
 
@@ -1599,7 +1608,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (cast
       (unsafe
         (ptr-read
@@ -1613,7 +1625,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-write!
         (int->ptr
@@ -2139,7 +2154,7 @@
         (ptr-read
           (ptr-offset
             (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-            (shr id 16))))]
+            (shr id ast-expr-node-pool-segment-shift))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -2191,7 +2206,7 @@
         (ptr-read
           (ptr-offset
             (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-            (shr id 16))))]
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -2210,7 +2225,7 @@
           (ptr-read
             (ptr-offset
               (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-              (shr id 16))))]
+              (shr id ast-expr-node-pool-segment-shift))))]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -2876,7 +2891,10 @@
     [id : i64 pool.count]
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -2915,7 +2933,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
+          (ptr-offset
+            (int->ptr pool.segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -3070,7 +3090,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
+          (ptr-offset
+            (int->ptr pool.segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -4930,7 +4952,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -4950,7 +4975,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr bases-address : (Ptr i64)) (shr row-id 16))))]
+          (ptr-offset
+            (int->ptr bases-address : (Ptr i64))
+            (shr row-id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr
@@ -4984,7 +5011,10 @@
             count)]
         [base : i64
           (unsafe
-            (ptr-read (ptr-offset (int->ptr bases : (Ptr i64)) (shr index 16))))]
+            (ptr-read
+              (ptr-offset
+                (int->ptr bases : (Ptr i64))
+                (shr index ast-expr-node-pool-segment-shift))))]
         [address : i64 (+ base (* index (ast-expr-node-bytes)))]
         [remaining : i64 (- end index)]
         (while (> remaining 0)

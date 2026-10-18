@@ -4555,8 +4555,8 @@
   (match (backend.compiler-backend-emit-pack-words
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 7)
-    (Bool true)
+    (& (I64 7))
+    (& (Bool true))
     "-16(%rbp)"
     "-24(%rbp)"
     false
@@ -4567,8 +4567,8 @@
       (match (backend.compiler-backend-emit-pack-words
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
-        (I64 9)
-        (Char 'A')
+        (& (I64 9))
+        (& (Char 'A'))
         "%r12"
         "%r13"
         false
@@ -4597,8 +4597,8 @@
     (match (backend.compiler-backend-emit-pack-words
       (ast.ast-node-pool-reader-type-segment-bases)
       gp-assignments
-      (Var 0)
-      (Var 1)
+      (& (Var 0))
+      (& (Var 1))
       "-16(%rbp)"
       "-24(%rbp)"
       false
@@ -4610,8 +4610,8 @@
         (match (backend.compiler-backend-emit-pack-words
           (ast.ast-node-pool-reader-type-segment-bases)
           xmm-assignments
-          (Var 0)
-          (Var 1)
+          (& (Var 0))
+          (& (Var 1))
           "-16(%rbp)"
           "-24(%rbp)"
           true
@@ -13231,7 +13231,7 @@ f:
 (define (compiler-backend-zero-load-ok?) : bool
   (match (backend.compiler-backend-emit-load-value
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 0)
+    (& (I64 0))
     "%rax"
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(Ok asm) (string.eq asm "    xorl %eax, %eax\n")]
@@ -23631,8 +23631,8 @@ f:
         (Var 0)
         (I64 1)
         (U64)
-        (I64 9)
-        (I64)
+        (& (I64 9))
+        (& (I64))
         index
         0
         index.backend-state)
@@ -33571,7 +33571,7 @@ f:
             backend-state
             assignments
             (Var 5)
-            (Var 6))
+            (& (Var 6)))
           7
           "%r8")
         "%r10"))))
@@ -38375,7 +38375,7 @@ b_keep:
     assignments
     var-id
     reg
-    (F64)
+    (& (F64))
     backend-state))
 
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs

@@ -21203,7 +21203,8 @@
 ;; already carries this classification on the callee identity --
 ;; compiler-ir-runtime-control-flow-id? IS the recognized set, and giving a
 ;; direct call the `ControlFlow` effect is the only thing it does -- so every
-;; consumer here asks that one predicate instead of re-deriving a name set.
+;; consumer here asks that classification (opt-direct-call-effect) instead of
+;; re-deriving a name set.
 ;; Ordinary direct callees classify Unknown; the memory-classified runtime
 ;; helpers classify MemoryRead/MemoryWrite.
 ;;
@@ -21231,7 +21232,9 @@
 ;; over it. It is a call boundary in the emitted asm and in nothing the
 ;; interlock is pricing.
 (define (opt-direct-call-noreturn? [name : i64]) : bool
-  (ir.compiler-ir-runtime-control-flow-id? name))
+  (match (opt-direct-call-effect name)
+    [(ControlFlow) true]
+    [_ false]))
 
 ;; Writes no memory at all -- the fact the store summaries are asking for.
 (define (opt-direct-call-memory-clean?
@@ -21304,7 +21307,7 @@
     (opt-licm-store-summary-empty)
     (if (opt-direct-call-header-clean? direct-call-clean name)
       (opt-licm-store-summary-element-only-call)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(MemoryRead) (opt-licm-store-summary-empty)]
         [(MemoryWrite) (opt-licm-store-summary-header-or-unknown-store)]
         [_ (opt-licm-store-summary-call-or-unknown)]))))
@@ -26191,7 +26194,7 @@
          (Store _ _ _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
          (Return _))
       true]
-    [(Call _ name _ _) (ir.compiler-ir-runtime-control-flow-id? name)]
+    [(Call _ name _ _) (opt-direct-call-noreturn? name)]
     [_ false]))
 
 (define (opt-licm-return-staging-block?
@@ -114213,6 +114216,62 @@
     [scc : OptSccResult (opt-scc-compute calls)]
     (OptProgramIndex index calls scc)))
 
+;; --- extern effect identities -------------------------------------------------
+;;
+;; Calls name an extern by its language identity, while its runtime effects
+;; belong to the declared link identity. This table maps every declared extern
+;; of the program being optimized to that link. Provided entries are the program
+;; functions of that name, whose summaries come from their bodies, so they are
+;; not recorded; no other declaration shares a program function's identity.
+;; Declarations that disagree on the link record -1, an identity no effect table
+;; classifies. Like opt-licm-global-headers it outlives one program's arenas, so
+;; every program entry installs its own table before reading any summary.
+(define opt-effect-links : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+(define (opt-effect-links-install! [externs : (& ir.CompilerIrExternSeq)]) : unit
+  (let
+    [out
+      (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
+    (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs at)
+        [(Extern name _ _ _ _ link _ provided)
+          (unless
+            provided
+            (opt_i64_i64_map.insert-ref!
+              (&mut out)
+              name
+              (match (opt_i64_i64_map.get (& out) name)
+                [(LookupFound earlier)
+                  (if (= earlier link)
+                    link
+                    -1)]
+                [(LookupMissing) link])))]))
+    (set! opt-effect-links out)))
+
+;; The identity a direct call to `name` reaches: a declared extern's link
+;; identity, otherwise `name` itself. Every classification of a callee outside
+;; the program's functions starts from it.
+(define (opt-effect-callee [name : i64]) : i64
+  (match (opt_i64_i64_map.get
+    (& opt-effect-links)
+    (ir.compiler-ir-symbol-id name))
+    [(LookupFound link) link]
+    [(LookupMissing) name]))
+
+;; A runtime effect class is keyed on the helper's own identity. A call whose
+;; identity reaches a different link is not that helper, even when it is
+;; spelled like one, so it has the unknown effect of any other extern.
+(define (opt-direct-call-effect [name : i64]) : ir.CompilerIrEffect
+  (if (= (opt-effect-callee name) name)
+    (ir.compiler-ir-direct-call-effect-id name)
+    (ir.CompilerIrEffect.Unknown)))
+
+;; The private globals a call to a callee outside the program's functions may
+;; write, decided by the identity it reaches.
+(define (opt-external-call-write-mask [name : i64]) : i64
+  (opt-global-mod-ref-external-mask (opt-effect-callee name)))
+
 (define (opt-program-index-empty) : OptProgramIndex
   (let
     [functions : ir.CompilerIrFunctionSeq (ir.compiler-ir-function-seq-empty)]
@@ -114353,9 +114412,10 @@
           (array-ref rows slot))))
     out))
 
-;; Per-function write rows closed over the direct call graph, each joined with
-;; `extra` (the writes every function may make), as the summary maps store
-;; them.
+;; Private-global rows closed over the direct call graph. Each declared extern
+;; gets its link's external-call row plus `extra`: escaped storage remains
+;; writable through runtime pointers. An extern whose row would be empty gets
+;; none, since a lookup of a name without a row applies the same link rule.
 (define (opt-program-closed-rows-map
   [index : (& index OptProgramIndex)]
   [rows : (&mut rows (__tl_dyn-array i64))]
@@ -114367,7 +114427,20 @@
     (while (< slot (array-length rows))
       (set! (array-ref rows slot) (bit-or (array-ref rows slot) extra))
       (+= slot 1))
-    (opt-program-rows-map index rows false capacity)))
+    (let
+      [out (opt-program-rows-map index rows false capacity)]
+      [at (opt_i64_i64_map.next-occupied (& opt-effect-links) 0)]
+      (while (< at (opt_i64_i64_map.capacity (& opt-effect-links)))
+        (match (opt_i64_i64_map.entry-at (& opt-effect-links) at)
+          [(EntrySome name link)
+            (let
+              [mask (bit-or (opt-global-mod-ref-external-mask link) extra)]
+              (unless
+                (= mask 0)
+                (opt_i64_i64_map.insert-ref! (&mut out) name mask)))]
+          [(EntryNone) unit])
+        (set! at (opt_i64_i64_map.next-occupied (& opt-effect-links) (+ at 1))))
+      out)))
 
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
@@ -114862,7 +114935,7 @@
         args
         0)]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         ;; The runtime control-flow family is the nonreturning abort set;
         ;; it writes no memory the caller can observe afterwards because
         ;; there is no afterwards. The non-call arm below already gives
@@ -115085,11 +115158,13 @@
 ;; exactly what `opt-load-cse-state-direct-call` looks up for a call-site name.
 ;; An uninitialized builtin id is -1 and is never a call-site name, so it is
 ;; skipped rather than seeded (mirroring `compiler-ir-runtime-memory-write-id?`).
+;; So is a builtin whose spelling the program declares as an extern linked
+;; elsewhere: calls with that identity reach the link (opt-effect-callee).
 (define (opt-call-memory-seed-builtin
   [out : opt_i64_i64_map.Map]
   [name-id : i64]
   [summary : i64]) : opt_i64_i64_map.Map
-  (if (< name-id 0)
+  (if (or (< name-id 0) (not (= (opt-effect-callee name-id) name-id)))
     out
     (let
       [next : opt_i64_i64_map.Map out]
@@ -115281,12 +115356,15 @@
     rows))
 
 ;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
-;; verdict, which is the summary this builder produced before SUM-3.
+;; verdict, which is the summary this builder produced before SUM-3. The
+;; function list declares no externs.
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : (& ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
+    [_externs : unit
+      (opt-effect-links-install! (& (ir.compiler-ir-extern-seq-empty)))]
     [index : OptProgramIndex (opt-program-index-build functions)]
     (opt-call-memory-build-with-descriptor-globals
       type-segment-bases
@@ -116648,6 +116726,7 @@
       [count : i64 (opt-function-seq-count reachable-functions)]
       [capacity : i64 (opt-function-index-capacity count)]
       [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
+      [_externs : unit (opt-effect-links-install! externs)]
       [summaries : OptProgramSummaries
         (if (<= count (opt-summary-function-limit))
           (opt-program-call-summaries
@@ -117110,8 +117189,8 @@
 ;;       (opt-global-mod-ref-call-mask), and the union of those rows over the
 ;;       function's returning calls -- opt-global-cell-call-writes -- is
 ;;       exactly the set of cells this condition refuses. A callee outside the
-;;       program's function list is an EXTERN: no IR body, hence no `Store`,
-;;       and under (b) no pointer it holds can name a cell, so it writes none.
+;;       program's function list uses the external-call effect: arbitrary externs
+;;       may re-enter user code and therefore write any cell.
 ;;       An INDIRECT call (CallIndirect, either C-ABI store-result form,
 ;;       SpmdCall, TailCallIndirect) may land on any function of the program,
 ;;       so it contributes "any cell" and refuses every G -- and so does every
@@ -117259,10 +117338,9 @@
 
 ;; Condition (c) as a MASK over global cells: what the RETURNING calls this
 ;; scan saw may write, in the packed OptGlobalModRef encoding. An unresolved
-;; call form contributes "any cell"; a named callee contributes its row, which
-;; is 0 for an extern (no IR body, hence no `Store`) and "any cell" whenever
-;; the program carries no table -- so a table-less program refuses exactly the
-;; functions v1 refused. The walk stops as soon as the union saturates.
+;; call form contributes "any cell"; a named callee contributes its row or its
+;; external-call effect. An arbitrary extern or an unavailable table refuses
+;; every cell. The walk stops as soon as the union saturates.
 (define (opt-global-cell-call-writes-list
   [mod-ref : (& mod-ref OptGlobalModRef)]
   [names : OptLabelSet]
@@ -117484,8 +117562,8 @@
 ;;   * a write through a pointer that names a cell. `CompilerIrValue.GlobalAddr`
 ;;     is the only IR value form that produces a cell address, so when the
 ;;     program's address-taken set is EMPTY no pointer in the program can name a
-;;     cell, and no `StorePtr`, `CopyBytes`, vector store, syscall or extern
-;;     callee can reach one. That is the same whole-program argument
+;;     cell, and no `StorePtr`, `CopyBytes`, vector store or syscall can
+;;     directly reach one. That is the same whole-program argument
 ;;     opt-licm-direct-call-keeps-globals-clean? already rests on; this table
 ;;     requires it as a precondition and is not built at all when it fails, so
 ;;     the argument is never stretched.
@@ -117493,11 +117571,12 @@
 ;;     through this table. An INDIRECT one (`CallIndirect`, the two C-ABI
 ;;     store-result forms, `SpmdCall`, `TailCallIndirect`) may land on any
 ;;     function of the program and so contributes "any cell", as does any
-;;     instruction whose effect is `Unknown` or `CpuProbe`. An EXTERN callee has
-;;     no IR body, hence performs no `Store`, and under the empty address-taken
-;;     precondition cannot reach a cell through a pointer either, so it
-;;     contributes nothing -- the same verdict opt-call-memory-apply-direct-call
-;;     gives a name outside the program's function set.
+;;     instruction whose effect is `Unknown` or `CpuProbe`. An arbitrary EXTERN
+;;     callee may re-enter a TypeLisp callback or exported function, so it also
+;;     contributes "any cell". Compiler-owned runtime helpers with known
+;;     effects do not call user code; their pointer writes still obey the empty
+;;     address-taken precondition. Both direct queries and the transitive rows
+;;     use this same external-call classification.
 ;;
 ;; THE LATTICE AND THE FIXPOINT. A row is a bit set: one bit per global that is
 ;; a direct `Store` target somewhere in the program (bits 0..61), plus bit 62
@@ -117523,10 +117602,8 @@
   ;; this map is never stored, so no execution writes its cell at all and every
   ;; query for it is false. The storage table indexes every non-scalar global.
   (index opt_i64_i64_map.Map)
-  ;; function symbol id -> that function's packed write set. Every function of
-  ;; the program has a row; an absent name is an extern: no IR body, and under
-  ;; the empty address-taken precondition no pointer it holds can name a cell,
-  ;; so it writes none.
+  ;; Function or declared extern identity -> packed write set, including re-entry.
+  ;; Every program function has a row; absent names use the external-call rule.
   (writes opt_i64_i64_map.Map))
 
 ;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
@@ -117581,8 +117658,32 @@
     (opt-global-mod-ref-any? mask)
     (not (= (bit-and mask (opt-global-mod-ref-cell-bit index name)) 0))))
 
-;; The cells a DIRECT callee may write. No table, or a resolved row; an absent
-;; name is an extern and writes none (see the header's exhaustive list).
+;; Compiler-owned runtime helpers never call user code, so a call to one cannot
+;; re-enter a TypeLisp function that writes a private global. The proof is
+;; narrower than a helper's general memory effect: the byte copies remain
+;; unknown write barriers. Atomic helpers keep their general effect because
+;; they order other threads' writes before the caller's later reads.
+(define (opt-runtime-call-excludes-reentry? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (= name cbi.compiler-builtin-id-tl-memcpy)
+      (= name cbi.compiler-builtin-id-tl-memcpy-fresh)
+      (cbi.compiler-builtin-backend-fixed-fault-id? name)
+      (cbi.compiler-builtin-backend-runtime-core-id? name)
+      (and
+        (cbi.compiler-builtin-backend-runtime-stdlib-type-lisp-id? name)
+        (not (cbi.compiler-builtin-backend-runtime-atomic-id? name))))))
+
+;; Any other external callee may invoke a TypeLisp callback that writes private
+;; cells or storage without receiving a global address itself. `name` is an
+;; effect identity (opt-effect-callee).
+(define (opt-global-mod-ref-external-mask [name : i64]) : i64
+  (if (opt-runtime-call-excludes-reentry? name)
+    0
+    (opt-global-mod-ref-effect-mask (ir.compiler-ir-direct-call-effect-id name))))
+
+;; A direct callee's row, or the conservative external-call effect.
 (define (opt-global-mod-ref-call-mask
   [mod-ref : (& mod-ref OptGlobalModRef)]
   [name : i64]) : i64
@@ -117592,7 +117693,7 @@
       (& mod-ref.writes)
       (ir.compiler-ir-symbol-id name))
       [(LookupFound mask) mask]
-      [(LookupMissing) 0])))
+      [(LookupMissing) (opt-external-call-write-mask name)])))
 
 ;; The cells a `Store name` writes: exactly name's, when there is a table.
 (define (opt-global-mod-ref-instr-store-mask
@@ -117621,11 +117722,10 @@
     [(or (Pure) (MemoryRead) (ControlFlow) (MemoryWrite)) 0]
     [(or (CpuProbe) (Unknown)) (opt-global-mod-ref-any)]))
 
-;; One instruction's own cell writes, joined into `mask`. A direct call adds
-;; nothing here: a program callee's row reaches its callers through the closure
-;; (opt-global-mod-ref-writes), and any other callee is an extern, which writes
-;; no cell (see the header's exhaustive list).
+;; Internal callees contribute through the call-graph closure. External calls
+;; seed their re-entry effect here so it propagates through internal callers.
 (define (opt-global-mod-ref-instr-mask
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [mask : i64]
   [instr : ir.CompilerIrInstr]) : i64
@@ -117633,7 +117733,10 @@
     mask
     (match (compiler-opt-global-shared-view instr)
       [(Store name _ _) (opt-global-mod-ref-store-mask index name)]
-      [(or (Call _ _ _ _) (TailCall _ _ _)) 0]
+      [(or (Call _ name _ _) (TailCall name _ _))
+        (if (opt-program-function? program name)
+          0
+          (opt-external-call-write-mask name))]
       ;; The one call form the effect table classifies `ControlFlow` rather
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
@@ -117658,6 +117761,7 @@
               blocks
               (cast 0 : i64)
               opt-global-mod-ref-instr-mask
+              program
               index))]))
     (opt-program-closed-rows-map program (&mut rows) 0 capacity)))
 
@@ -118361,6 +118465,7 @@
 
 ;; One instruction's OWN storage writes, callees excluded.
 (define (opt-global-obj-instr-own-mask
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : (& owners opt_i64_i64_map.Map)]
   [instr : (& ir.CompilerIrInstr)]) : i64
@@ -118371,11 +118476,15 @@
       (opt-global-obj-owner-mask
         index
         (opt-global-obj-owner-of-value owners (& ptr)))]
-    [(or (Call _ _ _ _) (TailCall _ _ _)) 0]
+    [(or (Call _ name _ _) (TailCall name _ _))
+      (if (opt-program-function? program name)
+        0
+        (opt-external-call-write-mask name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
     [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
 
 (define (opt-global-obj-own-instr!
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : OptGlobalObjOwners]
   [escaped : (&mut escaped (__tl_dyn-array i64))]
@@ -118400,7 +118509,9 @@
               escaped
               index)))])
     (opt-global-obj-escape-refs! refs.ref-list escaped index)
-    (bit-or mask (opt-global-obj-instr-own-mask index owners.map (& instr)))))
+    (bit-or
+      mask
+      (opt-global-obj-instr-own-mask program index owners.map (& instr)))))
 
 ;; --- pass 0: what every call site passes to every parameter ------------------
 ;;
@@ -118558,6 +118669,7 @@
                   blocks
                   (cast 0 : i64)
                   opt-global-obj-own-instr!
+                  program
                   index
                   (compiler-opt-global-shared-view owners)
                   escaped)
@@ -122036,12 +122148,15 @@
 
 ;; The three-argument form, for callers with no program facts or per-callee
 ;; memory summary in hand: P-B's length-equality table then refuses every
-;; global whose box reaches a call, which is what an absent summary means.
+;; global whose box reaches a call, which is what an absent summary means. The
+;; function list declares no externs.
 (define (opt-global-cell-summary-build
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]) : OptGlobalCellSummary
   (let
+    [_externs : unit
+      (opt-effect-links-install! (& (ir.compiler-ir-extern-seq-empty)))]
     [facts : OptProgramFacts (opt-program-facts-build functions)]
     (opt-global-cell-summary-build-with-call-memory
       type-segment-bases
@@ -123577,6 +123692,7 @@
           (let
             ;; LICM-GDP: the header-typed-global table is per program.
             [_licm-headers : unit (opt-licm-global-headers-reset!)]
+            [_effect-links : unit (opt-effect-links-install! (& externs))]
             [_licm-deref : unit
               (opt-licm-deref-program-facts!
                 type-segment-bases
@@ -128657,7 +128773,7 @@
         (opt-global-mod-ref-any)
         (opt-global-mod-ref-call-mask table name))]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(or (MemoryRead) (ControlFlow)) 0]
         [_ (opt-global-mod-ref-any)])]))
 
@@ -128744,7 +128860,7 @@
                   global-args?
                   0))]
             [(LookupMissing)
-              (match (ir.compiler-ir-direct-call-effect-id name)
+              (match (opt-direct-call-effect name)
                 ;; The runtime control-flow family is the nonreturning abort
                 ;; set (tl_abort_label / tl_oob_abort / tl_div_abort /
                 ;; tl_shift_abort). No instruction after such a call ever runs,
@@ -133681,7 +133797,7 @@
         ;; row must name no storage.
         (or (not obj.built?) (= (opt-global-mod-ref-call-mask obj name) 0)))]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(or (MemoryRead) (ControlFlow)) true]
         [_ false])]))
 

@@ -94,6 +94,20 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+## Loader diagnostic codes
+
+The `loader-error-codes` public CLI case checks source-facing loader failures
+through check/compile on both targets, including cross-file parse forwarding,
+explicit module identity overrides, and a local collision's secondary label.
+`compiler_load_tests.tl` checks explicit loader-API identity mismatches and
+code/category parity between ordinary and package walkers, legal import cycles,
+pending generators and missing text/binary includes. Registry and explain
+tests require every published loader code to remain documented.
+`loader-package-include-resolution` checks E0303 and the include's source span
+for an unknown package alias on both targets. `loader-unpublished-identity-code`
+keeps E0306 out of the public registry and explanations; explicit API identity
+constraints remain tested as E0303 resolution errors.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
@@ -231,6 +245,20 @@ two driver states. `intern-reset!` invalidates every retained ID;
 the generation. State-owned reset/capture/install operations affect only that
 driver job.
 
+Synthetic compiler fixtures initialize builtin IDs before constructing checker
+environments or reading fixed IDs; the IR-text reader supplies that boundary
+for IR fixtures. Later-phase accessors keep their owner/generation guard.
+Destructive intern fixtures use `compiler_ast_types_tests.with-test-interns`,
+which installs a fresh table with its builtin state and restores the caller's
+matching pair before releasing fixture storage. A captured intern view shares
+arrays and cannot undo a reset of the caller's table. After a reset inside a
+fixture, initialize its new builtin generation before using it. Fixture bodies
+must complete normally, without an early `return` out of the scope.
+`tc-type-env-intern-builtin-fixture-state` pins nested owners, reset generations,
+synthetic cache setup and caller restoration. Run the entire compiler-core file
+in declaration order and with shuffle seeds 1 and 17 at opt0/1/2, plus the
+optimizer file's filtered aggregate cases and full shuffled suite.
+
 `intern-str` is the short-lived, same-state compatibility path. Code that
 retains an ID across a reset or install boundary resolves it through a captured
 `InternSourceNameSession`, whose `InternSourceNameResolution` rejects
@@ -261,6 +289,14 @@ cannot resolve a valid prefix. The existing parser and LSP smokes retain alias,
 wildcard, string-path diagnostics, and editor integration coverage.
 
 ## Optimizer dense block scans
+
+Whole-program optimizer fixtures use `with-test-inline-mode` around the
+production entry. That entry arms the checked inliner, while direct band tests
+deliberately start disarmed and checked-tier tests may start armed. Restoring
+the caller's mode prevents declaration-order dependencies without changing
+production behavior. The owning inline regression covers both initial modes;
+run the optimizer smoke in declaration order and shuffle seeds 1 and 17 at
+opt0/1/2 when changing this boundary.
 
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`
 compares linked, dense and mixed blocks across growth, empty inputs and
@@ -302,6 +338,24 @@ the instructions and expected replacements use parsed IR text. Keep these
 checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
+
+The public-check `check-invalidated-parameter-*` cases retain read locations,
+invalidation secondary labels, ownership help and decoded E0208 diagnostics
+for multi-expression functions, lambdas and nested lets. Both direct safe
+destroy and imported invalidation helpers run through `check` and `compile`
+on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
+`tc-copy-projection-source-views-reuse-checked-receiver-facts` also keeps the
+checked receiver lookup through source and macro views, with non-Copy and
+unknown fields retaining their consuming dereference.
+`check-invalidated-parameter-field-read-span` locates dotted field reads
+(`pair.count`, `pair.text`) at the read in multi-expression, `begin` and
+single-expression bodies; `compiler-check-invalidated-field-read-spans-ok?`
+pins the same primaries and origin labels through the virtual-source checker,
+and `tc-move-located-view-names-the-enclosing-read` the view itself.
+`check-foreign-global-write-locations` keeps #7976 writes at the `set!` target,
+and an owner macro's write at its invocation in the importer's file;
+`check-with-owner-invalidation-location` keeps E0212 at the arena or phase
+argument.
 
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,

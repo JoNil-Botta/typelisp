@@ -135,6 +135,8 @@ The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
 sub-word integer and floating fields, and move-only boxed field values.
 
+## Store and constructor exits
+
 `store_operand_exits.tl` and `store_constructor_exits.tl` run at opt0/1/2 on
 both hosts. They cover scalar, aggregate, field, tuple, box, reference, raw
 pointer, global and array stores; return, break and continue; skipped bounds
@@ -144,6 +146,12 @@ instruction after a terminator, including annotation, replacement, constructor,
 direct/indirect call, C ABI and syscall paths. The paired safety cases retain
 canonical rejection of immutable receivers, wrong return types and invalid
 unreachable tails.
+
+`literal_constructor_exits.tl` runs at opt0/1/2 on both hosts. It checks Box and
+tuple return/break/continue, nested and zero-sized elements, skipped later
+effects and conditional fallthrough. `compiler-lower-literal-constructor-exits`
+also rejects unoptimized instructions after a terminator. The paired safety
+fixtures keep invalid returns and unreachable tuple elements type-checked.
 
 ## Runtime byte search
 

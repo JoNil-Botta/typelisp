@@ -16604,8 +16604,7 @@
       [_ false])
     "pure fields keep the packed path; effectful receivers guard their real frame home"))
 
-;; A lowered exit ends its block immediately; even dead stores can otherwise
-;; be moved across the exit by later CFG and scheduling passes.
+;; A terminator must end its block before later passes can move dead effects.
 (define (lower-test-block-exits?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
   (match blocks
@@ -16680,3 +16679,38 @@
           (str_cat.str-cat
             "store exit must terminate its block, case "
             (string.int->string index)))))))
+
+(test
+  compiler-lower-literal-constructor-exits
+  (let
+    [sources : (Array String 8)
+      (array
+        "(define (probe) : (Box i64) (box (return (box 42))))"
+        "(define (probe) : (Tuple i64 i64) (tuple 1 (return (tuple 20 22))))"
+        "(define (probe) : (Tuple unit i64) (tuple unit (return (tuple unit 42))))"
+        "(define (probe) : unit (tuple unit (return unit)) unit)"
+        "(define (probe) : (Box (Box i64)) (box (box (return (box (box 42))))))"
+        "(define (probe) : (Tuple (Tuple i64 i64) i64) (tuple (tuple 1 (return (tuple (tuple 10 20) 12))) 99))"
+        "(define (probe [leave : bool]) : (Box i64) (box (if leave (return (box 42)) 7)))"
+        "(define (probe) : i64 (let [i : i64 0] [n : i64 2] (while (< i 3) (set! i (+ i 1)) (begin (tuple (begin (set! n (+ n 10)) (continue)) 99) unit)) (+ n 1)))")]
+    (for [index (iterator.range 0 (array-length sources))]
+      (test.assert-true
+        (match (lower.lower-compiler-source (clone (array-ref sources index)))
+          [(Ok (Program _ functions _) _ owner)
+            (let
+              [valid : bool
+                (match (lower-test-function-seq-find functions "probe")
+                  [(Some (Function _ _ _ _ blocks _))
+                    (lower-test-block-exits?
+                      (ir.compiler-ir-block-list-view blocks))]
+                  [_ false])]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas owner))
+              valid)]
+          [(Err diagnostic)
+            (io.println
+              "literal exit case {}: {}"
+              index
+              (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+            false])
+        (str_cat.str-cat "literal exit case " (string.int->string index))))))

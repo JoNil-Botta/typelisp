@@ -245,6 +245,14 @@ wildcard, string-path diagnostics, and editor integration coverage.
 
 ## Optimizer dense block scans
 
+Whole-program optimizer fixtures use `with-test-inline-mode` around the
+production entry. That entry arms the checked inliner, while direct band tests
+deliberately start disarmed and checked-tier tests may start armed. Restoring
+the caller's mode prevents declaration-order dependencies without changing
+production behavior. The owning inline regression covers both initial modes;
+run the optimizer smoke in declaration order and shuffle seeds 1 and 17 at
+opt0/1/2 when changing this boundary.
+
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`
 compares linked, dense and mixed blocks across growth, empty inputs and
 retained rescans. It checks the two forward root passes, single-source

@@ -906,6 +906,100 @@
       5
       17)))
 
+(define (compiler-check-moved-read-located?
+  [path : String]
+  [source : String]
+  [name : String]
+  [line : i64]
+  [col : i64]
+  [origin-line : i64]
+  [origin-col : i64]) : bool
+  (match (check_core.compiler-check-source (clone path) source)
+    [(Ok _ _) false]
+    [(Err diagnostics-box _)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
+        [diagnostic : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first (& diagnostics))]
+        [labels : cdiag.CompilerDiagnosticLabelList
+          (cdiag.compiler-diagnostic-secondary-spans (& diagnostic))]
+        (and
+          (= (cdiag.compiler-diagnostic-list-count (& diagnostics)) 1)
+          (string.eq
+            (cdiag.compiler-diagnostic-message (& diagnostic))
+            (str_cat.str-cat "typecheck: use of moved value `" name "`"))
+          (string.eq (cdiag.compiler-diagnostic-path (& diagnostic)) path)
+          (= (cdiag.compiler-diagnostic-line (& diagnostic)) line)
+          (= (cdiag.compiler-diagnostic-col (& diagnostic)) col)
+          (= (cdiag.compiler-diagnostic-label-list-count (& labels)) 1)
+          (let
+            [origin : cdiag.CompilerDiagnosticLabel
+              (cdiag.compiler-diagnostic-label-list-get (& labels) 0)]
+            (and
+              (=
+                (cdiag.compiler-diagnostic-span-start-line (& origin.span))
+                origin-line)
+              (=
+                (cdiag.compiler-diagnostic-span-start-col (& origin.span))
+                origin-col)))))]))
+
+;; A dotted field read of a parameter whose arena was invalidated names the
+;; read, not the invalidation, in multi-expression, `begin` and single
+;; expression bodies; the invalidation is the origin label (#8994).
+(define (compiler-check-invalidated-field-read-spans-ok?) : bool
+  (and
+    (compiler-check-moved-read-located?
+      "tests/invalidated_field_multi.tl"
+      "(import stdlib.arena)
+(defstruct Pair
+  (a i64)
+  (b i64))
+(define (read-field
+  [owner : (arena.Arena r) (:invalidate r)]
+  [p : (in r Pair)]) : i64
+  (arena.destroy-safe! owner)
+  p.b)
+(define (main) : i64 42)"
+      "p"
+      9
+      3
+      8
+      3)
+    (compiler-check-moved-read-located?
+      "tests/invalidated_field_begin.tl"
+      "(import stdlib.arena)
+(defstruct Pair
+  (a i64)
+  (b i64))
+(define (read-field
+  [owner : (arena.Arena r) (:invalidate r)]
+  [p : (in r Pair)]) : i64
+  (begin
+    (arena.destroy-safe! owner)
+    (+ p.a 1)))
+(define (main) : i64 42)"
+      "p"
+      10
+      8
+      9
+      5)
+    (compiler-check-moved-read-located?
+      "tests/invalidated_field_single.tl"
+      "(import stdlib.arena)
+(defstruct Pair
+  (a i64)
+  (b i64))
+(define (read-field
+  [owner : (arena.Arena r) (:invalidate r)]
+  [p : (in r Pair)]) : i64
+  (+ (begin (arena.destroy-safe! owner) 0) p.b))
+(define (main) : i64 42)"
+      "p"
+      8
+      44
+      8
+      13)))
+
 (define (compiler-check-tests-ok?) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (and
@@ -925,6 +1019,7 @@
     (compiler-check-qualified-near-miss-ok?)
     (compiler-check-qualified-unbound-display-ok?)
     (compiler-check-caller-operand-diagnostic-path-ok?)
+    (compiler-check-invalidated-field-read-spans-ok?)
     (overlay_tests.compiler-source-overlay-tests-ok?)))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool

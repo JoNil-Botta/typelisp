@@ -128655,8 +128655,8 @@
 ;; Only a function nothing can tell apart from its twin is merged:
 ;; - it is reached only through `Call`/`TailCall` and runtime-global
 ;;   initializers: neither a `Function` descriptor reference nor a raw
-;;   `GlobalAddr` code address observes its identity, no named C-ABI or SPMD call names it, no
-;;   extern declares it, and it is not a root activated by name
+;;   `GlobalAddr` code address observes its identity, no named C-ABI or SPMD
+;;   call names it, no extern declares it, and it is not a root activated by name
 ;;   (`opt-arg-global-root-leaf?`: the entry and the backend's string helpers);
 ;; - its ABI is Ordinary;
 ;; - it holds no runtime abort site (`opt-runtime-abort-instr?`): a located

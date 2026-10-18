@@ -2185,3 +2185,8 @@ expression segment boundaries, including more than two full segments. Run it at
 opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
 and equal-ID/different-pool cases. Wrapper removal consumes each row before
 reading the next and copies out the leaf without recursive stack growth.
+
+`lambda_capture_scalar.tl` runs at opt0/1/2 on both hosts. Captured closures
+store a raw code address in their descriptor. Identical-function merging must
+retain that target, just as it retains a function-descriptor reference; the
+optimizer's observed-code-address test checks both identities directly.

@@ -570,7 +570,7 @@ lambda_capture_copy|all|-|tests/integration/lambda_capture_copy.tl|42|-|-|-|-
 lambda_capture_fixed_array|all|-|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-|-
 lambda_capture_fixed_array_aggregate|all|-|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|stdlib/string.tl|-
 lambda_capture_nested_aggregate|all|-|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|stdlib/string.tl|-
-lambda_capture_scalar|all|-|tests/integration/lambda_capture_scalar.tl|42|-|-|-|-
+lambda_capture_scalar|all|0,1,2|tests/integration/lambda_capture_scalar.tl|42|-|-|-|-
 lambda_capture_struct_enum|all|-|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-|-
 lambda_capture_tuple|all|-|tests/integration/lambda_capture_tuple.tl|42|-|-|-|-
 lambda_lift|all|-|tests/integration/lambda_lift.tl|42|-|-|-|-

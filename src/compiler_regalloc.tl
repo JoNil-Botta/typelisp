@@ -6506,16 +6506,20 @@
   full-array
   candidate-start-end-var)
 
-(define (compiler-reg-candidate-sort [candidates : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
+(define (compiler-reg-candidate-sort
+  [candidates : (& candidates CompilerRegIntervalSeq)]) : CompilerRegIntervalSeq
   (let
-    [count : i64 (compiler-reg-interval-seq-count candidates)]
+    [count : i64 candidates.len]
     [items : (__tl_dyn-array CompilerRegInterval)
       (__tl_make-array CompilerRegInterval count)]
     [index : i64 0]
     (while (< index count)
-      (set!
-        (array-ref items index)
-        (compiler-reg-interval-seq-ref candidates index))
+      (let
+        [item : (& candidates CompilerRegInterval)
+          (& (array-ref candidates.slots index))]
+        (set!
+          (array-ref items index)
+          (CompilerRegInterval item.var item.start item.end)))
       (set! index (+ index 1)))
     (compiler-reg-candidate-heapsort!
       (compiler-reg-global-shared-view items)
@@ -21560,18 +21564,16 @@
 ;; The merged coarse interval drives interference; a singleton var's coarse
 ;; interval already equals its live range, so non-coalesced values are unaffected.
 (define (compiler-reg-sort-root-segments
-  [segments : CompilerRegIntervalSeq]
+  [segments : (& segments CompilerRegIntervalSeq)]
   [root : i64]) : CompilerRegIntervalSeq
   (let
-    [count : i64 segments.len]
-    [items : (__tl_dyn-array CompilerRegInterval) segments.slots]
+    [sorted : CompilerRegIntervalSeq (compiler-reg-candidate-sort segments)]
+    [count : i64 sorted.len]
+    [items : (__tl_dyn-array CompilerRegInterval) sorted.slots]
     [written : i64 0]
     [index : i64 0]
-    ;; Gathering gives this root fresh backing storage. Sorting and compaction
-    ;; may replace slots without mutating any member's original live segments.
-    (compiler-reg-candidate-heapsort!
-      (compiler-reg-global-shared-view items)
-      count)
+    ;; The sorted storage is owned by this union. Compaction may replace slots
+    ;; without mutating a member's original live segments.
     (while (< index count)
       (let
         [start : i64 (__tl-project-field (array-ref items index) start)]
@@ -21658,11 +21660,11 @@
     ;; then form its non-overlapping union without filling genuine holes.
     (set! v 0)
     (while (< v n)
-      (set!
-        (array-ref root-segs v)
-        (compiler-reg-sort-root-segments
-          (compiler-reg-global-array-element-shared-view root-segs v)
-          v))
+      (when
+        (> (__tl-project-field (array-ref root-segs v) len) 0)
+        (set!
+          (array-ref root-segs v)
+          (compiler-reg-sort-root-segments (& (array-ref root-segs v)) v)))
       (set! v (+ v 1)))
     (CompilerRegIntervalIndex root-starts root-ends root-segs)))
 

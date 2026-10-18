@@ -10968,9 +10968,9 @@
               (set!
                 (array-ref want root)
                 (compiler-reg-root-reference-union
-                  (reg.compiler-reg-global-array-element-shared-view segments v)
+                  (clone (array-ref segments v))
                   root
-                  (reg.compiler-reg-global-array-element-shared-view want root)))))))
+                  (clone (array-ref want root))))))))
       (let
         [input : reg.CompilerRegIntervalIndex
           (reg.CompilerRegIntervalIndex starts ends segments)]
@@ -11052,7 +11052,7 @@
           (reg.compiler-reg-interval-seq-append (& want) (array-ref expected i))))
       (let
         [got : reg.CompilerRegIntervalSeq
-          (reg.compiler-reg-sort-root-segments input 7)]
+          (reg.compiler-reg-sort-root-segments (& input) 7)]
         (test.assert-true
           (compiler-reg-root-segments-eq? (& got) (& want))
           "endpoint sharing merges, one-position gaps and i64 limits do not")))))

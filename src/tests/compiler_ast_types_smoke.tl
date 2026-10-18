@@ -3361,6 +3361,8 @@
         (ast.ast-expr-packed-span-record-address table index)
         : (Ptr i64)))))
 
+;; KIND 0 selects the canonical accessors and 1 the ReSpan accessors; both
+;; record kinds share one physical table layout.
 (define (compiler-ast-packed-record-eq?
   [table : i64]
   [kind : i64]
@@ -3369,7 +3371,7 @@
   (and
     (=
       (ast.ast-expr-semantic-node-from-span-slot
-        (if (= kind ast.ast-expr-span-record-kind-canonical)
+        (if (= kind 0)
           (+ index 1)
           (- 0 (+ index 1)))
         table
@@ -3377,11 +3379,11 @@
         table
         (+ index 1))
       (cast
-        (if (= kind ast.ast-expr-span-record-kind-canonical)
+        (if (= kind 0)
           expected.semantic-node
           expected.owner-node)
         : i64))
-    (if (= kind ast.ast-expr-span-record-kind-canonical)
+    (if (= kind 0)
       (let
         [actual : ast.AstExprCanonicalSpanRecord
           (ast.ast-expr-canonical-record-get table index)]
@@ -3402,7 +3404,7 @@
   [kind : i64]
   [index : i64]
   [value : ast.AstExprCanonicalSpanRecord]) : unit
-  (if (= kind ast.ast-expr-span-record-kind-canonical)
+  (if (= kind 0)
     (ast.ast-expr-canonical-record-set! table index value)
     (ast.ast-expr-respan-record-set!
       table
@@ -3475,8 +3477,8 @@
         (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 7 0 6 0)))]
     [tables : (Array i64 2)
       (array
-        (ast.ast-expr-span-table-new owner-handle 0 64)
-        (ast.ast-expr-span-table-new owner-handle 1 64))]
+        (ast.ast-expr-span-table-new owner-handle 64)
+        (ast.ast-expr-span-table-new owner-handle 64))]
     [ok : bool
       (and
         (= (ast.ast-expr-semantic-node-from-span-slot 0 0 0 0 0) -1)
@@ -3502,7 +3504,7 @@
                   [1 64]
                   [2 65535]
                   [_ 65536])]
-              (ast.ast-expr-span-table-ensure! table owner-handle kind index)
+              (ast.ast-expr-span-table-ensure! table owner-handle index)
               (compiler-ast-packed-record-write!
                 table
                 kind
@@ -3596,7 +3598,7 @@
     [handle : i64 (arena.raw-handle owner)]
     [before : i64
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes handle)]
-    [_segment : i64 (ast.ast-expr-span-segment-new handle 0 64)]
+    [_segment : i64 (ast.ast-expr-span-segment-new handle 64)]
     [used : i64
       (-
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes handle)

@@ -1169,10 +1169,14 @@
   (semantic-node i32)
   (span AstSourceSpan))
 
-;; Compact slots retain both complete i32 ids. The coordinate word holds a
-;; signed start line, two u12 columns and an eight-bit line delta below 255.
-;; Tag 255 instead keeps an exact logical-record pointer in the first word.
-;; Overflow slots are table-owned and recycled when a record becomes compact.
+;; Compact slots retain both complete i32 ids: the first word holds the
+;; record's first i32 field in bits 0-31 and its second in bits 32-63. The
+;; coordinate word holds the line delta (end line - start line, 0-254) in bits
+;; 0-7, the u12 end column in bits 8-19, the u12 start column in bits 20-31 and
+;; the signed i32 start line in bits 32-63. Every other coordinate takes tag 255
+;; in bits 0-7 (the rest zero), and the first word then holds an exact
+;; logical-record pointer. Overflow slots are table-owned and recycled when a
+;; record becomes compact.
 (define ast-expr-span-packed-escape-tag : i64
   255)
 
@@ -1229,12 +1233,6 @@
   ;; 64M records per kind; growth past them panics instead of writing outside
   ;; the table.
   1024)
-
-;; Record kinds share the table code: 0 canonical, 1 ReSpan.
-(define ast-expr-span-record-kind-canonical : i64
-  0)
-(define ast-expr-span-record-kind-respan : i64
-  1)
 
 (define (ast-expr-span-table-word [table : i64] [index : i64]) : i64
   (unsafe
@@ -1464,7 +1462,7 @@
 
 ;; make-array zero-fills even reused arenas. Unused slots start with tag zero;
 ;; table segment addresses and the overflow free-list head also start at zero.
-(define (ast-expr-span-segment-new [owner : i64] [_kind : i64] [records : i64]) : i64
+(define (ast-expr-span-segment-new [owner : i64] [records : i64]) : i64
   (let
     [segment : (__tl_dyn-array i64)
       (in-arena (arena.Arena owner) (__tl_make-array i64 (* records 2)))]
@@ -1473,9 +1471,9 @@
         (ptr->int (__tl_array-data segment)))
       : i64)))
 
-;: A record table for KIND in OWNER whose segment 0 holds CAPACITY records,
+;: A record table in OWNER whose segment 0 holds CAPACITY records,
 ;: clamped to the initial capacity and one full segment.
-(define (ast-expr-span-table-new [owner : i64] [kind : i64] [capacity : i64]) : i64
+(define (ast-expr-span-table-new [owner : i64] [capacity : i64]) : i64
   (let
     [words : (__tl_dyn-array i64)
       (in-arena
@@ -1502,7 +1500,7 @@
     (ast-expr-span-table-word-set!
       table
       2
-      (ast-expr-span-segment-new owner kind first))
+      (ast-expr-span-segment-new owner first))
     table))
 
 ;; Copy segment 0 into one of exactly REQUESTED records (at most a full
@@ -1512,7 +1510,6 @@
 (define (ast-expr-span-table-grow-first-to!
   [table : i64]
   [owner : i64]
-  [kind : i64]
   [requested : i64]) : unit
   (let
     [old-capacity : i64 (ast-expr-span-table-word table 1)]
@@ -1524,7 +1521,7 @@
     (when
       (> capacity old-capacity)
       (let
-        [new-base : i64 (ast-expr-span-segment-new owner kind capacity)]
+        [new-base : i64 (ast-expr-span-segment-new owner capacity)]
         ;; The table is shared by all snapshots. Old segment-zero addresses
         ;; never escape, so copying packed slots preserves unique overflow owners.
         (for [index (iterator.range 0 old-capacity)]
@@ -1544,11 +1541,7 @@
 
 ;: Make record INDEX of TABLE addressable: grow segment 0 by doubling while it
 ;: is below a full segment, otherwise add the missing segments (never copying).
-(define (ast-expr-span-table-ensure!
-  [table : i64]
-  [owner : i64]
-  [kind : i64]
-  [index : i64]) : unit
+(define (ast-expr-span-table-ensure! [table : i64] [owner : i64] [index : i64]) : unit
   (unless
     (< index (ast-expr-span-table-capacity table))
     (let
@@ -1561,12 +1554,11 @@
           [capacity : i64 (ast-expr-span-table-word table 1)]
           (while (<= capacity index)
             (set! capacity (* capacity 2)))
-          (ast-expr-span-table-grow-first-to! table owner kind capacity))
+          (ast-expr-span-table-grow-first-to! table owner capacity))
         (begin
           (ast-expr-span-table-grow-first-to!
             table
             owner
-            kind
             ast-expr-span-record-segment-size)
           (for [missing (iterator.range 1 (+ segment 1))]
             (when
@@ -1576,7 +1568,6 @@
                 (+ missing 2)
                 (ast-expr-span-segment-new
                   owner
-                  kind
                   ast-expr-span-record-segment-size))))
           (ast-expr-span-table-word-set!
             table
@@ -1748,14 +1739,12 @@
 (define ast-node-canonical-span-records : i64
   (ast-expr-span-table-new
     (arena.tl_arena_current)
-    ast-expr-span-record-kind-canonical
     ast-expr-span-record-initial-capacity))
 (define ast-node-canonical-span-count : i64
   0)
 (define ast-node-respan-records : i64
   (ast-expr-span-table-new
     (arena.tl_arena_current)
-    ast-expr-span-record-kind-respan
     ast-expr-span-record-initial-capacity))
 (define ast-node-respan-count : i64
   0)
@@ -1875,7 +1864,6 @@
   (ast-expr-span-table-ensure!
     ast-node-canonical-span-records
     node-pool-base-arena
-    ast-expr-span-record-kind-canonical
     ast-node-canonical-span-count))
 
 ;; In-place rewrites of persistent nodes (#8757). A session that caches parsed
@@ -1982,7 +1970,6 @@
   (ast-expr-span-table-ensure!
     ast-node-respan-records
     node-pool-base-arena
-    ast-expr-span-record-kind-respan
     ast-node-respan-count))
 
 (define (ast-expr-semantic-node-from-span-slot
@@ -2452,15 +2439,9 @@
     [span-slot-segment-bases : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
     [canonical-span-records : i64
-      (ast-expr-span-table-new
-        base-arena
-        ast-expr-span-record-kind-canonical
-        ast-expr-span-record-initial-capacity)]
+      (ast-expr-span-table-new base-arena ast-expr-span-record-initial-capacity)]
     [respan-records : i64
-      (ast-expr-span-table-new
-        base-arena
-        ast-expr-span-record-kind-respan
-        ast-expr-span-record-initial-capacity)]
+      (ast-expr-span-table-new base-arena ast-expr-span-record-initial-capacity)]
     [storage-root : i64 (ast-node-pool-arena-make)]
     (for [segment-index (iterator.range 0 segment-count)]
       (let
@@ -2536,7 +2517,6 @@
   (ast-expr-span-table-ensure!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     pool.canonical-span-count)
   pool)
 
@@ -2746,7 +2726,6 @@
   (ast-expr-span-table-grow-first-to!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     capacity))
 
 (define (ast-expr-node-pool-state-canonical-records-grow-in-place!
@@ -2754,7 +2733,6 @@
   (ast-expr-span-table-ensure!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     pool.canonical-span-count))
 
 (define (ast-expr-node-pool-state-respan-records-grow-in-place!
@@ -2762,7 +2740,6 @@
   (ast-expr-span-table-ensure!
     pool.respan-records
     pool.base-arena
-    ast-expr-span-record-kind-respan
     pool.respan-count))
 
 (define (ast-expr-node-pool-state-note-span-in-place!

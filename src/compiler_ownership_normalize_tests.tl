@@ -1022,6 +1022,15 @@
       (normalize-test-dead-unsupported?)
       "normalizer does not certify unsupported dead forms")
     (set! mode 0)
+    (while (< mode 3)
+      (begin
+        (test.assert-true
+          (normalize-test-diverging-operand? mode)
+          (str_cat.str-cat
+            "normalizer diverging operand mode "
+            (string.int->string mode)))
+        (set! mode (+ mode 1))))
+    (set! mode 0)
     (while (< mode 15)
       (begin
         (test.assert-true
@@ -1282,12 +1291,12 @@
     [store : typed.TypedStore (fixture.typed-test-store (& lease))]
     [origin : typed.TypedOriginId
       (fixture.typed-test-origin! (&mut store) (& lease))]
-    [int-type : typed.TypedTypeId
-      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
     [unit-type : typed.TypedTypeId
       (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Unit)]
     [never-type : typed.TypedTypeId
       (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Never)]
+    [string-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.String)]
     [returned : typed.TypedOccurrenceId
       (normalize-test-node!
         (&mut store)
@@ -1296,23 +1305,16 @@
         origin
         typed.TypedOperation.Return
         (normalize-test-empty))]
-    ;; A call whose operand diverges is outside the subset, even dead.
-    [diverged : typed.TypedOccurrenceId
-      (normalize-test-node!
-        (&mut store)
-        (& lease)
-        never-type
-        origin
-        typed.TypedOperation.Return
-        (normalize-test-empty))]
+    ;; A value of a type without an ownership class is outside the subset,
+    ;; even dead.
     [read : typed.TypedOccurrenceId
       (normalize-test-node!
         (&mut store)
         (& lease)
-        int-type
+        string-type
         origin
-        (typed.TypedOperation.Primitive (typed.TypedPrimitive.Builtin 999 1))
-        (__tl_make-array diverged))]
+        (typed.TypedOperation.Primitive (typed.TypedPrimitive.Builtin 999 0))
+        (normalize-test-empty))]
     [root : typed.TypedOccurrenceId
       (normalize-test-node!
         (&mut store)
@@ -1331,6 +1333,106 @@
       [(norm.OwnershipNormalizeResult.Err
           (norm.OwnershipNormalizeFailure.Unsupported _))
         true]
+      [_ false])))
+
+;; A diverging operand is an exit (#8449): the operation is never performed
+;; and the operands after it are walked in blocks nothing reaches. Mode 0 is a
+;; call's first argument (its second is dead), mode 1 a unary operand, mode 2
+;; a loop condition (its body is dead). Each body returns once, through the
+;; diverging operand.
+(define (normalize-test-diverging-operand? [mode : i64]) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (fixture.typed-test-lease (& intern-state) (cast (+ 701 mode) : u64))]
+    [store : typed.TypedStore (fixture.typed-test-store (& lease))]
+    [origin : typed.TypedOriginId
+      (fixture.typed-test-origin! (&mut store) (& lease))]
+    [int-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [unit-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Unit)]
+    [never-type : typed.TypedTypeId
+      (fixture.typed-test-type! (&mut store) (& lease) ast.AstType.Never)]
+    [value : typed.TypedOccurrenceId
+      (fixture.typed-test-literal!
+        (&mut store)
+        (& lease)
+        int-type
+        origin
+        typed.TypedSyntax.Generated
+        42)]
+    [returned : typed.TypedOccurrenceId
+      (normalize-test-node!
+        (&mut store)
+        (& lease)
+        never-type
+        origin
+        typed.TypedOperation.Return
+        (normalize-test-one value))]
+    [dead : typed.TypedOccurrenceId
+      (if (= mode 2)
+        (normalize-test-node!
+          (&mut store)
+          (& lease)
+          unit-type
+          origin
+          (typed.TypedOperation.Literal ast.AstLiteral.Unit)
+          (normalize-test-empty))
+        (fixture.typed-test-literal!
+          (&mut store)
+          (& lease)
+          int-type
+          origin
+          typed.TypedSyntax.Generated
+          17))]
+    [root : typed.TypedOccurrenceId
+      (cond
+        [(= mode 0)
+          (normalize-test-node!
+            (&mut store)
+            (& lease)
+            never-type
+            origin
+            (typed.TypedOperation.Primitive
+              (typed.TypedPrimitive.Builtin 999 2))
+            (fixture.typed-test-children2 returned dead))]
+        [(= mode 1)
+          (normalize-test-node!
+            (&mut store)
+            (& lease)
+            never-type
+            origin
+            (typed.TypedOperation.Unary ast.AstUnOp.Neg)
+            (normalize-test-one returned))]
+        [else
+          (normalize-test-node!
+            (&mut store)
+            (& lease)
+            never-type
+            origin
+            typed.TypedOperation.While
+            (fixture.typed-test-children2 returned dead))])]
+    (match (norm.ownership-normalize!
+      (&mut store)
+      (& lease)
+      root
+      int-type
+      (__tl_make-array norm.OwnershipNormalizeTypeClass 0)
+      (norm.ownership-normalize-default-limits))
+      [(norm.OwnershipNormalizeResult.Ok output)
+        (let
+          [index : i64 0]
+          [returns : i64 0]
+          (while (< index (array-length output.body.blocks))
+            (begin
+              (match (& (array-ref output.body.blocks index).terminator)
+                [(own.OwnershipTerminator.Return _)
+                  (set! returns (+ returns 1))]
+                [_ unit])
+              (set! index (+ index 1))))
+          (= returns 1))]
       [_ false])))
 
 (define (normalize-test-goto?
@@ -1510,11 +1612,15 @@
               (fixture.typed-test-children2 inner outer-continue)))]
         [(= mode 11) value]
         [else unit-node])]
+    ;; A loop whose condition diverges (mode 14) never completes: its own
+    ;; result is Never.
     [loop : typed.TypedOccurrenceId
       (normalize-test-node!
         (&mut store)
         (& lease)
-        unit-type
+        (if (= mode 14)
+          never-type
+          unit-type)
         origin
         typed.TypedOperation.While
         (fixture.typed-test-children2 condition body))]
@@ -1631,6 +1737,12 @@
               (normalize-test-goto? (& output.body) 2 4)
               (normalize-test-goto? (& output.body) 5 6)
               (normalize-test-goto? (& output.body) 6 1))]
+          ;; A diverging condition is an exit: the condition block returns
+          ;; and nothing reaches the body or the loop exit.
+          [(= mode 14)
+            (match (& (array-ref output.body.blocks 1).terminator)
+              [(own.OwnershipTerminator.Return _) true]
+              [_ false])]
           [else false])]
       [(norm.OwnershipNormalizeResult.Err
           (norm.OwnershipNormalizeFailure.Core failure))
@@ -1648,7 +1760,4 @@
           (= mode 10)
           (= mode 11)
           (= mode 12))]
-      [(norm.OwnershipNormalizeResult.Err
-          (norm.OwnershipNormalizeFailure.Unsupported _))
-        (= mode 14)]
       [_ false])))

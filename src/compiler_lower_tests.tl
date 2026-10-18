@@ -3198,6 +3198,19 @@
   (with ([b (BufferedFile (FileHandle 10) 20) cleanup-buffered-file])
     42))")
 
+;; A `with` initializer that diverges is an exit: its owner is never
+;; initialized, so neither the body that projects it nor its cleanup follows.
+(define (compiler-lower-diverging-with-initializer-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (early [x : i64]) : i64
+  (with ([h (return x) cleanup-file-handle])
+    (+ h.fd x)))
+(define (main) : i64
+  (early 42))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower.lower-compiler-source src)
     [(Ok _ _) true]
@@ -6454,6 +6467,24 @@
           "close-buffer"
           "cleanup-file-handle"))]
     [_ false]))
+
+(test
+  compiler-lower-diverging-with-initializer
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source
+        (compiler-lower-diverging-with-initializer-source)))
+      [(Some functions)
+        (and
+          (= (lower-test-count functions "early" (Return)) 1)
+          (=
+            (lower-test-function-direct-call-count
+              functions
+              "early"
+              "cleanup-file-handle")
+            0))]
+      [_ false])
+    "a diverging with initializer ends the scope: no body or cleanup follows it"))
 
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))

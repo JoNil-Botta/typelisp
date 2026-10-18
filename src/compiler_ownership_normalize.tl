@@ -2428,8 +2428,9 @@
           (normalize-child-id node 0)
           block
           depth))]
+    ;; A diverging operand is an exit.
+    (when (= input.type 13) (return (NormalizeValueResult.Ok input)))
     (if (or
-      (= input.type 13)
       (not (normalize-primitive-type? input.type))
       (not (normalize-primitive-type? node.type)))
       (NormalizeValueResult.Err
@@ -3287,9 +3288,9 @@
     [condition-block : i64 (try (normalize-block! state (& node.source)))]
     [body-block : i64 (try (normalize-block! state (& node.source)))]
     [exit-block : i64 (try (normalize-block! state (& node.source)))]
-    (unless
-      (= node.type 0)
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+    ;; A diverging condition is an exit: the loop is entered once and never
+    ;; completes, and its body is walked in a block nothing reaches.
+    [diverged? : bool false]
     (try
       (normalize-terminate!
         state
@@ -3306,23 +3307,26 @@
             (normalize-child-id node 0)
             condition-block
             depth))]
-      (when
-        (= condition.type 13)
-        (return
-          (NormalizeValueResult.Err
-            (OwnershipNormalizeFailure.Unsupported
-              "ownership normalization: while Never condition coercion"))))
+      (set! diverged? (= condition.type 13))
       (unless
-        (= condition.type 1)
+        (and
+          (or diverged? (= condition.type 1))
+          (=
+            node.type
+            (if diverged?
+              13
+              0)))
         (return (NormalizeValueResult.Err (normalize-type-error))))
-      (try
-        (normalize-terminate!
-          state
-          condition.block
-          (own.OwnershipTerminator.Branch
-            (normalize-place-id (& state) condition.place)
-            (normalize-block-id (& state) body-block)
-            (normalize-block-id (& state) exit-block)))))
+      (unless
+        diverged?
+        (try
+          (normalize-terminate!
+            state
+            condition.block
+            (own.OwnershipTerminator.Branch
+              (normalize-place-id (& state) condition.place)
+              (normalize-block-id (& state) body-block)
+              (normalize-block-id (& state) exit-block))))))
     (let
       [saved-break : i64 state.break-target]
       [saved-continue : i64 state.continue-target]
@@ -3358,7 +3362,9 @@
                   body.block
                   (own.OwnershipTerminator.Goto
                     (normalize-block-id (& state) condition-block)))))])))
-    (normalize-value! state exit-block 0 (& node.source))))
+    (if diverged?
+      (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))
+      (normalize-value! state exit-block 0 (& node.source)))))
 
 (define (normalize-loop-control!
   [state : (&mut state NormalizeState)]
@@ -5674,6 +5680,7 @@
     [values : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [active : i64 block]
     [index : i64 0]
+    [exited? : bool false]
     (unless
       (and (>= selected 0) (< selected (- count 1)))
       (return (NormalizeValueResult.Err (normalize-type-error))))
@@ -5688,15 +5695,17 @@
               (normalize-child-id node index)
               active
               depth))]
-        (when
-          (= value.type 13)
-          (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: eager call Never operand coercion"))))
-        (__tl_array-push! values value.place)
-        (set! active value.block)
+        ;; A diverging element is an exit: the later ones never run (each is
+        ;; walked in a block nothing reaches) and nothing is selected.
+        (if (or exited? (= value.type 13))
+          (begin
+            (set! exited? true)
+            (set! active (try (normalize-block! state (& node.source)))))
+          (begin
+            (__tl_array-push! values value.place)
+            (set! active value.block)))
         (set! index (+ index 1))))
+    (when exited? (return (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))))
     (let
       [result : i64
         (try (normalize-local! state node.type false (& node.source)))]
@@ -6088,6 +6097,8 @@
     ;; A receiver selecting its place through control flow (form 151) forms a
     ;; place in each tail; one of them is borrowed at the store the same way.
     [selection : NormalizeMaybeSelection NormalizeMaybeSelection.No]
+    ;; An operand diverged: the call is never made.
+    [exited? : bool false]
     (while (< index (array-length node.children))
       (let
         [before : i64 state.reserved-count]
@@ -6199,22 +6210,34 @@
                         3
                         2)]
                     [_ 0])))])]
-        (when
-          (= value.type 13)
-          (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: eager call Never operand coercion"))))
-        (try (normalize-charge! state 1 1 0))
-        (__tl_array-push! operands value.place)
-        (__tl_array-push!
-          reservations
-          (if (= state.reserved-count (+ before 1))
-            before
-            -1))
-        (when (= index 0) (set! store-end state.loan-count))
-        (set! active value.block)
+        (if (or exited? (= value.type 13))
+          ;; A diverging operand is an exit: the operands after it never run,
+          ;; each walked in a block nothing reaches (as a binary's right
+          ;; operand after a diverging left one), and the call is never made.
+          (begin
+            (set! exited? true)
+            (set! active (try (normalize-block! state (& node.source)))))
+          (begin
+            (try (normalize-charge! state 1 1 0))
+            (__tl_array-push! operands value.place)
+            (__tl_array-push!
+              reservations
+              (if (= state.reserved-count (+ before 1))
+                before
+                -1))
+            (when (= index 0) (set! store-end state.loan-count))
+            (set! active value.block)))
         (set! index (+ index 1))))
+    ;; Reservations the evaluated operands made are never activated, and a
+    ;; store's receiver formed before the exit is never reserved.
+    (when
+      exited?
+      (set! state.reserved-count mark)
+      (match deferred
+        [(NormalizeMaybeDeferred.Some receiver)
+          (try (normalize-retain-node! state receiver.node -1))]
+        [(NormalizeMaybeDeferred.No) unit])
+      (return (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))))
     (match selection
       [(NormalizeMaybeSelection.Some targets type)
         (let
@@ -8155,6 +8178,13 @@
     [active : i64 scrutinee.block]
     [arm : i64 1]
     [reached? : bool false]
+    ;; A diverging scrutinee is an exit: no arm is entered.
+    (when
+      (= scrutinee.type 13)
+      (return
+        (if (= node.type 13)
+          (NormalizeValueResult.Ok scrutinee)
+          (NormalizeValueResult.Err (normalize-type-error)))))
     ;; Matching a move-only module value by value would consume its
     ;; permanent place (SPEC global places).
     (when

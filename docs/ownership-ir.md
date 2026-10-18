@@ -346,8 +346,28 @@ Structured While has exactly one condition and body occurrence. Their CFG
 blocks repeat through edges; no occurrence is duplicated to unroll a loop.
 Break and Continue target the nearest enclosing While body, and its condition
 is checked outside that body's control scope. Nested traversal restores the
-outer targets. Conditions require Bool, bodies Unit or Never, and loop exits
-produce Unit. Never-valued condition coercion remains explicitly Unsupported.
+outer targets. Conditions require Bool (or Never: a diverging condition is
+an exit and the loop never completes), bodies Unit or Never, and loop exits
+produce Unit.
+
+A diverging operand (type Never) is an exit, the same rule wherever it occurs:
+the operations after it in its form are unreachable and the form itself is
+never performed. Each selected occurrence's own type is its intrinsic result
+(`tc-selected-flow-never!`): Never when an operand it evaluates in order
+diverges (a call or builtin argument, a constructor field, a tuple or array
+element, a unary or binary operand, an assigned or initialized value, a
+`set!` place's index), when the condition or scrutinee of a conditional does,
+or when every branch does; a contextual coercion of Never changes only the
+checked type. Binding scopes end at the exit in the producer: a `begin`,
+`let` or `with` is its prefix through the diverging form, a never-initialized
+binding gets no binder, a match after a diverging scrutinee is that
+scrutinee, and a place whose index diverges is never formed (its consumer is
+the indices through that one). The forms after it are still typed. Within
+other forms the normalizer walks the remaining operands into blocks nothing
+reaches, performs nothing and yields an exit value; reservations the earlier
+operands made are never activated. An exit leaves no normal edge, so no
+cleanup obligation is checked on it; `return`, `break` and `continue` remain
+checked exits.
 Computed Copy temporaries and unique Copy declaration writes use ordinary
 Assign in the core, allowing repeated execution without inventing a resource
 acquisition. Reads still require initialization on first entry and on every
@@ -1248,7 +1268,9 @@ including a scalar variable read. A reference argument records a borrow of its
 intended place rather than copying the pointee. Short-circuit operators become
 branches; untaken operands are not evaluated. An unused argument still performs
 its effects and specified failures. Constructor fields and pattern projections
-have the same explicit order and single-evaluation rule.
+have the same explicit order and single-evaluation rule. An argument of type
+Never is an exit: the arguments after it are not evaluated and the operation
+is not performed (see the diverging-operand rule of the selected slice).
 
 Loops contain entry, condition, body, backedge and exit blocks. `break` goes to
 the nearest loop exit, `continue` to its iteration edge, and `return` to the

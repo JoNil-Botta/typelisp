@@ -9397,6 +9397,19 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-use-after-move-source)
       "typecheck: use of moved value `s`")
+    ;; A call through a C function pointer value lends its operands (SPEC
+    ;; 4.3), as a direct extern call does, wherever the pointer comes from.
+    (compiler-typecheck-ok?
+      "(extern (make-callback) : (CFunc non-null (-> String i64)) (:symbol \"tl_make_callback\"))
+(defstruct CallbackHolder (callback (CFunc non-null (-> String i64))))
+(define global-callback : (CFunc non-null (-> String i64)) (make-callback))
+(define (lend-twice [callback : (CFunc non-null (-> String i64))] [holder : CallbackHolder] [s : String]) : i64
+  (+ (callback s) (global-callback s) (holder.callback s) ((make-callback) s)))")
+    (compiler-typecheck-error-ok?
+      "(defstruct Packet (text String))
+(define (lend-moved [callback : (CFunc non-null (-> String i64))] [s : String]) : i64
+  (let [p : Packet (Packet s)] (callback s)))"
+      "typecheck: use of moved value `s`")
     (compiler-typecheck-ok?
       "(define (single-move [s : String]) : String
   (let [t : String s] t))")

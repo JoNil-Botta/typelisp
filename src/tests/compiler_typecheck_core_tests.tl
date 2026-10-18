@@ -13137,6 +13137,10 @@
       (ast.ast-node-pool-context-expr-push
         pools
         (ast.AstExpr.Binary ast.AstBinOp.Add direct-return literal))]
+    [divergent-unary : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Neg direct-return))]
     [divergent-init : i64
       (tc-selected-test-let-id pools name ast.AstType.I64 direct-return read)]
     [branch : i64
@@ -13157,6 +13161,8 @@
     [lease : (typed.TypedBodyLease intern-state)
       (tc-selected-test-lease ctx (& intern-state))]
     [selected-bindings-25 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-27 : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [selected-bindings-24 : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
@@ -13279,6 +13285,80 @@
             [(tc_core.TcSelectedOccurrence.Selected _) true]
             [_ false])]
         [_ false])]
+    ;; A divergent operand is an exit: the unary operation is represented, its
+    ;; own result Never while its checked type stays the contextual one.
+    [unary-occurrence : tc_core.TcSelectedOccurrence
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        divergent-unary
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-27)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
+          occurrence]
+        [_ tc_core.TcSelectedOccurrence.Unrepresented])]
+    [unary-exit : bool
+      (match unary-occurrence
+        [(tc_core.TcSelectedOccurrence.Selected id)
+          (match (tc_core.tc-selected-occurrence-never!
+            (&mut store)
+            (& lease)
+            id)
+            [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+            [_ false])]
+        [_ false])]
+    ;; A divergent initializer is an exit: the `let` is its prefix through
+    ;; the initializer (the return, typed Never), and the never-initialized
+    ;; local has no binder.
+    [initializer-binders : i64 store.binder-count]
+    [initializer-occurrence : tc_core.TcSelectedOccurrence
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        divergent-init
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-24)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
+          occurrence]
+        [_ tc_core.TcSelectedOccurrence.Unrepresented])]
+    [initializer-exit : bool
+      (match initializer-occurrence
+        [(tc_core.TcSelectedOccurrence.Selected id)
+          (let
+            [exit : typed.TypedOccurrenceId
+              (tc-selected-test-child!
+                (&mut store)
+                (& lease)
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& id.handle)))
+                0)]
+            (and
+              (= store.binder-count initializer-binders)
+              (match (tc_core.tc-selected-occurrence-never!
+                (&mut store)
+                (& lease)
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& id.handle))))
+                [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+                [_ false])
+              (match (typed.typed-occurrence-get! (&mut store) (& lease) id)
+                [(typed.TypedNodeResult.Ok node) (= node.child-count 1)]
+                [_ false])
+              (match (typed.typed-occurrence-get! (&mut store) (& lease) exit)
+                [(typed.TypedNodeResult.Ok node)
+                  (match node.operation
+                    [(typed.TypedOperation.Return) true]
+                    [_ false])]
+                [_ false])))]
+        [_ false])]
     [count : i64 store.occurrence-count]
     [query : bool
       (and
@@ -13311,22 +13391,6 @@
               diagnostic.message
               "typecheck: return type mismatch: expected i64, found bool"))]
         [_ false])]
-    [initializer-gap : bool
-      (match (tc_core.tc-infer-selected-id
-        ctx
-        env
-        divergent-init
-        (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
-        (tc_core.tc-selected-capture
-          (&mut store)
-          (& lease)
-          (&mut selected-bindings-24)))
-        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
-          (match occurrence
-            [(tc_core.TcSelectedOccurrence.Unrepresented) true]
-            [_ false])]
-        [_ false])]
     [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! saved)]
     [missing : bool
       (match (tc_core.tc-infer-selected-id
@@ -13354,8 +13418,11 @@
       binary-selected
       (io.panic "selected return: divergent binary operand selected"))
     (unless
-      initializer-gap
-      (io.panic "selected return: divergent initializer stays unrepresented"))
+      unary-exit
+      (io.panic "selected return: divergent unary operand is an exit"))
+    (unless
+      initializer-exit
+      (io.panic "selected return: divergent initializer ends its let"))
     (unless missing (io.panic "selected return: enclosing function required"))
     (unless unchanged (io.panic "selected return: failed operand retired"))
     true))
@@ -14316,6 +14383,88 @@
   (test.assert-true
     (tc-free-names-hygienic-binder-ok?)
     "free-name analysis renders a hygienic binder through its session"))
+
+;; A signature's arena brand (#8449): the lifetime an arena owner parameter
+;; binds, by value or behind `&`, brands its `(in r T)` parameters. The call
+;; slice takes such a parameter as an owned value of that arena, and an
+;; argument only with exactly that brand.
+(define (tc-selected-arena-branded-signature-ok?) : bool
+  (let
+    [_init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [_installed : unit (ast.ast-node-pool-context-install! pools)]
+    [_reader : unit (ast.ast-node-pool-reader-use! pools)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [brand : i64 (ci.intern "selected-signature-brand")]
+    [other : i64 (ci.intern "selected-signature-other")]
+    [borrow : i64 (ci.intern "selected-signature-borrow")]
+    [brands : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [_brands : unit (ast.ast-lifetime-list-push (&mut brands) brand)]
+    [owner : ast.AstType
+      (ast.ast-ty-struct-args cbi.compiler-builtin-id-arena-type brands)]
+    [branded : ast.AstType
+      (ast.ast-ty-region-with-pools pools brand (& (ast.AstType.String)))]
+    [foreign : ast.AstType
+      (ast.ast-ty-region-with-pools pools other (& (ast.AstType.String)))]
+    [by-value : ast.AstTypeList
+      (ast.ast-type-cons-with-pools
+        pools
+        (& owner)
+        (&
+          (ast.ast-type-cons-with-pools
+            pools
+            (& branded)
+            (& (ast.ast-type-list-new)))))]
+    [by-reference : ast.AstTypeList
+      (ast.ast-type-cons-with-pools
+        pools
+        (& (ast.ast-ty-ref-with-pools pools borrow (& owner)))
+        (&
+          (ast.ast-type-cons-with-pools
+            pools
+            (& branded)
+            (& (ast.ast-type-list-new)))))]
+    [regions : (__tl_dyn-array i64)
+      (tc_core.tc-selected-signature-arena-regions ctx (& by-value))]
+    [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [value-marks : (__tl_dyn-array bool)
+      (tc_core.tc-selected-arena-branded-params ctx (& by-value))]
+    [reference-marks : (__tl_dyn-array bool)
+      (tc_core.tc-selected-arena-branded-params ctx (& by-reference))]
+    (and
+      (= (array-length regions) 1)
+      (= (array-ref regions 0) brand)
+      (not (array-ref value-marks 0))
+      (array-ref value-marks 1)
+      (not (array-ref reference-marks 0))
+      (array-ref reference-marks 1)
+      ;; Without the signature's brand the branded parameter has no graph type.
+      (not
+        (tc_core.tc-selected-call-param-type-ok?
+          ctx
+          (tc_core.tc-selected-signature-arena-erase
+            ctx
+            (& none)
+            (tc_core.tc-global-shared-view branded))))
+      (tc_core.tc-selected-call-param-type-ok?
+        ctx
+        (tc_core.tc-selected-signature-arena-erase
+          ctx
+          (& regions)
+          (tc_core.tc-global-shared-view branded)))
+      (tc_core.tc-selected-arena-brand-exact?
+        (tc_core.tc-global-shared-view branded)
+        (tc_core.tc-global-shared-view branded))
+      (tc_core.tc-selected-arena-brand-exact?
+        ast.AstType.String
+        (tc_core.tc-global-shared-view branded))
+      (not (tc_core.tc-selected-arena-brand-exact? foreign branded)))))
+
+(test
+  selected-arena-branded-signature
+  (test.assert-true
+    (tc-selected-arena-branded-signature-ok?)
+    "an arena parameter's brand makes the call's (in r T) parameters owned, with exactly that brand"))
 
 (test
   selected-inference-transactions

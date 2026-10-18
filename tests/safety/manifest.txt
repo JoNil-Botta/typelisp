@@ -980,6 +980,12 @@ arena_branded_destroy_closure_alias_use_reject|check-fail|tests/safety/arena_bra
 arena_branded_destroy_parameter_reject|check-fail|tests/safety/arena_branded_destroy_parameter_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
 arena_branded_destroy_parameter_field_reject|check-fail|tests/safety/arena_branded_destroy_parameter_field_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
 arena_branded_destroy_parameter_alias_reject|check-fail|tests/safety/arena_branded_destroy_parameter_alias_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+# A call whose signature brands an `(in r T)` parameter with an arena owner
+# parameter's `r` takes that arena's allocation; its branded result ends with
+# the arena, and a value of another arena coerced into the brand is not taken.
+arena_branded_call_operand_ok|check-ok|tests/safety/arena_branded_call_operand_ok.tl|-|-
+arena_branded_call_result_destroy_reject|check-fail|tests/safety/arena_branded_call_result_destroy_reject.tl|tests/safety/arena_branded_call_result_destroy_reject.tl:15:29|use of moved value `text`
+arena_branded_call_other_arena_reject|check-fail|tests/safety/arena_branded_call_other_arena_reject.tl|-|the ownership checker does not support a construct in this function body
 arena_destroy_copied_bare_owner_reject|check-fail|tests/safety/arena_destroy_copied_bare_owner_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
 # A tracked direct arena owner moves when stored in another binding, an
 # aggregate, a closure capture or a result, even as a bare Copy handle; passing
@@ -1605,6 +1611,11 @@ mir_try_moved_reject|check-fail|tests/safety/mir_try_moved_reject.tl|tests/safet
 mir_holder_ok|run-exit|tests/safety/mir_holder_ok.tl|5|-
 mir_holder_borrow_conflict_reject|check-fail|tests/safety/mir_holder_borrow_conflict_reject.tl|tests/safety/mir_holder_borrow_conflict_reject.tl:16:13|cannot mutably borrow borrowed place `items`
 mir_unreachable_tail_ok|check-ok|tests/safety/mir_unreachable_tail_ok.tl|-|-
+never_let_initializer_ok|run-exit|tests/safety/never_let_initializer_ok.tl|42|-
+never_let_initializer_obligation_reject|check-fail|tests/safety/never_let_initializer_obligation_reject.tl|tests/safety/never_let_initializer_obligation_reject.tl:14:19|cleanup obligation of `h` is not discharged before this return
+never_operand_ok|run-exit|tests/safety/never_operand_ok.tl|42|-
+never_operand_moved_reject|check-fail|tests/safety/never_operand_moved_reject.tl|tests/safety/never_operand_moved_reject.tl:16:38|use of moved value `t`
+never_operand_obligation_reject|check-fail|tests/safety/never_operand_obligation_reject.tl|tests/safety/never_operand_obligation_reject.tl:21:20|cleanup obligation of `h` is not discharged before this break leaves its loop
 mir_call_result_lifetime_ok|run-exit|tests/safety/mir_call_result_lifetime_ok.tl|42|-
 mir_reborrow_shared_from_mut_reject|check-fail|tests/safety/mir_reborrow_shared_from_mut_reject.tl|tests/safety/mir_reborrow_shared_from_mut_reject.tl:14:13|cannot assign to borrowed place `exclusive.value`
 mir_call_result_deref_reject|check-fail|tests/safety/mir_call_result_deref_reject.tl|tests/safety/mir_call_result_deref_reject.tl:14:13|cannot assign to borrowed place `x.value`
@@ -1676,6 +1687,9 @@ mir_with_arena_moved_outer_reject|check-fail|tests/safety/mir_with_arena_moved_o
 mir_with_arena_borrow_conflict_reject|check-fail|tests/safety/mir_with_arena_borrow_conflict_reject.tl|tests/safety/mir_with_arena_borrow_conflict_reject.tl:11:28|cannot assign to borrowed place `values[0]`
 mir_cfunc_value_call_ok|check-ok|tests/safety/mir_cfunc_value_call_ok.tl|-|-
 mir_cfunc_unsafe_call_reject|check-fail|tests/safety/mir_cfunc_unsafe_call_reject.tl|tests/safety/mir_cfunc_unsafe_call_reject.tl:7:3|C function pointer requires unsafe context
+mir_cfunc_value_lend_ok|check-ok|tests/safety/mir_cfunc_value_lend_ok.tl|-|-
+mir_cfunc_value_lend_moved_reject|check-fail|tests/safety/mir_cfunc_value_lend_moved_reject.tl|tests/safety/mir_cfunc_value_lend_moved_reject.tl:10:23|use of moved value `s`
+mir_cfunc_value_lend_obligation_reject|check-fail|tests/safety/mir_cfunc_value_lend_obligation_reject.tl|tests/safety/mir_cfunc_value_lend_obligation_reject.tl:11:3|cleanup obligation of `h` is not discharged at the end of its let scope
 mir_array_literal_move_ok|run-exit|tests/safety/mir_array_literal_move_ok.tl|42|-
 mir_array_literal_move_twice_reject|check-fail|tests/safety/mir_array_literal_move_twice_reject.tl|tests/safety/mir_array_literal_move_twice_reject.tl:9:21|use of moved value `items[0]`
 mir_array_literal_move_computed_read_reject|check-fail|tests/safety/mir_array_literal_move_computed_read_reject.tl|tests/safety/mir_array_literal_move_computed_read_reject.tl:10:27|use of moved value `items`

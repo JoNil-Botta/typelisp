@@ -1977,7 +1977,9 @@
     LowerState
     sym_i64_env.SymI64Env
     tc_core.TcTypeEnv
-    LowerCleanupStack))
+    LowerCleanupStack)
+  ;; An initializer diverged: the later bindings and the body never run.
+  (Diverged LowerState))
 
 (defenum ResultLowerResourceBindings
   (Ok LowerResourceBindings)
@@ -45658,6 +45660,13 @@
                       init))]
                 (match lowered
                   [(Expr init-state init-value init-ty)
+                    ;; A diverging initializer is an exit: its owner is never
+                    ;; initialized, and what follows it is unreachable (as
+                    ;; after a diverging form in `lower-begin-at`).
+                    (when
+                      (tc_core.tc-never-type?
+                        (lower-global-shared-view init-ty))
+                      (return (Ok (Diverged init-state))))
                     (match (lower-cleanup-name-id-from-expr
                       (lower-global-shared-view cleanup))
                       [(Ok cleanup-name-id)
@@ -45809,7 +45818,14 @@
                     (try
                       (lower-emit-cleanup-stack body-state body-env cleanups))]
                   (ResultLowerExpr.Ok
-                    (LowerExpr.Expr cleanup-state value body-ty))))]))])))
+                    (LowerExpr.Expr cleanup-state value body-ty))))]))]
+      ;; No cleanup runs on a never edge.
+      [(LowerResourceBindings.Diverged diverged-state)
+        (ResultLowerExpr.Ok
+          (LowerExpr.Expr
+            diverged-state
+            ir.CompilerIrValue.Unit
+            ast.AstType.Never))])))
 
 (define (lower-begin
   [ctx : tc_core.TcContext]

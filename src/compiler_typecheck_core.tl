@@ -3544,60 +3544,93 @@
         (TcSelectedSink.Capture store lease bindings))]))
 
 ;; Contextual Never coercion affects the checker's result, not control flow.
-;; Derive the intrinsic result of these two compound forms from their actual
-;; chosen child records while retaining the canonical inferred type separately.
+;; Every published occurrence takes its intrinsic result from its actual
+;; chosen child records, while the canonical inferred type is retained
+;; separately (`tc-selected-publish`). A diverging operand is an exit: a form
+;; that evaluates its operands in order, an operand of type Never among them,
+;; never completes (the operands after it are unreachable). A conditional
+;; form diverges only when its condition or scrutinee does, or every branch.
 (define (tc-selected-flow-never!
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [operation : (& operation typed.TypedOperation)]
   [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]) : TcSelectedBoolResult
   (match operation
-    [(typed.TypedOperation.Sequence)
-      (let
-        [index : i64 0]
-        [never? : bool false]
-        (while (< index (array-length children))
-          (let
-            [child-never? : bool
-              (try
-                (tc-selected-occurrence-never!
-                  store
-                  lease
-                  (typed.TypedOccurrenceId
-                    (typed.typed-handle-copy
-                      (& (array-ref children index).handle)))))]
-            (set! never? (or never? child-never?))
-            (set! index (+ index 1))))
-        (TcSelectedBoolResult.Ok never?))]
     [(typed.TypedOperation.If)
       (unless
         (= (array-length children) 3)
         (return (TcSelectedBoolResult.Err typed.TypedError.Shape)))
       (let
         [condition : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 0).handle)))))]
-        [left : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 1).handle)))))]
-        [right : bool
-          (try
-            (tc-selected-occurrence-never!
-              store
-              lease
-              (typed.TypedOccurrenceId
-                (typed.typed-handle-copy (& (array-ref children 2).handle)))))]
+          (try (tc-selected-child-never! store lease children 0))]
+        [left : bool (try (tc-selected-child-never! store lease children 1))]
+        [right : bool (try (tc-selected-child-never! store lease children 2))]
         (TcSelectedBoolResult.Ok (or condition (and left right))))]
-    [_ (TcSelectedBoolResult.Err typed.TypedError.Shape)]))
+    ;; A match diverges when its scrutinee does, or every arm's body: no arm
+    ;; reaches its join (`normalize-match!`). Child 0 is the scrutinee; an
+    ;; arm's child 1 is its body.
+    [(typed.TypedOperation.Match _)
+      (if (or
+        (= (array-length children) 0)
+        (try (tc-selected-child-never! store lease children 0)))
+        (TcSelectedBoolResult.Ok (> (array-length children) 0))
+        (let
+          [index : i64 1]
+          [never? : bool (> (array-length children) 1)]
+          (while (and never? (< index (array-length children)))
+            (let
+              [body : typed.TypedOccurrenceId
+                (try
+                  (typed.typed-child-get!
+                    store
+                    lease
+                    (typed.TypedOccurrenceId
+                      (typed.typed-handle-copy
+                        (& (array-ref children index).handle)))
+                    1))]
+              (set!
+                never?
+                (try (tc-selected-occurrence-never! store lease body)))
+              (set! index (+ index 1))))
+          (TcSelectedBoolResult.Ok never?)))]
+    ;; A loop diverges when its condition does; its body may break out.
+    [(typed.TypedOperation.While)
+      (tc-selected-child-never! store lease children 0)]
+    ;; A short-circuit operator evaluates its right operand conditionally.
+    [(typed.TypedOperation.Binary (ast.AstBinOp.And))
+      (tc-selected-child-never! store lease children 0)]
+    [(typed.TypedOperation.Binary (ast.AstBinOp.Or))
+      (tc-selected-child-never! store lease children 0)]
+    ;; An arm or pattern is entered only through its match.
+    [(typed.TypedOperation.Arm) (TcSelectedBoolResult.Ok false)]
+    [(typed.TypedOperation.Pattern _) (TcSelectedBoolResult.Ok false)]
+    [_
+      (let
+        [index : i64 0]
+        [never? : bool false]
+        (while (and (not never?) (< index (array-length children)))
+          (set!
+            never?
+            (try (tc-selected-child-never! store lease children index)))
+          (set! index (+ index 1)))
+        (TcSelectedBoolResult.Ok never?))]))
 
+;; Whether child `index` of `children` diverges (its own type is Never).
+(define (tc-selected-child-never!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]
+  [index : i64]) : TcSelectedBoolResult
+  (if (or (< index 0) (>= index (array-length children)))
+    (TcSelectedBoolResult.Err typed.TypedError.Shape)
+    (tc-selected-occurrence-never!
+      store
+      lease
+      (typed.TypedOccurrenceId
+        (typed.typed-handle-copy (& (array-ref children index).handle))))))
+
+;; An occurrence published with its intrinsic result (`tc-selected-publish`
+;; derives it for every form).
 (define (tc-selected-publish-flow
   [result : ResultTcType]
   [syntax : typed.TypedSyntax]
@@ -3609,40 +3642,7 @@
     lease
     intern
     bind)
-  (match result
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match sink
-        [(TcSelectedSink.Query)
-          (TcSelectedResult.Ok
-            ty
-            TcSelectedOccurrence.Unrepresented
-            TcSelectedSink.Query)]
-        [(TcSelectedSink.Capture store lease bindings)
-          (match (tc-selected-flow-never!
-            store
-            lease
-            (& operation)
-            (& children))
-            [(TcSelectedBoolResult.Err error)
-              (TcSelectedResult.Err
-                (tc-selected-error error)
-                (TcSelectedSink.Capture store lease bindings))]
-            [(TcSelectedBoolResult.Ok never?)
-              (match (tc-selected-publish
-                (ResultTcType.Ok
-                  (if never?
-                    ast.AstType.Never
-                    (tc-global-shared-view ty)))
-                syntax
-                source
-                operation
-                children
-                (TcSelectedSink.Capture store lease bindings))
-                [(TcSelectedResult.Err message next)
-                  (TcSelectedResult.Err message next)]
-                [(TcSelectedResult.Ok _ occurrence next)
-                  (TcSelectedResult.Ok ty occurrence next)])])])]))
+  (tc-selected-publish result syntax source operation children sink))
 
 (define (tc-selected-publish
   [result : ResultTcType]
@@ -3689,10 +3689,20 @@
                   ty
                   TcSelectedOccurrence.Unrepresented
                   (TcSelectedSink.Capture store lease bindings))
-                (match (typed.typed-type-add!
+                (match (match (tc-selected-flow-never!
                   store
                   lease
-                  (tc-global-shared-view ty))
+                  (& operation)
+                  (& children))
+                  [(TcSelectedBoolResult.Err error)
+                    (typed.TypedTypeIdResult.Err error)]
+                  [(TcSelectedBoolResult.Ok never?)
+                    (typed.typed-type-add!
+                      store
+                      lease
+                      (if never?
+                        ast.AstType.Never
+                        (tc-global-shared-view ty)))])
                   [(typed.TypedTypeIdResult.Err error)
                     (TcSelectedResult.Err
                       (tc-selected-error error)
@@ -6198,6 +6208,59 @@
         (tc-type-strip-region target)
         (tc-type-strip-region referent)))))
 
+;; Forming a place evaluates its index operands in order. One that diverges is
+;; an exit, as a diverging operand of any form (`tc-selected-flow-never!`): the
+;; place is never formed and its consumer never runs, so the consumer is the
+;; sequence of the indices through that one. The count of those indices, or 0.
+(define (tc-selected-place-exit!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [indices : (& indices (__tl_dyn-array typed.TypedOccurrenceId))]) : TcSelectedIndexCut
+  (let
+    [index : i64 0]
+    [cut : i64 0]
+    (while (and (= cut 0) (< index (array-length indices)))
+      (match (tc-selected-child-never! store lease indices index)
+        [(TcSelectedBoolResult.Err error)
+          (return (TcSelectedIndexCut.Err error))]
+        [(TcSelectedBoolResult.Ok never?) (when never? (set! cut (+ index 1)))])
+      (set! index (+ index 1)))
+    (TcSelectedIndexCut.Ok cut)))
+
+(defenum TcSelectedIndexCut
+  (Ok i64)
+  (Err typed.TypedError))
+
+;; The consumer of a place whose formation exits after `cut` indices.
+(define (tc-selected-place-exit-publish
+  [result : ResultTcType]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [indices : (& indices (__tl_dyn-array typed.TypedOccurrenceId))]
+  [cut : i64]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [prefix : (__tl_dyn-array typed.TypedOccurrenceId)
+      (__tl_make-array typed.TypedOccurrenceId cut)]
+    [index : i64 0]
+    (while (< index cut)
+      (set!
+        (array-ref prefix index)
+        (typed.TypedOccurrenceId
+          (typed.typed-handle-copy (& (array-ref indices index).handle))))
+      (set! index (+ index 1)))
+    (tc-selected-publish
+      result
+      syntax
+      source
+      typed.TypedOperation.Sequence
+      prefix
+      sink)))
+
 (define (tc-selected-publish-borrow
   [ty : ast.AstType]
   [mutable : bool]
@@ -6219,6 +6282,24 @@
           (ResultTcType.Ok ty)
           (TcSelectedSink.Capture store lease bindings))
         (let
+          [_exit : unit
+            (match (tc-selected-place-exit! store lease (& indices))
+              [(TcSelectedIndexCut.Err error)
+                (return
+                  (TcSelectedResult.Err
+                    (tc-selected-error error)
+                    (TcSelectedSink.Capture store lease bindings)))]
+              [(TcSelectedIndexCut.Ok cut)
+                (when
+                  (> cut 0)
+                  (return
+                    (tc-selected-place-exit-publish
+                      (ResultTcType.Ok ty)
+                      syntax
+                      source
+                      (& indices)
+                      cut
+                      (TcSelectedSink.Capture store lease bindings))))])]
           [type-id : typed.TypedTypeId
             (match (typed.typed-place-get! store lease id)
               [(typed.TypedPlaceView.Ok row)
@@ -8606,6 +8687,19 @@
                     bindings)])])])]))
 
 ;; A by-value scrutinee that is not a place lives in a synthetic binder.
+;; Unit, or Never when the initializing `value` diverges: an initialization
+;; published outside `tc-selected-publish` takes the same intrinsic result.
+(define (tc-selected-initialization-type!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [value : typed.TypedOccurrenceId]) : ast.AstType
+  (match (tc-selected-occurrence-never! store lease value)
+    [(TcSelectedBoolResult.Ok never?)
+      (if never?
+        ast.AstType.Never
+        ast.AstType.Unit)]
+    [(TcSelectedBoolResult.Err _) ast.AstType.Unit]))
+
 (define (tc-selected-scrutinee-binder!
   [ty : ast.AstType]
   [value : typed.TypedOccurrenceId]
@@ -8626,8 +8720,16 @@
             (TcSelectedScrutinee.Err
               (tc-selected-error error)
               (TcSelectedSink.Capture store lease bindings)))])]
+    ;; The initialization's own result: Never when its value diverges
+    ;; (`tc-selected-flow-never!`).
     [unit-id : typed.TypedTypeId
-      (match (typed.typed-type-add! store lease ast.AstType.Unit)
+      (match (typed.typed-type-add!
+        store
+        lease
+        (tc-selected-initialization-type!
+          store
+          lease
+          (typed.TypedOccurrenceId (typed.typed-handle-copy (& value.handle)))))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
           (return
@@ -8832,112 +8934,135 @@
                     (return (TcSelectedResult.Err message next))]
                   [(ResultTcUnit.Ok) unit])
                 (set! (array-ref children 0) scrutinee)
-                (match (tc-infer-selected-match-arms
-                  ctx
-                  env
-                  scrut-ty
-                  top-ty
-                  position
-                  (& arms)
-                  0
-                  (tc-selected-match-arm-expected
-                    ctx
-                    env
-                    (tc-global-shared-view expr)
-                    (& arms)
-                    (tc-global-shared-view syntax)
-                    (tc-global-shared-view expected))
-                  ast.AstType.Never
-                  arm-types
-                  children
-                  (> arms.len 0)
-                  (tc-global-shared-view source)
-                  next)
-                  [(TcSelectedArmsResult.Err message after)
-                    (TcSelectedResult.Err message after)]
-                  [(TcSelectedArmsResult.Legacy after)
-                    (tc-selected-unrepresented
-                      (tc-infer-selected-legacy ctx env expr syntax expected)
-                      after)]
-                  [(TcSelectedArmsResult.Ok
-                      merged
-                      represented?
+                (match (tc-selected-sink-never!
+                  next
+                  (typed.TypedOccurrenceId
+                    (typed.typed-handle-copy (& (array-ref children 0).handle))))
+                  [(TcSelectedNeverCheck.Checked diverged? next)
+                    (match (tc-infer-selected-match-arms
+                      ctx
+                      env
+                      scrut-ty
+                      top-ty
+                      position
+                      (& arms)
+                      0
+                      (tc-selected-match-arm-expected
+                        ctx
+                        env
+                        (tc-global-shared-view expr)
+                        (& arms)
+                        (tc-global-shared-view syntax)
+                        (tc-global-shared-view expected))
+                      ast.AstType.Never
                       arm-types
                       children
-                      after)
-                    (match (tc-match-exhaustiveness-ok
-                      ctx
-                      (tc-global-shared-view coverage)
-                      (tc-global-shared-view arms))
-                      [(ResultTcUnit.Err message)
+                      (and (> arms.len 0) (not diverged?))
+                      (tc-global-shared-view source)
+                      next)
+                      [(TcSelectedArmsResult.Err message after)
                         (TcSelectedResult.Err message after)]
-                      [(ResultTcUnit.Ok)
-                        (let
-                          [index : i64 0]
-                          [joined? : bool represented?]
-                          ;; An arm yielding a view of a move-only value (a
-                          ;; part bound from a referent) where the match
-                          ;; yields the owned value would move it out from
-                          ;; behind the reference, as a return would.
-                          [move-out : String ""]
-                          (while (< index arms.len)
-                            (unless
-                              (or
-                                (match (owned_view.compiler-owned-element-view
-                                  arm-types
-                                  index)
-                                  [(ast.AstType.Never) true]
-                                  [_ false])
-                                ;; As an `if` joins its branches: a
-                                ;; region tag on a Copy value aside.
-                                (tc-selected-aligned-type?
-                                  ctx
-                                  (tc-global-array-element-shared-view
-                                    arm-types
-                                    index)
-                                  (tc-global-shared-view merged)))
-                              (set! joined? false)
-                              (when
-                                (and
-                                  (= (string.string-length (& move-out)) 0)
-                                  (tc-selected-view-move-out?
-                                    ctx
-                                    env
-                                    (tc-global-shared-view merged)
-                                    (tc-global-array-element-shared-view
+                      [(TcSelectedArmsResult.Legacy after)
+                        (tc-selected-unrepresented
+                          (tc-infer-selected-legacy
+                            ctx
+                            env
+                            expr
+                            syntax
+                            expected)
+                          after)]
+                      [(TcSelectedArmsResult.Ok
+                          merged
+                          represented?
+                          arm-types
+                          children
+                          after)
+                        (match (tc-match-exhaustiveness-ok
+                          ctx
+                          (tc-global-shared-view coverage)
+                          (tc-global-shared-view arms))
+                          [(ResultTcUnit.Err message)
+                            (TcSelectedResult.Err message after)]
+                          [(ResultTcUnit.Ok)
+                            (let
+                              [index : i64 0]
+                              [joined? : bool represented?]
+                              ;; An arm yielding a view of a move-only value (a
+                              ;; part bound from a referent) where the match
+                              ;; yields the owned value would move it out from
+                              ;; behind the reference, as a return would.
+                              [move-out : String ""]
+                              (while (< index arms.len)
+                                (unless
+                                  (or
+                                    (match (owned_view.compiler-owned-element-view
                                       arm-types
-                                      index)))
-                                (set!
-                                  move-out
-                                  (match (ast.ast-match-arm-list-get
-                                    (& arms)
-                                    index
-                                    (ast.ast-match-arm-fallback))
-                                    [(ast.AstMatchArm.Arm pattern body-id)
-                                      (tc-selected-view-move-out-error
+                                      index)
+                                      [(ast.AstType.Never) true]
+                                      [_ false])
+                                    ;; As an `if` joins its branches: a
+                                    ;; region tag on a Copy value aside.
+                                    (tc-selected-aligned-type?
+                                      ctx
+                                      (tc-global-array-element-shared-view
+                                        arm-types
+                                        index)
+                                      (tc-global-shared-view merged)))
+                                  (set! joined? false)
+                                  (when
+                                    (and
+                                      (= (string.string-length (& move-out)) 0)
+                                      (tc-selected-view-move-out?
                                         ctx
                                         env
-                                        body-id
                                         (tc-global-shared-view merged)
-                                        0
-                                        (tc-pattern-add-bound-name-ids
-                                          pattern
-                                          TcNameIdList.Nil))]))))
-                            (set! index (+ index 1)))
-                          (if (> (string.string-length (& move-out)) 0)
-                            (TcSelectedResult.Err move-out after)
-                            (if joined?
-                              (tc-selected-publish
-                                (ResultTcType.Ok merged)
-                                syntax
-                                source
-                                (typed.TypedOperation.Match (= mode 2))
-                                children
-                                after)
-                              (TcSelectedResult.Ok
-                                merged
-                                TcSelectedOccurrence.Unrepresented
-                                after))))])]))])])]))
+                                        (tc-global-array-element-shared-view
+                                          arm-types
+                                          index)))
+                                    (set!
+                                      move-out
+                                      (match (ast.ast-match-arm-list-get
+                                        (& arms)
+                                        index
+                                        (ast.ast-match-arm-fallback))
+                                        [(ast.AstMatchArm.Arm pattern body-id)
+                                          (tc-selected-view-move-out-error
+                                            ctx
+                                            env
+                                            body-id
+                                            (tc-global-shared-view merged)
+                                            0
+                                            (tc-pattern-add-bound-name-ids
+                                              pattern
+                                              TcNameIdList.Nil))]))))
+                                (set! index (+ index 1)))
+                              (if (> (string.string-length (& move-out)) 0)
+                                (TcSelectedResult.Err move-out after)
+                                (cond
+                                  ;; The arms after a diverging scrutinee never
+                                  ;; run: the match is its scrutinee's evaluation,
+                                  ;; an exit (the arms are still typed).
+                                  [diverged?
+                                    (TcSelectedResult.Ok
+                                      merged
+                                      (TcSelectedOccurrence.Selected
+                                        (typed.TypedOccurrenceId
+                                          (typed.typed-handle-copy
+                                            (& (array-ref children 0).handle))))
+                                      after)]
+                                  [joined?
+                                    (tc-selected-publish-flow
+                                      (ResultTcType.Ok merged)
+                                      syntax
+                                      source
+                                      (typed.TypedOperation.Match (= mode 2))
+                                      children
+                                      after)]
+                                  [else
+                                    (TcSelectedResult.Ok
+                                      merged
+                                      TcSelectedOccurrence.Unrepresented
+                                      after)])))])])]))])])]))
 
 ;; --- In-arena (#8449) ---------------------------------------------------------
 ;;
@@ -13704,6 +13829,10 @@
   (Ordinary i64 ast.AstType bool)
   ;; An extern function: its key and checked signature.
   (Foreign i64 ast.AstType)
+  ;; A call through a C function pointer value: the `CFunc`'s signature. The C
+  ;; ABI is a property of the callee's type, so the call is foreign as an
+  ;; extern function's is (SPEC 4.3), wherever the pointer value comes from.
+  (ForeignValue ast.AstType)
   ;; A read-only builtin: its dispatch arm.
   (Builtin i64)
   ;; A slice view (`slice-view`, `slice-mut-view` and their bytes forms):
@@ -13994,6 +14123,8 @@
       (tc-call-function-lifetimes
         (tc-global-shared-view params)
         (tc-global-shared-view ret))]
+    [arena-regions : (__tl_dyn-array i64)
+      (tc-selected-signature-arena-regions ctx (& params))]
     [index : i64 0]
     [ok? : bool
       (and
@@ -14039,7 +14170,12 @@
               (tc-global-shared-view params)
               (tc-global-shared-view ret))))
         (or
-          (tc-selected-call-param-type-ok? ctx (tc-global-shared-view ret))
+          (tc-selected-call-param-type-ok?
+            ctx
+            (tc-selected-signature-arena-erase
+              ctx
+              (& arena-regions)
+              (tc-global-shared-view ret)))
           (tc-selected-view-type?
             ctx
             (tc-resolve-type ctx (tc-global-shared-view ret)))))]
@@ -14048,10 +14184,52 @@
         ok?
         (tc-selected-call-param-type-ok?
           ctx
-          (ast.ty-node-get
-            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback)))))
+          (tc-selected-signature-arena-erase
+            ctx
+            (& arena-regions)
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (& params)
+                index
+                (ast.ast-type-id-fallback))))))
       (set! index (+ index 1)))
     ok?))
+
+;; The lifetimes a signature brands an arena owner parameter with, by value or
+;; behind a reference: the arena regions of the call, as an arena parameter's
+;; brand is one of its own body's (`typed.typed-arena-region-note!`). A value
+;; `(in r T)` of such a brand is an allocation of the argument's arena: an
+;; owned value of the graph, while typing keeps the brand's region rules.
+(define (tc-selected-signature-arena-regions
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]) : (__tl_dyn-array i64)
+  (let
+    [regions : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 0]
+    (while (< index (ast.ast-type-list-len params))
+      (match (tc-arena-target
+        ctx
+        (tc-type-strip-invalidate
+          (tc-resolve-type
+            ctx
+            (ast.ty-node-get
+              (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))))
+        [(TcArenaTarget.Target _ _ (TcMaybeNameId.Some region))
+          (__tl_array-push! regions region)]
+        [_ unit])
+      (set! index (+ index 1)))
+    regions))
+
+;; A signature type with the signature's arena `regions` erased
+;; (`tc-selected-arena-erase`); an `(:invalidate r T)` parameter takes a `T`.
+(define (tc-selected-signature-arena-erase
+  [ctx : TcContext]
+  [regions : (& regions (__tl_dyn-array i64))]
+  [ty : ast.AstType]) : ast.AstType
+  (tc-selected-arena-erase
+    ctx
+    regions
+    (tc-type-strip-invalidate (tc-resolve-type ctx ty))))
 
 ;; A macro's hygienic name for an enum variant of its definition module,
 ;; looked up in that module's context exactly as legacy name lookup does (the
@@ -14812,6 +14990,70 @@
                 represented?
                 next)])])]))
 
+;; A call through a C function pointer value (SPEC 4.3): the pointer, a Copy
+;; value, is read first; then, as for an extern function, legacy typing
+;; decides the result and each operand is read for the call (a non-Copy place
+;; is lent). The callee is the call's child 0, as for any call through a value.
+(define (tc-infer-selected-foreign-value-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [func-id : i64]
+  [fn-ty : ast.AstType]
+  [args : (& args ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-legacy ctx env expr syntax expected)
+    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+    [(ResultTcType.Ok ty)
+      (match sink
+        [(TcSelectedSink.Query)
+          (TcSelectedResult.Ok
+            ty
+            TcSelectedOccurrence.Unrepresented
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (match (tc-infer-selected-callee
+            ctx
+            env
+            func-id
+            (tc-global-shared-view source)
+            (TcSelectedSink.Capture store lease bindings))
+            [(TcSelectedResult.Err message next)
+              (TcSelectedResult.Err message next)]
+            [(TcSelectedResult.Ok _ callee next)
+              (match (tc-infer-selected-builtin-operands
+                ctx
+                env
+                args
+                0
+                (__tl_make-array typed.TypedOccurrenceId args.len)
+                (tc-global-shared-view source)
+                next)
+                [(TcSelectedArgsResult.Err message after)
+                  (TcSelectedResult.Err message after)]
+                [(TcSelectedArgsResult.Ok children represented? after)
+                  (tc-selected-publish-call
+                    (ResultTcType.Ok ty)
+                    (typed.TypedCallKind.Indirect
+                      (tc-selected-effect-callee-id ctx env func-id))
+                    fn-ty
+                    syntax
+                    source
+                    (tc-selected-with-callee children (& callee))
+                    (and
+                      represented?
+                      (match (& callee)
+                        [(TcSelectedOccurrence.Selected _) true]
+                        [_ false]))
+                    after)])])])]))
+
 ;; A read operand formed as a place: a named place, or an array element (lent
 ;; whole for the read when its element cannot be named).
 (define (tc-selected-operand-place? [ctx : TcContext] [expr : ast.AstExpr]) : bool
@@ -15405,13 +15647,26 @@
     (match (tc-direct-lambda-check ctx env (tc-global-shared-view func))
       [(TcDirectLambdaCheck.No)
         (match (match (tc-call-target-expr-id ctx env func-id)
-          ;; A C function pointer is called through its value like a `Func`.
           [(ResultTcType.Ok callee-ty)
             (match (tc-selected-c-function-signature
               ctx
               env
               (tc-global-shared-view callee-ty))
-              [(ast.AstMaybeType.Some signature) (ResultTcType.Ok signature)]
+              ;; A C function pointer value is called through the C ABI: a
+              ;; foreign call, as a direct extern call is, whatever the
+              ;; pointer's source (a global, parameter, local, field or any
+              ;; other expression).
+              [(ast.AstMaybeType.Some signature)
+                (return
+                  (if (tc-selected-foreign-signature-ok?
+                    ctx
+                    (tc-global-shared-view signature)
+                    (match (& signature)
+                      [(ast.AstType.Func params _)
+                        (ast.ast-type-list-len params)]
+                      [_ -1]))
+                    (TcSelectedCallTarget.ForeignValue signature)
+                    TcSelectedCallTarget.Legacy))]
               [(ast.AstMaybeType.No) (ResultTcType.Ok callee-ty)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
           [(ResultTcType.Err _) TcSelectedCallTarget.Legacy]
@@ -15699,6 +15954,9 @@
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstTypeList)]
+  ;; Per parameter: whether the signature brands it with an arena
+  ;; (`tc-selected-arena-branded-params`).
+  [branded : (& branded (__tl_dyn-array bool))]
   [allow-region-args : bool]
   ;; A constructor's result: its arguments are stored into it.
   [constructor : ast.AstMaybeType]
@@ -15944,14 +16202,112 @@
                             func
                             args
                             params
+                            branded
                             allow-region-args
                             constructor
                             arity-msg
                             (+ index 1)
                             children
-                            (and represented? selected?)
+                            (and
+                              represented?
+                              selected?
+                              (or
+                                (>= index (array-length branded))
+                                (not (array-ref branded index))
+                                (tc-selected-arena-brand-exact?
+                                  (tc-global-shared-view got)
+                                  (tc-global-shared-view want))))
                             source
                             next)])))])])]))))
+
+;; The region tags (`(in r T)`) anywhere in a type.
+(define (tc-selected-region-tags-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
+  (match ty
+    [(ast.AstType.Region region inner)
+      (tc-selected-region-tags-into
+        (ast.ty-node-get inner)
+        (tc-name-id-list-add out region))]
+    [(ast.AstType.Tuple elems)
+      (let
+        [list : ast.AstTypeList (ast.ast-type-list-box-shared-view elems)]
+        [index : i64 0]
+        [acc : TcNameIdList out]
+        (while (< index (ast.ast-type-list-len (& list)))
+          (set!
+            acc
+            (tc-selected-region-tags-into
+              (ast.ty-node-get
+                (ast.ast-type-list-get
+                  (& list)
+                  index
+                  (ast.ast-type-id-fallback)))
+              acc))
+          (set! index (+ index 1)))
+        acc)]
+    [(or (ast.AstType.Array elem _) (ast.AstType.DynArray elem)
+         (ast.AstType.Slice elem) (ast.AstType.Box elem) (ast.AstType.Ptr elem)
+         (ast.AstType.MutPtr elem))
+      (tc-selected-region-tags-into (ast.ty-node-get elem) out)]
+    [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner)
+         (ast.AstType.Invalidate _ inner))
+      (tc-selected-region-tags-into (ast.ty-node-get inner) out)]
+    [_ out]))
+
+;; Per parameter of a signature: whether it is tagged with one of the
+;; signature's arena brands (`tc-selected-signature-arena-regions`).
+(define (tc-selected-arena-branded-params
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]) : (__tl_dyn-array bool)
+  (let
+    [regions : (__tl_dyn-array i64)
+      (tc-selected-signature-arena-regions ctx params)]
+    [count : i64 (ast.ast-type-list-len params)]
+    [out : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [tags : TcNameIdList
+          (tc-selected-region-tags-into
+            (tc-type-strip-invalidate
+              (tc-resolve-type
+                ctx
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    params
+                    index
+                    (ast.ast-type-id-fallback)))))
+            TcNameIdList.Nil)]
+        [found : bool false]
+        (while (and (not found) (not (tc-name-id-list-empty? tags)))
+          (when
+            (tc-selected-i64-member? (& regions) (tc-name-id-list-head tags))
+            (set! found true))
+          (set! tags (tc-name-id-list-rest tags)))
+        (set! (array-ref out index) found))
+      (set! index (+ index 1)))
+    out))
+
+;; A call represents an argument for a parameter it brands with an arena
+;; (`tc-selected-arena-branded-params`) only when the argument carries no
+;; other brand than the parameter's (`want`, instantiated). Typing lets a value
+;; of an outer arena flow into an inner arena's brand, but the call's result
+;; and stores then name the inner brand alone, and destroying the outer arena
+;; would not end them: the graph sees arena values only through their brands.
+(define (tc-selected-arena-brand-exact?
+  [got : ast.AstType]
+  [want : ast.AstType]) : bool
+  (let
+    [wanted : TcNameIdList (tc-selected-region-tags-into want TcNameIdList.Nil)]
+    [cursor : TcNameIdList (tc-selected-region-tags-into got TcNameIdList.Nil)]
+    [exact? : bool true]
+    (unless
+      (tc-name-id-list-empty? wanted)
+      (while (and exact? (not (tc-name-id-list-empty? cursor)))
+        (unless
+          (tc-name-id-list-contains wanted (tc-name-id-list-head cursor))
+          (set! exact? false))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    exact?))
 
 (define (tc-selected-publish-call
   [result : ResultTcType]
@@ -16163,6 +16519,18 @@
         expected
         source
         sink)]
+    [(TcSelectedCallTarget.ForeignValue fn-ty)
+      (tc-infer-selected-foreign-value-call
+        ctx
+        env
+        expr
+        func-id
+        fn-ty
+        (& args)
+        syntax
+        expected
+        source
+        sink)]
     [(TcSelectedCallTarget.Foreign key fn-ty)
       (tc-infer-selected-foreign-call
         ctx
@@ -16256,6 +16624,8 @@
                       (return (TcSelectedResult.Err message sink))])]
                 [declared-view : ast.AstTypeList
                   (tc-global-shared-view declared-params)]
+                [branded : (__tl_dyn-array bool)
+                  (tc-selected-arena-branded-params ctx (& declared-params))]
                 [params : ast.AstTypeList
                   (if (ast.ast-lifetime-list-empty? (& lifetimes))
                     declared-params
@@ -16289,6 +16659,7 @@
                       (tc-global-shared-view func)
                       (& args)
                       (& params)
+                      (& branded)
                       allow-region-args
                       (if (= key -1)
                         (ast.AstMaybeType.Some
@@ -18094,8 +18465,16 @@
             (TcSelectedPlaceResult.Err
               (tc-selected-error error)
               (TcSelectedSink.Capture store lease bindings)))])]
+    ;; The initialization's own result: Never when its value diverges
+    ;; (`tc-selected-flow-never!`).
     [unit-id : typed.TypedTypeId
-      (match (typed.typed-type-add! store lease ast.AstType.Unit)
+      (match (typed.typed-type-add!
+        store
+        lease
+        (tc-selected-initialization-type!
+          store
+          lease
+          (typed.TypedOccurrenceId (typed.typed-handle-copy (& value.handle)))))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
           (return
@@ -18514,6 +18893,24 @@
         TcSelectedSink.Query)]
     [(TcSelectedSink.Capture store lease bindings)
       (let
+        [_exit : unit
+          (match (tc-selected-place-exit! store lease (& indices))
+            [(TcSelectedIndexCut.Err error)
+              (return
+                (TcSelectedResult.Err
+                  (tc-selected-error error)
+                  (TcSelectedSink.Capture store lease bindings)))]
+            [(TcSelectedIndexCut.Ok cut)
+              (when
+                (> cut 0)
+                (return
+                  (tc-selected-place-exit-publish
+                    (ResultTcType.Ok (tc-global-shared-view type))
+                    (tc-global-shared-view syntax)
+                    (tc-global-shared-view source)
+                    (& indices)
+                    cut
+                    (TcSelectedSink.Capture store lease bindings))))])]
         [type-id : typed.TypedTypeId
           (match (typed.typed-place-get! store lease id)
             [(typed.TypedPlaceView.Ok row)
@@ -18809,6 +19206,24 @@
                   (tc-global-shared-view result)
                   (TcSelectedSink.Capture store lease bindings))
                 (let
+                  [_exit : unit
+                    (match (tc-selected-place-exit! store lease (& indices))
+                      [(TcSelectedIndexCut.Err error)
+                        (return
+                          (TcSelectedResult.Err
+                            (tc-selected-error error)
+                            (TcSelectedSink.Capture store lease bindings)))]
+                      [(TcSelectedIndexCut.Ok cut)
+                        (when
+                          (> cut 0)
+                          (return
+                            (tc-selected-place-exit-publish
+                              (tc-global-shared-view result)
+                              (tc-global-shared-view syntax)
+                              (tc-global-shared-view source)
+                              (& indices)
+                              cut
+                              (TcSelectedSink.Capture store lease bindings))))])]
                   [type-id : typed.TypedTypeId
                     (match (typed.typed-place-get! store lease id)
                       [(typed.TypedPlaceView.Ok row)
@@ -19104,21 +19519,9 @@
               (TcSelectedPlaceResult.Err
                 (tc-selected-error typed.TypedError.Query)
                 TcSelectedSink.Query)]
+            ;; A diverging index stays in the place: forming it is an exit
+            ;; (`tc-selected-place-exit!`).
             [(TcSelectedSink.Capture store lease bindings)
-              (match (tc-selected-occurrence-never! store lease index)
-                [(TcSelectedBoolResult.Err error)
-                  (return
-                    (TcSelectedPlaceResult.Err
-                      (tc-selected-error error)
-                      (TcSelectedSink.Capture store lease bindings)))]
-                [(TcSelectedBoolResult.Ok diverges)
-                  (when
-                    diverges
-                    (return
-                      (TcSelectedPlaceResult.Ok
-                        type
-                        TcSelectedPlace.Unrepresented
-                        (TcSelectedSink.Capture store lease bindings))))])
               (let
                 [count : i64 (array-length indices)]
                 [_charged : unit
@@ -50451,36 +50854,24 @@
       (match sink
         [(TcSelectedSink.Query)
           (tc-selected-unrepresented result TcSelectedSink.Query)]
+        ;; A diverging operand is an exit (`tc-selected-flow-never!`).
         [(TcSelectedSink.Capture store lease bindings)
-          (match (tc-selected-occurrence-never!
+          (match (typed.typed-charge!
             store
             lease
-            (typed.TypedOccurrenceId (typed.typed-handle-copy (& id.handle))))
-            [(TcSelectedBoolResult.Err error)
+            (comptime (size-of (type typed.TypedOccurrenceId))))
+            [(typed.TypedResult.Err error)
               (TcSelectedResult.Err
                 (tc-selected-error error)
                 (TcSelectedSink.Capture store lease bindings))]
-            [(TcSelectedBoolResult.Ok never?)
-              (if never?
-                (tc-selected-unrepresented
-                  result
-                  (TcSelectedSink.Capture store lease bindings))
-                (match (typed.typed-charge!
-                  store
-                  lease
-                  (comptime (size-of (type typed.TypedOccurrenceId))))
-                  [(typed.TypedResult.Err error)
-                    (TcSelectedResult.Err
-                      (tc-selected-error error)
-                      (TcSelectedSink.Capture store lease bindings))]
-                  [(typed.TypedResult.Ok _)
-                    (tc-selected-publish
-                      result
-                      syntax
-                      source
-                      (typed.TypedOperation.Unary op)
-                      (__tl_make-array id)
-                      (TcSelectedSink.Capture store lease bindings))]))])])]))
+            [(typed.TypedResult.Ok _)
+              (tc-selected-publish
+                result
+                syntax
+                source
+                (typed.TypedOperation.Unary op)
+                (__tl_make-array id)
+                (TcSelectedSink.Capture store lease bindings))])])]))
 
 (define (tc-infer-selected-unary
   [ctx : TcContext]
@@ -51101,9 +51492,9 @@
       TcSelectedSink.Query)))
 
 ;; The canonical sequence checker retains precisely the child results it just
-;; selected. A Never before the last child keeps the old checking schedule:
-;; later children are still checked once, in Query mode, and the whole sequence
-;; remains unrepresented until unreachable execution has a normalized form.
+;; selected. A child that diverges before the last one ends the sequence: later
+;; children are still checked once, in Query mode, and the sequence is its
+;; prefix through that child.
 (define (tc-infer-selected-begin
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -51306,30 +51697,32 @@
                     ty
                     TcSelectedOccurrence.Unrepresented
                     next))]
+              ;; A form whose own result is Never diverges, whatever type
+              ;; its context coerces it to (`tc-selected-flow-never!`).
               [else
-                (let
-                  [diverged? : bool
-                    (and
-                      represented?
-                      selected?
-                      (match ty
-                        [(ast.AstType.Never) true]
-                        [_ false]))]
-                  (tc-infer-selected-begin-at
-                    ctx
-                    env
-                    exprs
-                    (+ index 1)
-                    syntax
-                    expected
-                    source
-                    children
-                    (and represented? selected? (not diverged?))
-                    (if (and diverged? (< cut 0))
+                (match (if (and represented? selected?)
+                  (tc-selected-sink-never!
+                    next
+                    (typed.TypedOccurrenceId
+                      (typed.typed-handle-copy
+                        (& (array-ref children index).handle))))
+                  (TcSelectedNeverCheck.Checked false next))
+                  [(TcSelectedNeverCheck.Checked diverged? after)
+                    (tc-infer-selected-begin-at
+                      ctx
+                      env
+                      exprs
                       (+ index 1)
-                      cut)
-                    unit-each?
-                    next))]))]))))
+                      syntax
+                      expected
+                      source
+                      children
+                      (and represented? selected? (not diverged?))
+                      (if (and diverged? (< cut 0))
+                        (+ index 1)
+                        cut)
+                      unit-each?
+                      after)])]))]))))
 
 (define (tc-selected-children-prefix
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
@@ -62251,6 +62644,9 @@
             source.column
             (string.copy (& source.expansion))))])))
 
+;; A binding's initialization: its binder noted and an `Initialize` of it from
+;; `init`, typed unit; or, for a diverging initializer, `init` itself, typed
+;; Never, whose caller ends its sequence there.
 (define (tc-selected-let-initialize
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -62326,10 +62722,16 @@
                       (TcSelectedResult.Err
                         (tc-selected-error error)
                         (TcSelectedSink.Capture store lease bindings)))])]
+              ;; A diverging initializer is an exit: Never never receives a
+              ;; storage place, so the binding is initialized on no path that
+              ;; reaches its scope. No binder is noted; the initialization is
+              ;; the initializer's own evaluation, and what follows it is
+              ;; unreachable (`tc-infer-selected-let-at`, as a diverging form
+              ;; in `tc-infer-selected-begin-at`).
               (if never?
                 (TcSelectedResult.Ok
-                  ast.AstType.Unit
-                  TcSelectedOccurrence.Unrepresented
+                  ast.AstType.Never
+                  (TcSelectedOccurrence.Selected child)
                   (TcSelectedSink.Capture store lease bindings))
                 (let
                   [source : ownership.OwnershipSource
@@ -62472,6 +62874,7 @@
           source
           (__tl_make-array typed.TypedOccurrenceId 0)
           false
+          -1
           TcSelectedSink.Query)]
       [(TcSelectedSink.Capture store lease associations)
         (match (typed.typed-charge! store lease 1)
@@ -62507,6 +62910,7 @@
                   source
                   (__tl_make-array typed.TypedOccurrenceId (+ count 1))
                   true
+                  -1
                   (TcSelectedSink.Capture store lease associations))])])])))
 
 (define (tc-selected-scope-finish
@@ -62730,6 +63134,7 @@
           typed.TypedOccurrenceId
           (+ (ast.ast-resource-binding-list-len bindings) 1))
         true
+        -1
         sink)]
     (when scoped? (tc-type-env-scoped-runtime-restore! saved))
     (tc-selected-scope-finish env binding-count result)))
@@ -62745,20 +63150,34 @@
   [source : ownership.OwnershipSource]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [represented? : bool]
+  ;; The count of children through the first diverging initializer, or -1.
+  [cut : i64]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
   (if (>= index (ast.ast-resource-binding-list-len bindings))
-    (match (tc-infer-selected-begin
-      ctx
-      env
-      body
-      typed.TypedSyntax.Generated
-      expected
-      (tc-global-shared-view source)
-      sink)
+    (match (if (>= cut 0)
+      (tc-selected-unrepresented
+        (tc-selected-project
+          (tc-infer-selected-begin
+            ctx
+            env
+            body
+            typed.TypedSyntax.Generated
+            expected
+            (tc-global-shared-view source)
+            TcSelectedSink.Query))
+        sink)
+      (tc-infer-selected-begin
+        ctx
+        env
+        body
+        typed.TypedSyntax.Generated
+        expected
+        (tc-global-shared-view source)
+        sink))
       [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
       [(TcSelectedResult.Ok ty occurrence next)
         (if (tc-expr-list-result-uses-cleanup-owner?
@@ -62773,21 +63192,40 @@
               (cdiag.CompilerTypecheckKind.ResourceOwnership)
               "typecheck: cleanup-required resource would escape with scope")
             next)
-          (match occurrence
-            [(TcSelectedOccurrence.Selected child)
-              (if represented?
-                (begin
-                  (set! (array-ref children index) child)
-                  (tc-selected-publish-flow
-                    (ResultTcType.Ok ty)
-                    syntax
-                    source
-                    typed.TypedOperation.Sequence
-                    children
-                    next))
-                (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next))]
-            [(TcSelectedOccurrence.Unrepresented)
-              (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)]))])
+          (cond
+            ;; The bindings and body after a diverging initializer never run
+            ;; (as in `tc-infer-selected-let-at`): the scope is its prefix
+            ;; through that initializer, an exit.
+            [(>= cut 0)
+              (tc-selected-publish-flow
+                (ResultTcType.Ok ty)
+                syntax
+                source
+                typed.TypedOperation.Sequence
+                (tc-selected-children-prefix children cut)
+                next)]
+            [else
+              (match occurrence
+                [(TcSelectedOccurrence.Selected child)
+                  (if represented?
+                    (begin
+                      (set! (array-ref children index) child)
+                      (tc-selected-publish-flow
+                        (ResultTcType.Ok ty)
+                        syntax
+                        source
+                        typed.TypedOperation.Sequence
+                        children
+                        next))
+                    (TcSelectedResult.Ok
+                      ty
+                      TcSelectedOccurrence.Unrepresented
+                      next))]
+                [(TcSelectedOccurrence.Unrepresented)
+                  (TcSelectedResult.Ok
+                    ty
+                    TcSelectedOccurrence.Unrepresented
+                    next)])]))])
     (match (ast.ast-resource-binding-list-get
       bindings
       index
@@ -62802,12 +63240,13 @@
             (tc-global-shared-view cleanup))
             [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
             [(ResultTcType.Ok expected-init-ty)
-              (match (tc-infer-selected-id
+              (match (tc-infer-selected-sequence-child
                 ctx
                 env
                 init-box
                 (ast.AstMaybeType.Some expected-init-ty)
                 (tc-global-shared-view source)
+                (< cut 0)
                 sink)
                 [(TcSelectedResult.Err message next)
                   (TcSelectedResult.Err message next)]
@@ -62861,7 +63300,10 @@
                               next)
                               [(TcSelectedResult.Err message after)
                                 (TcSelectedResult.Err message after)]
-                              [(TcSelectedResult.Ok _ initialized after)
+                              [(TcSelectedResult.Ok
+                                  initialized-ty
+                                  initialized
+                                  after)
                                 (let
                                   [selected? : bool
                                     (match initialized
@@ -62870,6 +63312,14 @@
                                         true]
                                       [(TcSelectedOccurrence.Unrepresented)
                                         false])]
+                                  ;; A diverging initializer is an exit
+                                  ;; (`tc-selected-let-initialize`).
+                                  [diverged? : bool
+                                    (and
+                                      selected?
+                                      (match initialized-ty
+                                        [(ast.AstType.Never) true]
+                                        [_ false]))]
                                   (tc-infer-selected-with-resource-at
                                     ctx
                                     next-env
@@ -62880,7 +63330,10 @@
                                     expected
                                     source
                                     children
-                                    (and represented? selected?)
+                                    (and represented? selected? (not diverged?))
+                                    (if (and diverged? (< cut 0))
+                                      (+ index 1)
+                                      cut)
                                     after))]))])])])]))])))
 
 (define (tc-infer-selected-let-scoped
@@ -63502,6 +63955,24 @@
       (tc-selected-unrepresented (ResultTcType.Ok ty) TcSelectedSink.Query)]
     [(TcSelectedSink.Capture store lease bindings)
       (let
+        [_exit : unit
+          (match (tc-selected-place-exit! store lease (& indices))
+            [(TcSelectedIndexCut.Err error)
+              (return
+                (TcSelectedResult.Err
+                  (tc-selected-error error)
+                  (TcSelectedSink.Capture store lease bindings)))]
+            [(TcSelectedIndexCut.Ok cut)
+              (when
+                (> cut 0)
+                (return
+                  (tc-selected-place-exit-publish
+                    (ResultTcType.Ok (tc-global-shared-view ty))
+                    typed.TypedSyntax.Generated
+                    (tc-global-shared-view source)
+                    (& indices)
+                    cut
+                    (TcSelectedSink.Capture store lease bindings))))])]
         [type-id : typed.TypedTypeId
           (match (typed.typed-place-get! store lease id)
             [(typed.TypedPlaceView.Ok row)
@@ -63560,6 +64031,8 @@
   [source : ownership.OwnershipSource]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [represented? : bool]
+  ;; The count of children through the first diverging initializer, or -1.
+  [cut : i64]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
@@ -63584,18 +64057,35 @@
             0))
           [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
           [(ResultTcUnit.Ok)
-            (match occurrence
-              [(TcSelectedOccurrence.Selected child)
-                (set! (array-ref children index) child)
+            (cond
+              ;; The bindings and body after a diverging initializer never
+              ;; run: the `let` is its prefix through that initializer, an
+              ;; exit (they are still typed), as a `begin` after a diverging
+              ;; form (`tc-infer-selected-begin-at`).
+              [(>= cut 0)
                 (tc-selected-publish-flow
                   (ResultTcType.Ok ty)
                   syntax
                   source
                   typed.TypedOperation.Sequence
-                  children
+                  (tc-selected-children-prefix children cut)
                   next)]
-              [(TcSelectedOccurrence.Unrepresented)
-                (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)])])])
+              [else
+                (match occurrence
+                  [(TcSelectedOccurrence.Selected child)
+                    (set! (array-ref children index) child)
+                    (tc-selected-publish-flow
+                      (ResultTcType.Ok ty)
+                      syntax
+                      source
+                      typed.TypedOperation.Sequence
+                      children
+                      next)]
+                  [(TcSelectedOccurrence.Unrepresented)
+                    (TcSelectedResult.Ok
+                      ty
+                      TcSelectedOccurrence.Unrepresented
+                      next)])])])])
     (match (ast.ast-let-binding-list-get
       bindings
       index
@@ -63662,7 +64152,7 @@
                     next)
                     [(TcSelectedResult.Err message next)
                       (TcSelectedResult.Err message next)]
-                    [(TcSelectedResult.Ok _ initialized next)
+                    [(TcSelectedResult.Ok initialized-ty initialized next)
                       (let
                         [selected? : bool
                           (match initialized
@@ -63670,6 +64160,15 @@
                               (set! (array-ref children index) child)
                               true]
                             [(TcSelectedOccurrence.Unrepresented) false])]
+                        ;; A diverging initializer is an exit
+                        ;; (`tc-selected-let-initialize`): it ends the
+                        ;; selected prefix.
+                        [diverged? : bool
+                          (and
+                            selected?
+                            (match initialized-ty
+                              [(ast.AstType.Never) true]
+                              [_ false]))]
                         (tc-infer-selected-let-at
                           ctx
                           next-env
@@ -63681,7 +64180,10 @@
                           expected
                           source
                           children
-                          (and represented? selected?)
+                          (and represented? selected? (not diverged?))
+                          (if (and diverged? (< cut 0))
+                            (+ index 1)
+                            cut)
                           next))])])]))])))
 
 (define (tc-resource-cleanup-direct-name-ok
@@ -82458,59 +82960,38 @@
           (TcSelectedResult.Err
             "typecheck: query retained a selected assignment"
             TcSelectedSink.Query)]
+        ;; A diverging value is an exit: the assignment, typed Never
+        ;; (`tc-selected-flow-never!`), writes nothing.
         [(TcSelectedSink.Capture store lease bindings)
-          (let
-            [never? : bool
-              (match (tc-selected-occurrence-never!
-                store
-                lease
-                (typed.TypedOccurrenceId
-                  (typed.typed-handle-copy (& id.handle))))
-                [(TcSelectedBoolResult.Ok value) value]
-                [(TcSelectedBoolResult.Err error)
-                  (return
-                    (TcSelectedResult.Err
-                      (tc-selected-error error)
-                      (TcSelectedSink.Capture store lease bindings)))])]
-            (if never?
-              (TcSelectedResult.Ok
-                ast.AstType.Unit
-                TcSelectedOccurrence.Unrepresented
-                (TcSelectedSink.Capture store lease bindings))
-              (match (tc-selected-binding-find!
-                store
-                lease
-                (& bindings)
-                env
-                origin)
-                [(TcSelectedBinderLookup.Err error)
-                  (TcSelectedResult.Err
-                    (tc-selected-error error)
+          (match (tc-selected-binding-find! store lease (& bindings) env origin)
+            [(TcSelectedBinderLookup.Err error)
+              (TcSelectedResult.Err
+                (tc-selected-error error)
+                (TcSelectedSink.Capture store lease bindings))]
+            [(TcSelectedBinderLookup.Ok result)
+              (match result
+                [(TcSelectedBinder.Unrepresented)
+                  (TcSelectedResult.Ok
+                    ast.AstType.Unit
+                    TcSelectedOccurrence.Unrepresented
                     (TcSelectedSink.Capture store lease bindings))]
-                [(TcSelectedBinderLookup.Ok result)
-                  (match result
-                    [(TcSelectedBinder.Unrepresented)
-                      (TcSelectedResult.Ok
-                        ast.AstType.Unit
-                        TcSelectedOccurrence.Unrepresented
+                [(TcSelectedBinder.Found binder)
+                  (match (typed.typed-charge!
+                    store
+                    lease
+                    (comptime (size-of (type typed.TypedOccurrenceId))))
+                    [(typed.TypedResult.Err error)
+                      (TcSelectedResult.Err
+                        (tc-selected-error error)
                         (TcSelectedSink.Capture store lease bindings))]
-                    [(TcSelectedBinder.Found binder)
-                      (match (typed.typed-charge!
-                        store
-                        lease
-                        (comptime (size-of (type typed.TypedOccurrenceId))))
-                        [(typed.TypedResult.Err error)
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings))]
-                        [(typed.TypedResult.Ok _)
-                          (tc-selected-publish
-                            (ResultTcType.Ok ast.AstType.Unit)
-                            syntax
-                            source
-                            (typed.TypedOperation.Assign binder)
-                            (__tl_make-array id)
-                            (TcSelectedSink.Capture store lease bindings))])])])))])]))
+                    [(typed.TypedResult.Ok _)
+                      (tc-selected-publish
+                        (ResultTcType.Ok ast.AstType.Unit)
+                        syntax
+                        source
+                        (typed.TypedOperation.Assign binder)
+                        (__tl_make-array id)
+                        (TcSelectedSink.Capture store lease bindings))])])])])]))
 
 ;; Select the assignment target once, before its RHS. Preserve that winner
 ;; through contextual inference and all existing cleanup/region/reference

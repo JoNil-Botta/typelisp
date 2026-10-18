@@ -284,6 +284,9 @@
 ;; creates a loan. `PtrAddrOf` addresses a named place without evaluating or
 ;; reading it: raw addresses are unsafe capabilities outside ownership facts.
 (defenum TypedPrimitive
+  ;; A declaration's closure descriptor, without calling it. The declaration
+  ;; index and canonical key obey the same authority as a declared call.
+  (FunctionValue i64 i64)
   (Cast)
   (PtrNull)
   (PtrNullCheck)
@@ -315,6 +318,7 @@
 
 (define (typed-primitive-arity [primitive : (& primitive TypedPrimitive)]) : i64
   (match primitive
+    [(TypedPrimitive.FunctionValue _ _) 0]
     [(TypedPrimitive.Cast) 1]
     [(TypedPrimitive.PtrNull) 0]
     [(TypedPrimitive.PtrNullCheck) 1]
@@ -1265,6 +1269,10 @@
   [operation : (& operation TypedOperation)]) : TypedResult
   (match operation
     [(TypedOperation.Literal literal) (typed-literal-ok! store lease literal)]
+    [(TypedOperation.Primitive (TypedPrimitive.FunctionValue index key))
+      (if (typed-declared-call-valid? lease index key false)
+        (TypedResult.Ok unit)
+        (TypedResult.Err TypedError.Unknown))]
     [(TypedOperation.Pattern (TypedPattern.Literal literal))
       (typed-literal-ok! store lease literal)]
     ;; The remaining operations carry scalar IDs/operators, not leased bytes.
@@ -1442,29 +1450,11 @@
       [(TypedResolutionAuthority.Symbols authority)
         (and
           (symbols.compiler-resolution-lease-current? authority)
-          (>= key 0)
-          (< index (symbols.compiler-symbols-decl-count authority.symbols))
-          (=
-            key
-            (symbols.compiler-symbol-module-key-id-by-id
-              (symbols.compiler-symbols-owner-module-id-at-index-or
-                authority.symbols
-                index
-                -1)
-              (symbols.compiler-symbols-decl-name-id-at-index
-                authority.symbols
-                index)))
-          (match (symbols.compiler-symbols-decl-at-index
+          (symbols.compiler-symbols-function-target?
             authority.symbols
-            index)
-            [(Ok declaration)
-              (match declaration
-                [(ast.AstDecl.DefFn _ _ _ _ _ _) (not foreign?)]
-                ;; An extern returning a borrowed view uses an ordinary
-                ;; lifetime contract; opaque foreign calls only read operands.
-                [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Function) _ _) true]
-                [_ false])]
-            [_ false]))])))
+            index
+            key
+            foreign?))])))
 
 (define (typed-call-add!
   [store : (&mut store TypedStore)]
@@ -1700,6 +1690,15 @@
   (try (typed-origin-ok (& store) (& origin)))
   (try (typed-operation-payload-ok! store lease (& operation)))
   (match (& operation)
+    [(TypedOperation.Primitive (TypedPrimitive.FunctionValue _ _))
+      (match (typed-type-get! store lease type)
+        [(TypedTypeResult.Ok value)
+          (unless
+            (match (& (deref value))
+              [(ast.AstType.Func _ _) true]
+              [_ false])
+            (return (TypedOccurrenceResult.Err TypedError.Shape)))]
+        [(TypedTypeResult.Err error) (return (TypedOccurrenceResult.Err error))])]
     [(TypedOperation.FormPlace place)
       (try (typed-place-operation-type-ok (& store) place (& type)))]
     [(TypedOperation.CopyPlace place)

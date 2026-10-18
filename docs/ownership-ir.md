@@ -1700,6 +1700,15 @@ function values and C function pointers can be parameters, copied bindings,
 branch results and returns. Their nested signatures remain guarded by the
 source type pool. Call operands and results are checked by canonical type
 equality, including callable parameters/results, before IR emission.
+String handles use the same register-width value representation. Their checked
+Move instructions invalidate the source in the ownership graph and emit an IR
+move; the runtime does not clear moved storage. Named function values retain
+their checked declaration index and canonical key as a zero-operand primitive,
+and emit the existing closure-descriptor value. Publication and lowering share
+the symbol table's declaration-kind/key check, then lowering checks the full
+current signature. A compile-time-only target rejects both calls and value
+materialization through that same boundary. Canonical lowering errors carry
+diagnostics, preserving the checked operation's location for phase errors.
 A call through such a value consumes its already captured callee before its
 arguments; changing the source callable during argument evaluation cannot
 redirect that call. Foreign

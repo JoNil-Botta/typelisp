@@ -1012,6 +1012,8 @@
 (define (normalize-primitive-copy
   [primitive : (& primitive typed.TypedPrimitive)]) : typed.TypedPrimitive
   (match primitive
+    [(typed.TypedPrimitive.FunctionValue index key)
+      (typed.TypedPrimitive.FunctionValue index key)]
     [(typed.TypedPrimitive.Cast) typed.TypedPrimitive.Cast]
     [(typed.TypedPrimitive.PtrNull) typed.TypedPrimitive.PtrNull]
     [(typed.TypedPrimitive.PtrNullCheck) typed.TypedPrimitive.PtrNullCheck]
@@ -1258,7 +1260,7 @@
 (define (normalize-scalar-value-type? [type : (& type ast.AstType)]) : bool
   (match type
     [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _) (ast.AstType.Ptr _)
-         (ast.AstType.MutPtr _))
+         (ast.AstType.MutPtr _) (ast.AstType.String))
       true]
     [_
       (match (normalize-type-code type)
@@ -1305,6 +1307,8 @@
 (define (normalize-scalar-primitive?
   [primitive : (& primitive typed.TypedPrimitive)]) : bool
   (match primitive
+    [(typed.TypedPrimitive.FunctionValue index key)
+      (and (>= index 0) (>= key 0))]
     [(or (typed.TypedPrimitive.Cast) (typed.TypedPrimitive.PtrNull)
          (typed.TypedPrimitive.PtrNullCheck) (typed.TypedPrimitive.PtrRead)
          (typed.TypedPrimitive.PtrWrite) (typed.TypedPrimitive.PtrOffset)
@@ -1365,7 +1369,8 @@
             [(or (own.OwnershipOperation.Read _)
                  (own.OwnershipOperation.Consume _)
                  (own.OwnershipOperation.Assign _)
-                 (own.OwnershipOperation.Copy _ _))
+                 (own.OwnershipOperation.Copy _ _)
+                 (own.OwnershipOperation.Move _ _))
               true]
             [_ false])
           (return false))))

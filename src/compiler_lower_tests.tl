@@ -456,6 +456,81 @@
     (ir.compiler-debug-info-set-enabled! saved-debug)))
 
 (test
+  compiler-lower-normalized-string-values
+  (let
+    [bodies : (Array String 8)
+      (array
+        "\"answer\""
+        "(identity \"answer\")"
+        "(choose true \"answer\" \"other\")"
+        "(let [text \"answer\"] (first text (begin (set! text \"changed\") unit)))"
+        "(let [text \"answer\"] [index : i64 0] (while (< index 2) (begin (set! text (identity text)) (set! index (+ index 1)))) text)"
+        "(let [apply identity] (apply \"answer\"))"
+        "(let [apply identity] (apply (begin (set! apply other) \"answer\")))"
+        "((factory) \"answer\")")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(define (identity [text : String]) : String text)
+             (define (other [_text : String]) : String \"changed\")
+             (define (factory) : (-> String String) identity)
+             (define (choose [condition : bool] [left : String] [right : String]) : String (if condition left right))
+             (define (first [text : String] [_later : unit]) : String text)
+             (define (selected) : String "
+            (clone (array-ref bodies index))
+            ") (define (main) : i64 (begin (selected) 42))")]
+        (test.assert-true
+          (match (lower.lower-compiler-source source)
+            [(lower.ResultCompilerLower.Ok program _ owner)
+              (let
+                [count : i64
+                  (match program
+                    [(ir.CompilerIrProgram.Program _ functions _ _authority)
+                      (lower-test-function-label-load-count
+                        (& functions)
+                        "selected"
+                        "checked.0")])]
+                (lower.compiler-lower-arena-state-release!
+                  (lower.compiler-lower-state-arenas owner))
+                (= count 0))]
+            [(lower.ResultCompilerLower.Err diagnostic)
+              (io.println
+                "String case {}: {}"
+                index
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+              false])
+          (str_cat.str-cat
+            "String handles emit from checked graph, case "
+            (string.int->string index)))))))
+
+(test
+  compiler-lower-normalized-string-move-rejection
+  (let
+    [bodies : (Array String 3)
+      (array
+        "(let [text \"answer\"] (identity text) (identity text) 42)"
+        "(let [text \"answer\"] [moved text] (identity text) 42)"
+        "(let [text \"answer\"] [apply identity] (apply text) (apply text) 42)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower.lower-compiler-source
+          (str_cat.str-cat
+            "(define (identity [text : String]) : String text) (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+          [(lower.ResultCompilerLower.Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            false]
+          [(lower.ResultCompilerLower.Err diagnostic)
+            (let
+              [message
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic)))]
+              (string.contains (& message) "use of moved value `text`"))])
+        "String register moves keep the canonical non-Copy ownership rule"))))
+
+(test
   compiler-lower-normalized-scalar-control
   (test.assert-true
     (match (lower-test-functions
@@ -989,8 +1064,10 @@
           (tc_core.tc-context-source-names ctx)
           (ir.compiler-source-spans-empty)
           0)
-          [(lower.LowerNormalizedResult.Err message)
-            (string.eq message expected)]
+          [(lower.LowerNormalizedResult.Err diagnostic)
+            (string.eq
+              (cdiag.compiler-diagnostic-message (& diagnostic))
+              expected)]
           [_ false])]
       (lower.compiler-lower-arena-state-release!
         (lower.compiler-lower-state-arenas owner))
@@ -1653,13 +1730,18 @@
       "lower: comptime-error is compile-time only")
     (compiler-lower-error-ok?
       (compiler-lower-comptime-error-tail-source)
+      "lower: comptime-error is compile-time only")
+    (compiler-lower-error-ok?
+      "(import stdlib.comptime)
+       (define (main) : i64
+         (let [forbidden comptime.error] (forbidden \"indirect runtime forbidden\")))"
       "lower: comptime-error is compile-time only")))
 
 (test
   compiler-lower-comptime-error-runtime-diagnostics
   (test.assert-true
     (compiler-lower-comptime-error-runtime-diagnostics-ok?)
-    "ordinary and tail-position comptime-error calls are rejected"))
+    "runtime comptime-error calls and values are rejected"))
 
 (test
   compiler-lower-resetting-entry-live-session-guard

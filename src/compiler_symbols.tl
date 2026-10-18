@@ -3821,6 +3821,28 @@
       (& (compiler-symbols-program-shared-view program))
       (& symbols))))
 
+(define (compiler-symbols-function-target?
+  [symbols : (& symbols CompilerSymbols)]
+  [index : i64]
+  [key : i64]
+  [foreign? : bool]) : bool
+  (and
+    (>= index 0)
+    (< index (compiler-symbols-decl-count symbols))
+    (>= key 0)
+    (=
+      key
+      (compiler-symbol-module-key-id-by-id
+        (compiler-symbols-owner-module-id-at-index-or symbols index -1)
+        (compiler-symbols-decl-name-id-at-index symbols index)))
+    (match (compiler-symbols-decl-at-index symbols index)
+      [(Ok declaration)
+        (match declaration
+          [(ast.AstDecl.DefFn _ _ _ _ _ _) (not foreign?)]
+          [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Function) _ _) true]
+          [_ false])]
+      [_ false])))
+
 (define (compiler-symbols-decl-at-index
   [symbols : (& symbols CompilerSymbols)]
   [target : i64]) : parser.ResultAstDecl

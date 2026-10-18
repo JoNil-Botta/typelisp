@@ -73580,15 +73580,15 @@
 ;; points share place identities; the source AST is never read on this route.
 (defenum LowerNormalizedResult
   (Ok ir.CompilerIrFunction ir.CompilerSourceSpans)
-  (Err String))
+  (Err cdiag.CompilerDiagnostic))
 
 (defenum LowerNormalizedUnit
   (Ok unit)
-  (Err String))
+  (Err cdiag.CompilerDiagnostic))
 
 (defenum LowerNormalizedType
   (Ok ast.AstType)
-  (Err String))
+  (Err cdiag.CompilerDiagnostic))
 
 (define (lower-normalized-type
   [output : (& output norm.OwnershipNormalizedBody)]
@@ -73618,7 +73618,9 @@
           (array-ref
             output.value-types
             (- code norm.normalize-first-value-type))))]
-    [else (LowerNormalizedType.Err "lower: invalid certified scalar type")]))
+    [else
+      (LowerNormalizedType.Err
+        (lower-diagnostic "lower: invalid certified scalar type"))]))
 
 (defstruct LowerNormalizedState
   (ctx tc_core.TcContext)
@@ -73865,7 +73867,8 @@
     (begin
       (set! state.work (+ state.work units))
       (LowerNormalizedUnit.Ok unit))
-    (LowerNormalizedUnit.Err "lower: certified body work budget exhausted")))
+    (LowerNormalizedUnit.Err
+      (lower-diagnostic "lower: certified body work budget exhausted"))))
 
 (define (lower-normalized-place?
   [body : (& body own.OwnershipBody)]
@@ -73903,7 +73906,7 @@
                       (array-ref output.body.places node.result-place).type.index))))
               (return
                 (LowerNormalizedUnit.Err
-                  "lower: invalid certified selected result")))
+                  (lower-diagnostic "lower: invalid certified selected result"))))
             (when
               (typed.typed-handle-equal? (& output.root.handle) (& node.handle))
               (set! root? true)
@@ -73940,7 +73943,8 @@
                             (array-ref output.body.blocks call.block).instructions)))
                       (return
                         (LowerNormalizedUnit.Err
-                          "lower: invalid certified call position")))
+                          (lower-diagnostic
+                            "lower: invalid certified call position"))))
                     (let
                       [block : (& output own.OwnershipBlock)
                         (& (array-ref output.body.blocks call.block))]
@@ -73958,7 +73962,8 @@
                                 [_ false]))
                             (return
                               (LowerNormalizedUnit.Err
-                                "lower: invalid certified abort call")))
+                                (lower-diagnostic
+                                  "lower: invalid certified abort call"))))
                           (set! (array-ref state.aborts call.block) index))
                         (unless
                           (and
@@ -73972,7 +73977,8 @@
                               [_ false]))
                           (return
                             (LowerNormalizedUnit.Err
-                              "lower: invalid certified call assignment")))))]
+                              (lower-diagnostic
+                                "lower: invalid certified call assignment"))))))]
                   [(not
                       (and
                         (= call.block -1)
@@ -73980,7 +73986,8 @@
                         (= node.type 13)))
                     (return
                       (LowerNormalizedUnit.Err
-                        "lower: missing certified call position"))]
+                        (lower-diagnostic
+                          "lower: missing certified call position")))]
                   [else unit])]
               [_ unit])
             (when
@@ -74004,12 +74011,15 @@
                     (= (array-ref state.producers node.result-place) -1))
                   (return
                     (LowerNormalizedUnit.Err
-                      "lower: duplicate certified value definition")))
+                      (lower-diagnostic
+                        "lower: duplicate certified value definition"))))
                 (set! (array-ref state.producers node.result-place) index)))
             (set! index (+ index 1)))))
       (unless
         root?
-        (return (LowerNormalizedUnit.Err "lower: missing certified root")))
+        (return
+          (LowerNormalizedUnit.Err
+            (lower-diagnostic "lower: missing certified root"))))
       (set! index 0)
       (while (< index (array-length output.binders))
         (let
@@ -74028,10 +74038,73 @@
                   (array-ref output.body.places binder.place).type.index)
                 (not (array-ref state.bindings binder.place)))
               (return
-                (LowerNormalizedUnit.Err "lower: invalid certified binder")))
+                (LowerNormalizedUnit.Err
+                  (lower-diagnostic "lower: invalid certified binder"))))
             (set! (array-ref state.bindings binder.place) true)
             (set! index (+ index 1)))))
       (LowerNormalizedUnit.Ok unit))))
+
+(defstruct LowerNormalizedTarget
+  (symbol i64)
+  (type ast.AstType))
+
+(defenum LowerNormalizedTargetResult
+  (Ok LowerNormalizedTarget)
+  (Err cdiag.CompilerDiagnostic))
+
+(define (lower-normalized-target
+  [state : (& state LowerNormalizedState)]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [index : i64]
+  [key : i64]
+  [foreign? : bool]
+  [display : String]
+  [source : (& source own.OwnershipSource)]) : LowerNormalizedTargetResult
+  (unless
+    (csym.compiler-symbols-function-target? symbols index key foreign?)
+    (return
+      (LowerNormalizedTargetResult.Err
+        (lower-diagnostic "lower: certified declaration changed"))))
+  (when
+    (or
+      (lower-comptime-error-call-id?
+        (compiler-lower-state-from-name-cache state.names)
+        key)
+      (and
+        (csym.compiler-symbols-comptime-module-id?
+          (csym.compiler-symbols-owner-module-id-at-index-or symbols index -1))
+        (=
+          key
+          (csym.compiler-symbol-name-id-key
+            cbi.compiler-builtin-id-fix-stdlib_dot_comptime_slash_error))))
+    (return
+      (LowerNormalizedTargetResult.Err
+        (cdiag.compiler-diagnostic-from-ast-span
+          (if (> state.path-id 0)
+            (ci.intern-source-name-session-handle-str
+              (clone state.source-names)
+              state.path-id)
+            (clone source.path))
+          (ast.ast-source-span
+            source.line
+            source.column
+            source.line
+            source.column)
+          "lower: comptime-error is compile-time only"))))
+  (let
+    [symbol : i64
+      (lower-name-cache-ir-symbol (& state.names) key key (clone display))]
+    [type : ast.AstType
+      (match (lower-type-cache-lookup-id
+        (owned_view.compiler-owned-reference-shared-view (& state.types))
+        key
+        display)
+        [(tc_core.ResultTcType.Ok type) type]
+        [(tc_core.ResultTcType.Err _)
+          (return
+            (LowerNormalizedTargetResult.Err
+              (lower-diagnostic "lower: missing certified callee")))])]
+    (LowerNormalizedTargetResult.Ok (LowerNormalizedTarget symbol type))))
 
 (define (lower-normalized-call!
   [output : (& output norm.OwnershipNormalizedBody)]
@@ -74064,7 +74137,8 @@
           (unless
             (lower-normalized-place? (& output.body) callee)
             (return
-              (LowerNormalizedUnit.Err "lower: missing certified callee value")))
+              (LowerNormalizedUnit.Err
+                (lower-diagnostic "lower: missing certified callee value"))))
           (let
             [type : ast.AstType
               (try
@@ -74077,7 +74151,7 @@
                   (ast.ast-c-function-mode-nullable? mode)
                   (return
                     (LowerNormalizedUnit.Err
-                      "lower: nullable certified C callee")))
+                      (lower-diagnostic "lower: nullable certified C callee"))))
                 (set! c-abi? true)
                 (tc_core.tc-context-type-get ctx signature)]
               [_ type])))
@@ -74089,35 +74163,47 @@
               [_
                 (return
                   (LowerNormalizedUnit.Err
-                    "lower: invalid certified call target"))])]
+                    (lower-diagnostic "lower: invalid certified call target")))])]
+          [index : i64
+            (match (& call.kind)
+              [(typed.TypedCallKind.Declared index _) index]
+              [(typed.TypedCallKind.Foreign index _) index]
+              [_ -1])]
+          [foreign? : bool
+            (match (& call.kind)
+              [(typed.TypedCallKind.Foreign _ _) true]
+              [_ false])]
           [display : String
             (tc_core.tc-nominal-name-id-display-for-session
               (tc_core.tc-context-structural-session ctx)
               key)]
-          ;; The retained key is re-resolved through the ordinary name cache.
-          (set!
-            symbol
-            (lower-name-cache-ir-symbol (& state.names) key key (clone display)))
-          (match (lower-type-cache-lookup-id
-            (owned_view.compiler-owned-reference-shared-view (& state.types))
-            key
-            display)
-            [(tc_core.ResultTcType.Ok type) type]
-            [(tc_core.ResultTcType.Err _)
-              (return
-                (LowerNormalizedUnit.Err "lower: missing certified callee"))])))]
+          [target : LowerNormalizedTarget
+            (try
+              (lower-normalized-target
+                state
+                (tc_core.tc-context-symbols ctx)
+                index
+                key
+                foreign?
+                display
+                (& node.source)))]
+          (set! symbol target.symbol)
+          target.type))]
     [values : ir.CompilerIrValueBuilder
       (ir.compiler-ir-value-builder-with-capacity (array-length node.operands))]
     (unless
       (norm.normalize-scalar-call? call)
-      (return (LowerNormalizedUnit.Err "lower: invalid certified call form")))
+      (return
+        (LowerNormalizedUnit.Err
+          (lower-diagnostic "lower: invalid certified call form"))))
     (unless
       (ast.ast-type-eq-with-pools?
         (tc_core.tc-context-pools ctx)
         (& declaration)
         (& call.signature))
       (return
-        (LowerNormalizedUnit.Err "lower: certified callee signature changed")))
+        (LowerNormalizedUnit.Err
+          (lower-diagnostic "lower: certified callee signature changed"))))
     (match (& call.signature)
       [(ast.AstType.Func params result)
         (unless
@@ -74128,7 +74214,8 @@
               (& (tc_core.tc-context-type-get ctx result))
               (& (try (lower-normalized-type output node.type)))))
           (return
-            (LowerNormalizedUnit.Err "lower: invalid certified call signature")))
+            (LowerNormalizedUnit.Err
+              (lower-diagnostic "lower: invalid certified call signature"))))
         (for [index (iterator.range 0 params.len)]
           (let
             [place : i64 (array-ref node.operands (+ index offset))]
@@ -74148,13 +74235,14 @@
                         (array-ref output.body.places place).type.index)))))
               (return
                 (LowerNormalizedUnit.Err
-                  "lower: invalid certified call operand")))
+                  (lower-diagnostic "lower: invalid certified call operand"))))
             (ir.compiler-ir-value-builder-push!
               (&mut values)
               (ir.CompilerIrValue.Var place))))]
       [_
         (return
-          (LowerNormalizedUnit.Err "lower: invalid certified call signature"))])
+          (LowerNormalizedUnit.Err
+            (lower-diagnostic "lower: invalid certified call signature")))])
     (let
       [args : ir.CompilerIrValueSeq
         (ir.compiler-ir-value-builder-to-seq values)]
@@ -74214,12 +74302,56 @@
       (norm.normalize-scalar-primitive? primitive)
       (= (array-length node.operands) (typed.typed-primitive-arity primitive)))
     (return
-      (LowerNormalizedUnit.Err "lower: invalid certified primitive arity")))
+      (LowerNormalizedUnit.Err
+        (lower-diagnostic "lower: invalid certified primitive arity"))))
   (for [index (iterator.range 0 (array-length node.operands))]
     (unless
       (lower-normalized-place? (& output.body) (array-ref node.operands index))
       (return
-        (LowerNormalizedUnit.Err "lower: invalid certified primitive operand"))))
+        (LowerNormalizedUnit.Err
+          (lower-diagnostic "lower: invalid certified primitive operand")))))
+  (match primitive
+    [(typed.TypedPrimitive.FunctionValue index key)
+      (let
+        [ctx : tc_core.TcContext (clone state.ctx)]
+        [type : ast.AstType (try (lower-normalized-type output node.type))]
+        [display : String
+          (tc_core.tc-nominal-name-id-display-for-session
+            (tc_core.tc-context-structural-session ctx)
+            key)]
+        [target : LowerNormalizedTarget
+          (try
+            (lower-normalized-target
+              state
+              (tc_core.tc-context-symbols ctx)
+              index
+              key
+              false
+              display
+              (& node.source)))]
+        (unless
+          (and
+            (match (& type)
+              [(ast.AstType.Func _ _) true]
+              [_ false])
+            (ast.ast-type-eq-with-pools?
+              (tc_core.tc-context-pools ctx)
+              (& type)
+              (& target.type)))
+          (return
+            (LowerNormalizedUnit.Err
+              (lower-diagnostic
+                "lower: certified function value signature changed"))))
+        (lower-normalized-emit!
+          state
+          instrs
+          (& node.source)
+          (ir.CompilerIrInstr.Mov
+            place
+            (ir.CompilerIrValue.Function target.symbol)
+            type))
+        (return (LowerNormalizedUnit.Ok unit)))]
+    [_ unit])
   (let
     [ctx : tc_core.TcContext (clone state.ctx)]
     [type : ast.AstType (try (lower-normalized-type output node.type))]
@@ -74307,7 +74439,8 @@
       (unless
         valid?
         (return
-          (LowerNormalizedUnit.Err "lower: invalid certified primitive types")))]
+          (LowerNormalizedUnit.Err
+            (lower-diagnostic "lower: invalid certified primitive types"))))]
     [instruction : ir.CompilerIrInstr
       (match primitive
         [(or (typed.TypedPrimitive.Cast) (typed.TypedPrimitive.PtrCast)
@@ -74380,7 +74513,7 @@
             [_
               (return
                 (LowerNormalizedUnit.Err
-                  "lower: invalid certified pointer offset"))])]
+                  (lower-diagnostic "lower: invalid certified pointer offset")))])]
         [(typed.TypedPrimitive.Builtin _ _)
           (let
             [condition : i64 state.next-var]
@@ -74401,7 +74534,7 @@
                 [_ false])
               (return
                 (LowerNormalizedUnit.Err
-                  "lower: invalid certified C pointer check")))
+                  (lower-diagnostic "lower: invalid certified C pointer check"))))
             (try (lower-normalized-charge! state 4))
             (set! state.next-var (+ state.next-var 2))
             (lower-normalized-emit!
@@ -74437,7 +74570,8 @@
             (ir.CompilerIrInstr.Mov place operand type))]
         [_
           (return
-            (LowerNormalizedUnit.Err "lower: unsupported certified primitive"))])]
+            (LowerNormalizedUnit.Err
+              (lower-diagnostic "lower: unsupported certified primitive")))])]
     (lower-normalized-emit! state instrs (& node.source) instruction)
     (LowerNormalizedUnit.Ok unit)))
 
@@ -74527,7 +74661,8 @@
                         (array-ref node.operands 0)))
                     (return
                       (LowerNormalizedUnit.Err
-                        "lower: invalid certified unary operand")))
+                        (lower-diagnostic
+                          "lower: invalid certified unary operand"))))
                   (lower-normalized-emit!
                     state
                     instrs
@@ -74550,7 +74685,8 @@
                         (array-ref node.operands 1)))
                     (return
                       (LowerNormalizedUnit.Err
-                        "lower: invalid certified binary operands")))
+                        (lower-diagnostic
+                          "lower: invalid certified binary operands"))))
                   (let
                     [left : i64 (array-ref node.operands 0)]
                     [right : i64 (array-ref node.operands 1)]
@@ -74581,7 +74717,7 @@
               [_
                 (return
                   (LowerNormalizedUnit.Err
-                    "lower: invalid certified value producer"))])
+                    (lower-diagnostic "lower: invalid certified value producer")))])
             (LowerNormalizedUnit.Ok unit)))]
       [(= (array-ref output.body.places place).type.index 0)
         (begin
@@ -74591,7 +74727,9 @@
             source
             (ir.CompilerIrInstr.Mov place ir.CompilerIrValue.Unit type))
           (LowerNormalizedUnit.Ok unit))]
-      [else (LowerNormalizedUnit.Err "lower: missing certified value producer")])))
+      [else
+        (LowerNormalizedUnit.Err
+          (lower-diagnostic "lower: missing certified value producer"))])))
 
 (define (lower-normalized-reach!
   [output : (& output norm.OwnershipNormalizedBody)]
@@ -74634,11 +74772,13 @@
       [(own.OwnershipResult.Ok) unit]
       [(own.OwnershipResult.Err _)
         (return
-          (LowerNormalizedResult.Err "lower: invalid ownership certificate"))])
+          (LowerNormalizedResult.Err
+            (lower-diagnostic "lower: invalid ownership certificate")))])
     (unless
       (= output.body.entry.index 0)
       (return
-        (LowerNormalizedResult.Err "lower: invalid certified entry order")))
+        (LowerNormalizedResult.Err
+          (lower-diagnostic "lower: invalid certified entry order"))))
     (let
       [places : i64 (array-length output.body.places)]
       [blocks : i64 (array-length output.body.blocks)]
@@ -74733,7 +74873,8 @@
                               place.index
                               (&
                                 (array-ref block.instructions instruction).source)))]
-                        [(own.OwnershipOperation.Copy source dest)
+                        [(or (own.OwnershipOperation.Copy source dest)
+                             (own.OwnershipOperation.Move source dest))
                           (lower-normalized-emit!
                             (&mut state)
                             (&mut instrs)
@@ -74749,7 +74890,8 @@
                         [_
                           (return
                             (LowerNormalizedResult.Err
-                              "lower: unsupported certified effect"))])
+                              (lower-diagnostic
+                                "lower: unsupported certified effect")))])
                       (set! instruction (+ instruction 1))))
                   (match (& block.terminator)
                     [(own.OwnershipTerminator.Goto target)
@@ -74771,7 +74913,8 @@
                           (< producer 0)
                           (return
                             (LowerNormalizedResult.Err
-                              "lower: missing certified abort effect")))
+                              (lower-diagnostic
+                                "lower: missing certified abort effect"))))
                         (let
                           [node : (& output norm.NormalizeNode)
                             (& (array-ref output.nodes producer))]
@@ -74789,7 +74932,8 @@
                             [_
                               (return
                                 (LowerNormalizedResult.Err
-                                  "lower: invalid certified abort effect"))])))]
+                                  (lower-diagnostic
+                                    "lower: invalid certified abort effect")))])))]
                     [(own.OwnershipTerminator.Return operands)
                       (begin
                         (unless
@@ -74807,7 +74951,8 @@
                                   (array-ref operands.items 0).index).type.index)))
                           (return
                             (LowerNormalizedResult.Err
-                              "lower: invalid certified return arity")))
+                              (lower-diagnostic
+                                "lower: invalid certified return arity"))))
                         (ir.compiler-ir-instr-builder-push!
                           (&mut instrs)
                           (ir.CompilerIrInstr.Return
@@ -74821,7 +74966,8 @@
                     [_
                       (return
                         (LowerNormalizedResult.Err
-                          "lower: unsupported certified termination"))])
+                          (lower-diagnostic
+                            "lower: unsupported certified termination")))])
                   (lower-normalized-finish-block! (&mut state) (&mut instrs) -1))))
             (set! index (+ index 1))))
         (try (lower-normalized-elide-copies! output (&mut state)))
@@ -74922,8 +75068,8 @@
           (tc_core.tc-context-source-names ctx)
           spans
           (compiler-lower-state-current-source-path-id lower-state))
-          [(LowerNormalizedResult.Err message)
-            (ResultLowerFunction.Err (box (lower-diagnostic message)))]
+          [(LowerNormalizedResult.Err diagnostic)
+            (ResultLowerFunction.Err (box diagnostic))]
           [(LowerNormalizedResult.Ok function next-spans)
             (ResultLowerFunction.Ok
               (lower-function-seq-escape-to-ir-arena

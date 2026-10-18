@@ -6,6 +6,7 @@
 (import compiler_symbols as symbols)
 (import stdlib.test)
 (import stdlib.io)
+(import stdlib.iterator)
 (import stdlib.string)
 
 (define (typed-test-body [owner : u64]) : own.OwnershipBodyId
@@ -1828,6 +1829,58 @@
         (&mut store)
         (& lease)
         (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64))))]
+    [function-values : bool
+      (let
+        [origin : typed.TypedOriginId
+          (typed-test-origin! (&mut store) (& lease))]
+        [scalar : typed.TypedTypeId
+          (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+        [valid : bool true]
+        (for [mode (iterator.range 0 8)]
+          (let
+            [index : i64
+              (cond
+                [(= mode 1) 1]
+                [(= mode 3) -1]
+                [(= mode 4) 3]
+                [(= mode 5) 2]
+                [(= mode 6) 9223372036854775807]
+                [else 0])]
+            [target : i64
+              (cond
+                [(or (= mode 1) (= mode 2)) foreign-key]
+                [(= mode 5) value-key]
+                [else key])]
+            [type : typed.TypedTypeId
+              (typed.TypedTypeId
+                (typed.typed-handle-copy
+                  (if (= mode 7)
+                    (& scalar.handle)
+                    (& signature.handle))))]
+            [accepted : bool
+              (match (typed.typed-occurrence-add!
+                (&mut store)
+                (& lease)
+                type
+                typed.TypedSyntax.Generated
+                (typed.TypedOriginId
+                  (typed.typed-handle-copy (& origin.handle)))
+                (typed.TypedOperation.Primitive
+                  (typed.TypedPrimitive.FunctionValue index target))
+                (& (__tl_make-array typed.TypedOccurrenceId 0)))
+                [(typed.TypedOccurrenceResult.Ok _) (< mode 2)]
+                [(typed.TypedOccurrenceResult.Err error)
+                  (if (= mode 7)
+                    (match error
+                      [(typed.TypedError.Shape) true]
+                      [_ false])
+                    (and
+                      (>= mode 2)
+                      (match error
+                        [(typed.TypedError.Unknown) true]
+                        [_ false])))])]
+            (set! valid (and valid accepted))))
+        valid)]
     [valid : bool
       (and
         (typed.typed-declared-call-valid? (& lease) 0 key false)
@@ -1879,7 +1932,7 @@
     [stale : bool
       (not (typed.typed-declared-call-valid? (& lease) 0 key false))]
     (typed.typed-store-retire! (&mut store))
-    (and valid stale)))
+    (and valid function-values stale)))
 
 (define (compiler-typed-occurrence-self-test) : i64
   (test.assert-true

@@ -14606,6 +14606,28 @@
     true
     sink))
 
+;; A declaration value keeps its canonical target before the inference lease
+;; retires. Other Copy module values need a separate global-load representation.
+(define (tc-selected-global-value-primitive
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : typed.TypedPrimitive
+  (let
+    [index : i64 (tc-selected-call-declared-function ctx env name)]
+    (when
+      (>= index 0)
+      (match (tc-selected-declared-call-kind ctx index false)
+        [(typed.TypedCallKind.Declared _ key)
+          (when
+            (csym.compiler-symbols-function-target?
+              (tc-context-symbols ctx)
+              index
+              key
+              false)
+            (return (typed.TypedPrimitive.FunctionValue index key)))]
+        [_ unit]))
+    (typed.TypedPrimitive.Builtin (tc-selected-form-code-global) 0)))
+
 ;; A module-qualified value name: a nullary variant is a construction and a
 ;; Copy module value is a read of a fresh value; others stay with legacy.
 (define (tc-infer-selected-qualified-value
@@ -14664,7 +14686,7 @@
               syntax
               source
               (typed.TypedOperation.Primitive
-                (typed.TypedPrimitive.Builtin (tc-selected-form-code-global) 0))
+                (tc-selected-global-value-primitive ctx env name))
               (__tl_make-array typed.TypedOccurrenceId 0)
               sink)]
           ;; A move-only module value (of this module or another) is its static
@@ -16865,9 +16887,10 @@
                                 syntax
                                 source
                                 (typed.TypedOperation.Primitive
-                                  (typed.TypedPrimitive.Builtin
-                                    (tc-selected-form-code-global)
-                                    0))
+                                  (tc-selected-global-value-primitive
+                                    ctx
+                                    env
+                                    name))
                                 (__tl_make-array typed.TypedOccurrenceId 0)
                                 (TcSelectedSink.Capture store lease bindings))]
                             ;; A move-only module value read whole is taken out

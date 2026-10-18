@@ -3608,6 +3608,105 @@
       (and (>= used 1024) (< used 1200))
       "64 compact records fit 16-byte storage plus its array header")))
 
+;; `clone-ast-type`: every variant comes back equal to its source (children
+;; compared as plain ids, so distinct field values catch a swapped or dropped
+;; field), and a payload list the clone owns is fresh storage, so writing it
+;; leaves the source alone.
+(define (compiler-ast-type-list-of [a : i64] [b : i64]) : ast.AstTypeList
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (ast.AstTypeList slots 2)))
+
+(define (compiler-ast-lifetime-list-of [a : i64]) : ast.AstLifetimeList
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref slots 0) a)
+    (ast.AstLifetimeList slots 1)))
+
+(define (compiler-ast-type-clone-same? [ty : ast.AstType]) : bool
+  (let
+    [copy : ast.AstType (ast.clone-ast-type (& ty))]
+    (ast.ty-node-shallow-value-eq? ty copy)))
+
+(define (compiler-ast-type-clone?) : bool
+  (let
+    [every-shape? : bool
+      (and
+        (compiler-ast-type-clone-same? (I64))
+        (compiler-ast-type-clone-same? (I32))
+        (compiler-ast-type-clone-same? (I16))
+        (compiler-ast-type-clone-same? (I8))
+        (compiler-ast-type-clone-same? (U64))
+        (compiler-ast-type-clone-same? (U32))
+        (compiler-ast-type-clone-same? (U16))
+        (compiler-ast-type-clone-same? (U8))
+        (compiler-ast-type-clone-same? (F64))
+        (compiler-ast-type-clone-same? (F32))
+        (compiler-ast-type-clone-same? (Bool))
+        (compiler-ast-type-clone-same? (Char))
+        (compiler-ast-type-clone-same? (String))
+        (compiler-ast-type-clone-same? (Str))
+        (compiler-ast-type-clone-same? (Bytes))
+        (compiler-ast-type-clone-same? (Unit))
+        (compiler-ast-type-clone-same? (Never))
+        (compiler-ast-type-clone-same? (Expr))
+        (compiler-ast-type-clone-same? (ExprList))
+        (compiler-ast-type-clone-same?
+          (Func (box (compiler-ast-type-list-of 21 22)) 23))
+        (compiler-ast-type-clone-same?
+          (Tuple (box (compiler-ast-type-list-of 24 25))))
+        (compiler-ast-type-clone-same? (Array 26 27))
+        (compiler-ast-type-clone-same? (DynArray 28))
+        (compiler-ast-type-clone-same? (Box 29))
+        (compiler-ast-type-clone-same? (Region 30 31))
+        (compiler-ast-type-clone-same? (Ref 32 33))
+        (compiler-ast-type-clone-same? (MutRef 34 35))
+        (compiler-ast-type-clone-same? (Enum 36))
+        (compiler-ast-type-clone-same?
+          (EnumArgs 37 (box (compiler-ast-lifetime-list-of 38))))
+        (compiler-ast-type-clone-same? (Struct 39))
+        (compiler-ast-type-clone-same?
+          (StructArgs 40 (box (compiler-ast-lifetime-list-of 41))))
+        (compiler-ast-type-clone-same? (Var 42))
+        (compiler-ast-type-clone-same?
+          (VarArgs 43 (box (compiler-ast-lifetime-list-of 44))))
+        (compiler-ast-type-clone-same? (Ptr 45))
+        (compiler-ast-type-clone-same? (MutPtr 46))
+        (compiler-ast-type-clone-same? (Slice 47))
+        (compiler-ast-type-clone-same? (CFunc 48 (Nullable)))
+        (compiler-ast-type-clone-same? (CFunc 49 (NonNull)))
+        (compiler-ast-type-clone-same? (CFunc 50 (UnsafeNullable)))
+        (compiler-ast-type-clone-same? (CFunc 51 (UnsafeNonNull)))
+        (compiler-ast-type-clone-same? (Invalidate 52 53)))]
+    [func : ast.AstType (Func (box (compiler-ast-type-list-of 11 12)) 13)]
+    [func-copy : ast.AstType (ast.clone-ast-type (& func))]
+    (match func-copy
+      [(Func copied ret)
+        (let
+          [list : ast.AstTypeList (deref copied)]
+          (set! (array-ref list.slots 0) 99)
+          (and
+            every-shape?
+            (= ret 13)
+            (= list.len 2)
+            (= (array-ref list.slots 0) 99)
+            (= (array-ref list.slots 1) 12)
+            (match func
+              [(Func source _)
+                (let
+                  [source-list : ast.AstTypeList (deref source)]
+                  (= (array-ref source-list.slots 0) 11))]
+              [_ false])))]
+      [_ false])))
+
+(test
+  compiler-ast-type-clone
+  (tl_test.assert-true
+    (compiler-ast-type-clone?)
+    "clone-ast-type copies every shape and owns fresh payload storage"))
+
 (define (main) : i64
   (unless (compiler-ast-spmd-presence-segments?) (return 32))
   (unless

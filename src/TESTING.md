@@ -40,6 +40,11 @@ float and narrow reads against their exact extern metadata symbols. The
 extern spellings and then no extern, resets function caches, and checks a second
 owner's isolation and final retirement.
 
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

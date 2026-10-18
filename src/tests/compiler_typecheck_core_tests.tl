@@ -3386,12 +3386,52 @@
       (comptime
         (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
       80)
+    (= (comptime (offset-of (type TcTypeEnvStore) phase-param-markers)) 88)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
     (= (comptime (offset-of (type TcTypeEnvCache) chain-seq)) 8)
     (= (comptime (offset-of (type TcTypeEnvCache) chain-jumps-address)) 16)
     (= (comptime (offset-of (type TcTypeEnvCache) chain-prev-address)) 24)))
+
+(test
+  tc-arena-phase-param-store-isolation
+  (let
+    [base : tc_core.TcTypeEnv (tc_core.tc-type-env-new)]
+    [foreign : tc_core.TcTypeEnv (tc_core.tc-type-env-new)]
+    [owner : i64 (ci.intern "phase-store-owner")]
+    [generation : i64 (ci.intern "phase-store-generation")]
+    [pairs : ast.AstLifetimeList
+      (ast.ast-lifetime-cons
+        generation
+        (& (ast.ast-lifetime-cons owner (& (ast.ast-lifetime-list-new)))))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        base
+        (tc_core.tc-arena-phase-param-marker-id)
+        (tc_core.tc-arena-phase-param-marker-type base pairs))]
+    (test.assert-true
+      (tc_core.tc-arena-phase-param-region-owned-by? env owner generation)
+      "owner relationship belongs to the marked store")
+    (tc_core.compiler-typecheck-reset-intern-owned-state!)
+    (test.assert-true
+      (tc_core.tc-arena-phase-param-region-owned-by? env owner generation)
+      "unrelated cache reset preserves the retained store proof")
+    (test.assert-true
+      (not
+        (tc_core.tc-arena-phase-param-region-owned-by? foreign owner generation))
+      "another store does not inherit the relationship")
+    (for [index (iterator.range 0 96)]
+      (set!
+        env
+        (tc_core.tc-bind-id
+          env
+          (ci.intern
+            (str_cat.str-cat "phase-store-filler-" (string.int->string index)))
+          (I64))))
+    (test.assert-true
+      (tc_core.tc-arena-phase-param-region-owned-by? env owner generation)
+      "binding growth preserves the marker and its presence flag")))
 
 (define (tc-type-env-owner-arena-smoke?) : bool
   (let

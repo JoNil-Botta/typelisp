@@ -131,6 +131,29 @@ The three string raw-copy helpers carry unsafe-call effects; each caller keeps
 its source/destination proof at an explicit unsafe call, and a plain function
 value cannot erase that effect.
 
+Branded arena phase tokens carry two source lifetimes, owner `r` and generation
+`g`, without changing the runtime `{ arena, mark }` layout. The typechecker
+derives `g` from the canonical phase call identity. `TcMovedSet.arena-phases`
+is an immutable owner-to-generation chain, separate from local place IDs and
+moved projection facts. Snapshots share its head; branches union active entries,
+and loops compare backedges with their entry state. Only a matching direct
+local rewind clears an entry. Move-state constructors preserve the phase head
+alongside existing local, atomic-user and parameter-storage facts.
+
+Phase parameters establish both the active phase and the owner relationship of
+their generation. The shared type-child traversal and resolved nominal fields
+collect those relationships through holders, with exact instantiated-type cycle
+detection. A marker below the parameters keeps them visible while move and
+borrow scans walk the local spine. Its presence flag belongs to the environment
+store, so another job's cache reset cannot disable a retained proof.
+Owner invalidation includes these abstract
+generations as well as structurally generated local ones. An owner crossing a
+call during a live phase needs a corresponding phase in the substituted callee
+signature or an effect ending that owner. Opening a phase conflicts with live
+owner borrows; parameter rewind remains rejected without a caller-visible
+rewind effect. Lowering extracts the phase's nested arena handle and obtains
+the allocation region from the shared semantic `in-arena` environment.
+
 `AstType.CFunc` separates a native code address from an ordinary TypeLisp
 function/closure descriptor. Its pooled `Func` operand records only argument and
 result shape; its second operand records nullability and the unsafe-call effect.

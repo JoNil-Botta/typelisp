@@ -6537,20 +6537,47 @@ proof in section 6.5.
 
 **Arena phase tokens:** `stdlib.arena` exposes `arena.ArenaPhase`,
 `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` as the safe
-non-lexical invalidation surface for first-class arena owners. `arena.phase`
-and `arena.rewind-safe!` remain limited to direct local owners initialized by
-`arena.make` or `arena.make-atomic`. `arena.phase` records the runtime mark and
-advances the checker's generation for later `(in-arena owner ...)` allocations.
-`arena.rewind-safe!` consumes a direct local phase token and is accepted only
-when no live value, reference, borrow, closure capture, or container slot can
-reach an allocation from the token's generation. For atomic owners, the checker
+non-lexical invalidation surface for first-class arena owners. On a branded
+owned local arena place `(arena.Arena r)`, `arena.phase` records the runtime mark
+and infers a move-only `(arena.ArenaPhase r g)` with a call-site-fresh generation
+`g`. Both lifetime arguments are phantom: the runtime token still contains only
+an arena and a mark. A token may move into a local aggregate field or a helper
+parameter. `in-arena` on the token tags allocations `(in g T)`. While the phase
+is live, allocation through any owner place of brand `r` and opening another
+phase for `r` are rejected. Opening a phase also conflicts with a live borrow
+of its owner. Borrowed and global owners cannot establish this local proof.
+
+A direct canonical `arena.rewind-safe!` consumes a local token or local-rooted
+field whose generation matches the phase opened in the current function. It
+invalidates local values, borrows, captures and container slots containing `g`
+and clears the active phase for `r`. Pre-phase `(in r T)` values remain usable.
+Destroying an owner ends its active phase together with every generation it owns.
+Rewind on every reachable branch clears the phase; rewind on only one branch
+does not. A loop cannot carry an unclosed newly opened phase into its next
+iteration. A later phase has a distinct generation: reconstruct a stored
+`(State r g1)` as `(State r g2)` instead of assigning a new token to its old
+generation field. This exception does not introduce general output-only or
+existential lifetimes.
+
+An incoming `(arena.ArenaPhase r g)`, including one in a nominal holder,
+establishes that `g` belongs to `r` and that this owner has a live phase. A helper
+may allocate through the token but cannot rewind a parameter or a
+parameter-rooted field: caller-visible rewind effects are not yet supported.
+Passing an owner during its live phase requires the callee's signature to carry
+the matching phase relationship or an `:invalidate` effect ending that owner.
+Canonical handle inspection and aggregate construction preserve this proof.
+
+Bare legacy `arena.ArenaPhase` retains direct-local `make`/`make-atomic` owner
+and token-binding behavior: subsequent `in-arena owner` allocations use the
+recorded legacy generation. For atomic owners, the checker
 also requires every checker-visible thread user of the owner to have been joined
 or otherwise moved through an accepted release point before the rewind.
 `arena.destroy-safe!` consumes either such a direct local owner or a branded
 local/local-rooted aggregate place of type `(arena.Arena r)`. Branded destroy
 uses `r` as the stable invalidation identity: every current-function local,
 reference, borrow, closure, or aggregate/container value whose resolved type or
-capture provenance contains `r` becomes unusable. A parameter or
+capture provenance contains `r` or a phase generation belonging to `r` becomes
+unusable. A parameter or
 parameter-rooted place of brand `r` is accepted only when a parameter of the
 enclosing function or lambda declares `(:invalidate r)`; a nested lambda never
 inherits its enclosing function's effect. Atomic brands require the same
@@ -8972,7 +8999,7 @@ needs safe non-lexical reclamation:
       (+ n (string.string-length kept)))))
 ```
 
-The recognized safe surface is deliberately narrow: the owner argument to
+For the bare legacy surface, the owner argument to
 `arena.phase` must be a direct local binding initialized by `arena.make` or
 `arena.make-atomic`, and the argument to `arena.rewind-safe!` must be a direct
 local `arena.ArenaPhase` returned by `arena.phase`. `arena.destroy-safe!` also
@@ -8986,6 +9013,31 @@ current-function value carrying the destroyed brand is rejected. A parameter
 or parameter-rooted field is destroyed only under its signature's
 `(:invalidate r)` effect, which carries the same invalidation to every caller
 (section 5.16).
+
+The branded surface in section 5.16 additionally supports generation tokens:
+
+```lisp test=run name=arena-branded-phase-routing exit=42 stdout=""
+(import stdlib.arena)
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [owner (arena.make)]
+    [phase (arena.phase owner)]
+    [text (in-arena phase (string.append "temporary" "-data"))]
+    [length : i64 (string.string-length text)]
+    (arena.rewind-safe! phase)
+    (let
+      [base (in-arena owner (string.append "base" "-data"))]
+      [answer : i64 (+ 19 (+ length (string.string-length base)))]
+      (arena.destroy-safe! owner)
+      answer)))
+```
+
+A helper accepting `(arena.ArenaPhase r g)` by value transfers the token.
+Returning a holder containing it lets the caller retain its later rewind
+capability. Parameter rewind is rejected until a declared caller-visible rewind
+effect is available.
 
 The safe phase-token proof does not make an ordinary arena a spanning
 task-thread owner. Atomic arenas remain spanning owners only for values

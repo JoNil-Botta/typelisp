@@ -2,6 +2,13 @@
 (import stdlib.string)
 (import stdlib.test)
 
+(defstruct ArenaView
+  (handle i64))
+
+(define (read-context [state : (MutPtr ArenaView)]) : i64
+  (unsafe
+    (in-arena (arena.Arena (deref state).handle) 42)))
+
 (define (release-other
   [other : (arena.Arena other) (:invalidate other)]
   [_phase : (& phase (arena.ArenaPhase owner generation))]
@@ -24,6 +31,10 @@
 
 (define (main) : i64
   (let
+    [view (ArenaView (arena.raw-handle (arena.current)))]
+    [context : i64
+      (unsafe
+        (read-context (ptr-addr-of view)))]
     [owner (arena.make)]
     [other (arena.make)]
     [base (in-arena owner (string.append "base" "-value"))]
@@ -33,6 +44,9 @@
     [restored-owner routed.owner]
     [restored-phase routed.phase]
     [length : i64 (release-other other (& restored-phase) text)]
+    (test.assert-true
+      (= context 42)
+      "unsafe target retains its checked type fact")
     (test.assert-true (= length 11) "unrelated owner does not end this phase")
     (test.assert-true
       (= (string.string-length routed.text) 13)

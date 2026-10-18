@@ -26,6 +26,17 @@ assembly parity with forced source, and rejects source/producer
 mismatches. Semantic-index smoke tests with `--cfg test` assert that building
 the index does not typecheck let initializers again.
 
+The branded-phase integration rows run stored-token reconstruction, parameter
+routing, branch/loop state and joined atomic users at every opt level on both
+hosts. The safety rows pin distinct generations, active owner allocation,
+overlapping phases, one-arm joins, loop backedges, token reuse, captures and
+borrows, unreleased atomic users, forged tokens, and parameter rewind refusal.
+Incoming-phase tests also require owner destruction to invalidate abstract
+generation data through nested holders. Keep an unrelated-owner positive
+control and a helper that returns its owner/token together. Owner-only helper
+calls during a live phase must fail before they can hide a base-branded
+allocation from rewind. Preserve the bare legacy phase rows beside these tests.
+
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and
 emission on both SIMD widths and target ABIs. Its remapped homes extend beyond

@@ -1,16 +1,12 @@
 (import stdlib.arena)
-(import stdlib.string)
 
 (define (main) : i64
   (let
     [owner (arena.make-atomic)]
     [phase (arena.phase owner)]
-    [text (in-arena phase (string.append "captured" "-phase"))]
+    [borrowed (& phase)]
     [callback
       (lambda () : i64
-        (string.string-length text))]
-    [view (& callback)]
+        borrowed.mark.handle)]
     (arena.rewind-safe! phase)
-    (let
-      [callee (deref view)]
-      (callee))))
+    (callback)))

@@ -925,6 +925,38 @@ thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64
 thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
 arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
+# Branded generations, stored tokens, call boundaries, flow joins and atomic users.
+arena_branded_phase_active_open_reject|check-fail|tests/safety/arena_branded_phase_active_open_reject.tl|-|error[E0212]: typecheck: arena.phase cannot open inside its owner
+arena_branded_phase_active_rewind_reject|check-fail|tests/safety/arena_branded_phase_active_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot run inside the arena it rewinds
+arena_branded_phase_arity_one_reject|check-fail|tests/safety/arena_branded_phase_arity_one_reject.tl|-|error[E0202]: typecheck: nominal lifetime argument arity mismatch
+arena_branded_phase_arity_three_reject|check-fail|tests/safety/arena_branded_phase_arity_three_reject.tl|-|error[E0202]: typecheck: nominal lifetime argument arity mismatch
+arena_branded_phase_atomic_user_reject|check-fail|tests/safety/arena_branded_phase_atomic_user_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_branded_phase_borrowed_owner_open_reject|check-fail|tests/safety/arena_branded_phase_borrowed_owner_open_reject.tl|-|error[E0207]: typecheck: cannot assign to borrowed place `owner`
+arena_branded_phase_capture_borrow_reject|check-fail|tests/safety/arena_branded_phase_capture_borrow_reject.tl|-|error[E0208]: typecheck: use of moved value `callback`
+arena_branded_phase_capture_reject|check-fail|tests/safety/arena_branded_phase_capture_reject.tl|-|error[E0208]: typecheck: use of moved value `callback`
+arena_branded_phase_channel_reject|check-fail|tests/safety/arena_branded_phase_channel_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe!/rewind-safe! cannot prove atomic arena
+arena_branded_phase_continue_reject|check-fail|tests/safety/arena_branded_phase_continue_reject.tl|-|error[E0212]: typecheck: a phase opened in a loop must be rewound before the next iteration
+arena_branded_phase_duplicate_reject|check-fail|tests/safety/arena_branded_phase_duplicate_reject.tl|-|error[E0208]: typecheck: use of moved value `phase`
+arena_branded_phase_forge_reject|check-fail|tests/safety/arena_branded_phase_forge_reject.tl|-|error[E0206]: typecheck: return type mismatch: expected (stdlib.arena/ArenaPhase owner generation)
+arena_branded_phase_generation_reject|check-fail|tests/safety/arena_branded_phase_generation_reject.tl|-|error[E0206]: typecheck: struct field assignment type mismatch:
+arena_branded_phase_indirect_owner_route_reject|check-fail|tests/safety/arena_branded_phase_indirect_owner_route_reject.tl|-|error[E0212]: typecheck: passing an owner with a live phase requires an ArenaPhase parameter for that generation or an :invalidate effect
+arena_branded_phase_join_reject|check-fail|tests/safety/arena_branded_phase_join_reject.tl|-|error[E0212]: typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token
+arena_branded_phase_live_borrow_reject|check-fail|tests/safety/arena_branded_phase_live_borrow_reject.tl|-|error[E0208]: typecheck: use of moved value `view`
+arena_branded_phase_loop_header_reject|check-fail|tests/safety/arena_branded_phase_loop_header_reject.tl|-|error[E0212]: typecheck: a phase opened in a loop must be rewound before the next iteration
+arena_branded_phase_loop_reject|check-fail|tests/safety/arena_branded_phase_loop_reject.tl|-|error[E0212]: typecheck: a phase opened in a loop must be rewound before the next iteration
+arena_branded_phase_open_join_reject|check-fail|tests/safety/arena_branded_phase_open_join_reject.tl|-|error[E0212]: typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token
+arena_branded_phase_overlap_reject|check-fail|tests/safety/arena_branded_phase_overlap_reject.tl|-|error[E0212]: typecheck: arena.phase cannot overlap a live phase for the same owner
+arena_branded_phase_owner_route_reject|check-fail|tests/safety/arena_branded_phase_owner_route_reject.tl|-|error[E0212]: typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token
+arena_branded_phase_parameter_destroy_read_reject|check-fail|tests/safety/arena_branded_phase_parameter_destroy_read_reject.tl|-|error[E0208]: typecheck: use of moved value `text`
+arena_branded_phase_parameter_field_rewind_reject|check-fail|tests/safety/arena_branded_phase_parameter_field_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! requires a locally created owner;
+arena_branded_phase_parameter_nested_destroy_reject|check-fail|tests/safety/arena_branded_phase_parameter_nested_destroy_reject.tl|-|error[E0208]: typecheck: use of moved value `text`
+arena_branded_phase_parameter_overlap_reject|check-fail|tests/safety/arena_branded_phase_parameter_overlap_reject.tl|-|error[E0212]: typecheck: arena.phase requires a locally created owner;
+arena_branded_phase_parameter_owner_rewind_reject|check-fail|tests/safety/arena_branded_phase_parameter_owner_rewind_reject.tl|-|error[E0212]: typecheck: arena.phase requires a locally created owner;
+arena_branded_phase_parameter_owner_route_reject|check-fail|tests/safety/arena_branded_phase_parameter_owner_route_reject.tl|-|error[E0212]: typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token
+arena_branded_phase_parameter_rewind_reject|check-fail|tests/safety/arena_branded_phase_parameter_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! requires a locally created owner;
+arena_branded_phase_stored_reuse_reject|check-fail|tests/safety/arena_branded_phase_stored_reuse_reject.tl|-|error[E0208]: typecheck: use of moved value `state`
+arena_branded_phase_shadowed_owner_route_reject|check-fail|tests/safety/arena_branded_phase_shadowed_owner_route_reject.tl|-|error[E0212]: typecheck: in-arena owner has a live phase; allocate through its ArenaPhase token
+arena_branded_phase_wrong_owner_reject|check-fail|tests/safety/arena_branded_phase_wrong_owner_reject.tl|-|lifetime parameter 1 of `stdlib.arena/ArenaPhase` is invariant
 arena_branded_distinct_alias_reject|check-fail|tests/safety/arena_branded_distinct_alias_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
 arena_branded_operand_wrong_brand_reject|check-fail|tests/safety/arena_branded_operand_wrong_brand_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
 arena_bare_operand_brand_reject|check-fail|tests/safety/arena_bare_operand_brand_reject.tl|-|expected (stdlib.arena/Arena r), found stdlib.arena/Arena

@@ -429,7 +429,8 @@
   (structural-session-address i64)
   ;; Job-owned memo used while explicit cache layers collect signatures that
   ;; still contain unresolved type variables.
-  (type-resolution-cache-state-address i64))
+  (type-resolution-cache-state-address i64)
+  (phase-param-markers bool))
 
 ;; Structural index over one store's explicit top-env layer forest. `map` sends
 ;; a binding key to the packed reference of the newest layer that binds it;
@@ -8382,7 +8383,8 @@
     topenv-state-address
     0
     structural-session-address
-    type-resolution-cache-state-address))
+    type-resolution-cache-state-address
+    false))
 
 (define (tc-type-env-store-handle-new-with-topenv-state-address
   [topenv-state-address : i64]
@@ -32201,9 +32203,7 @@
         (tc-with-escape-expr ctx env scratch body (Some expected)))]
     [(WithScratch body) (tc-with-scratch-expr ctx env body (Some expected))]
     [(InArena arena-box body)
-      (let
-        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-scoped ctx env arena body (Some expected)))]
+      (tc-in-arena-expr-scoped ctx env arena-box body (Some expected))]
     [(WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(WithResource bindings body)
@@ -36153,15 +36153,18 @@
           No))]
     [_ No]))
 
-(define tc-arena-phase-param-bind-count : i64
-  0)
+(define (tc-arena-phase-param-markers-present? [env : TcTypeEnv]) : bool
+  (and
+    (> env.store 0)
+    (unsafe
+      (deref (int->ptr (cast env.store : u64) : (Ptr TcTypeEnvStore))).phase-param-markers)))
 
 (define (tc-arena-phase-param-marker-id) : i64
   (ci.intern "\n__typelisp_arena_phase_params"))
 
 (define (tc-arena-phase-param-env-pairs [env : TcTypeEnv]) : ast.AstLifetimeList
   (when
-    (= tc-arena-phase-param-bind-count 0)
+    (not (tc-arena-phase-param-markers-present? env))
     (return (ast.ast-lifetime-list-new)))
   (match (if (tc-type-env-scoped-runtime-active? env)
     (tc-type-env-scoped-carrier-marker-type
@@ -36175,18 +36178,10 @@
   [env : TcTypeEnv]
   [owner : i64]
   [generation : i64]) : bool
-  (when (= tc-arena-phase-param-bind-count 0) (return false))
+  (unless (tc-arena-phase-param-markers-present? env) (return false))
   (let
     [pairs : ast.AstLifetimeList (tc-arena-phase-param-env-pairs env)]
-    (for [pair-index (iterator.range 0 (/ pairs.len 2))]
-      (let
-        [index : i64 (* pair-index 2)]
-        (when
-          (and
-            (= generation (ast.ast-lifetime-list-get (& pairs) index -1))
-            (= owner (ast.ast-lifetime-list-get (& pairs) (+ index 1) -1)))
-          (return true))))
-    false))
+    (tc-arena-phase-pairs-contain? (& pairs) owner generation)))
 
 (define (tc-arena-phase-param-marker-type
   [env : TcTypeEnv]
@@ -36194,7 +36189,10 @@
   (let
     [outer : ast.AstLifetimeList (tc-arena-phase-param-env-pairs env)]
     (ast.ast-lifetime-list-append-from (&mut pairs) (& outer) 0)
-    (+= tc-arena-phase-param-bind-count 1)
+    (unsafe
+      (set!
+        (deref (int->ptr (cast env.store : u64) : (MutPtr TcTypeEnvStore))).phase-param-markers
+        true))
     (ast.ast-ty-var-args (tc-arena-phase-param-marker-id) pairs)))
 
 (defstruct TcArenaInputFacts
@@ -59702,11 +59700,12 @@
 (define (tc-in-arena-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [arena : ast.AstExpr]
+  [arena-id : i64]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
-    [arena-ty (try (tc-expr ctx env (tc-global-shared-view arena)))]
+    [arena : ast.AstExpr (tc-context-expr-get ctx arena-id)]
+    [arena-ty (try (tc-expr-id ctx env arena-id))]
     (if (or
       (tc-arena-type? ctx (tc-global-shared-view arena-ty))
       (match (tc-arena-phase-brands ctx (tc-global-shared-view arena-ty))
@@ -59782,13 +59781,13 @@
 (define (tc-in-arena-expr-scoped
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [arena : ast.AstExpr]
+  [arena-id : i64]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType (tc-in-arena-expr ctx env arena body expected)]
+    [result : ResultTcType (tc-in-arena-expr ctx env arena-id body expected)]
     (tc-type-env-scoped-runtime-restore! saved)
     result))
 
@@ -61672,9 +61671,7 @@
         (tc-with-escape-expr ctx env scratch body No))]
     [(WithScratch body) (tc-with-scratch-expr ctx env body No)]
     [(InArena arena-box body)
-      (let
-        [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-scoped ctx env arena body No))]
+      (tc-in-arena-expr-scoped ctx env arena-box body No)]
     [(WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(WithResource bindings body)
@@ -64862,13 +64859,9 @@
           "typecheck: a phase opened in a loop must be rewound before the next iteration")))))
 
 (define (tc-moved-with-arena-phases [set : TcMovedSet] [phases : i64]) : TcMovedSet
-  (TcMovedSet
-    (tc-moved-roots (tc-global-shared-view set))
-    (tc-moved-partials (tc-global-shared-view set))
-    (tc-moved-paths (tc-global-shared-view set))
-    (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-    phases
-    (tc-moved-param-storage-origins set)))
+  (match set
+    [(TcMovedSet roots partials paths hidden _ origins)
+      (TcMovedSet roots partials paths hidden phases origins)]))
 
 (define (tc-moved-set-box-shared-view [value : (Box TcMovedSet)]) : TcMovedSet
   (let
@@ -65294,13 +65287,9 @@
     (tc-param-storage-origins-union-at a Nil b)))
 
 (define (tc-moved-with-param-storage-origins [set : TcMovedSet] [origins : i64]) : TcMovedSet
-  (TcMovedSet
-    (tc-moved-roots (tc-global-shared-view set))
-    (tc-moved-partials (tc-global-shared-view set))
-    (tc-moved-paths (tc-global-shared-view set))
-    (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-    set.arena-phases
-    origins))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases _)
+      (TcMovedSet roots partials paths hidden phases origins)]))
 
 (define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
   (tc-param-storage-origin-lookup (tc-moved-param-storage-origins set) name-id))
@@ -65366,20 +65355,17 @@
 
 (define (tc-moved-clone [set : (& set TcMovedSet)]) : TcMovedSet
   (let
-    [set : TcMovedSet (owned_view.compiler-owned-reference-shared-view set)]
-    [roots : tc_i64_i64_map.Map (tc-moved-roots (tc-global-shared-view set))]
-    [partials : tc_i64_i64_map.Map
-      (tc-moved-partials (tc-global-shared-view set))]
-    [paths : TcMovedPathFacts (tc-moved-paths (tc-global-shared-view set))]
-    [hidden : tc_i64_i64_map.Map
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))]
-    (TcMovedSet
-      (tc-moved-clone-id-map-or-shared (& roots))
-      (tc-moved-clone-id-map-or-shared (& partials))
-      paths
-      (tc-moved-clone-id-map-or-shared (& hidden))
-      set.arena-phases
-      (tc-moved-param-storage-origins set))))
+    [snapshot : TcMovedSet
+      (owned_view.compiler-owned-reference-shared-view set)]
+    (match snapshot
+      [(TcMovedSet roots partials paths hidden phases origins)
+        (TcMovedSet
+          (tc-moved-clone-id-map-or-shared (& roots))
+          (tc-moved-clone-id-map-or-shared (& partials))
+          paths
+          (tc-moved-clone-id-map-or-shared (& hidden))
+          phases
+          origins)])))
 
 (define (tc-moved-contains? [set : (& set TcMovedSet)] [name-id : i64]) : bool
   (let
@@ -65391,30 +65377,20 @@
   -1)
 
 (define (tc-moved-add [set : TcMovedSet] [name-id : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id (tc-moved-no-origin-id))
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      set.arena-phases
-      (tc-moved-param-storage-origins set))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [out : tc_i64_i64_map.Map (tc-moved-id-map-own roots)]
+        (tc_i64_i64_map.insert-ref! (&mut out) name-id (tc-moved-no-origin-id))
+        (TcMovedSet out partials paths hidden phases origins))]))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id value)
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      set.arena-phases
-      (tc-moved-param-storage-origins set))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [out : tc_i64_i64_map.Map (tc-moved-id-map-own roots)]
+        (tc_i64_i64_map.insert-ref! (&mut out) name-id value)
+        (TcMovedSet out partials paths hidden phases origins))]))
 
 (define (tc-moved-add-origin
   [set : TcMovedSet]
@@ -65423,21 +65399,14 @@
   (tc-moved-add-value set name-id (ast.ast-node-push origin)))
 
 (define (tc-moved-remove [set : TcMovedSet] [name-id : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map (tc-moved-roots (tc-global-shared-view set))]
-    (if (tc-moved-id-map-shared-empty? (& out))
-      ;; The shared map holds no Occupied slot, so `remove-ref!` would probe,
-      ;; miss and leave everything -- including `len` -- untouched.
-      set
-      (begin
-        (tc_i64_i64_map.remove-ref! (&mut out) name-id)
-        (TcMovedSet
-          out
-          (tc-moved-partials (tc-global-shared-view set))
-          (tc-moved-paths (tc-global-shared-view set))
-          (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-          set.arena-phases
-          (tc-moved-param-storage-origins set))))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (unless
+        (tc-moved-id-map-shared-empty? (& roots))
+        (begin
+          (tc_i64_i64_map.remove-ref! (&mut roots) name-id)
+          unit))
+      (TcMovedSet roots partials paths hidden phases origins)]))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -65750,35 +65719,22 @@
   [set : TcMovedSet]
   [name-id : i64]
   [origin-id : i64]) : TcMovedSet
-  (let
-    [partials : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-partials (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut partials) name-id origin-id)
-    (TcMovedSet
-      (tc-moved-roots (tc-global-shared-view set))
-      partials
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      set.arena-phases
-      (tc-moved-param-storage-origins set))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [out : tc_i64_i64_map.Map (tc-moved-id-map-own partials)]
+        (tc_i64_i64_map.insert-ref! (&mut out) name-id origin-id)
+        (TcMovedSet roots out paths hidden phases origins))]))
 
 (define (tc-moved-remove-partial [set : TcMovedSet] [name-id : i64]) : TcMovedSet
-  (let
-    [partials : tc_i64_i64_map.Map
-      (tc-moved-partials (tc-global-shared-view set))]
-    (if (tc-moved-id-map-shared-empty? (& partials))
-      ;; No Occupied slot to find, so the removal below is a no-op (see
-      ;; `tc-moved-remove`).
-      set
-      (begin
-        (tc_i64_i64_map.remove-ref! (&mut partials) name-id)
-        (TcMovedSet
-          (tc-moved-roots (tc-global-shared-view set))
-          partials
-          (tc-moved-paths (tc-global-shared-view set))
-          (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-          set.arena-phases
-          (tc-moved-param-storage-origins set))))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (unless
+        (tc-moved-id-map-shared-empty? (& partials))
+        (begin
+          (tc_i64_i64_map.remove-ref! (&mut partials) name-id)
+          unit))
+      (TcMovedSet roots partials paths hidden phases origins)]))
 
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
   (let
@@ -65827,22 +65783,17 @@
   [path : TcMovePath]
   [kind : TcMovedPathKind]
   [origin : i64]) : TcMovedSet
-  (if (tc-moved-path-facts-contains-exact-kind?
-    (tc-moved-paths (tc-global-shared-view set))
-    path
-    kind)
-    set
-    (let
-      [fact : TcMovedPathFact (TcMovedPathFact path kind origin)]
-      (TcMovedSet
-        (tc-moved-roots (tc-global-shared-view set))
-        (tc-moved-partials (tc-global-shared-view set))
-        (tc-moved-path-facts-cons
-          (tc-moved-paths (tc-global-shared-view set))
-          fact)
-        (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-        set.arena-phases
-        (tc-moved-param-storage-origins set)))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [next : TcMovedPathFacts
+          (if (tc-moved-path-facts-contains-exact-kind?
+            (tc-global-shared-view paths)
+            path
+            kind)
+            paths
+            (tc-moved-path-facts-cons paths (TcMovedPathFact path kind origin)))]
+        (TcMovedSet roots partials next hidden phases origins))]))
 
 (define (tc-moved-owner-dependency-at?
   [env : TcTypeEnv]
@@ -65941,19 +65892,17 @@
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMovedSet
-  (match (tc-moved-path-facts-remove-exact
-    (tc-moved-paths (tc-global-shared-view set))
-    path
-    kind)
-    [(Missing) set]
-    [(Removed facts)
-      (TcMovedSet
-        (tc-moved-roots (tc-global-shared-view set))
-        (tc-moved-partials (tc-global-shared-view set))
-        facts
-        (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-        set.arena-phases
-        (tc-moved-param-storage-origins set))]))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [next : TcMovedPathFacts
+          (match (tc-moved-path-facts-remove-exact
+            (tc-global-shared-view paths)
+            path
+            kind)
+            [(Missing) paths]
+            [(Removed facts) facts])]
+        (TcMovedSet roots partials next hidden phases origins))]))
 
 (define (tc-moved-path-exact-conflict-kind-at
   [facts : TcMovedPathFacts]
@@ -69417,7 +69366,13 @@
               Nil
               (tc-moved-len locals)
               origin))]
-        (Ok (tc-move-discharge-invalidate locals marked owner))))))
+        [closed : TcMovedSet (tc-move-discharge-invalidate locals marked owner)]
+        (if (= closed.arena-phases 0)
+          (Ok closed)
+          (let
+            [phases : i64
+              (tc-arena-phase-state-remove closed.arena-phases owner)]
+            (Ok (tc-moved-with-arena-phases closed phases))))))))
 
 ;; The brand an `(:invalidate r T)` formal ends at one call: `r` after
 ;; inferring `T`'s lifetimes from the argument's checked type (#6670).
@@ -69526,18 +69481,12 @@
             origin)]))))
 
 (define (tc-moved-add-hidden-atomic-user [set : TcMovedSet] [owner-id : i64]) : TcMovedSet
-  (let
-    [hidden : tc_i64_i64_map.Map
-      (tc-moved-id-map-own
-        (tc-moved-hidden-atomic-users (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut hidden) owner-id (tc-moved-no-origin-id))
-    (TcMovedSet
-      (tc-moved-roots (tc-global-shared-view set))
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      hidden
-      set.arena-phases
-      (tc-moved-param-storage-origins set))))
+  (match set
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (let
+        [out : tc_i64_i64_map.Map (tc-moved-id-map-own hidden)]
+        (tc_i64_i64_map.insert-ref! (&mut out) owner-id (tc-moved-no-origin-id))
+        (TcMovedSet roots partials paths out phases origins))]))
 
 (define (tc-moved-hidden-atomic-user?
   [env : TcTypeEnv]
@@ -70751,7 +70700,7 @@
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [params : ast.AstTypeList]) : ResultTcUnit
-  (when (or (= moved.arena-phases 0) (tc-in-unsafe? env)) (return Ok))
+  (when (= moved.arena-phases 0) (return Ok))
   (when
     (tc-move-check-constructor-call? ctx (tc-global-shared-view func))
     (return Ok))
@@ -78259,15 +78208,15 @@
 (define (tc-borrow-check-remove-pending-markers
   [borrowed : TcMovedSet]
   [scope-id : i64]) : TcMovedSet
-  (TcMovedSet
-    (tc-moved-roots (tc-global-shared-view borrowed))
-    (tc-moved-partials (tc-global-shared-view borrowed))
-    (tc-moved-path-facts-remove-pending-scope
-      (tc-moved-paths (tc-global-shared-view borrowed))
-      scope-id)
-    (tc-moved-hidden-atomic-users (tc-global-shared-view borrowed))
-    borrowed.arena-phases
-    (tc-moved-param-storage-origins borrowed)))
+  (match borrowed
+    [(TcMovedSet roots partials paths hidden phases origins)
+      (TcMovedSet
+        roots
+        partials
+        (tc-moved-path-facts-remove-pending-scope paths scope-id)
+        hidden
+        phases
+        origins)]))
 
 (define (tc-borrow-check-prune-before-exprs-loop
   [expr-bases : i64]
@@ -119028,7 +118977,6 @@
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (set! tc-signature-lifetime-marker-id-generation -1)
-  (set! tc-arena-phase-param-bind-count 0)
   (tc-source-dotted-alias-key-cache-reset!)
   (tc-source-dotted-full-path-key-cache-reset!)
   (tc-source-qualified-variant-key-cache-reset!))

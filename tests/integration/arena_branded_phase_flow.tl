@@ -30,12 +30,44 @@
         (+= total length)
         (arena.rewind-safe! phase)
         (+= index 1)
-        (if (= index 2)
-          (continue)
-          unit)))
+        (when (= index 2) (continue))))
     (let
       [post (in-arena owner (string.append "base" "-after-loop"))]
       [answer : i64 (+ total (string.string-length post))]
+      (arena.destroy-safe! owner)
+      answer)))
+
+(define (destroy-loop) : i64
+  (let
+    [index : i64 0]
+    (while (< index 3)
+      (let
+        [owner (arena.make)]
+        [_phase (arena.phase owner)]
+        (arena.destroy-safe! owner)
+        (+= index 1)))
+    index))
+
+(define (rewind-shadowed) : i64
+  (let
+    [owner (arena.make)]
+    [phase (arena.phase owner)]
+    [text (in-arena phase (string.append "outer" "-text"))]
+    [inner-length : i64
+      (let
+        [owner (arena.make)]
+        [phase (arena.phase owner)]
+        [text (in-arena phase (string.append "inner" "-text"))]
+        [length : i64 (string.string-length text)]
+        (arena.rewind-safe! phase)
+        (arena.destroy-safe! owner)
+        length)]
+    [outer-length : i64 (string.string-length text)]
+    (arena.rewind-safe! phase)
+    (let
+      [post (in-arena owner (string.append "base" "-after-shadow"))]
+      [answer : i64
+        (+ inner-length (+ outer-length (string.string-length post)))]
       (arena.destroy-safe! owner)
       answer)))
 
@@ -45,4 +77,10 @@
   (test.assert-true
     (= (rewind-loop) 55)
     "phase is closed on fallthrough and continue")
+  (test.assert-true
+    (= (destroy-loop) 3)
+    "destroy ends the active phase at a backedge")
+  (test.assert-true
+    (= (rewind-shadowed) 37)
+    "same-spelled owners and tokens remain distinct")
   42)

@@ -172,12 +172,14 @@
 (define (mark) : ArenaMark
   (ArenaMark (tl_region_mark)))
 
-;: Start a safe phase for a direct-local arena owner.
+;: Start a safe phase for an owned local arena place.
 ;:
-;: The compiler recognizes this call when the argument is a direct local
-;: `make` or `make-atomic` owner. It records a checker generation for later
-;: `in-arena` allocations and returns a token that can be consumed by
-;: `rewind-safe!`.
+;: A branded `(Arena r)` produces a move-only `(ArenaPhase r g)` with a fresh
+;: generation. Allocate through the token with `in-arena`; owner allocation
+;: and overlapping phases are rejected until direct local `rewind-safe!`.
+;: Tokens may travel through local fields and helper parameters, but parameter
+;: rewind needs a caller-visible effect and is rejected. Bare legacy owners
+;: retain direct-local tracking and `in-arena owner` generation tagging.
 (define (phase [arena : Arena]) : ArenaPhase
   (let
     [home : Arena (current)]

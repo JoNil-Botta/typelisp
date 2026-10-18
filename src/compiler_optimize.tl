@@ -114160,7 +114160,9 @@
 (defstruct OptProgramIndex
   (functions OptFunctionIndex)
   (calls OptCallGraph)
-  (scc OptSccResult))
+  (scc OptSccResult)
+  ;; Declared extern identity -> private-global write mask of its link target.
+  (external-writes opt_i64_i64_map.Map))
 
 (define (opt-program-index-build
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramIndex
@@ -114168,7 +114170,34 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [calls : OptCallGraph (opt-callgraph-build-with index true)]
     [scc : OptSccResult (opt-scc-compute calls)]
-    (OptProgramIndex index calls scc)))
+    (OptProgramIndex index calls scc (opt_i64_i64_map.with-capacity 1))))
+
+;; Extern aliases retain their language identity in calls. Runtime effects
+;; belong to the declared link identity; provided entries are program functions
+;; and must keep their own body-derived row. Conflicting declarations join.
+(define (opt-program-external-writes [externs : (& ir.CompilerIrExternSeq)]) : opt_i64_i64_map.Map
+  (let
+    [out
+      (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
+    (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs at)
+        [(Extern name _ _ _ _ link _ provided)
+          (unless
+            provided
+            (opt_i64_i64_map.insert-ref!
+              (&mut out)
+              name
+              (bit-or
+                (opt_i64_i64_map.get-value-or (& out) name 0)
+                (opt-global-mod-ref-external-mask link))))]))
+    out))
+
+(define (opt-program-external-write-mask
+  [program : (& program OptProgramIndex)]
+  [name : i64]) : i64
+  (match (opt_i64_i64_map.get (& program.external-writes) name)
+    [(LookupFound mask) mask]
+    [(LookupMissing) (opt-global-mod-ref-external-mask name)]))
 
 (define (opt-program-index-empty) : OptProgramIndex
   (let
@@ -114310,9 +114339,8 @@
           (array-ref rows slot))))
     out))
 
-;; Per-function write rows closed over the direct call graph, each joined with
-;; `extra` (the writes every function may make), as the summary maps store
-;; them.
+;; Private-global rows closed over the direct call graph. Declared extern rows
+;; join `extra` too: escaped storage remains writable through runtime pointers.
 (define (opt-program-closed-rows-map
   [index : (& index OptProgramIndex)]
   [rows : (&mut rows (__tl_dyn-array i64))]
@@ -114324,7 +114352,19 @@
     (while (< slot (array-length rows))
       (set! (array-ref rows slot) (bit-or (array-ref rows slot) extra))
       (+= slot 1))
-    (opt-program-rows-map index rows false capacity)))
+    (let
+      [out (opt-program-rows-map index rows false capacity)]
+      [externs (& index.external-writes)]
+      [at (opt_i64_i64_map.next-occupied externs 0)]
+      (while (< at (opt_i64_i64_map.capacity externs))
+        (match (opt_i64_i64_map.entry-at externs at)
+          [(EntrySome name mask)
+            (unless
+              (opt-program-function? index name)
+              (opt_i64_i64_map.insert-ref! (&mut out) name (bit-or mask extra)))]
+          [(EntryNone) unit])
+        (set! at (opt_i64_i64_map.next-occupied externs (+ at 1))))
+      out)))
 
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
@@ -116605,6 +116645,12 @@
       [count : i64 (opt-function-seq-count reachable-functions)]
       [capacity : i64 (opt-function-index-capacity count)]
       [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
+      [_externs : unit
+        (when
+          (<= count (opt-summary-function-limit))
+          (set!
+            facts.index.external-writes
+            (opt-program-external-writes externs)))]
       [summaries : OptProgramSummaries
         (if (<= count (opt-summary-function-limit))
           (opt-program-call-summaries
@@ -117480,7 +117526,7 @@
   ;; this map is never stored, so no execution writes its cell at all and every
   ;; query for it is false. The storage table indexes every non-scalar global.
   (index opt_i64_i64_map.Map)
-  ;; Function symbol id -> packed write set, including external re-entry effects.
+  ;; Function or declared extern identity -> packed write set, including re-entry.
   ;; Every program function has a row; absent names use the external-call rule.
   (writes opt_i64_i64_map.Map))
 
@@ -117540,7 +117586,17 @@
 ;; An arbitrary extern may invoke a TypeLisp callback that writes private cells
 ;; or storage without receiving a global address itself.
 (define (opt-global-mod-ref-external-mask [name : i64]) : i64
-  (opt-global-mod-ref-effect-mask (ir.compiler-ir-direct-call-effect-id name)))
+  ;; Runtime byte-copy leaves cannot invoke user code. This proof is narrower
+  ;; than their general memory effect, which remains an unknown write barrier.
+  (if (and
+    (>= name 0)
+    (or
+      (= name cbi.compiler-builtin-id-tl-memcpy)
+      (= name cbi.compiler-builtin-id-tl-memcpy-fresh)
+      (= name cbi.compiler-builtin-id-tl-mem-copy-fwd)
+      (= name cbi.compiler-builtin-id-tl-mem-copy8-fwd)))
+    0
+    (opt-global-mod-ref-effect-mask (ir.compiler-ir-direct-call-effect-id name))))
 
 ;; A direct callee's row, or the conservative external-call effect.
 (define (opt-global-mod-ref-call-mask
@@ -117595,7 +117651,7 @@
       [(or (Call _ name _ _) (TailCall name _ _))
         (if (opt-program-function? program name)
           0
-          (opt-global-mod-ref-external-mask name))]
+          (opt-program-external-write-mask program name))]
       ;; The one call form the effect table classifies `ControlFlow` rather
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
@@ -118338,7 +118394,7 @@
     [(or (Call _ name _ _) (TailCall name _ _))
       (if (opt-program-function? program name)
         0
-        (opt-global-mod-ref-external-mask name))]
+        (opt-program-external-write-mask program name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
     [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
 

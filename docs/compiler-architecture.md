@@ -1423,8 +1423,13 @@ Global-cell and global-storage write summaries treat arbitrary extern calls as
 possibly writing every global: an extern can invoke a callback or an exported
 function without receiving a global address. Direct queries and call-graph
 closure use the same rule, including tail calls and recursive components.
-Only compiler-owned runtime helpers with known IR effects exclude this re-entry;
-their pointer writes still obey the analyses' address and escape preconditions.
+Only compiler-owned runtime helpers with known effects or a proven non-reentrant
+byte-copy implementation exclude this re-entry. Their pointer writes still obey
+the analyses' address and escape preconditions. Lowered runtime copies carry the
+source builtin identity that supplies this proof.
+Extern aliases use their declared link identity for this proof. Exported entries
+retain their function bodies' write rows; conflicting extern effects join.
+These private-global masks do not describe arbitrary memory writes.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a

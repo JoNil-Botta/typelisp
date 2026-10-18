@@ -16006,7 +16006,7 @@
                 call-state
                 (Call
                   call-var
-                  (lower-derived-symbol-id "tl_memcpy")
+                  cbi.compiler-builtin-id-tl-memcpy
                   (ir.compiler-ir-call-args-from-seq
                     (& (ir.compiler-ir-value-seq3 dst-addr src-addr (I64 size))))
                   (Unit)))])])]))
@@ -16028,7 +16028,7 @@
                 call-state
                 (Call
                   call-var
-                  (lower-derived-symbol-id "tl_memcpy")
+                  cbi.compiler-builtin-id-tl-memcpy
                   (ir.compiler-ir-call-args-from-seq
                     (& (ir.compiler-ir-value-seq3 dst-addr src-addr size)))
                   (Unit)))])])]))

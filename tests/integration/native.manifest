@@ -1081,3 +1081,6 @@ store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|4
 never_call_merge|all|0,1,2|tests/integration/never_call_merge.tl|42|-|-|stdlib/test.tl|-
 
 gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-
+ownership_certified_never_call|all|0,1,2|tests/integration/ownership_certified_never_call.tl|42|-|-|-|-
+ownership_certified_never_argument|all|0,1,2|tests/integration/ownership_certified_never_argument.tl|42|-|-|-|-
+ownership_certified_never_indirect|all|0,1,2|tests/integration/ownership_certified_never_indirect.tl|42|-|-|-|-

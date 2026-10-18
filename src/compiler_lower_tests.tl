@@ -1,6 +1,10 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)
+(import compiler_ownership_normalize as norm)
+(import compiler_ownership_core as own)
+(import compiler_typed_occurrence as typed)
+(import compiler_typed_occurrence_tests as occurrence_fixture)
 (import compiler_optimize as optimize)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -327,6 +331,188 @@
           (str_cat.str-cat
             "checked indirect call, case "
             (string.int->string index)))))))
+
+(test
+  compiler-lower-normalized-never-calls
+  (let
+    [bodies : (Array String 8)
+      (array
+        "(stop 42)"
+        "(begin (stop 42) 1)"
+        "(sum (stop 42) (stop 1))"
+        "(sum (return 42) (stop 1))"
+        "(+ (return 42) 1)"
+        "(if false (stop 1) (stop 42))"
+        "(let [index : i64 0] (while true (set! index (+ index 1)) (if (= index 2) (stop 42) unit)) 1)"
+        "(let [value : i64 0] (stop (begin (set! value 42) value)))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(extern (stop [value : i64]) : never)
+             (define (sum [left : i64] [right : i64]) : i64 (+ left right))
+             (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        (test.assert-true
+          (match (lower-test-functions
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "never case {}: {}"
+                  index
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                (lower.ResultCompilerLower.Err diagnostic)]
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (lower.ResultCompilerLower.Ok program spans owner)]))
+            [(Some functions)
+              (=
+                (lower-test-function-label-load-count
+                  (& functions)
+                  "main"
+                  "checked.0")
+                0)]
+            [_ false])
+          (str_cat.str-cat
+            "checked never call or exited operand, case "
+            (string.int->string index)))))))
+
+(test
+  compiler-lower-normalized-never-indirect
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source
+        "(extern (stop [value : i64]) : never)
+       (define (invoke [func : (-> i64 never)] [other : (-> i64 never)]) : never
+         (func (begin (set! func other) 42)))
+       (define (main) : i64 (invoke stop stop))"))
+      [(Some functions)
+        (=
+          (lower-test-function-label-load-count
+            (& functions)
+            "invoke"
+            "checked.0")
+          0)]
+      [_ false])
+    "a captured Never callee emits at the checked abort point"))
+
+(define (lower-test-bad-call-anchor? [mode : i64]) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [symbol : i64 (ir.compiler-ir-symbol "invalid-anchor")]
+    [signature : ast.AstType
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64)))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools)]
+    [names : lower.LowerNameCache
+      (lower.lower-name-cache-from-env owner lower.LowerNameEnv.Nil)]
+    [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease interns)
+      (occurrence_fixture.typed-test-lease (& interns) (cast 97 : u64))]
+    [store : typed.TypedStore (occurrence_fixture.typed-test-store (& lease))]
+    [type : typed.TypedTypeId
+      (occurrence_fixture.typed-test-type!
+        (&mut store)
+        (& lease)
+        ast.AstType.I64)]
+    [return-type : typed.TypedTypeId
+      (typed.TypedTypeId (typed.typed-handle-copy (& type.handle)))]
+    [origin : typed.TypedOriginId
+      (occurrence_fixture.typed-test-origin! (&mut store) (& lease))]
+    [root : typed.TypedOccurrenceId
+      (occurrence_fixture.typed-test-literal!
+        (&mut store)
+        (& lease)
+        type
+        origin
+        typed.TypedSyntax.Generated
+        42)]
+    [output : norm.OwnershipNormalizedBody
+      (match (norm.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array norm.OwnershipNormalizeTypeClass 0)
+        (norm.ownership-normalize-default-limits))
+        [(norm.OwnershipNormalizeResult.Ok output) output]
+        [_ (return false)])]
+    ;; The core body is valid. Bad runtime anchors must be rejected before
+    ;; attempting to resolve the deliberately absent injected callee.
+    [expected : String
+      (cond
+        [(= mode 0) "lower: missing certified call position"]
+        [(<= mode 3) "lower: invalid certified call position"]
+        [(= mode 4) "lower: invalid certified call assignment"]
+        [(= mode 8) "lower: missing certified abort effect"]
+        [else "lower: invalid certified abort call"])]
+    (unless
+      (= mode 8)
+      (set!
+        (array-ref output.nodes 0).operation
+        (norm.NormalizeOperation.Call
+          0
+          0
+          false
+          false
+          0
+          (norm.NormalizeCall
+            (typed.TypedCallKind.Declared 0 0)
+            signature
+            -1
+            (cond [(= mode 0) -1] [(= mode 1) 1] [else 0])
+            (cond
+              [(= mode 2) -1]
+              [(= mode 3) 2]
+              [(or (= mode 4) (= mode 6) (= mode 7)) 1]
+              [else 0])))))
+    (when
+      (and (>= mode 5) (<= mode 7))
+      (set! (array-ref output.nodes 0).type 13)
+      (set! (array-ref output.nodes 0).result-place -1))
+    (when
+      (>= mode 7)
+      (set!
+        (array-ref output.body.blocks 0).terminator
+        own.OwnershipTerminator.Abort))
+    (when
+      (= mode 7)
+      (__tl_array-push! output.nodes (clone (array-ref output.nodes 0))))
+    (typed.typed-store-retire! (&mut store))
+    (let
+      [valid : bool
+        (match (lower.lower-normalized
+          ctx
+          names
+          lower.LowerTypeCache.No
+          (& output)
+          symbol
+          (tc_core.tc-context-source-names ctx)
+          (ir.compiler-source-spans-empty)
+          0)
+          [(lower.LowerNormalizedResult.Err message)
+            (string.eq message expected)]
+          [_ false])]
+      (lower.compiler-lower-arena-state-release!
+        (lower.compiler-lower-state-arenas owner))
+      valid)))
+
+(test
+  compiler-lower-normalized-call-anchor-rejection
+  (for [mode (iterator.range 0 9)]
+    (test.assert-true
+      (lower-test-bad-call-anchor? mode)
+      (str_cat.str-cat
+        "malformed checked call anchor, case "
+        (string.int->string mode)))))
 
 (define (compiler-lower-smoke-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)

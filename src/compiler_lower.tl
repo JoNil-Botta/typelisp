@@ -73600,7 +73600,9 @@
   (function i64)
   (source-names ci.InternSourceNameSessionHandle)
   (spans ir.CompilerSourceSpans)
-  (path-id i64))
+  (path-id i64)
+  (aborts (__tl_dyn-array i64))
+  (next-var i64))
 
 (define (lower-normalized-emit!
   [state : (&mut state LowerNormalizedState)]
@@ -73691,17 +73693,76 @@
                       (replace! state.spans (ir.compiler-source-spans-empty))
                       (ir.compiler-ir-symbol-typed-id state.function)
                       span)))))
+            (match (& node.operation)
+              [(norm.NormalizeOperation.Call _ _ _ _ _ call)
+                (cond
+                  [(>= call.block 0)
+                    (unless
+                      (and
+                        (< call.block (array-length output.body.blocks))
+                        (>= call.instruction 0)
+                        (<=
+                          call.instruction
+                          (array-length
+                            (array-ref output.body.blocks call.block).instructions)))
+                      (return
+                        (LowerNormalizedUnit.Err
+                          "lower: invalid certified call position")))
+                    (let
+                      [block : (& output own.OwnershipBlock)
+                        (& (array-ref output.body.blocks call.block))]
+                      (if (= node.type 13)
+                        (begin
+                          (unless
+                            (and
+                              (= node.result-place -1)
+                              (=
+                                call.instruction
+                                (array-length block.instructions))
+                              (= (array-ref state.aborts call.block) -1)
+                              (match (& block.terminator)
+                                [(own.OwnershipTerminator.Abort) true]
+                                [_ false]))
+                            (return
+                              (LowerNormalizedUnit.Err
+                                "lower: invalid certified abort call")))
+                          (set! (array-ref state.aborts call.block) index))
+                        (unless
+                          (and
+                            (<
+                              call.instruction
+                              (array-length block.instructions))
+                            (match (&
+                              (array-ref block.instructions call.instruction).operation)
+                              [(own.OwnershipOperation.Assign place)
+                                (= place.index node.result-place)]
+                              [_ false]))
+                          (return
+                            (LowerNormalizedUnit.Err
+                              "lower: invalid certified call assignment")))))]
+                  [(not
+                      (and
+                        (= call.block -1)
+                        (= call.instruction -1)
+                        (= node.type 13)))
+                    (return
+                      (LowerNormalizedUnit.Err
+                        "lower: missing certified call position"))]
+                  [else unit])]
+              [_ unit])
             (when
-              (match (& node.operation)
-                [(norm.NormalizeOperation.Literal _) true]
-                [(norm.NormalizeOperation.Unary _) true]
-                [(norm.NormalizeOperation.Call _ _ _ _ _ _) true]
-                [(norm.NormalizeOperation.Binary op)
-                  (match op
-                    [(ast.AstBinOp.And) false]
-                    [(ast.AstBinOp.Or) false]
-                    [_ true])]
-                [_ false])
+              (and
+                (!= node.type 13)
+                (match (& node.operation)
+                  [(norm.NormalizeOperation.Literal _) true]
+                  [(norm.NormalizeOperation.Unary _) true]
+                  [(norm.NormalizeOperation.Call _ _ _ _ _ _) true]
+                  [(norm.NormalizeOperation.Binary op)
+                    (match op
+                      [(ast.AstBinOp.And) false]
+                      [(ast.AstBinOp.Or) false]
+                      [_ true])]
+                  [_ false]))
               (begin
                 (unless
                   (and
@@ -73743,6 +73804,7 @@
   [state : (&mut state LowerNormalizedState)]
   [instrs : (&mut instrs ir.CompilerIrInstrBuilder)]
   [node : (& node norm.NormalizeNode)]
+  [destination : i64]
   [call : (& call norm.NormalizeCall)]) : LowerNormalizedUnit
   (let
     [ctx : tc_core.TcContext (clone state.ctx)]
@@ -73853,12 +73915,12 @@
         (& node.source)
         (if indirect?
           (ir.CompilerIrInstr.CallIndirect
-            node.result-place
+            destination
             (ir.CompilerIrValue.Var callee)
             (ir.compiler-ir-call-args-from-seq (& args))
             type)
           (ir.CompilerIrInstr.Call
-            node.result-place
+            destination
             symbol
             (ir.compiler-ir-call-args-from-seq (& args))
             type))))
@@ -73898,7 +73960,8 @@
                       (clone type))
                     type))]
               [(norm.NormalizeOperation.Call _ _ _ _ _ call)
-                (try (lower-normalized-call! output state instrs node call))]
+                (try
+                  (lower-normalized-call! output state instrs node place call))]
               [(norm.NormalizeOperation.Unary op)
                 (begin
                   (unless
@@ -74037,14 +74100,16 @@
           name
           source-names
           spans
-          path-id)]
+          path-id
+          (__tl_make-array i64 0)
+          places)]
       [params : ir.CompilerIrParamBuilder
         (ir.compiler-ir-param-builder-with-capacity 0)]
       [result : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
       [index : i64 0]
       (begin
         (try
-          (lower-normalized-charge! (&mut state) (+ (* 2 places) (* 2 blocks))))
+          (lower-normalized-charge! (&mut state) (+ (* 2 places) (* 3 blocks))))
         (while (< index places)
           (begin
             (__tl_array-push! state.producers -1)
@@ -74060,6 +74125,7 @@
                 (str_cat.str-cat "checked." (string.int->string index))]
               (__tl_array-push! state.labels (ir.compiler-ir-label label-text)))
             (__tl_array-push! state.reachable false)
+            (__tl_array-push! state.aborts -1)
             (set! index (+ index 1))))
         (try (lower-normalized-index! output (&mut state)))
         (try (lower-normalized-reach! output (&mut state)))
@@ -74140,6 +74206,32 @@
                           (ir.CompilerIrValue.Var value.index)
                           (array-ref state.labels yes.index)
                           (array-ref state.labels no.index)))]
+                    [(own.OwnershipTerminator.Abort)
+                      (let
+                        [producer : i64 (array-ref state.aborts index)]
+                        (when
+                          (< producer 0)
+                          (return
+                            (LowerNormalizedResult.Err
+                              "lower: missing certified abort effect")))
+                        (let
+                          [node : (& output norm.NormalizeNode)
+                            (& (array-ref output.nodes producer))]
+                          (match (& node.operation)
+                            [(norm.NormalizeOperation.Call _ _ _ _ _ call)
+                              (try
+                                (lower-normalized-call!
+                                  output
+                                  (&mut state)
+                                  (&mut instrs)
+                                  node
+                                  state.next-var
+                                  call))
+                              (set! state.next-var (+ state.next-var 1))]
+                            [_
+                              (return
+                                (LowerNormalizedResult.Err
+                                  "lower: invalid certified abort effect"))])))]
                     [(own.OwnershipTerminator.Return operands)
                       (begin
                         (unless
@@ -74183,7 +74275,7 @@
             name
             (ir.compiler-ir-param-builder-to-seq params)
             (try (lower-normalized-type output output.return-type))
-            places
+            state.next-var
             (ir.compiler-ir-block-builder-to-list result)
             ir.CompilerIrFunctionAbi.Ordinary)
           state.spans)))))

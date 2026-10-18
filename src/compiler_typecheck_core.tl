@@ -14908,15 +14908,28 @@
               [(TcSelectedArgsResult.Err message next)
                 (TcSelectedResult.Err message next)]
               [(TcSelectedArgsResult.Ok children represented? next)
-                (tc-selected-publish-call
-                  (ResultTcType.Ok ty)
-                  (tc-selected-declared-call-kind ctx key true)
-                  fn-ty
-                  syntax
-                  source
-                  children
-                  represented?
-                  next)]))])]))
+                (let
+                  ;; Contextual typing can report the expected result type
+                  ;; for a Never call. Its selected occurrence must preserve
+                  ;; the checked declaration's lack of a continuation.
+                  [actual : ast.AstType
+                    (match (& fn-ty)
+                      [(ast.AstType.Func _ result)
+                        (match (tc-resolve-type
+                          ctx
+                          (tc-context-type-get ctx result))
+                          [(ast.AstType.Never) ast.AstType.Never]
+                          [_ ty])]
+                      [_ ty])]
+                  (tc-selected-publish-call
+                    (ResultTcType.Ok actual)
+                    (tc-selected-declared-call-kind ctx key true)
+                    fn-ty
+                    syntax
+                    source
+                    children
+                    represented?
+                    next))]))])]))
 
 ;; A read operand formed as a place: a named place, or an array element (lent
 ;; whole for the read when its element cannot be named).

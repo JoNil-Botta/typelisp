@@ -938,7 +938,11 @@
 (defstruct NormalizeCall
   (kind typed.TypedCallKind)
   (signature ast.AstType)
-  (record i64))
+  (record i64)
+  ;; The execution point follows operand consumption, before result assignment.
+  ;; -1 means an operand exited before this call could execute.
+  (block i64)
+  (instruction i64))
 
 (defenum NormalizeOperation
   ;; Own the selected runtime payload before the inference lease is retired.
@@ -1147,7 +1151,12 @@
           false
           false
           -1
-          (NormalizeCall typed.TypedCallKind.Construct ast.AstType.Unit -1)))]
+          (NormalizeCall
+            typed.TypedCallKind.Construct
+            ast.AstType.Unit
+            -1
+            -1
+            -1)))]
     [(typed.TypedOperation.Primitive primitive)
       (NormalizeOperationResult.Ok
         (NormalizeOperation.Primitive (normalize-primitive-copy primitive)))]
@@ -1272,7 +1281,7 @@
     [(ast.AstType.Func params result)
       (unless
         (match (normalize-type-code (& (ast.ty-node-get result)))
-          [(NormalizeInt.Ok code) (< code 13)]
+          [(NormalizeInt.Ok code) (<= code 13)]
           [_ false])
         (return false))
       (for [index (iterator.range 0 params.len)]
@@ -1342,7 +1351,7 @@
       (match (& (array-ref output.body.blocks block).terminator)
         [(or (own.OwnershipTerminator.Goto _)
              (own.OwnershipTerminator.Branch _ _ _)
-             (own.OwnershipTerminator.Return _))
+             (own.OwnershipTerminator.Return _) (own.OwnershipTerminator.Abort))
           true]
         [_ false])
       (return false)))
@@ -1587,7 +1596,10 @@
   ;; `normalize-receiver-store!`), and how many such receivers are open.
   (receiver-targets (__tl_dyn-array NormalizeDeferredReceiver))
   (receiver-depth i64)
-  (value-types (__tl_dyn-array ast.AstType)))
+  (value-types (__tl_dyn-array ast.AstType))
+  ;; Occurrence-indexed 1 + execution coordinates, zero when not executed.
+  (evaluation-blocks (__tl_dyn-array i64))
+  (evaluation-instructions (__tl_dyn-array i64)))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -1794,7 +1806,7 @@
         discharge?
         indirect?
         call.signature.handle.index
-        (NormalizeCall call.kind signature record.handle.index)))))
+        (NormalizeCall call.kind signature record.handle.index -1 -1)))))
 
 (define (normalize-node!
   [state : (&mut state NormalizeState)]
@@ -2541,6 +2553,28 @@
           (array-ref state.nodes index).result-place)
         (set! child (+ child 1))))
     (set! node.result-place result-place)
+    (match (& node.operation)
+      [(NormalizeOperation.Call key count discharge? indirect? signature call)
+        (when
+          (< node.handle.index (array-length state.evaluation-blocks))
+          (let
+            [retained : NormalizeOperation
+              (NormalizeOperation.Call
+                key
+                count
+                discharge?
+                indirect?
+                signature
+                (NormalizeCall
+                  (clone call.kind)
+                  (clone call.signature)
+                  call.record
+                  (- (array-ref state.evaluation-blocks node.handle.index) 1)
+                  (-
+                    (array-ref state.evaluation-instructions node.handle.index)
+                    1)))]
+            (set! node.operation retained)))]
+      [_ unit])
     (normalize-node-append! state node)
     (NormalizeUnit.Ok unit)))
 
@@ -2563,6 +2597,9 @@
         block)]
     [value : NormalizeValue
       (try (normalize-execute! state store lease (& node) active (+ depth 1)))]
+    ;; An exiting operand makes the enclosing operation an exit as well;
+    ;; its declared contextual type does not imply a produced value.
+    (when (= value.type 13) (set! node.type 13))
     (normalize-note-typed! state value.place node.typed)
     (try (normalize-retain-node! state node value.place))
     (NormalizeValueResult.Ok value)))
@@ -6618,6 +6655,19 @@
               (normalize-place-id (& state) (array-ref operands index)))
             (& node.source)))
         (set! index (+ index 1))))
+    (when
+      (match (& node.operation)
+        [(NormalizeOperation.Call _ _ _ _ _ _) true]
+        [_ false])
+      (try (normalize-charge! state 2 2 0))
+      (normalize-handle-reserve! state.evaluation-blocks node.handle.index)
+      (normalize-handle-reserve!
+        state.evaluation-instructions
+        node.handle.index)
+      (set! (array-ref state.evaluation-blocks node.handle.index) (+ active 1))
+      (set!
+        (array-ref state.evaluation-instructions node.handle.index)
+        (+ (array-ref state.instruction-counts active) 1)))
     (if (= node.type 13)
       (begin
         (try (normalize-terminate! state active own.OwnershipTerminator.Abort))
@@ -11391,7 +11441,9 @@
           (__tl_make-array i64 0)
           (__tl_make-array NormalizeDeferredReceiver 0)
           0
-          (__tl_make-array ast.AstType 0))]
+          (__tl_make-array ast.AstType 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0))]
       [_keys : unit
         (while (<
           (array-length state.type-keys)

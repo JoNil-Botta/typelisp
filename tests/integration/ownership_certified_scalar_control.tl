@@ -129,9 +129,17 @@
 (define (forward-callable [func : (-> i64 i64 i64)]) : (-> i64 i64 i64)
   func)
 
+(define (exited-binary [value : i64]) : i64
+  (+ value (return 42)))
+
+(define (exited-call [value : i64]) : i64
+  (sum value (return 42)))
+
 (define (main) : i64
   (if (and
     (= (captured-left 42) 42)
+    (= (exited-binary 1) 42)
+    (= (exited-call 1) 42)
     (= (captured-call 42) 42)
     (= (nested-calls) 42)
     (= (recursive-call 6) 42)

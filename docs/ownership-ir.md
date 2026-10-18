@@ -1692,8 +1692,16 @@ A call through such a value consumes its already captured callee before its
 arguments; changing the source callable during argument evaluation cannot
 redirect that call. Foreign
 primitive operands retain the formal parameter's contextual type through the
-same operand walker used by read-only forms. Calls returning Never, C function-pointer calls, other nonprimitive places,
-loans, cleanup and arena emission still need to move
+same operand walker used by read-only forms. Calls returning Never retain their
+execution point after operand consumption; a reachable abort block must emit
+that call. An operand that exits prevents its enclosing call or operator from
+producing a value. Foreign calls preserve the checked declaration's Never
+result even when contextual typing reports an expected value type. These
+execution coordinates are consumed only for the current loan/cleanup-free
+representation, whose later ownership solving does not insert instructions.
+Malformed or duplicate call positions and aborts without an executable effect
+are hard errors. C function-pointer calls, other nonprimitive places, loans,
+cleanup and arena emission still need to move
 to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
 required. The scalar source fixture covers snapshots, argument ABI, loop exits
 and returns; direct graph selection additionally has a lowering assertion.

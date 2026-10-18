@@ -2190,3 +2190,11 @@ reading the next and copies out the leaf without recursive stack growth.
 store a raw code address in their descriptor. Identical-function merging must
 retain that target, just as it retains a function-descriptor reference; the
 optimizer's observed-code-address test checks both identities directly.
+
+The three `ownership_certified_never_*` native fixtures require both hosts and
+opt0/1/2. They check a nonreturning wrapper, an exited first argument that
+prevents later arguments and the outer call from running, and an indirect
+callee captured before a later argument reassigns its source. The scalar/control
+fixture also returns from inside binary and call operands. Lowering tests
+require the checked graph route and reject malformed call execution points,
+duplicate abort calls, and abort blocks with no executable effect.

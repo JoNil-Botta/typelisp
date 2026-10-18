@@ -1259,15 +1259,15 @@
 
 (define (lower-spmd-add-site!
   [ctx : tc_core.TcContext]
-  [state : LowerState]
+  [sites : (&mut sites LowerSpmdSites)]
+  [function : i64]
+  [mode : CompilerLowerMode]
   [expr : (& expr ast.AstExpr)]
   [parent : i64]
   [form : ir.CompilerSpmdForm]
   [origin : LowerSpmdOrigin]
   [frames : (& frames ir.CompilerSpmdMacroFrameList)]) : i64
   (let
-    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
-    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
     [ordinal : i64 sites.items.len]
     [key : String (lower-spmd-source-key ctx expr)]
     [head : i64
@@ -1292,12 +1292,11 @@
         false
         (ir.CompilerSpmdDecision
           (ir.CompilerSpmdSiteId
-            (ir.compiler-ir-symbol-typed-id
-              (lower-state-current-function-id state))
+            (ir.compiler-ir-symbol-typed-id function)
             ordinal)
           parent
           form
-          (lower-spmd-backend (lower-state-mode state))
+          (lower-spmd-backend mode)
           1
           (Rejected)
           (UnsupportedSource)
@@ -1382,7 +1381,9 @@
 ;; incoming state; ordinary children share it and sites own copied snapshots.
 (define (lower-spmd-enumerate!
   [ctx : tc_core.TcContext]
-  [state : LowerState]
+  [sites : (&mut sites LowerSpmdSites)]
+  [function : i64]
+  [mode : CompilerLowerMode]
   [expr : ast.AstExpr]
   [parent : i64]
   [origin : (&mut origin LowerSpmdOrigin)]
@@ -1396,7 +1397,9 @@
           (set! origin.primary.span span)
           (lower-spmd-enumerate!
             ctx
-            state
+            sites
+            function
+            mode
             (tc_core.tc-context-expr-get ctx inner)
             parent
             origin
@@ -1442,7 +1445,9 @@
               (set! origin.has-actionable true)))
           (lower-spmd-enumerate!
             ctx
-            state
+            sites
+            function
+            mode
             (tc_core.tc-context-expr-get ctx inner)
             parent
             origin
@@ -1455,7 +1460,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Foreach)
@@ -1466,7 +1473,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Reduce)
@@ -1477,7 +1486,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Scan)
@@ -1488,7 +1499,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Compact)
@@ -1499,7 +1512,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Broadcast)
@@ -1510,7 +1525,9 @@
           next-parent
           (lower-spmd-add-site!
             ctx
-            state
+            sites
+            function
+            mode
             (& expr)
             parent
             (Shuffle)
@@ -1525,7 +1542,9 @@
           [child : i64 (ast.ast-expr-list-get (& children) index -1)]
           (lower-spmd-enumerate!
             ctx
-            state
+            sites
+            function
+            mode
             (tc_core.tc-context-expr-get ctx child)
             next-parent
             origin
@@ -1533,9 +1552,6 @@
     (when
       (> next-parent parent)
       (let
-        [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
-        [sites : (&mut sites-box LowerSpmdSites)
-          (&mut (__tl-box-place sites-box))]
         [item : LowerSpmdSite
           (lower-spmd-site-list-get
             (& sites.items)
@@ -1552,6 +1568,8 @@
     (compiler-lower-state-spmd-source-present (lower-state-owner state))
     (return unit))
   (let
+    [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
+    [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
     [frames : ir.CompilerSpmdMacroFrameList
       (ir.compiler-spmd-macro-frame-list-empty)]
     [location : ir.CompilerSourceLocation
@@ -1559,7 +1577,15 @@
         (lower-state-current-source-path-id state)
         (ast.ast-source-span 0 0 0 0))]
     [origin : LowerSpmdOrigin (LowerSpmdOrigin location location false false)]
-    (lower-spmd-enumerate! ctx state body -1 (&mut origin) (&mut frames))))
+    (lower-spmd-enumerate!
+      ctx
+      sites
+      (lower-state-current-function-id state)
+      (lower-state-mode state)
+      body
+      -1
+      (&mut origin)
+      (&mut frames))))
 
 (define (lower-spmd-select!
   [state : LowerState]
@@ -1677,6 +1703,37 @@
               child.subtree-end
               (+ index 1))))))))
 
+(define (lower-spmd-publish-sites!
+  [sites : (&mut sites LowerSpmdSites)]
+  [spans : ir.CompilerSourceSpans]) : ir.CompilerSourceSpans
+  (match spans
+    [(Spans entries instructions count facts)
+      (let
+        [offset : i64
+          (if (>= sites.frame-base 0)
+            sites.frame-base
+            facts.frames.len)]
+        (set! sites.frame-base offset)
+        (for [index (iterator.range sites.flushed-frames sites.frames.len)]
+          (ir.compiler-spmd-macro-frame-list-append!
+            (&mut facts.frames)
+            (clone (array-ref sites.frames.slots index))))
+        (for [index (iterator.range sites.flushed sites.items.len)]
+          (let
+            [site : LowerSpmdSite
+              (lower-spmd-site-list-get
+                (& sites.items)
+                index
+                (lower-spmd-site-fallback))]
+            (unless site.finished (break))
+            (+= site.decision.frame-start offset)
+            (ir.compiler-spmd-decision-list-append!
+              (&mut facts.decisions)
+              site.decision)
+            (set! sites.flushed (+ index 1))))
+        (set! sites.flushed-frames sites.frames.len)
+        (ir.CompilerSourceSpans.Spans entries instructions count facts))]))
+
 (define (lower-spmd-publish-spans [state : LowerState]) : ir.CompilerSourceSpans
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -1690,34 +1747,7 @@
     [sites : (&mut sites-box LowerSpmdSites) (&mut (__tl-box-place sites-box))]
     [spans : ir.CompilerSourceSpans
       (lower-boxed-box-field-shared-view data spans)]
-    [out : ir.CompilerSourceSpans
-      (match spans
-        [(Spans entries instructions count facts)
-          (let
-            [offset : i64
-              (if (>= sites.frame-base 0)
-                sites.frame-base
-                facts.frames.len)]
-            (set! sites.frame-base offset)
-            (for [index (iterator.range sites.flushed-frames sites.frames.len)]
-              (ir.compiler-spmd-macro-frame-list-append!
-                (&mut facts.frames)
-                (clone (array-ref sites.frames.slots index))))
-            (for [index (iterator.range sites.flushed sites.items.len)]
-              (let
-                [site : LowerSpmdSite
-                  (lower-spmd-site-list-get
-                    (& sites.items)
-                    index
-                    (lower-spmd-site-fallback))]
-                (unless site.finished (break))
-                (+= site.decision.frame-start offset)
-                (ir.compiler-spmd-decision-list-append!
-                  (&mut facts.decisions)
-                  site.decision)
-                (set! sites.flushed (+ index 1))))
-            (set! sites.flushed-frames sites.frames.len)
-            (ir.CompilerSourceSpans.Spans entries instructions count facts))])]
+    [out : ir.CompilerSourceSpans (lower-spmd-publish-sites! sites spans)]
     (__tl-project-set-field
       (__tl-box-place data)
       spans
@@ -1726,6 +1756,23 @@
 
 ;; Source sites omitted by control flow or an earlier lowering error still
 ;; own identities. They have no selected lanes or scalar fallback to report.
+(define (lower-spmd-finalize-sites! [sites : (&mut sites LowerSpmdSites)]) : unit
+  (for [index (iterator.range 0 sites.items.len)]
+    (let
+      [item : LowerSpmdSite
+        (lower-spmd-site-list-get
+          (& sites.items)
+          index
+          (lower-spmd-site-fallback))]
+      (unless
+        item.entered
+        (set! item.selected true)
+        (set! item.finished true)
+        (set! item.decision.route (Inactive))
+        (set! item.decision.reason (NotLowered))
+        (set! item.decision.lanes 0)
+        (set! (array-ref sites.items.slots index) item)))))
+
 (define (lower-spmd-finalize-unvisited! [state : LowerState]) : unit
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -1737,21 +1784,7 @@
         [sites-box : (Box LowerSpmdSites) (lower-state-spmd-sites state)]
         [sites : (&mut sites-box LowerSpmdSites)
           (&mut (__tl-box-place sites-box))]
-        (for [index (iterator.range 0 sites.items.len)]
-          (let
-            [item : LowerSpmdSite
-              (lower-spmd-site-list-get
-                (& sites.items)
-                index
-                (lower-spmd-site-fallback))]
-            (unless
-              item.entered
-              (set! item.selected true)
-              (set! item.finished true)
-              (set! item.decision.route (Inactive))
-              (set! item.decision.reason (NotLowered))
-              (set! item.decision.lanes 0)
-              (set! (array-ref sites.items.slots index) item))))))))
+        (lower-spmd-finalize-sites! sites)))))
 
 (define (lower-spmd-complete-function
   [state : LowerState]
@@ -74210,6 +74243,37 @@
     (lower-normalized-emit! state instrs (& node.source) instruction)
     (LowerNormalizedUnit.Ok unit)))
 
+;; Active SPMD forms are outside the current executable graph subset. Keep
+;; unvisited source identities through the shared provenance-only enumerator.
+(define (lower-normalized-spmd-spans
+  [ctx : tc_core.TcContext]
+  [owner : CompilerLowerState]
+  [function : i64]
+  [mode : CompilerLowerMode]
+  [body : ast.AstExpr]
+  [spans : ir.CompilerSourceSpans]) : ir.CompilerSourceSpans
+  (unless (compiler-lower-state-spmd-source-present owner) (return spans))
+  (let
+    [sites : LowerSpmdSites (lower-spmd-sites-empty)]
+    [frames : ir.CompilerSpmdMacroFrameList
+      (ir.compiler-spmd-macro-frame-list-empty)]
+    [location : ir.CompilerSourceLocation
+      (ir.CompilerSourceLocation
+        (compiler-lower-state-current-source-path-id owner)
+        (ast.ast-source-span 0 0 0 0))]
+    [origin : LowerSpmdOrigin (LowerSpmdOrigin location location false false)]
+    (lower-spmd-enumerate!
+      ctx
+      (&mut sites)
+      function
+      mode
+      body
+      -1
+      (&mut origin)
+      (&mut frames))
+    (lower-spmd-finalize-sites! (&mut sites))
+    (lower-spmd-publish-sites! (&mut sites) spans)))
+
 (define (lower-normalized-assign!
   [output : (& output norm.OwnershipNormalizedBody)]
   [state : (&mut state LowerNormalizedState)]
@@ -74666,7 +74730,13 @@
               (lower-function-seq-escape-to-ir-arena
                 lower-state
                 (ir.CompilerIrFunctionSeq (__tl_make-array function) 1))
-              next-spans)]))]
+              (lower-normalized-spmd-spans
+                ctx
+                lower-state
+                logical-name
+                mode
+                body
+                next-spans))]))]
     [(tc_core.TcSelectedLookup.Legacy)
       (lower-function-escaping
         ctx

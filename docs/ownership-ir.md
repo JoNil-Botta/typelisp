@@ -1676,9 +1676,14 @@ representation. Scalar roots with Read/Assign/Copy effects and Goto/Branch/Retur
 edges are deep-copied, including selected value producers and provenance, into
 the job arena. The certificate's nonzero address identifies this immutable
 owned graph; its existing owner/revision/pool/interner checks guard lookup.
-Lowering verifies the current declaration signature and emits the graph's
-actual effects and edges without reading its source AST. A malformed retained
-graph or emission failure is a hard error, never an AST retry.
+Lowering verifies the current declaration signature and emits runtime effects
+and edges exclusively from the graph. A malformed retained graph or emission
+failure is a hard error, never an AST retry. Debug type roots use the existing
+layout registry after signature validation. Source-only SPMD sites omitted by
+control flow keep their identities through the shared provenance enumerator
+and publisher; this adapter emits no runtime operations. Active SPMD forms are
+outside this executable subset. The complete migration must retain these
+site/origin facts in the canonical body before retiring the source adapter.
 
 Other bodies retain the existing explicit `Legacy` emission entry after the
 same complete ownership check. This is a lowering migration boundary, not a

@@ -28857,7 +28857,8 @@
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
   (let
-    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    [facts : TcArenaInputFacts (tc-arena-input-param-facts ctx params)]
+    [pairs : ast.AstLifetimeList facts.phases]
     [base : TcTypeEnv
       (if (ast.ast-lifetime-list-empty? (& pairs))
         env
@@ -28987,7 +28988,8 @@
   [carrier : TcTypeEnvScopedCarrier]
   [params : (& params ast.AstParamList)]) : TcTypeEnvScopedCarrier
   (let
-    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    [facts : TcArenaInputFacts (tc-arena-input-param-facts ctx params)]
+    [pairs : ast.AstLifetimeList facts.phases]
     (when
       (ast.ast-lifetime-list-empty? (& pairs))
       (return
@@ -36021,8 +36023,13 @@
 (define (tc-arena-safe-call-kind-destroy) : i64
   3)
 
+(define (tc-arena-safe-call-kind-inspect) : i64
+  4)
+
 (define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
   (cond
+    [(or (= base-id (ci.intern "raw-handle")) (= base-id (ci.intern "eq?")))
+      (tc-arena-safe-call-kind-inspect)]
     [(= base-id cbi.compiler-builtin-id-arena-phase-base)
       (tc-arena-safe-call-kind-phase)]
     [(= base-id cbi.compiler-builtin-id-arena-rewind-safe-base)
@@ -36190,30 +36197,37 @@
     (+= tc-arena-phase-param-bind-count 1)
     (ast.ast-ty-var-args (tc-arena-phase-param-marker-id) pairs)))
 
-(define (tc-arena-phase-type-id-pairs-into
+(defstruct TcArenaInputFacts
+  (phases ast.AstLifetimeList)
+  (owners ast.AstLifetimeList))
+
+(define (tc-arena-input-facts-new) : TcArenaInputFacts
+  (TcArenaInputFacts (ast.ast-lifetime-list-new) (ast.ast-lifetime-list-new)))
+
+(define (tc-arena-input-type-id-facts-into
   [ctx : TcContext]
   [stack : (& stack ast.AstTypeList)]
-  [out : (&mut out ast.AstLifetimeList)]
+  [out : (&mut out TcArenaInputFacts)]
   [type-id : i64]) : unit
-  (tc-arena-phase-type-pairs-into ctx (ast.ty-node-get type-id) stack out))
+  (tc-arena-input-type-facts-into ctx (ast.ty-node-get type-id) stack out))
 
-(define (tc-arena-phase-types-pairs-into
+(define (tc-arena-input-types-facts-into
   [ctx : TcContext]
   [types : ast.AstTypeList]
   [stack : (& stack ast.AstTypeList)]
-  [out : (&mut out ast.AstLifetimeList)]) : unit
+  [out : (&mut out TcArenaInputFacts)]) : unit
   (for [index (iterator.range 0 types.len)]
-    (tc-arena-phase-type-id-pairs-into
+    (tc-arena-input-type-id-facts-into
       ctx
       stack
       out
       (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))))
 
-(define (tc-arena-phase-type-pairs-into
+(define (tc-arena-input-type-facts-into
   [ctx : TcContext]
   [ty : ast.AstType]
   [stack : (& stack ast.AstTypeList)]
-  [out : (&mut out ast.AstLifetimeList)]) : unit
+  [out : (&mut out TcArenaInputFacts)]) : unit
   (let
     [resolved : ast.AstType (tc-resolve-type ctx ty)]
     ;; Callable lifetimes belong to the deferred body's own signature.
@@ -36222,10 +36236,15 @@
         [(or (Func _ _) (CFunc _ _)) true]
         [_ false])
       (return unit))
+    (match (tc-arena-branded-region ctx (tc-global-shared-view resolved))
+      [(Some owner)
+        (ast.ast-lifetime-list-push (&mut out.owners) owner)
+        (return unit)]
+      [(No) unit])
     (match (tc-arena-phase-brands ctx (tc-global-shared-view resolved))
       [(Some owner generation)
-        (ast.ast-lifetime-list-push out generation)
-        (ast.ast-lifetime-list-push out owner)
+        (ast.ast-lifetime-list-push (&mut out.phases) generation)
+        (ast.ast-lifetime-list-push (&mut out.phases) owner)
         (return unit)]
       [(No) unit])
     (match (tc-global-shared-view resolved)
@@ -36260,7 +36279,7 @@
                     (or
                       (DefStruct _ _ _ _ fields)
                       (DefStructLifetimes _ _ _ _ _ fields)))
-                  (tc-arena-phase-types-pairs-into
+                  (tc-arena-input-types-facts-into
                     owner-ctx
                     (tc-init-struct-field-types-for-result
                       owner-ctx
@@ -36279,7 +36298,7 @@
                       index
                       (ast.ast-variant-def-fallback))
                       [(Def _ fields _)
-                        (tc-arena-phase-types-pairs-into
+                        (tc-arena-input-types-facts-into
                           owner-ctx
                           (tc-init-enum-fields-for-result
                             owner-ctx
@@ -36292,23 +36311,23 @@
       [_
         (ast.ast-type-for-each-child
           resolved
-          tc-arena-phase-type-id-pairs-into
+          tc-arena-input-type-id-facts-into
           ctx
           stack
           out)])))
 
-(define (tc-arena-phase-param-pairs
+(define (tc-arena-input-param-facts
   [ctx : TcContext]
-  [params : (& params ast.AstParamList)]) : ast.AstLifetimeList
+  [params : (& params ast.AstParamList)]) : TcArenaInputFacts
   (let
-    [out : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [out : TcArenaInputFacts (tc-arena-input-facts-new)]
     (for [index (iterator.range 0 (ast.ast-param-list-len params))]
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
         [(Param _ ty _)
           (unless
             (tc-name-id-list-empty?
               (tc-type-collect-regions (tc-global-shared-view ty)))
-            (tc-arena-phase-type-pairs-into
+            (tc-arena-input-type-facts-into
               ctx
               ty
               (& (ast.ast-type-list-new))
@@ -68042,7 +68061,8 @@
   ;; to their resolved types (tc-bind-params).
   (let
     [out : TcMovedSet moved]
-    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    [facts : TcArenaInputFacts (tc-arena-input-param-facts ctx params)]
+    [pairs : ast.AstLifetimeList facts.phases]
     [phases : i64 0]
     (for [index (iterator.range 0 (/ pairs.len 2))]
       (set!
@@ -69664,6 +69684,7 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
+  [locals : TcMovedSet]
   [moved : TcMovedSet]
   [args : ast.AstExprList]
   [origin : ast.AstExpr]) : TcMoveResult
@@ -69673,6 +69694,30 @@
     [ty (try (tc-body-type-fact-expr-id "move.phase_owner" ctx env arg))]
     (match (tc-arena-branded-region ctx ty)
       [(Some owner)
+        (let
+          [owner-expr : ast.AstExpr (tc-context-expr-get ctx arg)]
+          [owned-place : bool
+            (and
+              (=
+                (tc-reference-read-kind
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view owner-expr))
+                0)
+              (match (tc-move-direct-root-base-path expr-bases owner-expr)
+                [(Some path) (tc-moved-contains? locals path.root)]
+                [(No) false]))]
+          (unless
+            owned-place
+            (return
+              (Err
+                (tc-locate-error-at-expr
+                  expr-bases
+                  origin
+                  (tc-kind-message
+                    (ArenaOwnership)
+                    "typecheck: arena.phase requires an owned local arena place; a borrowed or global owner cannot establish a local phase"))))))
         (if (!= (tc-arena-phase-state-get moved.arena-phases owner) -2)
           (Err
             (tc-locate-error-at-expr
@@ -69967,6 +70012,7 @@
               ctx
               expr-bases
               env
+              locals
               moved
               args
               origin)]
@@ -70683,6 +70729,104 @@
             unit)))
       out)))
 
+(define (tc-arena-phase-pairs-contain?
+  [pairs : (& pairs ast.AstLifetimeList)]
+  [owner : i64]
+  [generation : i64]) : bool
+  (for [pair-index (iterator.range 0 (/ pairs.len 2))]
+    (let
+      [index : i64 (* pair-index 2)]
+      (when
+        (and
+          (= generation (ast.ast-lifetime-list-get pairs index -1))
+          (= owner (ast.ast-lifetime-list-get pairs (+ index 1) -1)))
+        (return true))))
+  false)
+
+(define (tc-move-check-arena-phase-call-inputs
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : (& moved TcMovedSet)]
+  [func : ast.AstExpr]
+  [args : (& args ast.AstExprList)]
+  [params : ast.AstTypeList]) : ResultTcUnit
+  (when (or (= moved.arena-phases 0) (tc-in-unsafe? env)) (return Ok))
+  (when
+    (tc-move-check-constructor-call? ctx (tc-global-shared-view func))
+    (return Ok))
+  (let
+    [source : i64 (tc-expr-var-name-id expr-bases (tc-global-shared-view func))]
+    (when
+      (and
+        (>= source 0)
+        (!=
+          (tc-arena-safe-call-kind-id
+            ctx
+            env
+            source
+            (tc-arena-call-lookup-id ctx env source))
+          (tc-arena-safe-call-kind-none)))
+      (return Ok)))
+  (let
+    [lifetimes : ast.AstLifetimeList
+      (tc-call-function-lifetimes (tc-global-shared-view params) (Unit))]
+    [subst
+      (try
+        (tc-infer-call-lifetime-subst
+          ctx
+          env
+          func
+          (owned_view.compiler-owned-reference-shared-view args)
+          (tc-global-shared-view params)
+          lifetimes
+          Nil))]
+    [concrete : ast.AstTypeList (tc-lifetime-subst-type-list subst params)]
+    [facts : TcArenaInputFacts (tc-arena-input-facts-new)]
+    [ended : TcNameIdList (tc-type-list-invalidate-lifetimes (& concrete))]
+    (tc-arena-input-types-facts-into
+      ctx
+      concrete
+      (& (ast.ast-type-list-new))
+      (&mut facts))
+    (for [index (iterator.range 0 args.len)]
+      (let
+        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+        [actual
+          (try
+            (tc-body-type-fact-expr-id "move.phase_call_input" ctx env arg-id))]
+        [input : TcArenaInputFacts (tc-arena-input-facts-new)]
+        (tc-arena-input-type-facts-into
+          ctx
+          actual
+          (& (ast.ast-type-list-new))
+          (&mut input))
+        (for [owner-index (iterator.range 0 input.owners.len)]
+          (let
+            [owner : i64
+              (ast.ast-lifetime-list-get (& input.owners) owner-index -1)]
+            [generation : i64
+              (tc-arena-phase-state-get moved.arena-phases owner)]
+            (when
+              (and
+                (!= generation -2)
+                (not
+                  (tc-name-id-list-contains (tc-global-shared-view ended) owner))
+                (not
+                  (tc-arena-phase-pairs-contain?
+                    (& facts.phases)
+                    owner
+                    generation)))
+              (return
+                (Err
+                  (tc-locate-error-at-expr
+                    expr-bases
+                    (tc-context-expr-get ctx arg-id)
+                    (tc-kind-message
+                      (ArenaOwnership)
+                      "typecheck: passing an owner with a live phase requires an ArenaPhase parameter for that generation or an :invalidate effect")))))))))
+    Ok))
+
 (define (tc-move-check-call-args-with-types
   [ctx : TcContext]
   [expr-bases : i64]
@@ -70754,6 +70898,16 @@
               moved
               (tc-global-shared-view args)
               (tc-global-shared-view params))]))]
+    [_phase-inputs
+      (try
+        (tc-move-check-arena-phase-call-inputs
+          ctx
+          expr-bases
+          env
+          (& moved-args0)
+          (tc-global-shared-view func)
+          (& args)
+          (tc-global-shared-view params)))]
     [moved-thread
       (try
         (tc-move-check-thread-channel-send-message
@@ -81964,6 +82118,37 @@
               (- remaining 1)
               primary)])])))
 
+(define (tc-borrow-check-safe-arena-phase-effect
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : ast.AstExprList]
+  [primary : ast.AstExpr]) : TcBorrowCheckResult
+  (when (!= args.len 1) (return (Ok borrowed)))
+  (let
+    [arg : i64 (ast.ast-expr-list-get (& args) 0 0)]
+    [ty (try (tc-body-type-fact-expr-id "borrow.phase_owner" ctx env arg))]
+    (match (tc-arena-branded-region ctx ty)
+      [(Some _)
+        (match (tc-move-direct-root-base-path
+          expr-bases
+          (tc-context-expr-get ctx arg))
+          [(Some path)
+            (try
+              (tc-borrow-check-assign-conflict
+                ctx
+                expr-bases
+                locals
+                (tc-global-shared-view borrowed)
+                path
+                primary))
+            unit]
+          [(No) unit])]
+      [(No) unit])
+    (Ok borrowed)))
+
 (define (tc-borrow-check-safe-arena-rewind-effect
   [ctx : TcContext]
   [expr-bases : i64]
@@ -82211,6 +82396,15 @@
         [arena-call-kind : i64
           (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
+          [(= arena-call-kind (tc-arena-safe-call-kind-phase))
+            (tc-borrow-check-safe-arena-phase-effect
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed
+              args
+              call-expr)]
           [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-borrow-check-safe-arena-rewind-effect
               ctx

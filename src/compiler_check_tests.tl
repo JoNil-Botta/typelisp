@@ -170,13 +170,14 @@
                 [(Ok _ _) false]
                 [(Err diagnostics _)
                   (let
-                    [items : cdiag.CompilerDiagnosticList
-                      (cdiag.compiler-diagnostic-list-box-shared-view
-                        diagnostics)]
                     [first : cdiag.CompilerDiagnostic
-                      (cdiag.compiler-diagnostic-list-first items)]
+                      (cdiag.compiler-diagnostic-list-first
+                        (& (deref diagnostics)))]
                     (and
-                      (= (cdiag.compiler-diagnostic-list-count items) 1)
+                      (=
+                        (cdiag.compiler-diagnostic-list-count
+                          (& (deref diagnostics)))
+                        1)
                       (match (cdiag.compiler-diagnostic-code (& first))
                         [(CompilerDiagnosticSomeString code)
                           (string.eq code "E0208")]

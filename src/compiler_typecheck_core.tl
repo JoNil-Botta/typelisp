@@ -8067,9 +8067,9 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [expr : (& expr ast.AstExpr)]
   [array-only : bool]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(BoxTake inner-box)
       (tc-reference-receiver-kind ctx expr-bases env inner-box array-only)]
     [(ArrayRef receiver-box _)
@@ -8094,7 +8094,10 @@
                         ctx
                         expr-bases
                         env
-                        (ast.ast-expr-segment-bases-get expr-bases receiver-box)
+                        (&
+                          (ast.ast-expr-segment-bases-get
+                            expr-bases
+                            receiver-box))
                         true)])]
                 [(Err _) kind])]
             [(Err _) kind])))]
@@ -8108,7 +8111,7 @@
               ctx
               expr-bases
               env
-              (ast.ast-expr-segment-bases-get expr-bases virtual-id)
+              (& (ast.ast-expr-segment-bases-get expr-bases virtual-id))
               array-only)]
           [(Err _) 0])
         0)]
@@ -8126,14 +8129,10 @@
     [named : i64
       (if array-only
         0
-        (tc-reference-value-kind
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view receiver)))]
+        (tc-reference-value-kind ctx expr-bases env receiver-id))]
     (if (> named 0)
       named
-      (tc-reference-read-kind ctx expr-bases env receiver array-only))))
+      (tc-reference-read-kind ctx expr-bases env (& receiver) array-only))))
 
 ;; 1 for a shared reference value, 2 for a mutable one, else 0. A receiver may
 ;; itself be a call or projection; its spelling does not confer ownership.
@@ -8141,16 +8140,18 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]) : i64
-  (match (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
-    [(Var name) (tc-lookup-id env name)]
-    [_ (tc-expr ctx env expr)])
-    [(Ok ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
-        [(Ref _ _) 1]
-        [(MutRef _ _) 2]
-        [_ 0])]
-    [(Err _) 0]))
+  [expr-id : i64]) : i64
+  (let
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
+    (match (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+      [(Var name) (tc-lookup-id env name)]
+      [_ (tc-body-type-fact-expr-id "move.reference_receiver" ctx env expr-id)])
+      [(Ok ty)
+        (match (tc-type-strip-region (tc-resolve-type ctx ty))
+          [(Ref _ _) 1]
+          [(MutRef _ _) 2]
+          [_ 0])]
+      [(Err _) 0])))
 
 ;; A by-value use of a non-Copy value read through a reference would move it
 ;; out of the reference, whether or not its inferred type has a region tag.
@@ -8165,13 +8166,7 @@
   [ty : ast.AstType]
   [help : String]) : String
   (let
-    [kind : i64
-      (tc-reference-read-kind
-        ctx
-        expr-bases
-        env
-        (tc-global-shared-view expr)
-        false)]
+    [kind : i64 (tc-reference-read-kind ctx expr-bases env (& expr) false)]
     (if (or
       (= kind 0)
       (tc-type-copyable?
@@ -73085,14 +73080,7 @@
   (when
     (and
       (not place-read)
-      (>
-        (tc-reference-read-kind
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view expr)
-          true)
-        0))
+      (> (tc-reference-read-kind ctx expr-bases env (& expr) true) 0))
     (let
       [ty (try (tc-expr ctx env (tc-global-shared-view expr)))]
       [message : String

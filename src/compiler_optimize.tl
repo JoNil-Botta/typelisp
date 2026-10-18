@@ -18686,7 +18686,7 @@
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value (ast.clone-ast-type ty))
+                    (Rec dst pre-value latch-value (ast.ty-node-persist ty))
                     recs))]
               [(No) (No)])]
           [_ (No)])])))
@@ -29542,7 +29542,7 @@
           (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
           (ir.compiler-ir-instr-builder-push!
             builder
-            (ir.CompilerIrInstr.Mov fresh (Var var) (ast.clone-ast-type ty)))
+            (ir.CompilerIrInstr.Mov fresh (Var var) (ast.ty-node-persist ty)))
           unit)])))
 
 (define (opt-licm-unswitch-clone-param-moves!
@@ -37625,7 +37625,7 @@
                                     phi-var
                                     seed-var
                                     next-var
-                                    (ast.clone-ast-type gep-ty)
+                                    (ast.ty-node-persist gep-ty)
                                     step
                                     step-index))
                                 (No))]
@@ -59667,7 +59667,7 @@
           (ir.CompilerIrInstr.Mov
             var-id
             (Var (+ base index))
-            (ast.clone-ast-type ty)))
+            (ast.ty-node-persist ty)))
         (opt-tailrec-push-assign-movs! params base (+ index 1) (&mut builder))])))
 
 (define (opt-tailrec-push-assign-movs-hybrid!
@@ -59691,7 +59691,7 @@
               (ir.CompilerIrInstr.Mov
                 var-id
                 (Var (+ base index))
-                (ast.clone-ast-type ty))))
+                (ast.ty-node-persist ty))))
           (opt-tailrec-push-assign-movs-hybrid!
             params
             args
@@ -59718,7 +59718,7 @@
             (+ base index)
             (ir.compiler-ir-clone-value
               (ir.compiler-ir-value-seq-borrow args index))
-            (ast.clone-ast-type ty)))
+            (ast.ty-node-persist ty)))
         (opt-tailrec-push-stage-movs!
           params
           args
@@ -60519,7 +60519,7 @@
                   [(Some rest)
                     (Some
                       (opt-unroll-phi-list-cons
-                        (Phi dst init back (ast.clone-ast-type ty))
+                        (Phi dst init back (ast.ty-node-persist ty))
                         rest))]
                   [(No) (No)])
                 (No))]
@@ -60868,7 +60868,7 @@
                         (OptSelfLoopStep
                           (= kind 2)
                           step
-                          (ast.clone-ast-type ity)
+                          (ast.ty-node-persist ity)
                           (opt-unroll-resolve-copy instrs phi-count last src 16)))]
                     [_ (Form (= kind 2))])]
                 [_ (Form (= kind 2))])))]
@@ -60904,7 +60904,7 @@
                   last
                   (& back)
                   inext))
-                (Some (ast.clone-ast-type iphi-ty) seed pred-label)
+                (Some (ast.ty-node-persist iphi-ty) seed pred-label)
                 (No))]
             [(No) (No)])]
         [_ (No)]))))
@@ -62852,7 +62852,7 @@
                             inext3)
                           unrolled-label
                           (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                (ast.clone-ast-type ty)))
+                (ast.ty-node-persist ty)))
             (opt-unroll-push-tail-instrs!
               instrs
               (+ index 1)
@@ -62899,7 +62899,7 @@
                                       chain-index))
                                   unrolled-label
                                   (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                        (ast.clone-ast-type ty)))
+                        (ast.ty-node-persist ty)))
                     (opt-unroll-push-tail-instrs!
                       instrs
                       (+ index 1)
@@ -64081,7 +64081,7 @@
                                 site.gep-index
                                 site.base
                                 k
-                                (ast.clone-ast-type ty))))]))]
+                                (ast.ty-node-persist ty))))]))]
                   [_ (No)])]
               [_ (No)])])]
       [(or (Mov _ _ _) (Gep _ _ _ _))
@@ -65498,7 +65498,7 @@
                                             (opt-normalize-int-to-i64 seed ity)
                                             step
                                             trips
-                                            (ast.clone-ast-type ity)
+                                            (ast.ty-node-persist ity)
                                             others
                                             pred-label))))]
                                   [(No) unit])))])])]
@@ -67333,7 +67333,7 @@
                                                     index-var
                                                     next-var
                                                     step
-                                                    (ast.clone-ast-type ity)
+                                                    (ast.ty-node-persist ity)
                                                     bound
                                                     cmp-op
                                                     memory-bases
@@ -77768,7 +77768,7 @@
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-bce-mb-far-rewrite-inputs (& inputs) wire far-labels env)
-                (ast.clone-ast-type ty))]
+                (ast.ty-node-persist ty))]
             [_ (ir.compiler-ir-instr-seq-ref instrs index)])
           (ir.compiler-ir-instr-seq-ref instrs index))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
@@ -91050,7 +91050,7 @@
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-uniform-phi-subst-inputs env (& inputs))
-                (ast.clone-ast-type ty))))]
+                (ast.ty-node-persist ty))))]
         [_
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)

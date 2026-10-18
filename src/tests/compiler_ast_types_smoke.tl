@@ -3608,10 +3608,10 @@
       (and (>= used 1024) (< used 1200))
       "64 compact records fit 16-byte storage plus its array header")))
 
-;; `clone-ast-type`: every variant comes back equal to its source (children
+;; `ty-node-persist`: every variant comes back equal to its source (children
 ;; compared as plain ids, so distinct field values catch a swapped or dropped
-;; field), and a payload list the clone owns is fresh storage, so writing it
-;; leaves the source alone.
+;; field), and each of the five owning variants gets a fresh payload list, so
+;; writing the copy's list leaves the source alone.
 (define (compiler-ast-type-list-of [a : i64] [b : i64]) : ast.AstTypeList
   (let
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 2)]
@@ -3627,8 +3627,46 @@
 
 (define (compiler-ast-type-clone-same? [ty : ast.AstType]) : bool
   (let
-    [copy : ast.AstType (ast.clone-ast-type (& ty))]
+    [copy : ast.AstType (ast.ty-node-persist (& ty))]
     (ast.ty-node-shallow-value-eq? ty copy)))
+
+;; The payload storage of an owning variant; empty for every other variant.
+(define (compiler-ast-payload-slots [ty : ast.AstType]) : (__tl_dyn-array i64)
+  (match ty
+    [(Func args _)
+      (let
+        [list : ast.AstTypeList (deref args)]
+        list.slots)]
+    [(Tuple args)
+      (let
+        [list : ast.AstTypeList (deref args)]
+        list.slots)]
+    [(EnumArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [(StructArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [(VarArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [_ (__tl_make-array i64 0)]))
+
+;; A write to the copy's first payload slot must not reach the source, whose
+;; first slot is never 99.
+(define (compiler-ast-type-copy-owns-payload? [source : ast.AstType]) : bool
+  (let
+    [copy-slots : (__tl_dyn-array i64)
+      (compiler-ast-payload-slots (ast.ty-node-persist (& source)))]
+    (set! (array-ref copy-slots 0) 99)
+    (let
+      [source-slots : (__tl_dyn-array i64) (compiler-ast-payload-slots source)]
+      (and
+        (= (array-ref copy-slots 0) 99)
+        (not (= (array-ref source-slots 0) 99))))))
 
 (define (compiler-ast-type-clone?) : bool
   (let
@@ -3680,32 +3718,24 @@
         (compiler-ast-type-clone-same? (CFunc 50 (UnsafeNullable)))
         (compiler-ast-type-clone-same? (CFunc 51 (UnsafeNonNull)))
         (compiler-ast-type-clone-same? (Invalidate 52 53)))]
-    [func : ast.AstType (Func (box (compiler-ast-type-list-of 11 12)) 13)]
-    [func-copy : ast.AstType (ast.clone-ast-type (& func))]
-    (match func-copy
-      [(Func copied ret)
-        (let
-          [list : ast.AstTypeList (deref copied)]
-          (set! (array-ref list.slots 0) 99)
-          (and
-            every-shape?
-            (= ret 13)
-            (= list.len 2)
-            (= (array-ref list.slots 0) 99)
-            (= (array-ref list.slots 1) 12)
-            (match func
-              [(Func source _)
-                (let
-                  [source-list : ast.AstTypeList (deref source)]
-                  (= (array-ref source-list.slots 0) 11))]
-              [_ false])))]
-      [_ false])))
+    (and
+      every-shape?
+      (compiler-ast-type-copy-owns-payload?
+        (Func (box (compiler-ast-type-list-of 11 12)) 13))
+      (compiler-ast-type-copy-owns-payload?
+        (Tuple (box (compiler-ast-type-list-of 14 15))))
+      (compiler-ast-type-copy-owns-payload?
+        (EnumArgs 16 (box (compiler-ast-lifetime-list-of 17))))
+      (compiler-ast-type-copy-owns-payload?
+        (StructArgs 18 (box (compiler-ast-lifetime-list-of 19))))
+      (compiler-ast-type-copy-owns-payload?
+        (VarArgs 20 (box (compiler-ast-lifetime-list-of 21)))))))
 
 (test
   compiler-ast-type-clone
   (tl_test.assert-true
     (compiler-ast-type-clone?)
-    "clone-ast-type copies every shape and owns fresh payload storage"))
+    "ty-node-persist copies every shape and owns fresh payload storage"))
 
 (define (main) : i64
   (unless (compiler-ast-spmd-presence-segments?) (return 32))

@@ -3269,6 +3269,8 @@
     (ty-node-persist-type-list-into items (&mut out) 0)
     out))
 
+;; A deep copy of a type read through a reference: the child lists get fresh
+;; storage in the current arena and child ids are copied as they are.
 (define (ty-node-persist [node : (& AstType)]) : AstType
   (let
     [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]
@@ -10865,70 +10867,6 @@
       (ast-lifetime-list-with-capacity (ast-lifetime-list-len (& lifetimes)))]
     (ast-lifetime-list-copy-into (& lifetimes) (&mut out) 0)
     out))
-
-(define (ast-lifetime-list-clone [lifetimes : (& lifetimes AstLifetimeList)]) : AstLifetimeList
-  (let
-    [out : AstLifetimeList
-      (ast-lifetime-list-with-capacity (ast-lifetime-list-len lifetimes))]
-    (ast-lifetime-list-copy-into lifetimes (&mut out) 0)
-    out))
-
-;; A deep copy of a type read through a reference, for a pass that rebuilds an
-;; instruction from a borrowed one. Only the Func, Tuple and *Args variants own
-;; storage (their child lists are copied); every other variant is scalars.
-;; Written by hand rather than with `stdlib.clone/gen-clone`: the generated
-;; clone of this 40-variant enum and its dependencies costs the compiler's own
-;; build about 2.8 MB of macro-expansion peak at opt1, for the same function.
-(define (clone-ast-type [ty : (& ty AstType)]) : AstType
-  (match ty
-    [(Func args ret) (Func (box (ast-type-list-slice args 0)) ret)]
-    [(Tuple args) (Tuple (box (ast-type-list-slice args 0)))]
-    [(EnumArgs name lifetimes)
-      (EnumArgs name (box (ast-lifetime-list-clone lifetimes)))]
-    [(StructArgs name lifetimes)
-      (StructArgs name (box (ast-lifetime-list-clone lifetimes)))]
-    [(VarArgs name lifetimes)
-      (VarArgs name (box (ast-lifetime-list-clone lifetimes)))]
-    [(I64) (I64)]
-    [(I32) (I32)]
-    [(I16) (I16)]
-    [(I8) (I8)]
-    [(U64) (U64)]
-    [(U32) (U32)]
-    [(U16) (U16)]
-    [(U8) (U8)]
-    [(F64) (F64)]
-    [(F32) (F32)]
-    [(Bool) (Bool)]
-    [(Char) (Char)]
-    [(String) (String)]
-    [(Str) (Str)]
-    [(Bytes) (Bytes)]
-    [(Unit) (Unit)]
-    [(Never) (Never)]
-    [(Expr) (Expr)]
-    [(ExprList) (ExprList)]
-    [(Array elem len) (Array elem len)]
-    [(DynArray elem) (DynArray elem)]
-    [(Box elem) (Box elem)]
-    [(Region name inner) (Region name inner)]
-    [(Ref name inner) (Ref name inner)]
-    [(MutRef name inner) (MutRef name inner)]
-    [(Enum name) (Enum name)]
-    [(Struct name) (Struct name)]
-    [(Var name) (Var name)]
-    [(Ptr inner) (Ptr inner)]
-    [(MutPtr inner) (MutPtr inner)]
-    [(Slice elem) (Slice elem)]
-    [(CFunc sig mode)
-      (CFunc
-        sig
-        (match mode
-          [(Nullable) (Nullable)]
-          [(NonNull) (NonNull)]
-          [(UnsafeNullable) (UnsafeNullable)]
-          [(UnsafeNonNull) (UnsafeNonNull)]))]
-    [(Invalidate name inner) (Invalidate name inner)]))
 
 (define (ast-compaction-remap-type-list
   [remap : (& remap AstProgramCompactionRemap)]

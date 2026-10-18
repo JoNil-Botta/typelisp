@@ -240,7 +240,7 @@
       (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)]
     (if (= control 0)
       (compiler-parse-state-control-addr
-        (& (compiler-parse-default-state-shared-view)))
+        (& (array-ref compiler-parse-default-state 0)))
       control)))
 
 (define (compiler-parse-origin-append-reference!
@@ -515,7 +515,7 @@
   (compiler-parse-decl-origin-cache-reset!)
   (compiler-parse-origin-reset!
     (compiler-parse-array-data-addr
-      (compiler-parse-default-state-shared-view).semantic-origins)))
+      (array-ref compiler-parse-default-state 0).semantic-origins)))
 
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan

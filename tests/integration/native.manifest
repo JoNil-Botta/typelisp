@@ -1084,3 +1084,4 @@ gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdl
 ownership_certified_never_call|all|0,1,2|tests/integration/ownership_certified_never_call.tl|42|-|-|-|-
 ownership_certified_never_argument|all|0,1,2|tests/integration/ownership_certified_never_argument.tl|42|-|-|-|-
 ownership_certified_never_indirect|all|0,1,2|tests/integration/ownership_certified_never_indirect.tl|42|-|-|-|-
+ownership_certified_cfunc|all|0,1,2|tests/integration/ownership_certified_cfunc.tl|42|-|-|benchmarks/ownership_certified_cfunc/baseline.c|-

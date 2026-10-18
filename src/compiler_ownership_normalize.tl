@@ -1255,6 +1255,14 @@
   ;; (`OwnershipNormalizeGlobalWrites`).
   (borrowed-globals (__tl_dyn-array i64)))
 
+(define (normalize-scalar-value-type? [type : (& type ast.AstType)]) : bool
+  (match type
+    [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _)) true]
+    [_
+      (match (normalize-type-code type)
+        [(NormalizeInt.Ok code) (< code 13)]
+        [_ false])]))
+
 (define (ownership-normalized-scalar-storage?
   [output : (& output OwnershipNormalizedBody)]
   [code : i64]) : bool
@@ -1263,10 +1271,8 @@
     (and
       (>= code normalize-first-value-type)
       (< (- code normalize-first-value-type) (array-length output.value-types))
-      (match (&
-        (array-ref output.value-types (- code normalize-first-value-type)))
-        [(ast.AstType.Func _ _) true]
-        [_ false]))))
+      (normalize-scalar-value-type?
+        (& (array-ref output.value-types (- code normalize-first-value-type)))))))
 
 (define (normalize-scalar-call? [call : (& call NormalizeCall)]) : bool
   (unless
@@ -1280,16 +1286,16 @@
   (match (& call.signature)
     [(ast.AstType.Func params result)
       (unless
-        (match (normalize-type-code (& (ast.ty-node-get result)))
-          [(NormalizeInt.Ok code) (<= code 13)]
-          [_ false])
+        (or
+          (normalize-scalar-value-type? (& (ast.ty-node-get result)))
+          (match (ast.ty-node-get result)
+            [(ast.AstType.Never) true]
+            [_ false]))
         (return false))
       (for [index (iterator.range 0 params.len)]
         (unless
-          (match (normalize-type-code
+          (normalize-scalar-value-type?
             (& (ast.ty-node-get (ast.ast-type-list-get params index -1))))
-            [(NormalizeInt.Ok code) (< code 13)]
-            [_ false])
           (return false)))
       true]
     [_ false]))

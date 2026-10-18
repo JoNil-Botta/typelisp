@@ -2198,3 +2198,11 @@ callee captured before a later argument reassigns its source. The scalar/control
 fixture also returns from inside binary and call operands. Lowering tests
 require the checked graph route and reject malformed call execution points,
 duplicate abort calls, and abort blocks with no executable effect.
+
+`ownership_certified_cfunc.tl` links its independent C helper on both hosts at
+opt0/1/2. It covers captured-callee mutation, callable parameters/results, loops,
+mixed integer/f32 arguments and nine integer arguments crossing the C ABI stack
+boundary. Lowering tests assert graph selection for eight C-call forms, unsafe
+non-null calls and nullable storage; nullable calls retain their diagnostic.
+The retirement test also inspects owned nullable/non-null C signatures after
+both the typed source store and normalization scratch have been retired.

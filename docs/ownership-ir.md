@@ -1687,7 +1687,10 @@ the index, declaration kind and key at publication; lowering resolves the key
 through its existing name cache and checks the current declaration signature.
 Arguments use the graph's already captured places in source order. Canonical
 value types are retained in body-type order under the same pool guard; internal
-function values can be parameters, copied bindings, branch results and returns.
+function values and C function pointers can be parameters, copied bindings,
+branch results and returns. Their nested signatures remain guarded by the
+source type pool. Call operands and results are checked by canonical type
+equality, including callable parameters/results, before IR emission.
 A call through such a value consumes its already captured callee before its
 arguments; changing the source callable during argument evaluation cannot
 redirect that call. Foreign
@@ -1700,8 +1703,10 @@ result even when contextual typing reports an expected value type. These
 execution coordinates are consumed only for the current loan/cleanup-free
 representation, whose later ownership solving does not insert instructions.
 Malformed or duplicate call positions and aborts without an executable effect
-are hard errors. C function-pointer calls, other nonprimitive places, loans,
-cleanup and arena emission still need to move
+are hard errors. A non-null C callee emits the existing `CallIndirectC` ABI
+instruction from its captured place; a nullable runtime callee is a hard error.
+The `c-fn-check` primitive, other nonprimitive places, loans, cleanup and arena
+emission still need to move
 to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
 required. The scalar source fixture covers snapshots, argument ABI, loop exits
 and returns; direct graph selection additionally has a lowering assertion.

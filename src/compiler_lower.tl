@@ -73823,6 +73823,7 @@
           -1)
         -1)]
     [symbol : i64 -1]
+    [c-abi? : bool false]
     [declaration : ast.AstType
       (if indirect?
         (begin
@@ -73830,10 +73831,22 @@
             (lower-normalized-place? (& output.body) callee)
             (return
               (LowerNormalizedUnit.Err "lower: missing certified callee value")))
-          (try
-            (lower-normalized-type
-              output
-              (array-ref output.body.places callee).type.index)))
+          (let
+            [type : ast.AstType
+              (try
+                (lower-normalized-type
+                  output
+                  (array-ref output.body.places callee).type.index))]
+            (match (& type)
+              [(ast.AstType.CFunc signature mode)
+                (when
+                  (ast.ast-c-function-mode-nullable? mode)
+                  (return
+                    (LowerNormalizedUnit.Err
+                      "lower: nullable certified C callee")))
+                (set! c-abi? true)
+                (tc_core.tc-context-type-get ctx signature)]
+              [_ type])))
         (let
           [key : i64
             (match (& call.kind)
@@ -73876,10 +73889,10 @@
         (unless
           (and
             (= (+ params.len offset) (array-length node.operands))
-            (match (norm.normalize-type-code
-              (& (tc_core.tc-context-type-get ctx result)))
-              [(norm.NormalizeInt.Ok code) (= code node.type)]
-              [_ false]))
+            (ast.ast-type-eq-with-pools?
+              (tc_core.tc-context-pools ctx)
+              (& (tc_core.tc-context-type-get ctx result))
+              (& (try (lower-normalized-type output node.type)))))
           (return
             (LowerNormalizedUnit.Err "lower: invalid certified call signature")))
         (for [index (iterator.range 0 params.len)]
@@ -73888,14 +73901,17 @@
             (unless
               (and
                 (lower-normalized-place? (& output.body) place)
-                (match (norm.normalize-type-code
+                (ast.ast-type-eq-with-pools?
+                  (tc_core.tc-context-pools ctx)
                   (&
                     (tc_core.tc-context-type-get
                       ctx
-                      (ast.ast-type-list-get params index -1))))
-                  [(norm.NormalizeInt.Ok code)
-                    (= code (array-ref output.body.places place).type.index)]
-                  [_ false]))
+                      (ast.ast-type-list-get params index -1)))
+                  (&
+                    (try
+                      (lower-normalized-type
+                        output
+                        (array-ref output.body.places place).type.index)))))
               (return
                 (LowerNormalizedUnit.Err
                   "lower: invalid certified call operand")))
@@ -73914,11 +73930,17 @@
         instrs
         (& node.source)
         (if indirect?
-          (ir.CompilerIrInstr.CallIndirect
-            destination
-            (ir.CompilerIrValue.Var callee)
-            (ir.compiler-ir-call-args-from-seq (& args))
-            type)
+          (if c-abi?
+            (ir.CompilerIrInstr.CallIndirectC
+              destination
+              (ir.CompilerIrValue.Var callee)
+              (ir.compiler-ir-call-args-from-seq (& args))
+              type)
+            (ir.CompilerIrInstr.CallIndirect
+              destination
+              (ir.CompilerIrValue.Var callee)
+              (ir.compiler-ir-call-args-from-seq (& args))
+              type))
           (ir.CompilerIrInstr.Call
             destination
             symbol

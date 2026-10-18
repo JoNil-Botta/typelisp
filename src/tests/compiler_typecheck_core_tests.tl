@@ -11198,7 +11198,7 @@
     [store : typed.TypedStore (tc-selected-test-store (& lease))]
     [_callable : unit
       (when
-        (= mode 7)
+        (>= mode 7)
         (let
           [arguments : ast.AstTypeList (ast.ast-type-list-new)]
           [_argument : unit
@@ -11206,7 +11206,16 @@
               (&mut arguments)
               (ast.ty-node-push (& (ast.AstType.I64))))]
           [signature : ast.AstType
-            (ast.ast-ty-func arguments (& (ast.AstType.I64)))]
+            (let
+              [func : ast.AstType
+                (ast.ast-ty-func arguments (& (ast.AstType.I64)))]
+              (if (= mode 7)
+                func
+                (ast.AstType.CFunc
+                  (ast.ty-node-push (& func))
+                  (if (= mode 8)
+                    ast.AstCFunctionMode.NonNull
+                    ast.AstCFunctionMode.Nullable))))]
           [type : typed.TypedTypeId
             (match (typed.typed-type-add!
               (&mut store)
@@ -11288,7 +11297,7 @@
         expression))
       [(tc_core.TcSelectedLookup.Normalized address)
         (and
-          (or (= mode 0) (= mode 7))
+          (or (= mode 0) (>= mode 7))
           (> address (cast 0 : u64))
           (let
             [output : ownership_normalize.OwnershipNormalizedBody
@@ -11297,17 +11306,40 @@
                 ownership_normalize.OwnershipNormalizedBody)]
             (and
               (or
-                (not (= mode 7))
+                (not (>= mode 7))
                 (and
                   (= (array-length output.value-types) 1)
-                  (match (& (array-ref output.value-types 0))
-                    [(ast.AstType.Func arguments result)
-                      (and
-                        (= arguments.len 1)
-                        (match (ast.ty-node-get result)
-                          [(ast.AstType.I64) true]
-                          [_ false]))]
-                    [_ false])))
+                  (let
+                    [type : (& output ast.AstType)
+                      (& (array-ref output.value-types 0))]
+                    (match type
+                      [(ast.AstType.Func arguments result)
+                        (and
+                          (= mode 7)
+                          (= arguments.len 1)
+                          (match (ast.ty-node-get result)
+                            [(ast.AstType.I64) true]
+                            [_ false]))]
+                      [(ast.AstType.CFunc signature mode-value)
+                        (and
+                          (>= mode 8)
+                          (=
+                            (ast.ast-c-function-mode-key mode-value)
+                            (if (= mode 8)
+                              1
+                              0))
+                          (let
+                            [signature-type : ast.AstType
+                              (ast.ty-node-get signature)]
+                            (match (& signature-type)
+                              [(ast.AstType.Func arguments result)
+                                (and
+                                  (= arguments.len 1)
+                                  (match (ast.ty-node-get result)
+                                    [(ast.AstType.I64) true]
+                                    [_ false]))]
+                              [_ false])))]
+                      [_ false]))))
               (ownership_normalize.ownership-normalized-scalar-emission?
                 (& output))
               (match (ownership.ownership-check
@@ -11328,7 +11360,7 @@
 
 (test
   tc-selected-normalized-certificate-retirement
-  (for [mode (iterator.range 0 8)]
+  (for [mode (iterator.range 0 10)]
     (test.assert-true
       (tc-selected-normalized-certificate-case? mode)
       (str_cat.str-cat

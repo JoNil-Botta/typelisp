@@ -333,6 +333,88 @@
             (string.int->string index)))))))
 
 (test
+  compiler-lower-normalized-c-function-calls
+  (let
+    [bodies : (Array String 8)
+      (array
+        "(func value 0)"
+        "(let [alias : (CFunc non-null (-> i64 i64 i64)) func] (alias value 0))"
+        "((if flag func other) value 0)"
+        "(func value (begin (set! func other) 0))"
+        "(let [index : i64 0] [total : i64 0] (while (< index 6) (set! total (func total 1)) (set! index (+ index 1))) (+ total 36))"
+        "(let [alias : (CFunc non-null (-> i64 i64 i64)) (relay func)] (set! alias other) (alias 20 22))"
+        "((relay func) value 0)"
+        "(func (begin (return 42) 0) (other 1 2))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(define (relay [f : (CFunc non-null (-> i64 i64 i64))]) : (CFunc non-null (-> i64 i64 i64)) f)
+             (define (invoke [func : (CFunc non-null (-> i64 i64 i64))] [other : (CFunc non-null (-> i64 i64 i64))] [value : i64] [flag : bool]) : i64 "
+            (clone (array-ref bodies index))
+            ") (define (main [func : (CFunc non-null (-> i64 i64 i64))] [other : (CFunc non-null (-> i64 i64 i64))]) : i64 (invoke func other 42 true))")]
+        (test.assert-true
+          (match (lower-test-functions
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "C function case {}: {}"
+                  index
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                (lower.ResultCompilerLower.Err diagnostic)]
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (lower.ResultCompilerLower.Ok program spans owner)]))
+            [(Some functions)
+              (and
+                (=
+                  (lower-test-function-label-load-count
+                    (& functions)
+                    "invoke"
+                    "checked.0")
+                  0)
+                (=
+                  (lower-test-function-label-load-count
+                    (& functions)
+                    "relay"
+                    "checked.0")
+                  0))]
+            [_ false])
+          (str_cat.str-cat
+            "checked C function call, case "
+            (string.int->string index)))))))
+
+(test
+  compiler-lower-normalized-c-function-boundaries
+  (begin
+    (test.assert-true
+      (match (lower-test-functions
+        (lower.lower-compiler-source
+          "(define (relay [f : (CFunc nullable (-> i64 i64))]) : (CFunc nullable (-> i64 i64)) f)
+           (define (invoke [f : (CFunc unsafe-non-null (-> i64 i64))]) : i64 (unsafe (f 42)))
+           (define (main) : i64 42)"))
+        [(Some functions)
+          (and
+            (=
+              (lower-test-function-label-load-count
+                (& functions)
+                "relay"
+                "checked.0")
+              0)
+            (=
+              (lower-test-function-label-load-count
+                (& functions)
+                "invoke"
+                "checked.0")
+              0))]
+        [_ false])
+      "nullable storage and checked unsafe C calls use the owned graph")
+    (test.assert-true
+      (compiler-lower-error-ok?
+        "(define (main [f : (CFunc nullable (-> i64 i64))]) : i64 (f 42))"
+        "typecheck: nullable C function pointer must be checked before calling")
+      "nullable C pointer call cannot receive a certificate")))
+
+(test
   compiler-lower-normalized-never-calls
   (let
     [bodies : (Array String 8)

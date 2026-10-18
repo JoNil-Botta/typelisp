@@ -3641,6 +3641,7 @@
     "a function-local store fork never touches its parent's store or index"))
 
 (define (tc-type-env-segmented-snapshot-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [branch-id : i64 (ci.intern "branch")]
     [base : tc_core.TcTypeEnv
@@ -5303,6 +5304,7 @@
     (io.panic "typecheck: scoped type env smoke failed")))
 
 (define (tc-type-env-walker-api-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [lookup-base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
@@ -5405,6 +5407,7 @@
     (io.panic "typecheck: env walker api smoke failed")))
 
 (define (tc-type-env-local-cache-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (and
     (tc-type-env-local-cache-behavior-smoke?)
     (tc-type-env-local-cache-default-shadow-smoke?)
@@ -5432,6 +5435,7 @@
 
 (test
   tc-type-env-explicit-cache-layering
+  (cbi.compiler-builtin-initialize-for-parse!)
   (if (tc-type-env-explicit-cache-layering-lookup-smoke?)
     unit
     (io.panic "typecheck: explicit env cache lookup layering smoke failed"))
@@ -5444,6 +5448,85 @@
   (if (tc-type-env-c-function-selected-key-smoke?)
     unit
     (io.panic "typecheck: selected C ABI fnptr key smoke failed")))
+
+(test
+  tc-type-env-intern-builtin-fixture-state
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [caller : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [caller-table : i64 (ci.intern-active-table-id)]
+    [caller-generation : i64 (ci.intern-generation)]
+    [caller-alloc : i64 cbi.compiler-builtin-id-tl-alloc]
+    [caller-name : i64 (ci.intern "fixture-caller")]
+    [caller-count : i64 (ci.intern-pool-len)]
+    (ast_tests.with-test-interns
+      (let
+        [table-a : i64 (ci.intern-active-table-id)]
+        [generation-a : i64 (ci.intern-generation)]
+        (test.assert-false (= table-a caller-table) "fixture owns its table")
+        (ci.intern-reset!)
+        (test.assert-false
+          (cbi.compiler-builtin-table-current?)
+          "reset invalidates the previous builtin generation")
+        (let
+          [_prefix : i64 (ci.intern "fixture-a-prefix")]
+          [reset-generation : i64 (ci.intern-generation)]
+          ;; The minimized failing prefix: reset, then synthetic cache setup.
+          (test.assert-true
+            (tc-type-env-local-cache-smoke?)
+            "synthetic cache fixtures initialize their builtin IDs")
+          (test.assert-false
+            (= generation-a reset-generation)
+            "fixture reset advances its generation")
+          (let
+            [alloc-a : i64 cbi.compiler-builtin-id-tl-alloc]
+            [builtins-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+            (ast_tests.with-test-interns
+              (test.assert-false
+                (= (ci.intern-active-table-id) table-a)
+                "nested fixture owns another table")
+              (test.assert-false
+                (= cbi.compiler-builtin-id-tl-alloc alloc-a)
+                "different prefixes produce different builtin IDs")
+              (cbi.state-install! builtins-a)
+              (test.assert-false
+                (cbi.compiler-builtin-table-current?)
+                "equal-looking IDs cannot substitute for builtin ownership")
+              (cbi.compiler-builtin-initialize-for-parse!))
+            (cbi.compiler-builtin-refresh!)
+            (test.assert-i64-eq (ci.intern-active-table-id) table-a "restore A")
+            (test.assert-i64-eq
+              (ci.intern-generation)
+              reset-generation
+              "restore A's reset generation")
+            (test.assert-i64-eq
+              cbi.compiler-builtin-id-tl-alloc
+              alloc-a
+              "restore A's matching builtins")))))
+    (cbi.compiler-builtin-refresh!)
+    (test.assert-i64-eq
+      (ci.intern-active-table-id)
+      caller-table
+      "restore caller")
+    (test.assert-i64-eq
+      (ci.intern-generation)
+      caller-generation
+      "preserve caller generation")
+    (test.assert-i64-eq
+      (ci.intern-pool-len)
+      caller-count
+      "preserve caller pool")
+    (test.assert-i64-eq
+      cbi.compiler-builtin-id-tl-alloc
+      caller-alloc
+      "restore caller builtins")
+    (test.assert-true
+      (string.eq (ci.intern-str caller-name) "fixture-caller")
+      "preserve caller spellings")
+    (test.assert-i64-eq
+      (ci.intern-compat-state-table-id caller)
+      caller-table
+      "caller snapshot still identifies the same owner")))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
@@ -5851,8 +5934,9 @@
   test
   (test
     tc-unbound-visible-name-persistent-and-qualified
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [module-id : i64 (ci.intern "suggest-module")]
         [other-module-id : i64 (ci.intern "suggest-other")]
@@ -5929,6 +6013,7 @@
           (io.panic
             "typecheck: persistent/qualified visible-name enumeration failed"))
         (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
         (let
           [hidden-id : i64 (ci.intern "__alpha")]
           [hidden-wanted-id : i64 (ci.intern "alpha")]
@@ -5944,14 +6029,16 @@
           (unless
             (string.eq hidden-result "")
             (io.panic "typecheck: visible-name reset isolation failed"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (cfg
   test
   (test
     tc-unbound-visible-name-structural-and-scoped-reset
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [module-id : i64 (ci.intern "macro-module")]
         [macro-source-id : i64 (ci.intern "macro-value")]
@@ -6043,14 +6130,16 @@
               (string.eq restored-result ""))
             (io.panic
               "typecheck: structural/scoped visible-name enumeration failed"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (cfg
   test
   (test
     tc-unbound-visible-name-two-job-isolation
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -6093,14 +6182,16 @@
             (string.eq result-a "job-alpha")
             (string.eq result-b "job-bravo"))
           (io.panic "typecheck: visible-name job isolation failed"))
-        (ci.intern-reset!)))))
+        (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)))))
 
 (cfg
   test
   (test
     tc-unbound-near-miss-stable-and-tie-broken
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [alpha-id : i64 (ci.intern "alpha")]
         [wanted-id : i64 (ci.intern "alphi")]
@@ -6133,14 +6224,16 @@
               after
               (tc_core.tc-unbound-near-miss false -1 env2 "alphi" wanted-id))
             (io.panic "typecheck: near-miss scan changed the updated result"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (cfg
   test
   (test
     tc-unbound-suggestion-suppression-scope
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -6193,7 +6286,8 @@
               (tc_core.tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
               "alpha"))
           (io.panic "typecheck: suggestion did not return after the scope"))
-        (ci.intern-reset!)))))
+        (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)))))
 
 (cfg
   test

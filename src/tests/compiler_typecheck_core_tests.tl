@@ -11797,6 +11797,55 @@
 ;; marker over the inner node of the initializer's Spanned row. Over a compact
 ;; marker (#8884) it keeps that Spanned row, the compact operand's view.
 (test
+  ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 9)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "initializer-operand")))]
+    [plain : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [compact : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ctfe_support.ctfe-compact-caller-origin-name)))
+        span)]
+    [ty : ast.AstType
+      (Region
+        (ctfe_support.ctfe-caller-origin-expr-type-id)
+        (ci.intern-composite-pair-id
+          (ci.intern "initializer-path")
+          (ast.ast-node-pool-context-type-push pools (I64))))]
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          plain
+          (& ty)))
+      var
+      "an initializer's marker goes over its Spanned row's inner node")
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          compact
+          (& ty)))
+      compact
+      "over a compact marker, it keeps the marker's Spanned view")))
+
+;; A Copy field projection through `deref` consults the checked receiver fact
+;; through a source or macro view of the projection; non-Copy and unknown fields
+;; keep the consuming dereference (#8994).
+(test
   tc-copy-projection-source-views-reuse-checked-receiver-facts
   (let
     [installed : ast.AstNodePoolContext
@@ -11879,49 +11928,3 @@
     (tc_core.tc-job-state-retire-owned-storage! job)
     (ast.ast-node-pool-context-install! installed)
     (ast.ast-node-pool-context-destroy-storage! pools)))
-
-(test
-  ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
-  (let
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 64 8)]
-    [span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 9)]
-    [var : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Var (ci.intern "initializer-operand")))]
-    [plain : i64 (ast.ast-expr-source-view-with-pools pools var span)]
-    [compact : i64
-      (ast.ast-expr-source-view-with-pools
-        pools
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (MacroExpansion
-            var
-            (tc_core.macro-expansion-provenance-id -1 -1)
-            (ctfe_support.ctfe-compact-caller-origin-name)))
-        span)]
-    [ty : ast.AstType
-      (Region
-        (ctfe_support.ctfe-caller-origin-expr-type-id)
-        (ci.intern-composite-pair-id
-          (ci.intern "initializer-path")
-          (ast.ast-node-pool-context-type-push pools (I64))))]
-    (test.assert-i64-eq
-      (tc-initializer-marker-test-inner
-        pools
-        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
-          pools
-          plain
-          (& ty)))
-      var
-      "an initializer's marker goes over its Spanned row's inner node")
-    (test.assert-i64-eq
-      (tc-initializer-marker-test-inner
-        pools
-        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
-          pools
-          compact
-          (& ty)))
-      compact
-      "over a compact marker, it keeps the marker's Spanned view")))

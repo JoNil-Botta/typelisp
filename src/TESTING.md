@@ -214,6 +214,20 @@ two driver states. `intern-reset!` invalidates every retained ID;
 the generation. State-owned reset/capture/install operations affect only that
 driver job.
 
+Synthetic compiler fixtures initialize builtin IDs before constructing checker
+environments or reading fixed IDs; the IR-text reader supplies that boundary
+for IR fixtures. Later-phase accessors keep their owner/generation guard.
+Destructive intern fixtures use `compiler_ast_types_tests.with-test-interns`,
+which installs a fresh table with its builtin state and restores the caller's
+matching pair before releasing fixture storage. A captured intern view shares
+arrays and cannot undo a reset of the caller's table. After a reset inside a
+fixture, initialize its new builtin generation before using it. Fixture bodies
+must complete normally, without an early `return` out of the scope.
+`tc-type-env-intern-builtin-fixture-state` pins nested owners, reset generations,
+synthetic cache setup and caller restoration. Run the entire compiler-core file
+in declaration order and with shuffle seeds 1 and 17 at opt0/1/2, plus the
+optimizer file's filtered aggregate cases and full shuffled suite.
+
 `intern-str` is the short-lived, same-state compatibility path. Code that
 retains an ID across a reset or install boundary resolves it through a captured
 `InternSourceNameSession`, whose `InternSourceNameResolution` rejects

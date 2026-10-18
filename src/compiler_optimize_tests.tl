@@ -3887,6 +3887,7 @@
       1)))
 
 (define (opt-aggregate-test-alloc) : ir.CompilerIrInstr
+  (cbi.compiler-builtin-initialize-for-parse!)
   (Call
     1
     cbi.compiler-builtin-id-tl-alloc

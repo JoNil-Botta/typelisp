@@ -2482,6 +2482,25 @@
     "borrow addresses avoid copies; writes and by-value aliases retain snapshots"))
 
 (test
+  compiler-lower-scalar-cleanup-emission
+  (let
+    [bodies : (Array String 2) (array "42" "(return 42)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower-test-functions
+          (lower.lower-compiler-source
+            (str_cat.str-cat
+              "(define cleaned : i64 0)
+               (define (cleanup [value : i64]) : unit (set! cleaned (+ cleaned value)))
+               (define (run) : i64 (with ([token 7 cleanup]) "
+              (clone (array-ref bodies index))
+              ")) (define (main) : i64 (run))")))
+          [(Some functions)
+            (= (lower-test-function-call-count functions "run" "cleanup") 1)]
+          [_ false])
+        "explicit scalar cleanup executes at normal and return exits"))))
+
+(test
   compiler-lower-never-callee
   (let
     [bodies : (Array String 4)

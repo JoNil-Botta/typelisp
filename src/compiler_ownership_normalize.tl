@@ -1337,6 +1337,10 @@
       (= (array-length output.body.cleanups) 0)
       (= (array-length output.body.obligations) 0))
     (return false))
+  ;; Scope owners carry runtime cleanup/invalidation obligations even when
+  ;; their storage is scalar. Consume alone does not encode those callbacks.
+  (for [index (iterator.range 0 (array-length output.binders))]
+    (when (!= (array-ref output.binders index).owner 0) (return false)))
   (for [place (iterator.range 0 (array-length output.body.places))]
     (unless
       (and

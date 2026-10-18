@@ -2088,3 +2088,9 @@ facts carry those checking and lowering contracts. Source/entry-point,
 seed-regression, unsafe-wrapper,
 mutation, instrumentation, performance and target-route evidence accompanies
 the pull request that lands this work.
+
+The scalar runtime classifier also excludes binders with scope-owner markers.
+A primitive resource can have an explicit `with` callback without a type-owned
+cleanup record; its checked `Consume` is ownership evidence, not an executable
+callback. Such bodies retain checked source runtime lowering until callback
+metadata and cleanup emission are part of the normalized runtime contract.

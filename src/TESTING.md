@@ -53,6 +53,10 @@ float and narrow reads against their exact extern metadata symbols. The
 extern spellings and then no extern, resets function caches, and checks a second
 owner's isolation and final retirement.
 
+`ownership_certified_scalar_cleanup.tl` checks normal, return, nested and both
+conditional exits of scalar resources with explicit cleanup callbacks. The
+callback trace pins execution once per owner and reverse acquisition order.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

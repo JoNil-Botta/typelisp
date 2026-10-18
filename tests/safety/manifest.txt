@@ -1593,6 +1593,8 @@ mir_field_set_ok|run-exit|tests/safety/mir_field_set_ok.tl|42|-
 mir_field_set_borrowed_reject|check-fail|tests/safety/mir_field_set_borrowed_reject.tl|tests/safety/mir_field_set_borrowed_reject.tl:10:13|cannot assign to borrowed place `holder.items`
 mir_global_ok|run-exit|tests/safety/mir_global_ok.tl|42|-
 mir_global_borrow_conflict_reject|check-fail|tests/safety/mir_global_borrow_conflict_reject.tl|tests/safety/mir_global_borrow_conflict_reject.tl:12:24|cannot assign to borrowed place `items[0]`
+mir_global_loan_local_shadow_reject|check-fail|tests/safety/mir_global_loan_local_shadow_reject.tl|tests/safety/mir_global_loan_local_shadow_reject.tl:21:16|cannot move borrowed place `text`
+mir_global_loan_local_shadow_ok|check-ok|tests/safety/mir_global_loan_local_shadow_ok.tl|-|-
 mir_match_loop_nil_ok|run-exit|tests/safety/mir_match_loop_nil_ok.tl|42|-
 mir_match_loop_moved_reject|check-fail|tests/safety/mir_match_loop_moved_reject.tl|tests/safety/mir_match_loop_moved_reject.tl:14:9|use of moved value `cursor`
 mir_macro_constructor_double_move_reject|check-fail|tests/safety/mir_macro_constructor_double_move_reject.tl|tests/safety/mir_macro_constructor_double_move_reject.tl:13:12|use of moved value `value`

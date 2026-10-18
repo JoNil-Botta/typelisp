@@ -1419,6 +1419,13 @@ edge-precise liveness while candidate rewrites still consume it. These lifetimes
 bound overlapping analyses within a large function; the existing function and
 assembly-stream arenas continue to bound accumulation across functions.
 
+Global-cell and global-storage write summaries treat arbitrary extern calls as
+possibly writing every global: an extern can invoke a callback or an exported
+function without receiving a global address. Direct queries and call-graph
+closure use the same rule, including tail calls and recursive components.
+Only compiler-owned runtime helpers with known IR effects exclude this re-entry;
+their pointer writes still obey the analyses' address and escape preconditions.
+
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through

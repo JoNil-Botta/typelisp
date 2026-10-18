@@ -7875,9 +7875,7 @@
         [(Phi bd binputs bty)
           (and
             (= ad bd)
-            (opt-phi-input-seq-eq
-              ainputs
-              (owned_view.compiler-owned-reference-shared-view binputs))
+            (opt-phi-input-seq-eq ainputs binputs)
             (opt-type-eq type-segment-bases aty bty))]
         [_ false])]
     [(Pack ad awords aty)

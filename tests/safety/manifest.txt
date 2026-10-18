@@ -926,6 +926,8 @@ thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_do
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
 arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
 arena_branded_distinct_alias_reject|check-fail|tests/safety/arena_branded_distinct_alias_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_branded_operand_wrong_brand_reject|check-fail|tests/safety/arena_branded_operand_wrong_brand_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_bare_operand_brand_reject|check-fail|tests/safety/arena_bare_operand_brand_reject.tl|-|expected (stdlib.arena/Arena r), found stdlib.arena/Arena
 arena_branded_duplicate_reject|check-fail|tests/safety/arena_branded_duplicate_reject.tl|-|use of moved value `owner`
 arena_branded_aggregate_duplicate_reject|check-fail|tests/safety/arena_branded_aggregate_duplicate_reject.tl|-|use of moved value `owner`
 arena_branded_closure_capture_reuse_reject|check-fail|tests/safety/arena_branded_closure_capture_reuse_reject.tl|-|use of moved value `owner`

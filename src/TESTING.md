@@ -33,17 +33,17 @@ the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
 
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
+
 `extern_data_memory.tl` links C data symbols at opt0/1/2 on both hosts.
 Its assembly-shape case pins both compare operand positions, arithmetic folds,
 float and narrow reads against their exact extern metadata symbols. The
 `backend-global-symbol-emission-owner` test reuses a backend owner with two
 extern spellings and then no extern, resets function caches, and checks a second
 owner's isolation and final retirement.
-
-`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
-returns early, for language closures and C code pointers. Counts require one
-callee evaluation, no later argument effects and the enclosing cleanup. A
-conditional callee also exercises the branch that actually invokes its function.
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI

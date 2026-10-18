@@ -293,6 +293,80 @@
 
 ;; --- self-test ---------------------------------------------------------------
 (test
+  compiler-lower-branded-view-call
+  (let
+    [bodies : (Array String 4)
+      (array
+        "(scoped-count (& owner) (string.append \"inside\" \"-scope\"))"
+        "(let [text (string.append \"inside\" \"-scope\")] (scoped-count (& owner) text))"
+        "(let [text (string.append \"inside\" \"-scope\")] (+ 40 (scoped-count (& owner) text)))"
+        "(let [text (string.append \"inside\" \"-scope\")] (scoped-length (& owner) text))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(import stdlib.arena) (import stdlib.string)
+             (define (scoped-count [_owner : (& a (arena.Arena r))] [_text : (in r String)]) : i64 2)
+             (define (scoped-length [_owner : (& a (arena.Arena r))] [text : (in r String)]) : i64 (string.string-length text))
+             (define (main) : i64 (let [owner (arena.make)] (in-arena owner "
+            (clone (array-ref bodies index))
+            ")))")]
+        (test.assert-true
+          (match (lower.lower-compiler-source source)
+            [(lower.ResultCompilerLower.Ok _ _ owner)
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas owner))
+              true]
+            [(lower.ResultCompilerLower.Err diagnostic)
+              (io.println
+                "branded view case {}: {}"
+                index
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+              false])
+          "arena-branded and borrowed view parameters retain a checked call")))))
+
+(test
+  compiler-lower-branded-view-reject
+  (let
+    [sources : (Array (Tuple String String) 3)
+      (array
+        (tuple
+          "(import stdlib.arena) (import stdlib.string)
+           (define (count [_owner : (& a (arena.Arena r))] [_text : (in r String)]) : i64 2)
+           (define (main) : i64 (let [owner (arena.make)] (in-arena owner (count (& owner) \"outside\"))))"
+          "type mismatch")
+        (tuple
+          "(import stdlib.arena) (import stdlib.string)
+           (define (count [_owner : (& a (arena.Arena r))] [_text : (in r String)]) : i64 2)
+           (define (main) : i64
+             (let [owner (arena.make)] [other (arena.make)]
+               (in-arena owner (let [text (string.append \"inside\" \"-scope\")] (count (& other) text)))))"
+          "type mismatch")
+        (tuple
+          "(import stdlib.arena) (import stdlib.string)
+           (define (release [owner : (arena.Arena r) (:invalidate r)] [text : (in r String)]) : i64
+             (begin (arena.destroy-safe! owner) (string.string-length text)))
+           (define (main) : i64 42)"
+          "use of moved value `text`"))]
+    (for [index (iterator.range 0 (array-length sources))]
+      (let
+        [entry (clone (array-ref sources index))]
+        [source (tuple-ref entry 0)]
+        [expected (tuple-ref entry 1)]
+        (test.assert-true
+          (match (lower.lower-compiler-source source)
+            [(lower.ResultCompilerLower.Ok _ _ owner)
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas owner))
+              false]
+            [(lower.ResultCompilerLower.Err diagnostic)
+              (let
+                [message
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic)))]
+                (string.contains (& message) (& expected)))])
+          "view call admission preserves region and invalidation checks")))))
+
+(test
   compiler-lower-normalized-scalar-control
   (test.assert-true
     (match (lower-test-functions

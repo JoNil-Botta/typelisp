@@ -14097,14 +14097,17 @@
         (= (tc-selected-reference-kind ctx (tc-global-shared-view resolved)) 1))]
     [_ false]))
 
-;; A parameter type the call slice represents: a value, or a reference whose
-;; referent is one (`tc-selected-reference-kind`).
+;; A parameter type the call slice represents: a value, a region-tagged view,
+;; or a reference whose referent is one (`tc-selected-reference-kind`).
 (define (tc-selected-call-param-type-ok? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
     ;; An `(:invalidate r T)` parameter takes a `T`.
     [param : ast.AstType (tc-type-strip-invalidate ty)]
     (or
       (tc-selected-call-type-ok? ctx (tc-global-shared-view param))
+      (tc-selected-view-type?
+        ctx
+        (tc-resolve-type ctx (tc-global-shared-view param)))
       (> (tc-selected-reference-kind ctx (tc-resolve-type ctx param)) 0))))
 
 ;; No argument's loan can flow into another argument unseen: two parameters
@@ -14269,11 +14272,7 @@
               (tc-global-shared-view func)
               (tc-global-shared-view params)
               (tc-global-shared-view ret))))
-        (or
-          (tc-selected-call-param-type-ok? ctx (tc-global-shared-view ret))
-          (tc-selected-view-type?
-            ctx
-            (tc-resolve-type ctx (tc-global-shared-view ret)))))]
+        (tc-selected-call-param-type-ok? ctx (tc-global-shared-view ret)))]
     (while (and ok? (< index (ast.ast-type-list-len (& params))))
       (set!
         ok?

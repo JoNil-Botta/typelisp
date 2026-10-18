@@ -71286,53 +71286,147 @@
           "typecheck: slice-split-at expects exactly two arguments"
           "typecheck: slice-view expects exactly three arguments")))))
 
-;; Borrowing a place observes every receiver and index but never performs the
-;; by-value transfer represented by public `deref`. Rebuild only the place
-;; spine with the seed's non-consuming BoxGet node, then reuse the ordinary
-;; move checker for conflict diagnostics and index evaluation.
-(define (tc-move-borrow-place-read-expr-id
-  [expr-bases : i64]
-  [expr : ast.AstExpr]) : i64
+(define (tc-clone-read-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : ast.AstExprList]) : ast.AstExprList
+  (let
+    [raw-name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-bases ctx)
+        (tc-context-expr-get ctx func-id))]
+    [name : i64
+      (tc-builtin-call-name-id
+        (tc-context-structural-session ctx)
+        raw-name
+        (tc-hygiene-global-name-id?
+          (tc-context-structural-session ctx)
+          raw-name))]
+    (if (and
+      (= args.len 1)
+      (cbi.compiler-builtin-typecheck-clone-id? name)
+      (not (tc-source-value-bound-id? ctx env name)))
+      (let
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+        (ast.ast-expr-list-push
+          (&mut out)
+          (tc-read-value-expr-id
+            (tc-context-expr-bases ctx)
+            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
+        out)
+      args)))
+
+;; Clone and place borrows read their result's storage without transferring it.
+;; Only value-producing paths inherit that demand: conditions, initializers,
+;; scrutinees, call arguments and sequence prefixes keep their ordinary moves.
+;; Rebuild the occurrence, never mutate a shared source node or mark its ID.
+(define (tc-read-value-expr-id [expr-bases : i64] [expr : ast.AstExpr]) : i64
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (ast.ast-expr-spanned
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         span)]
     [(Ann inner-box ty-id)
       (ast.ast-expr-ann-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         ty-id)]
     [(Cast inner-box ty-id)
       (ast.ast-expr-cast-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         ty-id)]
+    [(MacroExpansion inner-box provenance name)
+      (ast.ast-expr-macro-expansion
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        provenance
+        name)]
+    [(or (Begin items) (Unsafe items))
+      (let
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity items.len)]
+        (for [index (iterator.range 0 items.len)]
+          (let
+            [id : i64 (ast.ast-expr-list-get (& items) index 0)]
+            (ast.ast-expr-list-push
+              (&mut out)
+              (if (= index (- items.len 1))
+                (tc-read-value-expr-id
+                  expr-bases
+                  (ast.ast-expr-segment-bases-get expr-bases id))
+                id))))
+        (ast.ast-node-push
+          (match expr
+            [(Unsafe _) (Unsafe out)]
+            [_ (Begin out)])))]
+    [(If condition then-box else-box)
+      (ast.ast-expr-if
+        condition
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases then-box))
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases else-box)))]
+    [(Let payload)
+      (match (& (deref payload))
+        [(Let bindings body)
+          (let
+            [out : ast.AstLetBindingList
+              (ast.ast-let-binding-list-with-capacity bindings.len)]
+            (ast.ast-let-binding-list-append-from (&mut out) bindings 0)
+            (ast.ast-expr-let
+              out
+              (tc-read-value-expr-id
+                expr-bases
+                (ast.ast-expr-segment-bases-get expr-bases body))))])]
+    [(Match payload)
+      (match (& (deref payload))
+        [(Match scrutinee arms)
+          (let
+            [out : ast.AstMatchArmList
+              (ast.ast-match-arm-list-with-capacity arms.len)]
+            (for [index (iterator.range 0 arms.len)]
+              (match (ast.ast-match-arm-list-get
+                arms
+                index
+                (ast.ast-match-arm-fallback))
+                [(Arm pattern body)
+                  (ast.ast-match-arm-list-push
+                    (&mut out)
+                    (ast.AstMatchArm.Arm
+                      pattern
+                      (tc-read-value-expr-id
+                        expr-bases
+                        (ast.ast-expr-segment-bases-get expr-bases body))))]))
+            (ast.ast-expr-match scrutinee out))])]
     [(StructGet receiver-box field)
       (ast.ast-expr-struct-get-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         field)]
     [(TupleRef receiver-box index)
       (ast.ast-expr-tuple-ref
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         index)]
     [(ArrayRef receiver-box index-box)
       (ast.ast-expr-array-ref
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         index-box)]
     [(or (BoxGet receiver-box) (BoxTake receiver-box))
       (ast.ast-expr-box-get
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
     [_ (ast.ast-node-push expr)]))
@@ -71420,7 +71514,7 @@
     locals
     loop-carried
     moved
-    (tc-move-borrow-place-read-expr-id expr-bases place)))
+    (tc-read-value-expr-id expr-bases place)))
 
 (define (tc-move-cleanup-overwrite-message) : String
   (tc-kind-message
@@ -73243,6 +73337,7 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        [args : ast.AstExprList (tc-clone-read-args ctx env func-box args)]
         [slice-kind : TcSliceViewCallKind
           (tc-slice-view-call-kind ctx env (tc-global-shared-view func))]
         (if (= slice-kind TcSliceViewCallKind.None)
@@ -87173,6 +87268,7 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        [args : ast.AstExprList (tc-clone-read-args ctx env func-box args)]
         [slice-kind : TcSliceViewCallKind
           (tc-slice-view-call-kind ctx env (tc-global-shared-view func))]
         (if (= slice-kind TcSliceViewCallKind.None)
@@ -87929,9 +88025,7 @@
           [read-inner : ast.AstExpr
             (ast.ast-expr-segment-bases-get
               expr-bases
-              (tc-move-borrow-place-read-expr-id
-                expr-bases
-                (tc-global-shared-view inner)))]
+              (tc-read-value-expr-id expr-bases (tc-global-shared-view inner)))]
           (if (= (tc-moved-len borrowed) 0)
             (let
               [borrowed1

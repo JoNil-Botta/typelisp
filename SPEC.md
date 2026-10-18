@@ -9233,6 +9233,12 @@ and not a general manual memory management feature.
   from a generated helper use its generated-decl
   origin and the compiler handoff request location; producer conflicts name
   the conflicting helper explicitly.
+- The transitional `(clone value)` reads the selected value without moving
+  its source. Cloning a supported non-Copy referent, such as
+  `(clone (deref reference))`, produces independent owned storage and preserves
+  the reference or Box receiver. This read demand follows result branches and
+  sequence tails; prefix expressions and binding initializers retain ordinary
+  ownership rules. Cloning a reference itself remains unsupported.
 - The transitional compiler-special `clone` rejects unsupported
   ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,

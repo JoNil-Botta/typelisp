@@ -36028,7 +36028,9 @@
 
 (define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
   (cond
-    [(or (= base-id (ci.intern "raw-handle")) (= base-id (ci.intern "eq?")))
+    [(or
+        (= base-id cbi.compiler-builtin-id-arena-raw-handle-base)
+        (= base-id cbi.compiler-builtin-id-arena-eq-base))
       (tc-arena-safe-call-kind-inspect)]
     [(= base-id cbi.compiler-builtin-id-arena-phase-base)
       (tc-arena-safe-call-kind-phase)]

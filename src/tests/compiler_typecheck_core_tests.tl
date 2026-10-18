@@ -6463,6 +6463,14 @@
             cbi.compiler-builtin-id-arena-destroy-safe-base)
           (tc_core.tc-arena-safe-call-kind-destroy))
         (=
+          (tc_core.tc-arena-safe-call-base-kind-id
+            cbi.compiler-builtin-id-arena-raw-handle-base)
+          (tc_core.tc-arena-safe-call-kind-inspect))
+        (=
+          (tc_core.tc-arena-safe-call-base-kind-id
+            cbi.compiler-builtin-id-arena-eq-base)
+          (tc_core.tc-arena-safe-call-kind-inspect))
+        (=
           (tc_core.tc-arena-safe-call-base-kind-id generated-phase)
           (tc_core.tc-arena-safe-call-kind-none))
         (tc_core.tc-arena-canonical-call-base-id?

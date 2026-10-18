@@ -230,6 +230,10 @@
   -1)
 (define compiler-builtin-id-arena-destroy-safe-base : i64
   -1)
+(define compiler-builtin-id-arena-raw-handle-base : i64
+  -1)
+(define compiler-builtin-id-arena-eq-base : i64
+  -1)
 (define compiler-builtin-id-tls-current-arena : i64
   -1)
 (define compiler-builtin-id-tls-current-arena-set-bang : i64
@@ -1426,6 +1430,8 @@
           (id compiler-builtin-id-arena-phase-base 305 "phase")
           (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
           (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
+          (id compiler-builtin-id-arena-raw-handle-base 325 "raw-handle")
+          (id compiler-builtin-id-arena-eq-base 326 "eq?")
           ;; Captured into their slots but never loaded, so they stay -1.
           (id compiler-builtin-id-fix-LetBinding 311)
           (id compiler-builtin-id-fix-LetBindingList 312))
@@ -2568,6 +2574,10 @@
       (=
         compiler-builtin-id-arena-destroy-safe-base
         (ci.intern-source-slice "destroy-safe!" 0 13))
+      (=
+        compiler-builtin-id-arena-raw-handle-base
+        (ci.intern-source-slice "raw-handle" 0 10))
+      (= compiler-builtin-id-arena-eq-base (ci.intern-source-slice "eq?" 0 3))
       (not
         (=
           compiler-builtin-id-arena-type

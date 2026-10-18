@@ -335,6 +335,13 @@ Recursive type rendering retains both owners through nested pointer, slice,
 function and nominal arguments. The compatibility type-name entry deliberately
 uses the installed structural owner through the zero-handle adapter.
 
+Typechecker lifetime diagnostics also distinguish source pool IDs from syntax
+identities. Their shared renderer decodes the installed source-name owner's
+structural session through the existing syntax-name boundary, including a macro
+local's definition identity. Foreign, stale and malformed identities use the
+total `<id:N>` fallback before any string-pool lookup. Coercion details and
+recursive type rendering use that same boundary.
+
 A function's frame is laid out before its body is emitted. Below the slot and
 maximum callee-save area it holds, from the top down: the SIMD staging region,
 the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing

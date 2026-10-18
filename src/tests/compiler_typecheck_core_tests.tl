@@ -2731,6 +2731,176 @@
     CleanupOwner))
 
 (test
+  tc-lifetime-render-validates-syntax-owner
+  (let
+    [previous : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [left : ci.InternCompatState (ci.intern-compat-state-new)]
+    [right : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source : i64 (ci.intern-compat-state-intern (&mut left) "shadowed")]
+    [required : i64 (ci.intern-compat-state-intern (&mut left) "keep")]
+    [other : i64 (ci.intern-compat-state-intern (&mut right) "other")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& left)))]
+    [foreign-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& right)))]
+    [definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session
+        source
+        source)]
+    [local : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          definition
+          0
+          source))]
+    [foreign-definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        foreign-session
+        other
+        other)]
+    [foreign : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          foreign-session
+          foreign-definition
+          0
+          other))]
+    [template : i64
+      (cis.intern-template-source-identity-raw
+        (cis.intern-structural-session-template-source-identity session source))]
+    [fresh : i64
+      (cis.intern-fresh-local-identity-raw
+        (cis.intern-structural-session-fresh-local-identity session 7 source))]
+    [invalid : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-key
+          session
+          (ci.intern-structural-kind-macro-local)
+          (cis.intern-macro-definition-identity-raw foreign-definition)
+          0
+          source))]
+    [invalid-source : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-key
+          session
+          (ci.intern-structural-kind-macro-local)
+          (cis.intern-macro-definition-identity-raw definition)
+          0
+          (ci.intern-capacity)))]
+    [_install : unit (ci.intern-compat-state-install! (& left))]
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        source
+        local
+        template
+        fresh
+        foreign
+        invalid
+        invalid-source
+        (cis.intern-macro-definition-identity-raw definition)
+        -2)]
+    [expected : (__tl_dyn-array String)
+      (__tl_make-array
+        "shadowed"
+        "shadowed"
+        "shadowed"
+        "shadowed"
+        (str_cat.str-cat "<id:" (string.int->string foreign) ">")
+        (str_cat.str-cat "<id:" (string.int->string invalid) ">")
+        (str_cat.str-cat "<id:" (string.int->string invalid-source) ">")
+        (str_cat.str-cat
+          "<id:"
+          (string.int->string
+            (cis.intern-macro-definition-identity-raw definition))
+          ">")
+        "<id:-2>")]
+    [actual : (__tl_dyn-array String)
+      (__tl_make-array String (array-length names))]
+    [want : ast.AstType (ast.ast-ty-ref required (& (I64)))]
+    [got : ast.AstType (ast.ast-ty-ref local (& (I64)))]
+    [nested : ast.AstType (ast.ast-ty-mut-ref local (& (I64)))]
+    [details : (__tl_dyn-array String)
+      (__tl_make-array
+        (tc_core.tc-lifetime-coercion-outlives-detail local required)
+        (tc_core.tc-lifetime-coercion-invariant-detail
+          "mutable reference referent type"
+          (tc_core.tc-global-shared-view want)
+          (tc_core.tc-global-shared-view got))
+        (tc_core.tc-lifetime-coercion-variance-detail
+          "function parameter/result variance"
+          want
+          got)
+        (tc_core.tc-type-render (ast.ast-ty-ref required (& nested))))]
+    [expected-details : (__tl_dyn-array String)
+      (__tl_make-array
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
+          "; source lifetime `shadowed` does not outlive required lifetime `keep`")
+        "; source lifetime `shadowed` cannot satisfy required lifetime `keep` because mutable reference referent type is invariant"
+        "; source lifetime `shadowed` cannot satisfy required lifetime `keep` because function parameter/result variance failed"
+        "(& keep (&mut shadowed i64))")]
+    [same-slot? : bool
+      (=
+        (bit-and local (ci.intern-structural-key-index-mask))
+        (bit-and foreign (ci.intern-structural-key-index-mask)))]
+    (for [index (iterator.range 0 (array-length names))]
+      (set!
+        (array-ref actual index)
+        (tc_core.tc-lifetime-name-render (array-ref names index))))
+    (ci.intern-compat-state-reset! (&mut left))
+    (let
+      [replacement : i64
+        (ci.intern-compat-state-intern (&mut left) "replacement")]
+      [next-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state (& left)))]
+      [next-definition : cis.InternMacroDefinitionIdentity
+        (cis.intern-structural-session-macro-definition-identity
+          next-session
+          replacement
+          replacement)]
+      [next-local : i64
+        (cis.intern-macro-local-identity-raw
+          (cis.intern-structural-session-macro-local-identity
+            next-session
+            next-definition
+            0
+            replacement))]
+      [stale : String (tc_core.tc-lifetime-name-render local)]
+      [current : String (tc_core.tc-lifetime-name-render next-local)]
+      [expected-stale : String
+        (str_cat.str-cat "<id:" (string.int->string local) ">")]
+      [reused-slot? : bool
+        (=
+          (bit-and local (ci.intern-structural-key-index-mask))
+          (bit-and next-local (ci.intern-structural-key-index-mask)))]
+      (ci.intern-compat-state-install! (& previous))
+      (test.assert-true same-slot? "foreign identity reuses the same slot")
+      (test.assert-true reused-slot? "reset identity reuses the same slot")
+      (for [index (iterator.range 0 (array-length names))]
+        (test.assert-string-eq
+          (& (array-ref actual index))
+          (& (array-ref expected index))
+          "lifetime spelling requires a valid syntax owner and definition"))
+      (for [index (iterator.range 0 (array-length details))]
+        (test.assert-string-eq
+          (& (array-ref details index))
+          (& (array-ref expected-details index))
+          "lifetime coercion details render the source spelling"))
+      (test.assert-string-eq
+        (& stale)
+        (& expected-stale)
+        "stale lifetime cannot alias a reused slot")
+      (test.assert-string-eq
+        (& current)
+        "replacement"
+        "current lifetime retains its own spelling"))))
+
+(test
   tc-type-render-hides-elaborated-lifetimes
   (let
     [hidden : i64 (tc_core.tc-elided-lifetime-name 0)]

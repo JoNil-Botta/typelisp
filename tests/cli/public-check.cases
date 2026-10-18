@@ -752,6 +752,106 @@ run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-r
 stderr empty
 stdout contains Wrote
 
+# A dotted field read of an invalidated parameter is located at the read in
+# multi-expression, `begin` and single-expression bodies (#8994).
+case check-invalidated-parameter-field-read-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x multi.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  ({{each}} owner)
+  (+ pair.count (string.string-length pair.text)))
+
+(define (main) : i64 42)
+end-file
+file -x begin.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  (begin
+    ({{each}} owner)
+    pair.count))
+
+(define (main) : i64 42)
+end-file
+file -x single.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  (+ (begin ({{each}} owner) 0)
+     (string.string-length pair.text)))
+
+(define (main) : i64 42)
+end-file
+step check-multi
+run check "{{dir}}/multi.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order multi.tl:13:6 || multi.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step check-begin
+run check "{{dir}}/begin.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order begin.tl:14:5 || begin.tl:13: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step check-single
+run check "{{dir}}/single.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order single.tl:13:28 || single.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step compile-multi
+run compile "{{dir}}/multi.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/multi.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order multi.tl:13:6 || multi.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step compile-single
+run compile "{{dir}}/single.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/single.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order single.tl:13:28 || single.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+
 # Unsafe callable effects survive type inference, qualification and unsafe scope.
 case check-string-raw-copy-function-values
 target linux-x86_64 windows-x86_64

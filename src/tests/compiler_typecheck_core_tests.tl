@@ -11928,3 +11928,51 @@
     (tc_core.tc-job-state-retire-owned-storage! job)
     (ast.ast-node-pool-context-install! installed)
     (ast.ast-node-pool-context-destroy-storage! pools)))
+
+;; A node with no source span of its own, such as a dotted name's root, is
+;; viewed at the enclosing read's span without a new node. A spanned node keeps
+;; its own view, and an unspanned enclosing view leaves the node bare (#8994).
+(test
+  tc-move-located-view-names-the-enclosing-read
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
+    [read-span : ast.AstSourceSpan (ast.ast-source-span 9 3 9 5)]
+    [own-span : ast.AstSourceSpan (ast.ast-source-span 4 7 4 9)]
+    [root : i64
+      (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "p")))]
+    [read : i64 (ast.ast-expr-source-view-with-pools pools root read-span)]
+    [spanned : i64 (ast.ast-expr-source-view-with-pools pools root own-span)]
+    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+    (test.assert-true
+      (match (tc_core.tc-move-located-view
+        bases
+        (& (ast.ast-node-pool-context-expr-get pools read))
+        root)
+        [(Spanned inner span)
+          (and (= inner root) (ast.ast-source-span-eq? span read-span))]
+        [_ false])
+      "an unspanned root is viewed at the enclosing read")
+    (test.assert-true
+      (match (tc_core.tc-move-located-view
+        bases
+        (& (ast.ast-node-pool-context-expr-get pools read))
+        spanned)
+        [(Spanned inner span)
+          (and (= inner root) (ast.ast-source-span-eq? span own-span))]
+        [_ false])
+      "a spanned node keeps its own view")
+    (test.assert-true
+      (match (tc_core.tc-move-located-view
+        bases
+        (& (ast.ast-node-pool-context-expr-get pools root))
+        root)
+        [(Var _) true]
+        [_ false])
+      "an unspanned enclosing view leaves the node bare")
+    (test.assert-i64-eq
+      (ast.ast-node-pool-context-expr-len pools)
+      count
+      "viewing allocates no node")
+    (ast.ast-node-pool-context-destroy-storage! pools)))

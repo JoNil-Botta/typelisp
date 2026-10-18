@@ -301,6 +301,11 @@ on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
 `tc-copy-projection-source-views-reuse-checked-receiver-facts` also keeps the
 checked receiver lookup through source and macro views, with non-Copy and
 unknown fields retaining their consuming dereference.
+`check-invalidated-parameter-field-read-span` locates dotted field reads
+(`pair.count`, `pair.text`) at the read in multi-expression, `begin` and
+single-expression bodies; `compiler-check-invalidated-field-read-spans-ok?`
+pins the same primaries and origin labels through the virtual-source checker,
+and `tc-move-located-view-names-the-enclosing-read` the view itself.
 
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,

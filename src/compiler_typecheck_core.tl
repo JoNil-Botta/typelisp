@@ -71348,6 +71348,22 @@
     [(ast.AstExpr.BoxTake inner-box) inner-box]
     [_ -1]))
 
+;; The node at ID viewed for move diagnostics: its own view when it has a
+;; source span, otherwise at the span of the source VIEW enclosing it, without
+;; allocating a node. A dotted local field read is normalized into projection
+;; nodes whose root has no span of its own, so a conflict on that root names
+;; the read that spelled it.
+(define (tc-move-located-view
+  [expr-bases : i64]
+  [view : (& view ast.AstExpr)]
+  [node-id : i64]) : ast.AstExpr
+  (match (tc-expr-id-maybe-span expr-bases node-id)
+    [(Some _) (ast.ast-expr-segment-bases-get expr-bases node-id)]
+    [(No)
+      (match view
+        [(Spanned _ span) (ast.AstExpr.Spanned node-id span)]
+        [_ (ast.ast-expr-segment-bases-get expr-bases node-id)])]))
+
 ;; The receiver a field or tuple-element projection reads. A Copy projection
 ;; through `(deref place)`, directly or through further projections, copies out
 ;; of the boxed or referenced storage in place, so `(deref b).v` and
@@ -74480,7 +74496,7 @@
             env
             expr-bases
             (tc-global-shared-view expr)
-            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+            (tc-move-located-view expr-bases (& expr) inner-box))]
         [moved1
           (try
             (tc-move-check-expr

@@ -41,6 +41,7 @@ primary span, help and secondary labels.
 The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
+The unspanned root of a normalized dotted field read is viewed at that read.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:

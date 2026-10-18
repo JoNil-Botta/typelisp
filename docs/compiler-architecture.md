@@ -154,6 +154,9 @@ indirect call site uses that dispatcher; lexical provenance flags cannot choose
 a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+Both ordinary and tail indirect lowering materialize the complete callable
+value before lowering arguments, so argument effects cannot replace the selected
+closure descriptor or C code pointer. The snapshot shares the closure environment.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.

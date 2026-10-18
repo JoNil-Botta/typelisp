@@ -33,6 +33,14 @@ the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
 
+`indirect_callee_snapshot.tl` retains the callable before argument effects for
+language closures and C pointers, including local, parameter, global and field
+storage, raw pointer writes, conditional/wrapped/factory callees and
+unchanged-callee controls.
+Factory and invocation counts pin single evaluation. The native manifest runs
+all three optimization levels on both hosts; keep the mixed-float, stack, null
+and unsafe callable ABI families beside this ordering regression.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

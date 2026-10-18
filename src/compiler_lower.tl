@@ -35155,65 +35155,69 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (lower-c-function-type? (lower-global-shared-view func-ty))
-    (lower-indirect-c-abi-call
-      ctx
-      state
-      env
-      type-env
-      func-ty
-      func-value
-      args
-      result-ty
-      origin)
-    (match (lower-indirect-call-args-with-writebacks
-      ctx
-      state
-      env
-      type-env
-      args
-      (lower-global-shared-view func-ty))
-      [(Ok args-state values writebacks)
-        (match (tc_core.tc-type-strip-region
-          (tc_core.tc-resolve-type ctx func-ty))
-          [(Func param-types _)
-            (let
-              [lowered
-                (try
-                  (lower-internal-call-values
-                    ctx
-                    args-state
-                    (Indirect func-value)
-                    values
-                    (tc_core.tc-resolve-type-list ctx (deref param-types))
-                    result-ty
-                    origin))]
-              (match lowered
-                [(Expr call-state call-value call-ty)
-                  (Ok
-                    (Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))]))]
-          [_
-            (let
-              [lowered
-                (try
-                  (lower-call-values
-                    ctx
-                    args-state
-                    (Indirect func-value)
-                    values
-                    result-ty
-                    origin))]
-              (match lowered
-                [(Expr call-state call-value call-ty)
-                  (Ok
-                    (Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))]))])]
-      [(Err message) (Err message)])))
+  ;; The callable is a value evaluated before the arguments, even when its
+  ;; source binding is assigned while a later argument is evaluated.
+  (match (try (lower-materialize state func-value func-ty))
+    [(Expr state func-value func-ty)
+      (if (lower-c-function-type? (lower-global-shared-view func-ty))
+        (lower-indirect-c-abi-call
+          ctx
+          state
+          env
+          type-env
+          func-ty
+          func-value
+          args
+          result-ty
+          origin)
+        (match (lower-indirect-call-args-with-writebacks
+          ctx
+          state
+          env
+          type-env
+          args
+          (lower-global-shared-view func-ty))
+          [(Ok args-state values writebacks)
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx func-ty))
+              [(Func param-types _)
+                (let
+                  [lowered
+                    (try
+                      (lower-internal-call-values
+                        ctx
+                        args-state
+                        (Indirect func-value)
+                        values
+                        (tc_core.tc-resolve-type-list ctx (deref param-types))
+                        result-ty
+                        origin))]
+                  (match lowered
+                    [(Expr call-state call-value call-ty)
+                      (Ok
+                        (Expr
+                          (lower-apply-arg-writebacks ctx call-state writebacks)
+                          call-value
+                          call-ty))]))]
+              [_
+                (let
+                  [lowered
+                    (try
+                      (lower-call-values
+                        ctx
+                        args-state
+                        (Indirect func-value)
+                        values
+                        result-ty
+                        origin))]
+                  (match lowered
+                    [(Expr call-state call-value call-ty)
+                      (Ok
+                        (Expr
+                          (lower-apply-arg-writebacks ctx call-state writebacks)
+                          call-value
+                          call-ty))]))])]
+          [(Err message) (Err message)]))]))
 
 (define (lower-indirect-c-abi-call
   [ctx : tc_core.TcContext]
@@ -66402,7 +66406,11 @@
         sret-var)
         (let
           [lowered-func (try (lower-expr ctx state env type-env callee))]
-          (match lowered-func
+          [captured-func : LowerExpr
+            (match lowered-func
+              [(Expr func-state func-value func-ty)
+                (try (lower-materialize func-state func-value func-ty))])]
+          (match captured-func
             [(Expr func-state func-value lowered-func-ty)
               (match (lower-indirect-call-args
                 ctx

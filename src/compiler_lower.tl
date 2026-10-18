@@ -73662,7 +73662,7 @@
                   (& node.handle.body))
                 (= (array-length node.children) (array-length node.operands))
                 (or
-                  (= node.type 13)
+                  (and (= node.type 13) (= node.result-place -1))
                   (and
                     (lower-normalized-place? (& output.body) node.result-place)
                     (=

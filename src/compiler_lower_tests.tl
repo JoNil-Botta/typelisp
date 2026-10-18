@@ -396,6 +396,45 @@
       [_ false])
     "a captured Never callee emits at the checked abort point"))
 
+(test
+  compiler-lower-normalized-never-callee-exit
+  (let
+    [bodies : (Array String 2)
+      (array
+        "((begin (return 42) func) (stop 1))"
+        "((ann (return 42) : (-> i64 i64)) (stop 1))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(extern (stop [value : i64]) : never)
+             (define (identity [value : i64]) : i64 value)
+             (define (invoke [func : (-> i64 i64)]) : i64 "
+            (clone (array-ref bodies index))
+            ") (define (main) : i64 (invoke identity))")]
+        (test.assert-true
+          (match (lower-test-functions
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "callee exit case {}: {}"
+                  index
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                (lower.ResultCompilerLower.Err diagnostic)]
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (lower.ResultCompilerLower.Ok program spans owner)]))
+            [(Some functions)
+              (=
+                (lower-test-function-label-load-count
+                  (& functions)
+                  "invoke"
+                  "checked.0")
+                0)]
+            [_ false])
+          (str_cat.str-cat
+            "an exited callee skips its arguments, case "
+            (string.int->string index)))))))
+
 (define (lower-test-bad-call-anchor? [mode : i64]) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
@@ -453,6 +492,7 @@
         [(<= mode 3) "lower: invalid certified call position"]
         [(= mode 4) "lower: invalid certified call assignment"]
         [(= mode 8) "lower: missing certified abort effect"]
+        [(= mode 9) "lower: invalid certified selected result"]
         [else "lower: invalid certified abort call"])]
     (unless
       (= mode 8)
@@ -486,6 +526,7 @@
     (when
       (= mode 7)
       (__tl_array-push! output.nodes (clone (array-ref output.nodes 0))))
+    (when (= mode 9) (set! (array-ref output.nodes 0).type 13))
     (typed.typed-store-retire! (&mut store))
     (let
       [valid : bool
@@ -507,7 +548,7 @@
 
 (test
   compiler-lower-normalized-call-anchor-rejection
-  (for [mode (iterator.range 0 9)]
+  (for [mode (iterator.range 0 10)]
     (test.assert-true
       (lower-test-bad-call-anchor? mode)
       (str_cat.str-cat

@@ -51917,8 +51917,17 @@
           [place : TcBorrowPlace
             (try (tc-borrow-place ctx expr-bases env receiver))]
           (tc-borrow-place-box-get ctx place))]
-      [(or (Ref _ _) (MutRef _ _))
-        (tc-borrow-place ctx expr-bases env receiver)]
+      ;; Storage reached through a shared reference is shared, including when
+      ;; the receiver is itself a deref, array element or Box payload whose
+      ;; place does not already carry that reference's flag.
+      [(Ref _ _)
+        (let
+          [place : TcBorrowPlace
+            (try (tc-borrow-place ctx expr-bases env receiver))]
+          (match place
+            [(TcBorrowPlace lifetime referent-ty _)
+              (Ok (TcBorrowPlace lifetime referent-ty true))]))]
+      [(MutRef _ _) (tc-borrow-place ctx expr-bases env receiver)]
       [_
         (Err
           (tc-kind-message
@@ -83883,7 +83892,11 @@
           (tc-global-shared-view locals)
           borrowed0
           (tc-read-value-expr-id expr-bases (tc-global-shared-view place))))]
-    [_ (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
+    [reserved-place
+      (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
+    ;; Reading the place's receivers must not let a reservation write through
+    ;; a shared reference anywhere on its path; this is the `&mut` borrow rule.
+    [_ (try (tc-borrow-place-result-type true (Inferred) reserved-place))]
     (tc-borrow-check-add-two-phase-mut-place
       ctx
       expr-bases

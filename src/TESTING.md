@@ -168,6 +168,13 @@ plus exact shared-mutation, aliasing and move rejections. The
 `reference_place_read` native matrix checks transferred old values, retained
 storage, index evaluation and replacement order at opt0/1/2; the
 `replace_place_*_reject` safety rows preserve the consuming boundaries.
+`compiler-typecheck-place-through-shared-ok?` and the
+`replace_place_through_*` and `reborrow_through_inner_shared_array` rows
+reject a `replace!` place or `&mut` reborrow that reaches a `&mut` through a
+shared reference: directly, in a tuple, array, struct field or Box payload, as
+a Copy field, through two copies of one shared reference, and with a shared
+reference between two mutable ones. Each must report the `&mut` borrow
+diagnostic (E0207), not an incidental move error.
 
 ## Linux thread storage
 

@@ -995,9 +995,14 @@
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (set! (array-ref items 0) (& x))))"
       "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-    (tc_tests.compiler-typecheck-ok?
+    ;; The parameter `x` is the callee's copy, not the caller's `x` (#8890).
+    (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (__tl_array-push! items (& x)))")
+  (__tl_array-push! items (& x)))"
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+    (tc_tests.compiler-typecheck-ok?
+      "(define (main [x : i64] [p : (& x i64)] [items : (__tl_dyn-array (& x i64))]) : unit
+  (__tl_array-push! items p))")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (__tl_array-push! items (& x))))"

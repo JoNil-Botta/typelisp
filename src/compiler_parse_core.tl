@@ -273,21 +273,18 @@
     [index : i64 (compiler-parse-origin-word storage 2)]
     [base : i64 (compiler-parse-origin-segment-ensure! storage 6 index 17)]
     [offset : i64 (bit-and index 1023)]
-    [span : ast.AstSourceSpan
-      (ast.AstSourceSpan
+    [coordinates : i64
+      (ast.ast-source-span-pack
         (cast origin.start-line : i32)
         (cast origin.start-col : i32)
         (cast origin.end-line : i32)
         (cast origin.end-col : i32))]
-    [coordinates : i64
-      (ast.ast-source-span-pack
-        span.start-line
-        span.start-col
-        span.end-line
-        span.end-col)]
+    [tag : i64 origin.kind-tag]
+    ;; Closed tags are 0..12; unknown tags keep from-tag's ValueName fallback.
     [kind : i64
-      (compiler-parse-semantic-origin-kind-tag
-        (compiler-parse-semantic-origin-kind-from-tag origin.kind-tag))]
+      (if (< (cast tag : u64) (cast 13 : u64))
+        tag
+        11)]
     (when
       (= coordinates ast.ast-expr-span-packed-escape-tag)
       (let
@@ -299,7 +296,11 @@
             (ptr-offset
               (int->ptr wide-base : (MutPtr ast.AstSourceSpan))
               (bit-and wide 1023))
-            span))
+            (ast.AstSourceSpan
+              (cast origin.start-line : i32)
+              (cast origin.start-col : i32)
+              (cast origin.end-line : i32)
+              (cast origin.end-col : i32))))
         (set! coordinates wide)
         (set! kind (bit-or kind 128))
         (compiler-parse-origin-word-set! storage 4 (+ wide 1))))

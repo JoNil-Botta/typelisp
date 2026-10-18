@@ -65,6 +65,51 @@
     [(None) -42]))
 
 (test
+  compiler-parse-origin-columns-unknown-kind-fallback
+  (let
+    [state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [control : i64 (parser.compiler-parse-state-control-addr (& state))]
+    [storage : i64 (parser.compiler-parse-origin-storage control)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+    [origins : parser.ParseSemanticOriginVec
+      (parser.parse-semantic-origin-vec-with-capacity 3)]
+    [tags : (__tl_dyn-array i64) (__tl_make-array -1 13 9223372036854775807)]
+    (for [index (iterator.range 0 (array-length tags))]
+      (let
+        [record : parser.ParseSemanticOriginRecord
+          (compiler-parse-origin-column-fixture index)]
+        (set! record.kind-tag (array-ref tags index))
+        (parser.parse-semantic-origin-vec-push! (&mut origins) record)))
+    (parser.compiler-parse-semantic-origin-register-run!
+      storage
+      (& decls)
+      0
+      (& origins)
+      0
+      (array-length tags))
+    (let
+      [run : parser.CompilerParseSemanticOriginRun
+        (compiler-parse-test-origin-run control (& decls))]
+      (for [index (iterator.range 0 (array-length tags))]
+        (let
+          [actual : parser.CompilerParseSemanticOrigin
+            (parser.compiler-parse-semantic-origin-run-get
+              (& run)
+              index
+              (parser.compiler-parse-semantic-origin-fallback))]
+          (test.assert-i64-eq
+            (parser.compiler-parse-semantic-origin-kind-tag actual.kind)
+            11
+            "unknown tags retain the ValueName fallback")
+          (test.assert-i64-eq
+            actual.written-name
+            (compiler-parse-origin-column-fixture index).written-name
+            "unknown tags retain the stored occurrence"))))
+    (parser.compiler-parse-origin-reset! storage)))
+
+(test
   compiler-parse-origin-columns-alias-order-and-copy
   (cbi.compiler-builtin-initialize-for-parse!)
   (let

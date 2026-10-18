@@ -3414,7 +3414,7 @@
     [owner : arena.Arena (arena.make)]
     [owner-handle : i64 (arena.raw-handle owner)]
     [scratch : arena.Arena (arena.make)]
-    [cases : (Array ast.AstExprCanonicalSpanRecord 21)
+    [cases : (Array ast.AstExprCanonicalSpanRecord 23)
       (array
         (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 0 0 0 0))
         (ast.AstExprCanonicalSpanRecord
@@ -3469,7 +3469,10 @@
         (ast.AstExprCanonicalSpanRecord
           -2147483648
           2147483647
-          (ast.AstSourceSpan -2147483648 0 -2147483648 0)))]
+          (ast.AstSourceSpan -2147483648 0 -2147483648 0))
+        ;; Line delta 255 and a reversed span overflow even with narrow columns.
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 256 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 7 0 6 0)))]
     [tables : (Array i64 2)
       (array
         (ast.ast-expr-span-table-new owner-handle 0 64)
@@ -3485,7 +3488,7 @@
       (for [kind (iterator.range 0 2)]
         (let
           [table : i64 (array-ref tables kind)]
-          (for [index (iterator.range 0 21)]
+          (for [index (iterator.range 0 23)]
             (compiler-ast-packed-record-write!
               table
               kind
@@ -3514,7 +3517,7 @@
                     kind
                     index
                     (array-ref cases 5))))))
-          (for [index (iterator.range 0 21)]
+          (for [index (iterator.range 0 23)]
             (set!
               ok
               (and
@@ -3547,11 +3550,27 @@
                 (and
                   ok
                   (= slot (compiler-ast-packed-overflow-slot table 128))
-                  (compiler-ast-packed-record-eq? table kind 128 wide))))))))
+                  (compiler-ast-packed-record-eq? table kind 128 wide)))
+              ;; A wide-to-wide rewrite keeps its slot instead of allocating.
+              (compiler-ast-packed-record-write!
+                table
+                kind
+                128
+                (array-ref cases 5))
+              (set!
+                ok
+                (and
+                  ok
+                  (= slot (compiler-ast-packed-overflow-slot table 128))
+                  (compiler-ast-packed-record-eq?
+                    table
+                    kind
+                    128
+                    (array-ref cases 5)))))))))
     (arena.destroy-safe! scratch)
     ;; Validate all exceptional values again after the decoy arena retires.
     (for [kind (iterator.range 0 2)]
-      (for [index (iterator.range 0 21)]
+      (for [index (iterator.range 0 23)]
         (set!
           ok
           (and

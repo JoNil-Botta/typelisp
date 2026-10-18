@@ -5,6 +5,21 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`array_field_store_growth.tl` exercises field stores after dynamic-array
+growth for register and memory-class elements, nested struct/tuple projections,
+one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
+safety rows keep final bounds checks after the value's effects and reject
+immutable receivers; intermediate projection traps remain independently pinned
+by `set_intermediate_bounds_before_value_trap.tl`.
+
+The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
+pricing identical before and after backend frame-pointer omission enables an
+extra register, and checks that pricing restores its caller's pool. The IR
+observability gate compares cold and repeated batch assembly for
+`pure_call_join_live.tl`, including an empty predecessor, at opt0/1/2 for both
+target ABIs. An invalid middle entry must retain its source diagnostic and
+stop before later output is emitted.
+
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
 aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
 public check/compile
@@ -32,6 +47,11 @@ emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
 the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
+
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
 
 `extern_data_memory.tl` links C data symbols at opt0/1/2 on both hosts.
 Its assembly-shape case pins both compare operand positions, arithmetic folds,
@@ -131,6 +151,14 @@ lengths with a null pointer, public string offsets, and Linux inaccessible
 pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
+
+`clone_reference_referent.tl` checks non-Copy struct, enum and array clones
+through shared/mutable references, projected and compound results, macro
+expansion, receiver evaluation count, independent storage and Box cleanup at
+opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
+preserve ordinary prefix/initializer moves, source use-after-move, callable
+shadowing and the unsupported direct-reference clone boundary. Keep these
+alongside the existing move-out-of-reference and clone capability controls.
 
 ## Linux thread storage
 

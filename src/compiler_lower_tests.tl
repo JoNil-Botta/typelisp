@@ -1505,6 +1505,47 @@
     (compiler-lower-operand-snapshot-shape-ok?)
     "snapshot only storage that later evaluation can write"))
 
+(test
+  compiler-lower-never-callee
+  (let
+    [bodies : (Array String 4)
+      (array
+        "(let [f inc] ((begin (return 42) f) (argument)))"
+        "(let [f inc] [value : i64 ((begin (return 42) f) (argument))] (+ value 1))"
+        "(let [f (get)] ((begin (return 42) f) (argument)))"
+        "((begin (return 42) (get)) (argument))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (compiler-lower-ok?
+          (str_cat.str-cat
+            "(extern (get) : (CFunc non-null (-> i64 i64)))
+(define (inc [value : i64]) : i64 (+ value 1))
+(define (argument) : i64 41)
+(define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+        (str_cat.str-cat "Never callee, case " (string.int->string index))))))
+
+(test
+  compiler-lower-never-callee-live-boundaries
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc nullable (-> i64 i64)))
+         (define (main) : i64 (let [f (get)] (f 41)))"
+      "typecheck: nullable C function pointer must be checked before calling")
+    "an executing nullable C pointer still requires a check")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc unsafe-non-null (-> i64 i64)))
+         (define (main) : i64 (let [f (get)] (f 41)))"
+      "typecheck: C function pointer requires unsafe context")
+    "an executing unsafe C pointer still requires unsafe")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(define (main) : i64 (let [f 42] (f 41)))"
+      "typecheck: call target is not a function")
+    "an executing scalar cannot be called"))
+
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String
@@ -2418,6 +2459,28 @@
         (>= (lower-test-count functions "main" (StorePtr)) 2)
         (>= (lower-test-count functions "main" (Load)) 1))]
     [_ false]))
+
+(test
+  compiler-lower-clone-reference-receiver-once
+  (match (lower-test-functions
+    (compiler-lower-clone-source-with-prelude
+      "(defstruct Cell (name String))
+(define (observe [source : (& source Cell)]) : (& source Cell) source)
+(define (copy [source : (& source Cell)]) : Cell
+  (clone (deref (observe source))))
+(define (main) : i64
+  (let [source (Cell \"source\")] [copy (copy (& source))] 0))"))
+    [(Some functions)
+      (test.assert-true
+        (and
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::observe")
+            1)
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::clone$Cell")
+            1))
+        "cloning a shared referent evaluates its receiver once and deep-clones once")]
+    [_ (test.assert-true false "a supported non-Copy referent clone lowers")]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
   (match (lower-test-functions

@@ -110205,6 +110205,10 @@
   [func : (& ir.CompilerIrFunction)]
   [offset : i64]) : i64
   (let
+    ;; Standalone pricing has no frame-omission decision. Do not inherit the
+    ;; preceding emitted function's extra register across a compile boundary.
+    [saved-rbp-pool : bool reg.compiler-reg-rbp-pool-enabled]
+    [_standalone-pool : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
     [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
     ;; RG-1: and the allocator's home tracer, for the same reason the pass
     ;; tracer is silenced around a measured plan.
@@ -110246,6 +110250,8 @@
     [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
     [_restore-weights : unit
       (reg.compiler-reg-block-weights-set-frequency! true)]
+    [_restore-pool : unit
+      (reg.compiler-reg-set-rbp-pool-enabled! saved-rbp-pool)]
     cost))
 
 ;; INL-15: the block weights of the tier's currency, for the allocator's cost

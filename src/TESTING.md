@@ -41,6 +41,11 @@ Factory and invocation counts pin single evaluation. The native manifest runs
 all three optimization levels on both hosts; keep the mixed-float, stack, null
 and unsafe callable ABI families beside this ordering regression.
 
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

@@ -39932,6 +39932,11 @@
             (lower-expr ctx state env type-env (lower-global-shared-view func)))]
         (match lowered-func
           [(Expr func-state func-value func-ty)
+            (when
+              (match (& func-ty)
+                [(ast.AstType.Never) true]
+                [_ false])
+              (return (Ok (Expr func-state Unit (Never)))))
             (if (lower-function-type? (lower-global-shared-view func-ty))
               (lower-indirect-call
                 ctx

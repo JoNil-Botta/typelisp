@@ -1090,3 +1090,5 @@ ownership_certified_strings|all|0,1,2|tests/integration/ownership_certified_stri
 ownership_certified_globals|all|0,1,2|tests/integration/ownership_certified_globals.tl|42|-|-|global_reference_initializer_dep.tl,benchmarks/ownership_certified_globals/baseline.c|stage-stdlib
 ownership_certified_cfunc_borrows|all|0,1,2|tests/integration/ownership_certified_cfunc_borrows.tl|42|-|-|benchmarks/ownership_certified_cfunc_borrows/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
+
+indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib

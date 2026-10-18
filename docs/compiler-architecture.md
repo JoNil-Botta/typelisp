@@ -178,7 +178,9 @@ and hidden-result shapes through both direct and stored code pointers.
 
 `lower-indirect-call` owns typed dispatch to the C ABI lowering path. Every
 indirect call site uses that dispatcher; lexical provenance flags cannot choose
-a different calling convention for the same type. Global
+a different calling convention for the same type. A callee that lowers to
+`Never` returns its exit state before argument evaluation or callable dispatch.
+Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
 Both ordinary and tail indirect lowering materialize the complete callable

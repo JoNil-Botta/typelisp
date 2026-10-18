@@ -71491,8 +71491,7 @@
             receiver-id)
             [(TcBodyTypeFact.Hit receiver-ty)
               (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-            [(TcBodyTypeFact.Miss)
-              (tc-expr ctx env (clone (deref projection)))])]
+            [(TcBodyTypeFact.Miss) (tc-expr ctx env (clone (deref projection)))])]
         [_ (tc-expr ctx env (clone (deref projection)))])
         [(ResultTcType.Ok projected-ty)
           (if (tc-type-copyable? ctx projected-ty)

@@ -123702,6 +123702,21 @@
                 (set!
                   (array-ref opt-inline-pred-renames 0)
                   (OptInlinePredRenameList.Nil)))]
+            ;; At level 2 the walk has placed every surviving body in the
+            ;; optimizer-input arena, and it reset its callee-cost memo and its
+            ;; synth, owned-state and pure-call tables on the way out. The prune
+            ;; and the carry below read only those placed bodies and the
+            ;; driver's globals, externs and spans, which live outside the
+            ;; lower-IR arena. So the source owner can retire here, before the
+            ;; carry and the inline arena's release, instead of after them. The
+            ;; synchronous authority and its owner must themselves remain
+            ;; outside the retired storage.
+            [_retire-source-input : unit
+              (when
+                (= level 2)
+                (match input-retirement
+                  [(Retain) unit]
+                  [(Retire owner release-input) (release-input owner)]))]
             (match inlined
               [(Program reachable-functions inline-arena-spans)
                 (begin
@@ -123742,15 +123757,6 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena))]
-                    ;; Every surviving body is now independent of the source
-                    ;; owner. The synchronous authority and its owner must
-                    ;; themselves remain outside the retired storage.
-                    [_retire-source-input : unit
-                      (when
-                        (= level 2)
-                        (match input-retirement
-                          [(Retain) unit]
-                          [(Retire owner release-input) (release-input owner)]))]
                     [summaries : OptProgramSummaries
                       (opt-build-program-summaries
                         type-segment-bases
@@ -123855,8 +123861,10 @@
                               (& inline-spans)
                               (& optimized))))))))]))))]))
 
-;; Optional authority to retire source function storage after the level-2
-;; carrier handoff. The callback is synchronous and does not own its context.
+;; Optional authority to retire source function storage at the end of the
+;; level-2 inline walk, once every surviving body is placed in the
+;; optimizer-input arena and before the carrier handoff. The callback is
+;; synchronous and does not own its context.
 (defenum OptInputRetirement
   (Retain)
   (Retire i64 (-> i64 unit)))

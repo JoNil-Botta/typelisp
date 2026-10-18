@@ -3169,6 +3169,15 @@
         (set! ok false)))
     ok))
 
+;; The carry while the survivors' source is still live, so nothing is refused.
+(define (opt-input-carry-live
+  [pools : ast.AstNodePoolContext]
+  [input : (&mut input opt.OptOptimizerInput)]
+  [survivors : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (match (opt.opt-optimizer-input-carry pools input survivors false)
+    [(Carried carried) carried]
+    [(Unplaced _) (ir.compiler-ir-function-seq-empty)]))
+
 ;; Every index body is placed as the stage finishes it, whether its caller was
 ;; rewritten or not, and whether or not it survives pruning. The survivors then
 ;; need no copy.
@@ -3200,7 +3209,7 @@
     [out-loop-leaf-calls : i64
       (opt-input-arena-leaf-calls (& out) "input_loop")]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (owned_view.compiler-owned-shared-view survivors))]
@@ -3238,7 +3247,7 @@
     [placed-before? : bool
       (opt-input-arena-all-placed? (& input) (& functions))]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         functions)]
@@ -3257,6 +3266,93 @@
       "the copied input_dead is intact")
     (unsafe
       (arena.tl_arena_destroy bodies))))
+
+;; The placed main and the never placed input_loop, as separate survivor
+;; sequences over the same bodies.
+(define (opt-input-arena-mixed-survivors
+  [candidates : (& candidates ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity 2)]
+    (ir.compiler-ir-function-builder-push!
+      (&mut builder)
+      (ir.compiler-ir-function-seq-ref candidates 0))
+    (ir.compiler-ir-function-builder-push!
+      (&mut builder)
+      (ir.compiler-ir-function-seq-ref candidates 1))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
+;; Once the lower-IR source has retired, a survivor the stage did not place
+;; would be read from freed storage, so the carry copies nothing and names it;
+;; the optimizer turns that into an internal compiler error. While the source
+;; is live the same survivor is copied, and a placed one passes either way.
+(test
+  optimizer-input-carry-refuses-unplaced-survivors-after-retirement
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [input : opt.OptOptimizerInput
+      (opt.opt-optimizer-input-new (opt.opt-optimizer-input-carrier 2) 4)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [placed-main : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        0
+        (ir.compiler-ir-function-seq-borrow (& functions) 0))]
+    [candidates : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 2)]
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-main)
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& functions) 1))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [placed-only : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 1)]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& candidates) 0))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [refused : String
+      (match (opt.opt-optimizer-input-carry
+        pools
+        (&mut input)
+        (opt-input-arena-mixed-survivors (& candidates))
+        true)
+        [(Carried _) ""]
+        [(Unplaced name) name])]
+    [placed-carried : i64
+      (match (opt.opt-optimizer-input-carry pools (&mut input) placed-only true)
+        [(Carried carried) carried.len]
+        [(Unplaced _) -1])]
+    [copied : ir.CompilerIrFunctionSeq
+      (opt-input-carry-live
+        pools
+        (&mut input)
+        (opt-input-arena-mixed-survivors (& candidates)))]
+    (test.assert-owned-string-eq
+      refused
+      "input_loop"
+      "a retired source refuses the unplaced survivor by name")
+    (test.assert-i64-eq
+      placed-carried
+      1
+      "a placed survivor is carried after retirement")
+    (test.assert-i64-eq copied.len 2 "a live source carries both survivors")
+    (test.assert-true
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (ir.compiler-ir-function-seq-borrow (& copied) 0))
+      "the placed survivor is used as is")
+    (test.assert-false
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (ir.compiler-ir-function-seq-borrow (& copied) 1))
+      "the unplaced survivor is a copy")
+    (opt.opt-optimizer-input-release-all! (&mut input))))
 
 ;; Level 1 has no input arena: the stage places nothing and the loop reads the
 ;; stage's own sequence in place.
@@ -3277,7 +3373,7 @@
       (match inlined
         [(Program functions _) functions])]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (owned_view.compiler-owned-shared-view out))]
@@ -3340,7 +3436,7 @@
           (ir.compiler-ir-function-seq-ref (& functions) 3))
         (ir.compiler-ir-function-builder-to-seq builder))]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry pools (&mut input) survivors)]
+      (opt-input-carry-live pools (&mut input) survivors)]
     [release : opt.OptOptimizerInputRelease input.release]
     [copy (ir.compiler-ir-function-seq-borrow (& carried) 3)]
     (test.assert-true dead-placed? "a placed body matches its record")

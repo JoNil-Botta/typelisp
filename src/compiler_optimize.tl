@@ -100981,85 +100981,123 @@
       (opt-release-optimizer-input-arena "optimizer-input" handle)
       (set! (array-ref release.chunks chunk) 0))))
 
+;; What `opt-optimizer-input-carry` hands the loop: its input sequence, or the
+;; name of a survivor that is not resident in the input arenas although its
+;; source may no longer be read.
+(defenum OptOptimizerInputCarry
+  (Carried ir.CompilerIrFunctionSeq)
+  (Unplaced String))
+
+;; The position of the first survivor in FUNCS that is not the body placed
+;; under its name, or -1.
+(define (opt-optimizer-input-first-unplaced
+  [input : (& input OptOptimizerInput)]
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
+  (for [i (iterator.range 0 funcs.len)]
+    (unless
+      (opt-optimizer-input-placed?
+        input
+        (ir.compiler-ir-function-seq-borrow funcs i))
+      (return i)))
+  -1)
+
 ;; The loop's input sequence, resident in the input arenas. Every survivor the
-;; inline stage placed is used as is; any other survivor is copied into the
-;; carrier arena, so the loop never reads a body from the inline or lower-IR
-;; arenas. Builds the release schedule and releases the chunks no survivor is
-;; in.
+;; inline stage placed is used as is. The stage places every index body, so any
+;; other survivor still lives where it was produced: while that source is live
+;; it is copied into the carrier arena, so the loop never reads a body from the
+;; inline or lower-IR arenas; once SOURCE-RETIRED? says the source has retired,
+;; reading it would read freed storage, so the carry copies nothing and names
+;; the first such survivor instead. Builds the release schedule and releases
+;; the chunks no survivor is in.
 (define (opt-optimizer-input-carry
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
-  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (if (= input.arena 0)
-    funcs
-    (in-arena
-      (arena.Arena input.arena)
-      (let
-        [out : ir.CompilerIrFunctionSeq
-          (ir.compiler-ir-clone-function-seq-shell funcs)]
-        [chunk-count : i64 (array-length input.chunks)]
-        [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
-        [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
-        [i : i64 0]
-        (while (< i chunk-count)
-          (set! (array-ref chunks i) (array-ref input.chunks i))
-          (set! (array-ref last i) -1)
-          (+= i 1))
-        (set! i 0)
-        (while (< i out.len)
-          (let
-            [func : ir.CompilerIrFunction
-              (compiler-opt-global-array-element-shared-view out.slots i)]
-            (if (opt-optimizer-input-placed? input (& func))
-              (match (compiler-opt-global-shared-view func)
-                [(Function name _ _ _ _ _)
-                  (set!
-                    (array-ref
-                      last
-                      (opt_i64_i64_map.get-value-or
-                        (& input.placed-chunk)
-                        (ir.compiler-ir-symbol-id name)
-                        0))
-                    i)])
-              (set!
-                (array-ref out.slots i)
-                (ir.compiler-ir-clone-function pools (& func))))
-            (+= i 1)))
-        (let
-          [read-count : i64 0]
-          (set! i 0)
-          (while (< i chunk-count)
-            (if (< (array-ref last i) 0)
-              (unless
-                (= (array-ref chunks i) 0)
-                (opt-release-optimizer-input-arena
-                  "optimizer-input"
-                  (array-ref chunks i))
-                (set! (array-ref chunks i) 0))
-              (+= read-count 1))
-            (+= i 1))
-          (let
-            [order : (__tl_dyn-array i64) (__tl_make-array i64 read-count)]
-            [filled : i64 0]
-            ;; Insertion by `last`: chunk counts are a few dozen.
-            (set! i 0)
-            (while (< i chunk-count)
-              (unless
-                (< (array-ref last i) 0)
+  [funcs : ir.CompilerIrFunctionSeq]
+  [source-retired? : bool]) : OptOptimizerInputCarry
+  (let
+    [unplaced : i64
+      (if (and source-retired? (> input.arena 0))
+        (opt-optimizer-input-first-unplaced input (& funcs))
+        -1)]
+    (cond
+      [(= input.arena 0) (Carried funcs)]
+      [(>= unplaced 0)
+        (match (ir.compiler-ir-function-seq-borrow (& funcs) unplaced)
+          [(Function name _ _ _ _ _)
+            (Unplaced (ir.compiler-ir-symbol-text name))])]
+      [else
+        (Carried
+          (in-arena
+            (arena.Arena input.arena)
+            (let
+              [out : ir.CompilerIrFunctionSeq
+                (ir.compiler-ir-clone-function-seq-shell funcs)]
+              [chunk-count : i64 (array-length input.chunks)]
+              [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+              [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+              [i : i64 0]
+              (while (< i chunk-count)
+                (set! (array-ref chunks i) (array-ref input.chunks i))
+                (set! (array-ref last i) -1)
+                (+= i 1))
+              (set! i 0)
+              (while (< i out.len)
                 (let
-                  [at : i64 filled]
-                  (while (and
-                    (> at 0)
-                    (>
-                      (array-ref last (array-ref order (- at 1)))
-                      (array-ref last i)))
-                    (set! (array-ref order at) (array-ref order (- at 1)))
-                    (-= at 1))
-                  (set! (array-ref order at) i)
-                  (+= filled 1)))
-              (+= i 1))
-            (set! input.release (OptOptimizerInputRelease chunks last order))))
-        out))))
+                  [func : ir.CompilerIrFunction
+                    (compiler-opt-global-array-element-shared-view out.slots i)]
+                  (if (opt-optimizer-input-placed? input (& func))
+                    (match (compiler-opt-global-shared-view func)
+                      [(Function name _ _ _ _ _)
+                        (set!
+                          (array-ref
+                            last
+                            (opt_i64_i64_map.get-value-or
+                              (& input.placed-chunk)
+                              (ir.compiler-ir-symbol-id name)
+                              0))
+                          i)])
+                    (set!
+                      (array-ref out.slots i)
+                      (ir.compiler-ir-clone-function pools (& func))))
+                  (+= i 1)))
+              (let
+                [read-count : i64 0]
+                (set! i 0)
+                (while (< i chunk-count)
+                  (if (< (array-ref last i) 0)
+                    (unless
+                      (= (array-ref chunks i) 0)
+                      (opt-release-optimizer-input-arena
+                        "optimizer-input"
+                        (array-ref chunks i))
+                      (set! (array-ref chunks i) 0))
+                    (+= read-count 1))
+                  (+= i 1))
+                (let
+                  [order : (__tl_dyn-array i64)
+                    (__tl_make-array i64 read-count)]
+                  [filled : i64 0]
+                  ;; Insertion by `last`: chunk counts are a few dozen.
+                  (set! i 0)
+                  (while (< i chunk-count)
+                    (unless
+                      (< (array-ref last i) 0)
+                      (let
+                        [at : i64 filled]
+                        (while (and
+                          (> at 0)
+                          (>
+                            (array-ref last (array-ref order (- at 1)))
+                            (array-ref last i)))
+                          (set! (array-ref order at) (array-ref order (- at 1)))
+                          (-= at 1))
+                        (set! (array-ref order at) i)
+                        (+= filled 1)))
+                    (+= i 1))
+                  (set!
+                    input.release
+                    (OptOptimizerInputRelease chunks last order))))
+              out)))])))
 
 ;; Release every input chunk whose last reader is at or before loop position
 ;; POSITION, starting from `order[cursor]`, and return the next cursor.
@@ -123751,15 +123789,19 @@
             ;; and the carry below read only those placed bodies and the
             ;; driver's globals, externs and spans, which live outside the
             ;; lower-IR arena. So the source owner can retire here, before the
-            ;; carry and the inline arena's release, instead of after them. The
+            ;; carry and the inline arena's release, instead of after them; a
+            ;; survivor that is not a placed body is then an internal error. The
             ;; synchronous authority and its owner must themselves remain
             ;; outside the retired storage.
-            [_retire-source-input : unit
-              (when
+            [source-retired? : bool
+              (and
                 (= level 2)
                 (match input-retirement
-                  [(Retain) unit]
-                  [(Retire owner release-input) (release-input owner)]))]
+                  [(Retain) false]
+                  [(Retire owner release-input)
+                    (begin
+                      (release-input owner)
+                      true)]))]
             (match inlined
               [(Program reachable-functions inline-arena-spans)
                 (begin
@@ -123790,10 +123832,18 @@
                     ;; The driver's globals, externs and spans live outside
                     ;; the lower-IR arena; only its function bodies retire.
                     [optimizer-functions : ir.CompilerIrFunctionSeq
-                      (opt-optimizer-input-carry
+                      (match (opt-optimizer-input-carry
                         pools
                         (&mut optimizer-input)
-                        pruned-functions)]
+                        pruned-functions
+                        source-retired?)
+                        [(Carried carried) carried]
+                        [(Unplaced name)
+                          (io.panic
+                            (str_cat.str-cat
+                              "optimizer: survivor "
+                              name
+                              " is not a placed optimizer-input body after its lower-IR source retired"))])]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
                         unit

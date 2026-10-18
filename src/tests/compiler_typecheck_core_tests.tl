@@ -11841,3 +11841,38 @@
           (& ty)))
       compact
       "over a compact marker, it keeps the marker's Spanned view")))
+
+(test
+  tc-clone-read-shared-node-occurrences
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [receiver : i64 (ast.ast-node-push (ast.AstExpr.Var 0))]
+    [shared : i64 (ast.ast-node-push (ast.AstExpr.BoxTake receiver))]
+    [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+    [_prefix : unit (ast.ast-expr-list-push (&mut items) shared)]
+    [_tail : unit (ast.ast-expr-list-push (&mut items) shared)]
+    [read : ast.AstExpr
+      (ast.ast-node-get
+        (tc_core.tc-read-value-expr-id
+          (ast.ast-node-pool-context-expr-segment-bases pools)
+          (ast.AstExpr.Begin items)))]
+    (test.assert-true
+      (match read
+        [(Begin rewritten)
+          (and
+            (= (ast.ast-expr-list-get (& rewritten) 0 -1) shared)
+            (match (ast.ast-node-get (ast.ast-expr-list-get (& rewritten) 1 -1))
+              [(BoxGet id)
+                (match (ast.ast-node-get id)
+                  [(Var name) (= name 0)]
+                  [_ false])]
+              [_ false])
+            (match (ast.ast-node-get shared)
+              [(BoxTake id) (= id receiver)]
+              [_ false]))]
+        [_ false])
+      "a shared AST node remains owning in the prefix and read-only in the tail")
+    (ast.ast-node-pool-context-install! saved)))

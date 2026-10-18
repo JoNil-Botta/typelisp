@@ -372,6 +372,7 @@ constructor_alias_two_phase|all|-,0,2|tests/integration/constructor_alias_two_ph
 arena_poison_clone_survives|all|-|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_poison_stale_array_trap|linux|-|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl|-
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
+clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-

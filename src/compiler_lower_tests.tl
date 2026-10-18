@@ -2345,6 +2345,28 @@
         (>= (lower-test-count functions "main" (Load)) 1))]
     [_ false]))
 
+(test
+  compiler-lower-clone-reference-receiver-once
+  (match (lower-test-functions
+    (compiler-lower-clone-source-with-prelude
+      "(defstruct Cell (name String))
+(define (observe [source : (& source Cell)]) : (& source Cell) source)
+(define (copy [source : (& source Cell)]) : Cell
+  (clone (deref (observe source))))
+(define (main) : i64
+  (let [source (Cell \"source\")] [copy (copy (& source))] 0))"))
+    [(Some functions)
+      (test.assert-true
+        (and
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::observe")
+            1)
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::clone$Cell")
+            1))
+        "cloning a shared referent evaluates its receiver once and deep-clones once")]
+    [_ (test.assert-true false "a supported non-Copy referent clone lowers")]))
+
 (define (compiler-lower-clone-shape-ok?) : bool
   (match (lower-test-functions
     (compiler-lower-clone-source-with-prelude (compiler-lower-clone-source)))

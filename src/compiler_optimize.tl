@@ -128707,8 +128707,12 @@
     (set! at 0)
     (while (< at globals.len)
       (match (compiler-opt-global-array-element-shared-view globals.slots at)
-        [(Global _ _ (ir.CompilerIrValue.Function name))
-          (opt-merge-note-symbol! (&mut observed) name)]
+        [(Global _ _ value)
+          (match value
+            [(or (ir.CompilerIrValue.Function name)
+                 (ir.CompilerIrValue.GlobalAddr name))
+              (opt-merge-note-symbol! (&mut observed) name)]
+            [_ unit])]
         [_ unit])
       (set! at (+ at 1)))
     (set! at 0)

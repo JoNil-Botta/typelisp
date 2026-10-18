@@ -55050,6 +55050,39 @@
           "a b main call:a call:b init:b "
           "a descriptor or raw code address must preserve the named twin")))))
 
+(test
+  optimizer-merge-observed-global-code-address
+  (let
+    [body : String "%1 = add %0, 1 : i64\nreturn %1\n"]
+    [texts : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [values : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array
+        (ir.CompilerIrValue.Function (opt-test-symbol "b"))
+        (ir.CompilerIrValue.GlobalAddr (opt-test-symbol "b")))]
+    (set! (array-ref texts 0) (opt-merge-test-twin "a" (clone body)))
+    (set! (array-ref texts 1) (opt-merge-test-twin "b" body))
+    (set! (array-ref texts 2) (opt-merge-test-main "%3 = mov @cell : u64\n"))
+    (for [index (iterator.range 0 (array-length values))]
+      (let
+        [globals : ir.CompilerIrGlobalSeq
+          (ir.CompilerIrGlobalSeq
+            (__tl_make-array
+              (ir.CompilerIrGlobal.Global
+                (opt-test-symbol "cell")
+                ast.AstType.U64
+                (clone (array-ref values index))))
+            1)]
+        (match (opt.opt-merge-identical-functions
+          (ast.ast-node-pool-reader-type-segment-bases)
+          globals
+          (opt-merge-test-seq (clone texts))
+          (& (ir.compiler-ir-extern-seq-empty)))
+          [(opt.OptMergedProgram.Merged _ functions)
+            (test.assert-i64-eq
+              functions.len
+              3
+              "a global descriptor or raw code address retains its target")])))))
+
 (define (compiler-optimize-merge-functions-self-test) : i64
   (cbi.compiler-builtin-initialize-for-parse!)
   (let

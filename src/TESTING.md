@@ -5,6 +5,13 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`array_field_store_growth.tl` exercises field stores after dynamic-array
+growth for register and memory-class elements, nested struct/tuple projections,
+one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
+safety rows keep final bounds checks after the value's effects and reject
+immutable receivers; intermediate projection traps remain independently pinned
+by `set_intermediate_bounds_before_value_trap.tl`.
+
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an
 extra register, and checks that pricing restores its caller's pool. The IR
@@ -157,6 +164,14 @@ lengths with a null pointer, public string offsets, and Linux inaccessible
 pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
+
+`clone_reference_referent.tl` checks non-Copy struct, enum and array clones
+through shared/mutable references, projected and compound results, macro
+expansion, receiver evaluation count, independent storage and Box cleanup at
+opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
+preserve ordinary prefix/initializer moves, source use-after-move, callable
+shadowing and the unsupported direct-reference clone boundary. Keep these
+alongside the existing move-out-of-reference and clone capability controls.
 
 ## Linux thread storage
 

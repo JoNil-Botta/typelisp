@@ -1097,6 +1097,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+`lower-store-place` retains a selected array descriptor, index and inline
+field offset until the replacement value has been evaluated. The shared
+`lower-array-store-place` snapshot rules prevent later receiver/index writes
+from retargeting the store. `lower-store-destination-address` then checks the
+current length and uses the descriptor's current buffer. Struct and tuple
+projections add their `lower-inline-field-info` offsets without reading the
+element. A projection through a box or reference reads that indirection before
+the value runs, so its intermediate bounds checks remain eager. An inline
+fixed-array field of an element, as in
+`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
+array receiver: when `v` grows `a`, that store targets the buffer selected
+before the value ran (#9057). Borrow and `replace!` address selection
+continues to use `lower-mutable-place-address`.
+
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).
 Only a Copy aggregate's caller can still read its argument after the call: a

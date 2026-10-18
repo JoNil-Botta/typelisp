@@ -703,6 +703,13 @@ owner retires. `compiler-regalloc-self-test` runs its liveness-census check
 only in a build with `--cfg test`; that flag alone does not run source-local
 inline test declarations.
 
+The root-segment union tests compare gathered/sorted unions against the former
+insertion fold on deterministic generated member sets. They cover empty and
+single-member classes, unsorted and nested ranges, shared endpoints, genuine
+holes, invalid or missing parent entries, absent segment rows and inactive
+members. Exact snapshots preserve the original member arrays; a golden case
+pins endpoint sharing, one-position gaps and the upper i64 boundary.
+
 ### src/ reachability
 
 The package follows the standard layout: `typelisp build` resolves the default

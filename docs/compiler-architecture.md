@@ -1385,6 +1385,14 @@ metrics; the trace journal is copied before the planning arena is destroyed.
 Typed scalar reconstruction of split records makes an added owned payload or
 variant require an explicit update to that boundary.
 
+Coalesced register classes gather member live segments into fresh root storage.
+Singletons only retag their interval; already ordered lists bypass sorting.
+Other lists sort once by start/end/variable before compacting the union in place. Overlapping
+segments and shared endpoints merge; even a one-position gap remains a hole.
+The root's coarse bounds remain the minimum start and maximum end of its
+members. Gathering and compaction leave the member indexes and parent map
+unchanged, including when same-value coalescing admits overlapping members.
+
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only

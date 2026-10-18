@@ -19218,7 +19218,7 @@
       (compiler-backend-asm-append5
         out
         "    leaq "
-        (compiler-backend-state-global-symbol-id backend-state name)
+        (compiler-backend-state-user-symbol-id backend-state name)
         "(%rip), "
         reg
         "\n")
@@ -77886,7 +77886,9 @@ tl_shared_object_init:
     [(Global name)
       (let
         [symbol : String
-          (compiler-backend-global-symbol-index program-index name)]
+          (compiler-backend-state-user-symbol-id
+            program-index.backend-state
+            name)]
         ;; IAG-1: an inline aggregate global's value is its own address.
         [inline? : bool
           (compiler-backend-inline-aggregate-global?
@@ -77906,7 +77908,9 @@ tl_shared_object_init:
     [(GlobalAddr name)
       (let
         [symbol : String
-          (compiler-backend-global-symbol-index program-index name)]
+          (compiler-backend-state-user-symbol-id
+            program-index.backend-state
+            name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
             parts

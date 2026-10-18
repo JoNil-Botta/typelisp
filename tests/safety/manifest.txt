@@ -682,6 +682,14 @@ spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|typ
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
 spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_varying_value_reject|check-fail|tests/safety/spmd_uniform_index_varying_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_local_value_reject|check-fail|tests/safety/spmd_uniform_index_local_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_conditional_value_reject|check-fail|tests/safety/spmd_uniform_index_conditional_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_slice_value_reject|check-fail|tests/safety/spmd_uniform_index_slice_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_uniform_index_reject|check-fail|tests/safety/spmd_foreach2_uniform_index_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_uniform_index_masked_value_reject|check-fail|tests/safety/spmd_uniform_index_masked_value_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_masked_uniform_reject|check-fail|tests/safety/spmd_uniform_index_masked_uniform_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_write|run-exit|tests/integration/spmd_uniform_index_write.tl|42|-
 spmd_slice_alias_call_reject|check-fail|tests/safety/spmd_slice_alias_call_reject.tl|-|cannot mutably borrow borrowed place `items`
 spmd_slice_lane_mut_ref_escape_reject|check-fail|tests/safety/spmd_slice_lane_mut_ref_escape_reject.tl|-|foreach varying value type is not supported: (&mut output i64)
 spmd_slice_scatter_reject|check-fail|tests/safety/spmd_slice_scatter_reject.tl|-|foreach does not support non-contiguous array element destination indexes

@@ -5626,9 +5626,9 @@ flattened, and the two coordinate names must differ.
   order: `(y-begin, x-begin)` first, `x` varying fastest, then the next `y`.
 - Both coordinates are varying and read-only: `set!` of either is rejected.
   A coordinate passed to a helper is an ordinary varying value there.
-- A non-atomic array-element destination index inside a rank-2 body must be
-  the row-major form `base + (y - a) * span + (x - b)` for uniform `base`,
-  `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
+- For a varying non-atomic array-element write inside a rank-2 body, the
+  destination index must be the row-major form `base + (y - a) * span + (x - b)`
+  for uniform `base`, `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
   bounds, or the bare `x-end` when `x-begin` is the literal `0`. Additive
   terms may appear in any order and grouping, each coordinate exactly once and
   with positive sign. Uniform offsets must be constant across the whole
@@ -5690,12 +5690,17 @@ runtime-sized buffers, reading through `array-ref` and writing through
 - Reads may use any SPMD-safe varying `i64` index expression, including
   gather-only reads through an index array such as `xs[ix[i]]`. Each read
   performs the ordinary bounds check for the logical iteration performing it.
-- Non-atomic array-element assignment indexes must be the loop index or a
+- An unmasked array-element assignment whose receiver, index, and value are
+  all uniform remains a uniform write and is accepted, including a uniform
+  destination index. The scalar reference semantics still applies. Masked
+  assignments must use the canonical destination index even for a uniform value.
+- A non-atomic assignment with a varying receiver, index, or value is a varying
+  write. Its destination index must be the loop index or a
   simple uniform offset from it, such as `i` or `(+ base i)`. This makes
   ordinary writes race-free by construction: no two logical instances write
   the same element. Scatter writes through arbitrary varying indexes are
-  rejected; the only overlap-tolerant scatter surface is the explicit atomic
-  integer helper API below.
+  rejected; the only overlap-tolerant varying scatter surface is the explicit
+  atomic integer helper API below.
 - The scalar lane element types are `i8`, `u8`, `i16`, `u16`, `i32`, `u32`,
   `i64`, `u64`, `f32`, `f64`, and `bool`. Bool array storage stays
   byte-compatible (`0` or `1` per element); lowering converts between byte
@@ -5970,8 +5975,9 @@ Explicit SPMD atomic scatter:
   unsized array. There is no public memory-order parameter; all helpers are
   sequentially consistent.
 - Inside `foreach`, the helper index and value arguments may be varying. This
-  is the only overlap-tolerant scatter update in the source surface; ordinary
-  array-element assignment with a varying non-contiguous index remains rejected.
+  is the only overlap-tolerant varying scatter update in the source surface;
+  ordinary array-element assignment with a varying non-contiguous index remains
+  rejected.
 - Atomic helpers synchronize only the exact element they operate on. They do
   not make surrounding non-atomic data race-free and do not permit
   unsynchronized mutation of other fields or array elements.

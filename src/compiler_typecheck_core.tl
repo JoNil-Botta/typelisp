@@ -46113,16 +46113,6 @@
               (match index-info
                 [(TcSpmdExprInfo _ index-class index-env)
                   (let
-                    [_
-                      (try
-                        (if (tc-spmd-varying? index-class)
-                          (tc-spmd-foreach-index
-                            ctx
-                            expr-bases
-                            env
-                            array-env
-                            index)
-                          ResultTcUnit.Ok))]
                     [value-info
                       (try
                         (tc-spmd-array-value-expr
@@ -46139,6 +46129,18 @@
                             (tc-spmd-merge-class
                               array-class
                               (tc-spmd-merge-class index-class value-class))]
+                          ;; Varying writes require disjoint destinations even
+                          ;; when the selected index is uniform.
+                          [_
+                            (try
+                              (if (tc-spmd-varying? write-class)
+                                (tc-spmd-foreach-index
+                                  ctx
+                                  expr-bases
+                                  env
+                                  array-env
+                                  index)
+                                ResultTcUnit.Ok))]
                           (match (tc-type-strip-region array-ty)
                             [(Array elem-ty _)
                               (if (and

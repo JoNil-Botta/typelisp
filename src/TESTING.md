@@ -81,6 +81,13 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
+writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
+paired safety cases reject a uniform destination when the value is varying,
+including local-class merges, conditionals, bool slices and rank-2 domains.
+Masked branches retain their canonical-index requirement even for uniform
+values; serialized `foreach-active` keeps its existing collision semantics.
+
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.

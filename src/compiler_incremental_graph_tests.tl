@@ -1,4 +1,5 @@
 ;; Synthetic successful-query graphs and hostile graph transcripts (#7322).
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_graph as graph)
 (import compiler_incremental_identity as identity)
@@ -307,7 +308,7 @@
       (unless
         (= (array-ref left index) (array-ref right index))
         (set! equal? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     equal?))
 
 (define (graph-test-indices
@@ -963,7 +964,6 @@
     [bytes : (__tl_dyn-array u8) (graph.compiler-graph-encode (& valid))]
     [length : i64 (array-length bytes)]
     [prefixes-ok? : bool true]
-    [prefix : i64 0]
     [trailing : (__tl_dyn-array u8) (__tl_make-array u8 (+ length 1))]
     [huge-roots : (__tl_dyn-array u8)
       (binary.compiler-incremental-binary-copy (& bytes))]
@@ -986,17 +986,13 @@
     [load : graph.CompilerIncrementalGraphNode (graph-test-load)]
     [load-query-bytes : i64 (array-length load.query.transcript)]
     ;; Every proper prefix fails, terminates, and leaves decoding reusable.
-    (while (< prefix length)
+    (for [prefix (iterator.range 0 length)]
       (let
         [cut : (__tl_dyn-array u8)
           (graph.compiler-graph-range-bytes (& bytes) 0 prefix)]
-        (when (= (graph-test-decode-code cut) 0) (set! prefixes-ok? false))
-        (set! prefix (+ prefix 1))))
-    (let
-      [index : i64 0]
-      (while (< index length)
-        (set! (array-ref trailing index) (array-ref bytes index))
-        (set! index (+ index 1))))
+        (when (= (graph-test-decode-code cut) 0) (set! prefixes-ok? false))))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref trailing index) (array-ref bytes index)))
     ;; Counts no input could hold are refused before any allocation.
     (set! (array-ref huge-roots (+ header 4)) 255)
     (set! (array-ref huge-roots (+ header 5)) 255)

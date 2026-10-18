@@ -2,6 +2,7 @@
 ;;
 ;; Main-free, so the unified `main.tl` dispatcher runs the command without a
 ;; duplicate `main`.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
@@ -133,15 +134,13 @@
   [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
-    [index : i64 0]
     [sources : compiler_driver_core.CompilerDriverDiagnosticSources
       (compiler_driver_core.compiler-driver-diagnostic-sources-new)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (io.print-error
         (compiler_driver_core.compiler-driver-render-source-diagnostic-from
           (&mut sources)
-          (cdiag.compiler-diagnostic-list-get diagnostics index)))
-      (set! index (+ index 1)))))
+          (cdiag.compiler-diagnostic-list-get diagnostics index))))))
 
 (define (selfhost-check-file
   [input-path : String]
@@ -201,8 +200,7 @@
   (let
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [path : String (ast.ast-decl-path-list-get (& paths) index "")]
         [owned-path : String
@@ -214,8 +212,7 @@
           (ast.ast-decl-path-list-provenance-id
             (& paths)
             index
-            cbi.compiler-builtin-id-fix-empty))
-        (set! index (+ index 1))))
+            cbi.compiler-builtin-id-fix-empty))))
     out))
 
 (define (selfhost-check-package

@@ -1,4 +1,5 @@
 ;; Focused malformed-frame coverage for the TLCI-only deployment envelope.
+(import stdlib.iterator)
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_embedded_stdlib_tlci_encoder as encoder)
 (import stdlib.byte_buf_core)
@@ -8,13 +9,10 @@
   [payload : (&mut payload (__tl_dyn-array u8))]
   [start : i64]
   [value : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index 8)
-      (set!
-        (array-ref payload (+ start index))
-        (cast (bit-and (shr value (* index 8)) 255) : u8))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 8)]
+    (set!
+      (array-ref payload (+ start index))
+      (cast (bit-and (shr value (* index 8)) 255) : u8))))
 
 (define (tlci-codec-test-base-payload [raw-len : i64] [bit-len : i64]) : (__tl_dyn-array
     u8)
@@ -29,12 +27,10 @@
           1))]
     [payload : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len (+ 16 (+ 4369 bit-bytes))))]
-    [index : i64 0]
-    (while (< index prefix-len)
+    (for [index (iterator.range 0 prefix-len)]
       (set!
         (array-ref payload index)
-        (cast (string.string-ref prefix index) : u8))
-      (set! index (+ index 1)))
+        (cast (string.string-ref prefix index) : u8)))
     (tlci-codec-test-write-i64-le! (&mut payload) prefix-len raw-len)
     (tlci-codec-test-write-i64-le! (&mut payload) (+ prefix-len 8) bit-len)
     payload))
@@ -107,20 +103,16 @@
   (let
     [length : i64 (array-length payload)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ length 1))]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (array-ref payload index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (array-ref payload index)))
     out))
 
 (define (tlci-codec-test-take [payload : (__tl_dyn-array u8)] [length : i64]) : (__tl_dyn-array
     u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (array-ref payload index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (array-ref payload index)))
     out))
 
 (define (tlci-codec-test-rejects?
@@ -382,36 +374,26 @@
 (define (tlci-codec-test-round-trip-source) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    [i : i64 0]
     [state : i64 12345]
-    (while (< i 300)
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i 700)
+    (for [i (iterator.range 0 300)]
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8)))
+    (for [i (iterator.range 0 700)]
       (byte_buf_core.byte-buf-builder-push
         (&mut out)
-        (cast (+ 65 (% i 7)) : u8))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i 800)
+        (cast (+ 65 (% i 7)) : u8)))
+    (for [i (iterator.range 0 800)]
       (byte_buf_core.byte-buf-builder-push
         (&mut out)
-        (cast (+ 48 (% i 8)) : u8))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i 2000)
+        (cast (+ 48 (% i 8)) : u8)))
+    (for [i (iterator.range 0 2000)]
       (set! state (+ (* state 6364136223846793005) 1442695040888963407))
       (byte_buf_core.byte-buf-builder-push
         (&mut out)
-        (cast (bit-and (shr state 33) 255) : u8))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i 3000)
+        (cast (bit-and (shr state 33) 255) : u8)))
+    (for [i (iterator.range 0 3000)]
       (byte_buf_core.byte-buf-builder-push
         (&mut out)
-        (cast (+ 32 (% (* i 37) 91)) : u8))
-      (set! i (+ i 1)))
+        (cast (+ 32 (% (* i 37) 91)) : u8)))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (test
@@ -437,7 +419,7 @@
                     (array-ref decoded i)
                     (cast (string.string-ref source i) : u8))
                   (set! same false))
-                (set! i (+ i 1)))
+                (+= i 1))
               (if same
                 unit
                 (string.tl_oob_abort)))])])))

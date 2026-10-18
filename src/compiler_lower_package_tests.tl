@@ -70,7 +70,7 @@
         (let
           [ok : bool
             (match program
-              [(Program _ functions _)
+              [(Program _ functions _ _authority)
                 (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
           (lower.compiler-lower-arena-state-release!
             (lower.compiler-lower-state-arenas lower-owner))
@@ -140,7 +140,7 @@
         (let
           [ok : bool
             (match program
-              [(Program _ functions _)
+              [(Program _ functions _ _authority)
                 (let
                   [rendered : String
                     (compiler-lower-spmd-package-uniform-helper-render
@@ -708,7 +708,7 @@
       (let
         [ok : bool
           (match program
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (and
                 (string.eq
                   (ir.compiler-ir-spmd-private-abi-program-error functions)

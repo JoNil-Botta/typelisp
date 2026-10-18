@@ -13,10 +13,11 @@
 ;;    must still be computed from the freshly written values.
 ;;
 ;; 2. `nested-flip` alternates WHICH inner array handle sits in xss[0] each
-;;    iteration and then reads that inner array's length. The inner descriptor
-;;    load's base is loop-variant (reloaded from the outer element each
-;;    iteration), so it must NOT be hoisted: a wrong hoist reads one inner
-;;    array's length for all iterations and the checksum breaks.
+;;    iteration (swapping it with a spare by `replace!`) and then reads that
+;;    inner array's length. The inner descriptor load's base is loop-variant
+;;    (reloaded from the outer element each iteration), so it must NOT be
+;;    hoisted: a wrong hoist reads one inner array's length for all
+;;    iterations and the checksum breaks.
 ;;
 ;; Both bounds/values feed from (io.arg-count) so nothing constant-folds.
 (define (rotate-sum [xs : (__tl_dyn-array i64)] [n : i64]) : i64
@@ -32,16 +33,14 @@
 
 (define (nested-flip
   [xss : (__tl_dyn-array (__tl_dyn-array i64))]
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [spare : (__tl_dyn-array i64)]
   [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
+    [other : (__tl_dyn-array i64) spare]
     (while (< i n)
-      (if (= (% i 2) 0)
-        (set! (array-ref xss 0) a)
-        (set! (array-ref xss 0) b))
+      (set! other (replace! (array-ref xss 0) other))
       (set! acc (+ acc (array-length (array-ref xss 0))))
       (set! i (+ i 1)))
     acc))
@@ -65,9 +64,9 @@
     ;; acc = 6. A stale (hoisted-value) read of xs[3]/xs[4]/xs[5] gives 0.
     (let
       [r1 : i64 (rotate-sum xs n)]
-      ;; nested-flip over n=6: lengths 2,3,2,3,2,3 -> 15. A wrongly hoisted
+      ;; nested-flip over n=6: lengths 3,2,3,2,3,2 -> 15. A wrongly hoisted
       ;; inner-descriptor len gives 12 or 18.
-      [r2 : i64 (nested-flip xss a b n)]
+      [r2 : i64 (nested-flip xss b n)]
       (if (and (= r1 6) (= r2 15))
         42
         1))))

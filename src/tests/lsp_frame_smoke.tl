@@ -2075,8 +2075,8 @@
     [directive : String "\"newText\":\"  ;; lint-allow: single-begin\\n\""]
     [insertion : String
       "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"]
-    (set! (array-ref slots 0) finding)
-    (set! (array-ref slots 1) finding)
+    (set! (array-ref slots 0) (owned_view.compiler-owned-shared-view finding))
+    (set! (array-ref slots 1) (owned_view.compiler-owned-shared-view finding))
     (let
       [findings : lint_core.LintFindings (lint_core.LintFindings slots 2)]
       (and

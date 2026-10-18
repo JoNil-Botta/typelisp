@@ -59,7 +59,7 @@
     true
     true
     true
-    63))
+    127))
 
 (test
   compiler-backend-runtime-global-storage-page

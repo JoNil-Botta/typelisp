@@ -544,12 +544,12 @@
             (load.compiler-load-session-state-use! state))]
         [_begin-a : unit
           (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
-            (& state-a)
+            (&mut state-a)
             alias
             cbi.compiler-builtin-id-fix-empty)]
         [_begin-b : unit
           (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
-            (& state-b)
+            (&mut state-b)
             alias
             cbi.compiler-builtin-id-fix-empty)]
         [demand : load.CompilerLoadLazyAliasDemand
@@ -561,13 +561,13 @@
             pools)]
         [observed-a : load_tests.CompilerLoadLazyQualifiedObserverResult
           (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
-            (& state-a))]
+            (&mut state-a))]
         [b-still-active : bool
           (load.compiler-load-session-state-lazy-qualified-observer-active?
             (& state-b))]
         [observed-b : load_tests.CompilerLoadLazyQualifiedObserverResult
           (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
-            (& state-b))]
+            (&mut state-b))]
         [ok : bool
           (and
             demand.qualified

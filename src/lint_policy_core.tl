@@ -364,7 +364,7 @@
                 DuplicateGroup
                 (owned_view.compiler-owned-shared-view group.name)
                 group.layer
-                group.origin
+                (owned_view.compiler-owned-shared-view group.origin)
                 (str_cat.str-cat "duplicate lint group definition: " group.name)))))
         (set! index (+ index 1))))
     out))
@@ -395,7 +395,7 @@
                     (lint-policy-unknown-rule-diagnostic
                       name
                       group.layer
-                      group.origin))))]
+                      (owned_view.compiler-owned-shared-view group.origin)))))]
             [(Group name)
               (when
                 (and
@@ -409,7 +409,7 @@
                     (lint-policy-unknown-group-diagnostic
                       name
                       group.layer
-                      group.origin))))])
+                      (owned_view.compiler-owned-shared-view group.origin)))))])
           (set! member-index (+ member-index 1)))
         (set! group-index (+ group-index 1))))
     out))
@@ -489,10 +489,10 @@
                             GroupCycle
                             (owned_view.compiler-owned-shared-view group.name)
                             group.layer
-                            group.origin
+                            (owned_view.compiler-owned-shared-view group.origin)
                             (str_cat.str-cat
                               "cyclic lint group definition: "
-                              group.name)))))
+                              (owned_view.compiler-owned-shared-view group.name))))))
                     (set! cycle-here true)
                     (set! done true)
                     (when (= current cycle-root) (set! propagating false)))))])
@@ -508,10 +508,10 @@
                 InvalidGroupReference
                 (owned_view.compiler-owned-shared-view group.name)
                 group.layer
-                group.origin
+                (owned_view.compiler-owned-shared-view group.origin)
                 (str_cat.str-cat
                   "lint group depends on an invalid group: "
-                  group.name)))))
+                  (owned_view.compiler-owned-shared-view group.name))))))
         (set! (array-ref colors current) 2)
         (LintPolicyGroupGraphWalk out cycle-root propagating)))))
 
@@ -888,7 +888,7 @@
     reason))
 
 (define (lint-policy-apply-to-rule
-  [decisions : (& decisions LintPolicyDecisions)]
+  [decisions : (&mut decisions LintPolicyDecisions)]
   [rule-index : i64]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
@@ -1001,11 +1001,11 @@
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
-  [decisions : (& decisions LintPolicyDecisions)]
+  [decisions : (&mut decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
-  (match assignment.subject
+  (match (owned_view.compiler-owned-shared-view assignment.subject)
     [(Rule _) state]
     [(Group name)
       (if (not
@@ -1063,11 +1063,11 @@
 
 (define (lint-policy-apply-rule-assignment
   [rules : (& rules lint_core.LintRuleList)]
-  [decisions : (& decisions LintPolicyDecisions)]
+  [decisions : (&mut decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
-  (match assignment.subject
+  (match (owned_view.compiler-owned-shared-view assignment.subject)
     [(Group _) state]
     [(Rule name)
       (let
@@ -1100,7 +1100,7 @@
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
   [assignments : (& assignments LintPolicyAssignments)]
-  [decisions : (& decisions LintPolicyDecisions)]
+  [decisions : (&mut decisions LintPolicyDecisions)]
   [layer-rank : i64]
   [rules-only : bool]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1211,7 +1211,7 @@
           valid-groups
           membership
           assignments
-          decisions
+          (&mut decisions)
           layer
           false
           state))
@@ -1224,7 +1224,7 @@
           valid-groups
           membership
           assignments
-          decisions
+          (&mut decisions)
           layer
           true
           state))

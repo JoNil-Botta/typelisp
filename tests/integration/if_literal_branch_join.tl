@@ -70,10 +70,103 @@
         b)]
     v))
 
+;; Compound branch tails receive the same contextual width as bare literals.
+(define (compound-begin-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (begin
+          unit
+          0)
+        (wide 5))]
+    x))
+
+(define (compound-begin-right [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (wide 5)
+        (begin
+          unit
+          0))]
+    x))
+
+(define (compound-let-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (let
+          [_n : i64 9]
+          0)
+        (wide 5))]
+    x))
+
+(define (compound-nested-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (if c
+          0
+          1)
+        (wide 5))]
+    x))
+
+(define (compound-wrapped-both [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (begin
+          unit
+          0)
+        (begin
+          unit
+          (wide 5)))]
+    x))
+
+(define (compound-unary-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (neg 1)
+        (wide 5))]
+    x))
+
+(define (compound-binary-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (+ 1 2)
+        (wide 5))]
+    x))
+
+(define (compound-tuple-left [c : bool]) : i64
+  (let
+    [x
+      (if c
+        (tuple 0 1)
+        (tuple (wide 5) (wide 5)))]
+    (+ (tuple-ref x 0) (tuple-ref x 1))))
+
 (define (main) : i64
   (let
     [ok : bool
       (and
+        (= (compound-begin-left true) 0)
+        (= (compound-begin-left false) 5000000000)
+        (= (compound-begin-right true) 5000000000)
+        (= (compound-begin-right false) 0)
+        (= (compound-let-left true) 0)
+        (= (compound-let-left false) 5000000000)
+        (= (compound-nested-left true) 0)
+        (= (compound-nested-left false) 5000000000)
+        (= (compound-wrapped-both true) 0)
+        (= (compound-wrapped-both false) 5000000000)
+        (= (compound-unary-left true) -1)
+        (= (compound-unary-left false) 5000000000)
+        (= (compound-binary-left true) 3)
+        (= (compound-binary-left false) 5000000000)
+        (= (compound-tuple-left true) 1)
+        (= (compound-tuple-left false) 10000000000)
         (below true (wide 5) 1)
         (not (below false (wide 5) (wide 4)))
         (below false (wide 3) (wide 4))

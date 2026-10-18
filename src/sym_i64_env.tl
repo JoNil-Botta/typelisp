@@ -67,7 +67,8 @@
     [capacity : i64 (array-length store.slots)]
     [owner : i64 store.arena]
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [bigger : (__tl_dyn-array SymI64Binding)
           (__tl_make-array

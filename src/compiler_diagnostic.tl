@@ -232,7 +232,7 @@
   (let
     [diagnostics : CompilerDiagnosticList
       (owned_view.compiler-owned-reference-shared-view diagnostics)]
-    (array-ref diagnostics.slots index)))
+    (owned_view.compiler-owned-element-view diagnostics.slots index)))
 
 (define (compiler-diagnostic-list-ref
   [diagnostics : (& diagnostics CompilerDiagnosticList)]
@@ -246,7 +246,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
+      (set!
+        (array-ref dst index)
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))))
 
 (define (compiler-diagnostic-list-grow!
@@ -288,10 +290,14 @@
       (compiler-diagnostic-list-grow! diagnostics))
     (let
       [cursor : i64 count]
+      ;; Each slot's handle moves one place up; the vacated slot is
+      ;; overwritten by the insertion.
       (while (> cursor index)
         (set!
           (array-ref diagnostics.slots cursor)
-          (array-ref diagnostics.slots (- cursor 1)))
+          (owned_view.compiler-owned-array-element-shared-view
+            diagnostics.slots
+            (- cursor 1)))
         (set! cursor (- cursor 1)))
       (set! (array-ref diagnostics.slots index) diag)
       (set! diagnostics.len (+ count 1)))))
@@ -833,7 +839,7 @@
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : (& CompilerDiagnosticMaybeString)]) : CompilerDiagnosticMaybeString
-  (match (owned_view.compiler-owned-reference-shared-view value)
+  (match value
     [CompilerDiagnosticNoString CompilerDiagnosticNoString]
     [(CompilerDiagnosticSomeString text)
       (CompilerDiagnosticSomeString (string.copy (& text)))]))
@@ -888,7 +894,9 @@
     [index : i64 0]
     (set! (array-ref dst 0) label)
     (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
+      (set!
+        (array-ref dst (+ index 1))
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))
     (CompilerDiagnosticLabelList dst (+ count 1))))
 
@@ -956,7 +964,9 @@
     [index : i64 0]
     (set! (array-ref dst 0) note)
     (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
+      (set!
+        (array-ref dst (+ index 1))
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))
     (CompilerDiagnosticNoteList dst (+ count 1))))
 
@@ -1565,13 +1575,13 @@
 (define (compiler-diagnostic-maybe-string-eq?
   [left : (& CompilerDiagnosticMaybeString)]
   [right : (& CompilerDiagnosticMaybeString)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view left)
+  (match left
     [CompilerDiagnosticNoString
       (match right
         [CompilerDiagnosticNoString true]
         [(CompilerDiagnosticSomeString _) false])]
     [(CompilerDiagnosticSomeString left-text)
-      (match (owned_view.compiler-owned-reference-shared-view right)
+      (match right
         [(CompilerDiagnosticSomeString right-text)
           (string.eq left-text right-text)]
         [CompilerDiagnosticNoString false])]))
@@ -1699,7 +1709,9 @@
     [index : i64 0]
     (set! (array-ref dst 0) fix)
     (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
+      (set!
+        (array-ref dst (+ index 1))
+        (owned_view.compiler-owned-element-view src index))
       (set! index (+ index 1)))
     (CompilerDiagnosticFixSeq dst (+ count 1))))
 

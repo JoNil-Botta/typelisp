@@ -1,0 +1,30 @@
+;: A safe `spawn` whose task assigns no global keeps `(& g)` valid (#7904).
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
+
+(defstruct Big
+  (a i64)
+  (b i64)
+  (c i64)
+  (d i64))
+
+(define g : Big
+  (Big 1 2 3 4))
+
+(define (field-a [r : (& r Big)]) : (& r i64)
+  (& r.a))
+
+(define (read [r : (& r i64)] [n : i64]) : i64
+  (+ n (deref r)))
+
+(define (main) : i64
+  (read
+    (field-a (& g))
+    (match (thread_i64.spawn
+      (lambda () : i64
+        7))
+      [(thread_i64.I64SpawnErr _) 0]
+      [(thread_i64.I64SpawnOk worker)
+        (match (thread_i64.join worker)
+          [(thread_i64.I64JoinOk value) value]
+          [(thread_i64.I64JoinErr _) 0])])))

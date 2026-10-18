@@ -158,6 +158,12 @@ indirect call site uses that dispatcher; lexical provenance flags cannot choose
 a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+Ordinary and tail indirect lowering copy the selected callable (a closure
+descriptor sharing its environment, or a C code pointer) before lowering
+arguments only when an argument can write the storage it was read from: a local
+by the argument operand snapshot rule, a global cell unless every argument only
+reads. Function names and values the callee expression computed are not
+copied, so their direct-call facts survive.
 Scalar global reads, including folds and rematerialized reads, use
 the prepared program's symbol index. That index resolves extern metadata and
 ordinary module symbols identically to unfolded loads, and is replaced at
@@ -1423,6 +1429,27 @@ edge-precise liveness while candidate rewrites still consume it. These lifetimes
 bound overlapping analyses within a large function; the existing function and
 assembly-stream arenas continue to bound accumulation across functions.
 
+Global-cell and global-storage write summaries treat arbitrary extern calls as
+possibly writing every global: an extern can invoke a callback or an exported
+function without receiving a global address. Direct queries and call-graph
+closure use the same rule, including tail calls and recursive components.
+Only compiler-owned runtime helpers (the backend runtime, stdlib runtime and
+fault-helper builtin sets, and the byte copies) exclude this re-entry; atomic
+helpers do not, because they order other threads' writes. Their pointer writes
+still obey the analyses' address and escape preconditions: an extern's storage
+row keeps every escaped global. Lowered runtime copies carry the source builtin
+identity that supplies this proof.
+
+A call names an extern by its language identity; the optimizer maps it to the
+declared link identity (`opt-effect-callee`) before classifying it. The re-entry
+proof reads the link. A runtime effect class (memory read, memory write,
+non-returning) applies only when the call's identity is the helper itself, so a
+declaration spelled like a helper but linked elsewhere keeps the unknown effect
+in load reuse, transitive call summaries, trap detection and builtin seeds.
+Declarations that disagree on the link classify as unknown. Exported entries
+retain their function bodies' summaries. These private-global masks do not
+describe arbitrary memory writes.
+
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
@@ -1983,6 +2010,11 @@ references. Code lookup is ASCII case-insensitive. `typelisp explain --list`
 prints the registry and `typelisp explain --search <term>` searches its titles
 and prose. The code list, with owners and construction sites, is in
 [diagnostic-codes.md](../docs/diagnostic-codes.md).
+
+Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
+source context is attached. Resolver helpers keep plain internal messages;
+forwarded parser/typechecker diagnostics retain their own codes and provenance.
+The `E03..` inventory lists every loader conversion, including package imports.
 
 ## Async process ownership
 

@@ -1457,20 +1457,29 @@
         [(Err _) false])]
     [(Err _) false]))
 
-;; Call and operator operands copy storage only when later evaluation can
-;; write it. Unrelated writes retain only their assignment copy; a write to
-;; the operand also needs its snapshot.
+;; Call and operator operands, and indirect callees in ordinary and tail
+;; calls, copy storage only when later evaluation can write it. Unrelated
+;; writes and calls retain only their assignment copy; a write to the operand
+;; or callee also needs its snapshot.
 (define (compiler-lower-operand-snapshot-source) : String
   "(define (first [a : i64] [_b : i64]) : i64 a)
+(define (id [a : i64]) : i64 a)
 (define (plain [x : i64] [y : i64]) : i64 (first x (+ y 1)))
 (define (unrelated [x : i64] [y : i64]) : i64 (first x (begin (set! y 2) y)))
 (define (assigned [x : i64]) : i64 (first x (begin (set! x 2) 0)))
 (define (plain-op [x : i64] [y : i64]) : i64 (+ x (+ y 1)))
 (define (unrelated-op [x : i64] [y : i64]) : i64 (+ x (begin (set! y 2) y)))
 (define (assigned-op [x : i64]) : i64 (+ x (begin (set! x 2) 0)))
+(define (callee-call [f : (-> i64 i64)] [x : i64]) : i64 (+ 0 (f (first x 1))))
+(define (callee-unrelated [f : (-> i64 i64)] [x : i64]) : i64 (+ 0 (f (begin (set! x 2) x))))
+(define (callee-assigned [f : (-> i64 i64)] [g : (-> i64 i64)]) : i64 (+ 0 (f (begin (set! f g) 1))))
+(define (tail-callee-call [f : (-> i64 i64)] [x : i64]) : i64 (f (first x 1)))
+(define (tail-callee-assigned [f : (-> i64 i64)] [g : (-> i64 i64)]) : i64 (f (begin (set! f g) 1)))
 (define (main) : i64
   (+ (plain 1 2) (unrelated 1 2) (assigned 1)
-     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)))")
+     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)
+     (callee-call id 1) (callee-unrelated id 1) (callee-assigned id id)
+     (tail-callee-call id 1) (tail-callee-assigned id id)))")
 
 (define (compiler-lower-operand-snapshot-shape-ok?) : bool
   (match (lower-test-functions
@@ -1482,7 +1491,12 @@
         (= (lower-test-count functions "assigned" (CopyMov)) 2)
         (= (lower-test-count functions "plain-op" (CopyMov)) 0)
         (= (lower-test-count functions "unrelated-op" (CopyMov)) 1)
-        (= (lower-test-count functions "assigned-op" (CopyMov)) 2))]
+        (= (lower-test-count functions "assigned-op" (CopyMov)) 2)
+        (= (lower-test-count functions "callee-call" (CopyMov)) 0)
+        (= (lower-test-count functions "callee-unrelated" (CopyMov)) 1)
+        (= (lower-test-count functions "callee-assigned" (CopyMov)) 2)
+        (= (lower-test-count functions "tail-callee-call" (CopyMov)) 0)
+        (= (lower-test-count functions "tail-callee-assigned" (CopyMov)) 2))]
     [_ false]))
 
 (test
@@ -2387,25 +2401,52 @@
           0))]
     [_ false]))
 
+(define (lower-test-runtime-memcpy-instr-count
+  [count : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (+
+    count
+    (match instr
+      [(Call _ name _ _)
+        (if (= name cbi.compiler-builtin-id-tl-memcpy)
+          1
+          0)]
+      [_ 0])))
+
+(define (lower-test-runtime-memcpy-count
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find functions name)
+    [(Some (Function _ _ _ _ blocks _))
+      (optimize.opt-blocks-fold
+        blocks
+        (cast 0 : i64)
+        lower-test-runtime-memcpy-instr-count)]
+    [(No) -1]))
+
+(test
+  lower-runtime-copy-source-identity
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(define (copy [destination : (&mut destination (Array i64 25))]
+                      [source : (& source (Array i64 25))]) : unit
+         (set! (deref destination) (deref source)))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-runtime-memcpy-count functions "copy")
+        1
+        "a fixed-size aggregate copy names the runtime source identity")]
+    [(No) (test.assert-true false "aggregate copy fixture lowers")]))
+
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
   (match (lower-test-functions
     (compiler-lower-clone-source-with-prelude
       (compiler-lower-clone-dynarray-bulk-source)))
     [(Some functions)
       (and
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-i64-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-i64-items") 1)
         (= (lower-test-count functions ".::copy-i64-items" (Branch)) 0)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-word-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-word-items") 1)
         (= (lower-test-count functions ".::copy-word-items" (Branch)) 0)
         (=
           (lower-test-function-call-count

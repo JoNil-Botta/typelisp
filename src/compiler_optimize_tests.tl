@@ -77211,6 +77211,141 @@ return 0" true)
             snapshot)
           "the fallback returns the exact input")])))
 
+;; #9013: bounds_group runs below the pipeline on a body nothing promises
+;; verifies: a function SSA construction could not rename keeps its duplicate
+;; definitions through every pass that refused it. The pass entry's first round
+;; therefore verifies the candidate itself. Trusting it would run the rewrite
+;; on the unverified body and report the verifier's rejection as an internal
+;; error.
+(define (opt-bg-duplicate-def-text) : String
+  "entry:
+     %2 = sub %0, 1 : i64
+     bounds_check %2, 2 message \"bg_dup_a\"
+     %3 = sub %0, 2 : i64
+     bounds_check %3, 2 message \"bg_dup_b\"
+     %4 = gep %1, %2 : i64
+     %5 = load %4 : i64
+     %6 = gep %1, %3 : i64
+     %7 = load %6 : i64
+     %8 = add %5, %7 : i64
+     jump tail
+   tail:
+     %9 = add %8, 1 : i64
+     %9 = add %8, 2 : i64
+     return %9")
+
+(test
+  bounds-group-entry-verifies-its-first-round
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [valid : ir.CompilerIrFunction
+      (opt-bg-text-function "bg_entry_valid" (opt-bg-stack-pair-text))]
+    [unverified : ir.CompilerIrFunction
+      (opt-bg-text-function "bg_entry_unverified" (opt-bg-duplicate-def-text))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [valid-out : ir.CompilerIrFunction (opt.opt-bg-function bases (& valid))]
+    [unverified-out : ir.CompilerIrFunction
+      (opt.opt-bg-function bases (& unverified))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (not (opt.opt-verify-ok? (& (opt.opt-verify-function (& unverified)))))
+      "the fixture reaches bounds_group unverified")
+    (test.assert-true
+      (not (opt.opt-function-eq bases valid-out valid))
+      "the verifying twin is rewritten")
+    (test.assert-true
+      (string.eq ice "")
+      "an unverified body raises no internal error")
+    (test.assert-true
+      (opt.opt-function-eq bases unverified-out unverified)
+      "an unverified body is handed back unchanged")))
+
+;; #9013: preheaders commits its own rewrite behind `opt-verify-gate`, so a
+;; rejected post-verify is an internal error. A correct pass cannot be made to
+;; break a verifying input, so the test tells the gate that a body with a
+;; duplicate definition verifies: the definition survives preheader synthesis,
+;; the post-verify rejects the result, and the commit raises and rolls back.
+;; Told the truth, the gate turns the body down and nothing is raised.
+(define (opt-preheaders-ice-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "preheaders_ice")
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    1
+    blocks
+    Ordinary))
+
+(define (opt-preheaders-ice-broken) : ir.CompilerIrFunction
+  (opt-preheaders-ice-function
+    (irt.blocks
+      "entry:
+         %0 = mov 1 : i64
+         %0 = mov 2 : i64
+         branch true, pre-one, pre-two
+       pre-one:
+         jump loop
+       pre-two:
+         jump loop
+       loop:
+         branch true, body, exit
+       body:
+         jump loop
+       exit:
+         return %0")))
+
+(define (opt-preheaders-ice-run
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt.opt-loop-preheaders-function-with-context-result
+    (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+    verified?
+    func)
+    [(Result next _) next]))
+
+(test
+  preheaders-rejected-rewrite-is-internal-error
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [valid : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-natural-loop-no-preheader-blocks))]
+    [broken : ir.CompilerIrFunction (opt-preheaders-ice-broken)]
+    [_valid-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [valid-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-natural-loop-no-preheader-blocks)))]
+    [valid-ice : String (opt.opt-rewrite-ice-last)]
+    [_refused-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [refused-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run false (opt-preheaders-ice-broken))]
+    [refused-ice : String (opt.opt-rewrite-ice-last)]
+    [_trusted-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [trusted-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run true (opt-preheaders-ice-broken))]
+    [trusted-ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (and
+        (string.eq valid-ice "")
+        (not (opt.opt-function-eq bases valid-out valid)))
+      "a verifying body gets its preheader and raises nothing")
+    (test.assert-true
+      (and
+        (string.eq refused-ice "")
+        (opt.opt-function-eq bases refused-out broken))
+      "the gate turns an unverified body down without raising")
+    (test.assert-true
+      (and
+        (string.contains
+          (& trusted-ice)
+          "pass `preheaders` rewrote verified function `preheaders_ice`")
+        (string.contains (& trusted-ice) "duplicate var definition"))
+      "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    (test.assert-true
+      (opt.opt-function-eq bases trusted-out broken)
+      "the rejected rewrite rolls back to the input")))
+
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let
     [source : ir.CompilerIrBlockList (opt-thread-chain-blocks false)]

@@ -58081,13 +58081,12 @@
 ;; v1 refused a function outright as soon as any RETURNING call remained. The
 ;; condition is now per CELL: a direct callee contributes exactly the cells its
 ;; P18 mod-ref row says it (transitively) may `set!`, and only a call this walk
-;; cannot resolve to a name still refuses everything. Every fixture below is
+;; cannot prove excludes user-code re-entry refuses every cell. Every fixture below is
 ;; the SAME reader -- fixture A's body plus one returning call -- and differs
 ;; only in what the program says that call can write.
 ;;
-;;   P1 extern      the callee is no function of this program: no IR body,
-;;                  hence no `Store`, and under (b) no pointer that names a
-;;                  cell -> both word cells hoist
+;;   N0 extern      an arbitrary extern may invoke a callback that stores a
+;;                  private cell without receiving any cell address
 ;;   P2 other cell  the callee sets `gc_m` -> both word cells still hoist
 ;;   N1 the cell    the callee sets `gc_k` -> gc_k keeps per-use semantics,
 ;;                  while `gc_arr`, which nothing writes, still hoists
@@ -58115,11 +58114,13 @@
     [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
     [reader : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 1)]
-    ;; P1: `gc_callee` is absent from the program's function list
+    ;; N0: an absent direct callee can re-enter a global-writing callback
     [out-extern : ir.CompilerIrFunction
       (opt.opt-global-cell-function
         (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader))
         (opt.compiler-opt-global-shared-view reader))]
+    [blocks-extern : ir.CompilerIrBlockList
+      (opt.opt-function-blocks out-extern)]
     ;; P2: it is present, and sets a cell this reader never reads
     [out-other : ir.CompilerIrFunction
       (opt.opt-global-cell-function
@@ -58178,7 +58179,12 @@
     [blocks-indirect : ir.CompilerIrBlockList
       (opt.opt-function-blocks out-indirect)]
     (cond
-      [(not (= (opt-gc-test-call-hoist-ok? out-extern symbols.callee) 42)) 1]
+      [(not (= (opt.opt-function-frame out-extern) 10)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks-extern 0) 1)) 17]
+      [(match (opt-gc-test-instr-at blocks-extern 1 0)
+          [(Gep _ base _ _) (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        18]
       [(not (= (opt-gc-test-call-hoist-ok? out-other symbols.callee) 42)) 2]
       [(not (= (opt-gc-test-arr-only-hoist-ok? out-k) 42)) 3]
       [(not (= (opt-gc-test-arr-only-hoist-ok? out-trans) 42)) 4]
@@ -58239,8 +58245,8 @@
       (opt.opt-global-cell-function summaries-b reader-b)]
     [blocks-b : ir.CompilerIrBlockList (opt.opt-function-blocks out-b)]
     ;; fixture C: an INDIRECT call may land on any function of the program, so
-    ;; it may write any cell and (c) excludes the WHOLE function -- the only
-    ;; whole-function refusal left. Which cells a NAMED callee writes is
+    ;; it may write any cell and (c) excludes the WHOLE function, as does an
+    ;; arbitrary extern. Which cells a NAMED callee writes is
     ;; compiler-optimize-global-cell-call-mod-ref-self-test.
     [reader-c : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 3)]
@@ -61316,8 +61322,8 @@
 
 ;; `lp_callee` seen as the PROGRAM sees it. The per-global mod-ref table reads
 ;; every callee's row off its body, and a name absent from the program's
-;; function list is an extern (no IR body, hence no `set!`). `lp_callee` is a
-;; program function whose memory class these fixtures vary through
+;; function list is an arbitrary extern that may re-enter user code. `lp_callee`
+;; is a program function whose memory class these fixtures vary through
 ;; `direct-call-clean` alone, so it has to be in the list and it has to stay
 ;; opaque to the table: the indirect call is what makes its row "may write any
 ;; cell", which is exactly the fact these fixtures assume when they expect an
@@ -62207,6 +62213,10 @@
       (opt.opt-global-mod-ref-call-mask mod-ref symbols.opaque)]
     [extern-mask : i64
       (opt.opt-global-mod-ref-call-mask mod-ref symbols.extern)]
+    [runtime-mask : i64
+      (opt.opt-global-mod-ref-call-mask
+        mod-ref
+        cbi.compiler-builtin-id-tl-region-mark)]
     ;; the loop decisions, all under an empty direct-call-clean map
     [via-a : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.write-a))]
@@ -62222,6 +62232,10 @@
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.opaque))]
     [via-extern : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.extern))]
+    [via-runtime : ir.CompilerIrBlockList
+      (opt-mr-promoted
+        cells
+        (opt-mr-call-body-blocks symbols cbi.compiler-builtin-id-tl-region-mark))]
     [in-loop-store : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-store-body-blocks symbols))]
     ;; the same write-a loop in a program that takes a cell's address: the
@@ -62261,8 +62275,9 @@
       [(not (= elem-mask 0)) 9]
       ;; an indirect call may reach any `Store` in the program
       [(not (opt.opt-global-mod-ref-any? opaque-mask)) 10]
-      ;; an extern has no IR body and so performs no `Store`
-      [(not (= extern-mask 0)) 11]
+      ;; An arbitrary extern may re-enter; a trusted runtime helper cannot.
+      [(not (opt.opt-global-mod-ref-any? extern-mask)) 11]
+      [(not (= runtime-mask 0)) 36]
       ;; one `GlobalAddr` anywhere withdraws the table
       [addr-mod-ref.built? 12]
       [(not
@@ -62338,8 +62353,11 @@
       ;; a callee whose only writes go through a pointer refuses neither
       [(not (= (opt-lp-loop-body-cell-operands via-elem) 0)) 26]
       [(not (= (opt-lp-preheader-cell-loads via-elem) 2)) 27]
-      [(not (= (opt-lp-loop-body-cell-operands via-extern) 0)) 28]
-      [(not (= (opt-lp-preheader-cell-loads via-extern) 2)) 29]
+      ;; Arbitrary externs refuse both cells, including a no-argument call.
+      [(not (= (opt-lp-loop-body-cell-operands via-extern) 2)) 28]
+      [(not (= (opt-lp-preheader-cell-loads via-extern) 0)) 29]
+      [(not (= (opt-lp-loop-body-cell-operands via-runtime) 0)) 37]
+      [(not (= (opt-lp-preheader-cell-loads via-runtime) 2)) 38]
       ;; an indirect call inside the callee refuses both
       [(not (= (opt-lp-loop-body-cell-operands via-opaque) 2)) 30]
       [(not (= (opt-lp-preheader-cell-loads via-opaque) 0)) 31]
@@ -63898,6 +63916,128 @@
       true
       (& func))
       [(Result next _) (opt.opt-function-blocks next)])))
+
+;; Both tables must propagate extern re-entry through direct and tail calls,
+;; including a recursive component whose bodies precede the external leaf.
+(defstruct OptExternalModRefCase
+  (body String)
+  (may-write bool))
+
+(test
+  global-mod-ref-extern-reentry
+  (let
+    [cases
+      (array
+        (OptExternalModRefCase
+          "%1 = call invoke(fn@callback) : i64
+return %1"
+          true)
+        (OptExternalModRefCase "%1 = call invoke_saved() : i64
+return %1" true)
+        (OptExternalModRefCase "tailcall invoke_saved() : i64" true)
+        (OptExternalModRefCase
+          "store_ptr %0, fn@callback : u64
+%1 = call invoke_saved() : i64
+return %1"
+          true)
+        ;; IR-text symbols are generated identities, even when their spelling
+        ;; matches a trusted runtime helper.
+        (OptExternalModRefCase "%1 = call tl_region_mark() : u64
+return 0" true)
+        (OptExternalModRefCase "%1 = call tl_alloc(8) : u64
+return 0" true)
+        (OptExternalModRefCase "tailcall .L_tl_abort() : i64" true)
+        (OptExternalModRefCase "return 0" false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        [program
+          (irt.program
+            (str_cat.str-cat
+              "global @callback_cell : i64 = 0
+               global @callback_object : (__tl_dyn-array i64) = unit
+               function @wrapper(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+                 %1 = call cycle_a(%0) : i64
+                 return %1
+               }
+               function @cycle_a(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+                 %1 = call cycle_b(%0) : i64
+                 return %1
+               }
+               function @cycle_b(pointer=%0:u64) -> i64 vars 3 {
+               entry:
+                 %1 = call cycle_a(%0) : i64
+                 %2 = call leaf(%0) : i64
+                 return %2
+               }
+               function @leaf(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+"
+              (clone case.body)
+              "
+}
+               function @callback() -> i64 vars 0 {
+               entry:
+                 store @callback_cell, 1 : i64
+                 return 1
+               }"))]
+        (match program
+          [(Program globals functions _)
+            (let
+              [cells
+                (opt.opt-global-cell-summary-build
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& functions))]
+              [objects
+                (opt-test-global-obj-build
+                  globals
+                  functions
+                  cells.addr-taken
+                  32)]
+              [names (array "wrapper" "cycle_a" "cycle_b" "leaf")]
+              (test.assert-true cells.mod-ref.built? "cell table is available")
+              (test.assert-true objects.built? "storage table is available")
+              (for [at (iterator.range 0 (array-length names))]
+                (let
+                  [name (opt-test-symbol (clone (array-ref names at)))]
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask cells.mod-ref name))
+                      case.may-write)
+                    (clone case.body))
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask objects name))
+                      case.may-write)
+                    (clone case.body))))
+              (test.assert-i64-eq
+                (opt.opt-global-mod-ref-call-mask
+                  objects
+                  cbi.compiler-builtin-id-tl-region-mark)
+                0
+                "the source-identity runtime helper excludes callback re-entry")
+              ;; A direct query of a name absent from the program uses the
+              ;; same conservative rule as the transitive rows above.
+              (test.assert-true
+                (and
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      cells.mod-ref
+                      (opt-test-symbol "missing")))
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      objects
+                      (opt-test-symbol "missing")))
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      (& (opt.opt-global-mod-ref-none))
+                      cbi.compiler-builtin-id-tl-region-mark)))
+                "unresolved calls and unavailable tables stay conservative"))])))))
 
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64
   (let
@@ -66439,7 +66579,7 @@
   (test.assert-i64-eq
     (compiler-optimize-global-cell-call-mod-ref-self-test)
     42
-    "condition (c) is per cell: an extern or other-cell callee still hoists, a direct or transitive writer of the cell does not, and an indirect call refuses the function"))
+    "condition (c) is per cell: an other-cell callee still hoists, a direct or transitive writer of the cell does not, and an arbitrary extern or indirect call refuses the function"))
 
 (test
   global-cell-observable-store
@@ -66474,7 +66614,7 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-mod-ref-self-test)
     42
-    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
+    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing callee and a trusted runtime helper refuse nothing, an arbitrary extern, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
 
 (test
   global-obj-storage-write-table

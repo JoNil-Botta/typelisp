@@ -71492,8 +71492,8 @@
             [(TcBodyTypeFact.Hit receiver-ty)
               (tc-struct-get-result-type-id ctx receiver-ty field-id)]
             [(TcBodyTypeFact.Miss)
-              (tc-expr ctx env (tc-global-shared-view projection))])]
-        [_ (tc-expr ctx env (tc-global-shared-view projection))])
+              (tc-expr ctx env (tc-global-shared-view (deref projection)))])]
+        [_ (tc-expr ctx env (tc-global-shared-view (deref projection)))])
         [(ResultTcType.Ok projected-ty)
           (if (tc-type-copyable? ctx projected-ty)
             (ast.ast-expr-segment-bases-get expr-bases operand-id)

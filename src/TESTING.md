@@ -5,6 +5,14 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
+pricing identical before and after backend frame-pointer omission enables an
+extra register, and checks that pricing restores its caller's pool. The IR
+observability gate compares cold and repeated batch assembly for
+`pure_call_join_live.tl`, including an empty predecessor, at opt0/1/2 for both
+target ABIs. An invalid middle entry must retain its source diagnostic and
+stop before later output is emitted.
+
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
 aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
 public check/compile

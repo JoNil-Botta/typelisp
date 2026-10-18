@@ -3561,6 +3561,15 @@
                     item
                     meta-key)))])))]))
 
+;; The module a declaration that normalization keeps unchanged leaves current:
+;; a module marker names it. The normalization loops push every declaration
+;; for which `gen-decl-needs-normalize?` is false straight into their output
+;; instead of building a one-element list for it.
+(define (gen-kept-decl-module-id [decl : (& ast.AstDecl)] [module-id : i64]) : i64
+  (match decl
+    [(Module name) name]
+    [_ module-id]))
+
 (define (gen-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decl : (& ast.AstDecl)]
@@ -3660,32 +3669,50 @@
               cur-module-id))
           (set! done true)]
         [(Cons decl rest)
-          (match (gen-rewrite-decl-with-owner
-            owner
-            (& decl)
-            cur-module-id
-            (spec-place-shared-view cur-registry)
-            env)
-            [(Ok rewritten-decls decl-registry decl-module)
-              (let
-                [out-start : i64 (ast.ast-decl-list-len (& out))]
-                [rewritten-count : i64
-                  (ast.ast-decl-list-len (& rewritten-decls))]
-                (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                  (&mut out-origins)
-                  out-start
-                  rewritten-count
-                  (parser.compiler-parse-decl-list-storage-key (& rest))
-                  (- rest.offset 1)
-                  (& decl)
-                  (!= rewritten-count 1))
-                (ast.ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                (set! cur-registry decl-registry)
-                (set! cur-module-id decl-module)
-                (set! cursor rest))]
-            [(Err diag)
-              (set! result (Err diag))
-              (set! done true)])]))
+          (if (not (gen-decl-needs-normalize? (& decl)))
+            (begin
+              (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                (&mut out-origins)
+                (ast.ast-decl-list-len (& out))
+                1
+                (parser.compiler-parse-decl-list-storage-key (& rest))
+                (- rest.offset 1)
+                (& decl)
+                false)
+              (set!
+                cur-module-id
+                (gen-kept-decl-module-id (& decl) cur-module-id))
+              (ast.ast-decl-list-push (&mut out) decl)
+              (set! cursor rest))
+            (match (gen-rewrite-decl-with-owner
+              owner
+              (& decl)
+              cur-module-id
+              (spec-place-shared-view cur-registry)
+              env)
+              [(Ok rewritten-decls decl-registry decl-module)
+                (let
+                  [out-start : i64 (ast.ast-decl-list-len (& out))]
+                  [rewritten-count : i64
+                    (ast.ast-decl-list-len (& rewritten-decls))]
+                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                    (&mut out-origins)
+                    out-start
+                    rewritten-count
+                    (parser.compiler-parse-decl-list-storage-key (& rest))
+                    (- rest.offset 1)
+                    (& decl)
+                    (!= rewritten-count 1))
+                  (ast.ast-decl-list-append-from
+                    (&mut out)
+                    (& rewritten-decls)
+                    0)
+                  (set! cur-registry decl-registry)
+                  (set! cur-module-id decl-module)
+                  (set! cursor rest))]
+              [(Err diag)
+                (set! result (Err diag))
+                (set! done true)]))]))
     result))
 
 (define (gen-rewrite-decls-with-paths-and-owner
@@ -3746,49 +3773,70 @@
                 (& path-cursor)
                 0
                 cbi.compiler-builtin-id-fix-empty)]
-            (match (gen-rewrite-decl-with-owner
-              owner
-              (& decl)
-              cur-module-id
-              (spec-place-shared-view cur-registry)
-              env)
-              [(Ok rewritten-decls decl-registry decl-module)
-                (let
-                  [out-start : i64 (ast.ast-decl-list-len (& out))]
-                  [rewritten-count : i64
-                    (ast.ast-decl-list-len (& rewritten-decls))]
-                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                    (&mut out-origins)
-                    out-start
-                    rewritten-count
-                    (parser.compiler-parse-decl-list-storage-key (& rest))
-                    (- rest.offset 1)
-                    (& decl)
-                    (!= rewritten-count 1))
-                  (ast.ast-decl-list-append-from
-                    (&mut out)
-                    (& rewritten-decls)
-                    0)
-                  (gen-path-list-push-for-decls
-                    (&mut out-paths)
-                    (& rewritten-decls)
-                    decl-path
-                    owner-id
-                    provenance-id
-                    0)
-                  (set! cur-registry decl-registry)
-                  (set! cur-module-id decl-module)
-                  (set! decl-cursor rest)
-                  (set! path-cursor (gen-path-list-tail (& path-cursor))))]
-              [(Err diag)
+            (if (not (gen-decl-needs-normalize? (& decl)))
+              (begin
+                (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                  (&mut out-origins)
+                  (ast.ast-decl-list-len (& out))
+                  1
+                  (parser.compiler-parse-decl-list-storage-key (& rest))
+                  (- rest.offset 1)
+                  (& decl)
+                  false)
                 (set!
-                  result
-                  (Err
-                    (box
-                      (cdiag.compiler-diagnostic-with-fallback-path
-                        (deref diag)
-                        decl-path))))
-                (set! done true)]))]))
+                  cur-module-id
+                  (gen-kept-decl-module-id (& decl) cur-module-id))
+                (ast.ast-decl-list-push (&mut out) decl)
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                  (&mut out-paths)
+                  decl-path
+                  owner-id
+                  provenance-id)
+                (set! decl-cursor rest)
+                (set! path-cursor (gen-path-list-tail (& path-cursor))))
+              (match (gen-rewrite-decl-with-owner
+                owner
+                (& decl)
+                cur-module-id
+                (spec-place-shared-view cur-registry)
+                env)
+                [(Ok rewritten-decls decl-registry decl-module)
+                  (let
+                    [out-start : i64 (ast.ast-decl-list-len (& out))]
+                    [rewritten-count : i64
+                      (ast.ast-decl-list-len (& rewritten-decls))]
+                    (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      (&mut out-origins)
+                      out-start
+                      rewritten-count
+                      (parser.compiler-parse-decl-list-storage-key (& rest))
+                      (- rest.offset 1)
+                      (& decl)
+                      (!= rewritten-count 1))
+                    (ast.ast-decl-list-append-from
+                      (&mut out)
+                      (& rewritten-decls)
+                      0)
+                    (gen-path-list-push-for-decls
+                      (&mut out-paths)
+                      (& rewritten-decls)
+                      decl-path
+                      owner-id
+                      provenance-id
+                      0)
+                    (set! cur-registry decl-registry)
+                    (set! cur-module-id decl-module)
+                    (set! decl-cursor rest)
+                    (set! path-cursor (gen-path-list-tail (& path-cursor))))]
+                [(Err diag)
+                  (set!
+                    result
+                    (Err
+                      (box
+                        (cdiag.compiler-diagnostic-with-fallback-path
+                          (deref diag)
+                          decl-path))))
+                  (set! done true)])))]))
     result))
 
 (define (gen-normalize-program-with-pools-and-intern-state

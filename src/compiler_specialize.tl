@@ -6763,10 +6763,10 @@
               (ast.ast-place-shared-view decls))]
           [template-env : SpecTemplateEnv
             (spec-template-env-from-list (& templates))]
-          [ctfe-env : ctfe.CtfeEnv
-            (spec-owner-ctfe-env
-              owner
-              (& (ctfe.ctfe-reflections-from-program (& normalized))))]
+          ;; The reflections CTFE environment serves template rewriting only,
+          ;; so it is built there. Built eagerly, a program without templates
+          ;; kept a whole-program reflection table in its pool base arena
+          ;; through lowering.
           (if (= templates.len 0)
             (Ok normalized)
             (match (spec-rewrite-decls-with-owner
@@ -6777,7 +6777,9 @@
                 (State
                   (ast.ast-decl-list-new)
                   (spec_id_i64_map.with-capacity 64)
-                  ctfe-env
+                  (spec-owner-ctfe-env
+                    owner
+                    (& (ctfe.ctfe-reflections-from-program (& normalized))))
                   (spec-place-shared-view owner))))
               [(Ok rewritten _)
                 (spec-materialize-owner-generated-symbols! (&mut owner))
@@ -6813,10 +6815,8 @@
                   (ast.ast-place-shared-view decls))]
               [template-env : SpecTemplateEnv
                 (spec-template-env-from-list (& templates))]
-              [ctfe-env : ctfe.CtfeEnv
-                (spec-owner-ctfe-env
-                  owner
-                  (& (ctfe.ctfe-reflections-from-program (& normalized))))]
+              ;; As above: the reflections CTFE environment is built only when
+              ;; there are templates to rewrite.
               (if (= templates.len 0)
                 (Ok normalized normalized-paths)
                 (match (spec-rewrite-decls-with-paths-with-owner
@@ -6828,7 +6828,9 @@
                   (State
                     (ast.ast-decl-list-new)
                     (spec_id_i64_map.with-capacity 64)
-                    ctfe-env
+                    (spec-owner-ctfe-env
+                      owner
+                      (& (ctfe.ctfe-reflections-from-program (& normalized))))
                     (spec-place-shared-view owner)))
                   [(Ok rewritten rewritten-paths _)
                     (spec-materialize-owner-generated-symbols! (&mut owner))

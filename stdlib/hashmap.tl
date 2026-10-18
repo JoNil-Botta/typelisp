@@ -252,7 +252,9 @@
                       [_ true])
                       (set! index (bit-and (+ index 1) mask)))
                     (unsafe
-                      (ptr-write! (ptr-offset fresh-data index) (ptr-read old-ptr))))]
+                      (ptr-write!
+                        (ptr-offset fresh-data index)
+                        (ptr-read old-ptr))))]
                 [_ unit]))
             (set! scan (+ scan 1))))
         `(let

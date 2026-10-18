@@ -1068,7 +1068,7 @@
     (Some (ci.intern-generated-name "lib.want")))
     [(Err diag)
       (and
-        (compiler-load-error-code? (__tl-box-place diag) "E0306")
+        (compiler-load-error-code? (__tl-box-place diag) "E0303")
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
           "compiler-load: import expected module lib.want but loaded lib.actual"))]

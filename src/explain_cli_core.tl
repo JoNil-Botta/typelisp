@@ -712,25 +712,33 @@ See also:
 ")
 
 (define (diagnostic-explain-e0303) : String
-  "E0303: cannot resolve import
+  "E0303: cannot resolve import or include
 
 Description:
-    The loader cannot resolve the requested module or selected-import shape
-    under the current source roots and package dependency declarations. The
-    primary span is the import; the message states the resolution constraint.
+    The loader cannot resolve a module, selected-import shape or include path
+    under the current source roots and package dependency declarations. This
+    includes an unknown pkg: alias in an include-str, include-str-comptime,
+    include-str-lzss or include-bin path. The primary span is the import or
+    include form; the message states the resolution constraint.
 
 Minimal failing example:
     ; helper.tl defines answer, but answer.extra is not a supported selection:
     (import helper.answer.extra)
     (define (main) : i64 0)
 
+    ; In a package with no dependency alias named missing:
+    (include-str contents \"pkg:missing/data.txt\")
+    (define (main) : i64 0)
+
 Fix:
     Import a module or one item from a loadable module, using its dotted name.
     Declare package aliases and prepare dependency sources before using them.
+    For a package-qualified include, use a declared dependency alias and a
+    path within that dependency; relative includes use the including file.
     Ordinary import cycles are valid and terminate through load-once handling.
 
 See also:
-    SPEC.md, section 4.4 (modules and imports); E0304 (missing selected item).
+    SPEC.md, section 4.4 (modules, imports and includes); E0304 (selected item).
 ")
 
 (define (diagnostic-explain-e0304) : String
@@ -775,31 +783,6 @@ See also:
     SPEC.md, section 4.4 (import namespaces); E0304 (selected imports).
 ")
 
-(define (diagnostic-explain-e0306) : String
-  "E0306: module identity mismatch
-
-Description:
-    A loader operation with an explicit expected module identity loaded a
-    different identity. The primary path identifies that file; the message
-    shows both the expected and actual dotted identities.
-
-Minimal failing example:
-    ; Compiler loader API, with compiler_load imported as load:
-    (load.compiler-load-check-expected-module
-      \"helper.tl\"
-      (Some (load.compiler-load-parse-context-name-id \"expected\"))
-      \"actual\"
-      (load.compiler-load-parse-context-name-id \"actual\"))
-
-Fix:
-    Give the loader the intended canonical identity, or correct the loaded
-    declaration when the expectation is intentional. An explicit module
-    declaration can override an inferred file identity; it is not a duplicate.
-
-See also:
-    SPEC.md, section 4.4.1 (module identities); E0307 (duplicate modules).
-")
-
 (define (diagnostic-explain-e0307) : String
   "E0307: duplicate module declaration
 
@@ -818,7 +801,7 @@ Fix:
     distinct identities, or combine their declarations in one body.
 
 See also:
-    SPEC.md, section 4.4 (modules and load-once imports); E0306 (identity).
+    SPEC.md, section 4.4 (modules and load-once imports); E0303 (resolution).
 ")
 
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
@@ -1004,10 +987,6 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-load-ambiguous-import))
       (DiagnosticExplainDetailed (diagnostic-explain-e0305))]
-    [(diagnostic-explain-ascii-case-eq
-        code
-        (cdiag.compiler-diagnostic-code-load-module-identity))
-      (DiagnosticExplainDetailed (diagnostic-explain-e0306))]
     [(diagnostic-explain-ascii-case-eq
         code
         (cdiag.compiler-diagnostic-code-load-duplicate-module))

@@ -724,7 +724,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 35)]
+    [ok : bool (= count 34)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]

@@ -39,10 +39,9 @@ duplicate rows.
 | E0104 | parse | invalid pattern syntax | parser | raise-site `CompilerParseKind` | detailed |
 | E0301 | load | cannot read source module | loader | missing-source branches below | detailed |
 | E0302 | load | cannot read included file | loader | `compiler-load-include-read-error` | detailed |
-| E0303 | load | cannot resolve import | loader | import/include resolver result conversion | detailed |
+| E0303 | load | cannot resolve import or include | loader | import/include resolver and expected-identity conversion | detailed |
 | E0304 | load | missing selected import item | loader | selected-item validation below | detailed |
 | E0305 | load | ambiguous import binding | loader | alias and unqualified collision conversion | detailed |
-| E0306 | load | module identity mismatch | loader | expected-module validation below | detailed |
 | E0307 | load | duplicate module declaration | loader | module declaration validation below | detailed |
 
 Rows are in registry order, which is append order. `E01..` codes are parse
@@ -61,10 +60,9 @@ their code, category, primary/secondary paths and spans, help and notes.
 | --- | --- |
 | E0301 | `compiler-load-surface-summary-load-with-pools`; `compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current`; `compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools`; `compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback` |
 | E0302 | `compiler-load-include-read-error` (all four include kinds) |
-| E0303 | `compiler-load-expand-include-with-pools`; `compiler-load-package-expand-include`; resolver-error arms of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` and `compiler-load-package-decls-with-module-and-roots` |
+| E0303 | `compiler-load-expand-include-with-pools`; `compiler-load-package-expand-include`; resolver-error arms of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` and `compiler-load-package-decls-with-module-and-roots`; `compiler-load-check-expected-module`; `compiler-load-seen-expected-module-with-paths` |
 | E0304 | `compiler-load-check-unqualified-imports`; selected-item arms of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` and `compiler-load-package-decls-with-module-and-roots` |
 | E0305 | `compiler-load-import-alias-collision-result`; both import/import and import/local arms of `compiler-load-unqualified-import-collision-result` |
-| E0306 | `compiler-load-check-expected-module`; `compiler-load-seen-expected-module-with-paths` |
 | E0307 | `compiler-load-decls-module-id-loop`; duplicate module-body arm of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` |
 
 Missing-source diagnostics identify the resolved source path; selected and
@@ -72,6 +70,12 @@ ambiguous imports identify the importing form. A collision with a recorded
 local declaration retains its secondary label. Repeated imports and ordinary
 import cycles remain valid under load-once semantics. The macro-table cycle
 failure belongs to macro expansion, rather than ordinary loader resolution.
+
+Explicit expected-identity checks are internal loader-API resolution contracts
+and use E0303. A source module declaration may override its inferred file
+identity. There is no separate published E0306 code for that valid override.
+Package-qualified includes with unknown dependency aliases also use E0303;
+E0302 covers failure to read a successfully resolved include path.
 
 Package manifest, lock/cache and dependency-artifact failures are separate
 conversion boundaries, tracked by #8982. Macro namespace, expansion, generated

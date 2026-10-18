@@ -103,6 +103,10 @@ explicit module identity overrides, and a local collision's secondary label.
 code/category parity between ordinary and package walkers, legal import cycles,
 pending generators and missing text/binary includes. Registry and explain
 tests require every published loader code to remain documented.
+`loader-package-include-resolution` checks E0303 and the include's source span
+for an unknown package alias on both targets. `loader-unpublished-identity-code`
+keeps E0306 out of the public registry and explanations; explicit API identity
+constraints remain tested as E0303 resolution errors.
 
 ## Packed field receivers
 

@@ -7,6 +7,7 @@
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.io)
 (import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
@@ -3457,12 +3458,197 @@
     (compiler-ast-type-adopt-active-smoke?)
     "caller publication preserves newer appends through shared cursors while isolating unrelated owners and retired revisions"))
 
+(define (compiler-ast-captured-span-state? [pools : ast.AstNodePoolContext]) : bool
+  (let
+    [live : ast.AstExprNodePoolState
+      (ast.ast-expr-pool-cell-read pools.expr-pool)]
+    [active : ast.AstExprNodePoolState (ast.ast-node-pool-state-capture)]
+    (and
+      (= live.segment-bases active.segment-bases)
+      (= live.count active.count)
+      (= live.base-arena active.base-arena)
+      (= live.storage-arena active.storage-arena)
+      (= live.segment-count active.segment-count)
+      (= live.span-slot-segment-bases active.span-slot-segment-bases)
+      (= live.canonical-span-records active.canonical-span-records)
+      (= live.canonical-span-count active.canonical-span-count)
+      (= live.respan-records active.respan-records)
+      (= live.respan-count active.respan-count)
+      (=
+        (ast.ast-expr-span-table-capacity live.canonical-span-records)
+        (ast.ast-expr-span-table-capacity active.canonical-span-records))
+      (=
+        (ast.ast-expr-span-table-capacity live.respan-records)
+        (ast.ast-expr-span-table-capacity active.respan-records))
+      (= live.span-records-monotonic? active.span-records-monotonic?))))
+
+(define (compiler-ast-installed-span-capture?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [old : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [base : i64 -1]
+    [other : i64 -1]
+    [view : i64 -1]
+    [ok : bool true]
+    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (arena.set! scratch))
+    (for [index (iterator.range 0 65)]
+      (let
+        [literal : i64
+          (ast.ast-node-push-active (Literal (ast.ast-lit-int index)))]
+        [line : i64 (+ index 1)]
+        [_canonical : i64
+          (ast.ast-node-push-active
+            (Spanned literal (ast.ast-source-span line 1 line 2)))]
+        (when (= index 0) (set! base literal))
+        (when (= index 1) (set! other literal))
+        (unless (compiler-ast-captured-span-state? pools) (set! ok false))))
+    (for [index (iterator.range 0 65)]
+      (let
+        [line : i64 (+ index 100)]
+        [next : i64
+          (ast.ast-node-push-active
+            (Spanned base (ast.ast-source-span line 3 line 4)))]
+        (when (= index 0) (set! view next))
+        (when
+          (= index 63)
+          (set! old (ast.ast-node-pool-context-capture-active)))
+        (unless (compiler-ast-captured-span-state? pools) (set! ok false))))
+    (unsafe
+      (arena.set! home))
+    (unsafe
+      (arena.destroy scratch))
+    (unless ok (ast.ast-node-pool-context-install! previous) (return false))
+    (set!
+      ok
+      (and
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 65)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 65)
+        (= (ast.ast-node-pool-context-expr-respan-count old) 64)
+        (>=
+          (ast.ast-expr-span-table-capacity
+            (__tl-project-field
+              (ast.ast-expr-pool-cell-read old.expr-pool)
+              respan-records))
+          65)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span old view)
+          100)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))
+    (let
+      [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [frame : i64 (ast.ast-node-push-active (MacroExpansion base 0 0))]
+      [raw : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 1 1)]
+      (ast.ast-node-pool-context-capture-active! raw)
+      (set!
+        ok
+        (and
+          ok
+          (compiler-ast-captured-span-state? raw)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span pools frame)
+            1)))
+      (ast.ast-node-protected-floor-set! mark)
+      (ast.ast-node-set! view (Spanned other (ast.ast-source-span 200 5 201 6)))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-ast-captured-span-state? pools)
+          (= (ast.ast-node-pool-context-expr-respan-count pools) 66)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span pools view)
+            200)))
+      (ast.ast-node-set! view (Spanned -1 (ast.ast-source-span 300 1 300 2)))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-ast-captured-span-state? pools)
+          (match (ast.ast-node-pool-context-expr-view-span pools view)
+            [(No) true]
+            [_ false])))
+      (ast.ast-node-protected-restore!)
+      (ast.ast-node-protected-floor-set! 0)
+      (set!
+        ok
+        (and
+          ok
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span pools view)
+            100)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))
+      (let
+        [nested : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 1 1)]
+        (ast.ast-node-pool-context-install! nested)
+        (ast.ast-node-push-active (Literal (ast.ast-lit-int 9)))
+        (ast.ast-node-pool-context-install! pools)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-ast-captured-span-state? pools)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))))
+      (let
+        [stale : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-snapshot pools)]
+        [_appended : i64
+          (ast.ast-node-push-active
+            (Spanned base (ast.ast-source-span 400 1 400 2)))]
+        (ast.ast-node-pool-context-publish-newer! stale)
+        (set! pools stale)
+        (set!
+          ok
+          (and
+            ok
+            (compiler-ast-captured-span-state? pools)
+            (= (ast.ast-node-pool-context-expr-respan-count pools) 67))))
+      (ast.ast-node-pool-reset-to! 130)
+      (let
+        [reset-respans : i64
+          (ast.ast-node-pool-context-expr-respan-count pools)]
+        [reused : i64
+          (ast.ast-node-push-active
+            (Spanned base (ast.ast-source-span 500 1 500 2)))]
+        (set!
+          ok
+          (and
+            ok
+            (= reused 130)
+            (compiler-ast-captured-span-state? pools)
+            (=
+              (ast.ast-node-pool-context-expr-respan-count pools)
+              (+ reset-respans 1))
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span pools reused)
+              500)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))))
+    (ast.ast-node-pool-context-install! previous)
+    ok))
+
+(test
+  compiler-ast-installed-span-capture
+  (tl_test.assert-true
+    (compiler-ast-installed-span-capture?)
+    "global span changes reach installed cells and retained captures"))
+
 (define (main) : i64
   (unless (compiler-ast-expr-stale-alias-smoke?) (return 32))
   (unless (compiler-ast-type-stale-dedup-smoke?) (return 31))
   (unless (compiler-ast-type-adopt-active-smoke?) (return 30))
   (unless (compiler-ast-type-writer-sync-smoke?) (return 29))
   (unless (compiler-ast-type-pool-stamp-smoke?) (return 28))
+  (unless
+    (compiler-ast-installed-span-capture?)
+    (io.panic "compiler-ast-installed-span-capture failed"))
   (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
   (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
   (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))

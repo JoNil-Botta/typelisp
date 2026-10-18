@@ -303,10 +303,11 @@
         [(Ok actual _)
           (ctfe.ctfe-type-eq-in-env
             env
-            actual
-            (ast.ast-ty-dyn-array-with-pools
-              (ctfe.ctfe-env-pools env)
-              (& (I64))))]
+            (& actual)
+            (&
+              (ast.ast-ty-dyn-array-with-pools
+                (ctfe.ctfe-env-pools env)
+                (& (I64)))))]
         [(Err _) false])
       (match (ctfe.ctfe-expr-to-type
         (& (ctfe.ctfe-ast-get env generated-call))
@@ -326,7 +327,7 @@
     (& origin)
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env actual expected)]
+    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env (& actual) (& expected))]
     [(Err _) false]))
 
 (define (compiler-ctfe-type-expr-rejected?
@@ -1318,13 +1319,13 @@
         (match value
           [(Expr node produced)
             (and
-              (ctfe.ctfe-type-eq-in-env env produced (Expr))
+              (ctfe.ctfe-type-eq-in-env env (& produced) (& (Expr)))
               (match (ast.ast-node-pool-context-expr-get (& pools) node)
                 [(TypeLiteral ty-id)
                   (ctfe.ctfe-type-eq-in-env
                     env
-                    (ast.ast-node-pool-context-type-get (& pools) ty-id)
-                    (clone resolved))]
+                    (& (ast.ast-node-pool-context-type-get (& pools) ty-id))
+                    (& (clone resolved)))]
                 [_ false])
               (match (ctfe.ctfe-expr-list-type-nth
                 (&
@@ -1335,7 +1336,7 @@
                 [(Ok reflected)
                   (match reflected
                     [(Type actual)
-                      (ctfe.ctfe-type-eq-in-env env actual resolved)]
+                      (ctfe.ctfe-type-eq-in-env env (& actual) (& resolved))]
                     [_ false])]
                 [(Err _) false]))]
           [_ false])]
@@ -3062,11 +3063,14 @@
                         0
                         (ast.ast-param-fallback))
                         [(Param _ actual false)
-                          (ctfe.ctfe-type-eq-in-env env actual (clone expected))]
+                          (ctfe.ctfe-type-eq-in-env
+                            env
+                            (& actual)
+                            (& (clone expected)))]
                         [_ false])
                       (match maybe-ret
                         [(Some actual)
-                          (ctfe.ctfe-type-eq-in-env env actual expected)]
+                          (ctfe.ctfe-type-eq-in-env env (& actual) (& expected))]
                         [(No) false]))])]
               [_ false])]
           [_ false])]
@@ -3154,8 +3158,8 @@
                             (= actual-name parameter-name)
                             (ctfe.ctfe-type-eq-in-env
                               env
-                              actual-type
-                              parameter-type))
+                              (& actual-type)
+                              (& parameter-type)))
                           (set! status 5))]
                       [_ (set! status 5)])
                     (match maybe-ret

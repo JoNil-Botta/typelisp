@@ -8827,15 +8827,11 @@
   (let
     [index : i64 build.import-len]
     (set! (array-ref build.import-slots index) import-edge)
-    (CompilerLoadSurfaceBuild
-      build.import-slots
-      (+ index 1)
-      build.decl-slots
-      build.decl-len
-      build.has-tests
-      build.has-export-metadata
-      build.has-generated-decls
-      (or build.has-decl-emitting-macro decl-emitting))))
+    (set! build.import-len (+ index 1))
+    (set!
+      build.has-decl-emitting-macro
+      (or build.has-decl-emitting-macro decl-emitting))
+    build))
 
 (define (compiler-load-surface-build-add-decl
   [build : CompilerLoadSurfaceBuild]
@@ -14461,10 +14457,16 @@
   [scope : i64]
   [set : CompilerPkgLinkSet]) : CompilerPkgLink
   (if (= scope 0)
-    (CompilerPkgLink set link.linux link.windows)
+    (begin
+      (set! link.all set)
+      link)
     (if (= scope 1)
-      (CompilerPkgLink link.all set link.windows)
-      (CompilerPkgLink link.all link.linux set))))
+      (begin
+        (set! link.linux set)
+        link)
+      (begin
+        (set! link.windows set)
+        link))))
 
 ;: The category's value list within a link scope set.
 (define (compiler-pkg-link-set-category [set : CompilerPkgLinkSet] [cat : i64]) : fs.FsStringVector
@@ -14480,10 +14482,16 @@
   [cat : i64]
   [vec : fs.FsStringVector]) : CompilerPkgLinkSet
   (if (= cat 0)
-    (CompilerPkgLinkSet vec set.search-paths set.args)
+    (begin
+      (set! set.libraries vec)
+      set)
     (if (= cat 1)
-      (CompilerPkgLinkSet set.libraries vec set.args)
-      (CompilerPkgLinkSet set.libraries set.search-paths vec))))
+      (begin
+        (set! set.search-paths vec)
+        set)
+      (begin
+        (set! set.args vec)
+        set))))
 
 ;: The value list for a (scope, category) pair.
 (define (compiler-pkg-link-get-vec

@@ -4028,7 +4028,11 @@ Example:
   `bin` packages produce `<package-name>` on Linux and `<package-name>.exe` on
   Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
   `<package-name>.lib` on Windows. Assembly and object side artifacts use the
-  same profile directory. Windows static archives use a stable member order
+  same profile directory. Linux static archives invoke `ar rcsD`; the selected
+  archiver must support deterministic metadata through `D`. A rejected `D`
+  fails the build without retrying in nondeterministic mode. The complete
+  archiver command remains part of runtime artifact freshness.
+  Windows static archives use a stable member order
   and reproducible header metadata: TypeLisp invokes discovered MSVC `lib.exe`
   with `/Brepro`, or falls back to `llvm-ar --format=coff rcsD`.
   `TYPELISP_WINDOWS_LIB` may name either tool family by the executable basename
@@ -5031,7 +5035,9 @@ arena-owned storage escape the scoped region.
 
 ### 5.4 Arithmetic and logical operators
 
-All operators are prefix functions (or special forms):
+All operators are prefix functions (or special forms). Evaluated operands run
+left-to-right and retain the values they had when evaluated, as call arguments
+do (§5.3). Short-circuiting forms evaluate only their selected operands:
 
 | Operator | Signature | Description |
 |----------|-----------|-------------|
@@ -5181,6 +5187,19 @@ guards.
 - A function `define` or function `extern` declares a callable name, not a
   storage place. Assigning to it is rejected before checking the replacement,
   including through imports. Function-valued storage remains assignable.
+- The place is evaluated first, left-to-right through its receiver and
+  projections, retaining each receiver and index value before evaluating
+  `expr` once. Rebinding a receiver or changing an index does not retarget the
+  store: a reference, slice, Box or dynamic-array receiver keeps the storage it
+  selected. A by-value array, struct or tuple receiver is its variable's own
+  storage, so assigning that variable in `expr` writes the same storage the
+  store then updates, and the two variables never share storage afterwards.
+  An array-element place denotes that logical index in the selected
+  array: after `expr`, the store checks the current length and uses the current
+  buffer, including when `expr` grows the array. Checks needed to read an
+  intermediate projection run when that projection is evaluated. The final
+  array bounds check follows the value's effects, including for zero-sized
+  elements; an earlier trap prevents the remaining evaluation.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.

@@ -1,3 +1,5 @@
+;; A zero-sized element store checks its bounds after the value's effects
+;; (SPEC 5.10): the RHS prints before the out-of-bounds trap.
 (import stdlib.io)
 (import stdlib.string)
 

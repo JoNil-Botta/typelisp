@@ -15731,6 +15731,7 @@
       (match (tc-call-effective-arg-expr
         ctx
         env
+        arg-id
         (tc-global-shared-view arg)
         (tc-global-shared-view want))
         [(ResultTcExpr.Err message)
@@ -21821,22 +21822,12 @@
     ctx.program-decls))
 
 (define (tc-context-with-type-module-id [ctx : TcContext] [module-id : i64]) : TcContext
-  (TcContext
-    ctx.shared
-    ctx.job-state
-    ctx.module-id
-    module-id
-    ctx.module
-    ctx.program-decls))
+  (set! ctx.type-module-id module-id)
+  ctx)
 
 (define (tc-context-with-program [ctx : TcContext] [program : ast.AstProgram]) : TcContext
-  (TcContext
-    ctx.shared
-    ctx.job-state
-    ctx.module-id
-    ctx.type-module-id
-    ctx.module
-    (tc-context-program-bits program)))
+  (set! ctx.program-decls (tc-context-program-bits program))
+  ctx)
 
 (define (tc-context-for-type-resolution [ctx : TcContext]) : TcContext
   (if (= ctx.module-id ctx.type-module-id)
@@ -46583,7 +46574,8 @@
         (if (> mark-len current-len)
           current-len
           mark-len))]
-    (TcSpmdEnv env.bindings restored-len)))
+    (set! env.len restored-len)
+    env))
 
 (define (tc-spmd-env-copy-bindings
   [dst : (__tl_dyn-array TcSpmdBinding)]
@@ -54644,13 +54636,10 @@
       [(TcBorrowPlace lifetime referent-ty _ _)
         (Ok (ast.ast-ty-ref lifetime (& referent-ty)))])))
 
-;; The auto-borrow `(& arg)` as a value. Only the place is a node; the borrow
-;; is returned rather than pushed and read back, so no pool is read here.
-(define (tc-call-auto-borrow-expr [arg : ast.AstExpr]) : ast.AstExpr
-  (Borrow
-    false
-    (ast.ast-borrow-lifetime-to-id Inferred)
-    (ast.ast-node-push arg)))
+;; The auto-borrow `(& arg)` as a value, borrowing the argument's own node
+;; ARG-ID. Neither the borrow nor a copy of the argument is pushed (#8411).
+(define (tc-call-auto-borrow-expr [arg-id : i64]) : ast.AstExpr
+  (Borrow false (ast.ast-borrow-lifetime-to-id Inferred) arg-id))
 
 (define (tc-call-effective-var-arg-type
   [ctx : TcContext]
@@ -54842,16 +54831,20 @@
   [ctx : TcContext]
   [name : i64]
   [got : ast.AstType]
+  [arg-id : i64]
   [arg : ast.AstExpr]) : ResultTcExpr
   (if (tc-call-actual-immutable-reference? ctx (tc-global-shared-view got))
     (Ok arg)
     (let
       [_ (try (tc-borrow-place-var name got))]
-      (Ok (tc-call-auto-borrow-expr arg)))))
+      (Ok (tc-call-auto-borrow-expr arg-id)))))
 
+;; The call argument ARG as the callee's formal WANT receives it. ARG is the
+;; node at ARG-ID; an implicit borrow borrows that node itself.
 (define (tc-call-effective-arg-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [arg-id : i64]
   [arg : ast.AstExpr]
   [want : ast.AstType]) : ResultTcExpr
   (if (tc-call-slice-ref-formal? ctx (tc-global-shared-view want))
@@ -54879,9 +54872,10 @@
                           ctx
                           env
                           (tc-global-shared-view arg)))]
-                    (Ok (tc-call-auto-borrow-expr arg)))))
+                    (Ok (tc-call-auto-borrow-expr arg-id)))))
               (match (tc-lookup-visible-id ctx env name)
-                [(Ok got) (tc-call-effective-var-arg-expr ctx name got arg)]
+                [(Ok got)
+                  (tc-call-effective-var-arg-expr ctx name got arg-id arg)]
                 [(Err message)
                   (match (tc-call-arg-expr-type
                     ctx
@@ -54897,7 +54891,7 @@
                                 ctx
                                 env
                                 (tc-global-shared-view arg)))]
-                          (Ok (tc-call-auto-borrow-expr arg))))]
+                          (Ok (tc-call-auto-borrow-expr arg-id))))]
                     [(Err _) (Err message)])]))]
           [_
             (let
@@ -54920,7 +54914,7 @@
                     ctx
                     env
                     (tc-global-shared-view arg))
-                    [(Ok _) (Ok (tc-call-auto-borrow-expr arg))]
+                    [(Ok _) (Ok (tc-call-auto-borrow-expr arg-id))]
                     [(Err message)
                       (if (tc-call-string-temporary-ref-compatible?
                         ctx
@@ -57772,8 +57766,8 @@
       (Err
         (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg))
       (let
-        [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+        [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
         [want : ast.AstType
           (if (tc-invalidate-types-present?)
             (tc-type-strip-invalidate
@@ -57784,6 +57778,7 @@
         (match (tc-call-effective-arg-expr
           ctx
           env
+          arg-id
           (tc-global-shared-view arg)
           (tc-global-shared-view want))
           [(Ok effective-arg)
@@ -92893,6 +92888,51 @@
         (tc-context-expr-get ctx func-box))]
     [_ (tc-expr-maybe-span (tc-context-expr-bases ctx) call-expr)]))
 
+;; Report the error of the operand a macro asked `expr-type` about, at the
+;; operand, in place of the generic `expr-type` message (#8871). The transformer
+;; evaluation notes that operand, with the pools it read it from, in the job's
+;; CTFE macro state rather than in the message, so a macro's own error text can
+;; never name a node. Every failing transformer call reaches this on its error
+;; path, which takes the note whether it is used or not.
+;;
+;; The native route evaluates in its host session's pools, which hold the
+;; operand's caller-origin marker but which the call adopts only on success, so
+;; the error path adopts them the same way first. The diagnostic is replaced
+;; only when it is that `expr-type` failure and the operand, checked again in
+;; the environment of the macro call (the one its capture used), still fails.
+;; The pool-range test is a guard, not a filter: after the adoption every noted
+;; node is in range.
+(define (macro-failed-operand-diagnostic
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
+  (let
+    [state : ctfe_support.CompilerCtfeMacroState
+      (tc-context-ctfe-macro-state ctx)]
+    [noted-pools : ast.AstNodePoolContext
+      (ctfe_support.ctfe-failed-operand-pools-for-state state)]
+    [node : i64 (ctfe_support.ctfe-failed-operand-take-for-state! state)]
+    (if (and
+      (>= node 0)
+      (string.eq
+        (cdiag.compiler-diagnostic-message (& diag))
+        (ctfe_support.ctfe-expr-type-untyped-message)))
+      (begin
+        (ast.ast-node-pool-context-adopt-newer!
+          (tc-context-pools-live ctx)
+          noted-pools)
+        (tc-context-install-pools! ctx)
+        (if (< node (ast.ast-node-pool-context-expr-len (tc-context-pools ctx)))
+          (match (tc-expr ctx type-env (tc-context-expr-get ctx node))
+            [(Err message)
+              (tc-expr-diag
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx node)
+                message)]
+            [(Ok _) diag])
+          diag))
+      diag)))
+
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
   [path : String]
@@ -93018,6 +93058,7 @@
 
 (define (macro-decl-expansion-with-frame
   [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [path : String]
   [call-expr : ast.AstExpr]
   [macro-name : String]
@@ -93032,7 +93073,10 @@
             path
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-output-syntax-id-at
   [session : cis.InternStructuralSessionHandle]
@@ -102253,10 +102297,9 @@
               depth
               out)])])))
 
-;; Profile shim and copy-on-write commit. The inner walker still constructs one
-;; replacement node so its exhaustive syntax logic stays shared with captured
-;; syntax. For an owned node, immediately move that replacement into the
-;; transformer's original slot and rewind the one-node append.
+;; Captured/shared nodes keep the copy path. Uniquely owned span wrappers
+;; commit directly: a temporary wrapper's provenance must not survive the
+;; temporary's rollback. Other owned replacements still commit the final append.
 (define (macro-hygiene-expr
   [expr-bases : i64]
   [expr-id : i64]
@@ -102268,13 +102311,15 @@
       (cfg compile-profile (compiler-tc-walk-hygiene-start!))]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
     [result : i64
-      (macro-hygiene-expr-inner expr-bases expr env macro-name depth)]
+      (macro-hygiene-expr-inner expr-bases expr-id expr env macro-name depth)]
     [reuse? : bool
       (and
         (macro-hygiene-produced-owned? env.state expr-id)
-        (= (+ result 1) (ast.ast-node-pool-context-expr-len env.pools)))]
+        (or
+          (= result expr-id)
+          (= (+ result 1) (ast.ast-node-pool-context-expr-len env.pools))))]
     [out : i64
-      (if reuse?
+      (if (and reuse? (!= result expr-id))
         (let
           [replacement : ast.AstExpr (macro-hygiene-expr-get env result)]
           (ast.ast-node-pool-context-expr-set!
@@ -102321,6 +102366,7 @@
 
 (define (macro-hygiene-expr-inner
   [expr-bases : i64]
+  [expr-id : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -102328,12 +102374,22 @@
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (let
-        [inner : i64 inner-box]
-        [pools : ast.AstNodePoolContext env.pools]
-        (ast.ast-expr-spanned-with-pools
-          pools
-          (macro-hygiene-expr expr-bases inner env macro-name depth)
-          span))]
+        [inner : i64
+          (macro-hygiene-expr expr-bases inner-box env macro-name depth)]
+        [replacement : ast.AstExpr (Spanned inner span)]
+        (if (macro-hygiene-produced-owned? env.state expr-id)
+          (begin
+            (ast.ast-node-pool-context-expr-set!
+              env.pools
+              expr-id
+              (& replacement))
+            expr-id)
+          (ast.ast-node-pool-context-expr-push-borrowed
+            (& env.pools)
+            (& replacement))))]
+    ;; Do not apply a later expansion's hygiene environment to syntax behind a
+    ;; provenance boundary.  Macro discovery still walks through the marker so
+    ;; nested, not-yet-expanded calls can fire in their own hygiene pass.
     [(MacroExpansion _ _ _)
       (ast.ast-node-pool-context-expr-push env.pools expr)]
     [(Var name)
@@ -106092,7 +106148,7 @@
                   (& (tc-resolve-type ctx actual)))]
               (tc-context-install-pools! ctx)
               captured)]
-          [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+          [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
       (ctfe_support.ctfe-untyped-expr-type))
     resolved-expected))
 
@@ -106119,7 +106175,7 @@
             (tc-resolve-type ctx actual))]
         (tc-context-install-pools! ctx)
         captured)]
-    [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+    [(Err _) (ctfe_support.ctfe-failed-expr-type)]))
 
 ;; The declaration a call head names, as the `module/name` key the
 ;; typechecker resolves it to, when that declaration is a `define`d function of
@@ -109937,7 +109993,10 @@
             (macro-invocation-path ctx)
             call-expr
             macro-name
-            (cdiag.compiler-diagnostic-box-shared-view diag))))]))
+            (macro-failed-operand-diagnostic
+              ctx
+              type-env
+              (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -112265,6 +112324,7 @@
                             [(Ok identity _)
                               (macro-decl-expansion-with-frame
                                 call-ctx
+                                global-env
                                 (tc-global-shared-view decl-path)
                                 (tc-global-shared-view call-expr)
                                 (macro-decl-name-display
@@ -112535,6 +112595,7 @@
                                   [(Empty)
                                     (macro-decl-expansion-with-frame
                                       call-ctx
+                                      global-env
                                       (tc-global-shared-view decl-path)
                                       (tc-global-shared-view call-expr)
                                       (macro-decl-name-display

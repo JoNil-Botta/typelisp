@@ -194,7 +194,22 @@ variable literal bases, both length-slot GEP spellings, parameter/duplicate
 definitions, address-taken bases and destinations, and unsupported offsets and
 load types. `tests/integration/string_literal_eq.tl` checks every comparison
 width and runtime equal/different values at opt0/1/2 on both hosts; the matching
-assembly case pins the specialized four-byte comparison.
+assembly case pins the specialized four-byte comparison and its immediate
+little-endian literal word.
+
+`string-literal-data-fold` checks all integer widths and signedness through
+literal descriptor/data loads, copied pointers, word-preserving casts and
+cross-block definitions. It keeps unknown runtime descriptors, aliases with
+real pointer writes, nonunique definitions, unsupported casts/types, negative
+or overflowing offsets and overreads as loads. Descriptor words, non-zero
+descriptor slots, second pointer loads, narrow pointer loads and moves, phi
+pointers and non-integer element strides also stay loads; removing the
+data-mode, descriptor-slot, stride, pointer-load or word-type guard fails one
+of these controls. Its deep-chain boundary and cyclic definitions check that
+proof walks terminate conservatively. String
+operands alone use constructed IR because their text spelling is not lossless;
+the instructions and expected replacements use parsed IR text. Keep these
+checks with the existing literal-length and native equality coverage.
 
 The `copy-call-byte-copy` test also verifies copy/fill exit-value suffixes:
 the counter step must follow the memory operation, and only copies and the

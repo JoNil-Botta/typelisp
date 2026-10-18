@@ -1,5 +1,6 @@
-;; Capture the complete destination and check its bounds before computing the
-;; RHS. Scalar, aggregate, reference and zero-size stores have one order.
+;; Capture the receiver and index before computing the RHS; check the final
+;; element's bounds after it (SPEC 5.10). Scalar, aggregate, reference and
+;; zero-size stores have one order.
 (defstruct Triple
   (a i64)
   (b i64)

@@ -1,5 +1,4 @@
 ;; compiler_backend_object_target_linux.tl - Linux direct-object policy leaf.
-(import compiler_owned_view as owned_view)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
 (import compiler_x64_executable_template as x64_template)
@@ -32,23 +31,20 @@
     (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectStartContribution)
     (LinuxX64))
   (let
-    [entry : String "_tl_start"]
     [with-symbol : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-export-section
         parts
-        (owned_view.compiler-owned-shared-view entry)
+        "_tl_start"
         (Text)
         (Function))]
     [with-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-symbol
-        (&
-          (cobj.CompilerObjectX64Instr.Label
-            (owned_view.compiler-owned-shared-view entry))))]
+        (cobj.CompilerObjectX64Instr.Label "_tl_start"))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-label
-        entry
+        "_tl_start"
         "main")]
     (object_target.compiler-backend-object-add-text-bytes
       with-main-call
@@ -74,9 +70,14 @@
         (compiler-backend-object-add-entry with-tlci)
         with-tlci)]
     [final-parts : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-bss with-entry (& (Zero 0)))]
+      (object_target.compiler-backend-object-add-bss with-entry (Zero 0))]
     (cobj.CompilerObjectImage
       (cobj.compiler-object-section-builder-finish
-        (object_target.compiler-backend-object-base-sections (& final-parts) 4))
-      (object_target.compiler-backend-object-base-symbols (& final-parts))
-      (object_target.compiler-backend-object-base-relocations (& final-parts)))))
+        (object_target.compiler-backend-object-base-sections
+          final-parts.text
+          final-parts.data
+          final-parts.rodata
+          final-parts.bss
+          4))
+      (cobj.compiler-object-symbol-builder-finish final-parts.symbols)
+      (cobj.compiler-object-relocation-builder-finish final-parts.relocations))))

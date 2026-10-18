@@ -32,6 +32,10 @@ invariant_loop_call_write|all|0,2|tests/integration/invariant_loop_call.tl|0|190
 invariant_loop_call_nested|all|0,2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|stage-stdlib
 invariant_loop_call_varying|all|0,2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|stage-stdlib
 loop_call_addr_taken|all|0,2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|stage-stdlib
+global_cell_stored_address_loop|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|0 0|-|stage-stdlib
+global_cell_stored_address_alias|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|1 0|-|stage-stdlib
+global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|2 0|-|stage-stdlib
+global_cell_stored_address_twice|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|3 0|-|stage-stdlib
 hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
 aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
 static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl|-
@@ -55,7 +59,7 @@ guard_sink_store_across_guard|all|-|tests/integration/guard_sink_store_across_gu
 swb_frontier_line_eq|all|-|tests/integration/swb_frontier_line_eq.tl|34|6\n2\n34\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_global_len_eq_split|all|-|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:32:64: array index out of bounds: index=7 length=7\n
 content_bounds_csr|all|-|tests/integration/content_bounds_csr.tl|42|26\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
-content_bounds_abort|all|-|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:39:35: array index out of bounds: index=8 length=8\n
+content_bounds_abort|all|-|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:39:57: array index out of bounds: index=8 length=8\n
 content_bounds_induction|all|-|tests/integration/content_bounds_induction.tl|42|71\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 content_bounds_induction_abort|all|-|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:35:29: array index out of bounds: index=8 length=8\n
 content_bounds_checked|all|-|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
@@ -173,7 +177,7 @@ decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_argument
 compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl|-
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
-call_eval_order|all|0,1,2|tests/integration/call_eval_order.tl|42|-|-|-|-
+call_eval_order|all|-,0,1,2|tests/integration/call_eval_order.tl|42|-|-|-|-
 # By-value memory-class operands keep the value they had before later operands
 # write their storage (#8433, #7900); each proof that omits a snapshot has a
 # witness here: field/borrow/projection/macro writes, globals, raw addresses.
@@ -212,8 +216,10 @@ raw_copy_api|all|0,1,2|stdlib/tests/raw_copy_api.tl|42|-|-|stdlib/string.tl stdl
 array_set_eval_order|all|0,1,2|tests/integration/array_set_eval_order.tl|42|-|-|-|-
 array_store_place|all|0,1,2|tests/integration/array_store_place.tl|42|-|-|-|-
 array_store_scope|all|0,1,2|tests/integration/array_store_scope.tl|42|-|-|stdlib/arena.tl|-
-array_set_bounds_order|all|0,1,2|tests/integration/array_set_bounds_order.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:10:26: array index out of bounds: index=1 length=1\n
-array_set_zero_bounds_order|all|0,1,2|tests/integration/array_set_zero_bounds_order.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:10:26: array index out of bounds: index=1 length=1\n
+array_set_bounds_order|all|0,1,2|tests/integration/array_set_bounds_order.tl|134|RHS ran\n|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:26: array index out of bounds: index=1 length=1\n
+array_set_zero_bounds_order|all|0,1,2|tests/integration/array_set_zero_bounds_order.tl|134|RHS ran\n|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:26: array index out of bounds: index=1 length=1\n
+operator_operand_snapshot|all|0,1,2|tests/integration/operator_operand_snapshot.tl|42|-|-|stdlib/test.tl|-
+set_place_eval_order|all|0,1,2|tests/integration/set_place_eval_order.tl|42|-|-|stdlib/test.tl stdlib/string.tl|-
 call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
 call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
@@ -498,11 +504,11 @@ bce_paired_underflow_sp0_trap|all|-|tests/integration/bce_paired_underflow_trap.
 bce_paired_underflow_sp1_trap|all|-|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:42:46: array index out of bounds: index=-1 length=4\n
 bce_descending_counted_loop|all|-|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 unroll_load_store_remainder|all|-|tests/integration/unroll_load_store_remainder.tl|42|-|-|-|-
-unroll_load_store_even_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:30: array index out of bounds: index=4 length=4\n
-unroll_load_store_odd_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:30: array index out of bounds: index=5 length=5\n
+unroll_load_store_even_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:56: array index out of bounds: index=4 length=4\n
+unroll_load_store_odd_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:56: array index out of bounds: index=5 length=5\n
 bce_call_carrying_versioned_loop|all|-|tests/integration/bce_call_carrying_versioned_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
-bce_call_carrying_fast_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:34: array index out of bounds: index=4 length=4\n
-bce_call_carrying_slow_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:34: array index out of bounds: index=4 length=4\n
+bce_call_carrying_fast_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:57: array index out of bounds: index=4 length=4\n
+bce_call_carrying_slow_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:57: array index out of bounds: index=4 length=4\n
 bce_affine_versioning|all|-|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
 bce_monotone_cursor|all|-,2|tests/integration/bce_monotone_cursor.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
 bce_monotone_cursor_guard_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:54:35: array index out of bounds: index=24 length=24\n
@@ -758,7 +764,7 @@ arena_lifetimes_example|all|-|examples/arena_lifetimes.tl|42|arena lifetime scor
 tl_alloc|all|-|tests/integration/tl_alloc.tl|0|-|-|-|-
 tl_alloc_aligned|all|-|tests/integration/tl_alloc_aligned.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl|-
 tree|all|-|tests/integration/tree.tl|3|-|-|-|-
-tuple_values|all|0,1,2|tests/integration/tuple_values.tl|42|-|-|-|-
+tuple_values|all|-,0,1,2|tests/integration/tuple_values.tl|42|-|-|-|-
 # Moving a Box out of a nested tuple place leaves its Copy sibling readable.
 tuple_nested_place_move|all|0,1,2|tests/integration/tuple_nested_place_move.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-

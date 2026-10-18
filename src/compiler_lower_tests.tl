@@ -1275,26 +1275,39 @@
         [(Err _) false])]
     [(Err _) false]))
 
-;; #8433: a call argument read from a variable is copied before the later
-;; arguments only when one of them can write it. The counts are each
-;; function's var copies: `unrelated` and `assigned` hold their `set!`'s own
-;; copy, and `assigned` adds the snapshot.
-(define (compiler-lower-call-arg-snapshot-source) : String
+;; Call and operator operands copy storage only when later evaluation can
+;; write it. Unrelated writes retain only their assignment copy; a write to
+;; the operand also needs its snapshot.
+(define (compiler-lower-operand-snapshot-source) : String
   "(define (first [a : i64] [_b : i64]) : i64 a)
 (define (plain [x : i64] [y : i64]) : i64 (first x (+ y 1)))
 (define (unrelated [x : i64] [y : i64]) : i64 (first x (begin (set! y 2) y)))
 (define (assigned [x : i64]) : i64 (first x (begin (set! x 2) 0)))
-(define (main) : i64 (+ (plain 1 2) (+ (unrelated 1 2) (assigned 1))))")
+(define (plain-op [x : i64] [y : i64]) : i64 (+ x (+ y 1)))
+(define (unrelated-op [x : i64] [y : i64]) : i64 (+ x (begin (set! y 2) y)))
+(define (assigned-op [x : i64]) : i64 (+ x (begin (set! x 2) 0)))
+(define (main) : i64
+  (+ (plain 1 2) (unrelated 1 2) (assigned 1)
+     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)))")
 
-(define (compiler-lower-call-arg-snapshot-shape-ok?) : bool
+(define (compiler-lower-operand-snapshot-shape-ok?) : bool
   (match (lower-test-functions
-    (lower.lower-compiler-source (compiler-lower-call-arg-snapshot-source)))
+    (lower.lower-compiler-source (compiler-lower-operand-snapshot-source)))
     [(Some functions)
       (and
         (= (lower-test-count functions "plain" (CopyMov)) 0)
         (= (lower-test-count functions "unrelated" (CopyMov)) 1)
-        (= (lower-test-count functions "assigned" (CopyMov)) 2))]
+        (= (lower-test-count functions "assigned" (CopyMov)) 2)
+        (= (lower-test-count functions "plain-op" (CopyMov)) 0)
+        (= (lower-test-count functions "unrelated-op" (CopyMov)) 1)
+        (= (lower-test-count functions "assigned-op" (CopyMov)) 2))]
     [_ false]))
+
+(test
+  compiler-lower-operand-snapshot-shape
+  (test.assert-true
+    (compiler-lower-operand-snapshot-shape-ok?)
+    "snapshot only storage that later evaluation can write"))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
@@ -2703,14 +2716,12 @@
     (lower.lower-compiler-source (compiler-lower-inline-direct-store-source)))
     [(Some functions)
       (and
-        ;; Constructing a field through a reference needs no temporary
-        ;; transfer. A dynamic-array destination materializes its constructor
-        ;; first and transfers once: evaluating the operands may relocate the
-        ;; buffer, so the element address is resolved only afterwards. The
-        ;; fixed structural ABI destination still permits direct construction.
+        ;; No destination needs a temporary transfer. A dynamic-array element
+        ;; is a deferred destination: its address is resolved only after the
+        ;; constructor's operands run, so a relocating operand is harmless.
         (= (lower-test-count functions "direct-field" (CopyBytes)) 0)
         (= (lower-test-count functions "direct-init" (CopyBytes)) 0)
-        (= (lower-test-count functions "direct-dyn-array" (CopyBytes)) 1)
+        (= (lower-test-count functions "direct-dyn-array" (CopyBytes)) 0)
         (= (lower-test-count functions "direct-fixed-array" (CopyBytes)) 0)
         (> (lower-test-count functions "direct-fixed-literal" (CopyBytes)) 0))]
     [_ false]))
@@ -6462,7 +6473,7 @@
       [(LowerTestFunctions.Some functions)
         (and
           (= (lower-test-count functions "get" (LowerTestInstr.Bounds)) 1)
-          (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 2))]
+          (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 1))]
       [_ false])
     (match (lower-test-functions
       (lower.lower-compiler-source (compiler-lower-fixed-array-access-source)))
@@ -6474,7 +6485,7 @@
   compiler-lower-store-place-checks
   (test.assert-true
     (compiler-lower-store-place-checks-ok?)
-    "dynamic stores check reserved and current live extents; fixed stores check once"))
+    "a final element store checks once, after the value: a dynamic array against its current length"))
 
 (define (compiler-lower-array-take-shape-ok?) : bool
   (match (lower-test-functions

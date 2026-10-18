@@ -2573,18 +2573,8 @@
 (define (ast-expr-node-pool-state-with-span-record-order
   [pool : AstExprNodePoolState]
   [monotonic? : bool]) : AstExprNodePoolState
-  (AstExprNodePoolState
-    pool.segment-bases
-    pool.count
-    pool.base-arena
-    pool.storage-arena
-    pool.segment-count
-    pool.span-slot-segment-bases
-    pool.canonical-span-records
-    pool.canonical-span-count
-    pool.respan-records
-    pool.respan-count
-    monotonic?))
+  (set! pool.span-records-monotonic? monotonic?)
+  pool)
 
 (define (ast-expr-node-pool-state-canonical-records-grow
   [pool : AstExprNodePoolState]) : AstExprNodePoolState
@@ -3503,17 +3493,9 @@
   (let
     [slots : (__tl_dyn-array i64) pool.dedup-slots]
     (ty-node-dedup-slots-clear! (ast-place-shared-view slots))
-    (AstTypeNodePoolState
-      pool.segment-bases
-      pool.count
-      pool.base-arena
-      pool.exhausted
-      slots
-      0
-      pool.storage-arena
-      pool.segment-count
-      pool.revision
-      pool.revision-cell)))
+    (set! pool.dedup-slots slots)
+    (set! pool.dedup-count 0)
+    pool))
 
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
@@ -4157,7 +4139,17 @@
       (ptr-write! (ptr-offset cell 1) (ast-node-pool-len))
       (ptr-write! (ptr-offset cell 2) node-pool-base-arena)
       (ptr-write! (ptr-offset cell 3) ast-node-pool-storage-arena)
-      (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count))))
+      (ptr-write! (ptr-offset cell 4) ast-node-pool-segment-count)
+      (ptr-write! (ptr-offset cell 5) ast-node-span-slot-segment-bases)
+      (ptr-write! (ptr-offset cell 6) ast-node-canonical-span-records)
+      (ptr-write! (ptr-offset cell 7) ast-node-canonical-span-count)
+      (ptr-write! (ptr-offset cell 8) ast-node-respan-records)
+      (ptr-write! (ptr-offset cell 9) ast-node-respan-count)
+      (ptr-write!
+        (ptr-offset cell 10)
+        (if ast-node-span-records-monotonic?
+          1
+          0)))))
 
 (define (ty-node-pool-state-capture-to-cell! [cell-address : u64]) : unit
   (let
@@ -6453,11 +6445,8 @@
     out))
 
 (define (ast-spmd-specialization-clone [item : AstSpmdSpecialization]) : AstSpmdSpecialization
-  (AstSpmdSpecialization
-    item.lanes
-    (box (ast-spmd-param-class-list-clone (& (deref item.args))))
-    item.result
-    item.index-param))
+  (set! item.args (box (ast-spmd-param-class-list-clone (& (deref item.args)))))
+  item)
 
 (define (ast-spmd-specialization-fallback) : AstSpmdSpecialization
   (AstSpmdSpecialization 2 (box (ast-spmd-param-class-list-new)) Unit -1))
@@ -8088,7 +8077,7 @@
         [_ false])]
     [(AstMaybeType.Some a)
       (match ,right
-        [(AstMaybeType.Some b) (,on-type ,@contexts a b)]
+        [(AstMaybeType.Some b) (,on-type ,@contexts (& a) (& b))]
         [_ false])]))
 
 (defmacro (ast-expr-list-eq?
@@ -8181,7 +8170,7 @@
                 same
                 (and
                   (= a-name b-name)
-                  (,on-type ,@contexts a-ty b-ty)
+                  (,on-type ,@contexts (& a-ty) (& b-ty))
                   (= a-comptime b-comptime)))])])
       (set! index (+ index 1)))
     same))
@@ -8206,7 +8195,7 @@
               (set!
                 same
                 (and
-                  (,on-pattern ,@contexts a-pattern b-pattern)
+                  (,on-pattern ,@contexts (& a-pattern) (& b-pattern))
                   (,on-expr ,@contexts a-body b-body)))])])
       (set! index (+ index 1)))
     same))
@@ -8268,7 +8257,7 @@
           [_ false])]
       [(AstExpr.Literal a0)
         (match ,r
-          [(AstExpr.Literal b0) (,on-literal ,@x a0 b0)]
+          [(AstExpr.Literal b0) (,on-literal ,@x (& a0) (& b0))]
           [_ false])]
       [(AstExpr.Var a0)
         (match ,r
@@ -8416,7 +8405,7 @@
                   [(AstForeach.Foreach n1 t1 b0 b1 b2)
                     (and
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2))]
@@ -8430,8 +8419,8 @@
                     (and
                       (= m0 m1)
                       (= n0 n1)
-                      (,ty ,@x u0 u1)
-                      (,ty ,@x v0 v1)
+                      (,ty ,@x (& u0) (& u1))
+                      (,ty ,@x (& v0) (& v1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2)
@@ -8449,7 +8438,7 @@
                     (and
                       (= op0 op1)
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (,e ,@x a2 b2)
@@ -8465,11 +8454,11 @@
                     (and
                       (= op0 op1)
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (= p0 p1)
-                      (,ty ,@x u0 u1)
+                      (,ty ,@x (& u0) (& u1))
                       (,e ,@x a2 b2)
                       (,e ,@x a3 b3)
                       (,e ,@x a4 b4))])]
@@ -8483,11 +8472,11 @@
                   [(AstSpmdCompact.Compact n1 t1 b0 b1 p1 u1 b2 b3 b4)
                     (and
                       (= n0 n1)
-                      (,ty ,@x t0 t1)
+                      (,ty ,@x (& t0) (& t1))
                       (,e ,@x a0 b0)
                       (,e ,@x a1 b1)
                       (= p0 p1)
-                      (,ty ,@x u0 u1)
+                      (,ty ,@x (& u0) (& u1))
                       (,e ,@x a2 b2)
                       (,e ,@x a3 b3)
                       (,e ,@x a4 b4))])]

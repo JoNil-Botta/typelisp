@@ -15275,6 +15275,18 @@
           (Var var-id)
           ty))]))
 
+;; A named function value is already an immutable selected callable. Keep its
+;; direct target identity; only storage-backed values need a private snapshot.
+(define (lower-capture-callable
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : ResultLowerExpr
+  (if (match (& value)
+    [(ir.CompilerIrValue.Function _) true]
+    [_ false])
+    (Ok (Expr state value ty))
+    (lower-materialize state value ty)))
+
 (define (lower-materialize-at-expr
   [ctx : (& ctx tc_core.TcContext)]
   [state : LowerState]
@@ -35157,7 +35169,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   ;; The callable is a value evaluated before the arguments, even when its
   ;; source binding is assigned while a later argument is evaluated.
-  (match (try (lower-materialize state func-value func-ty))
+  (match (try (lower-capture-callable state func-value func-ty))
     [(Expr state func-value func-ty)
       (if (lower-c-function-type? (lower-global-shared-view func-ty))
         (lower-indirect-c-abi-call
@@ -66409,7 +66421,7 @@
           [captured-func : LowerExpr
             (match lowered-func
               [(Expr func-state func-value func-ty)
-                (try (lower-materialize func-state func-value func-ty))])]
+                (try (lower-capture-callable func-state func-value func-ty))])]
           (match captured-func
             [(Expr func-state func-value lowered-func-ty)
               (match (lower-indirect-call-args

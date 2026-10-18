@@ -15635,10 +15635,9 @@
               ;; A dependency can supply every value of this nominal type, so
               ;; no local Pack need exist. Capture the same layout facts used
               ;; by its body before the typecheck owner is retired.
-              (when
-                (and
-                  (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
-                  (tc_core.tc-inline-aggregate-layout-register-resident? layout))
+              (if (and
+                (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
+                (tc_core.tc-inline-aggregate-layout-register-resident? layout))
                 (set!
                   index
                   (ir.compiler-ir-representation-index-merge-group
@@ -15653,7 +15652,12 @@
                       (if (lower-register-word-sse-type?
                         (lower-register-layout-word-type layout 1))
                         2
-                        0)))))
+                        0))))
+                (set!
+                  index
+                  (ir.compiler-ir-representation-index-merge-one-word
+                    index
+                    (ast.ast-nominal-name-id-key name))))
               (lower-representation-stable-nominal-mask
                 type-segment-bases
                 state

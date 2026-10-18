@@ -1454,7 +1454,7 @@
             (& (ast.AstType.Struct name-id)))
             [(RegisterGroup words found-mask)
               (and (= words 2) (= found-mask mask))]
-            [(Unknown) (= mask -1)]
+            [(KnownOneWord) (= mask -1)]
             [_ false])]
         [(Err _) false]))))
 

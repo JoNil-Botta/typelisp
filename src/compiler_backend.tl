@@ -1,5 +1,6 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
 (import stdlib.io)
+(import stdlib.iterator)
 (import stdlib.env)
 (cfg compile-profile (import stdlib.profile))
 (cfg compile-profile (import compiler_profile_counters as counters))
@@ -36840,8 +36841,8 @@
           tables.representations
           (& ty))
           [(RegisterGroup count _) count]
-          ;; Unknown values retain the backend's conservative one-slot fallback;
-          ;; only KnownOneWord is positive proof exposed to optimization clients.
+          ;; TypeLisp externs require known facts at program admission. Other
+          ;; IR retains the one-slot fallback without exposing an optimizer proof.
           [_ 1]))]))
 
 (define (compiler-backend-group-type?
@@ -37544,6 +37545,77 @@
       plan
       function-seen)))
 
+;; Package nominal signatures need positive layout/signature evidence. The
+;; representation builder preserves missing extern layouts as Unknown.
+;; Physical structural transports instead carry their representation in the
+;; lowered signature; references do not require the referent's value layout.
+(define (compiler-backend-typelisp-extern-layout-known?
+  [index : CompilerBackendProgramIndex]
+  [ty : (& compiler_ast_types.AstType)]) : bool
+  (match ty
+    [(Func args ret)
+      (for [position
+        (iterator.range
+          0
+          (compiler_ast_types.ast-type-list-len (& (deref args))))]
+        (unless
+          (compiler-backend-typelisp-extern-layout-known?
+            index
+            (&
+              (compiler_ast_types.ast-type-segment-bases-get
+                index.type-segment-bases
+                (compiler_ast_types.ast-type-list-get
+                  (& (deref args))
+                  position
+                  (compiler_ast_types.ast-type-id-fallback)))))
+          (return false)))
+      (compiler-backend-typelisp-extern-layout-known?
+        index
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            index.type-segment-bases
+            ret)))]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (compiler-backend-typelisp-extern-layout-known?
+        index
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            index.type-segment-bases
+            inner)))]
+    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
+      (let
+        [tables : (& index CompilerBackendProgramTables)
+          (compiler-backend-program-tables index)]
+        [transport-mask : i64
+          (compiler_ir_types.compiler-ir-representation-abi-group-mask
+            index.type-segment-bases
+            ty)]
+        (or
+          (let
+            [name : i64
+              (compiler_ir_types.compiler-ir-representation-owned-aggregate-name
+                index.type-segment-bases
+                ty)]
+            (and
+              (>= name 0)
+              (>
+                (compiler-backend-abi-memory-size-from-name
+                  (compiler_ir_types.compiler-ir-symbol-text name))
+                0)))
+          (match (compiler_ir_types.compiler-ir-representation-index-kind
+            index.type-segment-bases
+            tables.representations
+            ty)
+            [(KnownOneWord) (< transport-mask 0)]
+            [(RegisterGroup count mask)
+              (and
+                (= count 2)
+                (>= mask 0)
+                (<= mask 3)
+                (or (< transport-mask 0) (= mask transport-mask)))]
+            [(Unknown) false])))]
+    [_ true]))
+
 ;; Program admission before any emission: every same-program private SPMD
 ;; helper and call must satisfy its explicit ABI descriptor (#7405), then the
 ;; symbol tables must be consistent. Both the assembly and object paths admit a
@@ -37557,6 +37629,19 @@
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]
   [emit-entry : bool]) : ResultCompilerBackendSymbolValidation
+  (for [position (iterator.range 0 externs.len)]
+    (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
+      [(Extern _ _ name ty abi _ _ _)
+        (match abi
+          [(TypeLisp)
+            (unless
+              (compiler-backend-typelisp-extern-layout-known? index (& ty))
+              (return
+                (compiler-backend-symbol-validation-error
+                  (str_cat.str-cat
+                    "backend: missing or conflicting aggregate layout for TypeLisp extern "
+                    name))))]
+          [_ unit])]))
   (let
     [spmd-abi-error : String
       (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)]

@@ -103,7 +103,13 @@ types and conflicting group observations covered. The package runtime lifetime
 test compares ordinary and Windows package assembly at all three levels for
 constructor-free nominal groups with all four integer/SSE word masks. It runs
 on either host and checks the retained output after scope cleanup. Native Slice
-extern rejection remains in the safety corpus.
+extern rejection remains in the safety corpus. The backend admission fixture
+exercises missing indices and entries, conflicting widths and register classes,
+and valid one-word/all four two-word layouts in parameter and result positions.
+Both assembly and object emitters on both targets must reject unresolved
+TypeLisp extern layouts while retaining native C extern behavior. Rebuilding the
+index must preserve missing facts even when native or pointer declarations of
+the same nominal type appear first.
 
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at

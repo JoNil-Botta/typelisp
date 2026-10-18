@@ -22,6 +22,10 @@
   false)
 (define compiler-builtin-id-tl-alloc : i64
   -1)
+(define compiler-builtin-id-tl-memcpy : i64
+  -1)
+(define compiler-builtin-id-tl-memcpy-fresh : i64
+  -1)
 (define compiler-builtin-id-tl-alloc-aligned : i64
   -1)
 (define compiler-builtin-id-tl-alloc-global : i64
@@ -1426,6 +1430,8 @@
           (id compiler-builtin-id-arena-phase-base 305 "phase")
           (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
           (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
+          (id compiler-builtin-id-tl-memcpy 325 "tl_memcpy")
+          (id compiler-builtin-id-tl-memcpy-fresh 326 "tl_memcpy_fresh")
           ;; Captured into their slots but never loaded, so they stay -1.
           (id compiler-builtin-id-fix-LetBinding 311)
           (id compiler-builtin-id-fix-LetBindingList 312))

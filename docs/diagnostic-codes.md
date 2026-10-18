@@ -37,9 +37,50 @@ duplicate rows.
 | E0102 | parse | malformed token | lexer, reader | `token.SourceErrorKind` `TokenError` | detailed |
 | E0103 | parse | malformed form | parser | raise-site `CompilerParseKind` | detailed |
 | E0104 | parse | invalid pattern syntax | parser | raise-site `CompilerParseKind` | detailed |
+| E0301 | load | cannot read source module | loader | missing-source branches below | detailed |
+| E0302 | load | cannot read included file | loader | `compiler-load-include-read-error` | detailed |
+| E0303 | load | cannot resolve import or include | loader | import/include resolver and expected-identity conversion | detailed |
+| E0304 | load | missing selected import item | loader | selected-item validation below | detailed |
+| E0305 | load | ambiguous import binding | loader | alias and unqualified collision conversion | detailed |
+| E0307 | load | duplicate module declaration | loader | module declaration validation below | detailed |
 
 Rows are in registry order, which is append order. `E01..` codes are parse
-codes and `E02..` codes are typecheck codes.
+codes, `E02..` codes are typecheck codes, and `E03..` codes are loader codes.
+
+## Loader and import error families
+
+`compiler-diagnostic-load` assigns the code and `load` category from a
+`CompilerLoadKind` at these construction sites in `compiler_load.tl`. Resolver
+helpers keep plain internal messages; their caller knows the cause when it
+attaches the import span. Classification never examines message wording.
+Forwarded parse/typecheck diagnostics do not enter this conversion and retain
+their code, category, primary/secondary paths and spans, help and notes.
+
+| Code | Public construction sites |
+| --- | --- |
+| E0301 | `compiler-load-surface-summary-load-with-pools`; `compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current`; `compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools`; `compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback` |
+| E0302 | `compiler-load-include-read-error` (all four include kinds) |
+| E0303 | `compiler-load-expand-include-with-pools`; `compiler-load-package-expand-include`; resolver-error arms of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` and `compiler-load-package-decls-with-module-and-roots`; `compiler-load-check-expected-module`; `compiler-load-seen-expected-module-with-paths` |
+| E0304 | `compiler-load-check-unqualified-imports`; selected-item arms of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` and `compiler-load-package-decls-with-module-and-roots` |
+| E0305 | `compiler-load-import-alias-collision-result`; both import/import and import/local arms of `compiler-load-unqualified-import-collision-result` |
+| E0307 | `compiler-load-decls-module-id-loop`; duplicate module-body arm of `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head` |
+
+Missing-source diagnostics identify the resolved source path; selected and
+ambiguous imports identify the importing form. A collision with a recorded
+local declaration retains its secondary label. Repeated imports and ordinary
+import cycles remain valid under load-once semantics. The macro-table cycle
+failure belongs to macro expansion, rather than ordinary loader resolution.
+
+Explicit expected-identity checks are internal loader-API resolution contracts
+and use E0303. A source module declaration may override its inferred file
+identity. There is no separate published E0306 code for that valid override.
+Package-qualified includes with unknown dependency aliases also use E0303;
+E0302 covers failure to read a successfully resolved include path.
+
+Package manifest, lock/cache and dependency-artifact failures are separate
+conversion boundaries, tracked by #8982. Macro namespace, expansion, generated
+output and CTFE codes are tracked by #8983. Both retain the full #7136 scope;
+these loader codes do not classify their forwarded failures.
 
 ## Parse error families
 
@@ -69,8 +110,8 @@ A parser error handed to other code as text (`parse-ast-source`,
 `parse-ast-expr`, `parse-ast-decl-maybe`) has no tag, so a syntax error in
 macro output stays a typecheck diagnostic.
 
-Parser and typechecker canonicalization are the current production sites for
-stable public codes. Loader, package, macro, lowering, backend, linker,
+Parser, typechecker and loader canonicalization are production sites for
+stable public codes. Package, macro, lowering, backend, linker,
 formatter, lint, documentation, and test diagnostics still contain uncoded
 public paths. Add category-specific codes at their canonical conversion points
 before claiming those strings as stable API. Test-only uses of

@@ -3816,6 +3816,13 @@
   _
   _)
 
+(define (compiler-ir-spmd-private-param-seq-borrow
+  [seq : (& seq CompilerIrSpmdPrivateParamSeq)]
+  [index : i64]) : (& seq CompilerIrSpmdPrivateParam)
+  (& (array-ref seq.slots index)))
+
+;; A by-value shallow copy of the element, for the callers that still
+;; need an owned value; it reads without a bounds check.
 (define (compiler-ir-spmd-private-param-seq-ref
   [seq : (& CompilerIrSpmdPrivateParamSeq)]
   [index : i64]) : CompilerIrSpmdPrivateParam
@@ -3838,7 +3845,7 @@
   (let
     [count : i64 0]
     (for [index (iterator.range 0 abi.params.len)]
-      (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
+      (match (compiler-ir-spmd-private-param-seq-borrow abi.params index)
         [(Param _ (Source _ _ _) _) (+= count 1)]
         [_ unit]))
     count))
@@ -3872,7 +3879,7 @@
         (&mut params)
         (compiler-ir-clone-spmd-private-param
           pools
-          (& (compiler-ir-spmd-private-param-seq-ref abi.params index)))))
+          (compiler-ir-spmd-private-param-seq-borrow abi.params index))))
     (CompilerIrSpmdPrivateAbi
       (match abi.schema
         [(V1) (V1)])
@@ -4033,8 +4040,8 @@
           same
           (compiler-ir-spmd-private-param-eq?
             bases
-            (& (compiler-ir-spmd-private-param-seq-ref left.params index))
-            (& (compiler-ir-spmd-private-param-seq-ref right.params index))))
+            (compiler-ir-spmd-private-param-seq-borrow left.params index)
+            (compiler-ir-spmd-private-param-seq-borrow right.params index)))
         (+= index 1))
       same)
     (compiler-ir-spmd-private-index-eq? left.index right.index)
@@ -4098,7 +4105,7 @@
           (compiler-ir-spmd-private-param-render
             structural-session
             type-segment-bases
-            (& (compiler-ir-spmd-private-param-seq-ref abi.params index))))))
+            (compiler-ir-spmd-private-param-seq-borrow abi.params index)))))
     (text_buf.render
       (text_buf.append
         buf
@@ -4161,7 +4168,7 @@
 (define (compiler-ir-spmd-private-param-shape-error
   [abi : (& CompilerIrSpmdPrivateAbi)]
   [index : i64]) : String
-  (match (compiler-ir-spmd-private-param-seq-ref abi.params index)
+  (match (compiler-ir-spmd-private-param-seq-borrow abi.params index)
     [(Param ordinal role ty)
       (cond
         [(not (= ordinal index))
@@ -4225,7 +4232,7 @@
     [last-index-base? : bool
       (and
         (> abi.params.len 1)
-        (match (compiler-ir-spmd-private-param-seq-ref
+        (match (compiler-ir-spmd-private-param-seq-borrow
           abi.params
           (- abi.params.len 1))
           [(Param _ (IndexBase) _) true]
@@ -4248,7 +4255,7 @@
               (string.int->string source)
               " is out of range")]
           [else
-            (match (compiler-ir-spmd-private-param-seq-ref
+            (match (compiler-ir-spmd-private-param-seq-borrow
               abi.params
               (+ source 1))
               [(Param _ (Source _ class _) _)
@@ -6480,7 +6487,7 @@
 (define (compiler-ir-u64-payload-render [value : u64]) : String
   (string.int->string (cast value : i64)))
 
-(define (compiler-ir-value-render [value : CompilerIrValue]) : String
+(define (compiler-ir-value-render [value : (& CompilerIrValue)]) : String
   (match value
     [(Var id) (str_cat.str-cat "%" (string.int->string id))]
     [(Global name) (str_cat.str-cat "@" (compiler-ir-symbol-text name))]
@@ -6494,7 +6501,7 @@
         "true"
         "false")]
     [(Char value) (string.int->string (cast value : i64))]
-    [(String value) value]
+    [(String value) (string.copy value)]
     [(Bytes value)
       (str_cat.str-cat
         "<bytes:"
@@ -6514,7 +6521,7 @@
       (if (= index 0)
         ""
         ", ")
-      (compiler-ir-value-render (compiler-ir-value-seq-ref values index))
+      (compiler-ir-value-render (compiler-ir-value-seq-borrow values index))
       (compiler-ir-value-seq-render-from values (+ index 1)))))
 
 (define (compiler-ir-value-seq-render [values : (& CompilerIrValueSeq)]) : String
@@ -6576,18 +6583,11 @@
 (define (compiler-ir-call-args-array-render
   [values : (& (__tl_dyn-array CompilerIrValue))]
   [index : i64]) : String
-  (if (>=
-    index
-    (array-length (owned_view.compiler-owned-reference-shared-view values)))
+  (if (>= index (array-length values))
     ""
     (str_cat.str-cat
-      (compiler-ir-value-render
-        (compiler-ir-array-shared-view
-          (owned_view.compiler-owned-reference-shared-view values)
-          index))
-      (if (=
-        (+ index 1)
-        (array-length (owned_view.compiler-owned-reference-shared-view values)))
+      (compiler-ir-value-render (& (array-ref values index)))
+      (if (= (+ index 1) (array-length values))
         ""
         (str_cat.str-cat
           ", "
@@ -6753,8 +6753,7 @@
     " lanes "
     (string.int->string lanes)
     " mask "
-    (compiler-ir-value-render
-      (owned_view.compiler-owned-reference-shared-view active-mask))
+    (compiler-ir-value-render active-mask)
     "("
     (compiler-ir-spmd-call-args-render
       structural-session
@@ -6778,8 +6777,7 @@
   [ty : (& ast.AstType)]) : String
   (str_cat.str-cat
     "  tailcall* "
-    (compiler-ir-value-render
-      (owned_view.compiler-owned-reference-shared-view callee))
+    (compiler-ir-value-render callee)
     "("
     (compiler-ir-call-args-render args)
     ") : "
@@ -6833,8 +6831,7 @@
   [value : (& CompilerIrValue)]
   [ty : (& ast.AstType)]) : String
   (str_cat.str-cat
-    (compiler-ir-value-render
-      (owned_view.compiler-owned-reference-shared-view value))
+    (compiler-ir-value-render value)
     " : "
     (compiler-ir-type-render structural-session type-segment-bases ty)))
 
@@ -9504,7 +9501,7 @@
             ty)])]))
 
 (define (compiler-ir-representation-instr-types!
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (& CompilerIrInstrSeq)]
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (for [i (iterator.range 0 (compiler-ir-instr-seq-count instrs))]
     (compiler-ir-representation-instr-def-type!
@@ -9636,7 +9633,7 @@
   [type-segment-bases : i64]
   [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
-  [instrs : CompilerIrInstrSeq]
+  [instrs : (& CompilerIrInstrSeq)]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-instr-seq-count instrs))
     index
@@ -9670,14 +9667,14 @@
     type-segment-bases
     (owned_view.compiler-owned-reference-shared-view index)
     (owned_view.compiler-owned-reference-shared-view types)
-    (owned_view.compiler-owned-reference-shared-view instrs)
+    instrs
     0))
 
 (define (compiler-ir-representation-collect-group-block-seq-from
   [type-segment-bases : i64]
   [index : CompilerIrRepresentationIndex]
   [types : CompilerIrRepresentationVarTypes]
-  [blocks : CompilerIrBlockSeq]
+  [blocks : (& CompilerIrBlockSeq)]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-block-seq-count blocks))
     index
@@ -9910,7 +9907,7 @@
 (define (compiler-ir-representation-collect-one-block-seq-from
   [type-segment-bases : i64]
   [index : CompilerIrRepresentationIndex]
-  [blocks : CompilerIrBlockSeq]
+  [blocks : (& CompilerIrBlockSeq)]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-block-seq-count blocks))
     index

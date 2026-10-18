@@ -39,6 +39,8 @@ allocation from rewind. Preserve the bare legacy phase rows beside these tests.
 The parameter fixture also checks that public type reflection retains both
 generation arguments and that unsafe allocation targets retain their original
 checked expression fact.
+The public CLI table compares cold and repeated batch assembly for all four
+phase fixtures at opt0/1/2 for both targets.
 
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and

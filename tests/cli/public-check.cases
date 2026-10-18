@@ -769,6 +769,21 @@ stderr empty
 same "{{dir}}/cold.s" "{{dir}}/first.s"
 same "{{dir}}/cold.s" "{{dir}}/second.s"
 
+case compile-branded-phase-batch
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena_branded_phase_store arena_branded_phase_flow arena_branded_phase_atomic arena_branded_phase_parameters
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/cold.s"
+exit 0
+stderr empty
+sh for n in first second; do printf '%s|%s\n' "{{root}}/tests/integration/{{each}}.tl" "{{native-dir}}/$n.s"; done > "{{dir}}/batch.txt"
+run compile --batch "{{dir}}/batch.txt" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stderr empty
+same "{{dir}}/cold.s" "{{dir}}/first.s"
+same "{{dir}}/cold.s" "{{dir}}/second.s"
+
 case check-branded-arena-operand-errors
 target linux-x86_64 windows-x86_64
 opt -

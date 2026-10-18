@@ -8,10 +8,11 @@
 # scripts/verify-integration.sh runs).
 #
 # hosts is all, linux or windows. opt lists the levels a row runs at, in
-# order: `-` is the batched default level and 0/1/2 a standalone
-# `--opt-level N` compile (extra prefixed `opt-level:N+`). A row with several
-# levels expands to `name` for `-` and `name_optN` for N; a row with one level
-# keeps its name. extra is `-` for none. `$SRC` in extra is the staged source
+# order: `-` is the default level and 0/1/2 an explicit `--opt-level N`
+# compile (extra prefixed `opt-level:N+`). Batches share a level and layout.
+# A row with several levels expands to `name` for `-` and `name_optN` for N;
+# a row with one level keeps its name. extra is `-` for none. `$SRC` in extra is
+# the staged source
 # path the compiler reports: target/integration-verify/HOST/ROW/ROW.tl.
 
 function fail(message) {

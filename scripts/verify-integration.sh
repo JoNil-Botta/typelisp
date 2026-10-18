@@ -287,6 +287,30 @@ INTEGRATION_POOL_DIR=
 INTEGRATION_POOL_WALL_MS=0
 INTEGRATION_POOL_PEAK_BYTES=0
 INTEGRATION_POOL_PEAK_LABEL=
+INTEGRATION_BATCH_GROUPS='embedded stage-stdlib
+embedded-opt0 stage-stdlib-opt0
+embedded-opt1 stage-stdlib-opt1
+embedded-opt2 stage-stdlib-opt2'
+
+# A group fixes the complete compile argv. Keep the default distinct from an
+# explicit opt1, even when the compiler's current default is opt1.
+integration_batch_group_options() {
+    INTEGRATION_GROUP_LAYOUT=$1
+    INTEGRATION_GROUP_OPT_LEVEL=
+    case "$INTEGRATION_GROUP_LAYOUT" in
+        *-opt[012])
+            INTEGRATION_GROUP_OPT_LEVEL=${INTEGRATION_GROUP_LAYOUT##*-opt}
+            INTEGRATION_GROUP_LAYOUT=${INTEGRATION_GROUP_LAYOUT%-opt*}
+            ;;
+    esac
+    case "$INTEGRATION_GROUP_LAYOUT" in
+        embedded | stage-stdlib) ;;
+        *)
+            echo "[integration] unknown batch compile group: $1" >&2
+            return 1
+            ;;
+    esac
+}
 
 # Compile one batch chunk. The timing row deliberately describes the actual
 # compiler process rather than attributing its elapsed time to individual
@@ -418,6 +442,127 @@ integration_batch_run_chunk() {
     integration_batch_settle_chunk "$_run_chunk_list" "$_run_chunk_label" ''
 }
 
+# A manifest row pins its optimization level with `opt-level:N+` in extra.
+# The queue groups equal levels together; the case loop retains that same
+# level for source-specific replay after a failed chunk.
+manifest_row_split_opt_level() {
+    MANIFEST_ROW_EXTRA=${1:-}
+    MANIFEST_ROW_OPT_LEVEL=
+    case "$MANIFEST_ROW_EXTRA" in
+        opt-level:*)
+            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_EXTRA#opt-level:}
+            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_OPT_LEVEL%%+*}
+            MANIFEST_ROW_EXTRA=${MANIFEST_ROW_EXTRA#opt-level:*+}
+            ;;
+    esac
+}
+
+# Emit one chunk list per group from the staged cases.
+integration_batch_queue() {
+    for _group in $INTEGRATION_BATCH_GROUPS; do
+        : > "$WORKDIR/batch-$_group.list"
+    done
+    while IFS='|' read -r _b_name _b_source _b_want _b_stdout _b_args _b_deps _b_extra _b_suite || [ -n "$_b_name" ]; do
+        case "$_b_name" in
+            "" | \#*) continue ;;
+        esac
+        manifest_row_split_opt_level "${_b_extra:-}"
+        _b_opt_level=$MANIFEST_ROW_OPT_LEVEL
+        _b_group=embedded
+        case "$MANIFEST_ROW_EXTRA" in
+            stage-stdlib | stage-stdlib+expected-stderr:*) _b_group=stage-stdlib ;;
+        esac
+        case "$_b_opt_level" in
+            '') ;;
+            0 | 1 | 2) _b_group=$_b_group-opt$_b_opt_level ;;
+            *)
+                echo "FAIL: invalid batch optimization level for $_b_name: $_b_opt_level" >&2
+                return 1
+                ;;
+        esac
+        _group_list="$WORKDIR/batch-$_b_group.list"
+        # Relative to ROOT, which is the working directory: the compiler reads
+        # these out of a file, so no shell path translation happens on Windows.
+        _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
+        if [ "$HOST_OS" = windows ]; then
+            _b_force=
+            if windows_manifest_assembly_reason "$_b_name" > /dev/null; then
+                _b_force='|force-assembly'
+            fi
+            printf '%s.tl|%s.obj|%s.s%s\n' \
+                "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_group_list"
+        else
+            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group_list"
+        fi
+    done < "$NORMALIZED_MANIFEST"
+
+    # Every chunk is an independent compiler process writing only its own
+    # cases' outputs, so they are queued in chunk order and compiled in the
+    # bounded pool; settling afterwards walks the same order.
+    _pool_queue="$WORKDIR/batch-pool.queue"
+    : > "$_pool_queue"
+    for _group in $INTEGRATION_BATCH_GROUPS; do
+        _group_list="$WORKDIR/batch-$_group.list"
+        [ -s "$_group_list" ] || continue
+        _total=$(wc -l < "$_group_list" | tr -d ' ')
+        echo "[integration] batch group $_group: $_total case(s)"
+        _offset=0
+        _index=0
+        while [ "$_offset" -lt "$_total" ]; do
+            _index=$((_index + 1))
+            _chunk="$WORKDIR/batch-$_group-$_index.list"
+            sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
+                "$_group_list" > "$_chunk"
+            printf 'batch-%s-%s|%s\n' "$_group" "$_index" \
+                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
+            _offset=$((_offset + INTEGRATION_BATCH_SIZE))
+        done
+    done
+}
+
+# The batch route must produce the same assembly as the per-case route, or the
+# amortization is buying a different compile. Prove it on one case per group
+# rather than trusting the argv construction above.
+integration_batch_sentinel() {
+    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+    # Windows plan rows intentionally select either object or assembly. Their
+    # object/forced-assembly differential lives in the focused COFF verifier;
+    # this legacy assembly byte comparison remains the Linux batch oracle.
+    [ "$HOST_OS" = linux ] || return 0
+    for _group in $INTEGRATION_BATCH_GROUPS; do
+        _list="$WORKDIR/batch-$_group-1.list"
+        [ -s "$_list" ] || continue
+        # The final entry has the most warmed-session predecessors available in
+        # a chunk. Selecting it exercises state contamination at a cost of one
+        # standalone compile per group.
+        _entry=$(integration_batch_sentinel_entry "$_list")
+        _sent_src=${_entry%%|*}
+        _sent_asm=${_entry#*|}
+        [ -s "$_sent_asm" ] || continue
+        _sent_ref="$WORKDIR/batch-$_group.sentinel.s"
+        integration_batch_group_options "$_group" || exit 1
+        set -- --stdlib-root "$ROOT/src"
+        if [ "$INTEGRATION_GROUP_LAYOUT" = stage-stdlib ]; then
+            set -- --stdlib-root "$ROOT/stdlib" "$@"
+        fi
+        if [ -n "$INTEGRATION_GROUP_OPT_LEVEL" ]; then
+            set -- "$@" --opt-level "$INTEGRATION_GROUP_OPT_LEVEL"
+        fi
+        # shellcheck disable=SC2086
+        "$COMPILER" compile "$_sent_src" $INTEGRATION_BATCH_TARGET_ARGS \
+            "$@" -o "$_sent_ref" \
+            > "$WORKDIR/batch-$_group.sentinel.stdout" \
+            2> "$WORKDIR/batch-$_group.sentinel.stderr"
+        if ! cmp -s "$_sent_asm" "$_sent_ref"; then
+            echo "FAIL: batched and standalone assembly differ for $_sent_src" >&2
+            echo "  batch:      $_sent_asm" >&2
+            echo "  standalone: $_sent_ref" >&2
+            exit 1
+        fi
+        echo "[integration] batch/standalone assembly identical for $_sent_src"
+    done
+}
+
 # The pool's job callback (see lib-bounded-pool.sh). A job is one chunk named
 # `batch-<group>-<index>`; its list sits at `$WORKDIR/<job>.list`, and its
 # timing rows go to a private file that integration_batch_run_pool merges in
@@ -430,24 +575,24 @@ bounded_pool_run_job() {
     if ci_timing_enabled; then
         TYPELISP_CI_TIMING_FILE="$INTEGRATION_POOL_DIR/timing/$_pool_job.tsv"
     fi
-    case "$_pool_label" in
-        embedded-*)
-            # shellcheck disable=SC2086
-            integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
-                "$_pool_label" "$_pool_cap" $INTEGRATION_BATCH_TARGET_ARGS \
-                --stdlib-root "$ROOT/src"
-            ;;
-        stage-stdlib-*)
-            # shellcheck disable=SC2086
-            integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
-                "$_pool_label" "$_pool_cap" $INTEGRATION_BATCH_TARGET_ARGS \
-                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
-            ;;
-        *)
-            echo "[integration] pool job names no chunk group: $_pool_job" >&2
+    _pool_index=${_pool_label##*-}
+    case "$_pool_index" in
+        '' | *[!0-9]* | 0*)
+            echo "[integration] invalid batch chunk index: $_pool_job" >&2
             return 1
             ;;
     esac
+    integration_batch_group_options "${_pool_label%-*}" || return 1
+    set -- --stdlib-root "$ROOT/src"
+    if [ "$INTEGRATION_GROUP_LAYOUT" = stage-stdlib ]; then
+        set -- --stdlib-root "$ROOT/stdlib" "$@"
+    fi
+    if [ -n "$INTEGRATION_GROUP_OPT_LEVEL" ]; then
+        set -- "$@" --opt-level "$INTEGRATION_GROUP_OPT_LEVEL"
+    fi
+    # shellcheck disable=SC2086
+    integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
+        "$_pool_label" "$_pool_cap" $INTEGRATION_BATCH_TARGET_ARGS "$@"
 }
 
 # Publish the jobs' private timing rows in queue order. A passing pool requires
@@ -1837,6 +1982,169 @@ run_path_normalization_self_test() {
     printf '%s\n' "verify-integration path normalization self-test passed"
 }
 
+run_batch_grouping_self_test() (
+    _group_test_root="$WORKDIR/level-groups/root with space"
+    mkdir -p "$_group_test_root/scripts" "$_group_test_root/src" "$_group_test_root/stdlib"
+    cp "$ROOT/scripts/run-memory-bounded.sh" "$ROOT/scripts/lib-linux-memory-limit.sh" \
+        "$_group_test_root/scripts/"
+    ROOT=$_group_test_root
+    WORKDIR="$ROOT/target/integration-verify/linux"
+    mkdir -p "$WORKDIR"
+    cd "$ROOT"
+    NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
+    INTEGRATION_BATCH_SIZE=2
+    INTEGRATION_BATCH_CHUNKS=0
+    INTEGRATION_BATCH_FAILED_CHUNKS=0
+    INTEGRATION_POOL_PEAK_BYTES=0
+    COMPILER="$WORKDIR/fake-typelisp"
+    cat > "$COMPILER" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1" = compile ] || exit 2
+shift
+batch=
+source=
+if [ "$1" = --batch ]; then batch=$2; shift 2
+else source=$1; shift
+fi
+level=default
+roots=
+output=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --opt-level) level=$2; shift 2 ;;
+        --stdlib-root)
+            case "$2" in "$PWD/src" | "$PWD/stdlib") ;; *) exit 2 ;; esac
+            roots=$roots${2##*/},
+            shift 2
+            ;;
+        -o) output=$2; shift 2 ;;
+        *) exit 2 ;;
+    esac
+done
+emit() {
+    IFS='|' read -r want_level want_roots status < "$1"
+    [ "$level" = "$want_level" ] && [ "$roots" = "$want_roots" ] || exit 2
+    printf '%s|%s\n' "$level" "$roots" > "$2"
+    if [ "$status" = fail ]; then
+        echo "fixture diagnostic: $1" >&2
+        return 1
+    fi
+}
+if [ -n "$batch" ]; then
+    while IFS='|' read -r source output; do emit "$source" "$output" || exit 1; done < "$batch"
+else emit "$source" "$output"
+fi
+EOF
+    chmod +x "$COMPILER"
+    TYPELISP_CI_TIMING_GATE=batch-grouping-self-test
+    ci_timing_init "$WORKDIR/timing.tsv" linux
+
+    : > "$NORMALIZED_MANIFEST"
+    integration_batch_queue
+    [ ! -s "$WORKDIR/batch-pool.queue" ] || exit 1
+
+    mkdir -p "$WORKDIR/single"
+    printf '1|src,|ok\n' > "$WORKDIR/single/single.tl"
+    printf 'single|unused.tl|0|-|-|-|opt-level:1+\n' > "$NORMALIZED_MANIFEST"
+    integration_batch_queue
+    [ "$(cat "$WORKDIR/batch-pool.queue")" = 'batch-embedded-opt1-1|64' ] || exit 1
+    integration_batch_run_pool "$WORKDIR/batch-pool.queue"
+    [ "$(cat "$WORKDIR/single/single.s")" = '1|src,' ] || exit 1
+
+    : > "$NORMALIZED_MANIFEST"
+    # Interleave the manifest; each partition must preserve its original order.
+    for _group_test_index in 1 2 3; do
+        for _group_test_level in 2 default 0 1; do
+            for _group_test_layout in stage_stdlib embedded; do
+                _group_test_name=$_group_test_layout'_'$_group_test_level'_'$_group_test_index
+                _group_test_extra=
+                _group_test_roots=src,
+                if [ "$_group_test_layout" = stage_stdlib ]; then
+                    _group_test_extra=stage-stdlib
+                    _group_test_roots=stdlib,src,
+                fi
+                if [ "$_group_test_level" != default ]; then
+                    _group_test_extra=opt-level:$_group_test_level+$_group_test_extra
+                fi
+                _group_test_status=ok
+                [ "$_group_test_name" != stage_stdlib_2_2 ] || _group_test_status=fail
+                mkdir -p "$WORKDIR/$_group_test_name"
+                printf '%s|%s|%s\n' "$_group_test_level" "$_group_test_roots" "$_group_test_status" \
+                    > "$WORKDIR/$_group_test_name/$_group_test_name.tl"
+                printf '%s|unused.tl|0|-|-|-|%s\n' "$_group_test_name" "$_group_test_extra" \
+                    >> "$NORMALIZED_MANIFEST"
+            done
+        done
+    done
+    integration_batch_queue
+    [ "$(wc -l < "$WORKDIR/batch-pool.queue" | tr -d ' ')" -eq 16 ] || exit 1
+    for _group_test_group in $INTEGRATION_BATCH_GROUPS; do
+        cat "$WORKDIR/batch-$_group_test_group-1.list" \
+            "$WORKDIR/batch-$_group_test_group-2.list" > "$WORKDIR/partition.list"
+        cmp "$WORKDIR/batch-$_group_test_group.list" "$WORKDIR/partition.list" || exit 1
+        [ "$(wc -l < "$WORKDIR/batch-$_group_test_group-1.list" | tr -d ' ')" -eq 2 ] || exit 1
+        [ "$(wc -l < "$WORKDIR/batch-$_group_test_group-2.list" | tr -d ' ')" -eq 1 ] || exit 1
+    done
+    INTEGRATION_BATCH_CHUNKS=0
+    INTEGRATION_BATCH_FAILED_CHUNKS=0
+    integration_batch_run_pool "$WORKDIR/batch-pool.queue"
+    [ "$INTEGRATION_BATCH_CHUNKS" -eq 16 ] && [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -eq 1 ] || exit 1
+    [ ! -e "$WORKDIR/stage_stdlib_2_1/stage_stdlib_2_1.s" ] &&
+        [ ! -e "$WORKDIR/stage_stdlib_2_2/stage_stdlib_2_2.s" ] || exit 1
+    grep -F 'fixture diagnostic: target/integration-verify/linux/stage_stdlib_2_2/stage_stdlib_2_2.tl' \
+        "$WORKDIR/batch-stage-stdlib-opt2-1.stderr" > /dev/null || exit 1
+    integration_batch_sentinel
+    # The original row's level is available for replay, including the healthy
+    # prefix whose partial output was removed with the failed chunk.
+    "$COMPILER" compile target/integration-verify/linux/stage_stdlib_2_1/stage_stdlib_2_1.tl \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
+        -o "$WORKDIR/stage_stdlib_2_1/stage_stdlib_2_1.s"
+    if "$COMPILER" compile target/integration-verify/linux/stage_stdlib_2_2/stage_stdlib_2_2.tl \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
+            -o "$WORKDIR/stage_stdlib_2_2/stage_stdlib_2_2.s" > "$WORKDIR/replay.stdout" 2> "$WORKDIR/replay.stderr"; then
+        echo 'FAIL: the pinned diagnostic disappeared during standalone replay' >&2
+        exit 1
+    fi
+
+    if (integration_batch_settle_chunk "$WORKDIR/batch-embedded-opt0-1.list" missing-1 '') \
+            > "$WORKDIR/missing.stdout" 2> "$WORKDIR/missing.stderr"; then
+        echo 'FAIL: a chunk without its result was accepted' >&2
+        exit 1
+    fi
+    grep -F 'left no compile status' "$WORKDIR/missing.stderr" > /dev/null || exit 1
+    for _group_test_bad in embedded-opt3 embedded-wrong; do
+        if integration_batch_group_options "$_group_test_bad" 2> "$WORKDIR/invalid-group.stderr"; then exit 1; fi
+        grep -F "unknown batch compile group: $_group_test_bad" "$WORKDIR/invalid-group.stderr" > /dev/null || exit 1
+    done
+    if bounded_pool_run_job batch-embedded-opt0-zero 64 2> "$WORKDIR/invalid-index.stderr"; then exit 1; fi
+    grep -F 'invalid batch chunk index' "$WORKDIR/invalid-index.stderr" > /dev/null || exit 1
+    printf 'bad|unused.tl|0|-|-|-|opt-level:3+\n' > "$NORMALIZED_MANIFEST"
+    if integration_batch_queue > "$WORKDIR/invalid-level.stdout" 2> "$WORKDIR/invalid-level.stderr"; then
+        echo 'FAIL: an invalid pinned optimization level reached the pool' >&2
+        exit 1
+    fi
+    grep -F 'invalid batch optimization level for bad: 3' "$WORKDIR/invalid-level.stderr" > /dev/null || exit 1
+
+    # This checks Windows plan data only; no Windows executable is run here.
+    HOST_OS=windows
+    printf '%s\n' \
+        'stdlib_string|unused.tl|0|-|-|-|opt-level:0+' \
+        'string_eq|unused.tl|0|-|-|-|opt-level:1+stage-stdlib' \
+        'u64_float_casts|unused.tl|0|-|-|-|opt-level:2+' > "$NORMALIZED_MANIFEST"
+    integration_batch_queue
+    for _group_test_group in $INTEGRATION_BATCH_GROUPS; do
+        cat "$WORKDIR/batch-$_group_test_group.list"
+    done > "$WORKDIR/windows-rows.list"
+    awk -F '|' '
+        NF != 4 || $4 != "force-assembly" { bad = 1 }
+        { stem = substr($1, 1, length($1) - 3) }
+        $2 != stem ".obj" || $3 != stem ".s" { bad = 1 }
+        END { exit bad || NR != 3 }
+    ' "$WORKDIR/windows-rows.list" || exit 1
+    printf '%s\n' 'verify-integration pinned batch grouping self-test passed'
+)
+
 run_batch_observability_self_test() {
     _dir="$WORKDIR/batch-observability-self-test"
     rm -rf "$_dir"
@@ -2003,6 +2311,7 @@ EOF
         exit 1
     fi
 
+    run_batch_grouping_self_test
     printf '%s\n' "verify-integration batch observability self-test passed"
 }
 
@@ -3084,10 +3393,9 @@ fi
 
 # Batched compile pre-pass. Every manifest case is a compile-success
 # case -- the third field is the *program's* exit code, not a compile
-# expectation -- so the only thing that partitions them is whether the case
-# opted into the on-disk stdlib layout. That makes two argv groups per host, and
-# each group compiles in bounded `compile --batch` chunks instead of one
-# compiler process per case.
+# expectation. Partition by stdlib layout and by default/explicit optimization
+# level, so every chunk shares one exact argv. Each group compiles in bounded
+# `compile --batch` chunks instead of one compiler process per case.
 #
 # On Linux the pre-pass populates per-case assembly. On Windows each row asks
 # the compiler for both destinations and consumes its deterministic COFF plan:
@@ -3101,24 +3409,6 @@ INTEGRATION_BATCH_FAILED_CHUNKS=0
 INTEGRATION_BATCHED_CASES=0
 INTEGRATION_STANDALONE_COMPILES=0
 
-# A manifest row may pin its own optimization level with an `opt-level:N+`
-# prefix on the extra field. The batched pre-pass compiles a whole chunk under
-# one argv, so a row that asks for a level of its own is left out of the batch
-# and compiled standalone by the case loop with `--opt-level N` -- exactly the
-# route a chunk failure already falls back to. Sets MANIFEST_ROW_OPT_LEVEL to
-# the level or the empty string, and MANIFEST_ROW_EXTRA to what is left of the
-# extra field.
-manifest_row_split_opt_level() {
-    MANIFEST_ROW_EXTRA=${1:-}
-    MANIFEST_ROW_OPT_LEVEL=
-    case "$MANIFEST_ROW_EXTRA" in
-        opt-level:*)
-            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_EXTRA#opt-level:}
-            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_OPT_LEVEL%%+*}
-            MANIFEST_ROW_EXTRA=${MANIFEST_ROW_EXTRA#opt-level:*+}
-            ;;
-    esac
-}
 
 # Stage every case's source and dependencies once, before anything compiles
 # them: the batch pre-pass and the case loop read the same staged tree. The
@@ -3273,72 +3563,6 @@ integration_stage_corpus() {
     ci_timing_run manifest stage-copy integration_stage_copy
 }
 
-# Emit one chunk list per group from the staged cases.
-integration_batch_queue() {
-    _group0="$WORKDIR/batch-embedded.list"
-    _group1="$WORKDIR/batch-stage-stdlib.list"
-    : > "$_group0"
-    : > "$_group1"
-    while IFS='|' read -r _b_name _b_source _b_want _b_stdout _b_args _b_deps _b_extra _b_suite || [ -n "$_b_name" ]; do
-        case "$_b_name" in
-            "" | \#*) continue ;;
-        esac
-        manifest_row_split_opt_level "${_b_extra:-}"
-        _b_opt_level=$MANIFEST_ROW_OPT_LEVEL
-        _b_stage=0
-        case "$MANIFEST_ROW_EXTRA" in
-            stage-stdlib | stage-stdlib+expected-stderr:*) _b_stage=1 ;;
-        esac
-        # Staged like every other case, but not batched: its level is its own.
-        [ -z "$_b_opt_level" ] || continue
-        # Relative to ROOT, which is the working directory: the compiler reads
-        # these out of a file, so no shell path translation happens on Windows.
-        _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
-        if [ "$HOST_OS" = windows ]; then
-            _b_force=
-            if windows_manifest_assembly_reason "$_b_name" > /dev/null; then
-                _b_force='|force-assembly'
-            fi
-            if [ "$_b_stage" -eq 1 ]; then
-                printf '%s.tl|%s.obj|%s.s%s\n' \
-                    "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_group1"
-            else
-                printf '%s.tl|%s.obj|%s.s%s\n' \
-                    "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_group0"
-            fi
-        elif [ "$_b_stage" -eq 1 ]; then
-            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group1"
-        else
-            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group0"
-        fi
-    done < "$NORMALIZED_MANIFEST"
-
-    # Every chunk is an independent compiler process writing only its own
-    # cases' outputs, so they are queued in chunk order and compiled in the
-    # bounded pool; settling afterwards walks the same order.
-    _pool_queue="$WORKDIR/batch-pool.queue"
-    : > "$_pool_queue"
-    for _group in embedded stage-stdlib; do
-        if [ "$_group" = embedded ]; then
-            _group_list=$_group0
-        else
-            _group_list=$_group1
-        fi
-        [ -s "$_group_list" ] || continue
-        _total=$(wc -l < "$_group_list" | tr -d ' ')
-        _offset=0
-        _index=0
-        while [ "$_offset" -lt "$_total" ]; do
-            _index=$((_index + 1))
-            _chunk="$WORKDIR/batch-$_group-$_index.list"
-            sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
-                "$_group_list" > "$_chunk"
-            printf 'batch-%s-%s|%s\n' "$_group" "$_index" \
-                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
-            _offset=$((_offset + INTEGRATION_BATCH_SIZE))
-        done
-    done
-}
 
 integration_batch_precompile() {
     [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
@@ -3360,49 +3584,6 @@ else
     INTEGRATION_BATCH_TARGET_ARGS=
 fi
 
-# The batch route must produce the same assembly as the per-case route, or the
-# amortization is buying a different compile. Prove it on one case per group
-# rather than trusting the argv construction above.
-integration_batch_sentinel() {
-    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
-    # Windows plan rows intentionally select either object or assembly. Their
-    # object/forced-assembly differential lives in the focused COFF verifier;
-    # this legacy assembly byte comparison remains the Linux batch oracle.
-    [ "$HOST_OS" = linux ] || return 0
-    for _group in embedded stage-stdlib; do
-        _list="$WORKDIR/batch-$_group-1.list"
-        [ -s "$_list" ] || continue
-        # The final entry has the most warmed-session predecessors available in
-        # a chunk. Selecting it exercises state contamination at a cost of one
-        # standalone compile per group.
-        _entry=$(integration_batch_sentinel_entry "$_list")
-        _sent_src=${_entry%%|*}
-        _sent_asm=${_entry#*|}
-        [ -s "$_sent_asm" ] || continue
-        _sent_ref="$WORKDIR/batch-$_group.sentinel.s"
-        if [ "$_group" = embedded ]; then
-            # shellcheck disable=SC2086
-            "$COMPILER" compile "$_sent_src" $INTEGRATION_BATCH_TARGET_ARGS \
-                --stdlib-root "$ROOT/src" -o "$_sent_ref" \
-                > "$WORKDIR/batch-$_group.sentinel.stdout" \
-                2> "$WORKDIR/batch-$_group.sentinel.stderr"
-        else
-            # shellcheck disable=SC2086
-            "$COMPILER" compile "$_sent_src" $INTEGRATION_BATCH_TARGET_ARGS \
-                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-                -o "$_sent_ref" \
-                > "$WORKDIR/batch-$_group.sentinel.stdout" \
-                2> "$WORKDIR/batch-$_group.sentinel.stderr"
-        fi
-        if ! cmp -s "$_sent_asm" "$_sent_ref"; then
-            echo "FAIL: batched and standalone assembly differ for $_sent_src" >&2
-            echo "  batch:      $_sent_asm" >&2
-            echo "  standalone: $_sent_ref" >&2
-            exit 1
-        fi
-        echo "[integration] batch/standalone assembly identical for $_sent_src"
-    done
-}
 
 # Staging stays inside the batch-compile phase row it has always been part of.
 integration_prepare() {

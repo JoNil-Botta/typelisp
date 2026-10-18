@@ -178,6 +178,16 @@ temporary file and `mv` is safe to share.
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).
 
+`verify-integration.sh` groups native manifest compilations by stdlib layout
+and optimization level: embedded or staged stdlib, each with the default or
+explicit opt0/opt1/opt2. Default and explicit opt1 retain separate provenance.
+The existing bounded pool runs each chunk under one exact argv. Timing rows
+describe actual chunk processes, while case runtime and assertion rows remain
+individual. Linux compares the batch and standalone assembly for one warmed
+entry per populated group. A compile-diagnostic chunk discards its partial
+outputs for replay at each row's original level; memory or timeout stops fail
+the gate. Windows keeps its validated COFF plan and forced assembly assertions.
+
 Linux memory limits (`lib-linux-memory-limit.sh`, used directly by the focused
 inline profile-summary and large CRLF formatter probes) need a usable
 user-systemd manager: it provides a hard cgroup-v2 `MemoryMax` over the complete

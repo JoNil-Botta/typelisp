@@ -511,8 +511,10 @@
         "semantic-origin-storage"
         (let
           [control : i64
-            (compiler_typecheck_core.tc-job-state-parser-control
-              typecheck-state)]
+            (if (= typecheck-state.address 0)
+              0
+              (compiler_typecheck_core.tc-job-state-parser-control
+                typecheck-state))]
           (if (= control 0)
             0
             (compiler_parse_core.compiler-parse-origin-word

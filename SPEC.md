@@ -5029,6 +5029,8 @@ arena-owned storage escape the scoped region.
 (func arg1 arg2 ...)
 ```
 
+- The callee expression is evaluated once before its arguments. The call uses
+  that captured callable value even if an argument changes its source storage.
 - Direct calls: the callee is a known function name.
 - Indirect calls: the callee is a variable or parameter of function type,
   including a named top-level function passed as a function value.

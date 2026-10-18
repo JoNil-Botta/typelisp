@@ -1085,7 +1085,10 @@
   (storage-root-kinds lower_i64_i64_map.Map)
   (storage-root-names lower_i64_i64_map.Map)
   ;; Vars holding a `ptr-read` view of memory-class storage.
-  (storage-raw-views lower_i64_i64_map.Map))
+  (storage-raw-views lower_i64_i64_map.Map)
+  ;; Binding var -> how many store places captured into its home are pending
+  ;; while their values are lowered (`lower-state-home-pinned?`).
+  (pinned-homes lower_i64_i64_map.Map))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1149,6 +1152,7 @@
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
+        (lower_i64_i64_map.with-capacity 4)
         (lower_i64_i64_map.with-capacity 4)))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
@@ -14419,6 +14423,55 @@
       (&mut (__tl-project-field (__tl-box-place data) storage-raw-views))
       var-id
       1)))
+
+;; A store place captured before its value points into its receiver's home.
+;; While the value is lowered that binding is pinned: assigning it must write
+;; the home in place, as SPEC 5.10 states for a by-value receiver, instead of
+;; repointing the binding to fresh storage the captured place cannot see.
+(define (lower-state-home-pin-count [state : LowerState] [var-id : i64]) : i64
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (lower_i64_i64_map.get-value-or
+      (& (__tl-project-field (__tl-box-place data) pinned-homes))
+      var-id
+      0)))
+
+(define (lower-state-home-pin-set!
+  [state : LowerState]
+  [var-id : i64]
+  [count : i64]) : unit
+  (when
+    (>= var-id 0)
+    (let
+      [data : (Box LowerStateData) (lower-state-box state)]
+      (lower_i64_i64_map.insert-ref!
+        (&mut (__tl-project-field (__tl-box-place data) pinned-homes))
+        var-id
+        count))))
+
+(define (lower-state-home-pinned? [state : LowerState] [var-id : i64]) : bool
+  (> (lower-state-home-pin-count state var-id) 0))
+
+;; The local binding at the root of a store receiver's projections, as the move
+;; checker roots them, or -1.
+(define (lower-store-receiver-home-var
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [receiver : ast.AstExpr]) : i64
+  (match (tc_core.tc-move-root-projection-var-id
+    (tc_core.tc-context-expr-bases ctx)
+    receiver)
+    [(Some name)
+      (let
+        [id : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (csym.compiler-symbols-missing-handle))]
+        (if (csym.compiler-symbols-handle-found? id)
+          id
+          -1))]
+    [(No) -1]))
 
 (define (lower-state-storage-raw-view? [state : LowerState] [var-id : i64]) : bool
   (let
@@ -30256,16 +30309,23 @@
                                           (if (lower-inline-aggregate-abi-copy-needed?
                                             ctx
                                             target-ty)
-                                            (if (lower-local-assignment-rebind?
-                                              assign-state
-                                              value-box
-                                              (lower-global-shared-view
-                                                assign-ir)
-                                              rhs-mark)
+                                            (if (and
+                                              (not
+                                                (lower-state-home-pinned?
+                                                  assign-state
+                                                  id))
+                                              (lower-local-assignment-rebind?
+                                                assign-state
+                                                value-box
+                                                (lower-global-shared-view
+                                                  assign-ir)
+                                                rhs-mark))
                                               ;; The value sits in fresh storage
                                               ;; this assignment produced; the
                                               ;; binding takes it as its new
-                                              ;; home instead of copying it.
+                                              ;; home instead of copying it,
+                                              ;; unless a pending store place
+                                              ;; still points into the old home.
                                               (begin
                                                 (lower-state-storage-derive!
                                                   assign-state
@@ -36085,7 +36145,9 @@
   [origin : (& origin ast.AstExpr)]) : i64
   (match origin
     [(or (Spanned inner-box _) (Ann inner-box _))
-      (lower-call-origin-callee-box ctx (& (lower-context-expr-get ctx inner-box)))]
+      (lower-call-origin-callee-box
+        ctx
+        (& (lower-context-expr-get ctx inner-box)))]
     [(Call func-box _) func-box]
     [_ -1]))
 
@@ -44053,6 +44115,37 @@
                             origin))]
                       (Ok (Expr refreshed old-value result-ty)))]))]))])))
 
+;; Stores `value` into `place`, captured from `receiver` before the value runs.
+;; The receiver's binding stays pinned to the home `place` points into until
+;; the store lands (`lower-state-home-pinned?`).
+(define (lower-store-expr-into-receiver-place-result
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : LowerStorePlace]
+  [receiver : ast.AstExpr]
+  [value : ast.AstExpr]
+  [origin : ast.AstExpr]
+  [array-slot? : bool]) : ResultLowerExpr
+  (let
+    [home : i64 (lower-store-receiver-home-var ctx env receiver)]
+    [pins : i64 (lower-state-home-pin-count state home)]
+    (lower-state-home-pin-set! state home (+ pins 1))
+    (match (lower-store-expr-into-place-result
+      ctx
+      state
+      env
+      type-env
+      place
+      value
+      origin
+      array-slot?)
+      [(ResultLowerExpr.Ok (LowerExpr.Expr stored stored-value stored-ty))
+        (lower-state-home-pin-set! stored home pins)
+        (ResultLowerExpr.Ok (LowerExpr.Expr stored stored-value stored-ty))]
+      [(ResultLowerExpr.Err error) (ResultLowerExpr.Err error)])))
+
 (define (lower-store-projected-result
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -44062,12 +44155,13 @@
   [receiver : ast.AstExpr]
   [value : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-store-expr-into-place-result
+  (match (lower-store-expr-into-receiver-place-result
     ctx
     state
     env
     type-env
     place
+    (lower-global-shared-view receiver)
     value
     (lower-global-shared-view origin)
     false)
@@ -44417,12 +44511,13 @@
     true
     value-box)
     [(ResultLowerStorePlace.Ok captured place)
-      (lower-store-expr-into-place-result
+      (lower-store-expr-into-receiver-place-result
         ctx
         captured
         env
         type-env
         place
+        (lower-context-expr-get ctx arr-box)
         (lower-context-expr-get ctx value-box)
         (lower-context-expr-get ctx index-box)
         true)]
@@ -45028,11 +45123,7 @@
                 in-call?
                 budget))]
           [(ast.AstExpr.Set target value-box)
-            (if (lower-snapshot-name-may-denote-root?
-              ctx
-              type-env
-              target
-              name)
+            (if (lower-snapshot-name-may-denote-root? ctx type-env target name)
               -1
               (lower-alias-scan-written
                 (lower-alias-scan
@@ -45048,8 +45139,7 @@
                (ast.AstExpr.ArraySet place-box _ _)
                (ast.AstExpr.ArrayTake place-box _ _)
                (ast.AstExpr.ArrayPush place-box _)
-               (ast.AstExpr.BoxSet place-box _)
-               (ast.AstExpr.BoxTake place-box)
+               (ast.AstExpr.BoxSet place-box _) (ast.AstExpr.BoxTake place-box)
                (ast.AstExpr.PtrAddrOf place-box)
                (ast.AstExpr.Borrow _ _ place-box))
             (if (lower-snapshot-place-roots-at? ctx type-env place-box name)
@@ -45058,8 +45148,7 @@
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (ast.ast-expr-child-ids
-                    (lower-context-expr-get ctx expr-id))
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
                   0
                   name
                   written
@@ -45089,22 +45178,8 @@
                   in-call?
                   budget)]
               (lower-alias-scan-join
-                (lower-alias-scan
-                  ctx
-                  type-env
-                  left
-                  name
-                  after
-                  in-call?
-                  budget)
-                (lower-alias-scan
-                  ctx
-                  type-env
-                  right
-                  name
-                  after
-                  in-call?
-                  budget)))]
+                (lower-alias-scan ctx type-env left name after in-call? budget)
+                (lower-alias-scan ctx type-env right name after in-call? budget)))]
           ;; The scrutinee, then each arm from the state it left.
           [(ast.AstExpr.Match _)
             (let
@@ -45146,8 +45221,7 @@
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (ast.ast-expr-child-ids
-                    (lower-context-expr-get ctx expr-id))
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
                   0
                   name
                   written
@@ -45378,12 +45452,12 @@
                     (ResultLowerExpr.Ok
                       (LowerExpr.Expr init-state init-value init-ty))]
                   [(lower-let-may-adopt-moved-storage?
-                      ctx
-                      init-state
-                      type-env
-                      init-source
-                      (lower-global-shared-view init-ty)
-                      id)
+                    ctx
+                    init-state
+                    type-env
+                    init-source
+                    (lower-global-shared-view init-ty)
+                    id)
                     ;; The binding takes over the moved binding's storage and
                     ;; becomes its owner, so later alias proofs ask whether
                     ;; the new name is written.
@@ -70323,7 +70397,9 @@
                 (lower-state-emit
                   done-state
                   (ir.CompilerIrInstr.Return
-                    (lower-return-maybe (ir.CompilerIrValue.Var sret-var) ret-ty))))]
+                    (lower-return-maybe
+                      (ir.CompilerIrValue.Var sret-var)
+                      ret-ty))))]
             [(LowerSlotStore.Err message) (ResultLowerState.Err message)]
             [(LowerSlotStore.No unchanged)
               (lower-return-expr-generic ctx unchanged env type-env expr ret-ty)]))]

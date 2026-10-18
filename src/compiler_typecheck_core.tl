@@ -69970,9 +69970,9 @@
         [_ (Ok moved)]))
     (Ok moved)))
 
-;; Core length/index inspectors take their receiver as a source-level place and
-;; never transfer its owner handle. Their argument traversal is therefore an
-;; implicit shared borrow; ordinary by-value calls get no such exemption.
+;; Core clone and length/index inspectors observe their source-level place,
+;; without transferring its owner handle. Only the canonical, unshadowed clone
+;; observes its operand; ordinary by-value calls get no such exemption.
 (define (tc-move-global-place-inspector-call?
   [expr-bases : i64]
   [_ctx : TcContext]
@@ -69995,7 +69995,10 @@
           false
           (or
             (cbi.compiler-builtin-typecheck-length-call-id? name-id)
-            (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id))))
+            (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
+            (and
+              (cbi.compiler-builtin-typecheck-clone-id? name-id)
+              (not (tc-source-value-bound-id? _ctx _env name-id))))))
       false)))
 
 (define (tc-move-local-call-capability [locals : TcMovedSet] [name-id : i64]) : i64

@@ -43,6 +43,9 @@
 (define (move-owned [items : (Array String 2)]) : String
   (array-ref items 0))
 
+(define (clone-first [items : (& (Array String 2))]) : String
+  (clone (array-ref items 0)))
+
 (define (touch [value : (&mut i64)]) : unit
   (set! (deref value) 7))
 
@@ -73,8 +76,13 @@
       (test.assert-true (starts-hello? (& texts)) "string comparison observes")]
     [_ (test.assert-i64-eq (width (& nested)) 2 "length observes nested array")]
     [_ (change-nested (&mut nested))]
+    [copied : String (clone-first (& texts))]
     [old : String (replace-first (&mut texts))]
     [moved : String (move-owned (array "x" "yy"))]
+    (test.assert-i64-eq
+      (string.string-length (& copied))
+      5
+      "borrowed element clone owns its result")
     (test.assert-i64-eq
       (string.string-length (& old))
       5

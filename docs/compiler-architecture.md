@@ -45,7 +45,7 @@ The unspanned root of a normalized dotted field read is viewed at that read.
 Fixed-array reference reads are checked as transfers independently of region
 escape: matching lifetimes do not give a borrowed element an owner. The shared
 move walker carries explicit place-read access for projection receivers,
-borrows, replacements and observing primitives. Indexes, call arguments and
+borrows, clones, replacements and observing primitives. Indexes, call arguments and
 stored values still use value traversal. Reference parameters are reborrowed
 at calls; constructor fields remain transfers. Receiver classification uses
 checked expression types, including reference-valued calls and projections.

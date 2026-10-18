@@ -133,7 +133,15 @@
         (tuple
           "(Array String 2)"
           "i64"
-          "(let [alias consume] (alias (array-ref p 0)))"))]
+          "(let [alias consume] (alias (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (array-ref p (consume (array-ref p 0))))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [clone consume] (clone (array-ref p 0)))"))]
     [good
       (array
         (tuple "(Array i64 2)" "i64" "(+ (array-ref p 0) (array-ref p 1))")
@@ -150,7 +158,14 @@
           "(Array (Tuple String i64) 1)"
           "i64"
           "(tuple-ref (array-ref p 0) 1)")
-        (tuple "(Array String 2)" "(& p str)" "(& (array-ref p 0))"))]
+        (tuple "(Array String 2)" "(& p str)" "(& (array-ref p 0))")
+        (tuple "(Array String 2)" "String" "(clone (array-ref p 0))")
+        (tuple "(Array Item 2)" "Item" "(clone (array-ref p 0))")
+        (tuple "(Array (Box i64) 1)" "(Box i64)" "(clone (array-ref p 0))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "(Array String 1)"
+          "(clone (array-ref p 0))"))]
     (for [kind (iterator.range 0 2)]
       (let
         [reference : String

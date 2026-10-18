@@ -339,6 +339,16 @@ checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
 
+The `fixed-array-reference-value-and-place-access` virtual-source matrix rejects
+non-Copy transfers through shared and mutable array references across bindings,
+arguments, results, branches, containers and stores, including matching
+signature lifetimes and reference-valued receivers. Copy aggregates and fields,
+borrowed elements and observing primitives stay accepted. Reborrow and replacement
+controls distinguish reading a place from transferring its element. The public
+`fixed-array-reference-*` cases pin E0208 and source locations through check and
+compile for both targets at every optimization level. `array_reference_reads.tl`
+runs the corresponding positive paths and owned moves in the native matrix.
+
 The public-check `check-invalidated-parameter-*` cases retain read locations,
 invalidation secondary labels, ownership help and decoded E0208 diagnostics
 for multi-expression functions, lambdas and nested lets. Both direct safe

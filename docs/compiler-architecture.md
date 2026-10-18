@@ -42,6 +42,13 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
+Fixed-array reference reads are checked as transfers independently of region
+escape: matching lifetimes do not give a borrowed element an owner. The shared
+move walker carries explicit place-read access for projection receivers,
+borrows, replacements and observing primitives. Indexes, call arguments and
+stored values still use value traversal. Reference parameters are reborrowed
+at calls; constructor fields remain transfers. Receiver classification uses
+checked expression types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:

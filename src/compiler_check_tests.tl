@@ -21,6 +21,181 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_parse_core as parser)
 (import sym_i64_env)
+(cfg test (import stdlib.iterator))
+(cfg test (import stdlib.test))
+
+(test
+  fixed-array-reference-reborrow-and-replacement
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/array_reference_reborrow.tl"
+      "(define (touch [p : (&mut i64)]) : unit (set! (deref p) 2))
+(define (via [p : (&mut (Array (&mut i64) 1))]) : unit
+  (touch (array-ref p 0)))
+(define (main) : i64 42)")
+    "a reference argument reborrows an element through mutable array access")
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/array_reference_replace.tl"
+      "(define (via [p : (&mut (Array String 2))]) : String
+  (replace! (array-ref p 0) \"new\"))
+(define (main) : i64 42)")
+    "replacement owns the old value after installing its successor"))
+
+(cfg
+  test
+  (define (compiler-check-array-reference-case-source
+    [reference : (& reference str)]
+    [row : (& row (Tuple String String String))]) : String
+    (str_cat.str-cat
+      "(defstruct Bag (items (Array String 2)))\n"
+      "(defstruct Item (text String) (number i64))\n"
+      "(defstruct Triple (x i64) (y i64) (z i64))\n"
+      "(defstruct Holder (text String))\n"
+      "(define (consume [text : String]) : i64 7)\n"
+      "(define (observe [text : (& str)]) : i64 7)\n"
+      "(define (relay [p : ("
+      (string.copy reference)
+      " p (Array String 2))]) : ("
+      (string.copy reference)
+      " p (Array String 2)) p)\n"
+      "(define (via [p : ("
+      (string.copy reference)
+      " p "
+      (string.copy (& (tuple-ref (deref row) 0)))
+      ")][index : i64]) : "
+      (string.copy (& (tuple-ref (deref row) 1)))
+      "\n  "
+      (string.copy (& (tuple-ref (deref row) 2)))
+      ")\n"
+      "(define (main) : i64 42)\n")))
+
+(test
+  fixed-array-reference-value-and-place-access
+  (let
+    [bad
+      (array
+        (tuple "(Array String 2)" "i64" "(consume (array-ref p 0))")
+        (tuple "(Array String 2)" "i64" "(consume (array-ref p index))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [s : String (array-ref p 0)] (consume s))")
+        (tuple "(Array String 2)" "i64" "(let [s (array-ref p 0)] (consume s))")
+        (tuple "(Array String 2)" "String" "(array-ref p 0)")
+        (tuple "(Array String 2)" "String" "(begin 0 (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(if (= index 0) (array-ref p 0) \"fallback\")")
+        (tuple "(Array String 2)" "Holder" "(Holder (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "(Tuple String i64)"
+          "(tuple (array-ref p 0) 1)")
+        (tuple "(Array String 2)" "(Array String 1)" "(array (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [s : String \"old\"] (set! s (array-ref p 0)) (consume s))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : (Array String 1) (array \"old\")] (set! (array-ref out 0) (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : Holder (Holder \"old\")] (set! out.text (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : (Tuple String i64) (tuple \"old\" 1)] (set! (tuple-ref out 0) (array-ref p 0)))")
+        (tuple "Bag" "i64" "(consume (array-ref p.items 0))")
+        (tuple "(Array String 2)" "(in p String)" "(array-ref p 0)")
+        (tuple "(Array String 2)" "(in p (Box String))" "(box (array-ref p 0))")
+        (tuple "(Array String 2)" "i64" "(consume (array-ref (relay p) 0))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(consume (array-ref (tuple-ref (tuple p) 0) 0))")
+        (tuple "(Array Item 2)" "String" "(array-ref p 0).text")
+        (tuple "(Array (Box i64) 1)" "(Box i64)" "(array-ref p 0)")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (array-ref p 0) 0)")
+        (tuple "(Array String 0)" "String" "(array-ref p 0)")
+        (tuple "(Array String 1)" "String" "(array-ref p 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(observe (& (array-ref p (consume (array-ref p 0)))))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [alias consume] (alias (array-ref p 0)))"))]
+    [good
+      (array
+        (tuple "(Array i64 2)" "i64" "(+ (array-ref p 0) (array-ref p 1))")
+        (tuple "(Array Triple 1)" "Triple" "(array-ref p 0)")
+        (tuple "(Array Item 2)" "i64" "(array-ref p 0).number")
+        (tuple "(Array String 2)" "i64" "(observe (& (array-ref p 0)))")
+        (tuple "(Array String 2)" "i64" "(observe (array-ref p 0))")
+        (tuple "(Array String 2)" "bool" "(= (array-ref p 0) \"hello\")")
+        (tuple
+          "(Array (Array String 2) 1)"
+          "i64"
+          "(array-length (array-ref p 0))")
+        (tuple
+          "(Array (Tuple String i64) 1)"
+          "i64"
+          "(tuple-ref (array-ref p 0) 1)")
+        (tuple "(Array String 2)" "(& p str)" "(& (array-ref p 0))"))]
+    (for [kind (iterator.range 0 2)]
+      (let
+        [reference : String
+          (if (= kind 0)
+            "&"
+            "&mut")]
+        (for [index (iterator.range 0 (array-length bad))]
+          (let
+            [source : String
+              (compiler-check-array-reference-case-source
+                (& reference)
+                (& (array-ref bad index)))]
+            [rejected : bool
+              (match (check_core.compiler-check-source
+                "tests/array_reference_transfer.tl"
+                source)
+                [(Ok _ _) false]
+                [(Err diagnostics _)
+                  (let
+                    [items : cdiag.CompilerDiagnosticList
+                      (cdiag.compiler-diagnostic-list-box-shared-view
+                        diagnostics)]
+                    [first : cdiag.CompilerDiagnostic
+                      (cdiag.compiler-diagnostic-list-first items)]
+                    (and
+                      (= (cdiag.compiler-diagnostic-list-count items) 1)
+                      (match (cdiag.compiler-diagnostic-code (& first))
+                        [(CompilerDiagnosticSomeString code)
+                          (string.eq code "E0208")]
+                        [CompilerDiagnosticNoString false])))])]
+            (test.assert-true
+              rejected
+              (str_cat.str-cat
+                "borrowed fixed-array transfer: "
+                (string.copy (& (tuple-ref (array-ref bad index) 2)))))))
+        (for [index (iterator.range 0 (array-length good))]
+          (test.assert-true
+            (compiler-check-source-ok?
+              "tests/array_reference_read.tl"
+              (compiler-check-array-reference-case-source
+                (& reference)
+                (& (array-ref good index))))
+            (str_cat.str-cat
+              "fixed-array observation: "
+              (string.copy (& (tuple-ref (array-ref good index) 2))))))))))
 
 (define (compiler-check-fix-test-position-index
   [source : (& source str)]

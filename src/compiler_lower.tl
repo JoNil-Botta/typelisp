@@ -69111,9 +69111,11 @@
       [mark : i64 (arena.tl_region_mark)]
       [function-state : CompilerLowerFunctionState
         (compiler-lower-function-state-new lower-state)]
+      ;; Local descendants belong to this scratch extent; their immutable
+      ;; parent tail and its read-only chain index keep the enclosing owner.
       (match (lower-function
         ctx
-        top-env
+        (tc_core.tc-type-env-fork-function-store top-env)
         type-cache
         function-state
         logical-name
@@ -69142,7 +69144,7 @@
                 (arena.tl_arena_set scratch)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set enclosing))
-              (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+              (tc_core.tc-type-env-retire-function-store! job-state)
               (Ok escaped-fns escaped-spans)))]
         [(Err message)
           (unsafe
@@ -69160,7 +69162,7 @@
               (arena.tl_arena_set scratch)
               (arena.tl_region_reset mark)
               (arena.tl_arena_set enclosing))
-            (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
+            (tc_core.tc-type-env-retire-function-store! job-state)
             (Err escaped-message))]))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64

@@ -28,6 +28,127 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-function-env-scratch
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [parent-name : i64 (ci.intern "function-env-parent")]
+    [missing : i64 (ci.intern "function-env-missing")]
+    [parent : tc_core.TcTypeEnv
+      (tc_core.tc-env-with-cache
+        (tc_core.tc-bind-id
+          (tc_core.tc-empty-env-with-job-state job)
+          parent-name
+          (I64)))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [names : lower.LowerNameCache (lower.lower-name-cache-from-env owner Nil)]
+    [types : lower.LowerTypeCache
+      (lower.lower-type-cache-from-env owner parent)]
+    [before : tc_core.TcTypeEnvStore
+      (tc_core.tc-type-env-store-read parent.store)]
+    [chain : i64 (tc_core.tc-chain-state-address parent.store)]
+    [counts : (Array i64 4) (array 0 3 80 1)]
+    (ast.ast-node-pool-context-install! pools)
+    (for [case-index (iterator.range 0 (array-length counts))]
+      (let
+        [count : i64 (array-ref counts case-index)]
+        [params : ast.AstParamList (ast.ast-param-list-with-capacity count)]
+        [first : i64 (ci.intern "function-env-local")]
+        [epoch : i64 tc_core.tc-type-env-store-epoch]
+        (for [index (iterator.range 0 count)]
+          (ast.ast-param-list-push
+            (&mut params)
+            (ast.ast-param-id
+              (if (= index 0)
+                first
+                (ci.intern
+                  (str_cat.str-cat
+                    "function-env-local-"
+                    (string.int->string index))))
+              (I64)
+              false)))
+        (match (lower.lower-function-escaping
+          ctx
+          parent
+          (lower.lower-global-shared-view types)
+          (ci.intern-generated-canonical-name "function-env-ok")
+          params
+          (I64)
+          (if (= count 0)
+            (Literal (ast.ast-lit-int 42))
+            (Var first))
+          (Known -1 0)
+          (ir.compiler-source-spans-empty)
+          (lower.lower-global-shared-view names)
+          (lower.CompilerLowerMode.LinuxScalar))
+          [(Ok functions _)
+            (test.assert-true
+              (> (ir.compiler-ir-function-seq-count (& functions)) 0)
+              "escaped function remains readable after rewind")]
+          [(Err _) (test.assert-true false "function lowering succeeds")])
+        (test.assert-true
+          (> tc_core.tc-type-env-store-epoch epoch)
+          "function-store retirement invalidates address-keyed memos")
+        (let
+          [after : tc_core.TcTypeEnvStore
+            (tc_core.tc-type-env-store-read parent.store)]
+          (test.assert-true
+            (and
+              (= after.binding-len before.binding-len)
+              (= after.binding-capacity before.binding-capacity)
+              (= after.cache-len before.cache-len)
+              (= after.cache-capacity before.cache-capacity)
+              (= (tc_core.tc-chain-state-address parent.store) chain)
+              (match (tc_core.tc-lookup-id parent parent-name)
+                [(Ok (I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id parent first)
+                [(Err _) true]
+                [_ false]))
+            "lowering leaves the parent store, chain and bindings intact"))))
+    (match (lower.lower-function-escaping
+      ctx
+      parent
+      (lower.lower-global-shared-view types)
+      (ci.intern-generated-canonical-name "function-env-error")
+      (ast.ast-param-list-new)
+      (I64)
+      (Var missing)
+      (Known -1 0)
+      (ir.compiler-source-spans-empty)
+      names
+      (lower.CompilerLowerMode.LinuxScalar))
+      [(Err diagnostic)
+        (test.assert-true
+          (>
+            (string.string-length
+              (cdiag.compiler-diagnostic-message (__tl-box-place diagnostic)))
+            0)
+          "error diagnostic survives the function rewind")]
+      [(Ok _ _) (test.assert-true false "missing variable rejects")])
+    (test.assert-true
+      (=
+        (tc_core.tc-type-env-store-read parent.store).binding-len
+        before.binding-len)
+      "an error also leaves the persistent parent untouched")
+    (lower.compiler-lower-arena-state-release!
+      (lower.compiler-lower-state-arenas owner))
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
   compiler-lower-let-source-fact-fallback
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]

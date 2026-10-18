@@ -8190,15 +8190,17 @@
           (lower-type-cache-overlay lower-state local-type-env)))]
     [(Err message) (Err message)]))
 
-;; The declaration loop's module views are released in epochs. The loop's
-;; `(module ...)` markers are split into `lower-module-view-epoch-count` equal
-;; epochs. A module's view lives in the arena of the epoch holding the module's
-;; last marker, and that arena is destroyed once the loop has passed the epoch,
-;; when no module of the epoch has a segment left. Views share epoch arenas
-;; because an arena of its own would cost most views a whole transparent huge
-;; page on Linux.
-(define lower-module-view-epoch-count : i64
-  8)
+;; The declaration loop's module views are released in epochs of consecutive
+;; `(module ...)` markers, each at most `lower-module-view-epoch-markers` long.
+;; A module's view lives in the arena of the epoch holding the module's last
+;; marker, and that arena is destroyed once the loop has passed the epoch, when
+;; no module of the epoch has a segment left. A view therefore outlives its
+;; module's last segment by at most one epoch of markers, however large the
+;; program, and the number of epoch arenas grows with the number of markers.
+;; Views share epoch arenas because an arena of its own would cost most views a
+;; whole transparent huge page on Linux.
+(define lower-module-view-epoch-markers : i64
+  32)
 
 (defstruct LowerModuleViewEpochs
   ;; module id -> index of the module's last marker
@@ -8237,7 +8239,7 @@
     (LowerModuleViewEpochs
       last-markers
       count
-      (__tl_make-array i64 lower-module-view-epoch-count)
+      (__tl_make-array i64 (+ (/ count lower-module-view-epoch-markers) 1))
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
       0
@@ -8247,12 +8249,8 @@
   [epochs : (& epochs LowerModuleViewEpochs)]
   [module-id : i64]) : i64
   (/
-    (*
-      (lower_i64_i64_map.get-value-or (& epochs.last-markers) module-id 0)
-      lower-module-view-epoch-count)
-    (if (> epochs.marker-count 0)
-      epochs.marker-count
-      1)))
+    (lower_i64_i64_map.get-value-or (& epochs.last-markers) module-id 0)
+    lower-module-view-epoch-markers))
 
 ;; MODULE-ID's view, built on first use into its epoch's arena. The
 ;; lowering-wide declaration index is filled first, in the enclosing arena; the
@@ -8319,10 +8317,12 @@
   [epochs : (&mut epochs LowerModuleViewEpochs)]
   [marker : i64]) : unit
   (while (and
-    (< epochs.released lower-module-view-epoch-count)
-    (<=
-      (* (+ epochs.released 1) epochs.marker-count)
-      (* marker lower-module-view-epoch-count)))
+    (< epochs.released (array-length epochs.arenas))
+    ;; The epoch is complete once the loop has passed its last marker; the
+    ;; final epoch may be shorter than the others.
+    (or
+      (<= (* (+ epochs.released 1) lower-module-view-epoch-markers) marker)
+      (<= epochs.marker-count marker)))
     (let
       [epoch : i64 epochs.released]
       [store : LowerModuleLocalViewStore

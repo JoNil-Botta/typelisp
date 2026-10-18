@@ -31,6 +31,15 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; Whole-program entries arm the checked tier; a fixture must restore the
+;; caller's mode so later band-only and explicitly armed probes stay distinct.
+(defmacro (with-test-inline-mode [body : comptime.Expr]) : comptime.Expr
+  `(let
+    [armed : bool (opt.opt-inline-checked-armed?)]
+    [result ,body]
+    (opt.opt-inline-checked-set-active! armed)
+    result))
+
 ;; Dense fixture literals expand to one right-sized builder and forward pushes.
 ;; Each expansion owns its backing array, so separate tests cannot accidentally
 ;; share mutable instruction storage.
@@ -453,11 +462,35 @@
 (define (opt-test-optimize-program-with-level
   [program : ir.CompilerIrProgram]
   [level : i64]) : ir.CompilerIrProgram
-  (match (opt.optimize-program-with-spans-and-level
-    (& program)
-    (ir.compiler-source-spans-empty)
-    level)
+  (match (with-test-inline-mode
+    (opt.optimize-program-with-spans-and-level
+      (& program)
+      (ir.compiler-source-spans-empty)
+      level))
     [(Program optimized _) optimized]))
+
+(test
+  whole-program-fixture-restores-inline-mode
+  (let
+    [previous : bool (opt.opt-inline-checked-armed?)]
+    (for [mode (iterator.range 0 2)]
+      (let
+        [armed : bool (= mode 1)]
+        (opt.opt-inline-checked-set-active! armed)
+        (let
+          [_optimized : ir.CompilerIrProgram
+            (opt-test-optimize-program-with-level
+              (opt-spans-program (irt.instrs "return 0"))
+              2)]
+          (test.assert-bool-eq
+            (opt.opt-inline-checked-armed?)
+            armed
+            "whole-program fixtures restore the caller's inliner mode"))))
+    (opt.opt-inline-checked-set-active! false)
+    (test.assert-true
+      (compiler-optimize-inline-shared-accessor-call-free-ok?)
+      "a full-program fixture does not arm a later band-only fixture")
+    (opt.opt-inline-checked-set-active! previous)))
 
 ;; The inline stage with no optimizer-input arena: final bodies escape into the
 ;; current arena, as they do for every caller that is not the level-2 program
@@ -2545,10 +2578,11 @@
         (opt-test-span-symbol "main")
         (& live)
         (opt-test-span 31 5))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      1)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        1))
       [(Program _ optimized-spans)
         (and
           (= (ir.compiler-source-spans-instr-count (& optimized-spans)) 1)
@@ -2578,10 +2612,11 @@
         (opt-test-span-symbol "main")
         (& folded)
         (opt-test-span 41 7))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -2611,10 +2646,11 @@
         (opt-test-span-symbol "main")
         (& second)
         (opt-test-span 61 11))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program-with-frame instrs 5))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program-with-frame instrs 5))
+        spans
+        2))
       [(Program optimized optimized-spans)
         (and
           (opt-span-lookup-ok?
@@ -2639,10 +2675,11 @@
     [addr : ir.CompilerIrInstr (AddrOf 3 2)]
     [instrs : ir.CompilerIrInstrSeq
       (opt-test-instrs (clone producer) (clone addr) (irt.instr "return 42"))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      (opt-spans-base)
-      1)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        (opt-spans-base)
+        1))
       [(Program optimized _)
         (and
           (= (opt-count-exact-instr-program optimized producer) 0)
@@ -2725,10 +2762,11 @@
     [ok : bool
       (begin
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.optimize-program-with-spans-and-level
-          (& (opt-inline-span-program symbols))
-          spans
-          2)
+        (match (with-test-inline-mode
+          (opt.optimize-program-with-spans-and-level
+            (& (opt-inline-span-program symbols))
+            spans
+            2))
           [(Program _ optimized-spans)
             (and
               (opt-span-lookup-ok?
@@ -2758,10 +2796,11 @@
         (opt-test-span 91 17))]
     [cloned-call : ir.CompilerIrInstr
       (Call 1 symbols.opaque (One (I64 7)) (I64))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-inline-span-program symbols))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-inline-span-program symbols))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -3425,13 +3464,14 @@
         (ir.compiler-ir-clone-function-seq pools (& functions)))]
     [function-count : i64 functions.len]
     [control : ir.CompilerIrProgram
-      (match (opt.optimize-program
-        (Program
-          (ir.compiler-ir-global-seq-empty)
-          functions
-          (ir.compiler-ir-extern-seq-empty))
-        (ir.compiler-source-spans-empty)
-        (opt.optimize-request pools level))
+      (match (with-test-inline-mode
+        (opt.optimize-program
+          (Program
+            (ir.compiler-ir-global-seq-empty)
+            functions
+            (ir.compiler-ir-extern-seq-empty))
+          (ir.compiler-source-spans-empty)
+          (opt.optimize-request pools level)))
         [(Program result _) result])]
     [state : OptInputRetirementTestState
       (OptInputRetirementTestState (__tl_make-array source) (__tl_make-array 0))]
@@ -3444,15 +3484,16 @@
           (unsafe
             (cast (ptr->int (ptr-addr-of state)) : i64))
           opt-test-retire-input!)))
-    (match (opt.optimize-program
-      (Program
-        (ir.compiler-ir-global-seq-empty)
-        (in-arena
-          (arena.Arena source)
-          (ir.compiler-ir-clone-function-seq pools (& source-functions)))
-        (ir.compiler-ir-extern-seq-empty))
-      (ir.compiler-source-spans-empty)
-      request)
+    (match (with-test-inline-mode
+      (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          (in-arena
+            (arena.Arena source)
+            (ir.compiler-ir-clone-function-seq pools (& source-functions)))
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        request))
       [(Program result _)
         (test.assert-i64-eq
           (array-ref state.calls 0)
@@ -3653,10 +3694,11 @@
         (opt-test-span-symbol "main")
         (& call)
         (opt-test-span 101 19))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -3690,10 +3732,11 @@
         (opt-test-span-symbol "main")
         (& tail)
         (opt-test-span 131 25))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      (ir.compiler-ir-global-shared-view spans)
-      0)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        (ir.compiler-ir-global-shared-view spans)
+        0))
       [(Program _ optimized-spans)
         (and
           (= (ir.compiler-source-spans-instr-count (& spans)) 2)
@@ -12540,9 +12583,10 @@
         (opt.compiler-opt-global-shared-view program)
         2)]
     [defaulted : ir.CompilerIrProgram
-      (match (opt.optimize-program-with-spans
-        (& program)
-        (ir.compiler-source-spans-empty))
+      (match (with-test-inline-mode
+        (opt.optimize-program-with-spans
+          (& program)
+          (ir.compiler-source-spans-empty)))
         [(Program optimized _) optimized])]
     [fixed-program : ir.CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]

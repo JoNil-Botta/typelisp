@@ -9804,7 +9804,7 @@
               (owned_view.compiler-owned-reference-shared-view index)
               key))]
         [(None) (owned_view.compiler-owned-reference-shared-view index)])]
-    (match (owned_view.compiler-owned-reference-shared-view ty)
+    (match ty
       [(Func args ret)
         (compiler-ir-representation-collect-one-type
           type-segment-bases

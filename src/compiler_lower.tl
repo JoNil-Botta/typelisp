@@ -15496,12 +15496,7 @@
   [index : (&mut index ir.CompilerIrRepresentationIndex)]
   [layout : tc_core.TcInlineAggregateLayout]
   [fuel : i64]) : i64
-  (if (or
-    (<= fuel 0)
-    (>
-      (tc_core.tc-inline-aggregate-layout-size
-        (lower-global-shared-view layout))
-      512))
+  (if (or (<= fuel 0) (> (tc_core.tc-inline-aggregate-layout-size layout) 512))
     0
     (match layout
       [(Struct _ _ fields)
@@ -15612,12 +15607,8 @@
               ;; by its body before the typecheck owner is retired.
               (when
                 (and
-                  (=
-                    (tc_core.tc-inline-aggregate-layout-size
-                      (lower-global-shared-view layout))
-                    16)
-                  (tc_core.tc-inline-aggregate-layout-register-resident?
-                    (lower-global-shared-view layout)))
+                  (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
+                  (tc_core.tc-inline-aggregate-layout-register-resident? layout))
                 (set!
                   index
                   (ir.compiler-ir-representation-index-merge-group
@@ -15626,9 +15617,7 @@
                     2
                     (+
                       (if (lower-register-word-sse-type?
-                        (lower-register-layout-word-type
-                          (lower-global-shared-view layout)
-                          0))
+                        (lower-register-layout-word-type layout 0))
                         1
                         0)
                       (if (lower-register-word-sse-type?
@@ -16196,13 +16185,13 @@
     current))
 
 (define (lower-register-struct-word-type-fields
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
   (lower-register-struct-word-type-fields-at fields word-index current 0))
 
 (define (lower-register-struct-word-type-fields-at
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [word-index : i64]
   [current : ast.AstType]
   [index : i64]) : ast.AstType
@@ -16249,13 +16238,13 @@
         (+ index 1)))))
 
 (define (lower-register-enum-word-type-variants
-  [variants : tc_core.TcInlineVariantLayoutList]
+  [variants : (& variants tc_core.TcInlineVariantLayoutList)]
   [word-index : i64]
   [current : ast.AstType]) : ast.AstType
   (lower-register-enum-word-type-variants-at variants word-index current 0))
 
 (define (lower-register-enum-word-type-variants-at
-  [variants : tc_core.TcInlineVariantLayoutList]
+  [variants : (& variants tc_core.TcInlineVariantLayoutList)]
   [word-index : i64]
   [current : ast.AstType]
   [index : i64]) : ast.AstType
@@ -16273,7 +16262,7 @@
 ;; words are represented as i64 bit words; SSE eightbytes are represented by f64
 ;; values, including homogeneous packed f32 words carried opaquely in XMM regs.
 (define (lower-register-layout-word-type
-  [layout : tc_core.TcInlineAggregateLayout]
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
   [word-index : i64]) : ast.AstType
   (match layout
     [(Struct _ _ fields)
@@ -26318,8 +26307,7 @@
           ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
           ;; struct packs each word and combines them with
           ;; CompilerIrInstr.Pack.
-          (if (tc_core.tc-inline-aggregate-layout-register-resident?
-            (lower-global-shared-view layout))
+          (if (tc_core.tc-inline-aggregate-layout-register-resident? layout)
             (if (lower-type-register-group?
               ctx
               (lower-global-shared-view struct-ty))
@@ -26451,8 +26439,7 @@
           ;; A 1-word register-resident enum is nullary, so its single word
           ;; is the discriminant tag. A 2-word register-group enum packs the tag
           ;; into word0 and the variant payload into word1.
-          (if (tc_core.tc-inline-aggregate-layout-register-resident?
-            (lower-global-shared-view layout))
+          (if (tc_core.tc-inline-aggregate-layout-register-resident? layout)
             ;; A register-resident enum is 8 (nullary tag) or 16 bytes (tag
             ;; word0 + payload word1); derive the 2-word group case from the size we
             ;; already have rather than rebuilding the layout (lower-type-register-
@@ -33754,16 +33741,15 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : ast.AstType
-  (match (lower-global-shared-view ty)
+  (match (& ty)
     [(Func args ret-id)
       (let
         [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-        [ret : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
         [leading-sret? : bool
           (match (lower-internal-return-class
             ctx
             mode
-            (lower-global-shared-view ret))
+            (tc_core.tc-context-type-get ctx ret-id))
             [(Sret _) true]
             [_ false])]
         [params : ast.AstTypeList (ast.ast-type-list-new)]
@@ -33788,14 +33774,20 @@
             (not leading-sret?)
             (lower-type-inline-struct-or-enum?
               ctx
-              (lower-global-shared-view ret))
+              (tc_core.tc-context-type-get ctx ret-id))
             (not
-              (lower-type-register-resident? ctx (lower-global-shared-view ret))))
+              (lower-type-register-resident?
+                ctx
+                (tc_core.tc-context-type-get ctx ret-id))))
           (ast.ast-type-list-push (&mut params) pointer-id))
         (ast.ast-ty-func-with-pools
           pools
           params
-          (& (lower-internal-return-physical-type ctx mode ret))))]
+          (&
+            (lower-internal-return-physical-type
+              ctx
+              mode
+              (tc_core.tc-context-type-get ctx ret-id)))))]
     [_ ty]))
 
 (define (lower-c-abi-register-resident-to-scalar
@@ -71269,11 +71261,12 @@
                       (& decl-name-cache)
                       logical-key-id
                       logical-key-id)]
+                  [abi : ast.AstExternAbi
+                    (ast.ast-extern-metadata-abi
+                      (lower-box-shared-view metadata))]
+                  [c-abi? : bool (ast.ast-extern-abi-c? (& abi))]
                   (if (and
-                    (ast.ast-extern-abi-c?
-                      (&
-                        (ast.ast-extern-metadata-abi
-                          (lower-box-shared-view metadata))))
+                    c-abi?
                     (tc_core.tc-type-contains-reference?
                       (lower-global-shared-view resolved-ty))
                     (not
@@ -71300,17 +71293,13 @@
                             (lower-box-shared-view metadata))
                           name
                           logical-name
-                          (if (ast.ast-extern-abi-c?
-                            (&
-                              (ast.ast-extern-metadata-abi
-                                (lower-box-shared-view metadata))))
+                          (if c-abi?
                             (tc_core.tc-type-without-regions resolved-ty)
                             (lower-internal-extern-type
                               decl-ctx
                               mode
                               resolved-ty))
-                          (ast.ast-extern-metadata-abi
-                            (lower-box-shared-view metadata))
+                          abi
                           (ci.intern-id-value
                             (ast.ast-extern-metadata-symbol-id
                               (& (deref metadata))))
@@ -72208,8 +72197,7 @@
   [layout : tc_core.TcInlineAggregateLayout]) : ir.CompilerDebugTypeNode
   (let
     [resident : bool
-      (tc_core.tc-inline-aggregate-layout-register-resident?
-        (lower-global-shared-view layout))]
+      (tc_core.tc-inline-aggregate-layout-register-resident? layout)]
     (match layout
       [(tc_core.TcInlineAggregateLayout.Struct size align fields)
         (let

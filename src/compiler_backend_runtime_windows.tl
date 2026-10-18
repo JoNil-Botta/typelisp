@@ -56,7 +56,7 @@
     .zero 8
 
 ")]
-    (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
       (sanitize.runtime-sanitize-data data)
       data)))
 
@@ -1913,23 +1913,10 @@ tl_mem_copy8_fwd:
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String
-  "    .globl tl_memchr
-tl_memchr:
-    testq %rdx, %rdx
-    jle .Ltl_memchr_not_found
-    movzbl %r8b, %r8d
-    xorq %rax, %rax
-.Ltl_memchr_loop:
-    cmpb %r8b, (%rcx,%rax)
-    je .Ltl_memchr_found
-    incq %rax
-    cmpq %rdx, %rax
-    jl .Ltl_memchr_loop
-.Ltl_memchr_not_found:
-    movq $-1, %rax
-.Ltl_memchr_found:
-    ret
-")
+  (str_cat.str-cat
+    "    .globl tl_memchr
+"
+    (runtime_common.compiler-backend-runtime-memchr-body "%rcx" "%rdx" "%r8b")))
 
 ;; Fill `count` pointer-sized slots at `buf` with `value`, one instruction per
 ;; slot under the deterministic instruction-count gate (a `rep stosq` is one Ir
@@ -2078,8 +2065,8 @@ tl_tlci_call_macro_entry:
             (WindowsRuntimeArenaProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-windows-arena
             (compiler-backend-runtime-windows-arena-functions
               profile
@@ -2110,6 +2097,16 @@ tl_tlci_call_macro_entry:
             profile
             debug-text)))
       (compiler-backend-runtime-windows-render
+        (and
+          features.alloc
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (WindowsRuntimeGlobalAlloc)
+        (runtime_common.compiler-backend-runtime-global-alloc-functions
+          (compiler-backend-current-arena-load "%r13")
+          (compiler-backend-current-arena-store "%rbx")
+          (compiler-backend-current-arena-store "%r13")
+          false))
+      (compiler-backend-runtime-windows-render
         features.region-mark
         (WindowsRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
@@ -2123,8 +2120,8 @@ tl_tlci_call_macro_entry:
             (WindowsRuntimeRegionResetProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-windows-reset
             (compiler-backend-runtime-windows-region-reset-functions
               profile

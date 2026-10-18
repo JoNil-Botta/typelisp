@@ -1061,6 +1061,15 @@
         "app.main"
         "helper"))))
 
+(define (compiler-load-error-code?
+  [diag : (& diag cdiag.CompilerDiagnostic)]
+  [code : String]) : bool
+  (and
+    (string.eq (cdiag.compiler-diagnostic-code-or-empty diag) code)
+    (match (cdiag.compiler-diagnostic-category diag)
+      [(CompilerDiagnosticSomeString category) (string.eq category "load")]
+      [CompilerDiagnosticNoString false])))
+
 (define (compiler-load-expected-module-conflict-ok?) : bool
   (match (load.compiler-load-source-with-paths-and-roots-expect
     "src/lib.tl"
@@ -1070,9 +1079,11 @@
     (& (svec.new))
     (Some (ci.intern-generated-name "lib.want")))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: import expected module lib.want but loaded lib.actual")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0303")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: import expected module lib.want but loaded lib.actual"))]
     [(Ok _ _ _ _) false]))
 
 (define (compiler-load-duplicate-module-ok?) : bool
@@ -1083,9 +1094,11 @@
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: duplicate module declaration")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0307")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: duplicate module declaration"))]
     [(Ok _ _) false]))
 
 (define (compiler-load-nested-module-body-ok?) : bool
@@ -1134,9 +1147,11 @@
 (module local.helper (define b : i64 2))"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: duplicate module declaration")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0307")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: duplicate module declaration"))]
     [(Ok _ _) false]))
 
 (define (compiler-load-seen-module-ok?) : bool
@@ -1245,9 +1260,11 @@
 (define (main) : i64 0)"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: ambiguous import alias 'one' between 'pkg.one' and 'other.one'; use distinct aliases or qualified access")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0305")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: ambiguous import alias 'one' between 'pkg.one' and 'other.one'; use distinct aliases or qualified access"))]
     [(Ok _ _) false]))
 
 ;; Re-importing the same module under the same alias is idempotent, not a
@@ -1379,6 +1396,19 @@
   [right : cdiag.CompilerDiagnostic]) : bool
   (and
     (string.eq
+      (cdiag.compiler-diagnostic-code-or-empty (& left))
+      (cdiag.compiler-diagnostic-code-or-empty (& right)))
+    (=
+      (cdiag.compiler-diagnostic-col (& left))
+      (cdiag.compiler-diagnostic-col (& right)))
+    (string.eq
+      (match (cdiag.compiler-diagnostic-category (& left))
+        [(CompilerDiagnosticSomeString category) category]
+        [CompilerDiagnosticNoString ""])
+      (match (cdiag.compiler-diagnostic-category (& right))
+        [(CompilerDiagnosticSomeString category) category]
+        [CompilerDiagnosticNoString ""]))
+    (string.eq
       (cdiag.compiler-diagnostic-path (& left))
       (cdiag.compiler-diagnostic-path (& right)))
     (=
@@ -1443,6 +1473,7 @@
             (let
               [package : cdiag.CompilerDiagnostic (deref package-diag)]
               (and
+                (compiler-load-error-code? (& ordinary) "E0305")
                 (string.eq
                   (cdiag.compiler-diagnostic-message (& ordinary))
                   message)
@@ -1772,6 +1803,7 @@
                   [package-value : cdiag.CompilerDiagnostic
                     (deref package-diag)]
                   (and
+                    (compiler-load-error-code? (& ordinary-value) "E0304")
                     (string.eq
                       (cdiag.compiler-diagnostic-message ordinary-value)
                       "compiler-load: module 'pkg.shared' has no selected item 'absent'")
@@ -1797,6 +1829,7 @@
                   [package-value : cdiag.CompilerDiagnostic
                     (deref package-diag)]
                   (and
+                    (compiler-load-error-code? (& ordinary-value) "E0303")
                     (string.eq
                       (cdiag.compiler-diagnostic-message ordinary-value)
                       "compiler-load: import 'pkg.shared.absent.extra' leaves more than one segment after loadable module 'pkg.shared'; only one selected item is supported")
@@ -1822,6 +1855,7 @@
                   [package-value : cdiag.CompilerDiagnostic
                     (deref package-diag)]
                   (and
+                    (compiler-load-error-code? (& ordinary-value) "E0305")
                     (string.eq
                       (cdiag.compiler-diagnostic-path ordinary-value)
                       "target/cl_import_suffix_collision.tl")
@@ -2664,9 +2698,11 @@
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: cannot read import src/no_such_module_xyz.tl")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0301")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: cannot read import src/no_such_module_xyz.tl"))]
     [(Ok _ _) false]))
 
 (define (compiler-load-include-str-relative-ok?) : bool
@@ -2852,9 +2888,11 @@
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0302")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)"))]
     [(Ok _ _) false]))
 
 (define (compiler-load-include-str-raw-text-ok?) : bool
@@ -2901,9 +2939,11 @@
 (define value : i64 1)"
     (sym_i64_env.sym-i64-empty))
     [(Err diag)
-      (string.eq
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-        "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
+      (and
+        (compiler-load-error-code? (__tl-box-place diag) "E0302")
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)"))]
     [(Ok _ _) false]))
 
 (define (compiler-load-embedded-stdlib-lookup-ok?) : bool

@@ -62,6 +62,24 @@
       (ptr-write! field (cast 44 : i32)))
     (+ (cast wrap.tiny.a : i64) (cast wrap.tiny.b : i64))))
 
+(unsafe
+  (define (write-exposed-sibling [p : (MutPtr Pair)]) : i64
+    (unsafe
+      (set! (deref p).y 20))
+    7))
+
+(define (exposed-home-rhs-write) : bool
+  (let
+    [item : Pair (Pair 1 2)]
+    [addr : (MutPtr Pair)
+      (unsafe
+        (ptr-addr-of item))]
+    (set!
+      item.x
+      (unsafe
+        (write-exposed-sibling addr)))
+    (and (= item.x 7) (= item.y 20))))
+
 (define (main) : i64
   (let
     [one : i64 (one-word-field-write-score)]
@@ -73,4 +91,5 @@
       [(not (= two 117)) 2]
       [(not (= whole 13)) 3]
       [(not (= nested 55)) 4]
+      [(not (exposed-home-rhs-write)) 5]
       [else 0])))

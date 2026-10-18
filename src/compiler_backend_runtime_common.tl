@@ -60,6 +60,63 @@
           (owned_view.compiler-owned-shared-view new))))
     out))
 
+;; SSE2 and these scratch registers are volatile on both x86-64 ABIs. Every
+;; vector load has at least 16 bytes remaining; the byte tail reads only the
+;; caller's range, including at a page boundary. pmovmskb orders bits by byte
+;; address, so bsf selects the first match even for NUL and high-bit bytes.
+(define (compiler-backend-runtime-memchr-body
+  [data : String]
+  [count : String]
+  [byte : String]) : String
+  (compiler-backend-runtime-replace-all
+    (compiler-backend-runtime-replace-all
+      (compiler-backend-runtime-replace-all
+        "tl_memchr:
+    testq COUNT, COUNT
+    jle .Ltl_memchr_not_found
+    xorq %rax, %rax
+    cmpq $16, COUNT
+    jl .Ltl_memchr_loop
+    movzbl BYTE, %r9d
+    movd %r9d, %xmm0
+    punpcklbw %xmm0, %xmm0
+    punpcklwd %xmm0, %xmm0
+    pshufd $0, %xmm0, %xmm0
+    movq COUNT, %r10
+.Ltl_memchr_wide:
+    movdqu (DATA,%rax), %xmm1
+    pcmpeqb %xmm0, %xmm1
+    pmovmskb %xmm1, %r9d
+    testl %r9d, %r9d
+    jne .Ltl_memchr_wide_found
+    addq $16, %rax
+    subq $16, %r10
+    cmpq $16, %r10
+    jae .Ltl_memchr_wide
+    testq %r10, %r10
+    je .Ltl_memchr_not_found
+.Ltl_memchr_loop:
+    cmpb BYTE, (DATA,%rax)
+    je .Ltl_memchr_found
+    incq %rax
+    cmpq COUNT, %rax
+    jl .Ltl_memchr_loop
+.Ltl_memchr_not_found:
+    movq $-1, %rax
+.Ltl_memchr_found:
+    ret
+.Ltl_memchr_wide_found:
+    bsfl %r9d, %r9d
+    addq %r9, %rax
+    ret
+"
+        "DATA"
+        data)
+      "COUNT"
+      count)
+    "BYTE"
+    byte))
+
 ;; The arena-debug root registry and its checked entry points for one target:
 ;; ARG is the first argument register, IDX the slot index, and SUFFIX tells the
 ;; target's local labels apart. The ELF leaf closes each symbol's extent and
@@ -250,11 +307,37 @@ tl_profile_alloc_peak_bytes:
 
 ")
 
+;; The private root uses the ordinary arena header, with a separate static
+;; buffer. Its Windows committed bound equals capacity: exhaustion grows a new
+;; segment rather than trying to commit image storage. Linux ignores that word.
 (define (compiler-backend-runtime-common-data
   [features : (& features CompilerBackendRuntimeFeatures)]
   [arena-data : String]) : String
   (str_cat.str-cat
     arena-data
+    (if (and
+      features.alloc
+      (compiler-backend-runtime-features-leaf? features 32))
+      "    .section .data
+    .balign 8
+.L_tl_global_aggregate_arena:
+    .quad 0
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage_end
+    .quad 0
+    .quad .L_tl_global_aggregate_arena
+    .quad 1
+    .quad .L_tl_global_aggregate_arena
+    .quad .L_tl_global_aggregate_storage_end
+    .section .bss
+    .balign 4096
+.L_tl_global_aggregate_storage:
+    .zero 4096
+.L_tl_global_aggregate_storage_end:
+
+"
+      "")
     (compiler-backend-runtime-startup-profile-data features.startup-profile)
     (compiler-backend-runtime-profile-data features.profile)
     (if features.region-reset
@@ -262,6 +345,39 @@ tl_profile_alloc_peak_bytes:
       "")
     (compiler-backend-runtime-argv-data)
     (compiler-backend-runtime-env-data)))
+
+;; Implicit global storage must survive the caller's temporary arena. The
+;; private atomic root starts with one static page and reuses ordinary arena
+;; growth after that page fills. Its root and segments are never exposed or
+;; reset. Only shallow containers use it; payload lifetimes are unchanged.
+(define (compiler-backend-runtime-global-alloc-functions
+  [save-current : String]
+  [select-global : String]
+  [restore-current : String]
+  [elf? : bool]) : String
+  (str_cat.str-cat
+    (if elf?
+      "    .type tl_alloc_global,@function\n"
+      "")
+    "    .globl tl_alloc_global
+tl_alloc_global:
+    pushq %rbx
+    pushq %r13
+    subq $40, %rsp
+"
+    save-current
+    "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n"
+    select-global
+    "    call tl_alloc\n"
+    restore-current
+    "    addq $40, %rsp
+    popq %r13
+    popq %rbx
+    ret
+"
+    (if elf?
+      "    .size tl_alloc_global, . - tl_alloc_global\n\n"
+      "\n")))
 
 (define (compiler-backend-runtime-startup-profile-functions
   [startup-profile : bool]) : String

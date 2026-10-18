@@ -18,6 +18,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.byte_reader)
+(import stdlib.clone as clone_gen)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 (import stdlib.vector)
@@ -1058,16 +1059,16 @@
             (when
               (= (cast (array-ref transcript key-start) : i64) 9)
               (let
-                [sequence-length : i64
-                  (compiler-graph-u32-at transcript (+ key-start 1))]
-                [child-length-at : i64 (+ (+ key-start 13) sequence-length)]
-                [child-length : i64
-                  (compiler-graph-u32-at transcript child-length-at)]
-                [child-start : i64 (+ child-length-at 4)]
+                [range : (Tuple i64 i64)
+                  (compiler-graph-child-query-range
+                    transcript
+                    key-start
+                    key-length)]
+                [child-start : i64 (tuple-ref range 0)]
+                [child-length : i64 (tuple-ref range 1)]
                 (if (and
-                  (>= sequence-length 0)
+                  (>= child-start 0)
                   (>= child-length 0)
-                  (= (+ child-start child-length) (+ key-start key-length))
                   (< (graph_edge_vec.len edges) limits.max-edges))
                   (graph_edge_vec.push-ref!
                     edges
@@ -1085,6 +1086,67 @@
             (set! offset (+ observation-start observation-length))
             (set! index (+ index 1))))))
     ok?))
+
+;; Shared Child-key framing for graph decoding and resumable scheduling. The
+;; caller validates the complete typed record before trusting the query.
+(define (compiler-graph-child-query-range
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [start : i64]
+  [length : i64]) : (Tuple i64 i64)
+  (let
+    [sequence-length : i64 (compiler-graph-u32-at bytes (+ start 1))]
+    [length-at : i64 (+ (+ start 13) sequence-length)]
+    [child-length : i64 (compiler-graph-u32-at bytes length-at)]
+    [child-start : i64 (+ length-at 4)]
+    (if (and
+      (byte_reader.range-present? (array-length bytes) start length)
+      (>= sequence-length 0)
+      (> child-length 0)
+      (= (+ child-start child-length) (+ start length)))
+      (tuple child-start child-length)
+      (tuple -1 -1))))
+
+(define (compiler-graph-trace-child-query
+  [record : (& record trace.CompilerIncrementalTraceRecord)]
+  [parent : (& parent identity.CompilerIncrementalIdentity)]
+  [limits : (& limits CompilerIncrementalGraphLimits)]) : ResultCompilerIncrementalGraphQuery
+  (if (and
+    (= record.kind 9)
+    (trace.compiler-trace-limits-valid? (& limits.trace))
+    (<= (string.string-length record.key) limits.trace.max-edge-bytes)
+    (<= (string.string-length record.observation) limits.trace.max-edge-bytes)
+    (trace.compiler-trace-record-parse-valid? record parent (& limits.trace)))
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (trace.compiler-trace-raw-bytes (& record.key))]
+      [range : (Tuple i64 i64)
+        (compiler-graph-child-query-range (& bytes) 0 (array-length bytes))]
+      [start : i64 (tuple-ref range 0)]
+      [length : i64 (tuple-ref range 1)]
+      (if (>= start 0)
+        (let
+          [scratch : arena.Arena (arena.make)]
+          [result : ResultCompilerIncrementalGraphQuery
+            (compiler-graph-query-from-transcript
+              (compiler-graph-range-bytes (& bytes) start length)
+              limits
+              scratch.handle
+              -1
+              -1)]
+          (arena.destroy-safe! scratch)
+          result)
+        (Err
+          (compiler-graph-error
+            compiler-graph-error-trace
+            -1
+            -1
+            "invalid child key"))))
+    (Err
+      (compiler-graph-error
+        compiler-graph-error-trace
+        -1
+        -1
+        "invalid child record"))))
 
 ;; The little-endian u32 at `offset`, or -1 when it is not wholly present.
 (define (compiler-graph-u32-at
@@ -2074,3 +2136,11 @@
   [left : (& left CompilerIncrementalGraph)]
   [right : (& right CompilerIncrementalGraph)]) : bool
   (sha256.digest-eq? (& left.fingerprint) (& right.fingerprint)))
+
+(clone_gen.gen-clone CompilerIncrementalStoredResultKey)
+
+(clone_gen.gen-clone CompilerIncrementalGraphRootName)
+
+(clone_gen.gen-clone CompilerIncrementalGraphRoot)
+
+(clone_gen.gen-clone CompilerIncrementalGraphNode)

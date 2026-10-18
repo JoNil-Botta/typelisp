@@ -25,7 +25,7 @@
     (ptr-read (ptr-offset (__tl_array-data ids.slots) index))))
 
 (define (compiler-x64-template-id-from-index [index : i64]) : x64.CompilerX64ExecutableTemplateId
-  (if (or (< index 0) (>= index 100))
+  (if (or (< index 0) (>= index 102))
     (io.panic "x64 executable template: id index is out of range")
     (unsafe
       (ptr-read
@@ -40,7 +40,7 @@
         (__tl_make-array x64.CompilerX64ExecutableTemplateId 112)
         0)]
     [index : i64 0]
-    (while (< index 100)
+    (while (< index 102)
       (compiler-x64-template-id-list-push!
         (&mut ids)
         (compiler-x64-template-id-from-index index))
@@ -121,7 +121,7 @@
               (LinuxRuntimeArenaProfileDebug)
               features.profile
               features.arena-debug)
-            (!= (bit-and features.leaf-mask 32) 0)))
+            (!= (bit-and features.leaf-mask 64) 0)))
         (when
           features.profile
           (compiler-x64-template-id-list-push! (&mut ids) (CommonProfile)))
@@ -142,6 +142,11 @@
               features.profile
               features.arena-debug)))
         (when
+          (and features.alloc (!= (bit-and features.leaf-mask 32) 0))
+          (compiler-x64-template-id-list-push!
+            (&mut ids)
+            (LinuxRuntimeGlobalAlloc)))
+        (when
           features.region-mark
           (compiler-x64-template-id-list-push!
             (&mut ids)
@@ -158,7 +163,7 @@
                 (LinuxRuntimeRegionResetProfileDebug)
                 features.profile
                 features.arena-debug)
-              (!= (bit-and features.leaf-mask 32) 0))))]
+              (!= (bit-and features.leaf-mask 64) 0))))]
       [(WindowsX64)
         (compiler-x64-template-id-list-push! (&mut ids) (WindowsRuntimeMemcpy))
         (compiler-x64-template-id-list-push! (&mut ids) (WindowsRuntimeMemchr))
@@ -186,7 +191,7 @@
               (WindowsRuntimeArenaProfileDebug)
               features.profile
               features.arena-debug)
-            (!= (bit-and features.leaf-mask 32) 0)))
+            (!= (bit-and features.leaf-mask 64) 0)))
         (when
           features.profile
           (compiler-x64-template-id-list-push! (&mut ids) (CommonProfile)))
@@ -207,6 +212,11 @@
               features.profile
               features.arena-debug)))
         (when
+          (and features.alloc (!= (bit-and features.leaf-mask 32) 0))
+          (compiler-x64-template-id-list-push!
+            (&mut ids)
+            (WindowsRuntimeGlobalAlloc)))
+        (when
           features.region-mark
           (compiler-x64-template-id-list-push!
             (&mut ids)
@@ -223,7 +233,7 @@
                 (WindowsRuntimeRegionResetProfileDebug)
                 features.profile
                 features.arena-debug)
-              (!= (bit-and features.leaf-mask 32) 0))))
+              (!= (bit-and features.leaf-mask 64) 0))))
         (compiler-x64-template-id-list-push! (&mut ids) (WindowsRuntimeThread))
         (when
           features.backtrace

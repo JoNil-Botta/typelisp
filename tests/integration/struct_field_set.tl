@@ -60,7 +60,75 @@
       (__tl-project-field (tuple-ref t 0) x)
       (__tl-project-field (tuple-ref t 0) y))))
 
+(defstruct Narrow
+  (a u8)
+  (b u16))
+
+(defstruct Floats
+  (a f32)
+  (b f32))
+
+(defstruct Doubles
+  (a f64)
+  (b f64))
+
+(define (packed-width-sibling-writes) : bool
+  (let
+    [n : Narrow (Narrow 1 2)]
+    [f : Floats (Floats 1.0 2.0)]
+    [d : Doubles (Doubles 1.0 2.0)]
+    (set!
+      n.a
+      (begin
+        (set! n.b 65535)
+        255))
+    (set!
+      f.a
+      (begin
+        (set! f.b 20.5)
+        7.5))
+    (set!
+      d.a
+      (begin
+        (set! d.b 20.5)
+        7.5))
+    (and
+      (= n.a 255)
+      (= n.b 65535)
+      (= f.a 7.5)
+      (= f.b 20.5)
+      (= d.a 7.5)
+      (= d.b 20.5))))
+
+(defstruct Owner
+  (value (Box i64))
+  (sibling i64))
+
+(define (boxed-field-effects) : bool
+  (and
+    (let
+      [p : Owner (Owner (box 1) 2)]
+      (set!
+        p.value
+        (begin
+          (set! p.sibling 20)
+          (box 7)))
+      (and (= (deref p.value) 7) (= p.sibling 20)))
+    ;; A by-value receiver is its variable's storage (SPEC 5.10): the
+    ;; assignment in the value writes that storage, and the store then lands
+    ;; in it.
+    (let
+      [p : Owner (Owner (box 1) 2)]
+      (set!
+        p.value
+        (begin
+          (set! p (Owner (box 7) 8))
+          (box 5)))
+      (and (= (deref p.value) 5) (= p.sibling 8)))))
+
 (define (main) : i64
+  (when (not (boxed-field-effects)) (return 2))
+  (when (not (packed-width-sibling-writes)) (return 1))
   (-
     (+
       (local-field-set)

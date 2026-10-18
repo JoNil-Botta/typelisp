@@ -404,6 +404,10 @@ there is no public unsized `Array` alias.
   range `[len, capacity)` is reserved implementation storage and cannot be
   read by safe code.
 - `ByteBuf` has no text, encoding, or NUL-termination invariant.
+- Safe borrowed byte views validate `0 <= len <= array-length slots` before
+  constructing the view. An invalid public length takes the ordinary bounds
+  trap. Raw string-copy helpers require explicit unsafe context and a proof
+  of their source and destination extents.
 - Growing a `ByteBuf` may allocate a new active-arena backing store and copy
   the live bytes. The old backing store is not reclaimed until its arena is
   reset or the process exits.
@@ -545,7 +549,9 @@ and `(&mut r T)` receivers the result is `T` (with the receiver's region or
 lifetime provenance retained where applicable). Copyable values are read
 without consuming the receiver. Moving a non-Copy value from an owned Box
 consumes the Box handle; moving a non-Copy value through either reference kind
-is rejected unless a future replacement operation explicitly supports it.
+is rejected unless a future replacement operation explicitly supports it. The
+operand of the compiler-special `clone` is the exception: there a non-Copy
+`(deref value)` is read, not moved, and keeps its receiver (section 7.6).
 
 `(set! (deref value) replacement)` writes through an owned Box or mutable
 reference storage place. Shared references are read-only. The replacement must
@@ -5024,12 +5030,13 @@ arena-owned storage escape the scoped region.
 - Direct calls: the callee is a known function name.
 - Indirect calls: the callee is a variable or parameter of function type,
   including a named top-level function passed as a function value.
-- The callee value is evaluated once before the arguments. Reassigning its
-  source binding while evaluating an argument does not change this call's target.
-- Arguments are evaluated left-to-right. Each argument passes the value it had
-  when it was evaluated. A later argument that assigns or writes the variable,
-  field or element an earlier argument read does not change the earlier
-  argument's value. Writes through a borrow, a raw pointer or a callee count too.
+- The callee expression is evaluated once, before the arguments, and the
+  arguments are evaluated left-to-right. The call uses the callable value the
+  callee expression produced, and each argument passes the value it had when it
+  was evaluated. An argument that assigns or writes the variable, field or
+  element that the callee expression or an earlier argument read changes
+  neither the function called nor the earlier argument's value. Writes through
+  a borrow, a raw pointer or a function the argument calls count too.
 - Arguments are passed per the platform calling convention (§11); arguments
   beyond register capacity are passed on the stack.
 
@@ -8731,6 +8738,13 @@ low-level exception and carry no safety guarantees.
   Compiler-generated over-aligned storage may explicitly select the private
   `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
   implied.
+- Replacing a global inline aggregate may require a shallow container copy.
+  That implicit storage has program lifetime, independent of the active arena,
+  so leaving a scratch scope cannot invalidate the stored value. The copy does
+  not clone payloads or extend their lifetimes: source-level allocations and
+  borrowed references still obey the ordinary ownership and escape checks.
+  A previously captured assignment receiver continues to designate the old
+  aggregate storage after whole-global replacement (section 5.10).
 - Fatal page-allocation failures terminate with status 134 without allocating
   while reporting the failure. On Windows, `VirtualAlloc` failures include the
   ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,
@@ -9302,12 +9316,25 @@ and not a general manual memory management feature.
   from a generated helper use its generated-decl
   origin and the compiler handoff request location; producer conflicts name
   the conflicting helper explicitly.
+- The transitional `(clone value)` reads its operand without moving it and
+  returns independent owned storage, so `(clone (deref reference))` and
+  `(clone (deref box))` leave the reference or Box usable. The read reaches
+  through annotation, `cast` and macro-expansion wrappers, both `if` arms,
+  every `match` arm body, the `let` body, the last form of `begin` or
+  `unsafe`, and the receivers of `deref`, field, tuple and array projections.
+  The rest of the operand keeps its ordinary use rules: `if` conditions,
+  `match` scrutinees, `let` initializers, earlier `begin`/`unsafe` forms,
+  array indices, and call and constructor arguments are used as anywhere
+  else, so a non-Copy value there is moved. This applies
+  only when `clone` names the compiler-special form, not a binding, function
+  or constructor of that name.
 - The transitional compiler-special `clone` rejects unsupported
   ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
-  references including borrowed `str`, raw pointers, boxes,
+  references including borrowed `str`, raw pointers,
   compile-time-only values, and named aggregate shapes containing
-  non-cloneable fields.
+  non-cloneable fields. A `(Box T)` operand with a cloneable `T`, owned or read
+  through a reference, clones into a new box.
 
 ---
 

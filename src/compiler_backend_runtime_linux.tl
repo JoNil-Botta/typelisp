@@ -81,7 +81,7 @@ tl_backtrace_stack_high:
           (runtime_common.compiler-backend-runtime-arena-debug-text?
             features.arena-debug)
           features.backtrace))]
-    (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
       (sanitize.runtime-sanitize-data data)
       data)))
 
@@ -1223,25 +1223,13 @@ tl_mem_copy8_fwd:
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String
-  "    .globl tl_memchr
+  (str_cat.str-cat
+    "    .globl tl_memchr
     .type tl_memchr,@function
-tl_memchr:
-    testq %rsi, %rsi
-    jle .Ltl_memchr_not_found
-    movzbl %dl, %edx
-    xorq %rax, %rax
-.Ltl_memchr_loop:
-    cmpb %dl, (%rdi,%rax)
-    je .Ltl_memchr_found
-    incq %rax
-    cmpq %rsi, %rax
-    jl .Ltl_memchr_loop
-.Ltl_memchr_not_found:
-    movq $-1, %rax
-.Ltl_memchr_found:
-    ret
-    .size tl_memchr, . - tl_memchr
-")
+"
+    (runtime_common.compiler-backend-runtime-memchr-body "%rdi" "%rsi" "%dl")
+    "    .size tl_memchr, . - tl_memchr
+"))
 
 ;; Fill `count` pointer-sized slots at `buf` with `value`, one instruction per
 ;; slot under the deterministic instruction-count gate (a `rep stosq` is one Ir
@@ -1459,8 +1447,8 @@ tl_backtrace_stack_set:
             (LinuxRuntimeArenaProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-linux-arena
             (compiler-backend-runtime-linux-arena-functions profile debug-text))
           (compiler-backend-runtime-linux-arena-functions profile debug-text)))
@@ -1489,6 +1477,16 @@ tl_backtrace_stack_set:
             profile
             debug-text)))
       (compiler-backend-runtime-linux-render
+        (and
+          features.alloc
+          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
+        (LinuxRuntimeGlobalAlloc)
+        (runtime_common.compiler-backend-runtime-global-alloc-functions
+          (compiler-backend-current-arena-load "%r13")
+          (compiler-backend-current-arena-store "%rbx")
+          (compiler-backend-current-arena-store "%r13")
+          true))
+      (compiler-backend-runtime-linux-render
         features.region-mark
         (LinuxRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
@@ -1502,8 +1500,8 @@ tl_backtrace_stack_set:
             (LinuxRuntimeRegionResetProfileDebug)
             profile
             arena-debug)
-          (runtime_common.compiler-backend-runtime-features-leaf? features 32))
-        (if (runtime_common.compiler-backend-runtime-features-leaf? features 32)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
           (sanitize.runtime-sanitize-linux-reset
             (compiler-backend-runtime-region-reset-functions profile debug-text))
           (compiler-backend-runtime-region-reset-functions profile debug-text))))))

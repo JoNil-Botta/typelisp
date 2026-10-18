@@ -85,8 +85,7 @@
 ;# ```
 (import stdlib.eq)
 
-;: Runtime bounds abort for malformed public representations. Declared here
-;: instead of importing all of `stdlib.string` into every vector user.
+;: Bounds trap for malformed public vector representations.
 (extern (tl_oob_abort) : never)
 
 ;: Emit a generated growable vector module for element type `T`.
@@ -357,32 +356,29 @@
         (define (new) : Vec
           (with-capacity 4))
         (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
-          (begin
-            ;; len and both backing arrays are public representation. The
-            ;; non-aborting take below cannot prove a raw replacement in bounds.
-            ;; Validate before either cleanup or write changes ownership.
-            (when
-              (or
-                (< v.len 0)
-                (> v.len (array-length v.state.slots))
-                (> v.len (array-length v.state.live)))
-              (tl_oob_abort))
-            (if (if (>= index 0)
-              (< index v.len)
-              false)
-              (let
-                [taken : (Tuple bool ,T)
-                  (__tl_array-take! v.state.slots v.state.live index)]
-                (begin
-                  (if (tuple-ref taken 0)
-                    (,cleanup-function-expr (tuple-ref taken 1))
-                    unit)
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset (__tl_array-data v.state.slots) index)
-                      value))
-                  (set! (array-ref v.state.live index) true)))
-              (,cleanup-function-expr value))))
+          ;; The non-aborting take cannot prove a raw replacement is in bounds.
+          ;; Validate public lengths before cleanup or writing changes ownership.
+          (when
+            (or
+              (< v.len 0)
+              (> v.len (array-length v.state.slots))
+              (> v.len (array-length v.state.live)))
+            (tl_oob_abort))
+          (if (if (>= index 0)
+            (< index v.len)
+            false)
+            (let
+              [taken : (Tuple bool ,T)
+                (__tl_array-take! v.state.slots v.state.live index)]
+              (if (tuple-ref taken 0)
+                (,cleanup-function-expr (tuple-ref taken 1))
+                unit)
+              (unsafe
+                (ptr-write!
+                  (ptr-offset (__tl_array-data v.state.slots) index)
+                  value))
+              (set! (array-ref v.state.live index) true))
+            (,cleanup-function-expr value)))
         (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
           (let
             [index : i64 v.len]

@@ -22,6 +22,27 @@
 (import compiler_ast_types.AstImportedSpmdSpecialization)
 (cfg test (import stdlib.io))
 
+;; Destructive intern fixtures own a separate table. A captured caller view
+;; shares its arrays, so resetting that table and reinstalling its old scalar
+;; cells would not restore it. Bodies must finish normally before restoration.
+(defmacro (with-test-interns [body : unit ...]) : unit
+  `(let
+    [caller-interns : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [caller-builtins : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [fixture-interns : ci.InternCompatState (ci.intern-compat-state-new)]
+    (ci.intern-compat-state-install! fixture-interns)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    ,@body
+    (ci.intern-compat-state-capture-from-globals! (&mut fixture-interns))
+    (ci.intern-compat-state-install! caller-interns)
+    (cbi.state-install! caller-builtins)
+    (ci.intern-compat-state-release-structural-generations!
+      (&mut fixture-interns))
+    (unsafe
+      (arena.destroy
+        (arena.Arena (ci.intern-compat-state-persistent-arena fixture-interns))))))
+
 (define (ast-lit-string-text [string-id : i64]) : String
   (ci.intern-str string-id))
 

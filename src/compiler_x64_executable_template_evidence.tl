@@ -35,6 +35,7 @@
   (CopyFwd)
   (Copy8Fwd)
   (MemFill8)
+  (GlobalAlloc)
   (ArenaSanitizer))
 
 (defenum CompilerX64TemplateContributionKind
@@ -130,7 +131,7 @@
 (define (compiler-x64-template-feature-from-catalog [value : (& value str)]) : CompilerX64TemplateFeature
   (let
     [tag : i64 (catalog.compiler-x64-template-catalog-tag value)]
-    (if (or (< tag 0) (>= tag 25))
+    (if (or (< tag 0) (>= tag 26))
       (io.panic "x64 executable template: evidence enum tag is out of range")
       (unsafe
         (ptr-read

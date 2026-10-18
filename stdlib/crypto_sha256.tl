@@ -29,6 +29,7 @@
 ;#       [(crypto_sha256.Sha256FinalizeErr _) 1])))
 ;# ```
 (import stdlib.byte_buf)
+(import stdlib.clone as clone_gen)
 (import stdlib.string)
 
 ;: Stable SHA-256 update and finalization failures.
@@ -583,3 +584,6 @@
               (finalize-into-pointer! state output))])]
       (wipe-state! state)
       result)))
+
+;: Copy a digest into caller-owned metadata.
+(clone_gen.gen-clone Sha256Digest)

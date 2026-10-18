@@ -32,7 +32,7 @@
     [index : i64 0]
     [count : i64 0]
     (while (< index functions.len)
-      (match (ir.compiler-ir-function-seq-ref functions index)
+      (match (ir.compiler-ir-function-seq-borrow functions index)
         [(Function name _ _ _ _ _)
           (let
             [name-text : String (ir.compiler-ir-symbol-text name)]
@@ -66,10 +66,15 @@
     [result : lower.ResultCompilerLower
       (lower-compiler-source-with-mode-and-package source mode "spmd_fixture")]
     (match result
-      [(Ok program _)
-        (match program
-          [(Program _ functions _ _authority)
-            (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
+      [(Ok program _ lower-owner)
+        (let
+          [ok : bool
+            (match program
+              [(Program _ functions _ _authority)
+                (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          ok)]
       [(Err _) false])))
 
 (define (compiler-lower-spmd-package-scalar-collapse-source) : String
@@ -103,8 +108,7 @@
   (if (>= index functions.len)
     ""
     (let
-      [function : ir.CompilerIrFunction
-        (ir.compiler-ir-function-seq-ref functions index)]
+      [function (ir.compiler-ir-function-seq-borrow functions index)]
       (match (ir.compiler-ir-global-shared-view function)
         [(Function name _ _ _ _ _)
           (if (lower.lower-string-prefix-at?
@@ -132,19 +136,25 @@
         (lower.CompilerLowerMode.Avx512)
         "spmd_fixture")]
     (match result
-      [(Ok program _)
-        (match program
-          [(Program _ functions _ _authority)
-            (let
-              [rendered : String
-                (compiler-lower-spmd-package-uniform-helper-render functions)]
-              [splat-i64 : String "splat 7 lanes 8 : i64"]
-              [splat-i32 : String "splat 7 lanes 8 : i32"]
-              [reduce-i64 : String "vector_reduce_min"]
-              (and
-                (string.contains (& rendered) (& splat-i64))
-                (not (string.contains (& rendered) (& splat-i32)))
-                (string.contains (& rendered) (& reduce-i64))))])]
+      [(Ok program _ lower-owner)
+        (let
+          [ok : bool
+            (match program
+              [(Program _ functions _ _authority)
+                (let
+                  [rendered : String
+                    (compiler-lower-spmd-package-uniform-helper-render
+                      functions)]
+                  [splat-i64 : String "splat 7 lanes 8 : i64"]
+                  [splat-i32 : String "splat 7 lanes 8 : i32"]
+                  [reduce-i64 : String "vector_reduce_min"]
+                  (and
+                    (string.contains (& rendered) (& splat-i64))
+                    (not (string.contains (& rendered) (& splat-i32)))
+                    (string.contains (& rendered) (& reduce-i64))))])]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          ok)]
       [(Err _) false])))
 
 (define (compiler-lower-spmd-package-return-context-ok?) : bool
@@ -162,7 +172,12 @@
     [result : lower.ResultCompilerLower
       (lower-compiler-source-with-mode-and-package source mode "spmd_fixture")]
     (match result
-      [(Ok _ _) false]
+      [(Ok _ _ lower-owner)
+        (let
+          [ok : bool false]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          ok)]
       [(Err diag)
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
@@ -689,16 +704,21 @@
     (compiler-lower-spmd-package-callable-source)
     mode
     "spmd_fixture")
-    [(Ok program _)
-      (match program
-        [(Program _ functions _ _authority)
-          (and
-            (string.eq
-              (ir.compiler-ir-spmd-private-abi-program-error functions)
-              "")
-            (string.eq
-              (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
-              expected))])]
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match program
+            [(Program _ functions _ _authority)
+              (and
+                (string.eq
+                  (ir.compiler-ir-spmd-private-abi-program-error functions)
+                  "")
+                (string.eq
+                  (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
+                  expected))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-lower-spmd-package-callable-tests-ok?) : bool
@@ -747,9 +767,13 @@
   [src : String]
   [mode : lower.CompilerLowerMode]
   [package-name : String]) : lower.ResultCompilerLower
-  (lower.lower-compiler-source-with-path-mode-package-and-state
-    (lower.compiler-lower-state-new)
-    "<source>"
-    src
-    mode
-    package-name))
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    (lower.lower-standalone-result
+      owner
+      (lower.lower-compiler-source-with-path-mode-package-and-state
+        owner
+        "<source>"
+        src
+        mode
+        package-name))))

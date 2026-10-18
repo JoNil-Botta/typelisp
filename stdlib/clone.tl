@@ -848,9 +848,11 @@
                               (comptime.pattern-list-cons
                                 (comptime.pattern-binding "tail")
                                 (comptime.pattern-list-empty))))]
+                        ;; Late helpers must contain ordinary syntax: macro
+                        ;; expansion has already finished at this handoff.
                         [next-tail : comptime.Expr
                           (if boxed-self
-                            `(__tl-box-place tail)
+                            `(deref tail)
                             `tail)]
                         [acc-tail : comptime.Expr
                           (if boxed-self

@@ -36,6 +36,8 @@ global_cell_stored_address_loop|all|0,1,2|tests/integration/global_cell_stored_a
 global_cell_stored_address_alias|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|1 0|-|stage-stdlib
 global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|2 0|-|stage-stdlib
 global_cell_stored_address_twice|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|3 0|-|stage-stdlib
+extern_callback_global|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|-|benchmarks/extern_callback_global/baseline.c|stage-stdlib
+extern_callback_global_more|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|a b|benchmarks/extern_callback_global/baseline.c|stage-stdlib
 hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
 aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
 static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl|-
@@ -122,6 +124,7 @@ ptr_offset_inline_aggregate_stride|all|-|tests/integration/ptr_offset_inline_agg
 ptr_addr_of_places|all|-|tests/integration/ptr_addr_of_places.tl|0|-|-|-|-
 ptr_aggregate_copy|all|-|tests/integration/ptr_aggregate_copy.tl|0|-|-|-|-
 raw_pointer_register_addr_of|all|-|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
+raw_pointer_register_addr_of_levels|all|0,2|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
 raw_pointer_field_place|all|0,1,2|tests/integration/raw_pointer_field_place.tl|42|-|-|stdlib/string.tl|-
 auto_borrow_call|all|-|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl|-
 stdlib_string_to_int|all|-|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl|-
@@ -343,6 +346,7 @@ licm_element_bound_abort_opt2|all|2|tests/integration/licm_element_bound.tl|134|
 licm_guarded_read|all|-|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|-
 licm_guarded_read_opt2|all|2|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_guarded_read_abort_opt2|all|2|tests/integration/licm_guarded_read.tl|134|254\n122\n0\n|9 3 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:49:44: array index out of bounds: index=9 length=8\n
+licm_disjoint_fields|all|0,1,2|tests/integration/licm_disjoint_fields.tl|42|-|257 -7|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_raw_deref|all|-|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|-
 licm_raw_deref|all|0,1,2|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_payload_other|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 0|stdlib/io.tl stdlib/string.tl|stage-stdlib
@@ -436,6 +440,7 @@ arena_sanitizer_rewound_page|linux|0,1,2|tests/integration/arena_sanitizer.tl|13
 arena_sanitizer_partial_page_poison|all|0,1,2|tests/integration/arena_sanitizer.tl|42|-|4|-|stage-stdlib
 arena_sanitizer_repeated_rewind|all|0,1,2|tests/integration/arena_sanitizer.tl|42|-|5|-|stage-stdlib
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
+clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
@@ -514,6 +519,11 @@ bce_affine_versioning|all|-|tests/integration/bce_affine_versioning.tl|42|-|0|st
 bce_monotone_cursor|all|-,2|tests/integration/bce_monotone_cursor.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
 bce_monotone_cursor_guard_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:54:35: array index out of bounds: index=24 length=24\n
 bce_monotone_cursor_stall_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:76:47: array index out of bounds: index=24 length=24\n
+bce_binary_interval|all|0,1,2|tests/integration/bce_binary_interval.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
+bce_binary_interval_extent_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=32 length=32\n
+bce_binary_interval_negative_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=-5 length=32\n
+bce_binary_interval_overflow_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=-1 length=32\n
+bce_binary_interval_base_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=32 length=32\n
 bce_affine_overflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:45: array index out of bounds: index=-9223372036854775807 length=8\n
 bce_affine_underflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:34:45: array index out of bounds: index=-2 length=8\n
 make_array_init|all|-|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl|-
@@ -742,6 +752,7 @@ string_length|all|-|tests/integration/string_length.tl|5|-|-|stdlib/string.tl|-
 string_record_extent|all|-|tests/integration/string_record_extent.tl|42|-|-|-|-
 string_match|all|-|tests/integration/string_match.tl|42|-|-|-|-
 struct_field_set|all|-|tests/integration/struct_field_set.tl|42|-|-|-|-
+struct_field_set_levels|all|0,2|tests/integration/struct_field_set.tl|42|-|-|-|-
 substring|all|-|tests/integration/substring.tl|55|-|-|stdlib/string.tl|-
 sym_i64_env|all|-|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: empty-lookup-or\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: bound-miss-lookup-or\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: fork-parent-no-left\nPASS: fork-parent-no-right\nPASS: fork-left-sees-left\nPASS: fork-left-no-right\nPASS: fork-right-sees-right\nPASS: fork-right-no-left\nPASS: computed-key-hit\nPASS: second-computed-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-value\nPASS: deep-newest\nPASS: deep-middle\nPASS: deep-oldest\nPASS: deep-miss\nPASS: deep-view-count\nPASS: arena-growth-parent\nPASS: arena-growth-child\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl|-
 tail_self_loop|all|-|tests/integration/tail_self_loop.tl|42|-|-|-|-
@@ -826,6 +837,23 @@ compiler_ownership_loan_smoke|all|0,1,2|src/tests/compiler_ownership_loan_smoke.
 compiler_ownership_cleanup_smoke|all|0,1,2|src/tests/compiler_ownership_cleanup_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_cleanup_tests.tl|stage-stdlib
 compiler_typed_occurrence_smoke|all|0,1,2|src/tests/compiler_typed_occurrence_smoke.tl|42|-|-|compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl|stage-stdlib
 compiler_ownership_normalize_smoke|all|0,1,2|src/tests/compiler_ownership_normalize_smoke.tl|42|-|-|compiler_ownership_normalize.tl compiler_ownership_normalize_tests.tl compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl compiler_ownership_dump.tl|stage-stdlib
+ir_sequence_borrow_instr_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|0 0|-|-
+ir_sequence_borrow_instr_negative|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 -1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=-1 length=1\n
+ir_sequence_borrow_instr_end|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=1 length=1\n
+ir_sequence_borrow_phi_offset_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|1 0|-|-
+ir_sequence_borrow_phi_negative_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt0/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt1/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt2/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt0/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt1/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt2/compiler_ir_types.tl:6132:6: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_end_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt0/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt1/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt2/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt0/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt1/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt2/compiler_ir_types.tl:6132:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_block_empty|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|2 0|-|expected-stderr:tl: $SRC:32:55: array index out of bounds: index=0 length=0\n
 compiler_liveness_smoke|all|-|src/tests/compiler_liveness_smoke.tl|42|-|-|compiler_liveness_tests.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
 compiler_regalloc_smoke|all|-|src/tests/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc_tests.tl compiler_abi.tl compiler_regalloc.tl compiler_parallel_move.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_ir_return_storage.tl|-
 lex_span_smoke|all|-|src/tests/lex_span_smoke.tl|42|-|-|lex.tl token.tl compiler_intern.tl stdlib/arena.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl reader_tests.tl|-
@@ -885,6 +913,7 @@ mem_copy_fwd_runtime_contract|all|-|tests/integration/mem_copy_fwd_runtime_contr
 arena_atomic_rewind_destroy_safe|all|-|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_aggregate|all|-|tests/integration/arena_branded_atomic_aggregate.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_place_destroy|all|-|tests/integration/arena_branded_atomic_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+arena_branded_operands|all|0,1,2|tests/integration/arena_branded_operands.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 resource_with_order|all|-|tests/integration/resource_with_order.tl|42|-|-|-|-
 resource_with_arg_cycle|all|-|tests/integration/resource_with_arg_cycle.tl|42|-|-|-|-
 sync_channel_thread_runtime|all|-|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
@@ -1018,6 +1047,7 @@ factored_addresses|all|0,1,2|tests/integration/factored_addresses.tl|0|257269108
 inline_alloc_alias|all|0,1,2|tests/integration/inline_alloc_alias.tl|42|-|-|-|stage-stdlib
 memcpy_short_runtime|all|0,1,2|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|stage-stdlib
 runtime_leaf_aliases|all|0,1,2|tests/integration/runtime_leaf_aliases.tl|42|-|-|-|stage-stdlib
+runtime_memchr|all|0,1,2|tests/integration/runtime_memchr.tl|42|-|-|-|stage-stdlib
 replayed_loop_call_lagged_neg3|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|-3|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_0|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=0 d=0\n|0|stdlib/io.tl stdlib/string.tl|stage-stdlib
 replayed_loop_call_lagged_1|all|0,1,2|tests/integration/replayed_loop_call_lagged.tl|0|r=100 d=-1\n|1|stdlib/io.tl stdlib/string.tl|stage-stdlib
@@ -1030,3 +1060,15 @@ linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_ar
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
 selected_inference_dotted|all|0,1,2|tests/integration/selected_inference_dotted.tl|42|-|-|-|stage-stdlib
 ownership_certified_scalar_control|all|0,1,2|tests/integration/ownership_certified_scalar_control.tl|42|-|-|-|-
+
+packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+
+gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-
+
+global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
+global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
+indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
+extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib

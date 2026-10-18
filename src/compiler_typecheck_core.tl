@@ -243,6 +243,7 @@
   (name-id i64)
   (init-id i64)
   (binding-ty ast.AstType)
+  (inconsistent bool)
   (transition TcCheckedLetBindingTransition)
   ;; Previous fact with the same composite hash. Full identity is compared on
   ;; lookup, so hash collisions cannot alias bindings.
@@ -255,17 +256,19 @@
 
 (defstruct TcCheckedLetBindingFactStateData
   (enabled bool)
+  (complete-required bool)
+  (recording bool)
   (current-declaration-ordinal i64)
   (facts (__tl_dyn-array TcCheckedLetBindingFact))
   (capacity i64)
   (len i64)
   (by-hash tc_i64_i64_map.Map)
+  (declaration-ordinals tc_i64_i64_map.Map)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
   ;; a separately resettable arena rather than leaking boxes into the job arena.
   (payload-arena i64)
   (return-arena i64)
-  (owner-arena i64)
-  (inconsistent bool))
+  (owner-arena i64))
 
 (defstruct TcCheckedLetBindingFactState
   (address i64))
@@ -791,15 +794,17 @@
       (array-ref cell 0)
       (TcCheckedLetBindingFactStateData
         false
+        false
+        false
         -1
         (__tl_make-array TcCheckedLetBindingFact 0)
         0
         0
         (tc_i64_i64_map.with-capacity 1)
+        (tc_i64_i64_map.with-capacity 1)
         0
         0
-        (arena.tl_arena_current)
-        false))
+        (arena.tl_arena_current)))
     (TcCheckedLetBindingFactState
       (cast
         (unsafe
@@ -1690,9 +1695,10 @@
       (if (= payload 0)
         (begin
           (set! (deref data).enabled false)
+          (set! (deref data).complete-required false)
+          (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
-          (set! (deref data).len 0)
-          (set! (deref data).inconsistent false))
+          (set! (deref data).len 0))
         (begin
           (if (= (arena.tl_arena_current) payload)
             (arena.tl_arena_set (deref data).return-arena)
@@ -1703,18 +1709,23 @@
             (set!
               (deref data).facts
               (__tl_make-array TcCheckedLetBindingFact 0))
-            (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1)))
+            (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1))
+            (set!
+              (deref data).declaration-ordinals
+              (tc_i64_i64_map.with-capacity 1)))
           (set! (deref data).enabled false)
+          (set! (deref data).complete-required false)
+          (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).capacity 0)
           (set! (deref data).len 0)
           (set! (deref data).payload-arena 0)
           (set! (deref data).return-arena 0)
-          (set! (deref data).inconsistent false)
           (arena.tl_arena_destroy payload))))))
 
 (define (tc-checked-let-binding-facts-begin!
-  [state : TcCheckedLetBindingFactState]) : unit
+  [state : TcCheckedLetBindingFactState]
+  [complete-required : bool]) : unit
   (tc-checked-let-binding-fact-state-release-storage! state)
   (let
     [return-arena : i64 (arena.tl_arena_current)]
@@ -1727,14 +1738,18 @@
           (tc-checked-let-binding-fact-state-ptr state)]
         (unsafe
           (set! (deref data).enabled true)
+          (set! (deref data).complete-required complete-required)
+          (set! (deref data).recording true)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).facts (__tl_make-array TcCheckedLetBindingFact 64))
           (set! (deref data).capacity 64)
           (set! (deref data).len 0)
           (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 128))
+          (set!
+            (deref data).declaration-ordinals
+            (tc_i64_i64_map.with-capacity 128))
           (set! (deref data).payload-arena payload)
-          (set! (deref data).return-arena return-arena)
-          (set! (deref data).inconsistent false))))))
+          (set! (deref data).return-arena return-arena))))))
 
 (define (tc-checked-let-binding-facts-finish!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -1744,6 +1759,149 @@
   [state : TcCheckedLetBindingFactState]) : bool
   (unsafe
     (deref (tc-checked-let-binding-fact-state-view state)).enabled))
+
+;; Semantic indexing requires complete proofs. Lowering can infer missing
+;; bindings, so retaining its proofs must not disable trusted surface hydration.
+(define (tc-checked-let-binding-facts-complete-required?
+  [state : TcCheckedLetBindingFactState]) : bool
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (and data.enabled data.complete-required)))
+
+;; Recording grows the fact array and both maps by doubling inside the payload
+;; generation, so every superseded copy stays there next to the live one.
+;; Copy the live facts (exactly sized), their persisted types and both maps
+;; into a fresh generation and destroy the old one; lowering then retains only
+;; the proofs it may look up.
+(define (tc-checked-let-binding-facts-compact!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (unless
+      (or (not data.enabled) (= data.payload-arena 0))
+      (let
+        [fresh : i64 (arena.tl_arena_make)]
+        [compacted : TcCheckedLetBindingFactStateData
+          (in-arena
+            (unsafe
+              (arena.Arena fresh))
+            (let
+              [count : i64 data.len]
+              [facts : (__tl_dyn-array TcCheckedLetBindingFact)
+                (__tl_make-array
+                  TcCheckedLetBindingFact
+                  (if (< count 1)
+                    1
+                    count))]
+              (for [index (iterator.range 0 count)]
+                (let
+                  [fact (& (array-ref data.facts index))]
+                  (set!
+                    (array-ref facts index)
+                    (TcCheckedLetBindingFact
+                      fact.declaration-ordinal
+                      fact.body-id
+                      fact.binding-ordinal
+                      fact.name-id
+                      fact.init-id
+                      (ast.ty-node-persist (& fact.binding-ty))
+                      fact.inconsistent
+                      (TcCheckedLetBindingTransition
+                        fact.transition.arena-owner-kind
+                        fact.transition.phase-owner-id)
+                      fact.hash-next))))
+              (TcCheckedLetBindingFactStateData
+                data.enabled
+                data.complete-required
+                data.recording
+                data.current-declaration-ordinal
+                facts
+                (if (< count 1)
+                  1
+                  count)
+                count
+                (clone data.by-hash)
+                (clone data.declaration-ordinals)
+                fresh
+                data.return-arena
+                data.owner-arena)))]
+        (tc-checked-let-binding-fact-state-data-set! state compacted)
+        (unsafe
+          (arena.tl_arena_destroy data.payload-arena))))))
+
+(define (tc-checked-let-binding-facts-freeze!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (tc-checked-let-binding-facts-compact! state)
+  (unsafe
+    (let
+      [data : (MutPtr TcCheckedLetBindingFactStateData)
+        (tc-checked-let-binding-fact-state-ptr state)]
+      (set! (deref data).recording false)
+      (set! (deref data).current-declaration-ordinal -1))))
+
+;; Declaration positions change when checked lowering prunes unreachable
+;; declarations. Resolve the original ordinal from the source module/name;
+;; an overloaded or repeated name is ambiguous and must use inference instead.
+(define (tc-checked-let-binding-declaration-key
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : i64
+  (let
+    [value : ast.AstDecl (owned_view.compiler-owned-reference-shared-view decl)]
+    (match value
+      [(DefFn _ name _ _ _ _)
+        (csym.compiler-symbol-module-key-id-by-id module-id name)]
+      [(Unsafe inner)
+        (tc-checked-let-binding-declaration-key
+          module-id
+          (& (__tl-box-place inner)))]
+      [_ -1])))
+
+(define (tc-checked-let-binding-facts-record-declaration!
+  [state : TcCheckedLetBindingFactState]
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (when
+      (and data.enabled data.recording)
+      (let
+        [key : i64 (tc-checked-let-binding-declaration-key module-id decl)]
+        (when
+          (>= key 0)
+          (let
+            [ordinal : i64 data.current-declaration-ordinal]
+            [value : i64
+              (match (tc_i64_i64_map.get (& data.declaration-ordinals) key)
+                [(LookupFound previous)
+                  (if (= previous ordinal)
+                    ordinal
+                    -1)]
+                [(LookupMissing) ordinal])]
+            (in-arena
+              (unsafe
+                (arena.Arena data.payload-arena))
+              (tc_i64_i64_map.insert-ref!
+                (&mut data.declaration-ordinals)
+                key
+                value))
+            (tc-checked-let-binding-fact-state-data-set! state data)))))))
+
+(define (tc-checked-let-binding-facts-declaration-ordinal
+  [state : TcCheckedLetBindingFactState]
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : i64
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (if data.enabled
+      (tc_i64_i64_map.get-value-or
+        (& data.declaration-ordinals)
+        (tc-checked-let-binding-declaration-key module-id decl)
+        -1)
+      -1)))
 
 (define (tc-checked-let-binding-facts-set-current-declaration!
   [state : TcCheckedLetBindingFactState]
@@ -1794,7 +1952,7 @@
     [data : TcCheckedLetBindingFactStateData
       (tc-checked-let-binding-fact-state-data state)]
     [declaration-ordinal : i64 data.current-declaration-ordinal]
-    (if (and data.enabled (>= declaration-ordinal 0))
+    (if (and data.enabled data.recording (>= declaration-ordinal 0))
       (let
         [key-hash : i64
           (tc-checked-let-binding-key-hash
@@ -1821,12 +1979,12 @@
                 ;; the same final binding and transition.
                 (unless
                   (and
-                    (tc-type-eq fact.binding-ty binding-ty)
+                    ;; Proof identity includes allocation-region wrappers.
+                    (ast.ast-type-eq? fact.binding-ty binding-ty)
                     (tc-checked-let-binding-transition-eq?
                       fact.transition
                       transition))
-                  (set! data.inconsistent true)
-                  (tc-checked-let-binding-fact-state-data-set! state data))
+                  (set! (array-ref data.facts cursor).inconsistent true))
                 (return unit))
               (set! cursor fact.hash-next))))
         (if (>= data.len data.capacity)
@@ -1850,6 +2008,7 @@
               name-id
               init-id
               persisted
+              false
               transition
               head))
           ;; Hashmap growth allocates in the active arena. Force it into the
@@ -1873,10 +2032,8 @@
   (let
     [data : TcCheckedLetBindingFactStateData
       (tc-checked-let-binding-fact-state-data state)]
-    (if (or (not data.enabled) data.inconsistent)
-      (if data.inconsistent
-        (Inconsistent)
-        (Missing))
+    (if (not data.enabled)
+      (Missing)
       (let
         [key-hash : i64
           (tc-checked-let-binding-key-hash
@@ -1898,7 +2055,10 @@
               binding-ordinal
               name-id
               init-id)
-              (return (Hit fact.binding-ty fact.transition))
+              (return
+                (if fact.inconsistent
+                  (Inconsistent)
+                  (Hit fact.binding-ty fact.transition)))
               (set! cursor fact.hash-next))))
         (Missing)))))
 
@@ -3068,18 +3228,22 @@
   (No)
   (Some bool i64 TcTypeEnv i64))
 
-(define tc-unbound-suggestion-snapshot : TcUnboundSuggestionSnapshot
-  (No))
+;; Only the latest diagnostic snapshot is live. Mutate one stable container so
+;; recording and clearing names do not retain a new global container each time.
+(define tc-unbound-suggestion-snapshot : (Array TcUnboundSuggestionSnapshot 1)
+  (array (No)))
 
 (define (tc-unbound-suggestion-snapshot-reset!) : unit
-  (set! tc-unbound-suggestion-snapshot (TcUnboundSuggestionSnapshot.No)))
+  (set!
+    (array-ref tc-unbound-suggestion-snapshot 0)
+    (TcUnboundSuggestionSnapshot.No)))
 
 (define (tc-unbound-suggestion-snapshot-record!
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : unit
   (set!
-    tc-unbound-suggestion-snapshot
+    (array-ref tc-unbound-suggestion-snapshot 0)
     (TcUnboundSuggestionSnapshot.Some
       (> (string.string-length (tc-context-module ctx)) 0)
       (tc-unbound-suggestion-scope-module-id ctx name-id)
@@ -4056,16 +4220,33 @@
                   [(TcSelectedResult.Ok ty occurrence next)
                     (TcSelectedResult.Ok ty occurrence next)]
                   [(TcSelectedResult.Err message next)
-                    (tc-selected-unrepresented
-                      (tc-macro-expansion-result-with-frame
-                        ctx
-                        (tc-context-expr-get ctx expanded)
-                        (macro-expansion-invocation-path-id provenance-id)
-                        (macro-expansion-origin-path-id provenance-id)
-                        macro-name-id
-                        span
-                        (ResultTcType.Err message))
-                      next)])]
+                    (let
+                      [compact? : bool
+                        (=
+                          macro-name-id
+                          (ctfe_support.ctfe-compact-caller-origin-name))]
+                      (tc-selected-unrepresented
+                        (tc-macro-expansion-result-with-frame
+                          ctx
+                          expanded
+                          compact?
+                          (macro-expansion-invocation-path-id provenance-id)
+                          (macro-expansion-origin-path-id provenance-id)
+                          macro-name-id
+                          span
+                          ;; A compact caller operand has no Spanned row of
+                          ;; its own; locate its error with full context, as
+                          ;; `tc-check-operand-view` does, so an unbound name
+                          ;; keeps its suggestion.
+                          (if compact?
+                            (tc-locate-spanned-error-with-context
+                              ctx
+                              env
+                              (tc-context-expr-get ctx expanded)
+                              span
+                              message)
+                            (ResultTcType.Err message)))
+                        next))])]
               (when
                 observed?
                 (tc-semantic-observer-send!
@@ -9922,7 +10103,22 @@
                                 arena-binder
                                 rewind?)
                               (__tl_make-array typed.TypedOccurrenceId 0)
-                              (& source))
+                              ;; Located at the arena or phase argument, as
+                              ;; main reports it, else at the call.
+                              (&
+                                (match (tc-expr-maybe-span
+                                  (tc-context-expr-bases ctx)
+                                  (tc-global-shared-view origin))
+                                  [(Some span)
+                                    (ownership.OwnershipSource
+                                      (string.copy (& source.path))
+                                      (tc-selected-span-line source.line span)
+                                      (tc-selected-span-column
+                                        source.column
+                                        span)
+                                      (string.copy (& source.expansion)))]
+                                  [(No)
+                                    (ownership.ownership-source-copy (& source))])))
                               [(TcSelectedPatternResult.Ok id)
                                 (__tl_array-push! children id)]
                               [(TcSelectedPatternResult.Unsupported) unit]
@@ -22874,7 +23070,11 @@
         [(MacroExpansion expanded provenance-id macro-name-id)
           (let
             [expanded-expr : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases expanded)]
+              (if (=
+                macro-name-id
+                (ctfe_support.ctfe-compact-caller-origin-name))
+                (Spanned expanded span)
+                (ast.ast-expr-segment-bases-get expr-bases expanded))]
             [path-id : i64 (macro-expansion-invocation-path-id provenance-id)]
             [origin-path-id : i64
               (macro-expansion-origin-path-id provenance-id)]
@@ -51882,9 +52082,14 @@
             (Ok (tc-contextual-result-type expected matched))]
           [(Mismatch _) (Ok actual)])])))
 
+;; An unlocated error from checking the expanded node EXPANDED takes that
+;; node's span, or the frame SPAN when it has none. The operand of a compact
+;; caller-origin marker (COMPACT?) is located at SPAN, the span of the Spanned
+;; view it is checked through as a temporary Spanned value.
 (define (tc-macro-expansion-result-with-frame
   [ctx : TcContext]
-  [inner : ast.AstExpr]
+  [expanded : i64]
+  [compact? : bool]
   [path-id : i64]
   [origin-path-id : i64]
   [macro-name-id : i64]
@@ -51897,9 +52102,16 @@
         [located : String
           (if (tc-encoded-error? message)
             message
-            (match (tc-expr-maybe-span (tc-context-expr-bases ctx) inner)
-              [(Some primary) (tc-located-error primary message)]
-              [(No) (tc-located-error span message)]))]
+            (let
+              [primary : ast.AstSourceSpan
+                (if compact?
+                  span
+                  (match (tc-expr-id-maybe-span
+                    (tc-context-expr-bases ctx)
+                    expanded)
+                    [(Some found) found]
+                    [(No) span]))]
+              (tc-located-error primary message)))]
         (Err
           (tc-macro-framed-error
             path-id
@@ -51907,6 +52119,104 @@
             origin-path-id
             macro-name-id
             (tc-unbound-finalize-located-error located))))]))
+
+;; Ordinary Spanned nodes and compact caller operands use the same transient
+;; view. No-view callers retain the ID entrypoint's normalization/observation.
+;; The view checks Unsafe with its span and locates errors with full context.
+(define (tc-check-operand-view
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [span : ast.AstSourceSpan]
+  [view? : bool]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (if view?
+    (let
+      [inner : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+      [result : ResultTcType
+        (match (tc-global-shared-view inner)
+          [(Unsafe exprs)
+            (tc-unsafe-begin-list-scoped
+              ctx
+              env
+              exprs
+              (if expected?
+                (Some expected)
+                (No))
+              (Some span))]
+          [_
+            (if expected?
+              (tc-expr-with-expected-or-actual-core-id
+                ctx
+                env
+                expr-id
+                expected
+                allow-mut-by-value-borrow)
+              (tc-expr-id ctx env expr-id))])]
+      (match result
+        [(Ok ty) (Ok ty)]
+        [(Err message)
+          (tc-locate-spanned-error-with-context ctx env inner span message)]))
+    (if expected?
+      (tc-expr-with-expected-or-actual-core-id
+        ctx
+        env
+        expr-id
+        expected
+        allow-mut-by-value-borrow)
+      (tc-expr-id ctx env expr-id))))
+
+;; Both checking modes share macro provenance and the operand's Spanned view.
+(define (tc-check-spanned-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner-box : i64]
+  [span : ast.AstSourceSpan]
+  [expected : ast.AstType]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (let
+    [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+    (match (tc-global-shared-view inner)
+      [(MacroExpansion expanded provenance-id macro-name-id)
+        (let
+          [compact? : bool
+            (= macro-name-id (ctfe_support.ctfe-compact-caller-origin-name))]
+          (tc-macro-expansion-result-with-frame
+            ctx
+            expanded
+            compact?
+            (macro-expansion-invocation-path-id provenance-id)
+            (macro-expansion-origin-path-id provenance-id)
+            macro-name-id
+            span
+            (tc-semantic-expansion
+              ctx
+              env
+              (macro-expansion-origin-path-id provenance-id)
+              macro-name-id
+              span
+              (tc-check-operand-view
+                ctx
+                env
+                expanded
+                span
+                compact?
+                expected
+                expected?
+                allow-mut-by-value-borrow))))]
+      [_
+        (tc-check-operand-view
+          ctx
+          env
+          inner-box
+          span
+          true
+          expected
+          expected?
+          allow-mut-by-value-borrow)])))
 
 (define (tc-expr-with-expected-or-actual-core-inner
   [ctx : TcContext]
@@ -51916,56 +52226,14 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
-                ctx
-                env
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-expr-with-expected-or-actual-core-id
-                  ctx
-                  env
-                  expanded
-                  expected
-                  allow-mut-by-value-borrow)))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped
-                      ctx
-                      env
-                      exprs
-                      (Some expected)
-                      (Some span))]
-                  [_
-                    (tc-expr-with-expected-or-actual-core-id
-                      ctx
-                      env
-                      inner-box
-                      expected
-                      allow-mut-by-value-borrow)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
-                    ctx
-                    env
-                    inner
-                    span
-                    message)]))]))]
+      (tc-check-spanned-operand
+        ctx
+        env
+        inner-box
+        span
+        expected
+        true
+        allow-mut-by-value-borrow)]
     [(MacroExpansion inner _ _)
       (tc-expr-with-expected-or-actual-core-id
         ctx
@@ -53730,7 +53998,7 @@
             clean-start
             (- (string.string-length message) clean-start))]
         (if (tc-unbound-name-message? clean-message)
-          (match tc-unbound-suggestion-snapshot
+          (match (array-ref tc-unbound-suggestion-snapshot 0)
             [(Some module-qualified module-id env name-id)
               (let
                 [name : String
@@ -61073,8 +61341,8 @@
   [env : TcTypeEnv]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : ResultTcType
-  ;; This path exists only to extend the environment while expression macros
-  ;; are being expanded. The complete expanded let is checked afterward by
+  ;; Extend semantic environments during expression macro expansion and
+  ;; post-check lowering. The complete expanded let is checked by
   ;; `tc-infer-selected-let`, which proves concrete closure capability and
   ;; captured-lifetime uses against the rest of the bindings and body. Admit a
   ;; direct lambda here so a macro-produced reference-capturing closure can
@@ -83281,40 +83549,7 @@
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (match (tc-global-shared-view inner)
-          [(MacroExpansion expanded provenance-id macro-name-id)
-            (tc-macro-expansion-result-with-frame
-              ctx
-              (tc-context-expr-get ctx expanded)
-              (macro-expansion-invocation-path-id provenance-id)
-              (macro-expansion-origin-path-id provenance-id)
-              macro-name-id
-              span
-              (tc-semantic-expansion
-                ctx
-                env
-                (macro-expansion-origin-path-id provenance-id)
-                macro-name-id
-                span
-                (tc-expr-id ctx env expanded)))]
-          [_
-            (let
-              [result : ResultTcType
-                (match (tc-global-shared-view inner)
-                  [(Unsafe exprs)
-                    (tc-unsafe-begin-list-scoped ctx env exprs No (Some span))]
-                  [_ (tc-expr-id ctx env inner-box)])]
-              (match result
-                [(Ok ty) (Ok ty)]
-                [(Err message)
-                  (tc-locate-spanned-error-with-context
-                    ctx
-                    env
-                    inner
-                    span
-                    message)]))]))]
+      (tc-check-spanned-operand ctx env inner-box span (Unit) false false)]
     [(or (MacroExpansion inner _ _) (LaneValue inner))
       (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]
@@ -88275,18 +88510,20 @@
         "` while `with` cleanup owner `"
         name
         "` holds values from it; the owner's cleanup runs when its `with` scope ends")]
-    ;; A call node carries no span of its own; its arena argument does.
-    (match (match (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))
+    ;; The invalidating call is located at its arena argument, or at the call's
+    ;; own source view when that argument has no span.
+    (match (match (match (ast.ast-expr-unspan-with-segment-bases
+      expr-bases
+      (& origin))
+      [(Call _ args)
+        (if (ast.ast-expr-list-empty? (& args))
+          TcMaybeAstSourceSpan.No
+          (tc-expr-id-maybe-span
+            expr-bases
+            (ast.ast-expr-list-get (& args) 0 0)))]
+      [_ TcMaybeAstSourceSpan.No])
       [(Some span) (TcMaybeAstSourceSpan.Some span)]
-      [(No)
-        (match origin
-          [(Call _ args)
-            (if (ast.ast-expr-list-empty? (& args))
-              TcMaybeAstSourceSpan.No
-              (tc-expr-id-maybe-span
-                expr-bases
-                (ast.ast-expr-list-get (& args) 0 0)))]
-          [_ TcMaybeAstSourceSpan.No])])
+      [(No) (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))])
       [(Some span)
         (tc-rich-error-with-help
           span
@@ -107133,6 +107370,20 @@
     (string.eq macro-name "stdlib.core_macros/__tl-project-set-field-name")
     (string.eq macro-name "stdlib.core_macros/__tl-box-place")))
 
+;; A caller-origin marker over a spanned operand takes the place of the
+;; operand's own Spanned row: the compact marker (`ctfe-compact-caller-origin-name`)
+;; wraps the operand's semantic node and one Spanned view with the operand's
+;; span wraps the marker. Wrapping the operand's Spanned row instead would
+;; repeat that span in a second row for every captured operand. Checking and
+;; locating below the marker see the same view as a temporary Spanned value.
+;; The operand keeps its Spanned row, under an ordinary -1 marker, when that row
+;; is the only record of something below it: over a call, since the expansion
+;; walk frames a macro call with the Spanned row directly above it; over another
+;; Spanned view with a different span; and over a macro marker, whose frame is
+;; recognized by the Spanned row above it. A job with a semantic observer (the
+;; semantic lint facts collector, `compiler_semantic_lint_facts.tl`) keeps it
+;; too, since the observer records a fact for each Spanned row the check visits
+;; by id. A string literal operand is copied.
 (define (macro-captured-expr-node
   [ctx : TcContext]
   [expr-cell-address : u64]
@@ -107141,47 +107392,66 @@
   [arg-expr : ast.AstExpr]
   [record-caller-origin : bool]) : i64
   (let
+    [compact? : bool false]
     [captured : i64
       (match (tc-global-shared-view arg-expr)
         [(Spanned inner span)
-          (match (tc-context-expr-get ctx inner)
-            [(Literal (String string-id))
-              (tc-context-expr-push-cell-addresses
-                expr-cell-address
-                type-cell-address
-                (Spanned
-                  (tc-context-expr-push-cell-addresses
-                    expr-cell-address
-                    type-cell-address
-                    (Literal (String string-id)))
-                  span))]
-            [_ arg-id])]
+          (let
+            [eligible? : bool
+              (and
+                record-caller-origin
+                (=
+                  (tc-job-state-semantic-observer (tc-context-job-state ctx)).address
+                  0))]
+            [operand : i64
+              (match (tc-context-expr-get ctx inner)
+                [(Literal (String string-id))
+                  (let
+                    [literal : i64
+                      (tc-context-expr-push-cell-addresses
+                        expr-cell-address
+                        type-cell-address
+                        (Literal (String string-id)))]
+                    (if eligible?
+                      literal
+                      (tc-context-expr-push-cell-addresses
+                        expr-cell-address
+                        type-cell-address
+                        (Spanned literal span))))]
+                [(or (Call _ _) (Spanned _ _) (MacroExpansion _ _ _)) arg-id]
+                [_
+                  (if eligible?
+                    inner
+                    arg-id)])]
+            (set! compact? (and eligible? (!= operand arg-id)))
+            operand)]
         [(Literal (String string-id))
           (tc-context-expr-push-cell-addresses
             expr-cell-address
             type-cell-address
             (Literal (String string-id)))]
         [_ arg-id])]
-    [path-id : i64 (macro-invocation-path-id ctx)]
-    [out : i64
-      (if record-caller-origin
-        (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
-          [(Some span)
-            (tc-context-expr-push-cell-addresses
-              expr-cell-address
-              type-cell-address
-              (Spanned
-                (tc-context-expr-push-cell-addresses
-                  expr-cell-address
-                  type-cell-address
-                  (MacroExpansion
-                    captured
-                    (macro-expansion-provenance-id -1 path-id)
-                    -1))
-                span))]
-          [(No) captured])
-        captured)]
-    out))
+    (if record-caller-origin
+      (match (tc-expr-maybe-span (tc-context-expr-bases ctx) arg-expr)
+        [(Some span)
+          (tc-context-expr-push-cell-addresses
+            expr-cell-address
+            type-cell-address
+            (Spanned
+              (tc-context-expr-push-cell-addresses
+                expr-cell-address
+                type-cell-address
+                (MacroExpansion
+                  captured
+                  (macro-expansion-provenance-id
+                    -1
+                    (macro-invocation-path-id ctx))
+                  (if compact?
+                    (ctfe_support.ctfe-compact-caller-origin-name)
+                    -1)))
+              span))]
+        [(No) captured])
+      captured)))
 
 (define (macro-env-extend-captured-param
   [env : ctfe_support.CtfeEnv]
@@ -122429,16 +122699,16 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   ;; A cached prefix contains only its summary, not semantic observations from
-  ;; the declarations it skipped. Retained let facts and clone-root collection
-  ;; therefore take the ordinary declaration walk even when an interactive
-  ;; prefix cache is on.
+  ;; the declarations it skipped. Consumers requiring complete let facts take
+  ;; the ordinary walk. Lowering may infer missing facts after trusted surface
+  ;; hydration; clone-root collection retains its interactive-cache guard below.
   (cond
     [(or
         (not
           (or
             (= tc-semantic-observed-jobs 0)
             (= (tc-context-semantic-observer ctx).address 0)))
-        (tc-checked-let-binding-facts-enabled?
+        (tc-checked-let-binding-facts-complete-required?
           (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))))
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
     [(surface_facts.surface-typecheck-facts-active?)
@@ -122927,6 +123197,12 @@
                 (tc-job-state-checked-let-binding-facts
                   (tc-context-job-state ctx))
                 (- rest.offset 1))]
+            [_record-checked-let-declaration : unit
+              (tc-checked-let-binding-facts-record-declaration!
+                (tc-job-state-checked-let-binding-facts
+                  (tc-context-job-state ctx))
+                cur-module-id
+                (& decl))]
             (match (tc-global-shared-view decl)
               [(Module next-module)
                 (tc-context-capture-active-pools! ctx)

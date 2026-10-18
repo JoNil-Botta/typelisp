@@ -1,5 +1,8 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import stdlib.iterator)
+(import stdlib.test)
 (import stdlib.io)
+(import stdlib.arena)
 (import compiler_object as cobj)
 (import compiler_object_asm as object_asm)
 (import compiler_object_coff as coff)
@@ -226,7 +229,12 @@
           (string.eq
             (cdiag.compiler-diagnostic-message (__tl-box-place diag))
             "compiler-backend-lower-source-for-target: standalone resetting compiler entry cannot run inside an active compiler load session")]
-        [(Ok _ _) false]))))
+        [(Ok _ _ lower-owner)
+          (let
+            [result : bool false]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            result)]))))
 
 ;; Test-side String shim for the explicit backend-state buffer route.  Keep the
 ;; state choice at each call site: callers construct and configure the exact
@@ -1241,12 +1249,17 @@
     "stdlib/runtime.tl"
     (compiler-backend-runtime-atomic-wrapper-source)
     (backend.compiler-backend-lower-mode-for-target target (Scalar)))
-    [(Ok program spans)
-      (compiler-backend-emit-program-with-spans-for-target-and-entry
-        program
-        spans
-        target
-        false)]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackend
+          (compiler-backend-emit-program-with-spans-for-target-and-entry
+            program
+            spans
+            target
+            false)]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
@@ -1313,12 +1326,17 @@
     "stdlib/runtime.tl"
     (compiler-backend-runtime-tls-wrapper-source)
     (backend.compiler-backend-lower-mode-for-target target (Scalar)))
-    [(Ok program spans)
-      (compiler-backend-emit-program-with-spans-for-target-and-entry
-        program
-        spans
-        target
-        false)]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackend
+          (compiler-backend-emit-program-with-spans-for-target-and-entry
+            program
+            spans
+            target
+            false)]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define (compiler-backend-runtime-tls-linux-wrapper-asm-ok? [asm : String]) : bool
@@ -1650,17 +1668,22 @@
   [target : backend.CompilerBackendTarget]) : backend.CompilerBackendObjectEligibility
   (match (lower.lower-compiler-source source)
     [(Err _) (Unsupported UnsupportedSemantics)]
-    [(Ok program _)
+    [(Ok program _ lower-owner)
       (let
-        [backend-state : backend.CompilerBackendState
-          (backend.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active))]
-        (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
-          backend-state
-          (ast.ast-node-pool-reader-type-segment-bases)
-          program
-          target
-          (profile_state.compiler-profile-state-new)))]))
+        [result : backend.CompilerBackendObjectEligibility
+          (let
+            [backend-state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new
+                (ci.intern-compat-state-capture-active))]
+            (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+              backend-state
+              (ast.ast-node-pool-reader-type-segment-bases)
+              program
+              target
+              (profile_state.compiler-profile-state-new)))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]))
 
 (define (compiler-backend-object-source-category?
   [source : String]
@@ -3254,30 +3277,35 @@
 
 (define (compiler-backend-missing-main-ok?) : bool
   (match (lower.lower-compiler-source (compiler-backend-missing-main-source))
-    [(Ok program spans)
-      (and
-        (compiler-backend-missing-main-rejected?
-          (compiler-backend-emit-program-with-spans-for-target-and-entry
-            (owned_view.compiler-owned-shared-view program)
-            (owned_view.compiler-owned-shared-view spans)
-            (backend.CompilerBackendTarget.Linux)
-            true))
-        (compiler-backend-missing-main-rejected?
-          (compiler-backend-emit-program-with-spans-for-target-and-entry
-            (owned_view.compiler-owned-shared-view program)
-            (owned_view.compiler-owned-shared-view spans)
-            (backend.CompilerBackendTarget.Windows)
-            true))
-        (match (compiler-backend-emit-program-with-spans-for-target-and-entry
-          program
-          spans
-          (backend.CompilerBackendTarget.Linux)
-          false)
-          [(Ok asm)
-            (and
-              (asm-has? asm ".text\n")
-              (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n" "main:\n"))]
-          [(Err _) false]))]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (and
+            (compiler-backend-missing-main-rejected?
+              (compiler-backend-emit-program-with-spans-for-target-and-entry
+                (owned_view.compiler-owned-shared-view program)
+                (owned_view.compiler-owned-shared-view spans)
+                (backend.CompilerBackendTarget.Linux)
+                true))
+            (compiler-backend-missing-main-rejected?
+              (compiler-backend-emit-program-with-spans-for-target-and-entry
+                (owned_view.compiler-owned-shared-view program)
+                (owned_view.compiler-owned-shared-view spans)
+                (backend.CompilerBackendTarget.Windows)
+                true))
+            (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+              program
+              spans
+              (backend.CompilerBackendTarget.Linux)
+              false)
+              [(Ok asm)
+                (and
+                  (asm-has? asm ".text\n")
+                  (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n" "main:\n"))]
+              [(Err _) false]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-string-ok?) : bool
@@ -4655,8 +4683,8 @@
   (match (backend.compiler-backend-emit-pack-words
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 7)
-    (Bool true)
+    (& (I64 7))
+    (& (Bool true))
     "-16(%rbp)"
     "-24(%rbp)"
     false
@@ -4667,8 +4695,8 @@
       (match (backend.compiler-backend-emit-pack-words
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
-        (I64 9)
-        (Char 'A')
+        (& (I64 9))
+        (& (Char 'A'))
         "%r12"
         "%r13"
         false
@@ -4697,8 +4725,8 @@
     (match (backend.compiler-backend-emit-pack-words
       (ast.ast-node-pool-reader-type-segment-bases)
       gp-assignments
-      (Var 0)
-      (Var 1)
+      (& (Var 0))
+      (& (Var 1))
       "-16(%rbp)"
       "-24(%rbp)"
       false
@@ -4710,8 +4738,8 @@
         (match (backend.compiler-backend-emit-pack-words
           (ast.ast-node-pool-reader-type-segment-bases)
           xmm-assignments
-          (Var 0)
-          (Var 1)
+          (& (Var 0))
+          (& (Var 1))
           "-16(%rbp)"
           "-24(%rbp)"
           true
@@ -5458,22 +5486,27 @@
   [target : backend.CompilerBackendTarget]
   [emit-entry : bool]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
-    [(Ok program spans)
-      (match (opt.optimize-program-with-spans-and-level (& program) spans 2)
-        [(Program optimized optimized-spans)
-          (let
-            [backend-state : backend.CompilerBackendState
-              (backend.compiler-backend-state-new
-                (ci.intern-compat-state-capture-active))]
-            (backend.compiler-backend-state-set-scalar-registers-enabled!
-              backend-state
-              true)
-            (compiler-backend-test-emit-program-with-state
-              backend-state
-              target
-              optimized
-              optimized-spans
-              emit-entry))])]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackend
+          (match (opt.optimize-program-with-spans-and-level (& program) spans 2)
+            [(Program optimized optimized-spans)
+              (let
+                [backend-state : backend.CompilerBackendState
+                  (backend.compiler-backend-state-new
+                    (ci.intern-compat-state-capture-active))]
+                (backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
+                  true)
+                (compiler-backend-test-emit-program-with-state
+                  backend-state
+                  target
+                  optimized
+                  optimized-spans
+                  emit-entry))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 ;; A `stdlib.*` module fixture is library code: its module-qualified `main` is
@@ -5483,12 +5516,17 @@
   [source : String]
   [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
-    [(Ok program spans)
-      (compiler-backend-emit-program-with-spans-for-target-and-entry
-        program
-        spans
-        target
-        false)]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackend
+          (compiler-backend-emit-program-with-spans-for-target-and-entry
+            program
+            spans
+            target
+            false)]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 ;; Emit the scalar stack-only path used by opt0/opt1. Keeping this helper
@@ -5499,22 +5537,30 @@
   [target : backend.CompilerBackendTarget]
   [level : i64]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
-    [(Ok program spans)
-      (match (opt.optimize-program-with-spans-and-level (& program) spans level)
-        [(Program optimized optimized-spans)
-          (let
-            [backend-state : backend.CompilerBackendState
-              (backend.compiler-backend-state-new
-                (ci.intern-compat-state-capture-active))]
-            (backend.compiler-backend-state-set-scalar-registers-enabled!
-              backend-state
-              false)
-            (compiler-backend-test-emit-program-with-state
-              backend-state
-              target
-              optimized
-              optimized-spans
-              true))])]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackend
+          (match (opt.optimize-program-with-spans-and-level
+            (& program)
+            spans
+            level)
+            [(Program optimized optimized-spans)
+              (let
+                [backend-state : backend.CompilerBackendState
+                  (backend.compiler-backend-state-new
+                    (ci.intern-compat-state-capture-active))]
+                (backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
+                  false)
+                (compiler-backend-test-emit-program-with-state
+                  backend-state
+                  target
+                  optimized
+                  optimized-spans
+                  true))])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 (define compiler-backend-stack-only-frame-color-source : String
@@ -11356,47 +11402,57 @@
   [src : String]) : bool
   (match (lower.lower-compiler-source
     (owned_view.compiler-owned-shared-view src))
-    [(Ok first-program first-spans)
+    [(Ok first-program first-spans lower-owner)
       (let
-        [legacy-state : backend.CompilerBackendState
-          (backend.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active))]
-        [legacy-stream : backend.CompilerBackendStreamState
-          (backend.compiler-backend-state-stream-state legacy-state)]
-        (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-          legacy-state
-          (ast.ast-node-pool-reader-type-segment-bases)
-          first-program
-          (backend.CompilerBackendTarget.Linux)
-          (Scalar)
-          first-spans
-          true
-          false
-          false
-          (profile_state.compiler-profile-state-new))
-          [(Ok raw)
-            (let
-              [legacy : String
-                (text_buf.render
-                  (backend.compiler-backend-peephole-asm-buffer-with-state
-                    legacy-state
-                    legacy-stream
-                    (text_buf.render raw)
-                    true))]
-              (match (lower.lower-compiler-source src)
-                [(Ok second-program second-spans)
-                  (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
-                    second-program
-                    (backend.CompilerBackendTarget.Linux)
-                    (Scalar)
-                    second-spans
-                    true
-                    false)
-                    [(Ok streamed)
-                      (string.eq legacy (text_buf.render streamed))]
-                    [(Err _) false])]
-                [(Err _) false]))]
-          [(Err _) false]))]
+        [result : bool
+          (let
+            [legacy-state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new
+                (ci.intern-compat-state-capture-active))]
+            [legacy-stream : backend.CompilerBackendStreamState
+              (backend.compiler-backend-state-stream-state legacy-state)]
+            (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+              legacy-state
+              (ast.ast-node-pool-reader-type-segment-bases)
+              first-program
+              (backend.CompilerBackendTarget.Linux)
+              (Scalar)
+              first-spans
+              true
+              false
+              false
+              (profile_state.compiler-profile-state-new))
+              [(Ok raw)
+                (let
+                  [legacy : String
+                    (text_buf.render
+                      (backend.compiler-backend-peephole-asm-buffer-with-state
+                        legacy-state
+                        legacy-stream
+                        (text_buf.render raw)
+                        true))]
+                  (match (lower.lower-compiler-source src)
+                    [(Ok second-program second-spans lower-owner)
+                      (let
+                        [result : bool
+                          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                            second-program
+                            (backend.CompilerBackendTarget.Linux)
+                            (Scalar)
+                            second-spans
+                            true
+                            false)
+                            [(Ok streamed)
+                              (string.eq legacy (text_buf.render streamed))]
+                            [(Err _) false])]
+                        (lower.compiler-lower-arena-state-release!
+                          (lower.compiler-lower-state-arenas lower-owner))
+                        result)]
+                    [(Err _) false]))]
+              [(Err _) false]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) false]))
 
 (define (compiler-backend-streamed-final-output-equivalent?) : bool
@@ -13389,7 +13445,7 @@ f:
 (define (compiler-backend-zero-load-ok?) : bool
   (match (backend.compiler-backend-emit-load-value
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 0)
+    (& (I64 0))
     "%rax"
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(Ok asm) (string.eq asm "    xorl %eax, %eax\n")]
@@ -15038,15 +15094,20 @@ f:
 
 (define (compiler-backend-target-linux-no-entry-ok? [src : String]) : bool
   (match (lower.lower-compiler-source src)
-    [(Ok program spans)
-      (asm-ok?
-        (compiler-backend-emit-program-with-spans-for-target-and-entry
-          program
-          spans
-          (backend.CompilerBackendTarget.Linux)
-          false)
-        (has ".text\n" "main:\n")
-        (lacks ".globl _tl_start\n" "_tl_start:\n"))]
+    [(Ok program spans lower-owner)
+      (let
+        [result : bool
+          (asm-ok?
+            (compiler-backend-emit-program-with-spans-for-target-and-entry
+              program
+              spans
+              (backend.CompilerBackendTarget.Linux)
+              false)
+            (has ".text\n" "main:\n")
+            (lacks ".globl _tl_start\n" "_tl_start:\n"))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) false]))
 
 (define (compiler-backend-target-linux-crt-entry-source) : String
@@ -15060,30 +15121,35 @@ f:
 (define (compiler-backend-target-linux-crt-entry-ok?) : bool
   (match (lower.lower-compiler-source
     (compiler-backend-target-linux-crt-entry-source))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode-and-crt
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Scalar)
-        spans
-        true
-        true)
-        [(Ok asm)
-          (and
-            (let
-              [text
-                (backend.compiler-backend-target-entry-text-with-crt
-                  (backend.CompilerBackendTarget.Linux)
-                  true
-                  true)]
-              (asm-has? text ".globl main"))
-            (asm-has?
-              asm
-              "main:\n"
-              "    movq %rdi, .L_tl_argc(%rip)\n"
-              "    call _tl___global_init_")
-            (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode-and-crt
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Scalar)
+            spans
+            true
+            true)
+            [(Ok asm)
+              (and
+                (let
+                  [text
+                    (backend.compiler-backend-target-entry-text-with-crt
+                      (backend.CompilerBackendTarget.Linux)
+                      true
+                      true)]
+                  (asm-has? text ".globl main"))
+                (asm-has?
+                  asm
+                  "main:\n"
+                  "    movq %rdi, .L_tl_argc(%rip)\n"
+                  "    call _tl___global_init_")
+                (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-target-windows-stack-probe-ok?) : bool
@@ -15143,29 +15209,34 @@ f:
       (match (backend.compiler-backend-lower-source-for-target
         (compiler-backend-callee-save-source)
         (backend.CompilerBackendTarget.Windows))
-        [(Ok program spans)
+        [(Ok program spans lower-owner)
           (let
-            [backend-state : backend.CompilerBackendState
-              (backend.compiler-backend-state-new
-                (ci.intern-compat-state-capture-active))]
-            (backend.compiler-backend-state-set-scalar-registers-enabled!
-              backend-state
-              true)
-            (match (compiler-backend-test-emit-program-with-state
-              backend-state
-              (backend.CompilerBackendTarget.Windows)
-              program
-              spans
-              true)
-              [(Ok asm)
-                (let
-                  [body : String
-                    (compiler-backend-asm-function-body asm "_tl_heavy")]
-                  (and
-                    (not (string.eq body ""))
-                    (asm-has? body ".seh_stackalloc " ".seh_endprologue\n")
-                    (asm-lacks? body ".seh_setframe" "movq %rsp, %rbp")))]
-              [(Err _) false]))]
+            [result : bool
+              (let
+                [backend-state : backend.CompilerBackendState
+                  (backend.compiler-backend-state-new
+                    (ci.intern-compat-state-capture-active))]
+                (backend.compiler-backend-state-set-scalar-registers-enabled!
+                  backend-state
+                  true)
+                (match (compiler-backend-test-emit-program-with-state
+                  backend-state
+                  (backend.CompilerBackendTarget.Windows)
+                  program
+                  spans
+                  true)
+                  [(Ok asm)
+                    (let
+                      [body : String
+                        (compiler-backend-asm-function-body asm "_tl_heavy")]
+                      (and
+                        (not (string.eq body ""))
+                        (asm-has? body ".seh_stackalloc " ".seh_endprologue\n")
+                        (asm-lacks? body ".seh_setframe" "movq %rsp, %rbp")))]
+                  [(Err _) false]))]
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-owner))
+            result)]
         [(Err _) false])]
     ok))
 
@@ -15360,6 +15431,32 @@ f:
 
 (define (compiler-backend-test-span [line : i64] [col : i64]) : ast.AstSourceSpan
   (ast.ast-source-span line col line col))
+
+(define (compiler-backend-spmd-source-site-retention-ok?) : bool
+  (match (lower.lower-compiler-source-with-mode
+    (lower_tests.compiler-lower-spmd-broadcast-source)
+    (lower.CompilerLowerMode.LinuxAvx2))
+    [(Ok _ spans lower-owner)
+      (let
+        [before : ir.CompilerSpmdDecisions
+          (ir.compiler-spmd-decisions-escape
+            (ir.compiler-source-spans-spmd (& spans)))]
+        [first : ir.CompilerSpmdDecision (array-ref before.decisions.slots 0)]
+        [remap : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [_remap : unit (set! (array-ref remap 0) 17)]
+        [after : ir.CompilerSourceSpans
+          (backend.compiler-backend-remap-source-spans
+            spans
+            (ir.compiler-ir-symbol-id-value first.site.function)
+            remap)]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        (and
+          (= before.decisions.len 2)
+          (lower_tests.compiler-lower-spmd-same-facts?
+            (& before)
+            (ir.compiler-source-spans-spmd (& after)))))]
+    [(Err _) false]))
 
 ;; Span symbols are one-word handles, the instruction key remains three words,
 ;; and identical spellings from different provenance stay distinct. The
@@ -17177,36 +17274,45 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-lane-id-rodata-source)
     lower-mode)
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        backend-mode
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and4
-              (let
-                [needle
-                  (str_cat.str-cat "    .section .rodata\n" align label ":\n")]
-                (asm-has? asm needle))
-              (=
-                (let
-                  [needle (str_cat.str-cat label ":\n")]
-                  (backend.compiler-backend-string-count asm needle))
-                1)
-              (>=
-                (let
-                  [needle (str_cat.str-cat load " " label "(%rip), ")]
-                  (backend.compiler-backend-string-count asm needle))
-                2)
-              (not
-                (let
-                  [needle (str_cat.str-cat label ":\n" load)]
-                  (asm-has? asm needle))))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            backend-mode
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and4
+                  (let
+                    [needle
+                      (str_cat.str-cat
+                        "    .section .rodata\n"
+                        align
+                        label
+                        ":\n")]
+                    (asm-has? asm needle))
+                  (=
+                    (let
+                      [needle (str_cat.str-cat label ":\n")]
+                      (backend.compiler-backend-string-count asm needle))
+                    1)
+                  (>=
+                    (let
+                      [needle (str_cat.str-cat load " " label "(%rip), ")]
+                      (backend.compiler-backend-string-count asm needle))
+                    2)
+                  (not
+                    (let
+                      [needle (str_cat.str-cat label ":\n" load)]
+                      (asm-has? asm needle))))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-lane-id-rodata-ok?) : bool
@@ -17226,26 +17332,32 @@ f:
     (match (lower.lower-compiler-source-with-mode
       (compiler-backend-lane-id-rodata-source)
       (lower.CompilerLowerMode.Avx2))
-      [(Ok program spans)
-        (match (backend.compiler-backend-emit-program-target-with-mode
-          program
-          (backend.CompilerBackendTarget.Linux)
-          (Avx2)
-          spans
-          true)
-          [(Ok asm)
-            (let
-              [body : String
-                (compiler-backend-asm-function-body asm "_tl_fill")]
-              [loop : String (compiler-backend-avx2-loop-body body)]
-              (and
-                (not (string.eq loop ""))
-                (=
-                  (let
-                    [needle (backend.compiler-backend-avx2-i64-lane-id-label)]
-                    (backend.compiler-backend-string-count loop needle))
-                  0)))]
-          [(Err _) false])]
+      [(Ok program spans lower-owner)
+        (let
+          [ok : bool
+            (match (backend.compiler-backend-emit-program-target-with-mode
+              program
+              (backend.CompilerBackendTarget.Linux)
+              (Avx2)
+              spans
+              true)
+              [(Ok asm)
+                (let
+                  [body : String
+                    (compiler-backend-asm-function-body asm "_tl_fill")]
+                  [loop : String (compiler-backend-avx2-loop-body body)]
+                  (and
+                    (not (string.eq loop ""))
+                    (=
+                      (let
+                        [needle
+                          (backend.compiler-backend-avx2-i64-lane-id-label)]
+                        (backend.compiler-backend-string-count loop needle))
+                      0)))]
+              [(Err _) false])]
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas lower-owner))
+          ok)]
       [(Err _) false])))
 
 (define (compiler-backend-avx2-map-asm-contains?
@@ -17255,22 +17367,27 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
     (lower.CompilerLowerMode.Avx2))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx2)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and4
-              (asm-has? asm "    vzeroupper\n")
-              (asm-has? asm move)
-              (asm-has? asm op)
-              (asm-has? asm "%ymm"))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx2)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and4
+                  (asm-has? asm "    vzeroupper\n")
+                  (asm-has? asm move)
+                  (asm-has? asm op)
+                  (asm-has? asm "%ymm"))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx2-vector-map-ok?) : bool
@@ -17292,55 +17409,68 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
     (lower.CompilerLowerMode.Avx2))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx2)
-        spans
-        true)
-        [(Ok asm)
-          (let
-            [body : String (compiler-backend-asm-function-body asm "_tl_fill")]
-            [loop : String (compiler-backend-avx2-loop-body body)]
-            (and
-              (backend.backend-and8
-                (asm-has? asm "    vzeroupper\n")
-                (asm-has? asm move)
-                (asm-has? asm op)
-                (asm-has? asm broadcast)
-                (asm-has? asm "%ymm")
-                (asm-lacks? asm "vector/mask IR emission is not implemented")
-                (= (backend.compiler-backend-string-count loop broadcast) 0)
-                true)
-              true))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx2)
+            spans
+            true)
+            [(Ok asm)
+              (let
+                [body : String
+                  (compiler-backend-asm-function-body asm "_tl_fill")]
+                [loop : String (compiler-backend-avx2-loop-body body)]
+                (and
+                  (backend.backend-and8
+                    (asm-has? asm "    vzeroupper\n")
+                    (asm-has? asm move)
+                    (asm-has? asm op)
+                    (asm-has? asm broadcast)
+                    (asm-has? asm "%ymm")
+                    (asm-lacks?
+                      asm
+                      "vector/mask IR emission is not implemented")
+                    (= (backend.compiler-backend-string-count loop broadcast) 0)
+                    true)
+                  true))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx2-uniform-zip-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
     (lower.CompilerLowerMode.Avx2))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx2)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "    vpmuludq ")
-              (asm-has? asm "    vpsllq $32, ")
-              (asm-has? asm "    vpaddq ")
-              (asm-has? asm "    vmovdqu ")
-              (asm-has? asm "%ymm")
-              (asm-lacks? asm "vector/mask IR emission is not implemented")
-              true)
-            true)]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx2)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "    vpmuludq ")
+                  (asm-has? asm "    vpsllq $32, ")
+                  (asm-has? asm "    vpaddq ")
+                  (asm-has? asm "    vmovdqu ")
+                  (asm-has? asm "%ymm")
+                  (asm-lacks? asm "vector/mask IR emission is not implemented")
+                  true)
+                true)]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 ;; The uniform value may move when preheader caches change register pressure;
@@ -18098,18 +18228,23 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-vector-spill-pressure-source)
     lower-mode)
-    [(Ok program spans)
-      (asm-ok?
-        (backend.compiler-backend-emit-program-target-with-mode
-          program
-          (backend.CompilerBackendTarget.Linux)
-          backend-mode
-          spans
-          true)
-        (has scratch)
-        (lacks
-          "vector spills are not implemented"
-          "vector register home unavailable"))]
+    [(Ok program spans lower-owner)
+      (let
+        [result : bool
+          (asm-ok?
+            (backend.compiler-backend-emit-program-target-with-mode
+              program
+              (backend.CompilerBackendTarget.Linux)
+              backend-mode
+              spans
+              true)
+            (has scratch)
+            (lacks
+              "vector spills are not implemented"
+              "vector register home unavailable"))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) false]))
 
 (define (compiler-backend-vector-spill-pressure-ok?) : bool
@@ -18375,142 +18510,167 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx2-map-source elem)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm move)
-              (asm-has? asm op)
-              (asm-has? asm "%zmm")
-              (asm-has? asm "%k")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "}{z}")
-              (asm-has? asm mask-move)
-              (asm-has? asm mask-shift))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm move)
+                  (asm-has? asm op)
+                  (asm-has? asm "%zmm")
+                  (asm-has? asm "%k")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "}{z}")
+                  (asm-has? asm mask-move)
+                  (asm-has? asm mask-shift))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-source-ok? [src : String]) : bool
   (match (lower.lower-compiler-source-with-mode
     src
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpcmpq $1,")
-              (asm-has? asm "    kandw ")
-              (asm-has? asm "    kandnw ")
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "}{z}")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "%k")
-              (asm-has? asm "    vmovdqu64 "))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpcmpq $1,")
+                  (asm-has? asm "    kandw ")
+                  (asm-has? asm "    kandnw ")
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "}{z}")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "%k")
+                  (asm-has? asm "    vmovdqu64 "))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-index-value-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-value-source)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpcmpq $1,")
-              (asm-has? asm "    kandw ")
-              (asm-has? asm "    kandnw ")
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "lane_id_")
-              (asm-has? asm "    vpaddq ")
-              (let
-                [needle
-                  (str_cat.str-cat
-                    "    vmovdqa64 "
-                    (backend.compiler-backend-avx512-i64-lane-id-label)
-                    "(%rip), ")]
-                (asm-has? asm needle)))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpcmpq $1,")
+                  (asm-has? asm "    kandw ")
+                  (asm-has? asm "    kandnw ")
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "lane_id_")
+                  (asm-has? asm "    vpaddq ")
+                  (let
+                    [needle
+                      (str_cat.str-cat
+                        "    vmovdqa64 "
+                        (backend.compiler-backend-avx512-i64-lane-id-label)
+                        "(%rip), ")]
+                    (asm-has? asm needle)))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-index-mod-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-index-mod-source)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpcmpq $0,")
-              (asm-has? asm "    kandw ")
-              (asm-has? asm "    kandnw ")
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "lane_id_")
-              (asm-has? asm "    vpandq ")
-              (let
-                [needle
-                  (str_cat.str-cat
-                    "    vmovdqa64 "
-                    (backend.compiler-backend-avx512-i64-lane-id-label)
-                    "(%rip), ")]
-                (asm-has? asm needle)))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpcmpq $0,")
+                  (asm-has? asm "    kandw ")
+                  (asm-has? asm "    kandnw ")
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "lane_id_")
+                  (asm-has? asm "    vpandq ")
+                  (let
+                    [needle
+                      (str_cat.str-cat
+                        "    vmovdqa64 "
+                        (backend.compiler-backend-avx512-i64-lane-id-label)
+                        "(%rip), ")]
+                    (asm-has? asm needle)))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-value-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx512-masked-if-value-source)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpcmpq $1,")
-              (asm-has? asm "    kandw ")
-              (asm-has? asm "    kandnw ")
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "    vmovdqu64 %zmm")
-              (asm-has? asm "{%k")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "%k"))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpcmpq $1,")
+                  (asm-has? asm "    kandw ")
+                  (asm-has? asm "    kandnw ")
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "    vmovdqu64 %zmm")
+                  (asm-has? asm "{%k")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "%k"))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-masked-if-ok?) : bool
@@ -18585,52 +18745,62 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-uniform-map-source elem)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm move)
-              (asm-has? asm op)
-              (asm-has? asm broadcast)
-              (asm-has? asm "%zmm")
-              (asm-has? asm "%k")
-              (asm-has? asm "tail_mask_")
-              (asm-has? asm "}{z}")
-              (asm-lacks? asm "vector/mask IR emission is not implemented"))
-            true)]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm move)
+                  (asm-has? asm op)
+                  (asm-has? asm broadcast)
+                  (asm-has? asm "%zmm")
+                  (asm-has? asm "%k")
+                  (asm-has? asm "tail_mask_")
+                  (asm-has? asm "}{z}")
+                  (asm-lacks? asm "vector/mask IR emission is not implemented"))
+                true)]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-uniform-zip-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-uniform-zip-source)
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vpbroadcastq ")
-              (asm-has? asm "    vpmullq ")
-              (asm-has? asm "    vpaddq ")
-              (asm-has? asm "    vmovdqu64 ")
-              (asm-has? asm "%zmm")
-              (asm-has? asm "%k")
-              (asm-lacks? asm "vector/mask IR emission is not implemented")
-              true)
-            true)]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vpbroadcastq ")
+                  (asm-has? asm "    vpmullq ")
+                  (asm-has? asm "    vpaddq ")
+                  (asm-has? asm "    vmovdqu64 ")
+                  (asm-has? asm "%zmm")
+                  (asm-has? asm "%k")
+                  (asm-lacks? asm "vector/mask IR emission is not implemented")
+                  true)
+                true)]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-uniform-vector-map-ok?) : bool
@@ -18686,26 +18856,31 @@ f:
   (match (lower.lower-compiler-source-with-mode
     src
     (lower.CompilerLowerMode.Avx2))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx2)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm "    vzeroupper\n")
-              (asm-has? asm extract)
-              (asm-has? asm horizontal)
-              (asm-has? asm op)
-              (asm-has? asm store)
-              (asm-has? asm "%ymm")
-              (asm-has? asm "spmd_reduce_avx2")
-              (asm-has? asm "spmd_reduce_tail"))
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx2)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm "    vzeroupper\n")
+                  (asm-has? asm extract)
+                  (asm-has? asm horizontal)
+                  (asm-has? asm op)
+                  (asm-has? asm store)
+                  (asm-has? asm "%ymm")
+                  (asm-has? asm "spmd_reduce_avx2")
+                  (asm-has? asm "spmd_reduce_tail"))
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-bool-reduce-asm-contains?
@@ -18716,20 +18891,25 @@ f:
   [result-op : String]
   [register : String]) : bool
   (match (lower.lower-compiler-source-with-mode src lower-mode)
-    [(Ok program spans)
-      (asm-ok?
-        (backend.compiler-backend-emit-program-target-with-mode
-          program
-          (backend.CompilerBackendTarget.Linux)
-          backend-mode
-          spans
-          true)
-        (has
-          "spmd_reduce_avx2_body"
-          reduce-op
-          result-op
-          register
-          "spmd_reduce_tail"))]
+    [(Ok program spans lower-owner)
+      (let
+        [result : bool
+          (asm-ok?
+            (backend.compiler-backend-emit-program-target-with-mode
+              program
+              (backend.CompilerBackendTarget.Linux)
+              backend-mode
+              spans
+              true)
+            (has
+              "spmd_reduce_avx2_body"
+              reduce-op
+              result-op
+              register
+              "spmd_reduce_tail"))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) false]))
 
 (define (compiler-backend-shuffle-asm-function-body
@@ -18737,15 +18917,20 @@ f:
   [lower-mode : lower.CompilerLowerMode]
   [backend-mode : backend.CompilerBackendMode]) : String
   (match (lower.lower-compiler-source-with-mode src lower-mode)
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        backend-mode
-        spans
-        true)
-        [(Ok asm) (compiler-backend-asm-function-body asm "_tl_f")]
-        [(Err _) ""])]
+    [(Ok program spans lower-owner)
+      (let
+        [result : String
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            backend-mode
+            spans
+            true)
+            [(Ok asm) (compiler-backend-asm-function-body asm "_tl_f")]
+            [(Err _) ""])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err _) ""]))
 
 (define (compiler-backend-identity-shuffle-eliminated?
@@ -19074,26 +19259,31 @@ f:
   (match (lower.lower-compiler-source-with-mode
     src
     (lower.CompilerLowerMode.Avx512))
-    [(Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        (Avx512)
-        spans
-        true)
-        [(Ok asm)
-          (and
-            (backend.backend-and8
-              (asm-has? asm extract)
-              (asm-has? asm horizontal)
-              (asm-has? asm op)
-              (asm-has? asm store)
-              (asm-has? asm "%zmm")
-              (asm-has? asm "%ymm")
-              (asm-has? asm "spmd_reduce_avx2")
-              true)
-            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
-        [(Err _) false])]
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            (backend.CompilerBackendTarget.Linux)
+            (Avx512)
+            spans
+            true)
+            [(Ok asm)
+              (and
+                (backend.backend-and8
+                  (asm-has? asm extract)
+                  (asm-has? asm horizontal)
+                  (asm-has? asm op)
+                  (asm-has? asm store)
+                  (asm-has? asm "%zmm")
+                  (asm-has? asm "%ymm")
+                  (asm-has? asm "spmd_reduce_avx2")
+                  true)
+                (asm-lacks? asm "vector/mask IR emission is not implemented"))]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-avx512-vector-reduce-i64-minmax-ok?) : bool
@@ -21193,52 +21383,63 @@ f:
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx2-data-pointer-cse-source)
     (lower.CompilerLowerMode.Avx2))
-    [(Ok program spans)
-      (match (opt.optimize-program-with-spans (& program) spans)
-        [(Program optimized optimized-spans)
-          (match (backend.compiler-backend-emit-program-target-with-mode
-            optimized
-            (backend.CompilerBackendTarget.Linux)
-            (Avx2)
-            optimized-spans
-            false)
-            [(Ok asm)
-              (let
-                [body : String
-                  (compiler-backend-asm-function-body asm "_tl_fill")]
-                [loop : String (compiler-backend-avx2-loop-body body)]
-                (and
-                  (backend.backend-and8
-                    (=
-                      (backend.compiler-backend-string-count loop "    movq 0(")
-                      0)
-                    (=
-                      (backend.compiler-backend-string-count loop "    movq (%")
-                      0)
-                    (=
-                      (backend.compiler-backend-string-count
+    [(Ok program spans lower-owner)
+      (let
+        [ok : bool
+          (match (opt.optimize-program-with-spans (& program) spans)
+            [(Program optimized optimized-spans)
+              (match (backend.compiler-backend-emit-program-target-with-mode
+                optimized
+                (backend.CompilerBackendTarget.Linux)
+                (Avx2)
+                optimized-spans
+                false)
+                [(Ok asm)
+                  (let
+                    [body : String
+                      (compiler-backend-asm-function-body asm "_tl_fill")]
+                    [loop : String (compiler-backend-avx2-loop-body body)]
+                    (and
+                      (backend.backend-and8
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    movq 0(")
+                          0)
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    movq (%")
+                          0)
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    vmovdqu (")
+                          1)
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    vpaddq (")
+                          0)
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    vmovdqu %ymm6")
+                          1)
+                        (asm-has? body "foreach_avx2_body")
+                        (asm-has? body "foreach_tail")
+                        (=
+                          (backend.compiler-backend-string-count
+                            loop
+                            "    vpaddq %ymm6, %ymm6, %ymm6")
+                          1))
+                      (asm-lacks?
                         loop
-                        "    vmovdqu (")
-                      1)
-                    (=
-                      (backend.compiler-backend-string-count
-                        loop
-                        "    vpaddq (")
-                      0)
-                    (=
-                      (backend.compiler-backend-string-count
-                        loop
-                        "    vmovdqu %ymm6")
-                      1)
-                    (asm-has? body "foreach_avx2_body")
-                    (asm-has? body "foreach_tail")
-                    (=
-                      (backend.compiler-backend-string-count
-                        loop
-                        "    vpaddq %ymm6, %ymm6, %ymm6")
-                      1))
-                  (asm-lacks? loop "vector/mask IR emission is not implemented")))]
-            [(Err _) false])])]
+                        "vector/mask IR emission is not implemented")))]
+                [(Err _) false])])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
     [(Err _) false]))
 
 (define (compiler-backend-test-mask-reg [number : i64]) : i64
@@ -21394,8 +21595,212 @@ f:
     (compiler-backend-spmd-mask-entry-validation-ok?)
     (compiler-backend-spmd-mask-entry-spill-first-ok?)))
 
+;; The expected immediates are ISA fixtures, independent of the production
+;; predicate selector. Both ABIs exercise the instruction spine with explicit
+;; register and spill homes; integer predicates retain their original bytes.
+(define (compiler-backend-vector-compare-predicate-case?
+  [type-index : i64]
+  [op-index : i64]
+  [avx512 : bool]
+  [spill : bool]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [types : (Array String 10)
+      (array "f32" "f64" "i8" "u8" "i16" "u16" "i32" "u32" "i64" "u64")]
+    [ops : (Array String 6) (array "eq" "ne" "lt" "le" "gt" "ge")]
+    [predicates : (Array i64 6) (array 0 4 1 2 6 5)]
+    [bits : i64
+      (cond
+        [(= type-index 0) 32]
+        [(= type-index 1) 64]
+        [(< type-index 4) 8]
+        [(< type-index 6) 16]
+        [(< type-index 8) 32]
+        [else 64])]
+    [floating : bool (< type-index 2)]
+    [lanes : i64
+      (/
+        (if avx512
+          512
+          256)
+        bits)]
+    [predicate : i64
+      (+
+        (array-ref predicates op-index)
+        (if (and floating (>= op-index 4))
+          8
+          0))]
+    [mnemonic : String
+      (if floating
+        (if (= bits 32)
+          "vcmpps"
+          "vcmppd")
+        (str_cat.str-cat
+          "vpcmp"
+          (if (= (% type-index 2) 1)
+            "u"
+            "")
+          (match bits
+            [8 "b"]
+            [16 "w"]
+            [32 "d"]
+            [_ "q"])))]
+    [width : String
+      (if avx512
+        "zmm"
+        "ymm")]
+    [lhs : String
+      (str_cat.str-cat
+        "%"
+        width
+        (if spill
+          "14"
+          "6"))]
+    [rhs : String
+      (if (and avx512 spill)
+        "-128(%rbp)"
+        (str_cat.str-cat
+          "%"
+          width
+          (if spill
+            "15"
+            "7")))]
+    [dst : String
+      (if avx512
+        (if spill
+          "%k7"
+          "%k1")
+        (if spill
+          "%ymm14"
+          "%ymm8"))]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    [instrs : ir.CompilerIrInstrSeq
+      (irt.instrs
+        (str_cat.str-cat
+          "%2 = vector_compare_"
+          (string.copy (array-ref ops op-index))
+          " %0, %1 lanes "
+          (string.int->string lanes)
+          " : "
+          (string.copy (array-ref types type-index))))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        (if spill
+          "%0=spill:-64 %1=spill:-128 %2=spill:-192"
+          (if avx512
+            "%0=%vec6 %1=%vec7 %2=%k1"
+            "%0=%vec6 %1=%vec7 %2=%vec8")))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      instrs
+      homes
+      3
+      target
+      state)
+      [(Ok asm)
+        (let
+          [expected : String
+            (str_cat.str-cat
+              "    "
+              mnemonic
+              " $"
+              (string.int->string predicate)
+              ", "
+              rhs
+              ", "
+              lhs
+              ", "
+              dst
+              "\n")]
+          (and
+            (asm-has? asm expected)
+            (if spill
+              (asm-has? asm "-64(%rbp)" "-128(%rbp)" "-192(%rbp)")
+              (string.eq asm expected))))]
+      [(Err _) false])))
+
+(define (compiler-backend-vector-compare-invalid? [avx512 : bool]) : bool
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      (irt.instrs
+        (if avx512
+          "%2 = vector_compare_add %0, %1 lanes 8 : f64"
+          "%2 = vector_compare_add %0, %1 lanes 4 : f64"))
+      (reg-homes
+        (if avx512
+          "%0=%vec6 %1=%vec7 %2=%k1"
+          "%0=%vec6 %1=%vec7 %2=%vec8"))
+      3
+      (backend.CompilerBackendTarget.Linux)
+      state)
+      [(Err diag)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          (if avx512
+            "backend: unsupported AVX-512 vector compare"
+            "backend: unsupported AVX2 vector compare"))]
+      [(Ok _) false])))
+
+(define (compiler-backend-vector-compare-predicates-ok?) : bool
+  (let
+    [host : i64 0]
+    [ok : bool true]
+    (while (< host 2)
+      (let
+        [mode : i64 0]
+        (while (< mode 2)
+          (let
+            [type-index : i64 0]
+            (while (<
+              type-index
+              (if (= mode 0)
+                2
+                10))
+              (let
+                [op : i64 0]
+                (while (< op 6)
+                  (let
+                    [spill : i64 0]
+                    (while (< spill 2)
+                      (unless
+                        (compiler-backend-vector-compare-predicate-case?
+                          type-index
+                          op
+                          (= mode 1)
+                          (= spill 1)
+                          (if (= host 0)
+                            (backend.CompilerBackendTarget.Linux)
+                            (backend.CompilerBackendTarget.Windows)))
+                        (set! ok false))
+                      (set! spill (+ spill 1))))
+                  (set! op (+ op 1))))
+              (set! type-index (+ type-index 1))))
+          (set! mode (+ mode 1))))
+      (set! host (+ host 1)))
+    (and
+      ok
+      (compiler-backend-vector-compare-invalid? false)
+      (compiler-backend-vector-compare-invalid? true))))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
+    (compiler-backend-vector-compare-predicates-ok?)
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
     (compiler-backend-lane-id-rodata-ok?)
@@ -23466,8 +23871,8 @@ f:
         (Var 0)
         (I64 1)
         (U64)
-        (I64 9)
-        (I64)
+        (& (I64 9))
+        (& (I64))
         index
         0
         index.backend-state)
@@ -30850,14 +31255,16 @@ f:
             (ci.intern "known_target")
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var arg))
             (ast.AstType.I64))))]
+    [block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        (ci.intern "entry")
+        (ir.compiler-ir-instr-builder-to-seq body))]
     (backend.compiler-backend-identity-tail-forwarder-block?
       (ast.ast-node-pool-reader-type-segment-bases)
       (backend.CompilerBackendTarget.Linux)
       (ci.intern "snapshot_forwarder")
       params
-      (ir.CompilerIrBlock.Block
-        (ci.intern "entry")
-        (ir.compiler-ir-instr-builder-to-seq body))
+      (& block)
       (compiler-backend-known-function-call-index))))
 
 (define (compiler-backend-identity-snapshot-proof-ok?) : bool
@@ -31970,6 +32377,45 @@ f:
       "    movq %rax, %r10\n    addq $16, %r10\n"
       "    movq %r8, 16(%r8)\n")))
 
+(define (compiler-backend-inline-global-alloc-target-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [bound : String
+      (match target
+        [(Linux) "    cmpq 24(%r9), %r8\n"]
+        [(Windows) "    cmpq 64(%r9), %r8\n"])]
+    [slow : String
+      (match target
+        [(Linux) "_slow:\n    movl $16, %edi\n    call tl_alloc_global\n"]
+        [(Windows) "_slow:\n    movl $16, %ecx\n    call tl_alloc_global\n"])]
+    ;; An inline aggregate global keeps its static home (SPEC 5.10), so no
+    ;; source store reaches the global allocator; its call is built directly.
+    (asm-ok?
+      (compiler-backend-emit-alloc-instrs-for-target
+        (compiler-backend-test-instr-seq-prepend
+          (Call 0 (ci.intern "tl_alloc_global") (One (I64 16)) (U64))
+          (ir.compiler-ir-instr-seq-empty))
+        target)
+      (has
+        "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
+        "_retry:\n    leaq 16(%rax), %r8\n"
+        bound
+        "    lock cmpxchgq %r8, 16(%r9)\n    jne "
+        slow)
+      (lacks "_slow:\n    call .L_tl_alloc16\n"))))
+
+(test
+  backend-inline-global-alloc
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless
+    (and
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic
+      "global container allocation must reserve atomically and grow through its private root")))
+
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
     (= (backend.compiler-backend-fast-alloc-size (One (I64 1))) 8)
@@ -31998,14 +32444,27 @@ f:
 ;; directly so the regression stays two instructions instead of depending on
 ;; the source size that happened to expose it in compiler_backend_tests.tl.
 (define (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?) : bool
+  (match (compiler-backend-emit-alloc-instrs-for-target
+    (compiler-backend-inline-fast-alloc-reused-vreg-instrs)
+    (backend.CompilerBackendTarget.Linux))
+    [(Ok asm)
+      (backend.backend-and4
+        (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i1_v0_slow:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i0_v0_done:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
+    [(Err _) false]))
+
+;; Emits `instrs` as the one block of a test function returning u64.
+(define (compiler-backend-emit-alloc-instrs-for-target
+  [instrs : ir.CompilerIrInstrSeq]
+  [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
   (let
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
     [prev-current-site : i64 (state-emit-current-site backend-state)]
-    [instrs : ir.CompilerIrInstrSeq
-      (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-blocks
@@ -32030,20 +32489,11 @@ f:
         instrs
         (regalloc.compiler-reg-assignment-table-empty)
         1
-        (backend.CompilerBackendTarget.Linux)
+        target
         backend-state)]
-    [_restore : unit
-      (begin
-        (emitter-scratch-restore! backend-state saved)
-        (set-state-emit-current-site! backend-state prev-current-site))]
-    (match result
-      [(Ok asm)
-        (backend.backend-and4
-          (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i1_v0_slow:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i0_v0_done:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
-      [(Err _) false])))
+    (emitter-scratch-restore! backend-state saved)
+    (set-state-emit-current-site! backend-state prev-current-site)
+    result))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
   "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
@@ -33600,7 +34050,7 @@ f:
             backend-state
             assignments
             (Var 5)
-            (Var 6))
+            (& (Var 6)))
           7
           "%r8")
         "%r10"))))
@@ -34289,9 +34739,9 @@ f:
                   (& blocks))]
               (and
                 (= (ir.compiler-ir-block-seq-count seq) 6)
-                (match (ir.compiler-ir-block-seq-ref seq 0)
+                (match (ir.compiler-ir-block-seq-borrow seq 0)
                   [(Block _ instrs)
-                    (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                    (match (ir.compiler-ir-instr-seq-borrow instrs 1)
                       [(Branch _ yes no)
                         (and
                           (=
@@ -34301,7 +34751,7 @@ f:
                             no
                             (ir.compiler-ir-label "entry__shrinkwrap_bare0")))]
                       [_ false])])
-                (match (ir.compiler-ir-block-seq-ref seq 4)
+                (match (ir.compiler-ir-block-seq-borrow seq 4)
                   [(Block label instrs)
                     (and
                       (= label (ir.compiler-ir-label "loop"))
@@ -34313,8 +34763,8 @@ f:
                             (if (<= phi-inputs-at-49077-29.len 0)
                               false
                               (let
-                                [phi-input-at-49077-29 : ir.CompilerIrPhiInput
-                                  (ir.compiler-ir-phi-input-seq-ref
+                                [phi-input-at-49077-29
+                                  (ir.compiler-ir-phi-input-seq-borrow
                                     phi-inputs-at-49077-29
                                     0)]
                                 [value : ir.CompilerIrValue
@@ -37788,6 +38238,92 @@ b_keep:
       (= (array-ref bounds 7) 41)
       (= (array-ref bounds 8) 0))))
 
+(test
+  backend-global-symbol-emission-owner
+  (let
+    [name : i64 (ci.intern "shared-data")]
+    [alpha : i64 (ci.intern "foreign_alpha")]
+    [beta : i64 (ci.intern "foreign_beta")]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [other : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [profile : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
+    (for [mode (iterator.range 0 4)]
+      (let
+        [link : String
+          (if (= mode 0)
+            "foreign_alpha"
+            "foreign_beta")]
+        [_index : backend.CompilerBackendProgramIndex
+          (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+            state
+            bases
+            (ir.compiler-ir-function-seq-empty)
+            (if (= mode 2)
+              (ir.compiler-ir-extern-seq-empty)
+              (ir.compiler-ir-extern-seq1
+                (ir.CompilerIrExtern.Extern
+                  name
+                  name
+                  "shared-data"
+                  ast.AstType.I64
+                  ast.AstExternAbi.C
+                  (if (= mode 0)
+                    alpha
+                    beta)
+                  (ast.ast-extern-link-input-list-new)
+                  false
+                  (ir.CompilerIrReturnStorage.None))))
+            profile)]
+        [expected : String
+          (if (= mode 2)
+            "_tl_shared_data(%rip)"
+            (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-value-global-memory-operand
+            state
+            bases
+            (ir.CompilerIrValue.Global name)
+            ast.AstType.I64)
+          (clone expected)
+          "compare folds use the current program's link symbol")
+        (backend.compiler-backend-state-user-symbol-cache-reset! state)
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-remat-global-cell-operand
+            state
+            (ir.CompilerIrValue.Global name))
+          (clone expected)
+          "function cache reset keeps program symbol authority")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-float-value-memory-operand
+            (regalloc.compiler-reg-assignment-table-empty)
+            (ir.CompilerIrValue.Global name)
+            (& (ast.AstType.F32))
+            state)
+          expected
+          "float folds use the same global cell")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-state-global-symbol-id other name)
+          "_tl_shared_data"
+          "another backend job does not inherit extern aliases")
+        (when
+          (= mode 1)
+          (backend.compiler-backend-state-clear-emission-arena! state)
+          (test.assert-owned-string-eq
+            (backend.compiler-backend-state-global-symbol-id state name)
+            "_tl_shared_data"
+            "returning from emission unpublishes symbols"))))
+    (backend.compiler-backend-state-release-final-arenas! state)
+    (test.assert-owned-string-eq
+      (backend.compiler-backend-state-global-symbol-id state name)
+      "_tl_shared_data"
+      "retiring the backend unpublishes program symbol authority")))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-signed-div-guard-shapes-ok?)
@@ -38009,6 +38545,7 @@ b_keep:
       (and
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-source-span-symbol-provenance-ok?)
+        (compiler-backend-spmd-source-site-retention-ok?)
         (compiler-backend-debug-disabled-sparse-paths-ok?)
         (compiler-backend-debug-path-remap-ok?)
         (compiler-backend-backtrace-metadata-shape-ok?)
@@ -38365,7 +38902,7 @@ b_keep:
     assignments
     var-id
     reg
-    (F64)
+    (& (F64))
     backend-state))
 
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
@@ -38839,10 +39376,7 @@ b_keep:
   [group-arena : arena.Arena]) : text_buf.TextBuf
   (let
     [chunks : text_buf.TextBufChunkList buf.chunks]
-    [chunk-count : i64
-      (text_buf.chunk-count
-        (backend.compiler-backend-global-shared-view chunks)
-        0)]
+    [chunk-count : i64 (text_buf.chunk-count (& chunks) 0)]
     [items : (__tl_dyn-array String) (__tl_make-array String chunk-count)]
     [initial : CompilerBackendPeepholeChunkState
       (CompilerBackendPeepholeChunkState (text_buf.empty) (text_buf.empty))]
@@ -39019,9 +39553,101 @@ b_keep:
 
 (define (compiler-backend-emit-source-object-image [src : String]) : backend.ResultCompilerBackendObject
   (match (lower.lower-compiler-source src)
-    [(Ok program spans)
-      (backend.compiler-backend-emit-program-object-image-linux program spans)]
+    [(Ok program spans lower-owner)
+      (let
+        [result : backend.ResultCompilerBackendObject
+          (backend.compiler-backend-emit-program-object-image-linux
+            program
+            spans)]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
+
+(define (compiler-backend-object-payload-owner-ok?
+  [payload : String]
+  [byte-payload? : bool]) : bool
+  (let
+    ;; IR payloads use the compiler's raw arena ABI; invalidate that exact
+    ;; owner after emission before inspecting the caller-owned records.
+    [owner : arena.Arena
+      (unsafe
+        (arena.Arena (arena.tl_arena_make_small)))]
+    [items : backend.BackendStringSeq
+      (in-arena
+        owner
+        (let
+          [slots : (__tl_dyn-array String) (__tl_make-array String 1)]
+          (set! (array-ref slots 0) (string.copy (& payload)))
+          (backend.BackendStringSeq slots 1)))]
+    [parts : object_target.CompilerBackendObjectTargetParts
+      (if byte-payload?
+        (backend.compiler-backend-object-bytes
+          (object_target.compiler-backend-object-parts-empty)
+          items
+          0)
+        (backend.compiler-backend-object-strings
+          (object_target.compiler-backend-object-parts-empty)
+          items
+          0))]
+    [records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish
+        (if byte-payload?
+          parts.data
+          parts.rodata))]
+    (unsafe
+      (arena.tl_arena_destroy (arena.raw-handle owner)))
+    (compiler-object-data-record-list-contains-payload?
+      records
+      payload
+      byte-payload?)))
+
+(define (compiler-backend-owned-object-payloads-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-source-object-image-for-target
+    "(extern (sink [value : String]) : i64)
+(define (main) : i64 (sink \"lower-owned-object-payload\"))"
+    target)
+    [(Ok image)
+      (let
+        [_next-job : backend.ResultCompilerBackend
+          (backend.compiler-backend-emit-source "(define (main) : i64 42)")]
+        (and
+          (compiler-object-section-contains-string?
+            image.sections
+            Rodata
+            "lower-owned-object-payload")
+          (match (object_asm.compiler-object-asm-render image)
+            [(Ok assembly)
+              (string.contains
+                (& assembly)
+                "    .byte 0x6c,0x6f,0x77,0x65,0x72,0x2d,0x6f,0x77,0x6e,0x65,0x64,0x2d,0x6f,0x62,0x6a,0x65\n    .byte 0x63,0x74,0x2d,0x70,0x61,0x79,0x6c,0x6f,0x61,0x64\n    .byte 0\n")]
+            [(Err _) false])))]
+    [(Err diag)
+      (io.panic (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
+
+(test
+  backend-owned-object-payload-lifetime
+  (let
+    [mode : i64 0]
+    (while (< mode 2)
+      (unless
+        (and
+          (compiler-backend-object-payload-owner-ok?
+            "owned-object-payload"
+            (= mode 1))
+          (compiler-backend-object-payload-owner-ok?
+            (object_target.compiler-backend-object-bytes-from-hex "00617f80ff")
+            (= mode 1)))
+        (io.panic "object payload retained its retired source arena"))
+      (set! mode (+ mode 1))))
+  (unless
+    (and
+      (compiler-backend-object-payload-owner-ok? "" false)
+      (compiler-backend-owned-object-payloads-ok? Linux)
+      (compiler-backend-owned-object-payloads-ok? Windows))
+    (io.panic
+      "object payloads must survive lower retirement and a later source job")))
 
 (define (compiler-backend-test-symbol [name : String]) : i64
   (ir.compiler-ir-test-symbol name))
@@ -41042,20 +41668,21 @@ b_keep:
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ _ instrs) (cobj.compiler-object-instr-list-count instrs)]))
 
-(define (compiler-object-data-record-list-contains-string?
+(define (compiler-object-data-record-list-contains-payload?
   [records : cobj.CompilerObjectDataRecordList]
-  [text : String]) : bool
+  [text : String]
+  [byte-payload? : bool]) : bool
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (cobj.compiler-object-data-record-list-ref records index)
-        [(String value)
-          (if (string.eq value text)
-            (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+      (if (match (cobj.compiler-object-data-record-list-ref records index)
+        [(String value) (and (not byte-payload?) (string.eq value text))]
+        [(Bytes value) (and byte-payload? (string.eq value text))]
+        [_ false])
+        (set! found true)
+        (set! index (+ index 1))))
     found))
 
 (define (compiler-object-data-record-list-contains-f64?
@@ -41160,7 +41787,7 @@ b_keep:
   [text : String]) : bool
   (match (cobj.compiler-object-section-list-find sections kind)
     [(Section _ data _)
-      (compiler-object-data-record-list-contains-string? data text)]))
+      (compiler-object-data-record-list-contains-payload? data text false)]))
 
 (define (compiler-object-section-contains-f64?
   [sections : (& sections cobj.CompilerObjectSectionList)]
@@ -41410,24 +42037,29 @@ user_fn:
     "shared_object_probe.tl"
     (compiler-backend-shared-object-probe-source)
     (backend.compiler-backend-lower-mode-for-target target (Scalar)))
-    [(Ok program spans)
+    [(Ok program spans lower-owner)
       (let
-        [state : backend.CompilerBackendState
-          (backend.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active))]
-        (backend.compiler-backend-state-set-shared-object-code-model!
-          state
-          true)
-        (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-          state
-          (ast.ast-node-pool-context-capture-active)
-          program
-          target
-          (Scalar)
-          spans
-          true
-          false
-          (profile_state.compiler-profile-state-new)))]
+        [result : backend.ResultCompilerBackend
+          (let
+            [state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new
+                (ci.intern-compat-state-capture-active))]
+            (backend.compiler-backend-state-set-shared-object-code-model!
+              state
+              true)
+            (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+              state
+              (ast.ast-node-pool-context-capture-active)
+              program
+              target
+              (Scalar)
+              spans
+              true
+              false
+              (profile_state.compiler-profile-state-new)))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        result)]
     [(Err diag) (Err diag)]))
 
 ;; A whole program under the shared-object code model: no entry, its global
@@ -41487,13 +42119,15 @@ user_fn:
             false
             false
             backtrace
-            31)))]
+            63)))]
     (and
       (asm-has?
         rewritten
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
+        "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
         "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
@@ -41504,8 +42138,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          7
-          5))
+          9
+          7))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test
@@ -41521,3 +42155,9 @@ user_fn:
       (compiler-backend-shared-object-runtime-ok? false false true)
       (compiler-backend-shared-object-runtime-ok? true true true))
     (io.panic "the shared-object code model rewrote an emission wrongly")))
+
+(test
+  backend-spmd-source-site-retention
+  (unless
+    (compiler-backend-spmd-source-site-retention-ok?)
+    (io.panic "backend remapping lost a source SPMD site or origin")))

@@ -27,6 +27,7 @@
 (import token)
 (cfg test (import stdlib.test))
 (cfg test (import stdlib.profile))
+(cfg test (import compiler_allocation_profile as alloc_profile))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
 (import compiler_parse_core as parser)
@@ -444,9 +445,9 @@
       (tc_core.TcCheckedLetBindingTransition 1 -1)]
     [special : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 2 91)]
-    (tc_core.tc-checked-let-binding-facts-begin! a)
-    (tc_core.tc-checked-let-binding-facts-begin! b)
-    (tc_core.tc-checked-let-binding-facts-begin! c)
+    (tc_core.tc-checked-let-binding-facts-begin! a true)
+    (tc_core.tc-checked-let-binding-facts-begin! b true)
+    (tc_core.tc-checked-let-binding-facts-begin! c true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
     ;; Reused init ids and same-spelled bindings remain distinct by enclosing
     ;; body and ordinal. Re-recording the same proof does not grow the store.
@@ -524,7 +525,7 @@
               [(Missing) true]
               [_ false]))]
         ;; A second generation must not see the first generation's keys.
-        (tc_core.tc-checked-let-binding-facts-begin! a)
+        (tc_core.tc-checked-let-binding-facts-begin! a true)
         (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 8)
         (tc_core.tc-checked-let-binding-fact-record!
           a
@@ -553,6 +554,268 @@
     (unless
       (tc-checked-let-binding-facts-self-test)
       (io.panic "typecheck: checked let-binding fact identity/reset failed"))))
+
+(cfg
+  test
+  (test
+    tc-checked-let-binding-facts-frozen-consumer
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [facts : tc_core.TcCheckedLetBindingFactState
+        (tc_core.tc-job-state-checked-let-binding-facts job)]
+      [module-a : i64 (ci.intern "checked-let-module-a")]
+      [module-b : i64 (ci.intern "checked-let-module-b")]
+      [decl : ast.AstDecl
+        (ast.ast-decl-def-fn-id
+          (ci.intern "checked-let-function")
+          (ast.ast-param-list-new)
+          (I64)
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
+      [transition : tc_core.TcCheckedLetBindingTransition
+        (tc_core.TcCheckedLetBindingTransition 0 -1)]
+      (tc_core.tc-checked-let-binding-facts-begin! facts false)
+      (test.assert-true
+        (not (tc_core.tc-checked-let-binding-facts-complete-required? facts))
+        "lowering consumers preserve trusted surface hydration")
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-a
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (I64)
+        transition)
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 19)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-b
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (Bool)
+        transition)
+      (test.assert-true
+        (and
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-a
+              (& decl))
+            7)
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& decl))
+            19))
+        "source declaration identity survives pruning and module changes")
+      (test.assert-true
+        (and
+          (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+            [(Hit (I64) _) true]
+            [_ false])
+          (match (tc_core.tc-checked-let-binding-fact-lookup
+            facts
+            19
+            11
+            0
+            13
+            17)
+            [(Hit (Bool) _) true]
+            [_ false]))
+        "shared body nodes retain each declaration's checked type")
+      (let
+        [wrapped : ast.AstDecl (Unsafe (box (clone decl)))]
+        (test.assert-true
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& wrapped))
+            19)
+          "unsafe wrappers preserve source declaration identity"))
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-a
+        (& decl))
+      (test.assert-true
+        (=
+          (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+            facts
+            module-a
+            (& decl))
+          -1)
+        "ambiguous source names require inference")
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        (in-arena
+          (unsafe
+            (arena.Arena scratch))
+          (for [index (iterator.range 0 257)]
+            (tc_core.tc-checked-let-binding-facts-set-current-declaration!
+              facts
+              index)
+            (tc_core.tc-checked-let-binding-facts-record-declaration!
+              facts
+              (+ 100000 index)
+              (& decl))))
+        (unsafe
+          (arena.tl_arena_destroy scratch)))
+      (for [index (iterator.range 0 257)]
+        (test.assert-true
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              (+ 100000 index)
+              (& decl))
+            index)
+          "grown declaration map survives scratch teardown"))
+      (tc_core.tc-checked-let-binding-facts-freeze! facts)
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-b
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (Bool)
+        transition)
+      (test.assert-true
+        (and
+          (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+            [(Hit (I64) _) true]
+            [_ false])
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& decl))
+            19))
+        "lowering queries cannot overwrite checked facts")
+      (tc_core.tc-checked-let-binding-facts-finish! facts)
+      (test.assert-true
+        (=
+          (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+            facts
+            module-b
+            (& decl))
+          -1)
+        "released generations retain no source identity"))))
+
+;; Freezing copies the live facts, their persisted types and both maps into a
+;; fresh generation, dropping the doubling history of the array and maps.
+(test
+  tc-checked-let-binding-facts-freeze-compacts
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    [func-ty : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+        (& (Bool)))]
+    (tc_core.tc-checked-let-binding-facts-begin! facts false)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 3)
+    (for [index (iterator.range 0 1000)]
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        index
+        0
+        13
+        17
+        (if (= (% index 2) 0)
+          (clone func-ty)
+          (I64))
+        transition))
+    (let
+      [before : i64
+        (alloc_profile.compiler-allocation-profile-arena-bump-bytes
+          (tc_core.tc-checked-let-binding-fact-state-data facts).payload-arena)]
+      [_freeze : unit (tc_core.tc-checked-let-binding-facts-freeze! facts)]
+      [after : i64
+        (alloc_profile.compiler-allocation-profile-arena-bump-bytes
+          (tc_core.tc-checked-let-binding-fact-state-data facts).payload-arena)]
+      (test.assert-true (< after before) "freezing drops the growth history")
+      (for [index (iterator.range 0 1000)]
+        (test.assert-true
+          (match (tc_core.tc-checked-let-binding-fact-lookup
+            facts
+            3
+            index
+            0
+            13
+            17)
+            [(Hit ty _)
+              (ast.ast-type-eq?
+                ty
+                (if (= (% index 2) 0)
+                  (clone func-ty)
+                  (I64)))]
+            [_ false])
+          "every compacted fact keeps its checked type")))
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
+
+(test
+  tc-checked-let-binding-facts-region-conflict
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [inner : i64 (ast.ast-node-pool-reader-type-push (& (String)))]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 77 inner)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 78 inner)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      12
+      0
+      13
+      17
+      (Bool)
+      transition)
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+        [(Inconsistent) true]
+        [_ false])
+      "different allocation regions are conflicting checked proofs")
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 12 0 13 17)
+        [(Hit (Bool) _) true]
+        [_ false])
+      "a conflicting proof cannot disable an unrelated binding")
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
 
 (define (tc-job-state-set-topenv-membership-enabled!
   [state : tc_core.TcJobState]
@@ -3374,6 +3637,7 @@
     "a function-local store fork never touches its parent's store or index"))
 
 (define (tc-type-env-segmented-snapshot-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [branch-id : i64 (ci.intern "branch")]
     [base : tc_core.TcTypeEnv
@@ -5036,6 +5300,7 @@
     (io.panic "typecheck: scoped type env smoke failed")))
 
 (define (tc-type-env-walker-api-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [lookup-base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache
@@ -5138,6 +5403,7 @@
     (io.panic "typecheck: env walker api smoke failed")))
 
 (define (tc-type-env-local-cache-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (and
     (tc-type-env-local-cache-behavior-smoke?)
     (tc-type-env-local-cache-default-shadow-smoke?)
@@ -5165,6 +5431,7 @@
 
 (test
   tc-type-env-explicit-cache-layering
+  (cbi.compiler-builtin-initialize-for-parse!)
   (if (tc-type-env-explicit-cache-layering-lookup-smoke?)
     unit
     (io.panic "typecheck: explicit env cache lookup layering smoke failed"))
@@ -5177,6 +5444,85 @@
   (if (tc-type-env-c-function-selected-key-smoke?)
     unit
     (io.panic "typecheck: selected C ABI fnptr key smoke failed")))
+
+(test
+  tc-type-env-intern-builtin-fixture-state
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [caller : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [caller-table : i64 (ci.intern-active-table-id)]
+    [caller-generation : i64 (ci.intern-generation)]
+    [caller-alloc : i64 cbi.compiler-builtin-id-tl-alloc]
+    [caller-name : i64 (ci.intern "fixture-caller")]
+    [caller-count : i64 (ci.intern-pool-len)]
+    (ast_tests.with-test-interns
+      (let
+        [table-a : i64 (ci.intern-active-table-id)]
+        [generation-a : i64 (ci.intern-generation)]
+        (test.assert-false (= table-a caller-table) "fixture owns its table")
+        (ci.intern-reset!)
+        (test.assert-false
+          (cbi.compiler-builtin-table-current?)
+          "reset invalidates the previous builtin generation")
+        (let
+          [_prefix : i64 (ci.intern "fixture-a-prefix")]
+          [reset-generation : i64 (ci.intern-generation)]
+          ;; The minimized failing prefix: reset, then synthetic cache setup.
+          (test.assert-true
+            (tc-type-env-local-cache-smoke?)
+            "synthetic cache fixtures initialize their builtin IDs")
+          (test.assert-false
+            (= generation-a reset-generation)
+            "fixture reset advances its generation")
+          (let
+            [alloc-a : i64 cbi.compiler-builtin-id-tl-alloc]
+            [builtins-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+            (ast_tests.with-test-interns
+              (test.assert-false
+                (= (ci.intern-active-table-id) table-a)
+                "nested fixture owns another table")
+              (test.assert-false
+                (= cbi.compiler-builtin-id-tl-alloc alloc-a)
+                "different prefixes produce different builtin IDs")
+              (cbi.state-install! builtins-a)
+              (test.assert-false
+                (cbi.compiler-builtin-table-current?)
+                "equal-looking IDs cannot substitute for builtin ownership")
+              (cbi.compiler-builtin-initialize-for-parse!))
+            (cbi.compiler-builtin-refresh!)
+            (test.assert-i64-eq (ci.intern-active-table-id) table-a "restore A")
+            (test.assert-i64-eq
+              (ci.intern-generation)
+              reset-generation
+              "restore A's reset generation")
+            (test.assert-i64-eq
+              cbi.compiler-builtin-id-tl-alloc
+              alloc-a
+              "restore A's matching builtins")))))
+    (cbi.compiler-builtin-refresh!)
+    (test.assert-i64-eq
+      (ci.intern-active-table-id)
+      caller-table
+      "restore caller")
+    (test.assert-i64-eq
+      (ci.intern-generation)
+      caller-generation
+      "preserve caller generation")
+    (test.assert-i64-eq
+      (ci.intern-pool-len)
+      caller-count
+      "preserve caller pool")
+    (test.assert-i64-eq
+      cbi.compiler-builtin-id-tl-alloc
+      caller-alloc
+      "restore caller builtins")
+    (test.assert-true
+      (string.eq (ci.intern-str caller-name) "fixture-caller")
+      "preserve caller spellings")
+    (test.assert-i64-eq
+      (ci.intern-compat-state-table-id caller)
+      caller-table
+      "caller snapshot still identifies the same owner")))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
@@ -5584,8 +5930,9 @@
   test
   (test
     tc-unbound-visible-name-persistent-and-qualified
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [module-id : i64 (ci.intern "suggest-module")]
         [other-module-id : i64 (ci.intern "suggest-other")]
@@ -5662,6 +6009,7 @@
           (io.panic
             "typecheck: persistent/qualified visible-name enumeration failed"))
         (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
         (let
           [hidden-id : i64 (ci.intern "__alpha")]
           [hidden-wanted-id : i64 (ci.intern "alpha")]
@@ -5677,14 +6025,16 @@
           (unless
             (string.eq hidden-result "")
             (io.panic "typecheck: visible-name reset isolation failed"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (cfg
   test
   (test
     tc-unbound-visible-name-structural-and-scoped-reset
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [module-id : i64 (ci.intern "macro-module")]
         [macro-source-id : i64 (ci.intern "macro-value")]
@@ -5776,14 +6126,16 @@
               (string.eq restored-result ""))
             (io.panic
               "typecheck: structural/scoped visible-name enumeration failed"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (cfg
   test
   (test
     tc-unbound-visible-name-two-job-isolation
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -5826,14 +6178,16 @@
             (string.eq result-a "job-alpha")
             (string.eq result-b "job-bravo"))
           (io.panic "typecheck: visible-name job isolation failed"))
-        (ci.intern-reset!)))))
+        (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)))))
 
 (cfg
   test
   (test
     tc-unbound-near-miss-stable-and-tie-broken
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [alpha-id : i64 (ci.intern "alpha")]
         [wanted-id : i64 (ci.intern "alphi")]
@@ -5866,7 +6220,8 @@
               after
               (tc_core.tc-unbound-near-miss false -1 env2 "alphi" wanted-id))
             (io.panic "typecheck: near-miss scan changed the updated result"))
-          (ci.intern-reset!))))))
+          (ci.intern-reset!)
+          (cbi.compiler-builtin-initialize-for-parse!))))))
 
 (define (tc-dotted-identity-refused?
   [ctx : tc_core.TcContext]
@@ -6065,8 +6420,9 @@
   test
   (test
     tc-unbound-suggestion-suppression-scope
-    (begin
+    (ast_tests.with-test-interns
       (ci.intern-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
       (let
         [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
         [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -6119,7 +6475,8 @@
               (tc_core.tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
               "alpha"))
           (io.panic "typecheck: suggestion did not return after the scope"))
-        (ci.intern-reset!)))))
+        (ci.intern-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)))))
 
 (cfg
   test
@@ -14796,3 +15153,268 @@
         arg
         "the implicit borrow borrows the argument's own node")
       (test.assert-i64-eq rows-after rows "the implicit borrow adds no row"))))
+
+(cfg
+  test
+  ;; The capture of ARG (#8884), with a caller-origin marker when RECORD?.
+  (define (tc-caller-marker-test-capture
+    [ctx : tc_core.TcContext]
+    [arg : i64]
+    [record? : bool]) : i64
+    (tc_core.macro-captured-expr-node
+      ctx
+      (tc_core.tc-context-expr-cell-address-live ctx)
+      (tc_core.tc-context-type-cell-address-live ctx)
+      arg
+      (tc_core.tc-context-expr-get ctx arg)
+      record?)))
+
+(cfg
+  test
+  ;; The node a caller-origin marker capture wraps: OUT is
+  ;; Spanned(MacroExpansion(node, caller, NAME), SPAN), or -1 for any other
+  ;; shape or marker name.
+  (define (tc-caller-marker-test-wrapped
+    [ctx : tc_core.TcContext]
+    [out : i64]
+    [name : i64]
+    [span : ast.AstSourceSpan]) : i64
+    (match (tc_core.tc-context-expr-get ctx out)
+      [(Spanned marker view-span)
+        (match (tc_core.tc-context-expr-get ctx marker)
+          [(MacroExpansion node _ marker-name)
+            (if (and
+              (= marker-name name)
+              (ast.ast-source-span-eq? view-span span))
+              node
+              -1)]
+          [_ -1])]
+      [_ -1])))
+
+(test
+  macro-captured-expr-node-caller-marker-shapes
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 3 5 3 9)]
+    [inner-span : ast.AstSourceSpan (ast.ast-source-span 3 6 3 8)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "caller-marker-operand")))]
+    [var-arg : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [call : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Call var (ast.ast-expr-list-new)))]
+    [call-arg : i64 (ast.ast-expr-source-view-with-pools pools call span)]
+    [nested-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-expr-source-view-with-pools pools var inner-span)
+        span)]
+    [text : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Literal (String (ci.intern "caller-marker-text"))))]
+    [text-arg : i64 (ast.ast-expr-source-view-with-pools pools text span)]
+    ;; An operand that is itself an expansion frame (a macro call's output)
+    ;; and one that is already a compact caller-origin marker.
+    [frame-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ci.intern "caller-marker-macro")))
+        span)]
+    [marked-arg : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ctfe_support.ctfe-compact-caller-origin-name)))
+        span)]
+    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! pools)
+    ;; Unobserved: the compact marker takes the operand's Spanned place.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx var-arg true)
+        (ctfe_support.ctfe-compact-caller-origin-name)
+        span)
+      var
+      "a plain operand's compact marker wraps its semantic node")
+    ;; A call keeps its row: the expansion walk frames a macro call with the
+    ;; Spanned row directly above it. A nested view keeps its distinct span.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx call-arg true)
+        -1
+        span)
+      call-arg
+      "a call operand keeps its Spanned row under a -1 marker")
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx nested-arg true)
+        -1
+        span)
+      nested-arg
+      "a nested source view keeps its row under a -1 marker")
+    ;; A marker over a marker: an expansion frame and a compact marker are
+    ;; both recognized by the Spanned row directly above them, so the new
+    ;; marker goes over that row.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx frame-arg true)
+        -1
+        span)
+      frame-arg
+      "an expansion-frame operand keeps its Spanned row under a -1 marker")
+    (test.assert-i64-eq
+      (tc-caller-marker-test-wrapped
+        ctx
+        (tc-caller-marker-test-capture ctx marked-arg true)
+        -1
+        span)
+      marked-arg
+      "a marked operand keeps its Spanned row under a -1 marker")
+    ;; A string literal is copied, never aliased.
+    (let
+      [copy : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx text-arg true)
+          (ctfe_support.ctfe-compact-caller-origin-name)
+          span)]
+      (test.assert-true
+        (and (>= copy 0) (!= copy text))
+        "a string operand's compact marker wraps a fresh literal")
+      (test.assert-true
+        (match (tc_core.tc-context-expr-get ctx copy)
+          [(Literal (String id)) (= id (ci.intern "caller-marker-text"))]
+          [_ false])
+        "the copied literal keeps its text"))
+    ;; Without a marker, the operand stays as it was; a string is still
+    ;; copied, under its own span.
+    (test.assert-i64-eq
+      (tc-caller-marker-test-capture ctx var-arg false)
+      var-arg
+      "an unmarked operand is the argument itself")
+    (test.assert-true
+      (match (tc_core.tc-context-expr-get
+        ctx
+        (tc-caller-marker-test-capture ctx text-arg false))
+        [(Spanned copy view-span)
+          (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
+        [_ false])
+      "an unmarked string operand is a spanned copy")
+    ;; A job with a semantic observer keeps the operand's own row under a -1
+    ;; marker: its semantic facts are keyed by the Spanned rows the check
+    ;; visits.
+    (tc_core.tc-job-state-set-semantic-observer!
+      (tc_core.tc-context-job-state ctx)
+      (tc_core.TcSemanticObserver 1))
+    (let
+      [observed : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx var-arg true)
+          -1
+          span)]
+      [observed-text : i64
+        (tc-caller-marker-test-wrapped
+          ctx
+          (tc-caller-marker-test-capture ctx text-arg true)
+          -1
+          span)]
+      (tc_core.tc-job-state-set-semantic-observer!
+        (tc_core.tc-context-job-state ctx)
+        (tc_core.TcSemanticObserver 0))
+      (ast.ast-node-pool-context-install! saved)
+      (test.assert-i64-eq
+        observed
+        var-arg
+        "an observed operand's marker wraps its Spanned row")
+      (test.assert-true
+        (match (tc_core.tc-context-expr-get ctx observed-text)
+          [(Spanned copy view-span)
+            (and (!= copy text) (ast.ast-source-span-eq? view-span span))]
+          [_ false])
+        "an observed string operand's marker wraps a spanned copy"))))
+
+(cfg
+  test
+  ;; The node under OUT's caller-origin marker when OUT is
+  ;; Spanned(MacroExpansion(node, caller, -1), _), or -1.
+  (define (tc-initializer-marker-test-inner
+    [pools : ast.AstNodePoolContext]
+    [out : i64]) : i64
+    (match (ast.ast-node-pool-context-expr-get pools out)
+      [(Spanned marker _)
+        (match (ast.ast-node-pool-context-expr-get pools marker)
+          [(MacroExpansion node _ name)
+            (if (= name -1)
+              node
+              -1)]
+          [_ -1])]
+      [_ -1])))
+
+;; The CTFE route marks a binding clause's initializer with a -1 caller-origin
+;; marker over the inner node of the initializer's Spanned row. Over a compact
+;; marker (#8884) it keeps that Spanned row, the compact operand's view.
+(test
+  ctfe-caller-origin-expr-node-keeps-a-compact-marker-view
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 9)]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Var (ci.intern "initializer-operand")))]
+    [plain : i64 (ast.ast-expr-source-view-with-pools pools var span)]
+    [compact : i64
+      (ast.ast-expr-source-view-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (MacroExpansion
+            var
+            (tc_core.macro-expansion-provenance-id -1 -1)
+            (ctfe_support.ctfe-compact-caller-origin-name)))
+        span)]
+    [ty : ast.AstType
+      (Region
+        (ctfe_support.ctfe-caller-origin-expr-type-id)
+        (ci.intern-composite-pair-id
+          (ci.intern "initializer-path")
+          (ast.ast-node-pool-context-type-push pools (I64))))]
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          plain
+          (& ty)))
+      var
+      "an initializer's marker goes over its Spanned row's inner node")
+    (test.assert-i64-eq
+      (tc-initializer-marker-test-inner
+        pools
+        (ctfe_support.ctfe-caller-origin-expr-node-with-pools
+          pools
+          compact
+          (& ty)))
+      compact
+      "over a compact marker, it keeps the marker's Spanned view")))

@@ -91,12 +91,7 @@
       [chunk : String
         (begin
           (unsafe
-            (string.str-copy-bytes-into
-              (unsafe
-                (string-data (& data)))
-              storage
-              0
-              count))
+            (string.str-copy-bytes-into (string-data (& data)) storage 0 count))
           (unsafe
             (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
       [next : TextBuf (append buf chunk)]

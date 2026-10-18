@@ -22,7 +22,13 @@
   false)
 (define compiler-builtin-id-tl-alloc : i64
   -1)
+(define compiler-builtin-id-tl-memcpy : i64
+  -1)
+(define compiler-builtin-id-tl-memcpy-fresh : i64
+  -1)
 (define compiler-builtin-id-tl-alloc-aligned : i64
+  -1)
+(define compiler-builtin-id-tl-alloc-global : i64
   -1)
 (define compiler-builtin-id-tl-region-mark : i64
   -1)
@@ -856,6 +862,7 @@
           (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
           ;; Append-only slot for the compiler-private aligned allocator.
           (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
+          (id compiler-builtin-id-tl-alloc-global 324 "tl_alloc_global")
           (id compiler-builtin-id-tl-region-mark 1 "tl_region_mark")
           (id compiler-builtin-id-tl-region-reset 2 "tl_region_reset")
           (id compiler-builtin-id-tl-arena-make 3 "tl_arena_make")
@@ -1423,6 +1430,8 @@
           (id compiler-builtin-id-arena-phase-base 305 "phase")
           (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
           (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
+          (id compiler-builtin-id-tl-memcpy 325 "tl_memcpy")
+          (id compiler-builtin-id-tl-memcpy-fresh 326 "tl_memcpy_fresh")
           ;; Captured into their slots but never loaded, so they stay -1.
           (id compiler-builtin-id-fix-LetBinding 311)
           (id compiler-builtin-id-fix-LetBindingList 312))
@@ -2649,6 +2658,7 @@
       compiler-builtin-id-tl-region-reset
       compiler-builtin-id-tl-arena-make)
     (= name-id compiler-builtin-id-tl-alloc-aligned)
+    (= name-id compiler-builtin-id-tl-alloc-global)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-arena-make-small
@@ -2760,7 +2770,8 @@
   (compiler-builtin-refresh!)
   (or
     (= name-id compiler-builtin-id-tl-alloc)
-    (= name-id compiler-builtin-id-tl-alloc-aligned)))
+    (= name-id compiler-builtin-id-tl-alloc-aligned)
+    (= name-id compiler-builtin-id-tl-alloc-global)))
 
 (define (compiler-builtin-backend-tl-region-mark-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)

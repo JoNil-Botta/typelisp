@@ -27,7 +27,9 @@
             false
             false
             false
-            63)]
+            ;; Every runtime leaf except the global allocator (32); 64 is the
+            ;; arena sanitizer entry.
+            95)]
         [linux : String
           (runtime_linux.compiler-backend-runtime-functions (& features))]
         [windows : String
@@ -122,7 +124,7 @@
         extra-features
         startup-profile
         extra-features
-        31)]
+        63)]
     [linux : String
       (runtime_linux.compiler-backend-runtime-functions (& features))]
     [windows : String
@@ -192,22 +194,22 @@
               [(Err _) (set! events-valid false)])
             (set! event-at (+ event-at 1)))
           (set! at (+ at 1))))
-      (test.assert-i64-eq ids.len 100 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 102 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
         112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        4259
+        4285
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        25904
+        26028
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        87
+        89
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly
@@ -234,7 +236,7 @@
             false
             false
             false
-            31)]
+            63)]
         [full : x64_selection.CompilerX64TemplateFeatures
           (x64_selection.CompilerX64TemplateFeatures
             true
@@ -245,7 +247,7 @@
             true
             true
             true
-            31)]
+            63)]
         [linux-min : x64_selection.CompilerX64ExecutableTemplateIdList
           (x64_selection.compiler-x64-runtime-template-selection
             (LinuxX64)
@@ -263,14 +265,14 @@
             (WindowsX64)
             (& full))]
         (test.assert-i64-eq linux-min.len 8 "minimal Linux template selection")
-        (test.assert-i64-eq linux-full.len 15 "full Linux template selection")
+        (test.assert-i64-eq linux-full.len 16 "full Linux template selection")
         (test.assert-i64-eq
           windows-min.len
           8
           "minimal Windows template selection")
         (test.assert-i64-eq
           windows-full.len
-          15
+          16
           "full Windows template selection")
         (test.assert-i64-eq
           (array-length linux-full.slots)

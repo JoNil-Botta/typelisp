@@ -2,9 +2,35 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 (import stdlib.hash)
 (import stdlib.string)
 (import stdlib.test)
+
+(test
+  compiler-builtin-global-allocator-lifecycle
+  (ci.intern-reset!)
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (cbi.compiler-builtin-refresh!)
+  (let
+    [snapshot : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [global-id : i64 cbi.compiler-builtin-id-tl-alloc-global]
+    (cbi.compiler-builtin-reset!)
+    (cbi.state-install! snapshot)
+    (test.assert-true
+      (and
+        (= cbi.compiler-builtin-id-tl-alloc-global global-id)
+        (= (cbi.state-ref snapshot 324) global-id)
+        (!= global-id cbi.compiler-builtin-id-tl-alloc)
+        (!= global-id cbi.compiler-builtin-id-c-fn-check)
+        (!= global-id cbi.compiler-builtin-id-tl-c-fn-null-abort)
+        (!= global-id cbi.compiler-builtin-id-tl-thread-local-word-addr)
+        (cbi.compiler-builtin-backend-runtime-core-id? global-id)
+        (cbi.compiler-builtin-backend-tl-alloc-id? global-id)
+        (string.eq (ci.intern-str global-id) "tl_alloc_global"))
+      "global allocator identity survives capture/reset/install without collision")))
 
 (define (compiler-backend-runtime-test-contains?
   [text : (& text str)]
@@ -33,7 +59,68 @@
     true
     true
     true
-    31))
+    63))
+
+(test
+  compiler-backend-runtime-global-storage-page
+  (let
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (compiler-backend-runtime-test-full-features)]
+    [linux : String (runtime_linux.compiler-backend-runtime-data (& features))]
+    [windows : String
+      (runtime_windows.compiler-backend-runtime-data (& features))]
+    [header : String
+      ".L_tl_global_aggregate_arena:
+    .quad 0
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage
+    .quad .L_tl_global_aggregate_storage_end
+    .quad 0
+    .quad .L_tl_global_aggregate_arena
+    .quad 1
+    .quad .L_tl_global_aggregate_arena
+    .quad .L_tl_global_aggregate_storage_end
+    .section .bss
+    .balign 4096
+.L_tl_global_aggregate_storage:
+    .zero 4096
+.L_tl_global_aggregate_storage_end:"]
+    (test.assert-true
+      (and
+        (string.contains (& linux) (& header))
+        (string.contains (& windows) (& header)))
+      "both targets start with a fully committed atomic page and a self-owned root")))
+
+(test
+  compiler-backend-runtime-memchr-parity
+  (let
+    [linux : String (runtime_linux.compiler-backend-runtime-memchr-functions)]
+    [windows : String
+      (runtime_windows.compiler-backend-runtime-memchr-functions)]
+    [normalized : String
+      (runtime_common.compiler-backend-runtime-replace-all
+        (runtime_common.compiler-backend-runtime-replace-all
+          (runtime_common.compiler-backend-runtime-replace-all
+            (string.replace
+              (string.replace linux "    .type tl_memchr,@function\n" "")
+              "    .size tl_memchr, . - tl_memchr\n"
+              "")
+            "%rdi"
+            "%rcx")
+          "%rsi"
+          "%rdx")
+        "%dl"
+        "%r8b")]
+    (test.assert-true
+      (string.eq (& normalized) (& windows))
+      "both ABIs use the same bounded search and volatile scratch registers")
+    (test.assert-true
+      (and
+        (string.contains (& windows) "    cmpq $16, %rdx\n")
+        (string.contains (& windows) "    movdqu (%rcx,%rax), %xmm1\n")
+        (string.contains (& windows) "    pcmpeqb %xmm0, %xmm1\n")
+        (string.contains (& windows) "    bsfl %r9d, %r9d\n"))
+      "full blocks compare bytes in parallel and return the first matching byte")))
 
 (test
   compiler-backend-runtime-leaf-feature-subsets
@@ -85,6 +172,37 @@
         false
         false)]
     (begin
+      (test.assert-true
+        (and
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& linux-min-data)
+              ".L_tl_global_aggregate_arena:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-min-data)
+              ".L_tl_global_aggregate_arena:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& linux-min-functions)
+              "tl_alloc_global:"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-min-functions)
+              "tl_alloc_global:"))
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-data)
+            ".L_tl_global_aggregate_arena:")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-data)
+            ".L_tl_global_aggregate_arena:")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "tl_alloc_global:")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "tl_alloc_global:"))
+        "global storage emits its private owner and allocator together only when selected")
       (test.assert-true
         (compiler-backend-runtime-test-contains? (& linux-min-data) ".tbss")
         "Linux runtime data owns the TLS arena slot")

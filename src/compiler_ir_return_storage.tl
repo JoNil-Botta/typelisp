@@ -289,20 +289,30 @@
                   (ast.ast-type-eq-with-seg-bases? facts.bases output ty)]
                 [_ false])]))))))
 
-(define (range-equal [left : StorageRange] [right : StorageRange]) : StorageRange
+;; The range of a join: one exact range when every arm has it. Arms that are
+;; all storage pointers but share no single declared extent prove no range, and
+;; the call keeps no storage claim (Unproven); an arm that is not a storage
+;; pointer makes the join one too (Unknown).
+(define (range-join [left : StorageRange] [right : StorageRange]) : StorageRange
   (match left
+    [(StorageRange.Unknown) (StorageRange.Unknown)]
+    [(StorageRange.Unproven)
+      (match right
+        [(StorageRange.Unknown) (StorageRange.Unknown)]
+        [_ (StorageRange.Unproven)])]
     [(StorageRange.Range root bytes)
       (match right
         [(StorageRange.Range other count)
           (if (and (= root other) (= bytes count))
             (StorageRange.Range root bytes)
-            (StorageRange.Unknown))]
-        [_ (StorageRange.Unknown)])]
-    [_ (StorageRange.Unknown)]))
+            (StorageRange.Unproven))]
+        [(StorageRange.Unproven) (StorageRange.Unproven)]
+        [(StorageRange.Unknown) (StorageRange.Unknown)])]))
 
 ;; The budget is shared across branches, not reset at each recursive edge.
-;; Exhaustion supplies no proof. Phi/Select admit only one exact range and
-;; GEP admits only zero offsets; interior pointers cannot borrow root capacity.
+;; Exhaustion supplies no proof. Phi/Select keep a range only when every arm
+;; has the same one (`range-join`), and GEP admits only zero offsets; interior
+;; pointers cannot borrow root capacity.
 (define (range
   [facts : (& facts StorageFacts)]
   [value : ir.CompilerIrValue]
@@ -352,7 +362,7 @@
                                   (ir.compiler-ir-phi-input-seq-ref inputs i)]
                                 (set!
                                   found
-                                  (range-equal
+                                  (range-join
                                     found
                                     (range facts input.value budget)))
                                 (set! i (+ i 1))))
@@ -367,7 +377,7 @@
                             (ir.compiler-ir-box-field-shared-view
                               boxed
                               on-false)]
-                          (range-equal
+                          (range-join
                             (range facts left budget)
                             (range facts right budget)))]
                       [_ (StorageRange.Unknown)])]))))]
@@ -513,8 +523,8 @@
 
 (define (storage-equal?
   [bases : i64]
-  [left : ir.CompilerIrReturnStorage]
-  [right : ir.CompilerIrReturnStorage]) : bool
+  [left : (& left ir.CompilerIrReturnStorage)]
+  [right : (& right ir.CompilerIrReturnStorage)]) : bool
   (match left
     [(ir.CompilerIrReturnStorage.None)
       (match right
@@ -523,7 +533,7 @@
     [(ir.CompilerIrReturnStorage.Some a)
       (match right
         [(ir.CompilerIrReturnStorage.Some b)
-          (contract-equal? bases (deref a) (deref b))]
+          (contract-equal? bases (& (deref a)) (& (deref b)))]
         [_ false])]))
 
 (define (function-abi-equal?

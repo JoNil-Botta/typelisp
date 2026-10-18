@@ -4643,20 +4643,22 @@
   [importer-path : String]
   [include-path : String]
   [resolved : String]) : cdiag.CompilerDiagnostic
-  (cdiag.compiler-diagnostic-at-start
-    (string.copy importer-path)
-    (str_cat.str-cat
-      "compiler-load: cannot read "
-      (match kind
-        [(Binary) "include-bin"]
-        [_ "include-str"])
-      " "
-      include-path
-      " from "
-      importer-path
-      " (resolved "
-      resolved
-      ")")))
+  (cdiag.compiler-diagnostic-load
+    IncludeRead
+    (cdiag.compiler-diagnostic-at-start
+      (string.copy importer-path)
+      (str_cat.str-cat
+        "compiler-load: cannot read "
+        (match kind
+          [(Binary) "include-bin"]
+          [_ "include-str"])
+        " "
+        include-path
+        " from "
+        importer-path
+        " (resolved "
+        resolved
+        ")"))))
 
 ;; The bytes an include embeds. An `include-str-lzss` of a TypeLisp `.tl`
 ;; source embeds it with its top-level inline tests blanked (#8713) and its
@@ -4750,7 +4752,11 @@
         name
         pools)]
     [(Err message)
-      (Err (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-load
+            ImportResolution
+            (cdiag.compiler-diagnostic-at-start importer-path message))))]))
 
 (define (compiler-load-decl-list-prepend-with-origin
   [head : (& ast.AstDecl)]
@@ -5260,9 +5266,11 @@
               [(CompilerLoadSomeModuleId _ _)
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-at-start
-                      path
-                      "compiler-load: duplicate module declaration")))])]
+                    (cdiag.compiler-diagnostic-load
+                      DuplicateModule
+                      (cdiag.compiler-diagnostic-at-start
+                        path
+                        "compiler-load: duplicate module declaration"))))])]
           [_
             (compiler-load-decls-module-id-loop
               path
@@ -5314,13 +5322,15 @@
           (Ok actual checked-actual-id)
           (Err
             (box
-              (cdiag.compiler-diagnostic-at-start
-                (string.copy path)
-                (str_cat.str-cat
-                  "compiler-load: import expected module "
-                  (ci.intern-str want)
-                  " but loaded "
-                  actual))))))]))
+              (cdiag.compiler-diagnostic-load
+                ModuleIdentity
+                (cdiag.compiler-diagnostic-at-start
+                  (string.copy path)
+                  (str_cat.str-cat
+                    "compiler-load: import expected module "
+                    (ci.intern-str want)
+                    " but loaded "
+                    actual)))))))]))
 
 (define (compiler-load-no-expected-module? [expected : ast.AstMaybeModuleName]) : bool
   (match expected
@@ -5597,22 +5607,24 @@
   [second-module : i64]) : ResultCompilerLoadAliasCheck
   (Err
     (box
-      (cdiag.compiler-diagnostic-from-ast-span
-        path
-        span
-        (str_cat.str-cat
-          "compiler-load: ambiguous import alias '"
+      (cdiag.compiler-diagnostic-load
+        AmbiguousImport
+        (cdiag.compiler-diagnostic-from-ast-span
+          path
+          span
           (str_cat.str-cat
-            (ci.intern-str alias)
+            "compiler-load: ambiguous import alias '"
             (str_cat.str-cat
-              "' between '"
+              (ci.intern-str alias)
               (str_cat.str-cat
-                (ci.intern-str first-module)
+                "' between '"
                 (str_cat.str-cat
-                  "' and '"
+                  (ci.intern-str first-module)
                   (str_cat.str-cat
-                    (ci.intern-str second-module)
-                    "'; use distinct aliases or qualified access"))))))))))
+                    "' and '"
+                    (str_cat.str-cat
+                      (ci.intern-str second-module)
+                      "'; use distinct aliases or qualified access")))))))))))
 
 ;; Parsed sources and fully expanded programs share this namespace rule. The
 ;; expected module is the loader's canonical identity; paths are diagnostic
@@ -5933,19 +5945,23 @@
           (owned_view.compiler-owned-shared-view collision))]
       (Err
         (box
-          (cdiag.compiler-diagnostic-from-ast-span
-            collision.path
-            collision.span
-            message))))
+          (cdiag.compiler-diagnostic-load
+            AmbiguousImport
+            (cdiag.compiler-diagnostic-from-ast-span
+              collision.path
+              collision.span
+              message)))))
     (let
       [diag : cdiag.CompilerDiagnostic
         (cdiag.compiler-diagnostic-with-help
           (&
-            (cdiag.compiler-diagnostic-from-ast-span
-              (owned_view.compiler-owned-shared-view collision.path)
-              collision.span
-              (compiler-load-unqualified-import-local-collision-message
-                (owned_view.compiler-owned-shared-view collision))))
+            (cdiag.compiler-diagnostic-load
+              AmbiguousImport
+              (cdiag.compiler-diagnostic-from-ast-span
+                (owned_view.compiler-owned-shared-view collision.path)
+                collision.span
+                (compiler-load-unqualified-import-local-collision-message
+                  (owned_view.compiler-owned-shared-view collision)))))
           "alias the import with `as`, rename the declaration, or import the module and use qualified access")]
       (Err
         (box
@@ -6027,12 +6043,14 @@
               (return
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-from-ast-span
-                      path
-                      (__tl-box-place span)
-                      (compiler-load-missing-selected-item-message
-                        (ci.intern-str source-module)
-                        (ModuleItem source-item)))))))
+                    (cdiag.compiler-diagnostic-load
+                      SelectedItem
+                      (cdiag.compiler-diagnostic-from-ast-span
+                        path
+                        (__tl-box-place span)
+                        (compiler-load-missing-selected-item-message
+                          (ci.intern-str source-module)
+                          (ModuleItem source-item))))))))
             (match (compiler-load-unqualified-import-note
               (&mut state)
               cur-module
@@ -6363,15 +6381,17 @@
               (return
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-at-start
-                      (string.copy path)
-                      (str_cat.str-cat
-                        "compiler-load: import expected module "
-                        (ci.intern-str expected-id)
-                        " but loaded "
-                        (ci.intern-syntax-name-text-or
-                          module-id
-                          "<structural-module>")))))))]
+                    (cdiag.compiler-diagnostic-load
+                      ModuleIdentity
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy path)
+                        (str_cat.str-cat
+                          "compiler-load: import expected module "
+                          (ci.intern-str expected-id)
+                          " but loaded "
+                          (ci.intern-syntax-name-text-or
+                            module-id
+                            "<structural-module>"))))))))]
           [(No) unit])
         (if (match expected-module
           [(Some expected-id) (= module-id expected-id)]
@@ -6502,11 +6522,13 @@
         [(CompilerEmbeddedStdlibNoSource)
           (parser.ResultAstProgramDiagnostic.Err
             (box
-              (cdiag.compiler-diagnostic-at-start
-                (string.copy path)
-                (str_cat.str-cat
-                  "compiler-load: cannot read import "
-                  (string.copy path)))))]))
+              (cdiag.compiler-diagnostic-load
+                SourceRead
+                (cdiag.compiler-diagnostic-at-start
+                  (string.copy path)
+                  (str_cat.str-cat
+                    "compiler-load: cannot read import "
+                    (string.copy path))))))]))
       [(Ok program)
         (match (compiler-load-surface-summary-build
           (& (string.copy path))
@@ -9626,9 +9648,11 @@
                   target-module-id))
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-at-start
-                      (string.copy importer-path)
-                      "compiler-load: duplicate module declaration")))
+                    (cdiag.compiler-diagnostic-load
+                      DuplicateModule
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy importer-path)
+                        "compiler-load: duplicate module declaration"))))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   (CompilerLoadTraversalContext
                     traversal.load-state
@@ -9841,12 +9865,14 @@
                             (return
                               (Err
                                 (box
-                                  (cdiag.compiler-diagnostic-from-ast-span
-                                    importer-path
-                                    (__tl-box-place span)
-                                    (compiler-load-missing-selected-item-message
-                                      import-path
-                                      kind))))))
+                                  (cdiag.compiler-diagnostic-load
+                                    SelectedItem
+                                    (cdiag.compiler-diagnostic-from-ast-span
+                                      importer-path
+                                      (__tl-box-place span)
+                                      (compiler-load-missing-selected-item-message
+                                        import-path
+                                        kind)))))))
                           (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                             (ast.ast-place-shared-view traversal)
                             rest
@@ -9949,10 +9975,12 @@
                 [(Err message)
                   (Err
                     (box
-                      (cdiag.compiler-diagnostic-from-ast-span
-                        importer-path
-                        (__tl-box-place span)
-                        message)))]))]
+                      (cdiag.compiler-diagnostic-load
+                        ImportResolution
+                        (cdiag.compiler-diagnostic-from-ast-span
+                          importer-path
+                          (__tl-box-place span)
+                          message))))]))]
           [(IncludeStr name include-path)
             (let
               [expanded
@@ -11461,11 +11489,13 @@
               [(CompilerEmbeddedStdlibNoSource)
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-at-start
-                      (string.copy path)
-                      (str_cat.str-cat
-                        "compiler-load: cannot read import "
-                        path))))])))))))
+                    (cdiag.compiler-diagnostic-load
+                      SourceRead
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy path)
+                        (str_cat.str-cat
+                          "compiler-load: cannot read import "
+                          path)))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [load-state : CompilerLoadSessionState]
@@ -11630,11 +11660,13 @@
               [(CompilerEmbeddedStdlibNoSource)
                 (Err
                   (box
-                    (cdiag.compiler-diagnostic-at-start
-                      (string.copy path)
-                      (str_cat.str-cat
-                        "compiler-load: cannot read import "
-                        path))))])))))))
+                    (cdiag.compiler-diagnostic-load
+                      SourceRead
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy path)
+                        (str_cat.str-cat
+                          "compiler-load: cannot read import "
+                          path)))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : (& str)]
@@ -12839,7 +12871,11 @@
         resolved
         name)]
     [(Err message)
-      (Err (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-load
+            ImportResolution
+            (cdiag.compiler-diagnostic-at-start importer-path message))))]))
 
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : (& ast.AstDeclList)]
@@ -13044,12 +13080,14 @@
                             (return
                               (Err
                                 (box
-                                  (cdiag.compiler-diagnostic-from-ast-span
-                                    importer-path
-                                    (__tl-box-place span)
-                                    (compiler-load-missing-selected-item-message
-                                      import-path
-                                      kind))))))
+                                  (cdiag.compiler-diagnostic-load
+                                    SelectedItem
+                                    (cdiag.compiler-diagnostic-from-ast-span
+                                      importer-path
+                                      (__tl-box-place span)
+                                      (compiler-load-missing-selected-item-message
+                                        import-path
+                                        kind)))))))
                           (match (compiler-load-package-decls-with-module-and-roots
                             (& rest)
                             (owned_view.compiler-owned-shared-view
@@ -13151,10 +13189,12 @@
                 [(Err message)
                   (Err
                     (box
-                      (cdiag.compiler-diagnostic-from-ast-span
-                        importer-path
-                        (__tl-box-place span)
-                        message)))]))]
+                      (cdiag.compiler-diagnostic-load
+                        ImportResolution
+                        (cdiag.compiler-diagnostic-from-ast-span
+                          importer-path
+                          (__tl-box-place span)
+                          message))))]))]
           [(IncludeStr name include-path)
             (let
               [expanded
@@ -13561,9 +13601,11 @@
         [(CompilerEmbeddedStdlibNoSource)
           (Err
             (box
-              (cdiag.compiler-diagnostic-at-start
-                (string.copy path)
-                (str_cat.str-cat "compiler-load: cannot read import " path))))]))))
+              (cdiag.compiler-diagnostic-load
+                SourceRead
+                (cdiag.compiler-diagnostic-at-start
+                  (string.copy path)
+                  (str_cat.str-cat "compiler-load: cannot read import " path)))))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : (& str)]

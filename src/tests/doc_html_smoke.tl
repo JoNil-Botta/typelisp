@@ -5,7 +5,6 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_owned_view as owned_view)
 
 (define (doc-html-smoke-modules
   [docs : doc_extract.DocExtraction]
@@ -20,11 +19,10 @@
       (doc_render.DocModule.Module "second.tl" second-docs))
     modules))
 
-(define (doc-html-smoke) : i64
-  (let
-    [docs : doc_extract.DocExtraction
-      (doc_extract.doc-extract-source
-        ";# Module docs with `code`, [links], <tag>, & amp.
+;; The first smoke module's documentation, extracted afresh for each consumer.
+(define (doc-html-smoke-docs) : doc_extract.DocExtraction
+  (doc_extract.doc-extract-source
+    ";# Module docs with `code`, [links], <tag>, & amp.
 ;# Quote docs say \"hello\".
 
 ;; ignored ordinary comment
@@ -32,21 +30,21 @@
 (define answer : i64 42)
 
 ;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))")]
+(define (add-one [x : i64]) : i64 (+ x 1))"))
+
+(define (doc-html-smoke) : i64
+  (let
+    [docs : doc_extract.DocExtraction (doc-html-smoke-docs)]
     [second-docs : doc_extract.DocExtraction
       (doc_extract.doc-extract-source
         ";# Second module docs.
 
 (define hidden : i64 1)")]
     [page : String
-      (doc_html.doc-html-render-module-page
-        "smoke<&>.tl"
-        (owned_view.compiler-owned-shared-view docs))]
+      (doc_html.doc-html-render-module-page "smoke<&>.tl" (doc-html-smoke-docs))]
     [graph : String
       (doc_html.doc-html-render-module-graph
-        (doc-html-smoke-modules
-          (owned_view.compiler-owned-shared-view docs)
-          second-docs))]
+        (doc-html-smoke-modules (doc-html-smoke-docs) second-docs))]
     [search-records : String
       (doc_html.doc-html-search-records-for-module
         "smoke.html"

@@ -219,6 +219,53 @@ for HASH_TARGET in linux-x86_64 windows-x86_64; do
     test -s "$WORKDIR/hash-length-chain-$HASH_TARGET.s"
 done
 
+# Backend frame-omission state must not change the next entry's inline costs.
+# This subject has enough call-spanning pressure to distinguish the pools.
+# Batch-file contents do not receive Git Bash's native argument conversion.
+POOL_WORKDIR=${WORKDIR#"$ROOT/"}
+POOL_SOURCE="tests/integration/pure_call_join_live.tl"
+POOL_EMPTY="$POOL_WORKDIR/pool-empty.tl"
+printf '%s\n' '(define (main) : i64 0)' >"$POOL_EMPTY"
+POOL_INVALID="$POOL_WORKDIR/pool-invalid.tl"
+printf '%s\n' '(define (main) : i64 "wrong")' >"$POOL_INVALID"
+for POOL_TARGET in linux-x86_64 windows-x86_64; do
+    for POOL_LEVEL in 0 1 2; do
+        POOL_DIR="$POOL_WORKDIR/pool-$POOL_TARGET-$POOL_LEVEL"
+        mkdir -p "$POOL_DIR"
+        "$COMPILER" compile "$POOL_SOURCE" --target "$POOL_TARGET" \
+            --opt-level "$POOL_LEVEL" --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src" -o "$POOL_DIR/cold.s" \
+            >"$POOL_DIR/cold.stdout" 2>"$POOL_DIR/cold.stderr"
+        printf '%s|%s\n' \
+            "$POOL_SOURCE" "$POOL_DIR/first.s" \
+            "$POOL_EMPTY" "$POOL_DIR/empty.s" \
+            "$POOL_SOURCE" "$POOL_DIR/after-empty.s" \
+            "$POOL_SOURCE" "$POOL_DIR/repeated.s" >"$POOL_DIR/batch.list"
+        "$COMPILER" compile --batch "$POOL_DIR/batch.list" \
+            --target "$POOL_TARGET" --opt-level "$POOL_LEVEL" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            >"$POOL_DIR/batch.stdout" 2>"$POOL_DIR/batch.stderr"
+        test -s "$POOL_DIR/cold.s"
+        for POOL_OUTPUT in first after-empty repeated; do
+            cmp "$POOL_DIR/cold.s" "$POOL_DIR/$POOL_OUTPUT.s" ||
+                fail "inline register pool depends on batch position: $POOL_TARGET opt$POOL_LEVEL $POOL_OUTPUT"
+        done
+    done
+    printf '%s|%s\n' \
+        "$POOL_SOURCE" "$POOL_DIR/before-error.s" \
+        "$POOL_INVALID" "$POOL_DIR/invalid.s" \
+        "$POOL_SOURCE" "$POOL_DIR/after-error.s" >"$POOL_DIR/invalid.list"
+    if "$COMPILER" compile --batch "$POOL_DIR/invalid.list" \
+        --target "$POOL_TARGET" --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        >"$POOL_DIR/invalid.stdout" 2>"$POOL_DIR/invalid.stderr"; then
+        fail "invalid batch entry unexpectedly succeeded: $POOL_TARGET"
+    fi
+    grep -F 'pool-invalid.tl' "$POOL_DIR/invalid.stderr" >/dev/null
+    test ! -e "$POOL_DIR/invalid.s"
+    test ! -e "$POOL_DIR/after-error.s"
+done
+
 if "$COMPILER" compile "$SOURCE" \
     --dump-ir after-no-such-pass \
     --opt-level 2 \

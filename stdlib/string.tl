@@ -263,16 +263,10 @@
         (unsafe
           (string-data text))]
       [dst : (MutPtr u8) (string-runtime-alloc len)]
-      (begin
-        (unsafe
-          (str-copy-bytes-into
-            (unsafe
-              (ptr-offset src start))
-            dst
-            0
-            len))
-        (unsafe
-          (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
+      (unsafe
+        (str-copy-bytes-into (ptr-offset src start) dst 0 len))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
 (define (append [left : (& left str)] [right : (& right str)]) : String
@@ -322,12 +316,7 @@
           [part : (& parts str) (& (array-ref parts copy-index))]
           [len : i64 (__tl_string_length part)]
           (unsafe
-            (str-copy-bytes-into
-              (unsafe
-                (string-data part))
-              dst
-              off
-              len))
+            (str-copy-bytes-into (string-data part) dst off len))
           (set! off (+ off len))
           (set! copy-index (+ copy-index 1))))
       (unsafe

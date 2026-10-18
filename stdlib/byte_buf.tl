@@ -219,32 +219,26 @@
           (unsafe
             (__tl_array-data out))]
         (unsafe
-          (string.str-copy-bytes-into
-            (unsafe
-              (bytes-data view))
-            dst
-            0
-            n))
+          (string.str-copy-bytes-into (bytes-data view) dst 0 n))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
 
 ;: Borrow the live range of a `ByteBuf` as immutable bytes.
+;: Public lengths outside the backing array trap before constructing the view.
 (define (as-bytes [buf : (& source ByteBuf)]) : (& source bytes)
-  (begin
-    ;; ByteBuf fields are public: construction alone proves no live extent.
-    (check-range (array-length buf.slots) 0 buf.len)
-    (unsafe
-      (tl_bytes_view_from_buf_parts
-        (ptr-cast (__tl_array-data buf.slots) : (Ptr u8))
-        buf.len
-        buf))))
+  (check-range (array-length buf.slots) 0 buf.len)
+  (unsafe
+    (tl_bytes_view_from_buf_parts
+      (ptr-cast (__tl_array-data buf.slots) : (Ptr u8))
+      buf.len
+      buf)))
 
 ;: Borrow the live range of a `ByteBuf` as mutable fixed-length bytes.
+;: Public lengths outside the backing array trap before constructing the view.
 (define (as-mut-bytes [buf : (&mut source ByteBuf)]) : (&mut source bytes)
-  (begin
-    (check-range (array-length buf.slots) 0 buf.len)
-    (unsafe
-      (tl_bytes_mut_view_from_buf_parts (__tl_array-data buf.slots) buf.len buf))))
+  (check-range (array-length buf.slots) 0 buf.len)
+  (unsafe
+    (tl_bytes_mut_view_from_buf_parts (__tl_array-data buf.slots) buf.len buf)))
 
 ;: Read live byte `index`, returning `fallback` when `index` is outside
 ;: `[0, len)`.
@@ -381,13 +375,11 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data ready.slots))]
-    ;; reserve cannot turn a forged negative/overflowed public length into
-    ;; proof that the destination raw range exists.
+    ;; Public len is not proof that reserve produced a valid raw destination.
     (check-range (array-length ready.slots) old-len count)
     (unsafe
       (string.str-copy-bytes-into
-        (unsafe
-          (ptr-offset (bytes-data src) start))
+        (ptr-offset (bytes-data src) start)
         dst
         old-len
         count))

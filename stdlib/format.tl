@@ -387,10 +387,8 @@
                 (if (> sink.len 0)
                   (unsafe
                     (string.str-copy-bytes-into
-                      (unsafe
-                        (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
-                      (unsafe
-                        (__tl_array-data larger))
+                      (ptr-cast (__tl_array-data sink.slots) : (Ptr u8))
+                      (__tl_array-data larger)
                       0
                       sink.len))
                   unit)
@@ -398,10 +396,8 @@
             unit)
           (unsafe
             (string.str-copy-bytes-into
-              (unsafe
-                (string-data (& data)))
-              (unsafe
-                (__tl_array-data sink.slots))
+              (string-data (& data))
+              (__tl_array-data sink.slots)
               sink.len
               count))
           (set! sink.len required)
@@ -486,7 +482,10 @@
           (int->ptr (cast address : u64) : (MutPtr Formatter)))]
       (if (<= (string.string-length (& data)) 0)
         unit
-        (if (!= (unsafe (deref slot).status) 0)
+        (if (!=
+          (unsafe
+            (deref slot).status)
+          0)
           unit
           (let
             [write-raw : (-> i64 String i64)

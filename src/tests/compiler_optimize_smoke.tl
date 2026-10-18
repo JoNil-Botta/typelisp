@@ -10,6 +10,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_optimize_tests as ot)
 (import compiler_optimize as opt)
+(import compiler_regalloc as reg)
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
@@ -30,7 +31,7 @@
       (match found
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Return (Some (I64 value))) value]
               [_ (- 0 1)])
             (- 0 1))])]))
@@ -85,7 +86,7 @@
       (+ index 1)
       (+
         acc
-        (match (ir.compiler-ir-instr-seq-ref instrs index)
+        (match (ir.compiler-ir-instr-seq-borrow instrs index)
           [(Switch _ _ _ _) 1]
           [(TotalEnumSwitch _ _ _ _ _) 1]
           [_ 0])))))
@@ -112,7 +113,7 @@
       (match block
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Switch _ base _ _) base]
               [(TotalEnumSwitch _ base _ _ _) base]
               [_ (- 0 1)])
@@ -141,7 +142,7 @@
       (match block
         [(Block _ instrs)
           (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Switch _ _ _ default-label) default-label]
               [(TotalEnumSwitch _ _ _ default-label _) default-label]
               [_ (ir.compiler-ir-label-none)])
@@ -219,7 +220,7 @@
 (define (opt-switch-test-block-tail-base [block : (& block ir.CompilerIrBlock)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ base _ _) base]
@@ -241,7 +242,7 @@
   [block : (& block ir.CompilerIrBlock)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(Switch _ _ _ default-label) default-label]
@@ -252,7 +253,7 @@
   [block : (& block ir.CompilerIrBlock)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref
+      (match (ir.compiler-ir-instr-seq-borrow
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
         [(TotalEnumSwitch _ _ _ _ _) true]
@@ -261,7 +262,7 @@
 (define (opt-switch-test-block-starts-with-mov? [block : ir.CompilerIrBlock]) : bool
   (match block
     [(Block _ instrs)
-      (match (ir.compiler-ir-instr-seq-ref instrs 0)
+      (match (ir.compiler-ir-instr-seq-borrow instrs 0)
         [(Mov _ _ _) true]
         [_ false])]))
 
@@ -272,7 +273,7 @@
   (let
     [index : i64 0]
     (while (< index cases.len)
-      (match (ir.compiler-ir-switch-case-seq-ref cases index)
+      (match (ir.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label) (when (= tag want-tag) (return (= label want-label)))])
       (set! index (+ index 1)))
     false))
@@ -301,10 +302,10 @@
         [(Block _ instrs)
           (and
             (= (ir.compiler-ir-instr-seq-count instrs) 2)
-            (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 0)
               [(Call _ name _ _) (= name cbi.compiler-builtin-id-tl-oob-abort)]
               [_ false])
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
+            (match (ir.compiler-ir-instr-seq-borrow instrs 1)
               [(Jump target) (= target label)]
               [_ false]))])]))
 
@@ -1555,7 +1556,7 @@
   [ty : ast.AstType]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Mov d (Var s) mov-ty)
         (if (= d dst)
           (and
@@ -2137,10 +2138,11 @@
             [(Phi _ inputs _)
               (if (opt.opt-phi-input-seq-eq
                 inputs
-                (match (irt.instr
-                  "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
-                  [(Phi _ expected _) expected]
-                  [_ (ir.compiler-ir-phi-input-seq-empty)]))
+                (&
+                  (match (irt.instr
+                    "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
+                    [(Phi _ expected _) expected]
+                    [_ (ir.compiler-ir-phi-input-seq-empty)])))
                 (match (opt.opt-cfg-find-block
                   blocks
                   (ir.compiler-ir-label "exit"))
@@ -2152,10 +2154,11 @@
                           [(Phi _ exit-inputs _)
                             (opt.opt-phi-input-seq-eq
                               exit-inputs
-                              (match (irt.instr
-                                "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
-                                [(Phi _ expected _) expected]
-                                [_ (ir.compiler-ir-phi-input-seq-empty)]))]
+                              (&
+                                (match (irt.instr
+                                  "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
+                                  [(Phi _ expected _) expected]
+                                  [_ (ir.compiler-ir-phi-input-seq-empty)])))]
                           [_ false])])])
                 false)]
             [_ false])])]))
@@ -2715,6 +2718,47 @@
   (test.assert-true
     (ot.compiler-optimize-inline-checked-depth-weighting-ok?)
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
+
+(test
+  inline-checked-register-pool-isolation
+  (let
+    [func
+      (irt.func
+        "function @checked_pool(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> unit vars 7 {
+         entry:
+           %6 = call opaque() : unit
+           store @sink, %0 : i64
+           store @sink, %1 : i64
+           store @sink, %2 : i64
+           store @sink, %3 : i64
+           store @sink, %4 : i64
+           store @sink, %5 : i64
+           return
+         }")]
+    [original : bool reg.compiler-reg-rbp-pool-enabled]
+    [_cold : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
+    [cold : i64
+      (opt.opt-inline-checked-alloc-cost
+        (ast.ast-node-pool-reader-type-segment-bases)
+        func
+        0)]
+    [cold-restored : bool (not reg.compiler-reg-rbp-pool-enabled)]
+    [_emitted : unit (reg.compiler-reg-set-rbp-pool-enabled! true)]
+    [after-emission : i64
+      (opt.opt-inline-checked-alloc-cost
+        (ast.ast-node-pool-reader-type-segment-bases)
+        func
+        0)]
+    [emitted-restored : bool reg.compiler-reg-rbp-pool-enabled]
+    [_restore : unit (reg.compiler-reg-set-rbp-pool-enabled! original)]
+    (test.assert-i64-eq
+      cold
+      after-emission
+      "inline pricing ignores the preceding backend register pool")
+    (test.assert-true cold-restored "a cold caller keeps its register pool")
+    (test.assert-true
+      emitted-restored
+      "an emitted caller keeps its register pool")))
 
 (test
   dominance-frontier-table-matches-scan
@@ -4041,3 +4085,15 @@
 (test
   function-index-leaf-starts
   (smoke-require-42 (smoke-function-index-leaf-starts-self-test)))
+
+(test
+  disjoint-store-forward
+  (smoke-require-42 (ot.compiler-optimize-disjoint-store-forward-self-test)))
+
+(test
+  licm-disjoint-field
+  (smoke-require-42 (ot.compiler-optimize-licm-field-self-test)))
+
+(test
+  licm-disjoint-field-pipeline
+  (smoke-require-42 (ot.compiler-optimize-licm-field-pipeline-self-test)))

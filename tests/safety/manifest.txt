@@ -418,6 +418,11 @@ vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_m
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
+clone_reference_prefix_move_reject|check-fail|tests/safety/clone_reference_prefix_move_reject.tl|-|use of moved value `cell`
+clone_reference_prefix_deref_reject|check-fail|tests/safety/clone_reference_prefix_deref_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_shadow_reject|check-fail|tests/safety/clone_reference_shadow_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_let_move_reject|check-fail|tests/safety/clone_reference_let_move_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|clone unsupported type (& source Cell)
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
 gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
 gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
@@ -944,6 +949,8 @@ thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_do
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
 arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
 arena_branded_distinct_alias_reject|check-fail|tests/safety/arena_branded_distinct_alias_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_branded_operand_wrong_brand_reject|check-fail|tests/safety/arena_branded_operand_wrong_brand_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_bare_operand_brand_reject|check-fail|tests/safety/arena_bare_operand_brand_reject.tl|-|expected (stdlib.arena/Arena r), found stdlib.arena/Arena
 arena_branded_duplicate_reject|check-fail|tests/safety/arena_branded_duplicate_reject.tl|-|use of moved value `owner`
 arena_branded_aggregate_duplicate_reject|check-fail|tests/safety/arena_branded_aggregate_duplicate_reject.tl|-|use of moved value `owner`
 arena_branded_closure_capture_reuse_reject|check-fail|tests/safety/arena_branded_closure_capture_reuse_reject.tl|-|use of moved value `owner`
@@ -983,7 +990,7 @@ arena_branded_destroy_parameter_alias_reject|check-fail|tests/safety/arena_brand
 # A call whose signature brands an `(in r T)` parameter with an arena owner
 # parameter's `r` takes that arena's allocation; its branded result ends with
 # the arena, and a value of another arena coerced into the brand is not taken.
-arena_branded_call_operand_ok|check-ok|tests/safety/arena_branded_call_operand_ok.tl|-|-
+arena_branded_call_operand_ok|run-exit|tests/safety/arena_branded_call_operand_ok.tl|42|-
 arena_branded_call_result_destroy_reject|check-fail|tests/safety/arena_branded_call_result_destroy_reject.tl|tests/safety/arena_branded_call_result_destroy_reject.tl:15:29|use of moved value `text`
 arena_branded_call_other_arena_reject|check-fail|tests/safety/arena_branded_call_other_arena_reject.tl|-|the ownership checker does not support a construct in this function body
 arena_destroy_copied_bare_owner_reject|check-fail|tests/safety/arena_destroy_copied_bare_owner_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
@@ -1886,3 +1893,7 @@ set_intermediate_bounds_before_value_trap|run-trap|tests/safety/set_intermediate
 # A macro operand that fails to typecheck reports its own error when the macro
 # asks for its type (#8871).
 macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_type_reject.tl|-|typecheck: array elements must have same type: expected i32, found i64
+
+# Packed field receivers retain identity without bypassing borrow checks.
+packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
+packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access

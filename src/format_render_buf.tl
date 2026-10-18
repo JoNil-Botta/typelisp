@@ -40,10 +40,8 @@
           (if (> n 0)
             (unsafe
               (string.str-copy-bytes-into
-                (unsafe
-                  (ptr-cast (__tl_array-data cur) : (Ptr u8)))
-                (unsafe
-                  (__tl_array-data bigger))
+                (ptr-cast (__tl_array-data cur) : (Ptr u8))
+                (__tl_array-data bigger)
                 0
                 n))
             unit)
@@ -59,10 +57,8 @@
         (fmt-render-buf-reserve buf (+ base slen))
         (unsafe
           (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& s)))
-            (unsafe
-              (__tl_array-data buf.data))
+            (string-data (& s))
+            (__tl_array-data buf.data)
             base
             slen))
         (set! buf.len (+ base slen))))))

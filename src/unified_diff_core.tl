@@ -457,10 +457,8 @@
           [offset : i64 out.stage.len]
           (unsafe
             (string.str-copy-bytes-into
-              (unsafe
-                (ptr-offset (string-data text) cursor))
-              (unsafe
-                (__tl_array-data out.stage.slots))
+              (ptr-offset (string-data text) cursor)
+              (__tl_array-data out.stage.slots)
               offset
               n))
           (set! out.stage.len (+ offset n))

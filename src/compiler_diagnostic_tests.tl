@@ -724,7 +724,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 28)]
+    [ok : bool (= count 34)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
@@ -963,6 +963,7 @@
     (cond
       [(cdiag.compiler-diagnostic-parse-code? (& code)) "parse"]
       [(string.is-string-prefix-at (& code) "E02" 0) "typecheck"]
+      [(string.is-string-prefix-at (& code) "E03" 0) "load"]
       [else ""])))
 
 (define (compiler-diagnostic-code-registry-owner [index : i64]) : String
@@ -971,4 +972,5 @@
     (cond
       [(string.eq category "parse") "parser"]
       [(string.eq category "typecheck") "typechecker"]
+      [(string.eq category "load") "loader"]
       [else ""])))

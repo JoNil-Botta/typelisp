@@ -14,6 +14,7 @@
 (import compiler_object_layout as layout)
 (import compiler_runtime_bindings as bindings)
 (import compiler_driver_core)
+(import compiler_lower)
 (import compiler_typecheck_core)
 (import compiler_ast_types)
 (import compiler_backend)
@@ -192,7 +193,8 @@
   [emit-entry : bool]
   [category : compiler_backend.CompilerDirectObjectFallbackReason]
   [profile-state : profile_state.CompilerProfileState]
-  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
+  [typecheck-state : compiler_typecheck_core.TcJobState]
+  [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg
       compile-profile
@@ -216,7 +218,8 @@
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
-            "backend.assembly")
+            "backend.assembly"
+            lower-state)
           (Assembly
             asm
             category
@@ -231,7 +234,8 @@
               "backend.assembly"))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
-            "backend.assembly-error")
+            "backend.assembly-error"
+            lower-state)
           (Err
             (compiler-windows-batch-backend-diagnostic input-path diag)
             (compiler_driver_core.compiler-driver-advisories-for-job
@@ -260,7 +264,8 @@
   [force-assembly : bool]
   [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
+  [typecheck-state : compiler_typecheck_core.TcJobState]
+  [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerWindowsBatchArtifact
   ;; A direct COFF object is linkable only through the freestanding runtime's
   ;; `_tl_start`, so a no-entry (library) image takes the assembly route.
   (if (or force-assembly (not emit-entry))
@@ -276,7 +281,8 @@
         ForcedAssembly
         MissingEntrySymbol)
       profile-state
-      typecheck-state)
+      typecheck-state
+      lower-state)
     (match (compiler-windows-coff-object-program-eligibility
       backend-state
       pools
@@ -293,7 +299,8 @@
           emit-entry
           category
           profile-state
-          typecheck-state)]
+          typecheck-state
+          lower-state)]
       [(Eligible)
         (begin
           (cfg
@@ -319,7 +326,8 @@
                     "backend.object-image"))
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
-                  "backend.object-image")
+                  "backend.object-image"
+                  lower-state)
                 (match (compiler-windows-coff-linkability
                   (owned_view.compiler-owned-shared-view image))
                   [(Linkable)
@@ -339,7 +347,8 @@
                                 "render.coff-object"))
                             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                               typecheck-state
-                              "render.coff-object")
+                              "render.coff-object"
+                              lower-state)
                             (if emit-side-assembly
                               (match (compiler_object_asm.compiler-object-asm-render
                                 image)
@@ -389,7 +398,8 @@
                       emit-entry
                       category
                       profile-state
-                      typecheck-state)]))]
+                      typecheck-state
+                      lower-state)]))]
             [(Err diag)
               (begin
                 (cfg
@@ -399,7 +409,8 @@
                     "backend.object-image"))
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
-                  "backend.object-image-error")
+                  "backend.object-image-error"
+                  lower-state)
                 (Err
                   (compiler-windows-batch-backend-diagnostic input-path diag)
                   (compiler_driver_core.compiler-driver-advisories-for-job
@@ -417,7 +428,8 @@
   [force-assembly : bool]
   [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
+  [typecheck-state : compiler_typecheck_core.TcJobState]
+  [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerWindowsBatchArtifact
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
     (Err
       (box
@@ -426,7 +438,8 @@
       (compiler_driver_core.compiler-driver-advisories-for-job typecheck-state))
     (begin
       (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
-        typecheck-state)
+        typecheck-state
+        lower-state)
       (compiler_driver_core.compiler-driver-retire-frontend-arena!)
       (cfg
         compile-profile
@@ -440,7 +453,10 @@
           opt-level
           profile-state
           false
-          (compiler_ir_types.compiler-ir-representation-index-empty)))
+          (compiler_ir_types.compiler-ir-representation-index-empty)
+          (compiler_optimize.OptInputRetirement.Retire
+            lower-state.address
+            compiler_driver_core.compiler-driver-retire-lowered-input!)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -450,8 +466,11 @@
                 "optimize"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
               typecheck-state
-              "optimize")
-            (compiler_driver_core.compiler-driver-release-lowered-ir! opt-level)
+              "optimize"
+              lower-state)
+            (compiler_driver_core.compiler-driver-release-lowered-ir!
+              opt-level
+              lower-state)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (Err
                 (box
@@ -474,7 +493,8 @@
                   force-assembly
                   emit-side-assembly
                   profile-state
-                  typecheck-state))))]))))
+                  typecheck-state
+                  lower-state))))]))))
 
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]
@@ -485,7 +505,14 @@
   [force-assembly : bool]
   [emit-side-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
-    [(Ok program spans pools profile-state backend-state typecheck-state)
+    [(Ok
+        program
+        spans
+        pools
+        profile-state
+        backend-state
+        typecheck-state
+        lower-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
@@ -517,10 +544,13 @@
               force-assembly
               emit-side-assembly
               profile-state
-              typecheck-state))]
+              typecheck-state
+              lower-state))]
         (if (= opt-level 0)
           (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
           unit)
+        (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!
+          lower-state)
         (compiler_ast_types.ast-node-pool-reader-clear!)
         (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
         out)]

@@ -1,5 +1,3 @@
-(import stdlib.comptime)
-
 (define text : String
   "global")
 
@@ -17,6 +15,5 @@
     [text : String "local"]
     [local : (& text str) (& text)]
     (read (borrow-global))
-    (begin
-      (consume text)
-      (read local))))
+    (consume text)
+    (read local)))

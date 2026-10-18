@@ -1,5 +1,3 @@
-(import stdlib.comptime)
-
 (define text : String
   "global")
 

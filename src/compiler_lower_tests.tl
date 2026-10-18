@@ -600,25 +600,24 @@
 
 (test
   compiler-lower-cfunc-readonly-owned-prefix
-  (begin
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(extern (get) : (CFunc non-null (-> String i64)))
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc non-null (-> String i64)))
 (define (identity [text : String]) : String text)
 (define (cleanup [_value : i64]) : unit unit)
 (define (main) : i64 (let [text \"answer\"] [f (get)] (f (begin (identity text) text)) 42))"
-        "typecheck: use of moved value `text`")
-      "a prefix call still consumes its owning argument")
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(import stdlib.comptime)
+      "typecheck: use of moved value `text`")
+    "a prefix call still consumes its owning argument")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(import stdlib.comptime)
 (define (identity [text : String]) : String text)
 (defmacro (twice [value : Expr]) : Expr `(begin (identity ,value) ,value))
 (extern (get) : (CFunc non-null (-> String i64)))
 (define (main) : i64 (let [text \"answer\"] [f (get)] (f (twice text)) 42))
 "
-        "typecheck: use of moved value `text`")
-      "a reused macro operand is inferred by its owning or reading occurrence")))
+      "typecheck: use of moved value `text`")
+    "a reused macro operand is inferred by its owning or reading occurrence"))
 
 (test
   compiler-lower-cfunc-readonly-shared-syntax
@@ -979,34 +978,33 @@
 
 (test
   compiler-lower-normalized-c-function-boundaries
-  (begin
-    (test.assert-true
-      (match (lower-test-functions
-        (lower.lower-compiler-source
-          "(define (relay [f : (CFunc nullable (-> i64 i64))]) : (CFunc nullable (-> i64 i64)) f)
+  (test.assert-true
+    (match (lower-test-functions
+      (lower.lower-compiler-source
+        "(define (relay [f : (CFunc nullable (-> i64 i64))]) : (CFunc nullable (-> i64 i64)) f)
            (define (invoke [f : (CFunc unsafe-non-null (-> i64 i64))]) : i64 (unsafe (f 42)))
            (define (main) : i64 42)"))
-        [(Some functions)
-          (and
-            (=
-              (lower-test-function-label-load-count
-                (& functions)
-                "relay"
-                "checked.0")
-              0)
-            (=
-              (lower-test-function-label-load-count
-                (& functions)
-                "invoke"
-                "checked.0")
-              0))]
-        [_ false])
-      "nullable storage and checked unsafe C calls use the owned graph")
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(define (main [f : (CFunc nullable (-> i64 i64))]) : i64 (f 42))"
-        "typecheck: nullable C function pointer must be checked before calling")
-      "nullable C pointer call cannot receive a certificate")))
+      [(Some functions)
+        (and
+          (=
+            (lower-test-function-label-load-count
+              (& functions)
+              "relay"
+              "checked.0")
+            0)
+          (=
+            (lower-test-function-label-load-count
+              (& functions)
+              "invoke"
+              "checked.0")
+            0))]
+      [_ false])
+    "nullable storage and checked unsafe C calls use the owned graph")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(define (main [f : (CFunc nullable (-> i64 i64))]) : i64 (f 42))"
+      "typecheck: nullable C function pointer must be checked before calling")
+    "nullable C pointer call cannot receive a certificate"))
 
 (test
   compiler-lower-normalized-primitives
@@ -2653,24 +2651,23 @@
 
 (test
   compiler-lower-never-callee-live-boundaries
-  (begin
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(extern (get) : (CFunc nullable (-> i64 i64)))
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc nullable (-> i64 i64)))
          (define (main) : i64 (let [f (get)] (f 41)))"
-        "typecheck: nullable C function pointer must be checked before calling")
-      "an executing nullable C pointer still requires a check")
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(extern (get) : (CFunc unsafe-non-null (-> i64 i64)))
+      "typecheck: nullable C function pointer must be checked before calling")
+    "an executing nullable C pointer still requires a check")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc unsafe-non-null (-> i64 i64)))
          (define (main) : i64 (let [f (get)] (f 41)))"
-        "typecheck: C function pointer requires unsafe context")
-      "an executing unsafe C pointer still requires unsafe")
-    (test.assert-true
-      (compiler-lower-error-ok?
-        "(define (main) : i64 (let [f 42] (f 41)))"
-        "typecheck: call target is not a function")
-      "an executing scalar cannot be called")))
+      "typecheck: C function pointer requires unsafe context")
+    "an executing unsafe C pointer still requires unsafe")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(define (main) : i64 (let [f 42] (f 41)))"
+      "typecheck: call target is not a function")
+    "an executing scalar cannot be called"))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.

@@ -3278,6 +3278,8 @@
     (ty-node-persist-type-list-into items (&mut out) 0)
     out))
 
+;; A deep copy of a type read through a reference: the child lists get fresh
+;; storage in the current arena and child ids are copied as they are.
 (define (ty-node-persist [node : (& AstType)]) : AstType
   (let
     [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]

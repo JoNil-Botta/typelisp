@@ -5,6 +5,14 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
+pricing identical before and after backend frame-pointer omission enables an
+extra register, and checks that pricing restores its caller's pool. The IR
+observability gate compares cold and repeated batch assembly for
+`pure_call_join_live.tl`, including an empty predecessor, at opt0/1/2 for both
+target ABIs. An invalid middle entry must retain its source diagnostic and
+stop before later output is emitted.
+
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
 aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
 public check/compile
@@ -32,6 +40,11 @@ emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
 the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
+
+`indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
+returns early, for language closures and C code pointers. Counts require one
+callee evaluation, no later argument effects and the enclosing cleanup. A
+conditional callee also exercises the branch that actually invokes its function.
 
 `extern_data_memory.tl` links C data symbols at opt0/1/2 on both hosts.
 Its assembly-shape case pins both compare operand positions, arithmetic folds,

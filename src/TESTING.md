@@ -2206,3 +2206,13 @@ boundary. Lowering tests assert graph selection for eight C-call forms, unsafe
 non-null calls and nullable storage; nullable calls retain their diagnostic.
 The retirement test also inspects owned nullable/non-null C signatures after
 both the typed source store and normalization scratch have been retired.
+
+`ownership_certified_primitives.tl` requires both hosts and opt0/1/2 with its
+independent C data/resolver helper. It checks cast widths and float truncation,
+pointer evaluation before a later argument mutates its source, typed memory
+reads/writes, pointer round trips, full inline-aggregate stride, and C pointer
+checks in branches and in sequence. The resolver count detects duplicate
+evaluation. The existing null-C-pointer fixture also runs all three opt levels,
+retaining exit134 and its exact stderr. Graph tests cover ten cast forms, six
+raw-pointer forms (including exact loads), four null-check flows and four
+malformed primitive payloads that must fail at the runtime consumer.

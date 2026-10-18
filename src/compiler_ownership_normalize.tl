@@ -1257,7 +1257,9 @@
 
 (define (normalize-scalar-value-type? [type : (& type ast.AstType)]) : bool
   (match type
-    [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _)) true]
+    [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _) (ast.AstType.Ptr _)
+         (ast.AstType.MutPtr _))
+      true]
     [_
       (match (normalize-type-code type)
         [(NormalizeInt.Ok code) (< code 13)]
@@ -1300,6 +1302,18 @@
       true]
     [_ false]))
 
+(define (normalize-scalar-primitive?
+  [primitive : (& primitive typed.TypedPrimitive)]) : bool
+  (match primitive
+    [(or (typed.TypedPrimitive.Cast) (typed.TypedPrimitive.PtrNull)
+         (typed.TypedPrimitive.PtrNullCheck) (typed.TypedPrimitive.PtrRead)
+         (typed.TypedPrimitive.PtrWrite) (typed.TypedPrimitive.PtrOffset)
+         (typed.TypedPrimitive.PtrCast) (typed.TypedPrimitive.PtrToInt)
+         (typed.TypedPrimitive.IntToPtr))
+      true]
+    [(typed.TypedPrimitive.Builtin code arity) (and (= code 22) (= arity 1))]
+    [_ false]))
+
 ;; This classifies an executable lowering representation, after the complete
 ;; ownership check. It never changes admission or retries a failed analysis.
 (define (ownership-normalized-scalar-emission?
@@ -1337,6 +1351,8 @@
              (NormalizeOperation.Continue) (NormalizeOperation.Return _))
           true]
         [(NormalizeOperation.Call _ _ _ _ _ call) (normalize-scalar-call? call)]
+        [(NormalizeOperation.Primitive primitive)
+          (normalize-scalar-primitive? primitive)]
         [_ false])
       (return false)))
   (for [block (iterator.range 0 (array-length output.body.blocks))]

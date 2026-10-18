@@ -73602,7 +73602,10 @@
   (spans ir.CompilerSourceSpans)
   (path-id i64)
   (aborts (__tl_dyn-array i64))
-  (next-var i64))
+  (next-var i64)
+  (blocks ir.CompilerIrBlockBuilder)
+  (current-label i64)
+  (next-label i64))
 
 (define (lower-normalized-emit!
   [state : (&mut state LowerNormalizedState)]
@@ -73757,6 +73760,7 @@
                   [(norm.NormalizeOperation.Literal _) true]
                   [(norm.NormalizeOperation.Unary _) true]
                   [(norm.NormalizeOperation.Call _ _ _ _ _ _) true]
+                  [(norm.NormalizeOperation.Primitive _) true]
                   [(norm.NormalizeOperation.Binary op)
                     (match op
                       [(ast.AstBinOp.And) false]
@@ -73948,6 +73952,265 @@
             type))))
     (LowerNormalizedUnit.Ok unit)))
 
+(define (lower-normalized-finish-block!
+  [state : (&mut state LowerNormalizedState)]
+  [instrs : (&mut instrs ir.CompilerIrInstrBuilder)]
+  [next : i64]) : unit
+  (ir.compiler-ir-block-builder-push!
+    (&mut state.blocks)
+    (ir.CompilerIrBlock.Block
+      state.current-label
+      (ir.compiler-ir-instr-builder-to-seq
+        (replace! (deref instrs) (ir.compiler-ir-instr-builder-new)))))
+  (set! state.current-label next))
+
+(define (lower-normalized-fresh-label!
+  [state : (&mut state LowerNormalizedState)]) : i64
+  (let
+    [text : String
+      (str_cat.str-cat "checked." (string.int->string state.next-label))]
+    (set! state.next-label (+ state.next-label 1))
+    (ir.compiler-ir-label text)))
+
+(define (lower-normalized-primitive!
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [state : (&mut state LowerNormalizedState)]
+  [instrs : (&mut instrs ir.CompilerIrInstrBuilder)]
+  [node : (& node norm.NormalizeNode)]
+  [place : i64]
+  [primitive : (& primitive typed.TypedPrimitive)]) : LowerNormalizedUnit
+  (unless
+    (and
+      (norm.normalize-scalar-primitive? primitive)
+      (= (array-length node.operands) (typed.typed-primitive-arity primitive)))
+    (return
+      (LowerNormalizedUnit.Err "lower: invalid certified primitive arity")))
+  (for [index (iterator.range 0 (array-length node.operands))]
+    (unless
+      (lower-normalized-place? (& output.body) (array-ref node.operands index))
+      (return
+        (LowerNormalizedUnit.Err "lower: invalid certified primitive operand"))))
+  (let
+    [ctx : tc_core.TcContext (clone state.ctx)]
+    [type : ast.AstType (try (lower-normalized-type output node.type))]
+    [source-type : ast.AstType
+      (if (> (array-length node.operands) 0)
+        (try
+          (lower-normalized-type
+            output
+            (array-ref output.body.places (array-ref node.operands 0)).type.index))
+        ast.AstType.Unit)]
+    [operand : ir.CompilerIrValue
+      (if (> (array-length node.operands) 0)
+        (ir.CompilerIrValue.Var (array-ref node.operands 0))
+        ir.CompilerIrValue.Unit)]
+    [pointer? : bool (tc_core.tc-raw-pointer-type? (clone source-type))]
+    [target-pointer? : bool (tc_core.tc-raw-pointer-type? (clone type))]
+    [valid? : bool
+      (match primitive
+        [(typed.TypedPrimitive.Cast)
+          (or
+            (and
+              (tc_core.tc-castable-type? (clone source-type))
+              (tc_core.tc-castable-type? (clone type)))
+            (tc_core.tc-function-to-integer-cast?
+              (clone source-type)
+              (clone type)))]
+        [(typed.TypedPrimitive.PtrNull)
+          (or
+            target-pointer?
+            (match (& type)
+              [(ast.AstType.CFunc _ mode)
+                (ast.ast-c-function-mode-nullable? mode)]
+              [_ false]))]
+        [(typed.TypedPrimitive.PtrNullCheck)
+          (and
+            (= node.type 1)
+            (or
+              pointer?
+              (match (& source-type)
+                [(ast.AstType.CFunc _ _) true]
+                [_ false])))]
+        [(typed.TypedPrimitive.PtrCast) (and pointer? target-pointer?)]
+        [(typed.TypedPrimitive.PtrToInt) (and pointer? (= node.type 9))]
+        [(typed.TypedPrimitive.IntToPtr)
+          (and target-pointer? (tc_core.tc-integer-type? (clone source-type)))]
+        [(typed.TypedPrimitive.PtrOffset)
+          (and
+            pointer?
+            (=
+              (array-ref output.body.places (array-ref node.operands 1)).type.index
+              5)
+            (ast.ast-type-eq-with-pools?
+              (tc_core.tc-context-pools ctx)
+              (& source-type)
+              (& type)))]
+        [(or (typed.TypedPrimitive.PtrRead) (typed.TypedPrimitive.PtrWrite))
+          (match (& source-type)
+            [(or (ast.AstType.Ptr element) (ast.AstType.MutPtr element))
+              (if (match primitive
+                [(typed.TypedPrimitive.PtrRead) true]
+                [_ false])
+                (ast.ast-type-eq-with-pools?
+                  (tc_core.tc-context-pools ctx)
+                  (& (tc_core.tc-context-type-get ctx element))
+                  (& type))
+                (and
+                  (= node.type 0)
+                  (match (& source-type)
+                    [(ast.AstType.MutPtr _) true]
+                    [_ false])
+                  (ast.ast-type-eq-with-pools?
+                    (tc_core.tc-context-pools ctx)
+                    (& (tc_core.tc-context-type-get ctx element))
+                    (&
+                      (try
+                        (lower-normalized-type
+                          output
+                          (array-ref
+                            output.body.places
+                            (array-ref node.operands 1)).type.index))))))]
+            [_ false])]
+        [(typed.TypedPrimitive.Builtin _ _) true]
+        [_ false])]
+    [_checked : unit
+      (unless
+        valid?
+        (return
+          (LowerNormalizedUnit.Err "lower: invalid certified primitive types")))]
+    [instruction : ir.CompilerIrInstr
+      (match primitive
+        [(or (typed.TypedPrimitive.Cast) (typed.TypedPrimitive.PtrCast)
+             (typed.TypedPrimitive.PtrToInt) (typed.TypedPrimitive.IntToPtr))
+          (let
+            [from : ast.AstType (lower-raw-pointer-ir-type (clone source-type))]
+            [to : ast.AstType (lower-raw-pointer-ir-type (clone type))]
+            (if (ast.ast-type-eq-with-pools?
+              (tc_core.tc-context-pools ctx)
+              (& from)
+              (& to))
+              (ir.CompilerIrInstr.Mov place operand type)
+              (ir.CompilerIrInstr.Cast place operand from to)))]
+        [(typed.TypedPrimitive.PtrNull)
+          (ir.CompilerIrInstr.Mov place (ir.CompilerIrValue.I64 0) type)]
+        [(typed.TypedPrimitive.PtrNullCheck)
+          (ir.CompilerIrInstr.BinOp
+            place
+            ir.CompilerIrBinOp.Eq
+            operand
+            (ir.CompilerIrValue.I64 0)
+            ast.AstType.Bool)]
+        [(typed.TypedPrimitive.PtrRead)
+          (ir.CompilerIrInstr.Load place operand type)]
+        [(typed.TypedPrimitive.PtrWrite)
+          (let
+            [stored : i64 (array-ref node.operands 1)]
+            (lower-normalized-emit!
+              state
+              instrs
+              (& node.source)
+              (ir.CompilerIrInstr.StorePtr
+                operand
+                (ir.CompilerIrValue.Var stored)
+                (try
+                  (lower-normalized-type
+                    output
+                    (array-ref output.body.places stored).type.index))))
+            (ir.CompilerIrInstr.Mov place ir.CompilerIrValue.Unit type))]
+        [(typed.TypedPrimitive.PtrOffset)
+          (match (& source-type)
+            [(or (ast.AstType.Ptr element) (ast.AstType.MutPtr element))
+              (let
+                [element-type : ast.AstType
+                  (tc_core.tc-context-type-get ctx element)]
+                [offset : ir.CompilerIrValue
+                  (ir.CompilerIrValue.Var (array-ref node.operands 1))]
+                (if (lower-type-inline-storage? ctx element-type)
+                  (let
+                    [scaled : i64 state.next-var]
+                    (try (lower-normalized-charge! state 1))
+                    (set! state.next-var (+ state.next-var 1))
+                    (lower-normalized-emit!
+                      state
+                      instrs
+                      (& node.source)
+                      (ir.CompilerIrInstr.BinOp
+                        scaled
+                        ir.CompilerIrBinOp.Mul
+                        offset
+                        (ir.CompilerIrValue.I64
+                          (lower-type-size ctx element-type))
+                        ast.AstType.I64))
+                    (ir.CompilerIrInstr.Gep
+                      place
+                      operand
+                      (ir.CompilerIrValue.Var scaled)
+                      ast.AstType.U8))
+                  (ir.CompilerIrInstr.Gep place operand offset element-type)))]
+            [_
+              (return
+                (LowerNormalizedUnit.Err
+                  "lower: invalid certified pointer offset"))])]
+        [(typed.TypedPrimitive.Builtin _ _)
+          (let
+            [condition : i64 state.next-var]
+            [fail : i64 (lower-normalized-fresh-label! state)]
+            [checked : i64 (lower-normalized-fresh-label! state)]
+            (unless
+              (match (& source-type)
+                [(ast.AstType.CFunc signature mode)
+                  (ast.ast-type-eq-with-pools?
+                    (tc_core.tc-context-pools ctx)
+                    (& type)
+                    (&
+                      (ast.AstType.CFunc
+                        signature
+                        (if (ast.ast-c-function-mode-unsafe? mode)
+                          ast.AstCFunctionMode.UnsafeNonNull
+                          ast.AstCFunctionMode.NonNull))))]
+                [_ false])
+              (return
+                (LowerNormalizedUnit.Err
+                  "lower: invalid certified C pointer check")))
+            (try (lower-normalized-charge! state 4))
+            (set! state.next-var (+ state.next-var 2))
+            (lower-normalized-emit!
+              state
+              instrs
+              (& node.source)
+              (ir.CompilerIrInstr.BinOp
+                condition
+                ir.CompilerIrBinOp.Eq
+                (clone operand)
+                (ir.CompilerIrValue.I64 0)
+                ast.AstType.Bool))
+            (lower-normalized-emit!
+              state
+              instrs
+              (& node.source)
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var condition)
+                fail
+                checked))
+            (lower-normalized-finish-block! state instrs fail)
+            (cbi.compiler-builtin-refresh!)
+            (lower-normalized-emit!
+              state
+              instrs
+              (& node.source)
+              (ir.CompilerIrInstr.Call
+                (+ condition 1)
+                cbi.compiler-builtin-id-tl-c-fn-null-abort
+                ir.CompilerIrCallArgs.Nil
+                ast.AstType.Never))
+            (lower-normalized-finish-block! state instrs checked)
+            (ir.CompilerIrInstr.Mov place operand type))]
+        [_
+          (return
+            (LowerNormalizedUnit.Err "lower: unsupported certified primitive"))])]
+    (lower-normalized-emit! state instrs (& node.source) instruction)
+    (LowerNormalizedUnit.Ok unit)))
+
 (define (lower-normalized-assign!
   [output : (& output norm.OwnershipNormalizedBody)]
   [state : (&mut state LowerNormalizedState)]
@@ -73984,6 +74247,15 @@
               [(norm.NormalizeOperation.Call _ _ _ _ _ call)
                 (try
                   (lower-normalized-call! output state instrs node place call))]
+              [(norm.NormalizeOperation.Primitive primitive)
+                (try
+                  (lower-normalized-primitive!
+                    output
+                    state
+                    instrs
+                    node
+                    place
+                    primitive))]
               [(norm.NormalizeOperation.Unary op)
                 (begin
                   (unless
@@ -74124,10 +74396,12 @@
           spans
           path-id
           (__tl_make-array i64 0)
-          places)]
+          places
+          (ir.compiler-ir-block-builder-new)
+          -1
+          blocks)]
       [params : ir.CompilerIrParamBuilder
         (ir.compiler-ir-param-builder-with-capacity 0)]
-      [result : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
       [index : i64 0]
       (begin
         (try
@@ -74180,6 +74454,7 @@
                   (ir.compiler-ir-instr-builder-new)]
                 [instruction : i64 0]
                 (begin
+                  (set! state.current-label (array-ref state.labels index))
                   (while (< instruction (array-length block.instructions))
                     (begin
                       (try (lower-normalized-charge! (&mut state) 1))
@@ -74286,11 +74561,7 @@
                       (return
                         (LowerNormalizedResult.Err
                           "lower: unsupported certified termination"))])
-                  (ir.compiler-ir-block-builder-push!
-                    (&mut result)
-                    (ir.CompilerIrBlock.Block
-                      (array-ref state.labels index)
-                      (ir.compiler-ir-instr-builder-to-seq instrs))))))
+                  (lower-normalized-finish-block! (&mut state) (&mut instrs) -1))))
             (set! index (+ index 1))))
         (LowerNormalizedResult.Ok
           (ir.CompilerIrFunction.Function
@@ -74298,7 +74569,7 @@
             (ir.compiler-ir-param-builder-to-seq params)
             (try (lower-normalized-type output output.return-type))
             state.next-var
-            (ir.compiler-ir-block-builder-to-list result)
+            (ir.compiler-ir-block-builder-to-list state.blocks)
             ir.CompilerIrFunctionAbi.Ordinary)
           state.spans)))))
 

@@ -1705,7 +1705,15 @@ representation, whose later ownership solving does not insert instructions.
 Malformed or duplicate call positions and aborts without an executable effect
 are hard errors. A non-null C callee emits the existing `CallIndirectC` ABI
 instruction from its captured place; a nullable runtime callee is a hard error.
-The `c-fn-check` primitive, other nonprimitive places, loans, cleanup and arena
+Scalar casts, raw-pointer values and scalar reads/writes, null tests, pointer
+conversions and pointer offsets also emit from their captured operands. Pointer
+offsets use the existing layout authority to stride inline aggregates by their
+full size. The runtime consumer checks primitive arity and canonical operand/
+result types before emission. `c-fn-check` emits a source-located null comparison,
+a failure block terminating in the existing Never abort call, and a success
+block forwarding the captured pointer. These internal IR blocks have labels
+distinct from the checked graph labels; following graph edges still target the
+original entry labels. Other nonprimitive places, loans, cleanup and arena
 emission still need to move
 to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
 required. The scalar source fixture covers snapshots, argument ABI, loop exits

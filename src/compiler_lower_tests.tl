@@ -415,6 +415,111 @@
       "nullable C pointer call cannot receive a certificate")))
 
 (test
+  compiler-lower-normalized-primitives
+  (let
+    [bodies : (Array String 10)
+      (array
+        "(cast (cast value : i8) : i64)"
+        "(cast (cast value : u8) : i64)"
+        "(cast (cast value : i16) : i64)"
+        "(cast (cast value : u16) : i64)"
+        "(cast (cast value : i32) : i64)"
+        "(cast (cast value : u32) : i64)"
+        "(cast (cast value : u64) : i64)"
+        "(cast (cast value : f32) : i64)"
+        "(cast (cast value : f64) : i64)"
+        "(cast (cast value : char) : i64)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower-test-functions
+          (lower.lower-compiler-source
+            (str_cat.str-cat
+              "(define (probe [value : i64]) : i64 "
+              (clone (array-ref bodies index))
+              ") (define (main) : i64 (probe 42))")))
+          [(Some functions)
+            (=
+              (lower-test-function-label-load-count
+                (& functions)
+                "probe"
+                "checked.0")
+              0)]
+          [_ false])
+        (str_cat.str-cat
+          "checked scalar cast, case "
+          (string.int->string index))))))
+
+(test
+  compiler-lower-normalized-pointer-primitives
+  (let
+    [bodies : (Array String 6)
+      (array
+        "(ptr-read ptr)"
+        "(begin (ptr-write! ptr value) (ptr-read ptr))"
+        "(ptr-read (ptr-offset ptr 1))"
+        "(ptr-read (ptr-cast (ptr-cast ptr : (Ptr u8)) : (Ptr i64)))"
+        "(ptr-read (int->ptr (ptr->int ptr) : (Ptr i64)))"
+        "(if (ptr-null? (ptr-null : (Ptr i64))) value (ptr-read ptr))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower-test-functions
+          (match (lower.lower-compiler-source
+            (str_cat.str-cat
+              "(define (probe [ptr : (MutPtr i64)] [value : i64]) : i64 (unsafe "
+              (clone (array-ref bodies index))
+              ")) (define (main) : i64 42)"))
+            [(lower.ResultCompilerLower.Err diagnostic)
+              (io.println
+                "pointer case {}: {}"
+                index
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+              (lower.ResultCompilerLower.Err diagnostic)]
+            [(lower.ResultCompilerLower.Ok program spans owner)
+              (lower.ResultCompilerLower.Ok program spans owner)]))
+          [(Some functions)
+            (=
+              (lower-test-function-label-load-count
+                (& functions)
+                "probe"
+                "checked.0")
+              (if (= index 5)
+                0
+                1))]
+          [_ false])
+        (str_cat.str-cat
+          "checked raw pointer primitive, case "
+          (string.int->string index))))))
+
+(test
+  compiler-lower-normalized-c-function-check
+  (let
+    [bodies : (Array String 4)
+      (array
+        "((c-fn-check func) value)"
+        "(let [checked : (CFunc non-null (-> i64 i64)) (c-fn-check func)] (checked value))"
+        "((if flag (c-fn-check func) (c-fn-check other)) value)"
+        "(begin (c-fn-check func) ((c-fn-check other) value))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower-test-functions
+          (lower.lower-compiler-source
+            (str_cat.str-cat
+              "(define (probe [func : (CFunc nullable (-> i64 i64))] [other : (CFunc nullable (-> i64 i64))] [value : i64] [flag : bool]) : i64 "
+              (clone (array-ref bodies index))
+              ") (define (main) : i64 42)")))
+          [(Some functions)
+            (=
+              (lower-test-function-label-load-count
+                (& functions)
+                "probe"
+                "checked.0")
+              0)]
+          [_ false])
+        (str_cat.str-cat
+          "checked C pointer null guard, case "
+          (string.int->string index))))))
+
+(test
   compiler-lower-normalized-never-calls
   (let
     [bodies : (Array String 8)
@@ -575,6 +680,8 @@
         [(= mode 4) "lower: invalid certified call assignment"]
         [(= mode 8) "lower: missing certified abort effect"]
         [(= mode 9) "lower: invalid certified selected result"]
+        [(= mode 11) "lower: invalid certified primitive types"]
+        [(>= mode 10) "lower: invalid certified primitive arity"]
         [else "lower: invalid certified abort call"])]
     (unless
       (= mode 8)
@@ -601,7 +708,7 @@
       (set! (array-ref output.nodes 0).type 13)
       (set! (array-ref output.nodes 0).result-place -1))
     (when
-      (>= mode 7)
+      (and (>= mode 7) (< mode 10))
       (set!
         (array-ref output.body.blocks 0).terminator
         own.OwnershipTerminator.Abort))
@@ -609,6 +716,16 @@
       (= mode 7)
       (__tl_array-push! output.nodes (clone (array-ref output.nodes 0))))
     (when (= mode 9) (set! (array-ref output.nodes 0).type 13))
+    (when
+      (>= mode 10)
+      (set!
+        (array-ref output.nodes 0).operation
+        (norm.NormalizeOperation.Primitive
+          (cond
+            [(= mode 10) typed.TypedPrimitive.Cast]
+            [(= mode 11) typed.TypedPrimitive.PtrNull]
+            [(= mode 12) (typed.TypedPrimitive.Builtin 22 1)]
+            [else (typed.TypedPrimitive.Builtin 999 1)]))))
     (typed.typed-store-retire! (&mut store))
     (let
       [valid : bool
@@ -635,6 +752,15 @@
       (lower-test-bad-call-anchor? mode)
       (str_cat.str-cat
         "malformed checked call anchor, case "
+        (string.int->string mode)))))
+
+(test
+  compiler-lower-normalized-primitive-rejection
+  (for [mode (iterator.range 10 14)]
+    (test.assert-true
+      (lower-test-bad-call-anchor? mode)
+      (str_cat.str-cat
+        "malformed checked primitive, case "
         (string.int->string mode)))))
 
 (define (compiler-lower-smoke-source) : String

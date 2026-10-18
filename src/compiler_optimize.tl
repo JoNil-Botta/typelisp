@@ -98278,6 +98278,39 @@
         state.changed?
         (owned_view.compiler-owned-reference-shared-view state))]))
 
+;; #9013. `opt-pass-with-ctx-result` by ownership instead of views: the state is
+;; taken apart, its function and context are moved into `step` under the names
+;; `func` and `ctx`, and the state is rebuilt around the function and context
+;; `step` returns, with the context exact. Nothing else keeps the input,
+;; so a pass that consumes its function does so with the checker's backing.
+(defmacro (opt-pass-move
+  [state : Expr]
+  [func : Expr]
+  [ctx : Expr]
+  [step : Expr]) : Expr
+  (match func
+    [(Expr.Var func-name)
+      (match ctx
+        [(Expr.Var ctx-name)
+          (comptime.expr-let-scope
+            func-name
+            `(__tl-project-field ,state func)
+            (comptime.expr-let-scope
+              ctx-name
+              `(__tl-project-field ,state ctx)
+              `(match ,step
+                [(OptFunctionCtxResult.Result move-next move-next-ctx)
+                  (OptPassState
+                    (__tl-project-field ,state type-segment-bases)
+                    (__tl-project-field ,state profile-state)
+                    (__tl-project-field ,state priced?)
+                    move-next
+                    move-next-ctx
+                    true
+                    (__tl-project-field ,state changed?))])))]
+        [_ (comptime-error "opt-pass-move: ctx must be a bare name")])]
+    [_ (comptime-error "opt-pass-move: func must be a bare name")]))
+
 ;; A branch rewrite hands back its input context unchanged when it declines, so
 ;; that context is exact only if the input's was.
 (define (opt-pass-with-rewrite
@@ -98777,41 +98810,35 @@
     ;; internal error.
     [verified? : bool
       (opt-verify-ok?
-        (&
-          (let
-            [func (opt-pass-func s)]
-            (opt-verify-function-with-context func s.ctx))))]
+        (& (opt-verify-function-with-context (& s.func) (& s.ctx))))]
     [s
       (opt-stage
         "preheaders"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-loop-preheaders-function-with-context-result
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-loop-preheaders-function-with-context-result ctx verified? func)))]
     [s
       (opt-stage
         "rotate_ssa"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-rotate-ssa-function-with-context-result
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-rotate-ssa-function-with-context-result ctx verified? func)))]
     [s
       (opt-stage
         "scratch_reset"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-scratch-reset-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-scratch-reset-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Retire dead phi webs before the loop passes read them: a dead phi cycle
     ;; reads its loop-defined input like any other reader, and both `flag_exit`
     ;; and `bce_version` reject a loop whose defs are read outside it. DCE at
@@ -98827,18 +98854,19 @@
     [licm-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-licm-function-with-context-result-and-direct-call-clean
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& summaries.direct-call-clean)
-              (& summaries.return-alias)
-              (& summaries.global-cell)
-              false
-              (& (opt-pass-func s))))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& summaries.direct-call-clean)
+            (& summaries.return-alias)
+            (& summaries.global-cell)
+            false
+            (& func)))
         "licm")]
     ;; The lowerer's checked moves into owned places arrive as `store_owned`;
     ;; everything below LICM reads them as the ordinary `store_ptr` they are.
@@ -98855,25 +98883,27 @@
     ;; ordinary bounded rematerialization chain.
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-successor-sink-function-with-context-result
-              type-segment-bases
-              (opt-pass-ctx s)
-              (opt-pass-func s)))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-successor-sink-function-with-context-result
+            type-segment-bases
+            ctx
+            func))
         "pre_induction_sink")]
     [s
       (opt-stage
         "induction"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-induction-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-induction-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Monotone-flag loop-exit conversion runs on induction's output and ahead
     ;; of versioning: the loop it hands the versioner has lost its flag test
     ;; and its clearing arm, so the clone the versioner has to fit inside
@@ -98881,13 +98911,14 @@
     [s
       (opt-stage
         "flag_exit"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-flag-exit-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-flag-exit-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Bounds-check loop versioning runs on induction's output so its
     ;; check-free fast clone reaches the unroller INSIDE the same pipeline
     ;; iteration (a lowered while loop rotates in iteration 1 and only reaches
@@ -98895,16 +98926,17 @@
     [bce-version-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-bce-version-function-with-context-result
-              type-segment-bases
-              (& summaries.direct-call-clean)
-              (& summaries.global-cell.len-eq)
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-bce-version-function-with-context-result
+            type-segment-bases
+            (& summaries.direct-call-clean)
+            (& summaries.global-cell.len-eq)
+            ctx
+            verified?
+            func))
         "bce_version")]
     ;; P-B's late slot: the versioner has had every loop now, so the
     ;; length-equality relation is read inside loop bodies too (see
@@ -98938,13 +98970,14 @@
     [s
       (opt-stage
         "fill_call"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-fill-call-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-fill-call-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Element copies become one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd
     ;; (i64/u64 slots) call, and for the same reason fills do: it has to happen
     ;; BEFORE the unroller, both because the unrolled body is what costs 3.5
@@ -98954,13 +98987,14 @@
     [s
       (opt-stage
         "copy_call"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-copy-call-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-copy-call-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Canonical counted-loop unrolling (x4) runs on the versioned blocks. A
     ;; successful rewrite versions at most one loop per pipeline iteration and
     ;; rebuilds the context for the new CFG, so the stages below keep valid
@@ -98968,14 +99002,15 @@
     [s
       (opt-stage
         "unroll"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-unroll-function-with-context-result
-              type-segment-bases
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-unroll-function-with-context-result
+            type-segment-bases
+            ctx
+            verified?
+            func)))]
     ;; Byte-compose load combining runs immediately after the unroller: a
     ;; constant-trip loop unrolled THIS iteration exposes its straight-line
     ;; compose here, and the round's DCE below removes the dead byte
@@ -98994,14 +99029,15 @@
     [s
       (opt-stage
         "lftr"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-lftr-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-lftr-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; LFTR materializes an end pointer in an inner loop's preheader after the
     ;; ordinary LICM run. Give that fresh invariant (and any induction-created
     ;; address recipe) one motion opportunity in the same pipeline iteration;
@@ -99010,18 +99046,19 @@
     [s
       (opt-stage
         "post_lftr_licm"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-licm-function-with-context-result-and-direct-call-clean
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& summaries.direct-call-clean)
-              (& summaries.return-alias)
-              (& summaries.global-cell)
-              true
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& summaries.direct-call-clean)
+            (& summaries.return-alias)
+            (& summaries.global-cell)
+            true
+            (& func))))]
     ;; Invariant-offset Gep splitting. Two orderings pin it here. It has to
     ;; follow bce_version, because only the fast clone drops the BoundsCheck
     ;; that keeps the `invariant + counter` Add multi-use, and a split that
@@ -99033,14 +99070,15 @@
     [s
       (opt-stage
         "gep_offset"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-gep-offset-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-gep-offset-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Affine chain folding must see the unroller's output INSIDE the same
     ;; pipeline iteration: a lowered while loop spends iteration 1 on
     ;; SSA+rotation and unrolls in iteration 2 (the fixpoint cap), so the

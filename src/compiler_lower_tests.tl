@@ -285,6 +285,49 @@
             "direct scalar call emits from checked graph, case "
             (string.int->string index)))))))
 
+(test
+  compiler-lower-normalized-indirect-calls
+  (let
+    [bodies : (Array String 6)
+      (array
+        "(func value 0)"
+        "(let [alias : (-> i64 i64 i64) func] (alias value 0))"
+        "((if flag func other) value 0)"
+        "(func value (begin (set! func other) 0))"
+        "(let [index : i64 0] [total : i64 0] (while (< index 6) (set! total (func total 1)) (set! index (+ index 1))) (+ total 36))"
+        "(let [alias : (-> i64 i64 i64) func] (set! alias other) (alias 20 22))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(define (sum [a : i64] [b : i64]) : i64 (+ a b))
+             (define (second [a : i64] [b : i64]) : i64 (- a b))
+             (define (invoke [func : (-> i64 i64 i64)] [other : (-> i64 i64 i64)] [value : i64] [flag : bool]) : i64 "
+            (clone (array-ref bodies index))
+            ") (define (main) : i64 (invoke sum second 42 true))")]
+        (test.assert-true
+          (match (lower-test-functions
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "indirect case {}: {}"
+                  index
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                (lower.ResultCompilerLower.Err diagnostic)]
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (lower.ResultCompilerLower.Ok program spans owner)]))
+            [(Some functions)
+              (=
+                (lower-test-function-label-load-count
+                  (& functions)
+                  "invoke"
+                  "checked.0")
+                0)]
+            [_ false])
+          (str_cat.str-cat
+            "checked indirect call, case "
+            (string.int->string index)))))))
+
 (define (compiler-lower-smoke-source) : String
   "(extern (print-i64 [arg0 : i64]) : unit)
 (define answer : i64 40)

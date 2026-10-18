@@ -693,7 +693,8 @@ its tests.
 
 The source fixture `ownership_certified_scalar_control.tl` covers captured
 operand values, signed comparison, loop-local initialization, continue/break,
-short-circuit effects, early return and unsigned ABI arguments through the
+short-circuit effects, early return, unsigned ABI arguments, direct and recursive
+calls, captured indirect callees, callable branch selection and callable returns through the
 ownership graph and the ordinary lowerer (exit 42 on both hosts at opt0/1/2).
 
 `compiler_ownership_normalize_tests.tl` exercises the primitive selected-node

@@ -94,6 +94,41 @@
           value))
       42)))
 
+(define (multiply [left : i64] [right : i64]) : i64
+  (* left right))
+
+(define (invoke-snapshot
+  [func : (-> i64 i64 i64)]
+  [other : (-> i64 i64 i64)]
+  [value : i64]) : i64
+  (func
+    value
+    (begin
+      (set! func other)
+      0)))
+
+(define (invoke-choice
+  [func : (-> i64 i64 i64)]
+  [other : (-> i64 i64 i64)]
+  [first : bool]) : i64
+  ((if first
+      func
+      other)
+    20
+    22))
+
+(define (invoke-loop [func : (-> i64 i64 i64)]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (while (< index 6)
+      (set! total (func total 7))
+      (set! index (+ index 1)))
+    total))
+
+(define (forward-callable [func : (-> i64 i64 i64)]) : (-> i64 i64 i64)
+  func)
+
 (define (main) : i64
   (if (and
     (= (captured-left 42) 42)
@@ -101,6 +136,11 @@
     (= (nested-calls) 42)
     (= (recursive-call 6) 42)
     (ordered-calls)
+    (= (invoke-snapshot sum multiply 42) 42)
+    (= (invoke-choice sum multiply true) 42)
+    (= (invoke-choice sum multiply false) 440)
+    (= (invoke-loop sum) 42)
+    (= ((forward-callable sum) 20 22) 42)
     (ordered-comparison 42)
     (= (control 9 3) 36)
     (= (short-circuit true) 10)

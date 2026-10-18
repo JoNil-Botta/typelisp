@@ -369,6 +369,26 @@
               (own.OwnershipTypeKind.Product (own.OwnershipTypeIds fields))
               own.OwnershipTypeKind.Scalar)
             copy?))
+        (let
+          [id : typed.TypedTypeId
+            (match (typed.typed-type-at! store lease index)
+              [(typed.TypedTypeIdResult.Ok id) id]
+              [(typed.TypedTypeIdResult.Err error)
+                (return
+                  (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])]
+          [canonical : ast.AstType
+            (match (typed.typed-type-get! store lease id)
+              [(typed.TypedTypeResult.Ok type) (clone (deref type))]
+              [(typed.TypedTypeResult.Err error)
+                (return
+                  (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])]
+          (try
+            (normalize-charge!
+              state
+              1
+              1
+              (comptime (size-of (type ast.AstType)))))
+          (__tl_array-push! state.value-types canonical))
         (__tl_array-push! state.type-keys key)
         (while (<
           (array-length state.type-references)
@@ -1210,6 +1230,9 @@
 ;; identities only and never authorize a later dereference into the old store.
 (defstruct OwnershipNormalizedBody
   (body own.OwnershipBody)
+  ;; Canonical value types in body-type order, after the fourteen primitive
+  ;; codes. Payloads are owned; nested type IDs use the guarded source pool.
+  (value-types (__tl_dyn-array ast.AstType))
   (nodes (__tl_dyn-array NormalizeNode))
   (binders (__tl_dyn-array NormalizeBinder))
   (root typed.TypedOccurrenceId)
@@ -1223,12 +1246,26 @@
   ;; (`OwnershipNormalizeGlobalWrites`).
   (borrowed-globals (__tl_dyn-array i64)))
 
+(define (ownership-normalized-scalar-storage?
+  [output : (& output OwnershipNormalizedBody)]
+  [code : i64]) : bool
+  (or
+    (and (>= code 0) (< code 13))
+    (and
+      (>= code normalize-first-value-type)
+      (< (- code normalize-first-value-type) (array-length output.value-types))
+      (match (&
+        (array-ref output.value-types (- code normalize-first-value-type)))
+        [(ast.AstType.Func _ _) true]
+        [_ false]))))
+
 (define (normalize-scalar-call? [call : (& call NormalizeCall)]) : bool
   (unless
     (match (& call.kind)
       [(or (typed.TypedCallKind.Declared _ key)
            (typed.TypedCallKind.Foreign _ key))
         (>= key 0)]
+      [(typed.TypedCallKind.Indirect _) true]
       [_ false])
     (return false))
   (match (& call.signature)
@@ -1254,8 +1291,12 @@
   [output : (& output OwnershipNormalizedBody)]) : bool
   (unless
     (and
-      (>= output.return-type 0)
-      (< output.return-type normalize-first-value-type)
+      (or
+        (= output.return-type 13)
+        (ownership-normalized-scalar-storage? output output.return-type))
+      (=
+        (+ normalize-first-value-type (array-length output.value-types))
+        (array-length output.body.types))
       (= (array-length output.body.loans) 0)
       (= (array-length output.body.cleanups) 0)
       (= (array-length output.body.obligations) 0))
@@ -1263,7 +1304,9 @@
   (for [place (iterator.range 0 (array-length output.body.places))]
     (unless
       (and
-        (< (array-ref output.body.places place).type.index 13)
+        (ownership-normalized-scalar-storage?
+          output
+          (array-ref output.body.places place).type.index)
         (match (array-ref output.body.places place).projection
           [(own.OwnershipProjection.Root) true]
           [_ false]))
@@ -1543,7 +1586,8 @@
   ;; selected (form 150), formed but not yet borrowed (see
   ;; `normalize-receiver-store!`), and how many such receivers are open.
   (receiver-targets (__tl_dyn-array NormalizeDeferredReceiver))
-  (receiver-depth i64))
+  (receiver-depth i64)
+  (value-types (__tl_dyn-array ast.AstType)))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -11346,7 +11390,8 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array NormalizeDeferredReceiver 0)
-          0)]
+          0
+          (__tl_make-array ast.AstType 0))]
       [_keys : unit
         (while (<
           (array-length state.type-keys)
@@ -11444,6 +11489,7 @@
             (OwnershipNormalizeResult.Ok
               (OwnershipNormalizedBody
                 state.body
+                state.value-types
                 state.nodes
                 state.binders
                 root

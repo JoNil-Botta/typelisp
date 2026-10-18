@@ -73558,7 +73558,9 @@
   (Ok ast.AstType)
   (Err String))
 
-(define (lower-normalized-type [code : i64]) : LowerNormalizedType
+(define (lower-normalized-type
+  [output : (& output norm.OwnershipNormalizedBody)]
+  [code : i64]) : LowerNormalizedType
   (cond
     [(= code 0) (LowerNormalizedType.Ok ast.AstType.Unit)]
     [(= code 1) (LowerNormalizedType.Ok ast.AstType.Bool)]
@@ -73574,6 +73576,16 @@
     [(= code 11) (LowerNormalizedType.Ok ast.AstType.F64)]
     [(= code 12) (LowerNormalizedType.Ok ast.AstType.Char)]
     [(= code 13) (LowerNormalizedType.Ok ast.AstType.Never)]
+    [(and
+        (>= code norm.normalize-first-value-type)
+        (<
+          (- code norm.normalize-first-value-type)
+          (array-length output.value-types)))
+      (LowerNormalizedType.Ok
+        (clone
+          (array-ref
+            output.value-types
+            (- code norm.normalize-first-value-type))))]
     [else (LowerNormalizedType.Err "lower: invalid certified scalar type")]))
 
 (defstruct LowerNormalizedState
@@ -73734,30 +73746,57 @@
   [call : (& call norm.NormalizeCall)]) : LowerNormalizedUnit
   (let
     [ctx : tc_core.TcContext (clone state.ctx)]
-    [key : i64
+    [indirect? : bool
       (match (& call.kind)
-        [(typed.TypedCallKind.Declared _ key) key]
-        [(typed.TypedCallKind.Foreign _ key) key]
-        [_
-          (return
-            (LowerNormalizedUnit.Err "lower: invalid certified direct call"))])]
-    ;; A typed declaration key is not a symbol. Resolve through the same
-    ;; name cache as ordinary lowering, and require the current declaration's
-    ;; signature to match the retained checked contract.
-    [display : String
-      (tc_core.tc-nominal-name-id-display-for-session
-        (tc_core.tc-context-structural-session ctx)
-        key)]
-    [symbol : i64
-      (lower-name-cache-ir-symbol (& state.names) key key (clone display))]
+        [(typed.TypedCallKind.Indirect _) true]
+        [_ false])]
+    [offset : i64
+      (if indirect?
+        1
+        0)]
+    [callee : i64
+      (if indirect?
+        (if (> (array-length node.operands) 0)
+          (array-ref node.operands 0)
+          -1)
+        -1)]
+    [symbol : i64 -1]
     [declaration : ast.AstType
-      (match (lower-type-cache-lookup-id
-        (owned_view.compiler-owned-reference-shared-view (& state.types))
-        key
-        display)
-        [(tc_core.ResultTcType.Ok type) type]
-        [(tc_core.ResultTcType.Err _)
-          (return (LowerNormalizedUnit.Err "lower: missing certified callee"))])]
+      (if indirect?
+        (begin
+          (unless
+            (lower-normalized-place? (& output.body) callee)
+            (return
+              (LowerNormalizedUnit.Err "lower: missing certified callee value")))
+          (try
+            (lower-normalized-type
+              output
+              (array-ref output.body.places callee).type.index)))
+        (let
+          [key : i64
+            (match (& call.kind)
+              [(typed.TypedCallKind.Declared _ key) key]
+              [(typed.TypedCallKind.Foreign _ key) key]
+              [_
+                (return
+                  (LowerNormalizedUnit.Err
+                    "lower: invalid certified call target"))])]
+          [display : String
+            (tc_core.tc-nominal-name-id-display-for-session
+              (tc_core.tc-context-structural-session ctx)
+              key)]
+          ;; The retained key is re-resolved through the ordinary name cache.
+          (set!
+            symbol
+            (lower-name-cache-ir-symbol (& state.names) key key (clone display)))
+          (match (lower-type-cache-lookup-id
+            (owned_view.compiler-owned-reference-shared-view (& state.types))
+            key
+            display)
+            [(tc_core.ResultTcType.Ok type) type]
+            [(tc_core.ResultTcType.Err _)
+              (return
+                (LowerNormalizedUnit.Err "lower: missing certified callee"))])))]
     [values : ir.CompilerIrValueBuilder
       (ir.compiler-ir-value-builder-with-capacity (array-length node.operands))]
     (unless
@@ -73774,7 +73813,7 @@
       [(ast.AstType.Func params result)
         (unless
           (and
-            (= params.len (array-length node.operands))
+            (= (+ params.len offset) (array-length node.operands))
             (match (norm.normalize-type-code
               (& (tc_core.tc-context-type-get ctx result)))
               [(norm.NormalizeInt.Ok code) (= code node.type)]
@@ -73783,7 +73822,7 @@
             (LowerNormalizedUnit.Err "lower: invalid certified call signature")))
         (for [index (iterator.range 0 params.len)]
           (let
-            [place : i64 (array-ref node.operands index)]
+            [place : i64 (array-ref node.operands (+ index offset))]
             (unless
               (and
                 (lower-normalized-place? (& output.body) place)
@@ -73807,15 +73846,22 @@
     (let
       [args : ir.CompilerIrValueSeq
         (ir.compiler-ir-value-builder-to-seq values)]
+      [type : ast.AstType (try (lower-normalized-type output node.type))]
       (lower-normalized-emit!
         state
         instrs
         (& node.source)
-        (ir.CompilerIrInstr.Call
-          node.result-place
-          symbol
-          (ir.compiler-ir-call-args-from-seq (& args))
-          (try (lower-normalized-type node.type)))))
+        (if indirect?
+          (ir.CompilerIrInstr.CallIndirect
+            node.result-place
+            (ir.CompilerIrValue.Var callee)
+            (ir.compiler-ir-call-args-from-seq (& args))
+            type)
+          (ir.CompilerIrInstr.Call
+            node.result-place
+            symbol
+            (ir.compiler-ir-call-args-from-seq (& args))
+            type))))
     (LowerNormalizedUnit.Ok unit)))
 
 (define (lower-normalized-assign!
@@ -73827,7 +73873,9 @@
   (let
     [type : ast.AstType
       (try
-        (lower-normalized-type (array-ref output.body.places place).type.index))]
+        (lower-normalized-type
+          output
+          (array-ref output.body.places place).type.index))]
     [producer : i64 (array-ref state.producers place)]
     (cond
       [(array-ref state.bindings place) (LowerNormalizedUnit.Ok unit)]
@@ -73891,6 +73939,7 @@
                     [right-type : ast.AstType
                       (try
                         (lower-normalized-type
+                          output
                           (array-ref output.body.places right).type.index))]
                     [operation : ir.CompilerIrBinOp
                       (lower-binop (norm.normalize-binary-copy op) right-type)]
@@ -73898,6 +73947,7 @@
                       (if (ir.compiler-ir-binop-compare? (& operation))
                         (try
                           (lower-normalized-type
+                            output
                             (array-ref output.body.places left).type.index))
                         type)]
                     (lower-normalized-emit!
@@ -74027,7 +74077,7 @@
                     (str_cat.str-cat
                       "parameter."
                       (string.int->string params.len))
-                    (try (lower-normalized-type binder.type))
+                    (try (lower-normalized-type output binder.type))
                     binder.place)))
               (set! index (+ index 1)))))
         (set! index 0)
@@ -74070,6 +74120,7 @@
                               (ir.CompilerIrValue.Var source.index)
                               (try
                                 (lower-normalized-type
+                                  output
                                   (array-ref output.body.places dest.index).type.index))))]
                         [_
                           (return
@@ -74131,7 +74182,7 @@
           (ir.CompilerIrFunction.Function
             name
             (ir.compiler-ir-param-builder-to-seq params)
-            (try (lower-normalized-type output.return-type))
+            (try (lower-normalized-type output output.return-type))
             places
             (ir.compiler-ir-block-builder-to-list result)
             ir.CompilerIrFunctionAbi.Ordinary)
@@ -74146,8 +74197,12 @@
     [result : ast.AstType (tc_core.tc-resolve-type ctx (clone (deref ret)))]
     [at : i64 0]
     (unless
-      (match (norm.normalize-type-code (& result))
-        [(norm.NormalizeInt.Ok code) (= code output.return-type)]
+      (match (lower-normalized-type output output.return-type)
+        [(LowerNormalizedType.Ok expected)
+          (ast.ast-type-eq-with-pools?
+            (tc_core.tc-context-pools ctx)
+            (& result)
+            (& expected))]
         [_ false])
       (return false))
     (for [index (iterator.range 0 (array-length output.binders))]
@@ -74164,8 +74219,12 @@
                 (unless
                   (and
                     (= name binder.name)
-                    (match (norm.normalize-type-code (& actual))
-                      [(norm.NormalizeInt.Ok code) (= code binder.type)]
+                    (match (lower-normalized-type output binder.type)
+                      [(LowerNormalizedType.Ok expected)
+                        (ast.ast-type-eq-with-pools?
+                          (tc_core.tc-context-pools ctx)
+                          (& actual)
+                          (& expected))]
                       [_ false]))
                   (return false)))])
           (set! at (+ at 1)))))

@@ -1685,10 +1685,15 @@ Direct scalar calls now retain their checked signature and distinct declaration
 index/name key before the inference lease retires. The live resolver validates
 the index, declaration kind and key at publication; lowering resolves the key
 through its existing name cache and checks the current declaration signature.
-Arguments use the graph's already captured places in source order. Foreign
+Arguments use the graph's already captured places in source order. Canonical
+value types are retained in body-type order under the same pool guard; internal
+function values can be parameters, copied bindings, branch results and returns.
+A call through such a value consumes its already captured callee before its
+arguments; changing the source callable during argument evaluation cannot
+redirect that call. Foreign
 primitive operands retain the formal parameter's contextual type through the
-same operand walker used by read-only forms. Calls returning Never, indirect
-calls, nonprimitive places, loans, cleanup and arena emission still need to move
+same operand walker used by read-only forms. Calls returning Never, C function-pointer calls, other nonprimitive places,
+loans, cleanup and arena emission still need to move
 to this route; all M3/M4 cost, lifetime and complete-pipeline acceptance remains
 required. The scalar source fixture covers snapshots, argument ABI, loop exits
 and returns; direct graph selection additionally has a lowering assertion.

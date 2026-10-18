@@ -11180,6 +11180,8 @@
 (define (tc-selected-normalized-certificate-case? [mode : i64]) : bool
   (let
     [name : i64 (ci.intern-generated-canonical-name "retained-normalized")]
+    [parameter-name : i64
+      (ci.intern-generated-canonical-name "retained-callable")]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [ctx : tc_core.TcContext (tc-selected-test-context pools)]
     [state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
@@ -11194,6 +11196,43 @@
     [params : ast.AstParamList (ast.ast-param-list-new)]
     [ret : ast.AstType ast.AstType.I64]
     [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [_callable : unit
+      (when
+        (= mode 7)
+        (let
+          [arguments : ast.AstTypeList (ast.ast-type-list-new)]
+          [_argument : unit
+            (ast.ast-type-list-push
+              (&mut arguments)
+              (ast.ty-node-push (& (ast.AstType.I64))))]
+          [signature : ast.AstType
+            (ast.ast-ty-func arguments (& (ast.AstType.I64)))]
+          [type : typed.TypedTypeId
+            (match (typed.typed-type-add!
+              (&mut store)
+              (& lease)
+              (clone signature))
+              [(typed.TypedTypeIdResult.Ok id) id]
+              [_ (return false)])]
+          [origin : typed.TypedOriginId
+            (match (typed.typed-origin-add!
+              (&mut store)
+              (& lease)
+              (ownership.OwnershipSource "callable.tl" 1 1 ""))
+              [(typed.TypedOriginResult.Ok id) id]
+              [_ (return false)])]
+          (ast.ast-param-list-push
+            (&mut params)
+            (ast.ast-param-id parameter-name signature false))
+          (match (typed.typed-binder-add!
+            (&mut store)
+            (& lease)
+            type
+            typed.TypedBinderKind.Parameter
+            origin
+            parameter-name)
+            [(typed.TypedBinderResult.Ok _) unit]
+            [_ (return false)])))]
     [root : typed.TypedOccurrenceId
       (tc-selected-test-infer!
         ctx
@@ -11249,7 +11288,7 @@
         expression))
       [(tc_core.TcSelectedLookup.Normalized address)
         (and
-          (= mode 0)
+          (or (= mode 0) (= mode 7))
           (> address (cast 0 : u64))
           (let
             [output : ownership_normalize.OwnershipNormalizedBody
@@ -11257,6 +11296,18 @@
                 address
                 ownership_normalize.OwnershipNormalizedBody)]
             (and
+              (or
+                (not (= mode 7))
+                (and
+                  (= (array-length output.value-types) 1)
+                  (match (& (array-ref output.value-types 0))
+                    [(ast.AstType.Func arguments result)
+                      (and
+                        (= arguments.len 1)
+                        (match (ast.ty-node-get result)
+                          [(ast.AstType.I64) true]
+                          [_ false]))]
+                    [_ false])))
               (ownership_normalize.ownership-normalized-scalar-emission?
                 (& output))
               (match (ownership.ownership-check
@@ -11266,7 +11317,7 @@
                 [_ false]))))]
       [(tc_core.TcSelectedLookup.Err message)
         (and
-          (> mode 0)
+          (and (> mode 0) (< mode 7))
           (string.eq
             message
             (if (= mode 6)
@@ -11276,7 +11327,7 @@
 
 (test
   tc-selected-normalized-certificate-retirement
-  (for [mode (iterator.range 0 7)]
+  (for [mode (iterator.range 0 8)]
     (test.assert-true
       (tc-selected-normalized-certificate-case? mode)
       (str_cat.str-cat

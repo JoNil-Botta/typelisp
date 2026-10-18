@@ -30776,7 +30776,8 @@
         (Program
           (ir.compiler-ir-global-seq-empty)
           functions
-          (ir.compiler-ir-extern-seq-empty))))))
+          (ir.compiler-ir-extern-seq-empty)))
+      (ir.compiler-ir-representation-index-empty))))
 
 (define (opt-ssa-representation-index-for-function
   [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrRepresentationIndex

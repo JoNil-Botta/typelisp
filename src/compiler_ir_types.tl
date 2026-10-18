@@ -9793,12 +9793,15 @@
           (if (compiler-ir-representation-internal-transport?
             type-segment-bases
             ty)
-            (owned_view.compiler-owned-reference-shared-view index)
+            (compiler-ir-representation-collect-signature-type
+              type-segment-bases
+              (owned_view.compiler-owned-reference-shared-view index)
+              ty)
             (compiler-ir-representation-index-merge-one-word
               (owned_view.compiler-owned-reference-shared-view index)
               key))]
         [(None) (owned_view.compiler-owned-reference-shared-view index)])]
-    (match (owned_view.compiler-owned-reference-shared-view ty)
+    (match ty
       [(Func args ret)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
@@ -10037,7 +10040,8 @@
 
 (define (compiler-ir-representation-index-build
   [type-segment-bases : i64]
-  [program : (& CompilerIrProgram)]) : CompilerIrRepresentationIndex
+  [program : (& CompilerIrProgram)]
+  [initial : CompilerIrRepresentationIndex]) : CompilerIrRepresentationIndex
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs)
       (let
@@ -10048,7 +10052,7 @@
         [groups : CompilerIrRepresentationIndex
           (compiler-ir-representation-collect-group-functions
             type-segment-bases
-            (& (compiler-ir-representation-index-empty))
+            (& initial)
             (& functions))]
         (compiler-ir-representation-collect-one-externs
           type-segment-bases

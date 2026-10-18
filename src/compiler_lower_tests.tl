@@ -16619,6 +16619,30 @@
               (return false)))])
       (lower-test-block-exits? rest)]))
 
+;; Lowers `source` and checks every block of function `name`; a lowering
+;; failure prints `label` with its diagnostic.
+(define (lower-test-source-blocks-exit?
+  [source : String]
+  [name : String]
+  [label : String]) : bool
+  (match (lower.lower-compiler-source source)
+    [(Ok (Program _ functions _) _ owner)
+      (let
+        [valid : bool
+          (match (lower-test-function-seq-find functions name)
+            [(Some (Function _ _ _ _ blocks _))
+              (lower-test-block-exits? (ir.compiler-ir-block-list-view blocks))]
+            [_ false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas owner))
+        valid)]
+    [(Err diagnostic)
+      (io.println
+        "{}: {}"
+        label
+        (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+      false]))
+
 (test
   compiler-lower-store-exits
   (let
@@ -16657,28 +16681,13 @@
             "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defstruct Holder (wide Wide)) (defstruct Zero (z unit)) (defenum Choice (Full Wide) (Blank)) (define (add [a : i64] [b : i64]) : i64 (+ a b)) (define (use-ref [p : (&mut p i64)] [v : i64]) : i64 (+ (deref p) v)) (extern (c-add [a : i64] [b : i64]) : i64 (:symbol \"c_add\")) (define (main) : i64 "
             (clone (array-ref bodies index))
             ")")]
-        (test.assert-true
-          (match (lower.lower-compiler-source source)
-            [(Ok (Program _ functions _) _ owner)
-              (let
-                [valid : bool
-                  (match (lower-test-function-seq-find functions "main")
-                    [(Some (Function _ _ _ _ blocks _))
-                      (lower-test-block-exits?
-                        (ir.compiler-ir-block-list-view blocks))]
-                    [_ false])]
-                (lower.compiler-lower-arena-state-release!
-                  (lower.compiler-lower-state-arenas owner))
-                valid)]
-            [(Err diagnostic)
-              (io.println
-                "lowering failed in store-exit case {}: {}"
-                index
-                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
-              false])
+        [label : String
           (str_cat.str-cat
             "store exit must terminate its block, case "
-            (string.int->string index)))))))
+            (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit? source "main" (clone label))
+          label)))))
 
 (test
   compiler-lower-literal-constructor-exits
@@ -16694,23 +16703,48 @@
         "(define (probe [leave : bool]) : (Box i64) (box (if leave (return (box 42)) 7)))"
         "(define (probe) : i64 (let [i : i64 0] [n : i64 2] (while (< i 3) (set! i (+ i 1)) (begin (tuple (begin (set! n (+ n 10)) (continue)) 99) unit)) (+ n 1)))")]
     (for [index (iterator.range 0 (array-length sources))]
-      (test.assert-true
-        (match (lower.lower-compiler-source (clone (array-ref sources index)))
-          [(Ok (Program _ functions _) _ owner)
-            (let
-              [valid : bool
-                (match (lower-test-function-seq-find functions "probe")
-                  [(Some (Function _ _ _ _ blocks _))
-                    (lower-test-block-exits?
-                      (ir.compiler-ir-block-list-view blocks))]
-                  [_ false])]
-              (lower.compiler-lower-arena-state-release!
-                (lower.compiler-lower-state-arenas owner))
-              valid)]
-          [(Err diagnostic)
-            (io.println
-              "literal exit case {}: {}"
-              index
-              (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
-            false])
-        (str_cat.str-cat "literal exit case " (string.int->string index))))))
+      (let
+        [label : String
+          (str_cat.str-cat "literal exit case " (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit?
+            (clone (array-ref sources index))
+            "probe"
+            (clone label))
+          label)))))
+
+(test
+  compiler-lower-operand-consumer-exits
+  (let
+    [bodies : (Array String 16)
+      (array
+        "(let [p : Pair (Pair 1 (return 42))] [q : i64 9] (+ p.a q))"
+        "(let [p (Pair 1 (return 42))] p.a)"
+        "(let [p : Pair (ann (return 42) : Pair)] p.a)"
+        "(let [p : Pair (if c (Pair 1 (return 42)) (return 7))] p.a)"
+        "(match (Pair 1 (return 42)) [(Pair a _) a])"
+        "(+ 1 (match (Full (Wide 1 (return 42) 3)) [(Full w) w.a] [(Blank) 0]))"
+        "(+ (Pair 1 (return 42)).a 9)"
+        "(neg (Wide 1 (return 42) 3).b)"
+        "(tuple-ref (tuple (ann 1 : i64) (return 42)) 0)"
+        "(array-ref (array (ann 1 : i64) (return 42)) 0)"
+        "(let [a : (Array i64 1) (array 1)] (array-ref a (return 42)))"
+        "(deref (box (return 42)))"
+        "(if (= (Pair 1 (return 42)).a 1) 2 3)"
+        "(match (tuple (ann 1 : i64) (return 42)) [(tuple a _) a])"
+        "(with ([held (Pair 5 0) drop-pair] [next (Pair 1 (return 42)) drop-pair]) held.a)"
+        "(let [n : i64 2] [i : i64 0] (while (< i 3) (set! i (+ i 1)) (let [x : i64 (+ 1 (begin (set! n (+ n 10)) (continue)))] (set! n x))) n)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defenum Choice (Full Wide) (Blank)) (define (drop-pair [p : Pair]) : unit unit) (define (probe [c : bool]) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        [label : String
+          (str_cat.str-cat
+            "operand consumer exit case "
+            (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit? source "probe" (clone label))
+          label)))))

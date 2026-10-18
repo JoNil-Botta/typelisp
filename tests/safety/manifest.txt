@@ -1539,3 +1539,7 @@ literal_exit_return_type_reject|check-fail|tests/safety/literal_exit_return_type
 literal_exit_return_type_reject-windows|check-fail-windows|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
 tuple_exit_unreachable_type_reject|check-fail|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
 tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+
+# An exiting let initializer leaves later bindings type-checked.
+let_exit_unreachable_type_reject|check-fail|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch
+let_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch

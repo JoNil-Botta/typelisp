@@ -330,6 +330,14 @@ stores, later elements or result materialization. Tuple element builders carry
 that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
 path available to commit.
 
+An exiting constructor or annotation reports `Never` with no value, so every
+consumer of an operand follows the same rule. Let and `with` bindings stop
+before later initializers and the body (`ResultLowerLetBindings` and
+`LowerResourceBindings` carry an `Exit` state). Match scrutinees, field, tuple
+and array projections, `deref`, unary and binary operands, `if` conditions and
+owned `for` sources return the exit's state as `Never` instead of dispatching
+on the missing value. The exit itself cleans earlier `with` resources.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

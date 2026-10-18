@@ -15,7 +15,10 @@ later arguments, snapshots, calls or writebacks. Array-literal builders retain
 the same distinction when constructing values for a store. The lowerer test
 `compiler-lower-store-exits` checks that each emitted terminator ends its block.
 Box and tuple construction preserve the same flow; the tuple element builder
-returns `ResultLowerExpr` to retain that distinction.
+returns `ResultLowerExpr` to retain that distinction. Expression consumers
+(bindings, scrutinees, projections, operators and conditions) check an
+operand's actual type for `Never` before using its value;
+`compiler-lower-operand-consumer-exits` covers them.
 
 Requested pointer-proof capture runs at the specialized, checked function
 boundary before expression dispatch erases pointer semantics. It uses the shared

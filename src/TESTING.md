@@ -153,6 +153,16 @@ effects and conditional fallthrough. `compiler-lower-literal-constructor-exits`
 also rejects unoptimized instructions after a terminator. The paired safety
 fixtures keep invalid returns and unreachable tuple elements type-checked.
 
+`exit_operand_consumers.tl` runs at opt0/1/2 on both hosts. Exiting
+constructors, annotations and scalar operands feed let and `with` bindings,
+match scrutinees, field/tuple/array projections, `deref`, unary and binary
+operators, `if` conditions and owned `for` sources in tail and value
+position, and inside loops whose opt2 form must keep no code after a
+`continue`. It also checks evaluation order and exactly-once cleanup.
+`compiler-lower-operand-consumer-exits` rejects unoptimized instructions after
+a terminator for the same consumers; `let_exit_unreachable_type_reject.tl`
+keeps bindings after an exit type-checked.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

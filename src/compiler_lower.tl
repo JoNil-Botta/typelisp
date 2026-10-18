@@ -2222,6 +2222,13 @@
   (Ok LowerState sym_i64_env.SymI64Env tc_core.TcTypeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; An exiting let initializer binds nothing: callers stop before later
+;; initializers and the body, and propagate its final state as `Never`.
+(defenum ResultLowerLetBindings
+  (Ok LowerState sym_i64_env.SymI64Env tc_core.TcTypeEnv)
+  (Err (Box cdiag.CompilerDiagnostic))
+  (Exit LowerState))
+
 ;; The Ok variant carries the full module-local type env (top-env + local type
 ;; decls), the module-local-only type env, and the module-local-only name env.
 ;; The local-only envs build small cache overlays over the shared global caches.
@@ -2729,7 +2736,10 @@
     LowerState
     sym_i64_env.SymI64Env
     tc_core.TcTypeEnv
-    LowerCleanupStack))
+    LowerCleanupStack)
+  ;; An exiting initializer has already run the earlier resources' cleanups
+  ;; through the exit; nothing remains to bind or clean.
+  (Exit LowerState))
 
 (defenum ResultLowerResourceBindings
   (Ok LowerResourceBindings)
@@ -28712,6 +28722,9 @@
           (try (lower-expr ctx state env type-env source))]
         (match lowered-source
           [(Expr source-state source-value source-ty)
+            (match (& source-ty)
+              [(Never) (return (Ok (Expr source-state Unit (Never))))]
+              [_ unit])
             (match (lower-state-alloc-var source-state)
               [(Alloc source-allocated source-var)
                 (match (lower-state-alloc-var
@@ -28981,6 +28994,7 @@
             (match (lower-let-bindings ctx state env type-env bindings body-box)
               [(Ok binding-state body-env body-type-env)
                 (lower-expr ctx binding-state body-env body-type-env body)]
+              [(Exit exit-state) (Ok (Expr exit-state Unit (Never)))]
               [(Err message) (Err message)]))])]
     [(Begin exprs) (lower-begin ctx state env type-env exprs)]
     [(Unsafe exprs)
@@ -29157,7 +29171,10 @@
                     operand-ty
                     inner)]))]
           (match lowered
-            [(Expr inner-state value _)
+            [(Expr inner-state value inner-ty)
+              (match (& inner-ty)
+                [(Never) (return (Ok (Expr inner-state Unit (Never))))]
+                [_ unit])
               (match (lower-state-alloc-var inner-state)
                 [(Alloc allocated var-id)
                   (Ok
@@ -29236,7 +29253,11 @@
                         left))]
                   [snapshot : LowerCallArgSnapshot
                     (match left-lowered
-                      [(Expr captured-state captured-value _)
+                      [(Expr captured-state captured-value captured-ty)
+                        (match (& captured-ty)
+                          [(Never)
+                            (return (Ok (Expr captured-state Unit (Never))))]
+                          [_ unit])
                         (lower-operand-snapshot
                           ctx
                           captured-state
@@ -29260,7 +29281,11 @@
                               (lower-global-shared-view right-ty)
                               right))]
                         (match right-lowered
-                          [(Expr right-state right-value _)
+                          [(Expr right-state right-value right-actual-ty)
+                            (match (& right-actual-ty)
+                              [(Never)
+                                (return (Ok (Expr right-state Unit (Never))))]
+                              [_ unit])
                             (if (and
                               (lower-binop-group-eq? op)
                               (lower-type-register-group?
@@ -29660,6 +29685,7 @@
                   (lower-global-shared-view body)
                   expr-ty
                   body)]
+              [(Exit exit-state) (Ok (Expr exit-state Unit (Never)))]
               [(Err message) (Err message)]))])]
     [(Begin exprs) (lower-begin-expected ctx state env type-env exprs expr-ty)]
     [(Unsafe exprs)
@@ -31009,6 +31035,7 @@
       [(Expr receiver-state receiver-value receiver-ty)
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx receiver-ty))
+          [(Never) (Ok (Expr receiver-state Unit (Never)))]
           [(or (Struct struct-name) (StructArgs struct-name _))
             (lower-struct-get-named
               ctx
@@ -31151,14 +31178,17 @@
           receiver-ty
           receiver))]
     (match lowered
-      [(Expr receiver-state receiver-value _)
-        (Ok
-          (lower-load-inline-value-at-offset
-            ctx
-            receiver-state
-            receiver-value
-            0
-            result-ty))])))
+      [(Expr receiver-state receiver-value actual-ty)
+        (match (& actual-ty)
+          [(Never) (Ok (Expr receiver-state Unit (Never)))]
+          [_
+            (Ok
+              (lower-load-inline-value-at-offset
+                ctx
+                receiver-state
+                receiver-value
+                0
+                result-ty))])])))
 
 ;; Lower a Box/reference projection: both handles are pointers to the projected
 ;; value's storage, so the load shape is identical after receiver validation.
@@ -31816,6 +31846,7 @@
     (match lowered
       [(Expr tuple-state tuple-value tuple-ty)
         (match (tc_core.tc-resolve-type ctx tuple-ty)
+          [(Never) (Ok (Expr tuple-state Unit (Never)))]
           [(Tuple elem-tys)
             (let
               [info : LowerFieldInfo
@@ -40527,7 +40558,10 @@
                       type-env
                       (lower-global-shared-view arr)))]
                 (match arr-lowered
-                  [(Expr arr-state arr-value _)
+                  [(Expr arr-state arr-value arr-value-ty)
+                    (match (& arr-value-ty)
+                      [(Never) (return (Ok (Expr arr-state Unit (Never))))]
+                      [_ unit])
                     (match (lower-index-result-type-or-check
                       ctx
                       env
@@ -40549,6 +40583,10 @@
                                 (lower-global-shared-view index)))]
                           (match idx-lowered
                             [(Expr idx-state idx-value idx-value-ty)
+                              (match (& idx-value-ty)
+                                [(Never)
+                                  (return (Ok (Expr idx-state Unit (Never))))]
+                                [_ unit])
                               (match (tc_core.tc-type-strip-region
                                 (tc_core.tc-resolve-type
                                   ctx
@@ -42505,7 +42543,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [bindings : ast.AstLetBindingList]
-  [body-id : i64]) : ResultLowerEnv
+  [body-id : i64]) : ResultLowerLetBindings
   (lower-let-bindings-at ctx state env type-env (& bindings) body-id 0))
 
 (define (lower-let-bindings-at
@@ -42515,7 +42553,7 @@
   [type-env : tc_core.TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
   [body-id : i64]
-  [index : i64]) : ResultLowerEnv
+  [index : i64]) : ResultLowerLetBindings
   (if (>= index (ast.ast-let-binding-list-len bindings))
     (Ok state env type-env)
     (match (ast.ast-let-binding-list-get
@@ -42527,16 +42565,20 @@
           [name-id : i64 name]
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
           [lowered
-            (try
-              (lower-let-init
-                ctx
-                state
-                env
-                type-env
-                (lower-global-shared-view maybe-ty)
-                (lower-global-shared-view init)))]
+            (match (lower-let-init
+              ctx
+              state
+              env
+              type-env
+              (lower-global-shared-view maybe-ty)
+              (lower-global-shared-view init))
+              [(Ok lowered-init) lowered-init]
+              [(Err message) (return (Err message))])]
           (match lowered
             [(Expr init-state init-value init-ty)
+              (match (& init-ty)
+                [(Never) (return (Exit init-state))]
+                [_ unit])
               (let
                 [binding-ty : ast.AstType
                   (lower-let-binding-type
@@ -42629,6 +42671,9 @@
                       init))]
                 (match lowered
                   [(Expr init-state init-value init-ty)
+                    (match (& init-ty)
+                      [(Never) (return (Ok (Exit init-state)))]
+                      [_ unit])
                     (match (lower-cleanup-name-id-from-expr
                       (lower-global-shared-view cleanup))
                       [(Ok cleanup-name-id)
@@ -42739,6 +42784,7 @@
           bindings
           (lower-cleanup-stack-empty)))]
     (match lowered-bindings
+      [(Exit exit-state) (Ok (Expr exit-state Unit (Never)))]
       [(Bindings binding-state body-env body-type-env cleanups)
         (let
           [lowered-body : LowerExpr
@@ -43493,6 +43539,9 @@
       (try (lower-expr ctx state env type-env (lower-global-shared-view cond)))]
     (match cond-lowered
       [(Expr cond-state cond-value cond-ty)
+        (match (& cond-ty)
+          [(Never) (return (Ok (Expr cond-state Unit (Never))))]
+          [_ unit])
         (if (tc_core.tc-type-compatible? (Bool) cond-ty)
           (match (lower-state-fresh-label cond-state "if_then")
             [(Label then-label-state then-label)
@@ -62684,6 +62733,9 @@
     [scrut-lowered (try (lower-expr ctx state env type-env scrutinee))]
     (match scrut-lowered
       [(Expr scrut-state scrut-value scrut-ty)
+        (match (& scrut-ty)
+          [(Never) (return (Ok (Expr scrut-state Unit (Never))))]
+          [_ unit])
         ;; Use the scrutinee var directly when it is already a var, like the
         ;; tail path: a copying Mov into a fresh home makes a 2-word enum pay
         ;; a Pack round-trip per copy.
@@ -67563,7 +67615,10 @@
   (let
     [cond-lowered : LowerExpr (try (lower-expr ctx state env type-env cond))]
     (match cond-lowered
-      [(Expr cond-state cond-value _)
+      [(Expr cond-state cond-value cond-ty)
+        (match (& cond-ty)
+          [(Never) (return (Ok cond-state))]
+          [_ unit])
         (match (lower-state-fresh-label cond-state "if_then")
           [(Label then-label-state then-label)
             (match (lower-state-fresh-label then-label-state "if_else")
@@ -67745,6 +67800,9 @@
         (try (lower-expr ctx state env type-env scrutinee))]
       (match scrut-lowered
         [(Expr scrut-state scrut-value scrut-ty)
+          (match (& scrut-ty)
+            [(Never) (return (Ok scrut-state))]
+            [_ unit])
           (match (lower-tail-match-scrutinee-home
             scrut-state
             scrut-value
@@ -67819,6 +67877,7 @@
                   body
                   ret-ty
                   sret-var)]
+              [(Exit exit-state) (Ok exit-state)]
               [(Err message) (Err message)]))])]
     [(Begin exprs)
       (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]

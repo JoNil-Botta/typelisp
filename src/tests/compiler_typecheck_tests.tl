@@ -10031,8 +10031,67 @@
     (begin (cleanup-file-handle p.a) 0)))")
       "typecheck: cleanup obligation of `p` is only partly discharged at the end of its let scope")))
 
+(define (compiler-typecheck-place-read-receivers-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Outer (pt Pt))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+(define (two [a : (&mut a Pt)] [b : (&mut b Pt)]) : unit unit)
+(define (take [p : Pt]) : unit unit)
+"]
+    [valid : (Array String 6)
+      (array
+        "(define (probe [p : (&mut p Pt)]) : i64 (let [old (replace! (deref p) (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Outer)]) : i64 (let [old (replace! (deref p).pt (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Pt)]) : i64 (bump (&mut (deref p))) (deref p).x)"
+        "(define (probe [p : (& p (Box i64))]) : i64 (deref (deref p)))"
+        "(define (probe [p : (Box (Box String))]) : String (deref (deref p)))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [invalid : (Array String 9)
+      (array
+        "(define (probe [p : (& p Pt)]) : Pt (replace! (deref p) (Pt \"z\" 2)))"
+        "(define (probe [p : (& p Pt)]) : unit (bump (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (two (&mut (deref p)) (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : Pt (deref p))"
+        "(define (probe [p : (&mut p Pt)]) : unit (bump (&mut (deref (begin (take (deref p)) p)))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (Box (Box String))]) : String (let [old (deref (deref p))] (deref (deref p))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [codes : (Array String 9)
+      (array
+        "E0215"
+        "E0207"
+        "E0207"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0215")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-place-read-receivers-ok?)
     (compiler-typecheck-global-loan-provenance-ok?)
     (compiler-typecheck-moved-set-metrics-ok?)
     (compiler-typecheck-error-ok?

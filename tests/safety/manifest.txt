@@ -1525,3 +1525,9 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Reference place reads preserve mutability, aliasing and consuming operands.
+replace_place_shared_reject|check-fail|tests/safety/replace_place_shared_reject.tl|-|replace! target must be a storage place
+replace_place_double_mut_reject|check-fail|tests/safety/replace_place_double_mut_reject.tl|-|E0207
+replace_place_prefix_move_reject|check-fail|tests/safety/replace_place_prefix_move_reject.tl|-|E0208
+replace_place_nested_move_reject|check-fail|tests/safety/replace_place_nested_move_reject.tl|-|E0208

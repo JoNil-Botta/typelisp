@@ -71465,16 +71465,16 @@
         [(Spanned _ span) (ast.AstExpr.Spanned node-id span)]
         [_ (ast.ast-expr-segment-bases-get expr-bases node-id)])]))
 
-;; The receiver a field or tuple-element projection reads. A Copy projection
-;; through `(deref place)`, directly or through further projections, copies out
-;; of the boxed or referenced storage in place, so `(deref b).v` and
+;; The receiver a field, tuple-element or dereference projection reads. A Copy
+;; projection through `(deref place)`, directly or through further projections,
+;; copies out of the boxed or referenced storage in place, so `(deref b).v` and
 ;; `(deref b).leaf.w` check `b` as a read instead of consuming the box. A
 ;; non-Copy projection keeps the consuming `deref` and its diagnostics.
 (define (tc-move-projection-receiver
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr-bases : i64]
-  [projection : ast.AstExpr]
+  [projection : (& projection ast.AstExpr)]
   [receiver : ast.AstExpr]) : ast.AstExpr
   (let
     [operand-id : i64
@@ -71485,7 +71485,7 @@
       receiver
       (match (match (ast.ast-expr-unspan-with-segment-bases
         expr-bases
-        (& projection))
+        projection)
         [(ast.AstExpr.StructGet receiver-id field-id)
           ;; Consumption uses the intrinsic receiver type recorded for this
           ;; same body and node. Reuse the ordinary field-type resolver; a
@@ -71496,8 +71496,8 @@
             receiver-id)
             [(TcBodyTypeFact.Hit receiver-ty)
               (tc-struct-get-result-type-id ctx receiver-ty field-id)]
-            [(TcBodyTypeFact.Miss) (tc-expr ctx env projection)])]
-        [_ (tc-expr ctx env projection)])
+            [(TcBodyTypeFact.Miss) (tc-expr ctx env (clone (deref projection)))])]
+        [_ (tc-expr ctx env (clone (deref projection)))])
         [(ResultTcType.Ok projected-ty)
           (if (tc-type-copyable? ctx projected-ty)
             (ast.ast-expr-segment-bases-get expr-bases operand-id)
@@ -73707,7 +73707,7 @@
             ctx
             env
             expr-bases
-            (tc-global-shared-view expr)
+            (& expr)
             (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         [moved1
           (try
@@ -74613,7 +74613,7 @@
             ctx
             env
             expr-bases
-            (tc-global-shared-view expr)
+            (& expr)
             (tc-move-located-view expr-bases (& expr) inner-box))]
         [moved1
           (try
@@ -74711,7 +74711,12 @@
               (tc-global-shared-view locals)
               (tc-global-shared-view loop-carried)
               moved
-              (tc-global-shared-view inner)))]
+              (tc-move-projection-receiver
+                ctx
+                env
+                expr-bases
+                (& expr)
+                (tc-global-shared-view inner))))]
         (match (tc-expr ctx env (tc-global-shared-view expr))
           [(Ok result-ty)
             (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
@@ -83871,13 +83876,13 @@
           (tc-global-shared-view borrow-expr)))]
     [borrowed1
       (try
-        (tc-borrow-check-expr
+        (tc-borrow-check-expr-id
           ctx
           expr-bases
           env
           (tc-global-shared-view locals)
           borrowed0
-          (tc-global-shared-view place)))]
+          (tc-read-value-expr-id expr-bases (tc-global-shared-view place))))]
     [_ (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
     (tc-borrow-check-add-two-phase-mut-place
       ctx
@@ -87517,7 +87522,7 @@
             ctx
             env
             expr-bases
-            (tc-global-shared-view expr)
+            (& expr)
             (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         [borrowed1
           (try
@@ -88604,7 +88609,12 @@
               env
               (tc-global-shared-view locals)
               borrowed
-              (tc-global-shared-view inner)))]
+              (tc-move-projection-receiver
+                ctx
+                env
+                expr-bases
+                (& expr)
+                (tc-global-shared-view inner))))]
         (match (tc-expr ctx env (tc-global-shared-view expr))
           [(Ok result-ty)
             (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))

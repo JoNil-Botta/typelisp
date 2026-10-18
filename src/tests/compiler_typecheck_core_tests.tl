@@ -5240,6 +5240,74 @@
     unit
     (io.panic "typecheck: scoped type env smoke failed")))
 
+(test
+  captured-global-reference-declared-lifetime
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 16 8)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx pools)]
+    [name : i64 (ci.intern "captured-global-ref")]
+    [global-region : i64 (ci.intern "global-region")]
+    [local-region : i64 (ci.intern "local-region")]
+    [scalar : ast.AstType (I64)]
+    (for [shape (iterator.range 0 3)]
+      (let
+        [global-type : ast.AstType
+          (cond
+            [(= shape 0) (ast.ast-ty-ref global-region (& scalar))]
+            [(= shape 1) (ast.ast-ty-mut-ref global-region (& scalar))]
+            [else (ast.ast-ty-region global-region (& scalar))])]
+        [local-type : ast.AstType (ast.ast-ty-ref local-region (& scalar))]
+        [globals : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id (tc_core.tc-empty-env) name (clone global-type))]
+        [carrier : tc_core.TcTypeEnvScopedCarrier
+          (tc_core.tc-type-env-scoped-carrier-bind-id
+            (tc_core.tc-type-env-scoped-carrier-from-env
+              (tc_core.tc-hygiene-global-env globals))
+            name
+            (clone local-type))]
+        [shadowed : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-scoped-carrier-env carrier)]
+        [saved : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-enter-env! shadowed)]
+        [global-ok : bool
+          (match (tc-lookup-hygiene-global-id shadowed name)
+            [(Ok type) (tc_core.tc-type-eq type (clone global-type))]
+            [_ false])]
+        [persistent-ok : bool
+          (match (tc_core.tc-lookup-persistent-id globals name)
+            [(Ok type) (tc_core.tc-type-eq type (clone global-type))]
+            [_ false])]
+        (test.assert-true global-ok "global lookup retains its declared region")
+        (tc_core.tc-hygiene-reset-active-top-env!
+          (tc_core.tc-context-macro-state ctx)
+          globals)
+        (for [identity (iterator.range 0 2)]
+          (let
+            [key : i64
+              (tc_core.macro-hygiene-global-id
+                (tc_core.tc-context-structural-session ctx)
+                cbi.compiler-builtin-id-fix-empty
+                name
+                (= identity 0))]
+            [read : i64
+              (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var key))]
+            (test.assert-true
+              (match (tc_core.tc-expr-id ctx shadowed read)
+                [(Ok type) (tc_core.tc-type-eq type (clone global-type))]
+                [_ false])
+              "macro capture keeps the declared global region")))
+        (test.assert-true
+          (match (tc-type-env-scoped-carrier-lookup-id carrier name)
+            [(Ok type) (tc_core.tc-type-eq type local-type)]
+            [_ false])
+          "global lookup restores the local shadow and its region")
+        (test.assert-true
+          persistent-ok
+          "shadowing preserves the earlier environment")
+        (tc_core.tc-type-env-scoped-runtime-restore! saved)))))
+
 (define (tc-type-env-walker-api-smoke?) : bool
   (let
     [lookup-base : tc_core.TcTypeEnv

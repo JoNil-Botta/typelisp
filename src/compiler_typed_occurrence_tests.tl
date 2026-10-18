@@ -885,6 +885,92 @@
             [_ false])]
         [_ false]))))
 
+(define (typed-test-full-width-binder-names?) : bool
+  (let
+    [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [declarations : symbols.CompilerSymbols
+      (symbols.compiler-symbols-empty-with-decls 16)]
+    [registries : symbols.CompilerRegistries
+      (symbols.compiler-registries-empty)]
+    [lease : (typed.TypedBodyLease registries)
+      (typed-test-resolution-lease
+        (& state)
+        (& declarations)
+        (& registries)
+        (cast 73 : u64))]
+    [store : typed.TypedStore (typed-test-store (& lease))]
+    [origin : typed.TypedOriginId (typed-test-origin! (&mut store) (& lease))]
+    [type : typed.TypedTypeId
+      (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [valid : bool true]
+    (for [index (iterator.range 0 3)]
+      (let
+        [name : i64
+          (cond
+            [(= index 0) 0]
+            [(= index 1) 4294967296]
+            [else 9223372036854775807])]
+        [global : typed.TypedBinderId
+          (match (typed.typed-binder-add!
+            (&mut store)
+            (& lease)
+            type
+            (typed.TypedBinderKind.Global (typed-test-global index))
+            origin
+            name)
+            [(typed.TypedBinderResult.Ok id) id]
+            [_ (io.panic "typed occurrence: named global fixture")])]
+        [attempt : typed.TypedAttemptId
+          (typed-test-attempt!
+            (&mut store)
+            (& lease)
+            typed.TypedMode.Executable)]
+        [local : typed.TypedBinderId
+          (match (typed.typed-binder-add!
+            (&mut store)
+            (& lease)
+            type
+            typed.TypedBinderKind.Local
+            origin
+            name)
+            [(typed.TypedBinderResult.Ok id) id]
+            [_ (io.panic "typed occurrence: named local fixture")])]
+        [local-ok : bool
+          (match (typed.typed-binder-get! (&mut store) (& lease) local)
+            [(typed.TypedBinderView.Ok binder)
+              (and
+                (= binder.name name)
+                (!= global.handle.index local.handle.index)
+                (match (& binder.kind)
+                  [(typed.TypedBinderKind.Local) true]
+                  [_ false]))]
+            [_ false])]
+        [_abort : unit
+          (typed-test-finish! (&mut store) (& lease) attempt false)]
+        [global-ok : bool
+          (match (typed.typed-binder-get! (&mut store) (& lease) global)
+            [(typed.TypedBinderView.Ok binder)
+              (and
+                (= binder.name name)
+                (match (& binder.kind)
+                  [(typed.TypedBinderKind.Global resolved)
+                    (and
+                      (= resolved.owner (cast 4294967321 : u64))
+                      (= resolved.generation (cast 4294967303 : u64))
+                      (= resolved.revision (cast 4294967311 : u64))
+                      (= resolved.index index))]
+                  [_ false]))]
+            [_ false])]
+        (set!
+          valid
+          (and
+            valid
+            local-ok
+            global-ok
+            (typed-test-stale-binder? (&mut store) (& lease) local)))))
+    (typed.typed-store-retire! (&mut store))
+    valid))
+
 (defstruct TypedInternFixture
   (store typed.TypedStore)
   (type typed.TypedTypeId)
@@ -2125,6 +2211,9 @@
   (test.assert-true
     (typed-test-resolved-identities?)
     "typed occurrence: resolved bindings, projections and call order")
+  (test.assert-true
+    (typed-test-full-width-binder-names?)
+    "typed occurrence: full-width names preserve global identity across local rollback")
   (test.assert-true
     (typed-test-interner?)
     "typed occurrence: explicit interner owner and reset generation")

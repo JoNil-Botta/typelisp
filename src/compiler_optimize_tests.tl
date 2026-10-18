@@ -55028,6 +55028,28 @@
         (opt-merge-test-seq texts)
         (& (ir.compiler-ir-extern-seq-empty))))))
 
+(test
+  optimizer-merge-observed-code-address
+  (let
+    [body : String "%1 = add %0, 1 : i64\nreturn %1\n"]
+    [values : (Array String 2) (array "fn@b" "&@b")]
+    (for [index (iterator.range 0 (array-length values))]
+      (let
+        [functions : (__tl_dyn-array String) (__tl_make-array String 3)]
+        (set! (array-ref functions 0) (opt-merge-test-twin "a" (clone body)))
+        (set! (array-ref functions 1) (opt-merge-test-twin "b" (clone body)))
+        (set!
+          (array-ref functions 2)
+          (opt-merge-test-main
+            (str_cat.str-cat
+              "%3 = mov "
+              (clone (array-ref values index))
+              " : u64\n")))
+        (test.assert-string-eq
+          (opt-merge-test-run functions "b")
+          "a b main call:a call:b init:b "
+          "a descriptor or raw code address must preserve the named twin")))))
+
 (define (compiler-optimize-merge-functions-self-test) : i64
   (cbi.compiler-builtin-initialize-for-parse!)
   (let

@@ -2768,8 +2768,8 @@
 (defenum OptUseNote
   (Var)
   (GlobalCount)
-  ;; The function whose address a `Function` value takes.
-  (FunctionValue))
+  ;; Descriptor references and raw code addresses both observe identity.
+  (FunctionAddress))
 
 (define (opt-note-use!
   [note : OptUseNote]
@@ -2789,9 +2789,10 @@
             [seen : i64 (opt-cl-map-count set id)]
             (opt_i64_i64_map.insert-ref! set id (+ seen 1)))]
         [_ unit])]
-    [(FunctionValue)
+    [(FunctionAddress)
       (match value
-        [(ir.CompilerIrValue.Function name)
+        [(or (ir.CompilerIrValue.Function name)
+             (ir.CompilerIrValue.GlobalAddr name))
           (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id name) 1)]
         [_ unit])]))
 
@@ -128653,8 +128654,8 @@
 ;;
 ;; Only a function nothing can tell apart from its twin is merged:
 ;; - it is reached only through `Call`/`TailCall` and runtime-global
-;;   initializers: no `Function` value takes its address (so no comparison or
-;;   table observes its identity), no named C-ABI or SPMD call names it, no
+;;   initializers: neither a `Function` descriptor reference nor a raw
+;;   `GlobalAddr` code address observes its identity, no named C-ABI or SPMD call names it, no
 ;;   extern declares it, and it is not a root activated by name
 ;;   (`opt-arg-global-root-leaf?`: the entry and the backend's string helpers);
 ;; - its ABI is Ordinary;
@@ -128671,7 +128672,7 @@
 (define (opt-merge-observe-instr!
   [observed : (&mut observed opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (opt-note-uses! (FunctionValue) observed instr)
+  (opt-note-uses! (FunctionAddress) observed instr)
   (match (opt-instr-target
     (owned_view.compiler-owned-reference-shared-view instr))
     [(NamedCall name) (opt-merge-note-symbol! observed name)]

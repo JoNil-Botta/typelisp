@@ -556,6 +556,136 @@
           (string.int->string index))))))
 
 (test
+  compiler-lower-cfunc-readonly-compound
+  (let
+    [bodies : (Array String 14)
+      (array
+        "(let [text \"answer\"] [f (get)] (f (begin unit text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (if true text text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (let [number 0] (begin (+ number 1) text))) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (match true [true text] [false text])) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (ann text : String)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (if true text \"fresh\")) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (let [local \"fresh\"] local)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (unsafe unit text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (with ([token 7 cleanup]) text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (if true text (let [local \"fresh\"] local))) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (let [text \"fresh\"] text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (if true (let [text \"fresh\"] text) text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (begin (f text) text)) (begin (identity text) 42))"
+        "(let [text \"answer\"] [f (get)] (f (if true (return 42) text)) (begin (identity text) 42))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (match (lower.lower-compiler-source
+          (str_cat.str-cat
+            "(extern (get) : (CFunc non-null (-> String i64)))
+(define (identity [text : String]) : String text)
+(define (cleanup [_value : i64]) : unit unit)
+(define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+          [(lower.ResultCompilerLower.Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            true]
+          [(lower.ResultCompilerLower.Err diagnostic)
+            (io.println
+              "read compound {}: {}"
+              index
+              (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+            false])
+        (str_cat.str-cat
+          "C read preserves its source, case "
+          (string.int->string index))))))
+
+(test
+  compiler-lower-cfunc-readonly-owned-prefix
+  (begin
+    (test.assert-true
+      (compiler-lower-error-ok?
+        "(extern (get) : (CFunc non-null (-> String i64)))
+(define (identity [text : String]) : String text)
+(define (cleanup [_value : i64]) : unit unit)
+(define (main) : i64 (let [text \"answer\"] [f (get)] (f (begin (identity text) text)) 42))"
+        "typecheck: use of moved value `text`")
+      "a prefix call still consumes its owning argument")
+    (test.assert-true
+      (compiler-lower-error-ok?
+        "(import stdlib.comptime)
+(define (identity [text : String]) : String text)
+(defmacro (twice [value : Expr]) : Expr `(begin (identity ,value) ,value))
+(extern (get) : (CFunc non-null (-> String i64)))
+(define (main) : i64 (let [text \"answer\"] [f (get)] (f (twice text)) 42))
+"
+        "typecheck: use of moved value `text`")
+      "a reused macro operand is inferred by its owning or reading occurrence")))
+
+(test
+  compiler-lower-cfunc-readonly-shared-syntax
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [source : String
+      "(extern (get) : (CFunc non-null (-> String i64)))
+       (define (identity [text : String]) : String text)
+       (define (main) : i64
+         (let [text \"answer\"] [f (get)] (f (begin (identity text) text)) 42))"]
+    (ast.ast-node-pool-context-install! pools)
+    (match (parser.parse-ast-source (& source))
+      [(Err _) (test.assert-true false "shared syntax fixture parses")]
+      [(Ok program)
+        (let
+          [changed : i64 0]
+          (for [id
+            (iterator.range 0 (ast.ast-node-pool-context-expr-len pools))]
+            (match (ast.ast-node-pool-context-expr-get (& pools) id)
+              [(ast.AstExpr.Begin values)
+                (when
+                  (= values.len 2)
+                  (let
+                    [first : i64 (ast.ast-expr-list-get (& values) 0 -1)]
+                    [last : i64 (ast.ast-expr-list-get (& values) 1 -1)]
+                    [first-expr : ast.AstExpr
+                      (ast.ast-node-pool-context-expr-get (& pools) first)]
+                    [last-expr : ast.AstExpr
+                      (ast.ast-node-pool-context-expr-get (& pools) last)]
+                    (match (ast.ast-expr-unspan last-expr)
+                      [(ast.AstExpr.Var name)
+                        (when
+                          (= name (ci.intern "text"))
+                          (match (ast.ast-expr-unspan first-expr)
+                            [(ast.AstExpr.Call callee _)
+                              (let
+                                [arguments : ast.AstExprList
+                                  (ast.ast-expr-list-new)]
+                                (ast.ast-expr-list-push (&mut arguments) last)
+                                (ast.ast-node-pool-context-expr-set!
+                                  pools
+                                  first
+                                  (& (ast.AstExpr.Call callee arguments)))
+                                (set! changed (+ changed 1)))]
+                            [_ unit]))]
+                      [_ unit])))]
+              [_ unit]))
+          (test.assert-i64-eq
+            changed
+            1
+            "owning prefix and read tail share one syntax ID")
+          (test.assert-true
+            (match (lower-compiler-program program)
+              [(Err diag)
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+                  "typecheck: use of moved value `text`")]
+              [(Ok _ _ owner)
+                (lower.compiler-lower-arena-state-release!
+                  (lower.compiler-lower-state-arenas owner))
+                false])
+            "each occurrence keeps its own owning or read adjustment"))])
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
   compiler-lower-cfunc-readonly-boundaries
   (let
     [bodies : (Array String 4)

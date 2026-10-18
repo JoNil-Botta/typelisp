@@ -53,6 +53,11 @@ float and narrow reads against their exact extern metadata symbols. The
 extern spellings and then no extern, resets function caches, and checks a second
 owner's isolation and final retirement.
 
+The CFunc readonly lowering tables cover compound argument result flow, fresh
+and shadowed locals, nested read calls, and owning prefixes. The shared-syntax
+case explicitly gives an owning prefix and a read tail the same AST node ID;
+it must reject the moved value, independently of source-node identity.
+
 `ownership_certified_scalar_cleanup.tl` checks normal, return, nested and both
 conditional exits of scalar resources with explicit cleanup callbacks. The
 callback trace pins execution once per owner and reverse acquisition order.

@@ -1720,7 +1720,14 @@ lends non-Copy arguments for the call instead of moving them. Publication
 checks the callee's complete non-null CFunc type, and the owned call snapshot
 retains its function signature before the inference lease retires. The same
 record excludes TypeLisp global-write effects for that foreign call. Language
-function values keep their ordinary argument moves.
+function values keep their ordinary argument moves. Compound arguments pass a
+read demand through the result edges of sequences, branches and scopes. Each
+recursive occurrence consumes its own demand before inferring owning effects
+and call operands; shared source syntax cannot transfer it to an earlier use.
+Fresh local results move into their argument temporary, identified against the
+checked binder boundary, while existing places lend their value. The selected
+graph carries the adjusted reference type; intrinsic source type facts retain
+the semantic value type, including through annotations and match arms.
 A call through such a value consumes its already captured callee before its
 arguments; changing the source callable during argument evaluation cannot
 redirect that call. Foreign

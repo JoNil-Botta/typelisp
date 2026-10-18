@@ -437,9 +437,9 @@
       (tc_core.TcCheckedLetBindingTransition 1 -1)]
     [special : tc_core.TcCheckedLetBindingTransition
       (tc_core.TcCheckedLetBindingTransition 2 91)]
-    (tc_core.tc-checked-let-binding-facts-begin! a)
-    (tc_core.tc-checked-let-binding-facts-begin! b)
-    (tc_core.tc-checked-let-binding-facts-begin! c)
+    (tc_core.tc-checked-let-binding-facts-begin! a true)
+    (tc_core.tc-checked-let-binding-facts-begin! b true)
+    (tc_core.tc-checked-let-binding-facts-begin! c true)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 7)
     ;; Reused init ids and same-spelled bindings remain distinct by enclosing
     ;; body and ordinal. Re-recording the same proof does not grow the store.
@@ -516,7 +516,7 @@
               [(Missing) true]
               [_ false]))]
         ;; A second generation must not see the first generation's keys.
-        (tc_core.tc-checked-let-binding-facts-begin! a)
+        (tc_core.tc-checked-let-binding-facts-begin! a true)
         (tc_core.tc-checked-let-binding-facts-set-current-declaration! a 8)
         (tc_core.tc-checked-let-binding-fact-record!
           a
@@ -545,6 +545,212 @@
     (unless
       (tc-checked-let-binding-facts-self-test)
       (io.panic "typecheck: checked let-binding fact identity/reset failed"))))
+
+(cfg
+  test
+  (test
+    tc-checked-let-binding-facts-frozen-consumer
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [facts : tc_core.TcCheckedLetBindingFactState
+        (tc_core.tc-job-state-checked-let-binding-facts job)]
+      [module-a : i64 (ci.intern "checked-let-module-a")]
+      [module-b : i64 (ci.intern "checked-let-module-b")]
+      [decl : ast.AstDecl
+        (ast.ast-decl-def-fn-id
+          (ci.intern "checked-let-function")
+          (ast.ast-param-list-new)
+          (I64)
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
+      [transition : tc_core.TcCheckedLetBindingTransition
+        (tc_core.TcCheckedLetBindingTransition 0 -1)]
+      (tc_core.tc-checked-let-binding-facts-begin! facts false)
+      (test.assert-true
+        (not (tc_core.tc-checked-let-binding-facts-complete-required? facts))
+        "lowering consumers preserve trusted surface hydration")
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-a
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (I64)
+        transition)
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 19)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-b
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (Bool)
+        transition)
+      (test.assert-true
+        (and
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-a
+              (& decl))
+            7)
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& decl))
+            19))
+        "source declaration identity survives pruning and module changes")
+      (test.assert-true
+        (and
+          (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+            [(Hit (I64) _) true]
+            [_ false])
+          (match (tc_core.tc-checked-let-binding-fact-lookup
+            facts
+            19
+            11
+            0
+            13
+            17)
+            [(Hit (Bool) _) true]
+            [_ false]))
+        "shared body nodes retain each declaration's checked type")
+      (let
+        [wrapped : ast.AstDecl (Unsafe (box (clone decl)))]
+        (test.assert-true
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& wrapped))
+            19)
+          "unsafe wrappers preserve source declaration identity"))
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-a
+        (& decl))
+      (test.assert-true
+        (=
+          (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+            facts
+            module-a
+            (& decl))
+          -1)
+        "ambiguous source names require inference")
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        (in-arena
+          (arena.Arena scratch)
+          (for [index (iterator.range 0 257)]
+            (tc_core.tc-checked-let-binding-facts-set-current-declaration!
+              facts
+              index)
+            (tc_core.tc-checked-let-binding-facts-record-declaration!
+              facts
+              (+ 100000 index)
+              (& decl))))
+        (unsafe
+          (arena.tl_arena_destroy scratch)))
+      (for [index (iterator.range 0 257)]
+        (test.assert-true
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              (+ 100000 index)
+              (& decl))
+            index)
+          "grown declaration map survives scratch teardown"))
+      (tc_core.tc-checked-let-binding-facts-freeze! facts)
+      (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+      (tc_core.tc-checked-let-binding-facts-record-declaration!
+        facts
+        module-b
+        (& decl))
+      (tc_core.tc-checked-let-binding-fact-record!
+        facts
+        11
+        0
+        13
+        17
+        (Bool)
+        transition)
+      (test.assert-true
+        (and
+          (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+            [(Hit (I64) _) true]
+            [_ false])
+          (=
+            (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+              facts
+              module-b
+              (& decl))
+            19))
+        "lowering queries cannot overwrite checked facts")
+      (tc_core.tc-checked-let-binding-facts-finish! facts)
+      (test.assert-true
+        (=
+          (tc_core.tc-checked-let-binding-facts-declaration-ordinal
+            facts
+            module-b
+            (& decl))
+          -1)
+        "released generations retain no source identity"))))
+
+(test
+  tc-checked-let-binding-facts-region-conflict
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [inner : i64 (ast.ast-node-pool-reader-type-push (& (String)))]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 77 inner)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      13
+      17
+      (Region 78 inner)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      12
+      0
+      13
+      17
+      (Bool)
+      transition)
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 11 0 13 17)
+        [(Inconsistent) true]
+        [_ false])
+      "different allocation regions are conflicting checked proofs")
+    (test.assert-true
+      (match (tc_core.tc-checked-let-binding-fact-lookup facts 7 12 0 13 17)
+        [(Hit (Bool) _) true]
+        [_ false])
+      "a conflicting proof cannot disable an unrelated binding")
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
 
 (define (tc-job-state-set-topenv-membership-enabled!
   [state : tc_core.TcJobState]

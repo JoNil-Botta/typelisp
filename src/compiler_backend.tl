@@ -1380,7 +1380,8 @@
             (Program
               (compiler_ir_types.compiler-ir-global-seq-empty)
               functions
-              externs)))))))
+              externs))
+          (compiler_ir_types.compiler-ir-representation-index-empty))))))
 
 (define (compiler-backend-state-ptr [state : CompilerBackendState]) : (MutPtr
     CompilerBackendStateData)

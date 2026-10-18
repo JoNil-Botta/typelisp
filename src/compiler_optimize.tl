@@ -121662,6 +121662,15 @@
         [(Store name _ _)
           (not
             (opt_i64_i64_map.contains? (& set) (ir.compiler-ir-symbol-id name)))]
+        ;; An in-place copy into a member's own storage writes its cell.
+        [(CopyBytes dst _ _)
+          (match dst
+            [(Global name)
+              (not
+                (opt_i64_i64_map.contains?
+                  (& set)
+                  (ir.compiler-ir-symbol-id name)))]
+            [_ true])]
         [_ true])
       (or (not reads?) (not (opt-len-eq-mentions? set scan.ref-list)))
       (match (opt-len-eq-call instr)
@@ -121949,6 +121958,30 @@
                     unit)))))]
         [_ unit]))))
 
+;; Record one write of candidate cell `id`: the stored value's array length,
+;; or a refusal when the walk cannot name it in this region.
+(define (opt-len-eq-record-write!
+  [ctx : (& ctx OptLenEqCtx)]
+  [writes : OptLenEqWrites]
+  [tables : (& tables OptLenEqDefs)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [id : i64]
+  [value : (& value ir.CompilerIrValue)]) : unit
+  (match value
+    [(Var var)
+      (match (opt-len-eq-length-of tables (& ctx.ctors) var 2)
+        [(Some len fits?)
+          (if (opt-len-eq-token-ok? tables (opt-len-eq-region ctx) len)
+            (opt-len-eq-writes-push!
+              writes
+              id
+              (opt-len-eq-region ctx)
+              len
+              fits?)
+            (opt_i64_i64_map.insert-ref! bad id 1))]
+        [(No) (opt_i64_i64_map.insert-ref! bad id 1)])]
+    [_ (opt_i64_i64_map.insert-ref! bad id 1)]))
+
 (define (opt-len-eq-scan-instr!
   [ctx : OptLenEqCtx]
   [taint : (& taint OptLenEqTaint)]
@@ -121982,40 +122015,39 @@
       (opt-len-eq-propagate! (& ctx) taint (& tables) dst (& src) false)]
     [(Load dst src _)
       (opt-len-eq-propagate! (& ctx) taint (& tables) dst (& src) true)]
+    ;; An aggregate global assigned in place: a copy into the global's own
+    ;; storage from offset 0 that covers both modelled words (`.slots` and
+    ;; `.len`, 16 bytes) is that cell's write, as `Store g, v` is for a boxed
+    ;; cell. Anything narrower still refuses the global below.
+    [(CopyBytes (Global name) value size)
+      (opt-len-eq-refuse-value! ctx taint bad value)
+      (if (and
+        (>= size 16)
+        (opt_i64_i64_map.contains? (& ctx.cand) (ir.compiler-ir-symbol-id name)))
+        (opt-len-eq-record-write!
+          ctx
+          (compiler-opt-global-shared-view ctx.writes)
+          tables
+          bad
+          (ir.compiler-ir-symbol-id name)
+          (& value))
+        (opt-len-eq-refuse-value! ctx taint bad (& (Global name))))]
     [(or (StorePtr address value _) (StoreOwned address value _)
          (CopyBytes address value _) (BoundsCheck address value _)
          (BinOp _ _ address value _))
       (opt-len-eq-refuse-value! ctx taint bad address)
       (opt-len-eq-refuse-value! ctx taint bad value)]
     [(Store name value _)
-      (let
-        [id : i64 (ir.compiler-ir-symbol-id name)]
-        (opt-len-eq-refuse-value! ctx taint bad value)
-        (let
-          [cand : opt_i64_i64_map.Map
-            (compiler-opt-global-shared-view ctx.cand)]
-          [ctors : opt_i64_i64_map.Map
-            (compiler-opt-global-shared-view ctx.ctors)]
-          [writes : OptLenEqWrites (compiler-opt-global-shared-view ctx.writes)]
-          (if (not (opt_i64_i64_map.contains? (& cand) id))
-            unit
-            (match value
-              [(Var var)
-                (match (opt-len-eq-length-of tables (& ctors) var 2)
-                  [(Some len fits?)
-                    (if (opt-len-eq-token-ok?
-                      tables
-                      (opt-len-eq-region ctx)
-                      len)
-                      (opt-len-eq-writes-push!
-                        writes
-                        id
-                        (opt-len-eq-region ctx)
-                        len
-                        fits?)
-                      (opt_i64_i64_map.insert-ref! bad id 1))]
-                  [(No) (opt_i64_i64_map.insert-ref! bad id 1)])]
-              [_ (opt_i64_i64_map.insert-ref! bad id 1)]))))]
+      (opt-len-eq-refuse-value! ctx taint bad value)
+      (when
+        (opt_i64_i64_map.contains? (& ctx.cand) (ir.compiler-ir-symbol-id name))
+        (opt-len-eq-record-write!
+          ctx
+          (compiler-opt-global-shared-view ctx.writes)
+          tables
+          bad
+          (ir.compiler-ir-symbol-id name)
+          (& value)))]
     [(or (Call _ name args _) (TailCall name args _))
       (opt-len-eq-check-args!
         ctx

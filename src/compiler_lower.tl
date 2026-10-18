@@ -16659,21 +16659,22 @@
 
 (define (lower-inline-aggregate-abi-copy-needed?
   [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
+  [ty : (& ty ast.AstType)]) : bool
   (and
     ;; A register-resident aggregate is returned/passed in a register,
     ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
     (lower-type-inline-storage? ctx ty)
-    (not (lower-type-register-resident? ctx ty))))
+    (not
+      (lower-type-register-resident?
+        ctx
+        (owned_view.compiler-owned-reference-shared-view ty)))))
 
 (define (lower-return-abi-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-inline-aggregate-abi-copy-needed?
-    ctx
-    (lower-global-shared-view ty))
+  (if (lower-inline-aggregate-abi-copy-needed? ctx ty)
     (lower-copy-inline-aggregate-to-heap ctx state value ty)
     (Ok (Expr state value ty))))
 
@@ -16682,9 +16683,7 @@
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-inline-aggregate-abi-copy-needed?
-    ctx
-    (lower-global-shared-view ty))
+  (if (lower-inline-aggregate-abi-copy-needed? ctx ty)
     ;; A local value owns its inline storage, even when its initializer is a
     ;; projection or control-flow result represented by an address into its source.
     ;; This shallow storage transfer implements both Copy and Move values;
@@ -16757,9 +16756,7 @@
     [symbol-id : i64 (lower-resolve-name-symbol-id state name-id)]
     (ResultLowerExpr.Ok
       (LowerExpr.Expr
-        (if (lower-inline-aggregate-abi-copy-needed?
-          ctx
-          (lower-global-shared-view ty))
+        (if (lower-inline-aggregate-abi-copy-needed? ctx ty)
           ;; Declaration initialization establishes this home; a later write
           ;; keeps it, so an already selected field still names the same
           ;; binding. The right-hand side is complete and nothing runs before
@@ -16850,9 +16847,7 @@
     (if (and
       (>= sret-var 0)
       (lower-type-inline-struct-or-enum? ctx (lower-global-shared-view ret-ty))
-      (lower-inline-aggregate-abi-copy-needed?
-        ctx
-        (lower-global-shared-view ret-ty)))
+      (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
       (match (lower-inline-aggregate-copy-size
         ctx
         (lower-global-shared-view ret-ty))
@@ -23473,9 +23468,7 @@
                 (ir.compiler-ir-value-seq1 payload))]
             (if (and
               (>= sret-var 0)
-              (lower-inline-aggregate-abi-copy-needed?
-                ctx
-                (lower-global-shared-view ret-ty)))
+              (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
               (let
                 [built : LowerState
                   (try
@@ -24743,9 +24736,7 @@
   [later-arguments? : bool]) : ResultLowerExpr
   (if (not later-arguments?)
     (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))
-    (if (lower-inline-aggregate-abi-copy-needed?
-      ctx
-      (lower-global-shared-view ty))
+    (if (lower-inline-aggregate-abi-copy-needed? ctx ty)
       (lower-copy-inline-aggregate-to-inline ctx state value ty)
       (ResultLowerExpr.Ok
         (match (& value)
@@ -24779,7 +24770,7 @@
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : bool
   (and
-    (lower-inline-aggregate-abi-copy-needed? ctx (lower-global-shared-view ty))
+    (lower-inline-aggregate-abi-copy-needed? ctx ty)
     (not
       (and
         (compiler-lower-function-state-raw-address-free?
@@ -24813,13 +24804,44 @@
 ;; written roots). Covers raw views and pattern or `let` aliases, which the
 ;; syntactic root proof cannot see through. Scalars are values held in vars
 ;; that `set!` rebinds, so they keep the name-based proof.
+;; A non-memory value this operand computed into a var of its own needs no
+;; snapshot: no later operand can name that var, and the var holds the value
+;; itself. A memory-class var is an address into storage that later operands
+;; may write, so it keeps the evaluation-order proof.
+(define (lower-fresh-operand-value?
+  [ctx : tc_core.TcContext]
+  [value : (& value ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]
+  [first-var : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (and
+        (>= id first-var)
+        (not (lower-inline-aggregate-abi-copy-needed? ctx ty)))]
+    [_ false]))
+
+;; A global never holds a reference (E0200), so a global operand of reference
+;; type is a borrow of that global's own storage. Its address cannot change
+;; while later operands run: the borrow checker rejects assigning a borrowed
+;; global and calling anything that may write it (E0222).
+(define (lower-borrowed-global-operand?
+  [value : (& value ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]) : bool
+  ;; Both collectors pass the resolved, region-free operand type.
+  (match value
+    [(ir.CompilerIrValue.Global _)
+      (match ty
+        [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)) true]
+        [_ false])]
+    [_ false]))
+
 (define (lower-operand-storage-immutable?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : bool
   (and
-    (lower-inline-aggregate-abi-copy-needed? ctx (lower-global-shared-view ty))
+    (lower-inline-aggregate-abi-copy-needed? ctx ty)
     (compiler-lower-function-state-raw-address-free?
       (lower-state-function-state state))
     (match value
@@ -25140,9 +25162,7 @@
       -1
       (match (tc_core.tc-expr ctx type-env (ast.AstExpr.Var root))
         [(tc_core.ResultTcType.Ok root-ty)
-          (if (lower-inline-aggregate-abi-copy-needed?
-            ctx
-            (lower-global-shared-view root-ty))
+          (if (lower-inline-aggregate-abi-copy-needed? ctx root-ty)
             (if (lower-state-storage-owned-by?
               state
               (sym_i64_env.sym-i64-lookup-id-or
@@ -26252,6 +26272,7 @@
           (tc_core.tc-type-without-regions
             (tc_core.tc-type-strip-invalidate
               (tc_core.tc-resolve-type ctx (lower-global-shared-view expected))))]
+        [first-var : i64 (lower-state-next-var state)]
         (match (lower-call-arg-as
           ctx
           state
@@ -26269,22 +26290,31 @@
                   arg-state
                   (lower-global-shared-view value)
                   (lower-global-shared-view arg-ty)
-                  (or
-                    (and
-                      (not
-                        (lower-operand-storage-immutable?
+                  (and
+                    (not
+                      (lower-fresh-operand-value?
+                        ctx
+                        (& value)
+                        (& arg-ty)
+                        first-var))
+                    (or
+                      (and
+                        (not
+                          (lower-operand-storage-immutable?
+                            ctx
+                            arg-state
+                            (lower-global-shared-view value)
+                            (lower-global-shared-view arg-ty)))
+                        (not
+                          (lower-borrowed-global-operand? (& value) (& arg-ty)))
+                        (lower-argument-snapshot-needed?
                           ctx
                           arg-state
-                          (lower-global-shared-view value)
-                          (lower-global-shared-view arg-ty)))
-                      (lower-argument-snapshot-needed?
-                        ctx
-                        arg-state
-                        env
-                        type-env
-                        args
-                        index))
-                    (lower-call-argument-unstable? ctx arg-state value arg-ty)))
+                          env
+                          type-env
+                          args
+                          index))
+                      (lower-call-argument-unstable? ctx arg-state value arg-ty))))
                   [(ResultLowerExpr.Ok
                       (LowerExpr.Expr snapshot-state snapshot-value _))
                     (let
@@ -26743,6 +26773,7 @@
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
             (tc_core.tc-resolve-type ctx (lower-global-shared-view expected)))]
+        [first-var : i64 (lower-state-next-var state)]
         (match (tc_core.tc-call-effective-arg-expr
           ctx
           type-env
@@ -26769,44 +26800,57 @@
                       arg-state
                       (lower-global-shared-view value)
                       (lower-global-shared-view value-ty)
-                      (if (and snapshot-final? (not fresh-destination?))
-                        (or
-                          (< (+ index 1) args.len)
-                          (lower-inline-aggregate-abi-copy-needed? ctx value-ty))
-                        (or
-                          ;; A fresh destination needs no snapshot for aliasing,
-                          ;; but scalar operands keep the cheap value snapshot
-                          ;; of every non-final operand (no named-var fact
-                          ;; proves a scalar temporary unchanged); only
-                          ;; memory-class copies use the evaluation-order proof.
-                          (and
-                            fresh-destination?
+                      (and
+                        (not
+                          (lower-fresh-operand-value?
+                            ctx
+                            (& value)
+                            (& value-ty)
+                            first-var))
+                        (if (and snapshot-final? (not fresh-destination?))
+                          (or
                             (< (+ index 1) args.len)
-                            (not
-                              (lower-inline-aggregate-abi-copy-needed?
+                            (lower-inline-aggregate-abi-copy-needed?
+                              ctx
+                              value-ty))
+                          (or
+                            ;; A fresh destination needs no snapshot for aliasing,
+                            ;; but a non-final scalar read of existing storage
+                            ;; keeps the cheap value snapshot (a fresh temporary
+                            ;; was excluded above); only memory-class copies use
+                            ;; the evaluation-order proof.
+                            (and
+                              fresh-destination?
+                              (< (+ index 1) args.len)
+                              (not
+                                (lower-inline-aggregate-abi-copy-needed?
+                                  ctx
+                                  value-ty)))
+                            (and
+                              (not
+                                (lower-operand-storage-immutable?
+                                  ctx
+                                  arg-state
+                                  (lower-global-shared-view value)
+                                  (lower-global-shared-view value-ty)))
+                              (not
+                                (lower-borrowed-global-operand?
+                                  (& value)
+                                  (& value-ty)))
+                              (lower-argument-snapshot-needed?
                                 ctx
-                                (lower-global-shared-view value-ty))))
-                          (and
-                            (not
-                              (lower-operand-storage-immutable?
+                                arg-state
+                                env
+                                type-env
+                                args
+                                index))
+                            (and
+                              (not snapshot-final?)
+                              (lower-call-argument-unstable?
                                 ctx
                                 arg-state
                                 (lower-global-shared-view value)
-                                (lower-global-shared-view value-ty)))
-                            (lower-argument-snapshot-needed?
-                              ctx
-                              arg-state
-                              env
-                              type-env
-                              args
-                              index))
-                          (and
-                            (not snapshot-final?)
-                            (lower-call-argument-unstable?
-                              ctx
-                              arg-state
-                              (lower-global-shared-view value)
-                              (lower-global-shared-view value-ty))))))
+                                (lower-global-shared-view value-ty)))))))
                       [(ResultLowerExpr.Ok
                           (LowerExpr.Expr snapshot-state snapshot-value _))
                         (match (lower-args-as-at
@@ -30108,7 +30152,7 @@
                                         (LowerExpr.Expr
                                           (if (lower-inline-aggregate-abi-copy-needed?
                                             ctx
-                                            (lower-global-shared-view target-ty))
+                                            target-ty)
                                             (if (lower-local-assignment-rebind?
                                               assign-state
                                               value-box
@@ -30727,9 +30771,7 @@
                 (lower-emit-cast item-state item-value item-ty expr-ty))])
           (match (try (lower-expr ctx state env type-env ptr))
             [(LowerExpr.Expr ptr-state ptr-value _)
-              (if (lower-inline-aggregate-abi-copy-needed?
-                ctx
-                (lower-global-shared-view expr-ty))
+              (if (lower-inline-aggregate-abi-copy-needed? ctx expr-ty)
                 ;; A memory-class read is a view of the designated storage: a
                 ;; distinct var that keeps the storage's root and is marked as
                 ;; a raw view (see `lower-state-storage-raw-view-note!`).
@@ -31525,9 +31567,7 @@
   [result-ty : ast.AstType]) : LowerSlotStore
   (if (and
     (lower-type-inline-struct-or-enum? ctx (lower-global-shared-view inner-ty))
-    (lower-inline-aggregate-abi-copy-needed?
-      ctx
-      (lower-global-shared-view inner-ty)))
+    (lower-inline-aggregate-abi-copy-needed? ctx inner-ty))
     (match (ast.ast-expr-unspan (& inner))
       [(ast.AstExpr.Call func-box args)
         (lower-call-into-slot
@@ -35175,9 +35215,7 @@
   ;; internal call path below. This legacy helper is nominal Struct/Enum only.
   (if (and
     (lower-type-inline-struct-or-enum? ctx (lower-global-shared-view result-ty))
-    (lower-inline-aggregate-abi-copy-needed?
-      ctx
-      (lower-global-shared-view result-ty)))
+    (lower-inline-aggregate-abi-copy-needed? ctx result-ty))
     (match (lower-inline-aggregate-copy-size
       ctx
       (lower-global-shared-view result-ty))
@@ -44647,9 +44685,7 @@
                     [binding-ir-ty : ast.AstType
                       (lower-one-word-register-storage-type ctx binding-ty)]
                     [memory-class? : bool
-                      (lower-inline-aggregate-abi-copy-needed?
-                        ctx
-                        (lower-global-shared-view binding-ty))]
+                      (lower-inline-aggregate-abi-copy-needed? ctx binding-ty)]
                     (match (lower-state-alloc-var init-state)
                       [(LowerAlloc.Alloc allocated var-id)
                         (let
@@ -65084,8 +65120,7 @@
   [name : i64]
   [var-id : i64]
   [ty : ast.AstType]) : ResultLowerEnv
-  (if (not
-    (lower-inline-aggregate-abi-copy-needed? ctx (lower-global-shared-view ty)))
+  (if (not (lower-inline-aggregate-abi-copy-needed? ctx ty))
     (ResultLowerEnv.Ok
       state
       (sym_i64_env.sym-i64-bind-id env name var-id)
@@ -68901,9 +68936,7 @@
         ;; struct or enum result needs no early-exit guard. Other memory-class
         ;; results (tuples, fixed arrays) have no nominal slot and keep the
         ;; conservative guard.
-        (lower-inline-aggregate-abi-copy-needed?
-          ctx
-          (lower-global-shared-view ret-ty))
+        (lower-inline-aggregate-abi-copy-needed? ctx ret-ty)
         (not
           (lower-type-inline-struct-or-enum?
             ctx
@@ -69486,9 +69519,7 @@
   (if (and
     (>= sret-var 0)
     (lower-type-inline-struct-or-enum? ctx (lower-global-shared-view ret-ty))
-    (lower-inline-aggregate-abi-copy-needed?
-      ctx
-      (lower-global-shared-view ret-ty)))
+    (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
     (match (lower-global-shared-view expr)
       [(Spanned inner-box _)
         (let
@@ -69700,9 +69731,7 @@
     [expr : ast.AstExpr
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
     (and
-      (lower-inline-aggregate-abi-copy-needed?
-        ctx
-        (lower-global-shared-view ty))
+      (lower-inline-aggregate-abi-copy-needed? ctx ty)
       (not (lower-internal-structural-type? ctx (lower-global-shared-view ty)))
       (compiler-lower-function-state-raw-address-free?
         (lower-state-function-state state))
@@ -70491,9 +70520,7 @@
               ;; root) or the incoming storage (a `param` root).
               (match (& source-value)
                 [(ir.CompilerIrValue.Var source-var)
-                  (if (lower-inline-aggregate-abi-copy-needed?
-                    ctx
-                    (lower-global-shared-view source-ty))
+                  (if (lower-inline-aggregate-abi-copy-needed? ctx source-ty)
                     (let
                       [root : i64
                         (if (<

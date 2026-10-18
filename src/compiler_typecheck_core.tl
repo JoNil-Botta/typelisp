@@ -16090,10 +16090,12 @@
   [env : TcTypeEnv]
   [owner-id : i64]
   [region-id : i64]) : bool
-  (tc-arena-region-owned-by-id-for-session?
-    (tc-type-env-structural-session env)
-    owner-id
-    region-id))
+  (or
+    (tc-arena-region-owned-by-id-for-session?
+      (tc-type-env-structural-session env)
+      owner-id
+      region-id)
+    (tc-arena-phase-param-region-owned-by? env owner-id region-id)))
 
 (define (tc-bind-arena-phase-token
   [env : TcTypeEnv]
@@ -28854,7 +28856,17 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
-  (tc-bind-params-at ctx env (& params) 0 Nil))
+  (let
+    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    [base : TcTypeEnv
+      (if (ast.ast-lifetime-list-empty? (& pairs))
+        env
+        (tc-bind-runtime-marker-id
+          env
+          (tc-arena-phase-param-marker-id)
+          (tc-arena-phase-param-marker-type env pairs)
+          Other))]
+    (tc-bind-params-at ctx base (& params) 0 Nil)))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
@@ -28974,7 +28986,26 @@
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier]
   [params : (& params ast.AstParamList)]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0 Nil))
+  (let
+    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    (when
+      (ast.ast-lifetime-list-empty? (& pairs))
+      (return
+        (tc-type-env-scoped-carrier-bind-params-at ctx carrier params 0 Nil)))
+    (let
+      [marker : ast.AstType
+        (tc-arena-phase-param-marker-type
+          (tc-type-env-scoped-carrier-env (& carrier))
+          pairs)]
+      [base : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-with-sidecar
+          (tc-global-shared-view carrier)
+          (tc-type-env-scoped-sidecar-bind-marker-id
+            carrier.sidecar
+            (tc-arena-phase-param-marker-id)
+            marker
+            Other))]
+      (tc-type-env-scoped-carrier-bind-params-at ctx base params 0 Nil))))
 
 (define (tc-type-env-scoped-carrier-bind-params-at
   [ctx : TcContext]
@@ -36114,6 +36145,175 @@
             (ast.ast-lifetime-list-get (& args) 1 (ast.ast-lifetime-fallback)))
           No))]
     [_ No]))
+
+(define tc-arena-phase-param-bind-count : i64
+  0)
+
+(define (tc-arena-phase-param-marker-id) : i64
+  (ci.intern "\n__typelisp_arena_phase_params"))
+
+(define (tc-arena-phase-param-env-pairs [env : TcTypeEnv]) : ast.AstLifetimeList
+  (when
+    (= tc-arena-phase-param-bind-count 0)
+    (return (ast.ast-lifetime-list-new)))
+  (match (if (tc-type-env-scoped-runtime-active? env)
+    (tc-type-env-scoped-carrier-marker-type
+      (tc-type-env-scoped-runtime-current env)
+      (tc-arena-phase-param-marker-id))
+    (tc-env-marker-type env (tc-arena-phase-param-marker-id)))
+    [(Some (VarArgs _ pairs)) (ast.ast-lifetime-list-box-shared-view pairs)]
+    [_ (ast.ast-lifetime-list-new)]))
+
+(define (tc-arena-phase-param-region-owned-by?
+  [env : TcTypeEnv]
+  [owner : i64]
+  [generation : i64]) : bool
+  (when (= tc-arena-phase-param-bind-count 0) (return false))
+  (let
+    [pairs : ast.AstLifetimeList (tc-arena-phase-param-env-pairs env)]
+    (for [pair-index (iterator.range 0 (/ pairs.len 2))]
+      (let
+        [index : i64 (* pair-index 2)]
+        (when
+          (and
+            (= generation (ast.ast-lifetime-list-get (& pairs) index -1))
+            (= owner (ast.ast-lifetime-list-get (& pairs) (+ index 1) -1)))
+          (return true))))
+    false))
+
+(define (tc-arena-phase-param-marker-type
+  [env : TcTypeEnv]
+  [pairs : ast.AstLifetimeList]) : ast.AstType
+  (let
+    [outer : ast.AstLifetimeList (tc-arena-phase-param-env-pairs env)]
+    (ast.ast-lifetime-list-append-from (&mut pairs) (& outer) 0)
+    (+= tc-arena-phase-param-bind-count 1)
+    (ast.ast-ty-var-args (tc-arena-phase-param-marker-id) pairs)))
+
+(define (tc-arena-phase-type-id-pairs-into
+  [ctx : TcContext]
+  [stack : (& stack ast.AstTypeList)]
+  [out : (&mut out ast.AstLifetimeList)]
+  [type-id : i64]) : unit
+  (tc-arena-phase-type-pairs-into ctx (ast.ty-node-get type-id) stack out))
+
+(define (tc-arena-phase-types-pairs-into
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [stack : (& stack ast.AstTypeList)]
+  [out : (&mut out ast.AstLifetimeList)]) : unit
+  (for [index (iterator.range 0 types.len)]
+    (tc-arena-phase-type-id-pairs-into
+      ctx
+      stack
+      out
+      (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))))
+
+(define (tc-arena-phase-type-pairs-into
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [stack : (& stack ast.AstTypeList)]
+  [out : (&mut out ast.AstLifetimeList)]) : unit
+  (let
+    [resolved : ast.AstType (tc-resolve-type ctx ty)]
+    ;; Callable lifetimes belong to the deferred body's own signature.
+    (when
+      (match (tc-global-shared-view resolved)
+        [(or (Func _ _) (CFunc _ _)) true]
+        [_ false])
+      (return unit))
+    (match (tc-arena-phase-brands ctx (tc-global-shared-view resolved))
+      [(Some owner generation)
+        (ast.ast-lifetime-list-push out generation)
+        (ast.ast-lifetime-list-push out owner)
+        (return unit)]
+      [(No) unit])
+    (match (tc-global-shared-view resolved)
+      [(or (StructArgs name _) (EnumArgs name _))
+        ;; Exact instantiated types bound recursion even when a recursive
+        ;; declaration permutes its lifetime arguments.
+        (for [index (iterator.range 0 stack.len)]
+          (when
+            (ast.ast-type-eq?
+              (tc-global-shared-view resolved)
+              (ast.ty-node-get
+                (ast.ast-type-list-get stack index (ast.ast-type-id-fallback))))
+            (return unit)))
+        (let
+          [handle : i64
+            (csym.compiler-symbols-lookup-type-id-or
+              (tc-context-symbols ctx)
+              name
+              (csym.compiler-symbols-missing-handle))]
+          (when
+            (csym.compiler-symbols-handle-found? handle)
+            (let
+              [owner-ctx : TcContext
+                (tc-context-with-nominal-owner-index-module
+                  ctx
+                  (csym.compiler-symbol-handle-index handle))]
+              [next : ast.AstTypeList (ast.ast-type-cons (& resolved) stack)]
+              (match (csym.compiler-symbols-decl-at-index
+                (tc-context-symbols-ref (& owner-ctx))
+                (csym.compiler-symbol-handle-index handle))
+                [(Ok
+                    (or
+                      (DefStruct _ _ _ _ fields)
+                      (DefStructLifetimes _ _ _ _ _ fields)))
+                  (tc-arena-phase-types-pairs-into
+                    owner-ctx
+                    (tc-init-struct-field-types-for-result
+                      owner-ctx
+                      name
+                      resolved
+                      fields)
+                    (& next)
+                    out)]
+                [(Ok
+                    (or
+                      (DefEnum _ _ _ variants)
+                      (DefEnumLifetimes _ _ _ _ variants)))
+                  (for [index (iterator.range 0 variants.len)]
+                    (match (ast.ast-variant-def-list-get
+                      (& variants)
+                      index
+                      (ast.ast-variant-def-fallback))
+                      [(Def _ fields _)
+                        (tc-arena-phase-types-pairs-into
+                          owner-ctx
+                          (tc-init-enum-fields-for-result
+                            owner-ctx
+                            name
+                            (tc-global-shared-view resolved)
+                            fields)
+                          (& next)
+                          out)]))]
+                [_ unit]))))]
+      [_
+        (ast.ast-type-for-each-child
+          resolved
+          tc-arena-phase-type-id-pairs-into
+          ctx
+          stack
+          out)])))
+
+(define (tc-arena-phase-param-pairs
+  [ctx : TcContext]
+  [params : (& params ast.AstParamList)]) : ast.AstLifetimeList
+  (let
+    [out : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param _ ty _)
+          (unless
+            (tc-name-id-list-empty?
+              (tc-type-collect-regions (tc-global-shared-view ty)))
+            (tc-arena-phase-type-pairs-into
+              ctx
+              ty
+              (& (ast.ast-type-list-new))
+              (&mut out)))]))
+    out))
 
 (define (tc-arena-phase-branded-type
   [env : TcTypeEnv]
@@ -67828,7 +68028,7 @@
               memory?)]
           [(Err _) (tc-type-copyable? ctx ty)])])))
 
-(define (tc-param-storage-seed-params
+(define (tc-move-seed-params
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
@@ -67842,6 +68042,19 @@
   ;; to their resolved types (tc-bind-params).
   (let
     [out : TcMovedSet moved]
+    [pairs : ast.AstLifetimeList (tc-arena-phase-param-pairs ctx params)]
+    [phases : i64 0]
+    (for [index (iterator.range 0 (/ pairs.len 2))]
+      (set!
+        phases
+        (tc-arena-phase-state-cons
+          (ast.ast-lifetime-list-get (& pairs) (+ (* index 2) 1) -1)
+          (ast.ast-lifetime-list-get (& pairs) (* index 2) -1)
+          phases)))
+    (unless
+      (= phases 0)
+      (set! phases (tc-arena-phase-state-union out.arena-phases phases))
+      (set! out (tc-moved-with-arena-phases out phases)))
     (for [index (iterator.range 0 (ast.ast-param-list-len params))]
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
         [(Param name ty _)
@@ -73857,7 +74070,7 @@
                   lambda-env
                   (tc-global-shared-view lambda-locals)
                   (tc-moved-empty)
-                  (tc-param-storage-seed-params
+                  (tc-move-seed-params
                     ctx
                     lambda-env
                     params
@@ -75474,7 +75687,7 @@
         env
         (tc-global-shared-view locals)
         (tc-moved-empty)
-        (tc-param-storage-seed-params ctx env params (tc-moved-empty))
+        (tc-move-seed-params ctx env params (tc-moved-empty))
         expr-id)]
     [retry? : bool
       (and
@@ -75494,7 +75707,7 @@
             env
             locals
             (tc-moved-empty)
-            (tc-param-storage-seed-params ctx env params (tc-moved-empty))
+            (tc-move-seed-params ctx env params (tc-moved-empty))
             expr-id)]
         (tc-body-move-operand-edges-set! state false)
         result)
@@ -118621,6 +118834,7 @@
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (set! tc-signature-lifetime-marker-id-generation -1)
+  (set! tc-arena-phase-param-bind-count 0)
   (tc-source-dotted-alias-key-cache-reset!)
   (tc-source-dotted-full-path-key-cache-reset!)
   (tc-source-qualified-variant-key-cache-reset!))

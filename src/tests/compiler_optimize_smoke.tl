@@ -2137,10 +2137,11 @@
             [(Phi _ inputs _)
               (if (opt.opt-phi-input-seq-eq
                 inputs
-                (match (irt.instr
-                  "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
-                  [(Phi _ expected _) expected]
-                  [_ (ir.compiler-ir-phi-input-seq-empty)]))
+                (&
+                  (match (irt.instr
+                    "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
+                    [(Phi _ expected _) expected]
+                    [_ (ir.compiler-ir-phi-input-seq-empty)])))
                 (match (opt.opt-cfg-find-block
                   blocks
                   (ir.compiler-ir-label "exit"))
@@ -2152,10 +2153,11 @@
                           [(Phi _ exit-inputs _)
                             (opt.opt-phi-input-seq-eq
                               exit-inputs
-                              (match (irt.instr
-                                "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
-                                [(Phi _ expected _) expected]
-                                [_ (ir.compiler-ir-phi-input-seq-empty)]))]
+                              (&
+                                (match (irt.instr
+                                  "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
+                                  [(Phi _ expected _) expected]
+                                  [_ (ir.compiler-ir-phi-input-seq-empty)])))]
                           [_ false])])])
                 false)]
             [_ false])])]))

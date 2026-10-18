@@ -63404,12 +63404,65 @@
           (ir.compiler-ir-function-seq-prepend
             (& reader)
             (& (ir.compiler-ir-function-seq-empty)))))]
-    [out (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [expected (opt-snapshot-test-function after)]
     [actual (ir.compiler-ir-function-seq-borrow (& out) 0)]
     [ok (opt.opt-function-eq bases (& actual) (& expected))]
     (opt.opt-pure-call-inline-memory-reset!)
     ok))
+
+;; The inline stage's normalization keeps each rewritten body as a deep copy of
+;; a scratch-phase rewrite (#8997): a candidate's body is normalized, and a
+;; function without a candidate capture is kept as it is.
+(test
+  global-snapshot-retained-normalization-keeps-candidate-free-functions
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture
+      (opt-snapshot-test-function
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add %0, %1 : i64
+           return %2")]
+    [reader : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "snapshot_reader")
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        0
+        (irt.blocks "entry:
+  return 0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        (& functions))]
+    [expected
+      (opt-snapshot-test-function
+        "entry:
+           %1 = call snapshot_reader() : i64
+           %2 = add @mr_a, %1 : i64
+           return %2")]
+    [rewritten (ir.compiler-ir-function-seq-borrow (& out) 0)]
+    [kept (ir.compiler-ir-function-seq-borrow (& out) 1)]
+    [normalized : bool (opt.opt-function-eq bases (& rewritten) (& expected))]
+    [kept-reader : bool (opt.opt-function-eq bases (& kept) (& reader))]
+    (opt.opt-pure-call-inline-memory-reset!)
+    (test.assert-true normalized "a candidate's rewritten body is normalized")
+    (test.assert-true kept-reader "a candidate-free function is kept as is")))
 
 (test
   global-snapshot-before-inlining
@@ -63493,7 +63546,10 @@
     [_normalize : unit
       (in-arena
         (arena.Arena scratch)
-        (opt.opt-pure-call-inline-memory-install! bases (& functions))
+        (opt.opt-pure-call-inline-memory-install!
+          (ast.ast-node-pool-reader-context-current)
+          bases
+          (& functions))
         unit)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [_destroy : unit
@@ -63536,7 +63592,11 @@
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
         (& (opt-cl-test-functions symbols)))]
-    [before-inline (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [before-inline
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [summaries
       (opt.opt-build-program-summaries

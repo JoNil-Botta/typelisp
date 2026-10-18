@@ -114398,6 +114398,7 @@
     (let
       [devirt : ir.CompilerIrFunctionSeq
         (opt-pure-call-inline-memory-install!
+          pools
           type-segment-bases
           (&
             (opt-tailrec-function-seq!
@@ -130036,7 +130037,53 @@
           (ir.compiler-ir-function-seq-ref functions slot))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
+;; Whether FUNC has a capture `opt-global-snapshot-function` may rewrite.
+(define (opt-global-snapshot-function-candidate?
+  [summaries : (& summaries OptProgramSummaries)]
+  [func : (& func ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ _ _ _ blocks _)
+      (opt-blocks-any?
+        blocks
+        opt-global-snapshot-candidate?
+        (& summaries.global-cell))]))
+
+;; Normalize FUNCTIONS as `opt-global-snapshot-normalize-functions` does, for
+;; bodies that outlive the call. Each function with a candidate capture is
+;; rewritten in one phase of a scratch arena and a deep copy of the result is
+;; kept, through the job's explicit POOLS; its value sources, use counts and
+;; intermediate block lists are dead once the copy is made. A function without
+;; a candidate is kept as is.
+(define (opt-global-snapshot-normalize-functions-retained
+  [pools : ast.AstNodePoolContext]
+  [summaries : (& summaries OptProgramSummaries)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [policy : OptGlobalSnapshotPolicy]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [scratch : arena.Arena (arena.make)]
+    (for [slot (iterator.range 0 functions.len)]
+      (let
+        [func : ir.CompilerIrFunction
+          (ir.compiler-ir-function-seq-ref functions slot)]
+        (if (opt-global-snapshot-function-candidate? summaries (& func))
+          (let
+            [phase : arena.ArenaPhase (arena.phase scratch)]
+            [rewritten : ir.CompilerIrFunction
+              (in-arena
+                scratch
+                (opt-global-snapshot-function summaries call-memory policy func))]
+            [kept : ir.CompilerIrFunction
+              (ir.compiler-ir-clone-function pools (& rewritten))]
+            (arena.rewind-safe! phase)
+            (ir.compiler-ir-function-builder-push! (&mut builder) kept))
+          (ir.compiler-ir-function-builder-push! (&mut builder) func))))
+    (arena.destroy-safe! scratch)
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
 (define (opt-pure-call-inline-memory-install!
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
   (let
@@ -130053,7 +130100,8 @@
     ;; boundary. Cleanup removes only dead captures before the inline census.
     (let
       [summaries (opt-program-summaries-empty)]
-      (opt-global-snapshot-normalize-functions
+      (opt-global-snapshot-normalize-functions-retained
+        pools
         (& summaries)
         (& opt-pure-call-inline-memory)
         (OptGlobalSnapshotPolicy true false)

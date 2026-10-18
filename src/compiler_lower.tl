@@ -15275,15 +15275,19 @@
           (Var var-id)
           ty))]))
 
-;; A named function value is already an immutable selected callable. Keep its
-;; direct target identity; only storage-backed values need a private snapshot.
+;; No read-only argument can change the selected storage. Named function
+;; values are immutable even across effects; other callees need a snapshot.
 (define (lower-capture-callable
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (if (match (& value)
-    [(ir.CompilerIrValue.Function _) true]
-    [_ false])
+  [ty : ast.AstType]
+  [args : (& args ast.AstExprList)]) : ResultLowerExpr
+  (if (or
+    (match (& value)
+      [(ir.CompilerIrValue.Function _) true]
+      [_ false])
+    (lower-call-args-read-only? ctx args 0))
     (Ok (Expr state value ty))
     (lower-materialize state value ty)))
 
@@ -35169,7 +35173,7 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   ;; The callable is a value evaluated before the arguments, even when its
   ;; source binding is assigned while a later argument is evaluated.
-  (match (try (lower-capture-callable state func-value func-ty))
+  (match (try (lower-capture-callable ctx state func-value func-ty (& args)))
     [(Expr state func-value func-ty)
       (if (lower-c-function-type? (lower-global-shared-view func-ty))
         (lower-indirect-c-abi-call
@@ -66421,7 +66425,13 @@
           [captured-func : LowerExpr
             (match lowered-func
               [(Expr func-state func-value func-ty)
-                (try (lower-capture-callable func-state func-value func-ty))])]
+                (try
+                  (lower-capture-callable
+                    ctx
+                    func-state
+                    func-value
+                    func-ty
+                    (& args)))])]
           (match captured-func
             [(Expr func-state func-value lowered-func-ty)
               (match (lower-indirect-call-args

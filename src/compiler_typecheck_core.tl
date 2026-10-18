@@ -72917,21 +72917,23 @@
           operation)]
       [(No) Ok])))
 
-;; A plain or dotted `set!` reached without a spanned parent (a virtual node);
-;; the value expression locates the diagnostic. Spanned `set!` nodes are
-;; checked, and located, in the `Spanned` arm of `tc-move-check-expr` first.
+;; A source assignment (including a macro invocation) supplies its own span.
+;; A virtual assignment without a source view falls back to its value.
 (define (tc-move-foreign-global-set-check
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [name : i64]
-  [rhs-box : i64]) : ResultTcUnit
+  [rhs-box : i64]
+  [site : ast.AstExpr]) : ResultTcUnit
   (tc-move-foreign-global-root-check
     ctx
     expr-bases
     locals
-    (ast.ast-expr-segment-bases-get expr-bases rhs-box)
+    (match (tc-expr-maybe-span expr-bases (tc-global-shared-view site))
+      [(Some _) site]
+      [(No) (ast.ast-expr-segment-bases-get expr-bases rhs-box)])
     (if (tc-dotted-place-name-id? ctx env name)
       (ci.intern-leading-dot-id name)
       name)
@@ -72960,6 +72962,9 @@
           first))]
     (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 second)))
 
+;; Match the payload without losing the source view. Move facts retain the
+;; invalidating expression, and conflicts need the original read's span even
+;; when the function body's synthetic Begin has no span of its own.
 (define (tc-move-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -72968,80 +72973,10 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : ast.AstExpr]) : TcMoveResult
-  (match (tc-global-shared-view expr)
-    [(Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-global-shared-view inner)
-          ;; A `set!` target has no place node of its own, so the spanned
-          ;; node locates its #7976 ownership diagnostic: the assignment, or
-          ;; for an expansion the macro call site.
-          [(Set name _)
-            (let
-              [_
-                (try
-                  (tc-move-foreign-global-root-check
-                    ctx
-                    expr-bases
-                    (tc-global-shared-view locals)
-                    expr
-                    (if (tc-dotted-place-name-id? ctx env name)
-                      (ci.intern-leading-dot-id name)
-                      name)
-                    "assign to"))]
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                inner))]
-          ;; An expanded `set!` keeps its template span; the call site that
-          ;; wraps the expansion locates the diagnostic instead.
-          [(MacroExpansion _ _ _)
-            (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& inner))
-              [(Set name _)
-                (let
-                  [_
-                    (try
-                      (tc-move-foreign-global-root-check
-                        ctx
-                        expr-bases
-                        (tc-global-shared-view locals)
-                        expr
-                        (if (tc-dotted-place-name-id? ctx env name)
-                          (ci.intern-leading-dot-id name)
-                          name)
-                        "assign to"))]
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    moved
-                    inner))]
-              [_
-                (tc-move-check-expr
-                  ctx
-                  expr-bases
-                  env
-                  locals
-                  loop-carried
-                  moved
-                  inner)])]
-          [_
-            (tc-move-check-expr
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              inner)]))]
-    [(or (MacroExpansion inner-box _ _) (Unary _ inner-box))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+    ;; Source/macro wrappers are removed above; keep their variants exhaustive.
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
+         (Unary _ inner-box))
       (tc-move-check-expr-id
         ctx
         expr-bases
@@ -74102,7 +74037,8 @@
               env
               (tc-global-shared-view locals)
               name
-              rhs-box))]
+              rhs-box
+              expr))]
         [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
         (if (tc-dotted-place-name-id? ctx env name)
           (let

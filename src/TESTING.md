@@ -286,6 +286,12 @@ checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
 
+The public-check `check-invalidated-parameter-*` cases retain read locations,
+invalidation secondary labels, ownership help and decoded E0208 diagnostics
+for multi-expression functions, lambdas and nested lets. Both direct safe
+destroy and imported invalidation helpers run through `check` and `compile`
+on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
+
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,
 branches, nested shadowing, loops and an unused reference payload. Its native

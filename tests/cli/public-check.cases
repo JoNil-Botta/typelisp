@@ -17,6 +17,12 @@ file bad-inline.tl
   (+ true 1))
 end-file
 
+file invalidation.tl
+(import stdlib.arena)
+(define (release [owner : (arena.Arena r) (:invalidate r)]) : unit
+  (arena.destroy-safe! owner))
+end-file
+
 case check-hello
 run check examples/hello.tl
 stderr empty
@@ -616,6 +622,135 @@ stderr contains error[E0222]
 stderr contains while global `held` is borrowed
 stderr contains (via observe -> install!)
 
+
+case check-invalidated-parameter-function-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define (destroy-and-read
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  ({{each}} owner)
+  (string.string-length text))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:9:25 || main.tl:8: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:9:25 || main.tl:8: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-lambda-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define callback
+  (lambda ([owner : (arena.Arena r) (:invalidate r)] [text : (in r String)]) : i64
+    ({{each}} owner)
+    (string.string-length text)))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:8:27 || main.tl:7: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:8:27 || main.tl:7: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-nested-let-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define (destroy-and-read
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  (let [n : i64 1]
+    ({{each}} owner)
+    (+ n (string.string-length text))))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:10:32 || main.tl:9: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:10:32 || main.tl:9: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-read-before-destroy
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+(define (read-and-destroy
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  (let [length (string.string-length text)]
+    ({{each}} owner)
+    length))
+(define (main) : i64 42)
+end-file
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+stderr empty
+stdout contains Wrote
 
 # Unsafe callable effects survive type inference, qualification and unsafe scope.
 case check-string-raw-copy-function-values

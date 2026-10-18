@@ -38,6 +38,9 @@ source allocation region alongside the runtime restore marker.
 Encoded typechecker errors cross the
 lowering boundary through the shared decoder, preserving the producer's code,
 primary span, help and secondary labels.
+The move checker matches expression payloads while retaining their source
+views. Conflict primaries name the read, and retained move/invalidation facts
+name the origin even under an unspanned synthetic function or lambda body.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:

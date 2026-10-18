@@ -64039,6 +64039,134 @@ return 0" true)
                       cbi.compiler-builtin-id-tl-region-mark)))
                 "unresolved calls and unavailable tables stay conservative"))])))))
 
+;; The runtime copy entries access their pointer operands and never invoke
+;; user code. IR-text symbols deliberately have separate generated identities.
+(test
+  runtime-copy-reentry-identity
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [ids
+      (array
+        cbi.compiler-builtin-id-tl-memcpy
+        cbi.compiler-builtin-id-tl-memcpy-fresh
+        cbi.compiler-builtin-id-tl-mem-copy-fwd
+        cbi.compiler-builtin-id-tl-mem-copy8-fwd)]
+    [names
+      (array "tl_memcpy" "tl_memcpy_fresh" "tl_mem_copy_fwd" "tl_mem_copy8_fwd")]
+    (for [index (iterator.range 0 (array-length ids))]
+      (let
+        [id (array-ref ids index)]
+        [generated (opt-test-symbol (clone (array-ref names index)))]
+        (test.assert-i64-eq
+          (opt.opt-global-mod-ref-external-mask id)
+          0
+          "runtime copies do not re-enter user code")
+        (test.assert-true
+          (and
+            (ir.compiler-ir-effect-eq?
+              (ir.compiler-ir-direct-call-effect-id generated)
+              Unknown)
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-global-mod-ref-external-mask generated)))
+          "a generated lookalike retains unknown re-entry effects")))))
+
+;; IR text has no extern declaration syntax; only this metadata is constructed.
+(define (opt-mod-ref-test-extern [name : i64] [link : i64] [provided : bool]) : ir.CompilerIrExtern
+  (ir.CompilerIrExtern.Extern
+    name
+    name
+    "alias"
+    (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+    (ast.AstExternAbi.C)
+    link
+    (ast.ast-extern-link-input-list-new)
+    provided))
+
+(test
+  global-mod-ref-extern-link-identity
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [links
+      (array
+        cbi.compiler-builtin-id-tl-region-mark
+        (opt-test-symbol "opaque_link")
+        (opt-test-symbol "tl_region_mark")
+        (opt-test-symbol "exported_callback")
+        cbi.compiler-builtin-id-tl-region-mark)]
+    (for [index (iterator.range 0 (array-length links))]
+      (let
+        [provided (= index 3)]
+        [callee
+          (if provided
+            "internal"
+            "alias")]
+        [name (opt-test-symbol (clone callee))]
+        [builder (ir.compiler-ir-extern-builder-with-capacity 2)]
+        [_extern
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern name (array-ref links index) provided))]
+        [_conflict
+          (when
+            (= index 4)
+            (ir.compiler-ir-extern-builder-push!
+              (&mut builder)
+              (opt-mod-ref-test-extern
+                name
+                (opt-test-symbol "opaque_link")
+                false)))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        [program
+          (irt.program
+            (str_cat.str-cat
+              "global @cell : i64 = 0
+               global @object : (__tl_dyn-array i64) = unit
+               function @wrapper() -> i64 vars 1 {
+               entry:
+                 %0 = call "
+              callee
+              "() : i64
+                 return 0
+               }
+               function @internal() -> i64 vars 0 {
+               entry:
+                 store @cell, 7 : i64
+                 return 0
+               }"))]
+        (match program
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cell summaries.global-cell.mod-ref]
+              [object summaries.global-cell.obj-mod-ref]
+              [queries (array name (opt-test-symbol "wrapper"))]
+              (test.assert-true
+                (and cell.built? object.built?)
+                "both tables are available")
+              (for [at (iterator.range 0 (array-length queries))]
+                (let
+                  [query (array-ref queries at)]
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-mask-may-write?
+                        cell.index
+                        (opt.opt-global-mod-ref-call-mask cell query)
+                        (opt-test-symbol "cell"))
+                      (not (= index 0)))
+                    "a declared runtime link is precise; opaque/conflicting links and provided writers are not")
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask object query))
+                      (and (not (= index 0)) (not provided)))
+                    "the storage table uses the same link identity and preserves provided function bodies"))))])))))
+
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64
   (let
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]

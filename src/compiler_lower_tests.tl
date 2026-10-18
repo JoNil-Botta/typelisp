@@ -2387,25 +2387,52 @@
           0))]
     [_ false]))
 
+(define (lower-test-runtime-memcpy-instr-count
+  [count : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (+
+    count
+    (match instr
+      [(Call _ name _ _)
+        (if (= name cbi.compiler-builtin-id-tl-memcpy)
+          1
+          0)]
+      [_ 0])))
+
+(define (lower-test-runtime-memcpy-count
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find functions name)
+    [(Some (Function _ _ _ _ blocks _))
+      (optimize.opt-blocks-fold
+        blocks
+        (cast 0 : i64)
+        lower-test-runtime-memcpy-instr-count)]
+    [(No) -1]))
+
+(test
+  lower-runtime-copy-source-identity
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(define (copy [destination : (&mut destination (Array i64 25))]
+                      [source : (& source (Array i64 25))]) : unit
+         (set! (deref destination) (deref source)))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-runtime-memcpy-count functions "copy")
+        1
+        "a fixed-size aggregate copy names the runtime source identity")]
+    [(No) (test.assert-true false "aggregate copy fixture lowers")]))
+
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
   (match (lower-test-functions
     (compiler-lower-clone-source-with-prelude
       (compiler-lower-clone-dynarray-bulk-source)))
     [(Some functions)
       (and
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-i64-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-i64-items") 1)
         (= (lower-test-count functions ".::copy-i64-items" (Branch)) 0)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-word-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-word-items") 1)
         (= (lower-test-count functions ".::copy-word-items" (Branch)) 0)
         (=
           (lower-test-function-call-count

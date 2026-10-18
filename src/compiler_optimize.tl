@@ -123799,9 +123799,8 @@
                 (match input-retirement
                   [(Retain) false]
                   [(Retire owner release-input)
-                    (begin
-                      (release-input owner)
-                      true)]))]
+                    (release-input owner)
+                    true]))]
             (match inlined
               [(Program reachable-functions inline-arena-spans)
                 (begin

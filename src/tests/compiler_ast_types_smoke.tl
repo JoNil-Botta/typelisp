@@ -11,6 +11,7 @@
 (import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
+(cfg test (import compiler_allocation_profile as allocation_profile))
 
 (define (compiler-ast-test-fresh-local-id
   [ordinal : i64]
@@ -2905,7 +2906,7 @@
 ;; Ownership-only copy-out keeps node ids and provenance unchanged, including
 ;; distinct views of one semantic node and shared edges. The source payload
 ;; arena dies before the second copy reads its result.
-(define (compiler-ast-persist-span-row? [count : i64]) : bool
+(define (compiler-ast-persist-span-row? [count : i64] [wide? : bool]) : bool
   (let
     [home : arena.Arena (arena.current)]
     [pools : ast.AstNodePoolContext
@@ -2933,7 +2934,15 @@
             (ast.ast-expr-spanned-with-pools
               pools
               literal
-              (ast.ast-source-span (+ index 1) 1 (+ index 1) 2))]
+              (ast.ast-source-span
+                (+ index 1)
+                (if wide?
+                  65536
+                  1)
+                (+ index 1)
+                (if wide?
+                  65537
+                  2)))]
           (ast.ast-expr-list-push
             (&mut views)
             (if (= index 0)
@@ -3046,7 +3055,9 @@
       (let
         [count : i64 (array-ref counts index)]
         (tl_test.assert-true
-          (compiler-ast-persist-span-row? count)
+          (and
+            (compiler-ast-persist-span-row? count false)
+            (compiler-ast-persist-span-row? count true))
           (str_cat.str-cat
             "ownership-only copy-out preserves provenance for "
             (string.int->string count)
@@ -3077,7 +3088,7 @@
         (ast.ast-expr-span-table-capacity active.respan-records))
       (= live.span-records-monotonic? active.span-records-monotonic?))))
 
-(define (compiler-ast-installed-span-capture?) : bool
+(define (compiler-ast-installed-span-capture? [wide? : bool]) : bool
   (let
     [previous : ast.AstNodePoolContext
       (ast.ast-node-pool-context-capture-active)]
@@ -3100,7 +3111,17 @@
         [line : i64 (+ index 1)]
         [_canonical : i64
           (ast.ast-node-push-active
-            (Spanned literal (ast.ast-source-span line 1 line 2)))]
+            (Spanned
+              literal
+              (ast.ast-source-span
+                line
+                (if wide?
+                  65536
+                  1)
+                line
+                (if wide?
+                  65539
+                  2))))]
         (when (= index 0) (set! base literal))
         (when (= index 1) (set! other literal))
         (unless (compiler-ast-captured-span-state? pools) (set! ok false))))
@@ -3109,7 +3130,17 @@
         [line : i64 (+ index 100)]
         [next : i64
           (ast.ast-node-push-active
-            (Spanned base (ast.ast-source-span line 3 line 4)))]
+            (Spanned
+              base
+              (ast.ast-source-span
+                line
+                (if wide?
+                  65536
+                  3)
+                line
+                (if wide?
+                  65539
+                  4))))]
         (when (= index 0) (set! view next))
         (when
           (= index 63)
@@ -3151,7 +3182,19 @@
             (ast.ast-node-pool-context-expr-view-span pools frame)
             1)))
       (ast.ast-node-protected-floor-set! mark)
-      (ast.ast-node-set! view (Spanned other (ast.ast-source-span 200 5 201 6)))
+      (ast.ast-node-set!
+        view
+        (Spanned
+          other
+          (ast.ast-source-span
+            200
+            (if wide?
+              65536
+              5)
+            201
+            (if wide?
+              65539
+              6))))
       (set!
         ok
         (and
@@ -3161,7 +3204,19 @@
           (compiler-ast-maybe-span-start-line?
             (ast.ast-node-pool-context-expr-view-span pools view)
             200)))
-      (ast.ast-node-set! view (Spanned -1 (ast.ast-source-span 300 1 300 2)))
+      (ast.ast-node-set!
+        view
+        (Spanned
+          -1
+          (ast.ast-source-span
+            300
+            (if wide?
+              65536
+              1)
+            300
+            (if wide?
+              65539
+              2))))
       (set!
         ok
         (and
@@ -3197,7 +3252,17 @@
           (ast.ast-node-pool-context-snapshot pools)]
         [_appended : i64
           (ast.ast-node-push-active
-            (Spanned base (ast.ast-source-span 400 1 400 2)))]
+            (Spanned
+              base
+              (ast.ast-source-span
+                400
+                (if wide?
+                  65536
+                  1)
+                400
+                (if wide?
+                  65539
+                  2))))]
         (ast.ast-node-pool-context-publish-newer! stale)
         (set! pools stale)
         (set!
@@ -3212,7 +3277,17 @@
           (ast.ast-node-pool-context-expr-respan-count pools)]
         [reused : i64
           (ast.ast-node-push-active
-            (Spanned base (ast.ast-source-span 500 1 500 2)))]
+            (Spanned
+              base
+              (ast.ast-source-span
+                500
+                (if wide?
+                  65536
+                  1)
+                500
+                (if wide?
+                  65539
+                  2))))]
         (set!
           ok
           (and
@@ -3232,7 +3307,9 @@
 (test
   compiler-ast-installed-span-capture
   (tl_test.assert-true
-    (compiler-ast-installed-span-capture?)
+    (and
+      (compiler-ast-installed-span-capture? false)
+      (compiler-ast-installed-span-capture? true))
     "global span changes reach installed cells and retained captures"))
 
 (define (compiler-ast-spmd-presence-segments?) : bool
@@ -3277,10 +3354,398 @@
     (compiler-ast-spmd-presence-segments?)
     "SPMD presence covers live segment boundaries, truncation and isolated owners"))
 
+(define (compiler-ast-packed-overflow-slot [table : i64] [index : i64]) : i64
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (ast.ast-expr-packed-span-record-address table index)
+        : (Ptr i64)))))
+
+;; KIND 0 selects the canonical accessors and 1 the ReSpan accessors; both
+;; record kinds share one physical table layout.
+(define (compiler-ast-packed-record-eq?
+  [table : i64]
+  [kind : i64]
+  [index : i64]
+  [expected : ast.AstExprCanonicalSpanRecord]) : bool
+  (and
+    (=
+      (ast.ast-expr-semantic-node-from-span-slot
+        (if (= kind 0)
+          (+ index 1)
+          (- 0 (+ index 1)))
+        table
+        (+ index 1)
+        table
+        (+ index 1))
+      (cast
+        (if (= kind 0)
+          expected.semantic-node
+          expected.owner-node)
+        : i64))
+    (if (= kind 0)
+      (let
+        [actual : ast.AstExprCanonicalSpanRecord
+          (ast.ast-expr-canonical-record-get table index)]
+        (and
+          (= actual.semantic-node expected.semantic-node)
+          (= actual.owner-node expected.owner-node)
+          (ast.ast-source-span-eq? actual.span expected.span)))
+      (let
+        [actual : ast.AstExprReSpan
+          (ast.ast-expr-respan-record-get table index)]
+        (and
+          (= actual.view-node expected.semantic-node)
+          (= actual.semantic-node expected.owner-node)
+          (ast.ast-source-span-eq? actual.span expected.span))))))
+
+(define (compiler-ast-packed-record-write!
+  [table : i64]
+  [kind : i64]
+  [index : i64]
+  [value : ast.AstExprCanonicalSpanRecord]) : unit
+  (if (= kind 0)
+    (ast.ast-expr-canonical-record-set! table index value)
+    (ast.ast-expr-respan-record-set!
+      table
+      index
+      (ast.AstExprReSpan value.semantic-node value.owner-node value.span))))
+
+(define (compiler-ast-packed-span-records?) : bool
+  (let
+    [owner : arena.Arena (arena.make)]
+    [owner-handle : i64 (arena.raw-handle owner)]
+    [scratch : arena.Arena (arena.make)]
+    [cases : (Array ast.AstExprCanonicalSpanRecord 23)
+      (array
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 0 0 0 0))
+        (ast.AstExprCanonicalSpanRecord
+          17
+          31
+          (ast.AstSourceSpan 1 65535 15 65535))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 65536 16 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 256 65535))
+        (ast.AstExprCanonicalSpanRecord
+          17
+          31
+          (ast.AstSourceSpan 2147483647 65535 2147483647 65535))
+        (ast.AstExprCanonicalSpanRecord
+          -2147483648
+          2147483647
+          (ast.AstSourceSpan -2147483648 -2147483648 2147483647 2147483647))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 7 65535 6 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 -1 1 0))
+        (ast.AstExprCanonicalSpanRecord
+          268435455
+          268435455
+          (ast.AstSourceSpan 0 0 14 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 1 65536))
+        (ast.AstExprCanonicalSpanRecord -1 31 (ast.AstSourceSpan 0 0 0 0))
+        (ast.AstExprCanonicalSpanRecord
+          268435456
+          268435455
+          (ast.AstSourceSpan 0 0 0 0))
+        (ast.AstExprCanonicalSpanRecord
+          268435455
+          268435456
+          (ast.AstSourceSpan 0 0 0 0))
+        (ast.AstExprCanonicalSpanRecord
+          2147483647
+          -1
+          (ast.AstSourceSpan -1 0 14 1))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 1 16 1))
+        (ast.AstExprCanonicalSpanRecord
+          268435455
+          268435455
+          (ast.AstSourceSpan 1 65535 255 65535))
+        (ast.AstExprCanonicalSpanRecord
+          17
+          31
+          (ast.AstSourceSpan -2147483648 0 -2147483648 65535))
+        (ast.AstExprCanonicalSpanRecord
+          -1
+          -2147483648
+          (ast.AstSourceSpan 1 4095 255 4095))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 4096 1 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 1 4096))
+        (ast.AstExprCanonicalSpanRecord
+          -2147483648
+          2147483647
+          (ast.AstSourceSpan -2147483648 0 -2147483648 0))
+        ;; Line delta 255 and a reversed span overflow even with narrow columns.
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 1 0 256 0))
+        (ast.AstExprCanonicalSpanRecord 17 31 (ast.AstSourceSpan 7 0 6 0)))]
+    [tables : (Array i64 2)
+      (array
+        (ast.ast-expr-span-table-new owner-handle 64)
+        (ast.ast-expr-span-table-new owner-handle 64))]
+    [ok : bool
+      (and
+        (= (ast.ast-expr-semantic-node-from-span-slot 0 0 0 0 0) -1)
+        (= (ast.ast-expr-semantic-node-from-span-slot 1 0 0 0 0) -1)
+        (= (ast.ast-expr-semantic-node-from-span-slot -1 0 0 0 0) -1))]
+    ;; The current scratch must own no overflow payload, even across growth.
+    (in-arena
+      scratch
+      (for [kind (iterator.range 0 2)]
+        (let
+          [table : i64 (array-ref tables kind)]
+          (for [index (iterator.range 0 23)]
+            (compiler-ast-packed-record-write!
+              table
+              kind
+              index
+              (array-ref cases index)))
+          (for [boundary (iterator.range 0 4)]
+            (let
+              [index : i64
+                (match boundary
+                  [0 63]
+                  [1 64]
+                  [2 65535]
+                  [_ 65536])]
+              (ast.ast-expr-span-table-ensure! table owner-handle index)
+              (compiler-ast-packed-record-write!
+                table
+                kind
+                index
+                (array-ref cases 5))
+              (set!
+                ok
+                (and
+                  ok
+                  (compiler-ast-packed-record-eq?
+                    table
+                    kind
+                    index
+                    (array-ref cases 5))))))
+          (for [index (iterator.range 0 23)]
+            (set!
+              ok
+              (and
+                ok
+                (compiler-ast-packed-record-eq?
+                  table
+                  kind
+                  index
+                  (array-ref cases index)))))
+          (let
+            [wide : ast.AstExprCanonicalSpanRecord (array-ref cases 3)]
+            [compact : ast.AstExprCanonicalSpanRecord (array-ref cases 17)]
+            [_first : unit
+              (compiler-ast-packed-record-write! table kind 128 wide)]
+            [slot : i64 (compiler-ast-packed-overflow-slot table 128)]
+            (for [_repeat (iterator.range 0 200)]
+              (compiler-ast-packed-record-write! table kind 128 compact)
+              (compiler-ast-packed-record-write! table kind 129 wide)
+              (set!
+                ok
+                (and
+                  ok
+                  (= slot (compiler-ast-packed-overflow-slot table 129))
+                  (compiler-ast-packed-record-eq? table kind 128 compact)
+                  (compiler-ast-packed-record-eq? table kind 129 wide)))
+              (compiler-ast-packed-record-write! table kind 129 compact)
+              (compiler-ast-packed-record-write! table kind 128 wide)
+              (set!
+                ok
+                (and
+                  ok
+                  (= slot (compiler-ast-packed-overflow-slot table 128))
+                  (compiler-ast-packed-record-eq? table kind 128 wide)))
+              ;; A wide-to-wide rewrite keeps its slot instead of allocating.
+              (compiler-ast-packed-record-write!
+                table
+                kind
+                128
+                (array-ref cases 5))
+              (set!
+                ok
+                (and
+                  ok
+                  (= slot (compiler-ast-packed-overflow-slot table 128))
+                  (compiler-ast-packed-record-eq?
+                    table
+                    kind
+                    128
+                    (array-ref cases 5)))))))))
+    (arena.destroy-safe! scratch)
+    ;; Validate all exceptional values again after the decoy arena retires.
+    (for [kind (iterator.range 0 2)]
+      (for [index (iterator.range 0 23)]
+        (set!
+          ok
+          (and
+            ok
+            (compiler-ast-packed-record-eq?
+              (array-ref tables kind)
+              kind
+              index
+              (array-ref cases index))))))
+    (arena.destroy-safe! owner)
+    ok))
+
+(test
+  compiler-ast-packed-span-records
+  (tl_test.assert-true
+    (compiler-ast-packed-span-records?)
+    "packed spans preserve full coordinates, ids, growth and table-owned overflow reuse"))
+
+(test
+  compiler-ast-span-record-physical-storage
+  (let
+    [owner : arena.Arena (arena.make)]
+    [handle : i64 (arena.raw-handle owner)]
+    [before : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes handle)]
+    [_segment : i64 (ast.ast-expr-span-segment-new handle 64)]
+    [used : i64
+      (-
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes handle)
+        before)]
+    (arena.destroy-safe! owner)
+    (tl_test.assert-true
+      (and (>= used 1024) (< used 1200))
+      "64 compact records fit 16-byte storage plus its array header")))
+
+;; `ty-node-persist`: every variant comes back equal to its source (children
+;; compared as plain ids, so distinct field values catch a swapped or dropped
+;; field), and each of the five owning variants gets a fresh payload list, so
+;; writing the copy's list leaves the source alone.
+(define (compiler-ast-type-list-of [a : i64] [b : i64]) : ast.AstTypeList
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (set! (array-ref slots 0) a)
+    (set! (array-ref slots 1) b)
+    (ast.AstTypeList slots 2)))
+
+(define (compiler-ast-lifetime-list-of [a : i64]) : ast.AstLifetimeList
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref slots 0) a)
+    (ast.AstLifetimeList slots 1)))
+
+(define (compiler-ast-type-clone-same? [ty : ast.AstType]) : bool
+  (let
+    [copy : ast.AstType (ast.ty-node-persist (& ty))]
+    (ast.ty-node-shallow-value-eq? ty copy)))
+
+;; The payload storage of an owning variant; empty for every other variant.
+(define (compiler-ast-payload-slots [ty : ast.AstType]) : (__tl_dyn-array i64)
+  (match ty
+    [(Func args _)
+      (let
+        [list : ast.AstTypeList (deref args)]
+        list.slots)]
+    [(Tuple args)
+      (let
+        [list : ast.AstTypeList (deref args)]
+        list.slots)]
+    [(EnumArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [(StructArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [(VarArgs _ lifetimes)
+      (let
+        [list : ast.AstLifetimeList (deref lifetimes)]
+        list.slots)]
+    [_ (__tl_make-array i64 0)]))
+
+;; A write to the copy's first payload slot must not reach the source, whose
+;; first slot is never 99.
+(define (compiler-ast-type-copy-owns-payload? [source : ast.AstType]) : bool
+  (let
+    [copy-slots : (__tl_dyn-array i64)
+      (compiler-ast-payload-slots (ast.ty-node-persist (& source)))]
+    (set! (array-ref copy-slots 0) 99)
+    (let
+      [source-slots : (__tl_dyn-array i64) (compiler-ast-payload-slots source)]
+      (and
+        (= (array-ref copy-slots 0) 99)
+        (not (= (array-ref source-slots 0) 99))))))
+
+(define (compiler-ast-type-clone?) : bool
+  (let
+    [every-shape? : bool
+      (and
+        (compiler-ast-type-clone-same? (I64))
+        (compiler-ast-type-clone-same? (I32))
+        (compiler-ast-type-clone-same? (I16))
+        (compiler-ast-type-clone-same? (I8))
+        (compiler-ast-type-clone-same? (U64))
+        (compiler-ast-type-clone-same? (U32))
+        (compiler-ast-type-clone-same? (U16))
+        (compiler-ast-type-clone-same? (U8))
+        (compiler-ast-type-clone-same? (F64))
+        (compiler-ast-type-clone-same? (F32))
+        (compiler-ast-type-clone-same? (Bool))
+        (compiler-ast-type-clone-same? (Char))
+        (compiler-ast-type-clone-same? (String))
+        (compiler-ast-type-clone-same? (Str))
+        (compiler-ast-type-clone-same? (Bytes))
+        (compiler-ast-type-clone-same? (Unit))
+        (compiler-ast-type-clone-same? (Never))
+        (compiler-ast-type-clone-same? (Expr))
+        (compiler-ast-type-clone-same? (ExprList))
+        (compiler-ast-type-clone-same?
+          (Func (box (compiler-ast-type-list-of 21 22)) 23))
+        (compiler-ast-type-clone-same?
+          (Tuple (box (compiler-ast-type-list-of 24 25))))
+        (compiler-ast-type-clone-same? (Array 26 27))
+        (compiler-ast-type-clone-same? (DynArray 28))
+        (compiler-ast-type-clone-same? (Box 29))
+        (compiler-ast-type-clone-same? (Region 30 31))
+        (compiler-ast-type-clone-same? (Ref 32 33))
+        (compiler-ast-type-clone-same? (MutRef 34 35))
+        (compiler-ast-type-clone-same? (Enum 36))
+        (compiler-ast-type-clone-same?
+          (EnumArgs 37 (box (compiler-ast-lifetime-list-of 38))))
+        (compiler-ast-type-clone-same? (Struct 39))
+        (compiler-ast-type-clone-same?
+          (StructArgs 40 (box (compiler-ast-lifetime-list-of 41))))
+        (compiler-ast-type-clone-same? (Var 42))
+        (compiler-ast-type-clone-same?
+          (VarArgs 43 (box (compiler-ast-lifetime-list-of 44))))
+        (compiler-ast-type-clone-same? (Ptr 45))
+        (compiler-ast-type-clone-same? (MutPtr 46))
+        (compiler-ast-type-clone-same? (Slice 47))
+        (compiler-ast-type-clone-same? (CFunc 48 (Nullable)))
+        (compiler-ast-type-clone-same? (CFunc 49 (NonNull)))
+        (compiler-ast-type-clone-same? (CFunc 50 (UnsafeNullable)))
+        (compiler-ast-type-clone-same? (CFunc 51 (UnsafeNonNull)))
+        (compiler-ast-type-clone-same? (Invalidate 52 53)))]
+    (and
+      every-shape?
+      (compiler-ast-type-copy-owns-payload?
+        (Func (box (compiler-ast-type-list-of 11 12)) 13))
+      (compiler-ast-type-copy-owns-payload?
+        (Tuple (box (compiler-ast-type-list-of 14 15))))
+      (compiler-ast-type-copy-owns-payload?
+        (EnumArgs 16 (box (compiler-ast-lifetime-list-of 17))))
+      (compiler-ast-type-copy-owns-payload?
+        (StructArgs 18 (box (compiler-ast-lifetime-list-of 19))))
+      (compiler-ast-type-copy-owns-payload?
+        (VarArgs 20 (box (compiler-ast-lifetime-list-of 21)))))))
+
+(test
+  compiler-ast-type-clone
+  (tl_test.assert-true
+    (compiler-ast-type-clone?)
+    "ty-node-persist copies every shape and owns fresh payload storage"))
+
 (define (main) : i64
   (unless (compiler-ast-spmd-presence-segments?) (return 32))
   (unless
-    (compiler-ast-installed-span-capture?)
+    (compiler-ast-packed-span-records?)
+    (io.panic "compiler-ast-packed-span-records failed"))
+  (unless
+    (and
+      (compiler-ast-installed-span-capture? false)
+      (compiler-ast-installed-span-capture? true))
     (io.panic "compiler-ast-installed-span-capture failed"))
   (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
   (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))

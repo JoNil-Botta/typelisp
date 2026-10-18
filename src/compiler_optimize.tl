@@ -2010,7 +2010,7 @@
         ;; The self edge.
         (unless
           bad
-          (match (ir.compiler-ir-instr-seq-ref instrs (- n 1))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- n 1))
             [(Branch cond t f)
               (if (and (= t label) (not (= f label)))
                 (begin
@@ -2963,24 +2963,14 @@
 
 (define (opt-collect-phi-uses-array
   [items : (__tl_dyn-array i64)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : unit
-  (let
-    [phi-inputs-at-2900-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-2900-3.len 0)
-      unit
-      (let
-        [phi-input-at-2900-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2900-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-2900-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-2900-3.slots
-            (+ phi-inputs-at-2900-3.start 1)
-            (- phi-inputs-at-2900-3.len 1))]
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view items)
-          value)
-        (opt-collect-phi-uses-array items rest)))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : unit
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var id)
+          (opt-used-array-add (compiler-opt-global-shared-view items) id)]
+        [_ unit]))))
 
 ;; Same tag-chain economics as `opt-instr-def-var` (see the note there): this
 ;; `match` lowers to a linear compare chain, so arm position is cost, and
@@ -3142,22 +3132,11 @@
 
 (define (opt-uncount-phi-uses-array
   [items : (&mut items (__tl_dyn-array i64))]
-  [inputs : ir.CompilerIrPhiInputSeq]) : unit
-  (let
-    [phi-inputs-at-3279-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-3279-3.len 0)
-      unit
-      (let
-        [phi-input-at-3279-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-3279-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-3279-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-3279-3.slots
-            (+ phi-inputs-at-3279-3.start 1)
-            (- phi-inputs-at-3279-3.len 1))]
-        (opt-uncount-value-uses-array items (& value))
-        (opt-uncount-phi-uses-array items rest)))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : unit
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (opt-uncount-value-uses-array items (& input.value)))))
 
 (define (opt-uncount-instr-uses-array
   [items : (&mut items (__tl_dyn-array i64))]
@@ -3191,9 +3170,9 @@
 
 (define (opt-collect-instr-seq-uses-array
   [items : (__tl_dyn-array i64)]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : unit
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [slots (& instrs.slots)]
     [count : i64 instrs.len]
     (for [index (iterator.range 0 count)]
       (opt-collect-instr-uses-array
@@ -7206,42 +7185,23 @@
   (and (= alabel blabel) (opt-value-eq av bv)))
 
 (define (opt-phi-input-seq-eq
-  [a : ir.CompilerIrPhiInputSeq]
-  [b : ir.CompilerIrPhiInputSeq]) : bool
-  (let
-    [phi-inputs-at-6661-3 : ir.CompilerIrPhiInputSeq a]
-    (if (<= phi-inputs-at-6661-3.len 0)
-      (let
-        [phi-inputs-at-6663-7 : ir.CompilerIrPhiInputSeq b]
-        (if (<= phi-inputs-at-6663-7.len 0)
-          true
-          false))
-      (let
-        [phi-input-at-6661-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-6661-3 0)]
-        [av : ir.CompilerIrValue phi-input-at-6661-3.value]
-        [alabel : i64 phi-input-at-6661-3.label]
-        [at : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-6661-3.slots
-            (+ phi-inputs-at-6661-3.start 1)
-            (- phi-inputs-at-6661-3.len 1))]
-        [phi-inputs-at-6667-7 : ir.CompilerIrPhiInputSeq b]
-        (if (<= phi-inputs-at-6667-7.len 0)
-          false
-          (let
-            [phi-input-at-6667-7
-              (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-6667-7 0)]
-            [bv : ir.CompilerIrValue phi-input-at-6667-7.value]
-            [blabel : i64 phi-input-at-6667-7.label]
-            [bt : ir.CompilerIrPhiInputSeq
-              (ir.CompilerIrPhiInputSeq
-                phi-inputs-at-6667-7.slots
-                (+ phi-inputs-at-6667-7.start 1)
-                (- phi-inputs-at-6667-7.len 1))]
-            (and
-              (opt-phi-input-eq (& av) alabel (& bv) blabel)
-              (opt-phi-input-seq-eq at bt))))))))
+  [a : (& a ir.CompilerIrPhiInputSeq)]
+  [b : (& b ir.CompilerIrPhiInputSeq)]) : bool
+  (if (not (= a.len b.len))
+    false
+    (begin
+      (for [index (iterator.range 0 a.len)]
+        (let
+          [left (ir.compiler-ir-phi-input-seq-borrow a index)]
+          [right (ir.compiler-ir-phi-input-seq-borrow b index)]
+          (unless
+            (opt-phi-input-eq
+              (& left.value)
+              left.label
+              (& right.value)
+              right.label)
+            (return false))))
+      true)))
 
 (define (opt-switch-case-eq
   [a : (& ir.CompilerIrSwitchCase)]
@@ -8498,7 +8458,8 @@
         env
         group
         index
-        (ir.compiler-ir-value-seq-ref words index))
+        (ir.compiler-ir-clone-value
+          (ir.compiler-ir-value-seq-borrow words index)))
       group
       (+ index 1)
       words)))
@@ -11533,8 +11494,8 @@
 
 (define (opt-def-counts-instr!
   [defs : (&mut defs (__tl_dyn-array i64))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var (& instr))
+  [instr : (& instr ir.CompilerIrInstr)]) : unit
+  (match (opt-instr-def-var instr)
     [(Some dst)
       (if (and (>= dst 0) (< dst (array-length defs)))
         (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
@@ -12008,27 +11969,17 @@
 (define (opt-verify-phi-input-uses
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
   [doms : (& doms OptDomInfo)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : ResultCompilerOptimizeVerify
-  (let
-    [phi-inputs-at-12652-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-12652-3.len 0)
-      (Ok)
-      (let
-        [phi-input-at-12652-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-12652-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-12652-3.value]
-        [pred-label : i64 phi-input-at-12652-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-12652-3.slots
-            (+ phi-inputs-at-12652-3.start 1)
-            (- phi-inputs-at-12652-3.len 1))]
-        (match value
-          [(Var var)
-            (let
-              [_ (try (opt-verify-var-use-on-edge defs doms var pred-label))]
-              (opt-verify-phi-input-uses defs doms rest))]
-          [_ (opt-verify-phi-input-uses defs doms rest)])))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : ResultCompilerOptimizeVerify
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var var)
+          (let
+            [_ (try (opt-verify-var-use-on-edge defs doms var input.label))]
+            unit)]
+        [_ unit])))
+  (Ok))
 
 (define (opt-verify-two
   [a : (& ResultCompilerOptimizeVerify)]
@@ -12164,53 +12115,38 @@
       (+= p 1))
     (Ok)))
 
-(define (opt-phi-input-labels [inputs : ir.CompilerIrPhiInputSeq]) : OptLabelSet
+(define (opt-phi-input-labels [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptLabelSet
+  ;; Last input first, as the set has always been built.
   (let
-    [phi-inputs-at-13106-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-13106-3.len 0)
-      (Nil)
-      (let
-        [phi-input-at-13106-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-13106-3 0)]
-        [label : i64 phi-input-at-13106-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-13106-3.slots
-            (+ phi-inputs-at-13106-3.start 1)
-            (- phi-inputs-at-13106-3.len 1))]
-        (opt-label-add (opt-phi-input-labels rest) label)))))
+    [labels : OptLabelSet (Nil)]
+    [index : i64 (- inputs.len 1)]
+    (while (>= index 0)
+      (set!
+        labels
+        (opt-label-add
+          labels
+          (ir.compiler-ir-phi-input-seq-borrow inputs index).label))
+      (-= index 1))
+    labels))
 
 (define (opt-phi-input-labels-unique-from?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [seen : OptLabelSet]) : bool
   (let
-    [phi-inputs-at-13116-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-13116-3.len 0)
-      true
+    [labels : OptLabelSet seen]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-13116-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-13116-3 0)]
-        [label : i64 phi-input-at-13116-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-13116-3.slots
-            (+ phi-inputs-at-13116-3.start 1)
-            (- phi-inputs-at-13116-3.len 1))]
-        (if (opt-label-contains seen label)
-          false
-          (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))))))
+        [label : i64 (ir.compiler-ir-phi-input-seq-borrow inputs index).label]
+        (when (opt-label-contains labels label) (return false))
+        (set! labels (opt-label-add labels label))))
+    true))
 
 (define (opt-phi-input-labels-match?
-  [inputs : (& ir.CompilerIrPhiInputSeq)]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [preds : OptLabelSet]) : bool
   (and
-    (opt-phi-input-labels-unique-from?
-      (owned_view.compiler-owned-reference-shared-view inputs)
-      (Nil))
-    (opt-label-set-eq?
-      (opt-phi-input-labels
-        (owned_view.compiler-owned-reference-shared-view inputs))
-      preds)))
+    (opt-phi-input-labels-unique-from? inputs (Nil))
+    (opt-label-set-eq? (opt-phi-input-labels inputs) preds)))
 
 ;; The values a two-input phi receives along its edges from `first` and
 ;; `second`, in that order, when those two edges are exactly its inputs.
@@ -15696,14 +15632,19 @@
             unit
             (for [index (iterator.range 0 words.len)]
               (let
-                [value (ir.compiler-ir-value-seq-ref words index)]
+                [value (ir.compiler-ir-value-seq-borrow words index)]
                 (if (and
                   (opt-copy-safe-source? value)
                   (not (opt-value-is-var? value group))
                   (not (opt-addr-taken-value? addr-taken value)))
                   (opt_global_fact_vec.push-ref!
                     items
-                    (OptGlobalFact.PackWord group index value block-id pos))
+                    (OptGlobalFact.PackWord
+                      group
+                      index
+                      (ir.compiler-ir-clone-value value)
+                      block-id
+                      pos))
                   unit))))]
         [_ unit])]
     [_
@@ -17612,37 +17553,29 @@
 
 (define (opt-loop-preheaders-phi-outside-values-compatible?
   [outside : OptLabelSet]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [seen : (& ir.CompilerIrMaybeValue)]) : bool
+  ;; Every input arriving from outside must carry one value: `seen`'s, or else
+  ;; the first such input's.
   (let
-    [phi-inputs-at-19481-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-19481-3.len 0)
-      true
+    [first : i64 -1]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-19481-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-19481-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-19481-3.value]
-        [label : i64 phi-input-at-19481-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-19481-3.slots
-            (+ phi-inputs-at-19481-3.start 1)
-            (- phi-inputs-at-19481-3.len 1))]
-        (if (opt-label-contains outside label)
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (opt-label-contains outside input.label)
           (match seen
+            [(Some value)
+              (unless (opt-value-eq value (& input.value)) (return false))]
             [(No)
-              (opt-loop-preheaders-phi-outside-values-compatible?
-                outside
-                rest
-                (& (Some value)))]
-            [(Some first)
-              (and
-                (opt-value-eq (& first) (& value))
-                (opt-loop-preheaders-phi-outside-values-compatible?
-                  outside
-                  rest
-                  seen))])
-          (opt-loop-preheaders-phi-outside-values-compatible? outside rest seen))))))
+              (if (< first 0)
+                (set! first index)
+                (let
+                  [head (ir.compiler-ir-phi-input-seq-borrow inputs first)]
+                  (unless
+                    (opt-value-eq (& head.value) (& input.value))
+                    (return false))))]))))
+    true))
 
 (define (opt-loop-preheaders-header-instr-compatible?
   [outside : OptLabelSet]
@@ -18747,13 +18680,13 @@
     (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
       [(No) (No)]
       [(Some recs)
-        (match (ir.compiler-ir-instr-seq-ref phis index)
+        (match (ir.compiler-ir-instr-seq-borrow phis index)
           [(Phi dst inputs ty)
             (match (opt-phi-edge-values (& inputs) preheader latch)
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value ty)
+                    (Rec dst pre-value latch-value (ast.ty-node-persist ty))
                     recs))]
               [(No) (No)])]
           [_ (No)])])))
@@ -18846,7 +18779,7 @@
                 (if (not
                   (opt-loop-rotation-header-prefix-ok? instrs phi-end last))
                   (No)
-                  (match (ir.compiler-ir-instr-seq-ref instrs last)
+                  (match (ir.compiler-ir-instr-seq-borrow instrs last)
                     [(Branch cond-value true-label false-label)
                       (opt-rotate-ssa-shape-from-branch
                         (& instrs)
@@ -18856,7 +18789,7 @@
                         preheader
                         latch
                         body
-                        cond-value
+                        (ir.compiler-ir-clone-value cond-value)
                         true-label
                         false-label)]
                     [_ (No)])))))])]))
@@ -18951,7 +18884,7 @@
       (ir.compiler-ir-block-list-seq
         (owned_view.compiler-owned-reference-shared-view blocks))]
     (for [i (iterator.range 0 seq.len)]
-      (match (ir.compiler-ir-block-seq-ref seq i)
+      (match (ir.compiler-ir-block-seq-borrow seq i)
         [(Block label instrs)
           (unless
             (= label header)
@@ -19032,7 +18965,7 @@
       (ir.compiler-ir-block-list-seq
         (owned_view.compiler-owned-reference-shared-view blocks))]
     (for [i (iterator.range 0 seq.len)]
-      (match (ir.compiler-ir-block-seq-ref seq i)
+      (match (ir.compiler-ir-block-seq-borrow seq i)
         [(Block label instrs)
           (unless
             (opt-label-contains body label)
@@ -19044,43 +18977,28 @@
 ;; position is the label on the input's edge.
 (define (opt-rotate-ssa-class-phi-uses
   [set : opt_i64_i64_map.Map]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [doms : (& doms OptDomInfo)]
   [body : OptLabelSet]
   [exit-label : i64]
   [body-label : i64]
   [want : i64]) : opt_i64_i64_map.Map
   (let
-    [phi-inputs-at-21071-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-21071-3.len 0)
-      set
+    [out : opt_i64_i64_map.Map set]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-21071-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-21071-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-21071-3.value]
-        [label : i64 phi-input-at-21071-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-21071-3.slots
-            (+ phi-inputs-at-21071-3.start 1)
-            (- phi-inputs-at-21071-3.len 1))]
-        (opt-rotate-ssa-class-phi-uses
-          (if (=
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (=
             (opt-rotate-ssa-position-class
               doms
               body
               exit-label
               body-label
-              label)
+              input.label)
             want)
-            (opt-collect-value-uses set (& value))
-            set)
-          rest
-          doms
-          body
-          exit-label
-          body-label
-          want)))))
+          (set! out (opt-collect-value-uses out (& input.value))))))
+    out))
 
 (define (opt-rotate-ssa-class-instr-uses
   [set : opt_i64_i64_map.Map]
@@ -21285,7 +21203,8 @@
 ;; already carries this classification on the callee identity --
 ;; compiler-ir-runtime-control-flow-id? IS the recognized set, and giving a
 ;; direct call the `ControlFlow` effect is the only thing it does -- so every
-;; consumer here asks that one predicate instead of re-deriving a name set.
+;; consumer here asks that classification (opt-direct-call-effect) instead of
+;; re-deriving a name set.
 ;; Ordinary direct callees classify Unknown; the memory-classified runtime
 ;; helpers classify MemoryRead/MemoryWrite.
 ;;
@@ -21313,7 +21232,9 @@
 ;; over it. It is a call boundary in the emitted asm and in nothing the
 ;; interlock is pricing.
 (define (opt-direct-call-noreturn? [name : i64]) : bool
-  (ir.compiler-ir-runtime-control-flow-id? name))
+  (match (opt-direct-call-effect name)
+    [(ControlFlow) true]
+    [_ false]))
 
 ;; Writes no memory at all -- the fact the store summaries are asking for.
 (define (opt-direct-call-memory-clean?
@@ -21386,7 +21307,7 @@
     (opt-licm-store-summary-empty)
     (if (opt-direct-call-header-clean? direct-call-clean name)
       (opt-licm-store-summary-element-only-call)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(MemoryRead) (opt-licm-store-summary-empty)]
         [(MemoryWrite) (opt-licm-store-summary-header-or-unknown-store)]
         [_ (opt-licm-store-summary-call-or-unknown)]))))
@@ -21593,31 +21514,22 @@
 
 (define (opt-licm-phi-root
   [env : (& env OptLicmRootEnv)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [found : OptMaybeLicmRoot]) : OptMaybeLicmRoot
   (let
-    [phi-inputs-at-23292-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-23292-3.len 0)
-      found
+    [agreed : OptMaybeLicmRoot found]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-23292-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-23292-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-23292-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-23292-3.slots
-            (+ phi-inputs-at-23292-3.start 1)
-            (- phi-inputs-at-23292-3.len 1))]
-        [root : OptLicmRoot (opt-licm-root-of-value env value)]
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        [root : OptLicmRoot (opt-licm-root-of-value env (& input.value))]
         (match root
-          [(NoRoot) (No)]
+          [(NoRoot) (return (No))]
           [_
-            (match found
-              [(No) (opt-licm-phi-root env rest (Some root))]
+            (match agreed
+              [(No) (set! agreed (Some root))]
               [(Some previous)
-                (if (opt-licm-root-eq? previous root)
-                  (opt-licm-phi-root env rest found)
-                  (No))])])))))
+                (unless (opt-licm-root-eq? previous root) (return (No)))])])))
+    agreed))
 
 ;; --- whole-program return-alias table ---------------------------------------
 ;;
@@ -21725,7 +21637,7 @@
             -2)]
         (if (< found 0)
           -1
-          (match (ir.compiler-ir-param-seq-ref (& params) found)
+          (match (ir.compiler-ir-param-seq-borrow (& params) found)
             [(Param _ _ var)
               (if (opt-blocks-every?
                 blocks
@@ -24007,14 +23919,14 @@
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (for [cursor (iterator.range 0 count)]
-          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(BoundsCheck check-index length _)
               (opt-licm-deref-row!
                 (compiler-opt-global-shared-view sink)
                 defs
                 sources
                 (& check-index)
-                length
+                (ir.compiler-ir-clone-value length)
                 id
                 cursor)]
             [(Branch cond true-label false-label)
@@ -25157,14 +25069,14 @@
         (match (opt-cfg-index-block index pred)
           [(Some (Block _ instrs))
             (if (> (ir.compiler-ir-instr-seq-count instrs) 0)
-              (match (ir.compiler-ir-instr-seq-ref
+              (match (ir.compiler-ir-instr-seq-borrow
                 instrs
                 (- (ir.compiler-ir-instr-seq-count instrs) 1))
                 [(Branch cond yes no)
                   (match (opt-licm-deref-resolve
                     facts.defs
                     facts.sources
-                    cond
+                    (ir.compiler-ir-clone-value cond)
                     (opt-licm-deref-fuel))
                     [(Var var)
                       (match (opt-licm-deref-def facts.defs facts.sources var)
@@ -26282,7 +26194,7 @@
          (Store _ _ _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
          (Return _))
       true]
-    [(Call _ name _ _) (ir.compiler-ir-runtime-control-flow-id? name)]
+    [(Call _ name _ _) (opt-direct-call-noreturn? name)]
     [_ false]))
 
 (define (opt-licm-return-staging-block?
@@ -29354,7 +29266,7 @@
   [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : OptMaybeLicmUnswitchShape
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Branch cond true-label false-label)
         (let
           [candidate? : bool
@@ -29410,7 +29322,7 @@
                   (ir.compiler-ir-block-list-empty)
                   label
                   index
-                  cond
+                  (ir.compiler-ir-clone-value cond)
                   true-label
                   false-label
                   (Nil))))))]
@@ -29625,7 +29537,7 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (for [position (iterator.range 0 params.len)]
-    (match (ir.compiler-ir-param-seq-ref params position)
+    (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param _ ty var)
         (let
           [fresh : i64 (array-ref cell 0)]
@@ -29633,7 +29545,7 @@
           (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
           (ir.compiler-ir-instr-builder-push!
             builder
-            (ir.CompilerIrInstr.Mov fresh (Var var) ty))
+            (ir.CompilerIrInstr.Mov fresh (Var var) (ast.ty-node-persist ty)))
           unit)])))
 
 (define (opt-licm-unswitch-clone-param-moves!
@@ -29686,13 +29598,13 @@
           (opt-licm-unswitch-same-cond-branch?
             (compiler-opt-global-shared-view shape)
             (ir.compiler-ir-instr-seq-borrow instrs cursor)))
-          (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+          (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
             [(Branch _ true-label _) (ir.CompilerIrInstr.Jump true-label)]
             [_ (ir.CompilerIrInstr.Jump shape.true-label)])
           ;; Every collected conjunct holds on this side, so each chain
           ;; block's Branch is the Jump it always takes here.
           (if (opt-label-contains shape.chain-labels label)
-            (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+            (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
               [(Branch _ true-label _) (ir.CompilerIrInstr.Jump true-label)]
               [_ (ir.compiler-ir-instr-seq-ref instrs cursor)])
             (ir.compiler-ir-instr-seq-ref instrs cursor)))))
@@ -30052,22 +29964,11 @@
                 [_ unit]))
             true)])]))
 
-(define (opt-licm-predicate-phi-input-of
-  [inputs : (& ir.CompilerIrPhiInputSeq)]
-  [label : i64]) : ir.CompilerIrMaybeValue
-  (let
-    [n : i64 inputs.len]
-    (for [i (iterator.range 0 n)]
-      (let
-        [input (ir.compiler-ir-phi-input-seq-ref inputs i)]
-        (when (= input.label label) (return (Some input.value)))))
-    (No)))
-
 (define (opt-licm-predicate-phi-inputs-agree?
   [inputs : (& ir.CompilerIrPhiInputSeq)]
   [head : i64]
   [fold : OptLabelSet]) : bool
-  (match (opt-licm-predicate-phi-input-of inputs head)
+  (match (opt-thread-phi-input-value inputs head)
     [(No) false]
     [(Some head-value)
       (let
@@ -33114,36 +33015,24 @@
 ;; the loop with a var carried round the back edge, so a function whose phis
 ;; never pair a var with a second input has no monotone seed anywhere.
 (define (opt-flag-exit-phi-inputs-seedable?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [var? : bool]
   [count : i64]) : bool
   (let
-    [phi-inputs-at-31400-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-31400-3.len 0)
-      (and var? (>= count 2))
+    [any-var? : bool var?]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-31400-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-31400-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-31400-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-31400-3.slots
-            (+ phi-inputs-at-31400-3.start 1)
-            (- phi-inputs-at-31400-3.len 1))]
-        (opt-flag-exit-phi-inputs-seedable?
-          rest
-          (or
-            var?
-            (match value
-              [(Var _) true]
-              [_ false]))
-          (+ count 1))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (match (& input.value)
+          [(Var _) (set! any-var? true)]
+          [_ unit])))
+    (and any-var? (>= (+ count inputs.len) 2))))
 
 (define (opt-flag-exit-instrs-have-candidate?
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (when
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(Phi _ inputs _) (opt-flag-exit-phi-inputs-seedable? inputs false 0)]
         [_ false])
       (return true))
@@ -33244,35 +33133,18 @@
   [def-label : (& def-label (__tl_dyn-array i64))]
   [flag : i64]
   [web : (&mut web (__tl_dyn-array i64))]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [fuel : i64]) : bool
-  (let
-    [phi-inputs-at-31567-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-31567-3.len 0)
-      false
-      (let
-        [phi-input-at-31567-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-31567-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-31567-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-31567-3.slots
-            (+ phi-inputs-at-31567-3.start 1)
-            (- phi-inputs-at-31567-3.len 1))]
-        (or
-          (match value
-            [(Var var)
-              (opt-flag-exit-web? blocks body index def-label flag web var fuel)]
-            [_ false])
-          (opt-flag-exit-web-inputs?
-            blocks
-            body
-            index
-            def-label
-            flag
-            web
-            rest
-            fuel))))))
+  (for [at (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
+      (match (& input.value)
+        [(Var var)
+          (when
+            (opt-flag-exit-web? blocks body index def-label flag web var fuel)
+            (return true))]
+        [_ unit])))
+  false)
 
 (define (opt-flag-exit-web?
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -33381,42 +33253,23 @@
   [flag : i64]
   [seed : (& ir.CompilerIrValue)]
   [at-label : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [closure : (&mut closure (__tl_dyn-array i64))]
   [web : (&mut web (__tl_dyn-array i64))]
   [bad : (&mut bad (__tl_dyn-array i64))]
   [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
   (let
-    [phi-inputs-at-31716-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-31716-3.len 0)
-      acc
+    [out : OptFlagExitEdgeList acc]
+    (for [at (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-31716-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-31716-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-31716-3.value]
-        [input-label : i64 phi-input-at-31716-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-31716-3.slots
-            (+ phi-inputs-at-31716-3.start 1)
-            (- phi-inputs-at-31716-3.len 1))]
-        (opt-flag-exit-walk-inputs
-          blocks
-          body
-          index
-          def-label
-          flag
-          seed
-          at-label
-          rest
-          closure
-          web
-          bad
-          (if (opt-value-eq (& value) seed)
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
+        (set!
+          out
+          (if (opt-value-eq (& input.value) seed)
             (begin
               (set! (array-ref bad 0) 1)
-              acc)
-            (match (compiler-opt-global-shared-view value)
+              out)
+            (match (& input.value)
               [(Var var)
                 (if (opt-flag-exit-web?
                   blocks
@@ -33438,20 +33291,21 @@
                     closure
                     web
                     bad
-                    acc)
+                    out)
                   (opt-flag-exit-record-clear!
-                    input-label
+                    input.label
                     at-label
-                    (& value)
+                    (& input.value)
                     bad
-                    acc))]
+                    out))]
               [_
                 (opt-flag-exit-record-clear!
-                  input-label
+                  input.label
                   at-label
-                  (& value)
+                  (& input.value)
                   bad
-                  acc)])))))))
+                  out)])))))
+    out))
 
 (define (opt-flag-exit-walk
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -34447,97 +34301,57 @@
         (opt-flag-exit-all-jump-only-to? blocks (opt-label-tail labels) merge))]))
 
 (define (opt-flag-exit-first-keyed-value
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [keys : OptLabelSet]) : ir.CompilerIrMaybeValue
-  (let
-    [phi-inputs-at-32906-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-32906-3.len 0)
-      (No)
-      (let
-        [phi-input-at-32906-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-32906-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-32906-3.value]
-        [label : i64 phi-input-at-32906-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-32906-3.slots
-            (+ phi-inputs-at-32906-3.start 1)
-            (- phi-inputs-at-32906-3.len 1))]
-        (if (opt-label-contains keys label)
-          (Some value)
-          (opt-flag-exit-first-keyed-value rest keys))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (opt-label-contains keys input.label)
+        (return (Some (clone input.value))))))
+  (No))
 
 (define (opt-flag-exit-keyed-any-closure?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [keys : OptLabelSet]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
-  (let
-    [phi-inputs-at-32919-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-32919-3.len 0)
-      false
-      (let
-        [phi-input-at-32919-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-32919-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-32919-3.value]
-        [label : i64 phi-input-at-32919-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-32919-3.slots
-            (+ phi-inputs-at-32919-3.start 1)
-            (- phi-inputs-at-32919-3.len 1))]
-        (or
-          (and
-            (opt-label-contains keys label)
-            (opt-flag-exit-closure-var? value closure))
-          (opt-flag-exit-keyed-any-closure? rest keys closure))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (and
+          (opt-label-contains keys input.label)
+          (opt-flag-exit-closure-var? (& input.value) closure))
+        (return true))))
+  false)
 
 (define (opt-flag-exit-keyed-all-closure?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [keys : OptLabelSet]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
-  (let
-    [phi-inputs-at-32937-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-32937-3.len 0)
-      true
-      (let
-        [phi-input-at-32937-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-32937-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-32937-3.value]
-        [label : i64 phi-input-at-32937-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-32937-3.slots
-            (+ phi-inputs-at-32937-3.start 1)
-            (- phi-inputs-at-32937-3.len 1))]
-        (and
-          (or
-            (not (opt-label-contains keys label))
-            (opt-flag-exit-closure-var? value closure))
-          (opt-flag-exit-keyed-all-closure? rest keys closure))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (unless
+        (or
+          (not (opt-label-contains keys input.label))
+          (opt-flag-exit-closure-var? (& input.value) closure))
+        (return false))))
+  true)
 
 (define (opt-flag-exit-keyed-all-eq?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [keys : OptLabelSet]
   [want : (& ir.CompilerIrValue)]) : bool
-  (let
-    [phi-inputs-at-32956-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-32956-3.len 0)
-      true
-      (let
-        [phi-input-at-32956-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-32956-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-32956-3.value]
-        [label : i64 phi-input-at-32956-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-32956-3.slots
-            (+ phi-inputs-at-32956-3.start 1)
-            (- phi-inputs-at-32956-3.len 1))]
-        (and
-          (or
-            (not (opt-label-contains keys label))
-            (opt-value-eq (& value) want))
-          (opt-flag-exit-keyed-all-eq? rest keys want))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (unless
+        (or
+          (not (opt-label-contains keys input.label))
+          (opt-value-eq (& input.value) want))
+        (return false))))
+  true)
 
 ;; Every phi of the merge block must give the same answer whichever of the
 ;; interchangeable exits a cleared path arrives on: either a closure var on all
@@ -34547,17 +34361,12 @@
   [keys : OptLabelSet]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
   (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    (match (ir.compiler-ir-instr-seq-borrow instrs pos)
       [(Phi _ inputs _)
         (unless
           (or
-            (opt-flag-exit-keyed-all-closure?
-              (compiler-opt-global-shared-view inputs)
-              keys
-              closure)
-            (match (opt-flag-exit-first-keyed-value
-              (compiler-opt-global-shared-view inputs)
-              keys)
+            (opt-flag-exit-keyed-all-closure? inputs keys closure)
+            (match (opt-flag-exit-first-keyed-value inputs keys)
               [(No) true]
               [(Some first) (opt-flag-exit-keyed-all-eq? inputs keys (& first))]))
           (return false))
@@ -34718,29 +34527,18 @@
 
 ;; --- C4/C7b: where the closure may be read ------------------------------------
 (define (opt-flag-exit-note-keyed-uses!
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [keys : OptLabelSet]
   [allowed : (__tl_dyn-array i64)]) : unit
-  (let
-    [phi-inputs-at-33168-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-33168-3.len 0)
-      unit
-      (let
-        [phi-input-at-33168-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-33168-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-33168-3.value]
-        [label : i64 phi-input-at-33168-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-33168-3.slots
-            (+ phi-inputs-at-33168-3.start 1)
-            (- phi-inputs-at-33168-3.len 1))]
-        (if (opt-label-contains keys label)
-          (opt-collect-value-uses-array
-            (compiler-opt-global-shared-view allowed)
-            value)
-          unit)
-        (opt-flag-exit-note-keyed-uses! rest keys allowed)))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (opt-label-contains keys input.label)
+        (match (& input.value)
+          [(Var id)
+            (opt-used-array-add (compiler-opt-global-shared-view allowed) id)]
+          [_ unit])))))
 
 (define (opt-flag-exit-defines-closure?
   [instr : (& instr ir.CompilerIrInstr)]
@@ -34982,14 +34780,10 @@
   [closure : (& closure (__tl_dyn-array i64))]) : bool
   (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (unless
-      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(Phi _ inputs _)
           (or
-            (not
-              (opt-flag-exit-keyed-any-closure?
-                (compiler-opt-global-shared-view inputs)
-                exits
-                closure))
+            (not (opt-flag-exit-keyed-any-closure? inputs exits closure))
             (opt-flag-exit-keyed-all-closure? inputs exits closure))]
         [_ true])
       (return false))
@@ -35310,7 +35104,7 @@
   [acc : OptFlagExitPhiFixes]) : OptFlagExitMaybePhiFixes
   (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
     (Some acc)
-    (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    (match (ir.compiler-ir-instr-seq-borrow instrs pos)
       [(Phi dst inputs _)
         (match (opt-thread-phi-input-value inputs arm-pred)
           [(No) (No)]
@@ -35692,38 +35486,28 @@
   [labels : (& labels (__tl_dyn-array i64))]
   [pred : i64]
   [len : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [want : (& ir.CompilerIrValue)]) : bool
-  (let
-    [phi-inputs-at-34317-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34317-3.len 0)
-      true
-      (let
-        [phi-input-at-34317-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-34317-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34317-3.value]
-        [label : i64 phi-input-at-34317-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34317-3.slots
-            (+ phi-inputs-at-34317-3.start 1)
-            (- phi-inputs-at-34317-3.len 1))]
-        (and
-          (or
-            (not
-              (opt-flag-exit-cleared-arrival?
-                (owned_view.compiler-owned-reference-shared-view ctx)
-                label))
-            (opt-flag-exit-agree-at?
-              ctx
-              pos
-              labels
-              pred
-              len
-              label
-              (& value)
-              want))
-          (opt-flag-exit-agree-inputs? ctx pos labels pred len rest want))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (unless
+        (or
+          (not
+            (opt-flag-exit-cleared-arrival?
+              (owned_view.compiler-owned-reference-shared-view ctx)
+              input.label))
+          (opt-flag-exit-agree-at?
+            ctx
+            pos
+            labels
+            pred
+            len
+            input.label
+            (& input.value)
+            want))
+        (return false))))
+  true)
 
 (define (opt-flag-exit-agree-phis?
   [ctx : (& OptFlagExitFixCtx)]
@@ -35733,12 +35517,10 @@
   [len : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
   (for [at (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs at)
+    (match (ir.compiler-ir-instr-seq-borrow instrs at)
       [(Phi _ inputs _)
         (unless
-          (match (opt-thread-phi-input-value
-            (compiler-opt-global-shared-view inputs)
-            ctx.arm-pred)
+          (match (opt-thread-phi-input-value inputs ctx.arm-pred)
             [(No) false]
             [(Some value)
               (match (opt-flag-exit-resolve
@@ -35868,60 +35650,39 @@
     (not (opt-dom-dominates? doms label label))))
 
 (define (opt-flag-exit-collect-inputs!
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [into : (__tl_dyn-array i64)]) : unit
-  (let
-    [phi-inputs-at-34504-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34504-3.len 0)
-      unit
-      (let
-        [phi-input-at-34504-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34504-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34504-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34504-3.slots
-            (+ phi-inputs-at-34504-3.start 1)
-            (- phi-inputs-at-34504-3.len 1))]
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view into)
-          value)
-        (opt-flag-exit-collect-inputs! rest into)))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var id)
+          (opt-used-array-add (compiler-opt-global-shared-view into) id)]
+        [_ unit]))))
 
 ;; A closure var on an edge out of the loop is already served by the literal
 ;; fold, which is cheaper than an exit phi, so it is not a read that needs one.
 (define (opt-flag-exit-xdom-inputs!
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [doms : (& doms OptDomInfo)]
   [exit-label : i64]
   [exits : OptLabelSet]
   [closure : (& closure (__tl_dyn-array i64))]
   [into : (__tl_dyn-array i64)]) : unit
-  (let
-    [phi-inputs-at-34525-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34525-3.len 0)
-      unit
-      (let
-        [phi-input-at-34525-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34525-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34525-3.value]
-        [label : i64 phi-input-at-34525-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34525-3.slots
-            (+ phi-inputs-at-34525-3.start 1)
-            (- phi-inputs-at-34525-3.len 1))]
-        (if (and
-          (opt-flag-exit-xdom? doms exit-label label)
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (and
+          (opt-flag-exit-xdom? doms exit-label input.label)
           (not
             (and
-              (opt-label-contains exits label)
-              (opt-flag-exit-closure-var? value closure))))
-          (opt-collect-value-uses-array
-            (compiler-opt-global-shared-view into)
-            value)
-          unit)
-        (opt-flag-exit-xdom-inputs! rest doms exit-label exits closure into)))))
+              (opt-label-contains exits input.label)
+              (opt-flag-exit-closure-var? (& input.value) closure))))
+        (match (& input.value)
+          [(Var id)
+            (opt-used-array-add (compiler-opt-global-shared-view into) id)]
+          [_ unit])))))
 
 (define (opt-flag-exit-outside-uses-instrs!
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -36025,33 +35786,21 @@
 ;; both. An exit whose edge carries no closure input at all is folded nowhere,
 ;; so it cannot be the exit that gets it wrong, and it drops out of the check.
 (define (opt-flag-exit-folded-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [exits : OptLabelSet]
   [closure : (& closure (__tl_dyn-array i64))]
   [acc : OptLabelSet]) : OptLabelSet
   (let
-    [phi-inputs-at-34704-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-34704-3.len 0)
-      acc
+    [folded : OptLabelSet acc]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-34704-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-34704-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-34704-3.value]
-        [label : i64 phi-input-at-34704-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-34704-3.slots
-            (+ phi-inputs-at-34704-3.start 1)
-            (- phi-inputs-at-34704-3.len 1))]
-        (opt-flag-exit-folded-inputs
-          rest
-          exits
-          closure
-          (if (and
-            (opt-label-contains exits label)
-            (opt-flag-exit-closure-var? value closure))
-            (opt-label-add acc label)
-            acc))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (and
+            (opt-label-contains exits input.label)
+            (opt-flag-exit-closure-var? (& input.value) closure))
+          (set! folded (opt-label-add folded input.label)))))
+    folded))
 
 (define (opt-flag-exit-folded-instrs
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -36066,7 +35815,7 @@
       (+ pos 1)
       exits
       closure
-      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(Phi _ inputs _)
           (opt-flag-exit-folded-inputs inputs exits closure acc)]
         [_ acc]))))
@@ -37162,7 +36911,7 @@
     [_ true]))
 
 (define (opt-flag-exit-seed-scan
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [body : (& body OptLoopBody)]
   [index : (& index OptCfgIndex)]
   [def-label : (& def-label (__tl_dyn-array i64))]
@@ -37171,45 +36920,31 @@
   [keep : ir.CompilerIrValue]
   [seed : i64]) : OptFlagExitSeed
   (let
-    [phi-inputs-at-35997-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-35997-3.len 0)
-      (if (and (= outside 1) (= inside 1))
-        (Some keep seed)
-        (No))
+    [outside-count : i64 outside]
+    [inside-count : i64 inside]
+    [kept : ir.CompilerIrValue keep]
+    [seed-var : i64 seed]
+    (for [at (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-35997-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-35997-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-35997-3.value]
-        [label : i64 phi-input-at-35997-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-35997-3.slots
-            (+ phi-inputs-at-35997-3.start 1)
-            (- phi-inputs-at-35997-3.len 1))]
-        (if (opt-loop-body-label-member? body index label)
-          (match value
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
+        (if (opt-loop-body-label-member? body index input.label)
+          (match (& input.value)
             [(Var var)
-              (opt-flag-exit-seed-scan
-                rest
-                body
-                index
-                def-label
-                outside
-                (+ inside 1)
-                keep
-                var)]
-            [_ (No)])
-          (if (opt-flag-exit-invariant-seed? value body index def-label)
-            (opt-flag-exit-seed-scan
-              rest
-              body
-              index
-              def-label
-              (+ outside 1)
-              inside
-              value
-              seed)
-            (No)))))))
+              (set! inside-count (+ inside-count 1))
+              (set! seed-var var)]
+            [_ (return (No))])
+          (if (opt-flag-exit-invariant-seed?
+            (& input.value)
+            body
+            index
+            def-label)
+            (begin
+              (set! outside-count (+ outside-count 1))
+              (set! kept (clone input.value)))
+            (return (No))))))
+    (if (and (= outside-count 1) (= inside-count 1))
+      (Some kept seed-var)
+      (No))))
 
 (define (opt-flag-exit-scan-header
   [blocks : (& ir.CompilerIrBlockList)]
@@ -37223,7 +36958,7 @@
   (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
       [here : OptFlagExitMaybePlan
-        (match (ir.compiler-ir-instr-seq-ref instrs pos)
+        (match (ir.compiler-ir-instr-seq-borrow instrs pos)
           [(Phi dst inputs ty)
             (match (let
               [body (opt-natural-loop-body-info loop)]
@@ -37447,7 +37182,7 @@
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
   (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (when
-      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(Phi _ inputs _)
           (match (opt-flag-exit-seed-scan
             inputs
@@ -37873,7 +37608,7 @@
                     (opt-lftr-def-index-seq-from latch-instrs next-var)]
                   (if (< step-index 0)
                     (No)
-                    (match (ir.compiler-ir-instr-seq-ref
+                    (match (ir.compiler-ir-instr-seq-borrow
                       latch-instrs
                       step-index)
                       [(Gep _ base offset gep-ty)
@@ -37893,7 +37628,7 @@
                                     phi-var
                                     seed-var
                                     next-var
-                                    gep-ty
+                                    (ast.ty-node-persist gep-ty)
                                     step
                                     step-index))
                                 (No))]
@@ -38689,19 +38424,6 @@
             (& (opt-cfg-filter-phi-inputs index block-id rest)))
           (opt-cfg-filter-phi-inputs index block-id rest))))))
 
-(define (opt-phi-input-count [inputs : ir.CompilerIrPhiInputSeq]) : i64
-  (let
-    [phi-inputs-at-37509-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-37509-3.len 0)
-      0
-      (let
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-37509-3.slots
-            (+ phi-inputs-at-37509-3.start 1)
-            (- phi-inputs-at-37509-3.len 1))]
-        (+ 1 (opt-phi-input-count rest))))))
-
 ;; A phi collapses when every input that is not the phi's own destination names
 ;; the SAME value -- LLVM's `simplifyPHINode` rule (llvm/lib/Analysis/
 ;; InstructionSimplify.cpp): "If all of the PHI's incoming values are the same
@@ -38726,35 +38448,25 @@
     [(Some seen) (opt-value-eq (& seen) value)]))
 
 (define (opt-phi-uniform-value-from
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [dst : i64]
   [found : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
   (let
-    [phi-inputs-at-37541-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-37541-3.len 0)
-      found
+    [agreed : ir.CompilerIrMaybeValue found]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-37541-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-37541-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-37541-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-37541-3.slots
-            (+ phi-inputs-at-37541-3.start 1)
-            (- phi-inputs-at-37541-3.len 1))]
-        (if (opt-value-is-var? value dst)
-          (opt-phi-uniform-value-from rest dst found)
-          (if (opt-phi-uniform-agrees? (& found) value)
-            (opt-phi-uniform-value-from rest dst (Some value))
-            (No)))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (unless
+          (opt-value-is-var? (& input.value) dst)
+          (if (opt-phi-uniform-agrees? (& agreed) (& input.value))
+            (set! agreed (Some (clone input.value)))
+            (return (No))))))
+    agreed))
 
 (define (opt-phi-uniform-value
   [inputs : (& ir.CompilerIrPhiInputSeq)]
   [dst : i64]) : ir.CompilerIrMaybeValue
-  (opt-phi-uniform-value-from
-    (owned_view.compiler-owned-reference-shared-view inputs)
-    dst
-    (No)))
+  (opt-phi-uniform-value-from inputs dst (No)))
 
 (define (opt-cfg-clean-instr
   [index : (& index OptCfgIndex)]
@@ -39071,7 +38783,7 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [pred-label : i64]) : bool
   (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+    (match (ir.compiler-ir-instr-seq-borrow instrs slot)
       [(Phi _ inputs _)
         (unless
           (match (opt-bool-branch-only-phi-input inputs)
@@ -40296,10 +40008,7 @@
         (and
           (if (= label old-label)
             true
-            (not
-              (opt-bool-branch-phi-input-has-label?
-                (owned_view.compiler-owned-reference-shared-view inputs)
-                label)))
+            (not (opt-bool-branch-phi-input-has-label? inputs label)))
           (opt-bool-branch-chain-phi-inputs-have-none-except?
             inputs
             (opt-label-tail labels)
@@ -40310,13 +40019,11 @@
   [old-label : i64]
   [new-preds : OptLabelSet]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
         (unless
           (and
-            (opt-bool-branch-phi-input-has-label?
-              (compiler-opt-global-shared-view inputs)
-              old-label)
+            (opt-bool-branch-phi-input-has-label? inputs old-label)
             (opt-bool-branch-chain-phi-inputs-have-none-except?
               (& inputs)
               new-preds
@@ -40584,82 +40291,44 @@
             (- remaining 1))
             [(Result final final-frame _) (Result final final-frame true)])]))))
 
-(define (opt-bool-branch-phi-inputs [inputs : ir.CompilerIrPhiInputSeq]) : OptBoolBranchPhiInputs
-  (let
-    [phi-inputs-at-39461-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-39461-3.len 0)
-      (No)
-      (let
-        [phi-input-at-39461-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39461-3 0)]
-        [first : ir.CompilerIrValue phi-input-at-39461-3.value]
-        [first-label : i64 phi-input-at-39461-3.label]
-        [first-rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-39461-3.slots
-            (+ phi-inputs-at-39461-3.start 1)
-            (- phi-inputs-at-39461-3.len 1))]
-        [phi-inputs-at-39463-7 : ir.CompilerIrPhiInputSeq first-rest]
-        (if (<= phi-inputs-at-39463-7.len 0)
-          (No)
-          (let
-            [phi-input-at-39463-7
-              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39463-7 0)]
-            [second : ir.CompilerIrValue phi-input-at-39463-7.value]
-            [second-label : i64 phi-input-at-39463-7.label]
-            [second-rest : ir.CompilerIrPhiInputSeq
-              (ir.CompilerIrPhiInputSeq
-                phi-inputs-at-39463-7.slots
-                (+ phi-inputs-at-39463-7.start 1)
-                (- phi-inputs-at-39463-7.len 1))]
-            [phi-inputs-at-39466-11 : ir.CompilerIrPhiInputSeq second-rest]
-            (if (<= phi-inputs-at-39466-11.len 0)
-              (Two first first-label second second-label)
-              (No))))))))
+(define (opt-bool-branch-phi-inputs
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptBoolBranchPhiInputs
+  (if (= inputs.len 2)
+    (let
+      [first (ir.compiler-ir-phi-input-seq-borrow inputs 0)]
+      [second (ir.compiler-ir-phi-input-seq-borrow inputs 1)]
+      (Two (clone first.value) first.label (clone second.value) second.label))
+    (No)))
 
 (define (opt-bool-branch-constant-inputs-acc
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [true-preds : OptLabelSet]
   [false-preds : OptLabelSet]
   [count : i64]) : OptBoolBranchConstantInputs
   (let
-    [phi-inputs-at-39479-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-39479-3.len 0)
-      (Some true-preds false-preds count)
+    [trues : OptLabelSet true-preds]
+    [falses : OptLabelSet false-preds]
+    [seen : i64 count]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-39479-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-39479-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-39479-3.value]
-        [label : i64 phi-input-at-39479-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-39479-3.slots
-            (+ phi-inputs-at-39479-3.start 1)
-            (- phi-inputs-at-39479-3.len 1))]
-        (if (or
-          (opt-label-contains true-preds label)
-          (opt-label-contains false-preds label))
-          (No)
-          (match value
-            [(Bool known)
-              (opt-bool-branch-constant-inputs-acc
-                rest
-                (if known
-                  (opt-label-add true-preds label)
-                  true-preds)
-                (if known
-                  false-preds
-                  (opt-label-add false-preds label))
-                (+ count 1))]
-            [_ (No)]))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (or
+            (opt-label-contains trues input.label)
+            (opt-label-contains falses input.label))
+          (return (No)))
+        (match (& input.value)
+          [(Bool known)
+            (if known
+              (set! trues (opt-label-add trues input.label))
+              (set! falses (opt-label-add falses input.label)))
+            (set! seen (+ seen 1))]
+          [_ (return (No))])))
+    (Some trues falses seen)))
 
 (define (opt-bool-branch-constant-inputs
   [inputs : (& ir.CompilerIrPhiInputSeq)]) : OptBoolBranchConstantInputs
-  (opt-bool-branch-constant-inputs-acc
-    (owned_view.compiler-owned-reference-shared-view inputs)
-    (Nil)
-    (Nil)
-    0))
+  (opt-bool-branch-constant-inputs-acc inputs (Nil) (Nil) 0))
 
 (define (opt-bool-branch-label-union [from : OptLabelSet] [into : OptLabelSet]) : OptLabelSet
   (match from
@@ -40706,24 +40375,13 @@
             (opt-label-tail preds))))]))
 
 (define (opt-bool-branch-phi-input-has-label?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [needle : i64]) : bool
-  (let
-    [phi-inputs-at-39557-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-39557-3.len 0)
-      false
-      (let
-        [phi-input-at-39557-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-39557-3 0)]
-        [label : i64 phi-input-at-39557-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-39557-3.slots
-            (+ phi-inputs-at-39557-3.start 1)
-            (- phi-inputs-at-39557-3.len 1))]
-        (if (= label needle)
-          true
-          (opt-bool-branch-phi-input-has-label? rest needle))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (when
+      (= (ir.compiler-ir-phi-input-seq-borrow inputs index).label needle)
+      (return true)))
+  false)
 
 (define (opt-bool-branch-phi-inputs-have-none?
   [inputs : (& ir.CompilerIrPhiInputSeq)]
@@ -40734,10 +40392,7 @@
       (let
         [label : i64 (opt-label-ref labels 0)]
         (and
-          (not
-            (opt-bool-branch-phi-input-has-label?
-              (owned_view.compiler-owned-reference-shared-view inputs)
-              label))
+          (not (opt-bool-branch-phi-input-has-label? inputs label))
           (opt-bool-branch-phi-inputs-have-none? inputs (opt-label-tail labels))))]))
 
 (define (opt-bool-branch-target-phis-repairable-from?
@@ -40745,13 +40400,11 @@
   [merge-label : i64]
   [new-preds : OptLabelSet]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
         (unless
           (and
-            (opt-bool-branch-phi-input-has-label?
-              (compiler-opt-global-shared-view inputs)
-              merge-label)
+            (opt-bool-branch-phi-input-has-label? inputs merge-label)
             (opt-bool-branch-phi-inputs-have-none? (& inputs) new-preds))
           (return false))
         unit]
@@ -41069,8 +40722,7 @@
     (opt-bool-branch-target-has-phi? blocks true-label)
     (opt-bool-branch-target-has-phi? blocks false-label))
     false
-    (match (opt-bool-branch-phi-inputs
-      (owned_view.compiler-owned-reference-shared-view inputs))
+    (match (opt-bool-branch-phi-inputs inputs)
       [(No) false]
       [(Two first first-label second second-label)
         (let
@@ -41118,25 +40770,13 @@
   (No)
   (Some ir.CompilerIrValue i64))
 
-(define (opt-bool-branch-only-phi-input [inputs : ir.CompilerIrPhiInputSeq]) : OptBoolBranchOnlyInput
-  (let
-    [phi-inputs-at-40009-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-40009-3.len 0)
-      (No)
-      (let
-        [phi-input-at-40009-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40009-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-40009-3.value]
-        [label : i64 phi-input-at-40009-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-40009-3.slots
-            (+ phi-inputs-at-40009-3.start 1)
-            (- phi-inputs-at-40009-3.len 1))]
-        [phi-inputs-at-40012-7 : ir.CompilerIrPhiInputSeq rest]
-        (if (<= phi-inputs-at-40012-7.len 0)
-          (Some value label)
-          (No))))))
+(define (opt-bool-branch-only-phi-input
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptBoolBranchOnlyInput
+  (if (= inputs.len 1)
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs 0)]
+      (Some (clone input.value) input.label))
+    (No)))
 
 (define (opt-bool-branch-fuse-single-compare-phi!
   [type-segment-bases : i64]
@@ -41158,8 +40798,7 @@
     (= merge-label true-label)
     (= merge-label false-label))
     false
-    (match (opt-bool-branch-only-phi-input
-      (owned_view.compiler-owned-reference-shared-view inputs))
+    (match (opt-bool-branch-only-phi-input inputs)
       [(No) false]
       [(Some value pred-label)
         (let
@@ -41744,42 +41383,25 @@
   [phi-left : bool]
   [literal : (& literal ir.CompilerIrValue)]
   [ty : (& ast.AstType)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [var-label : i64]
   [var-value : ir.CompilerIrValue]
   [var-count : i64]
   [literal-count : i64]) : OptPhiCmpFoldInputs
   (let
-    [phi-inputs-at-40777-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-40777-3.len 0)
-      (if (and (= var-count 1) (> literal-count 0))
-        (Some var-label var-value literal-count)
-        (No))
+    [the-var-label : i64 var-label]
+    [the-var-value : ir.CompilerIrValue var-value]
+    [vars : i64 var-count]
+    [literals : i64 literal-count]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-40777-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40777-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-40777-3.value]
-        [label : i64 phi-input-at-40777-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-40777-3.slots
-            (+ phi-inputs-at-40777-3.start 1)
-            (- phi-inputs-at-40777-3.len 1))]
-        (match (compiler-opt-global-shared-view value)
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (match (& input.value)
           [(Var _)
-            (if (> var-count 0)
-              (No)
-              (opt-phi-cmp-fold-classify
-                type-segment-bases
-                op
-                phi-left
-                literal
-                ty
-                rest
-                label
-                value
-                1
-                literal-count))]
+            (when (> vars 0) (return (No)))
+            (set! the-var-label input.label)
+            (set! the-var-value (clone input.value))
+            (set! vars 1)]
           [_
             (match (opt-phi-cmp-fold-verdict
               type-segment-bases
@@ -41787,20 +41409,12 @@
               phi-left
               literal
               ty
-              value)
-              [(No) (No)]
-              [(Some _)
-                (opt-phi-cmp-fold-classify
-                  type-segment-bases
-                  op
-                  phi-left
-                  literal
-                  ty
-                  rest
-                  var-label
-                  var-value
-                  var-count
-                  (+ literal-count 1))])])))))
+              (& input.value))
+              [(No) (return (No))]
+              [(Some _) (set! literals (+ literals 1))])])))
+    (if (and (= vars 1) (> literals 0))
+      (Some the-var-label the-var-value literals)
+      (No))))
 
 ;; The merge block's predecessor list, rewritten. The variable edge keeps its
 ;; place and now carries the moved compare's result; a literal edge that
@@ -42028,7 +41642,7 @@
             phi-left
             literal
             cmp-ty
-            (owned_view.compiler-owned-reference-shared-view inputs)
+            inputs
             (ir.compiler-ir-label-none)
             (Unit)
             0
@@ -42168,7 +41782,7 @@
       (No)
       (match (ir.compiler-ir-instr-seq-ref instrs slot)
         [(BinOp cmp-var op lhs rhs cmp-ty)
-          (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (+ slot 1))
             [(Branch (Var cond-var) true-label false-label)
               (let
                 [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
@@ -42408,45 +42022,25 @@
   [head-label : i64]
   [head-slot : i64]
   [head-instrs : (& head-instrs ir.CompilerIrInstrSeq)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [var-label : i64]
   [var-value : ir.CompilerIrValue]
   [var-count : i64]
   [literal-count : i64]) : OptPhiCmpFoldInputs
   (let
-    [phi-inputs-at-41493-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-41493-3.len 0)
-      (if (and (= var-count 1) (> literal-count 0))
-        (Some var-label var-value literal-count)
-        (No))
+    [the-var-label : i64 var-label]
+    [the-var-value : ir.CompilerIrValue var-value]
+    [vars : i64 var-count]
+    [literals : i64 literal-count]
+    (for [at (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-41493-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-41493-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-41493-3.value]
-        [label : i64 phi-input-at-41493-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-41493-3.slots
-            (+ phi-inputs-at-41493-3.start 1)
-            (- phi-inputs-at-41493-3.len 1))]
-        (match (compiler-opt-global-shared-view value)
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs at)]
+        (match (& input.value)
           [(Var _)
-            (if (> var-count 0)
-              (No)
-              (opt-phi-cmp-fold-chain-classify
-                type-segment-bases
-                index
-                uses
-                phi-var
-                phi-ty
-                head-label
-                head-slot
-                head-instrs
-                rest
-                label
-                value
-                1
-                literal-count))]
+            (when (> vars 0) (return (No)))
+            (set! the-var-label input.label)
+            (set! the-var-value (clone input.value))
+            (set! vars 1)]
           [_
             (match (opt-phi-cmp-fold-chain-exit
               type-segment-bases
@@ -42457,24 +42051,13 @@
               head-label
               head-slot
               head-instrs
-              (& value)
+              (& input.value)
               (opt-phi-cmp-fold-chain-fuel))
-              [(No) (No)]
-              [(Some _ _)
-                (opt-phi-cmp-fold-chain-classify
-                  type-segment-bases
-                  index
-                  uses
-                  phi-var
-                  phi-ty
-                  head-label
-                  head-slot
-                  head-instrs
-                  rest
-                  var-label
-                  var-value
-                  var-count
-                  (+ literal-count 1))])])))))
+              [(No) (return (No))]
+              [(Some _ _) (set! literals (+ literals 1))])])))
+    (if (and (= vars 1) (> literals 0))
+      (Some the-var-label the-var-value literals)
+      (No))))
 
 ;; Retarget every literal predecessor's jump onto the exit its value reaches.
 ;; The phi input it leaves behind is dropped by the same helper (slot 0 of the
@@ -42614,7 +42197,7 @@
         head-label
         head-slot
         head-instrs
-        (owned_view.compiler-owned-reference-shared-view inputs)
+        inputs
         (ir.compiler-ir-label-none)
         (Unit)
         0
@@ -42884,27 +42467,20 @@
 ;; and a literal input keeps the scan off every ordinary merge: a sentinel join
 ;; is exactly the phi that mixes the two.
 (define (opt-phi-cmp-fold-inputs-mixed?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [var? : bool]
   [literal? : bool]) : bool
-  (if (and var? literal?)
-    true
-    (let
-      [phi-inputs-at-42000-5 : ir.CompilerIrPhiInputSeq inputs]
-      (if (<= phi-inputs-at-42000-5.len 0)
-        false
-        (let
-          [phi-input-at-42000-5
-            (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-42000-5 0)]
-          [value : ir.CompilerIrValue phi-input-at-42000-5.value]
-          [rest : ir.CompilerIrPhiInputSeq
-            (ir.CompilerIrPhiInputSeq
-              phi-inputs-at-42000-5.slots
-              (+ phi-inputs-at-42000-5.start 1)
-              (- phi-inputs-at-42000-5.len 1))]
-          (match value
-            [(Var _) (opt-phi-cmp-fold-inputs-mixed? rest true literal?)]
-            [_ (opt-phi-cmp-fold-inputs-mixed? rest var? true)]))))))
+  (let
+    [vars? : bool var?]
+    [literals? : bool literal?]
+    (for [index (iterator.range 0 inputs.len)]
+      (when (and vars? literals?) (return true))
+      (let
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (match (& input.value)
+          [(Var _) (set! vars? true)]
+          [_ (set! literals? true)])))
+    (and vars? literals?)))
 
 (define (opt-phi-cmp-fold-forward-candidate?
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -42913,10 +42489,7 @@
     (match (ir.compiler-ir-instr-seq-borrow instrs 1)
       [(Jump _) true]
       [_ false])
-    (opt-phi-cmp-fold-inputs-mixed?
-      (owned_view.compiler-owned-reference-shared-view inputs)
-      false
-      false)))
+    (opt-phi-cmp-fold-inputs-mixed? inputs false false)))
 
 (define (opt-phi-cmp-fold-block-candidate? [block : ir.CompilerIrBlock]) : bool
   (match block
@@ -43197,25 +42770,13 @@
       [_ slot])))
 
 (define (opt-thread-phi-input-value
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [label : i64]) : ir.CompilerIrMaybeValue
-  (let
-    [phi-inputs-at-42465-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-42465-3.len 0)
-      (No)
-      (let
-        [phi-input-at-42465-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42465-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-42465-3.value]
-        [input-label : i64 phi-input-at-42465-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-42465-3.slots
-            (+ phi-inputs-at-42465-3.start 1)
-            (- phi-inputs-at-42465-3.len 1))]
-        (if (= input-label label)
-          (Some value)
-          (opt-thread-phi-input-value rest label))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when (= input.label label) (return (Some (clone input.value))))))
+  (No))
 
 (define (opt-thread-phi-inputs-drop
   [inputs : ir.CompilerIrPhiInputSeq]
@@ -43268,36 +42829,21 @@
 
 ;; How many of a phi's inputs are `var` carried under `label`.
 (define (opt-thread-count-inputs-of
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [label : i64]
   [var : i64]
   [found : i64]) : i64
   (let
-    [phi-inputs-at-42532-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-42532-3.len 0)
-      found
+    [count : i64 found]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-42532-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-42532-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-42532-3.value]
-        [input-label : i64 phi-input-at-42532-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-42532-3.slots
-            (+ phi-inputs-at-42532-3.start 1)
-            (- phi-inputs-at-42532-3.len 1))]
-        (opt-thread-count-inputs-of
-          rest
-          label
-          var
-          (if (= input-label label)
-            (match value
-              [(Var used)
-                (if (= used var)
-                  (+ found 1)
-                  found)]
-              [_ found])
-            found))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (= input.label label)
+          (match (& input.value)
+            [(Var used) (when (= used var) (set! count (+ count 1)))]
+            [_ unit]))))
+    count))
 
 (define (opt-thread-count-instrs-edge-uses
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -43305,7 +42851,7 @@
   [var : i64]
   [found : i64]) : i64
   (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+    (match (ir.compiler-ir-instr-seq-borrow instrs slot)
       [(Phi _ inputs _)
         (set! found (opt-thread-count-inputs-of inputs label var found))]
       [_ (break)]))
@@ -43424,7 +42970,7 @@
       (set! (array-ref scratch var) 0)
       (opt-collect-instr-seq-uses-array
         (compiler-opt-global-shared-view scratch)
-        (owned_view.compiler-owned-reference-shared-view instrs))
+        instrs)
       (>
         (array-ref scratch var)
         (opt-thread-count-instrs-edge-uses instrs merge-label var 0)))))
@@ -43808,18 +43354,18 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [phi-count : i64]
   [mov-limit : i64]
-  [value : ir.CompilerIrValue]
+  [value : (& value ir.CompilerIrValue)]
   [label : i64]
   [fuel : i64]) : ir.CompilerIrMaybeValue
   (if (<= fuel 0)
     (No)
-    (match (compiler-opt-global-shared-view value)
+    (match value
       [(Var var)
         (let
           [mov-slot : i64
             (opt-thread-mov-slot-for-var instrs phi-count mov-limit var)]
           (if (>= mov-slot 0)
-            (match (ir.compiler-ir-instr-seq-ref instrs mov-slot)
+            (match (ir.compiler-ir-instr-seq-borrow instrs mov-slot)
               [(Mov _ src _)
                 (opt-thread-translate-through-defs
                   instrs
@@ -43832,8 +43378,8 @@
             (let
               [slot : i64 (opt-thread-phi-slot-for-var instrs phi-count var)]
               (if (< slot 0)
-                (Some value)
-                (match (ir.compiler-ir-instr-seq-ref instrs slot)
+                (Some (Var var))
+                (match (ir.compiler-ir-instr-seq-borrow instrs slot)
                   [(Phi _ inputs _)
                     (match (opt-thread-phi-input-value inputs label)
                       [(No) (No)]
@@ -43842,11 +43388,11 @@
                           instrs
                           phi-count
                           mov-limit
-                          carried
+                          (& carried)
                           label
                           (- fuel 1))])]
                   [_ (No)])))))]
-      [_ (Some value)])))
+      [_ (Some (ir.compiler-ir-clone-value value))])))
 
 (define (opt-thread-translate-fuel [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (+ (ir.compiler-ir-instr-seq-count instrs) 2))
@@ -43901,7 +43447,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view value)
+        value
         origin-label
         (opt-thread-translate-fuel instrs))]
     [(Cons label next-instrs rest)
@@ -43909,7 +43455,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view value)
+        value
         label
         (opt-thread-translate-fuel instrs))
         [(No) (No)]
@@ -43952,7 +43498,7 @@
     instrs
     phi-count
     mov-limit
-    (owned_view.compiler-owned-reference-shared-view left)
+    left
     label
     (opt-thread-translate-fuel instrs))
     [(No) (No)]
@@ -43961,7 +43507,7 @@
         instrs
         phi-count
         mov-limit
-        (owned_view.compiler-owned-reference-shared-view right)
+        right
         label
         (opt-thread-translate-fuel instrs))
         [(No) (No)]
@@ -43985,7 +43531,7 @@
   [merge-label : i64]
   [origin-label : i64]) : bool
   (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+    (match (ir.compiler-ir-instr-seq-borrow instrs slot)
       [(Phi _ inputs _)
         (unless
           (match (opt-thread-phi-input-value inputs merge-label)
@@ -44022,9 +43568,7 @@
   (for [slot (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (ir.compiler-ir-instr-seq-ref instrs slot)
       [(Phi dst inputs ty)
-        (match (opt-thread-phi-input-value
-          (compiler-opt-global-shared-view inputs)
-          merge-label)
+        (match (opt-thread-phi-input-value inputs merge-label)
           [(Some carried)
             (match (opt-thread-translate-chain-value
               merge-instrs
@@ -45445,7 +44989,7 @@
         [slot : i64 (opt-thread-phi-slot-for-var merge-instrs phi-count var)]
         (if (< slot 0)
           (Var var)
-          (match (ir.compiler-ir-instr-seq-ref merge-instrs slot)
+          (match (ir.compiler-ir-instr-seq-borrow merge-instrs slot)
             [(Phi _ inputs _)
               (match (opt-thread-phi-input-value inputs origin-label)
                 [(No) (Unknown)]
@@ -45553,7 +45097,7 @@
       (No)
       (match (ir.compiler-ir-instr-seq-ref instrs 0)
         [(BinOp cmp-var op lhs rhs cmp-ty)
-          (match (ir.compiler-ir-instr-seq-ref instrs 1)
+          (match (ir.compiler-ir-instr-seq-borrow instrs 1)
             [(Branch (Var cond-var) true-label false-label)
               (if (and
                 (= cond-var cmp-var)
@@ -45848,11 +45392,9 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (for [slot (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      (match (ir.compiler-ir-instr-seq-borrow instrs slot)
         [(Phi _ inputs _)
-          (match (opt-thread-phi-input-value
-            (compiler-opt-global-shared-view inputs)
-            from-label)
+          (match (opt-thread-phi-input-value inputs from-label)
             [(No) (return false)]
             [(Some _) unit])
           (match (opt-thread-phi-input-value inputs merge-label)
@@ -45871,9 +45413,7 @@
     (for [slot (iterator.range 0 count)]
       (match (ir.compiler-ir-instr-seq-ref instrs slot)
         [(Phi dst inputs ty)
-          (match (opt-thread-phi-input-value
-            (compiler-opt-global-shared-view inputs)
-            from-label)
+          (match (opt-thread-phi-input-value inputs from-label)
             [(No) unit]
             [(Some carried)
               (opt-thread-note-value-use! uses carried)
@@ -45913,7 +45453,7 @@
         (when (= n 0) (return false))
         (for [i (iterator.range 0 n)]
           (let
-            [input (ir.compiler-ir-phi-input-seq-ref inputs i)]
+            [input (ir.compiler-ir-phi-input-seq-borrow inputs i)]
             [origin : i64 input.label]
             (opt-thread-facts-collect! facts index doms origin merge-label)
             (match (opt-thread-chain-exit
@@ -46124,7 +45664,7 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [phi-count : i64]) : bool
   (for [slot (iterator.range 0 phi-count)]
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+    (match (ir.compiler-ir-instr-seq-borrow instrs slot)
       [(Phi _ inputs _)
         (when (opt-phi-cmp-fold-inputs-mixed? inputs true false) (return true))]
       [_ (break)]))
@@ -46970,27 +46510,20 @@
 (define (opt-sccp-phi-value
   [type-segment-bases : i64]
   [state : (& state OptSccpState)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [ty : (& ast.AstType)]) : OptSccpValue
+  ;; Joined from the last input back to the first, as the value has always
+  ;; been folded.
   (let
-    [phi-inputs-at-45408-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-45408-3.len 0)
-      (Unknown)
+    [joined : OptSccpValue (Unknown)]
+    [index : i64 (- inputs.len 1)]
+    (while (>= index 0)
       (let
-        [phi-input-at-45408-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-45408-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-45408-3.value]
-        [pred : i64 phi-input-at-45408-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-45408-3.slots
-            (+ phi-inputs-at-45408-3.start 1)
-            (- phi-inputs-at-45408-3.len 1))]
-        [old (opt-sccp-phi-input-value state (& value) pred ty)]
-        (opt-sccp-join
-          type-segment-bases
-          old
-          (opt-sccp-phi-value type-segment-bases state rest ty))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        [old (opt-sccp-phi-input-value state (& input.value) input.label ty)]
+        (set! joined (opt-sccp-join type-segment-bases old joined)))
+      (-= index 1))
+    joined))
 
 (define (opt-sccp-mark-branch-targets
   [state : OptSccpState]
@@ -47617,7 +47150,7 @@
               (match (opt-switch-index-tag-from-values (& lhs) (& rhs))
                 [(Some index-var tag)
                   (match (opt-switch-branch
-                    (ir.compiler-ir-instr-seq-ref instrs 1))
+                    (ir.compiler-ir-instr-seq-borrow instrs 1))
                     [(Some (Var cond-var) arm-label next-label total-enum?)
                       (if (and
                         (= cond-var eq-var)
@@ -47658,10 +47191,11 @@
   (No)
   (Some ir.CompilerIrValue i64 i64 bool))
 
-(define (opt-switch-branch [instr : ir.CompilerIrInstr]) : OptSwitchBranch
+(define (opt-switch-branch [instr : (& instr ir.CompilerIrInstr)]) : OptSwitchBranch
   (match instr
-    [(Branch cond yes no) (Some cond yes no false)]
-    [(TotalEnumBranch cond yes no) (Some cond yes no true)]
+    [(Branch cond yes no) (Some (ir.compiler-ir-clone-value cond) yes no false)]
+    [(TotalEnumBranch cond yes no)
+      (Some (ir.compiler-ir-clone-value cond) yes no true)]
     [_ (No)]))
 
 (define (opt-switch-parse-compare-block-tail
@@ -47674,7 +47208,7 @@
         (if (= count 0)
           (No)
           (match (opt-switch-branch
-            (ir.compiler-ir-instr-seq-ref instrs (- count 1)))
+            (ir.compiler-ir-instr-seq-borrow instrs (- count 1)))
             [(Some (Var cond-var) true-label false-label total-enum?)
               (if (>= count 2)
                 (match (ir.compiler-ir-instr-seq-borrow instrs (- count 2))
@@ -48070,7 +47604,7 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         (if (<= count 0)
           (Unchanged block)
-          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
             [(TotalEnumSwitch
                 index
                 base
@@ -48116,7 +47650,7 @@
                               (- count 1)
                               (&
                                 (TotalEnumSwitch
-                                  index
+                                  (ir.compiler-ir-clone-value index)
                                   base
                                   total-cases
                                   trap-label
@@ -48722,7 +48256,7 @@
               (match (opt-switch-index-tag-from-values (& lhs) (& rhs))
                 [(Some _ _)
                   (match (opt-switch-branch
-                    (ir.compiler-ir-instr-seq-ref instrs 1))
+                    (ir.compiler-ir-instr-seq-borrow instrs 1))
                     [(Some (Var cond-var) _ _ _) (= cond-var eq-var)]
                     [_ false])]
                 [(No) false])
@@ -51683,12 +51217,15 @@
                 [(None) unit]
                 [(Some id)
                   (if (and (>= id 0) (< id (array-length terms)))
-                    (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                    (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
                       [(Branch cond true-label false-label)
                         (set!
                           (array-ref terms id)
                           (OptBoolBranchDef.Some
-                            (Branch cond true-label false-label)
+                            (Branch
+                              (ir.compiler-ir-clone-value cond)
+                              true-label
+                              false-label)
                             label))]
                       [_ unit])
                     unit)])))])
@@ -51806,42 +51343,24 @@
   [block-label : i64]
   [self : i64]
   [len : (& len ir.CompilerIrValue)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : bool
-  (let
-    [phi-inputs-at-51555-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-51555-3.len 0)
-      false
-      (let
-        [phi-input-at-51555-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-51555-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-51555-3.value]
-        [from-label : i64 phi-input-at-51555-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-51555-3.slots
-            (+ phi-inputs-at-51555-3.start 1)
-            (- phi-inputs-at-51555-3.len 1))]
-        (and
-          (opt-bounds-dom-counter-input-ok?
-            env
-            cmp-facts
-            block-label
-            self
-            len
-            (& (opt-bounds-dom-resolve env.copies value))
-            from-label)
-          (let
-            [phi-inputs-at-51573-9 : ir.CompilerIrPhiInputSeq
-              (compiler-opt-global-shared-view rest)]
-            (if (<= phi-inputs-at-51573-9.len 0)
-              true
-              (opt-bounds-dom-counter-inputs-ok?
-                env
-                cmp-facts
-                block-label
-                self
-                len
-                rest))))))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : bool
+  (if (<= inputs.len 0)
+    false
+    (begin
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (unless
+            (opt-bounds-dom-counter-input-ok?
+              env
+              cmp-facts
+              block-label
+              self
+              len
+              (& (opt-bounds-dom-resolve env.copies (clone input.value)))
+              input.label)
+            (return false))))
+      true)))
 
 (define (opt-bounds-dom-counter-in-range?
   [env : (& env OptBoundsDomEnv)]
@@ -52395,36 +51914,24 @@
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& cmp-facts OptDomCmpFacts)]
   [phis : (& OptNonnegPhis)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [fuel : i64]) : bool
-  (let
-    [phi-inputs-at-52210-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-52210-3.len 0)
-      false
-      (let
-        [phi-input-at-52210-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-52210-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-52210-3.value]
-        [from-label : i64 phi-input-at-52210-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-52210-3.slots
-            (+ phi-inputs-at-52210-3.start 1)
-            (- phi-inputs-at-52210-3.len 1))]
-        (and
-          (opt-bounds-dom-nonneg-edge?
-            env
-            cmp-facts
-            phis
-            (& value)
-            from-label
-            fuel)
-          (let
-            [phi-inputs-at-52229-9 : ir.CompilerIrPhiInputSeq
-              (compiler-opt-global-shared-view rest)]
-            (if (<= phi-inputs-at-52229-9.len 0)
-              true
-              (opt-bounds-dom-nonneg-inputs? env cmp-facts phis rest fuel))))))))
+  (if (<= inputs.len 0)
+    false
+    (begin
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (unless
+            (opt-bounds-dom-nonneg-edge?
+              env
+              cmp-facts
+              phis
+              (& input.value)
+              input.label
+              fuel)
+            (return false))))
+      true)))
 
 ;; `idx >= 0` plus a dominating signed `idx < len` decides the unsigned check:
 ;; both operands are then non-negative i64s, where unsigned and signed order
@@ -53257,52 +52764,30 @@
   [nonneg? : bool]
   [below? : bool]
   [strict? : bool]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [bound : (& ir.CompilerIrValue)]
   [fuel : i64]) : bool
-  (let
-    [phi-inputs-at-53371-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-53371-3.len 0)
-      false
-      (let
-        [phi-input-at-53371-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-53371-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-53371-3.value]
-        [from-label : i64 phi-input-at-53371-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-53371-3.slots
-            (+ phi-inputs-at-53371-3.start 1)
-            (- phi-inputs-at-53371-3.len 1))]
-        (and
-          (opt-bounds-dom-induct-edge?
-            env
-            cmp-facts
-            phis
-            home-label
-            nonneg?
-            below?
-            strict?
-            (& value)
-            from-label
-            bound
-            fuel)
-          (let
-            [phi-inputs-at-53396-9 : ir.CompilerIrPhiInputSeq
-              (compiler-opt-global-shared-view rest)]
-            (if (<= phi-inputs-at-53396-9.len 0)
-              true
-              (opt-bounds-dom-induct-inputs?
-                env
-                cmp-facts
-                phis
-                home-label
-                nonneg?
-                below?
-                strict?
-                rest
-                bound
-                fuel))))))))
+  (if (<= inputs.len 0)
+    false
+    (begin
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (unless
+            (opt-bounds-dom-induct-edge?
+              env
+              cmp-facts
+              phis
+              home-label
+              nonneg?
+              below?
+              strict?
+              (& input.value)
+              input.label
+              bound
+              fuel)
+            (return false))))
+      true)))
 
 ;; --- the decreasing affine index ---------------------------------------------
 ;;
@@ -53695,41 +53180,24 @@
   [cmp-facts : (& OptDomCmpFacts)]
   [len-positive? : bool]
   [len : (& len ir.CompilerIrValue)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [depth : i64]) : bool
-  (let
-    [phi-inputs-at-53896-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-53896-3.len 0)
-      false
-      (let
-        [phi-input-at-53896-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-53896-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-53896-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-53896-3.slots
-            (+ phi-inputs-at-53896-3.start 1)
-            (- phi-inputs-at-53896-3.len 1))]
-        (and
-          (opt-bounds-dom-masked-or-phi?
-            env
-            cmp-facts
-            len-positive?
-            len
-            (& (opt-bounds-dom-resolve env.copies value))
-            depth)
-          (let
-            [phi-inputs-at-53909-9 : ir.CompilerIrPhiInputSeq
-              (compiler-opt-global-shared-view rest)]
-            (if (<= phi-inputs-at-53909-9.len 0)
-              true
-              (opt-bounds-dom-phi-inputs-masked?
-                env
-                cmp-facts
-                len-positive?
-                len
-                rest
-                depth))))))))
+  (if (<= inputs.len 0)
+    false
+    (begin
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (unless
+            (opt-bounds-dom-masked-or-phi?
+              env
+              cmp-facts
+              len-positive?
+              len
+              (& (opt-bounds-dom-resolve env.copies (clone input.value)))
+              depth)
+            (return false))))
+      true)))
 
 (define (opt-bounds-dom-mask-in-range?
   [env : (& env OptBoundsDomEnv)]
@@ -55267,28 +54735,21 @@
 ;; The single input this phi carries on `label`. Two inputs on one label mean
 ;; the edge does not name one value, so the walk refuses.
 (define (opt-bounds-dom-phi-input-for
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [label : i64]
   [found : OptDomPhiInput]) : OptDomPhiInput
+  ;; The one input on edge `label`; a second one makes the answer unknown.
   (let
-    [phi-inputs-at-55588-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-55588-3.len 0)
-      found
+    [only : OptDomPhiInput found]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-55588-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-55588-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-55588-3.value]
-        [input-label : i64 phi-input-at-55588-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-55588-3.slots
-            (+ phi-inputs-at-55588-3.start 1)
-            (- phi-inputs-at-55588-3.len 1))]
-        (if (= input-label label)
-          (match found
-            [(Some _) (No)]
-            [(No) (opt-bounds-dom-phi-input-for rest label (Some value))])
-          (opt-bounds-dom-phi-input-for rest label found))))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (when
+          (= input.label label)
+          (match only
+            [(Some _) (return (No))]
+            [(No) (set! only (Some (clone input.value)))]))))
+    only))
 
 (define (opt-bounds-dom-phi-edge-operand
   [carrier : (& OptDomPhiCarrier)]
@@ -55927,7 +55388,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [cur : OptDomCmpFacts cmp-facts]
     (for [pos (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
         [(BinOp dst op lhs rhs ty)
           (if (opt-type-eq env.type-segment-bases ty (& (I64)))
             (opt-bounds-dom-nonneg-prepass-binop!
@@ -55942,8 +55403,14 @@
             unit)]
         [(BoundsCheck idx len _)
           (let
-            [cidx : ir.CompilerIrValue (opt-bounds-dom-resolve env.copies idx)]
-            [clen : ir.CompilerIrValue (opt-bounds-dom-resolve env.copies len)]
+            [cidx : ir.CompilerIrValue
+              (opt-bounds-dom-resolve
+                env.copies
+                (ir.compiler-ir-clone-value idx))]
+            [clen : ir.CompilerIrValue
+              (opt-bounds-dom-resolve
+                env.copies
+                (ir.compiler-ir-clone-value len))]
             (if (and
               (opt-gvn-value-stable? env.sources cidx)
               (opt-gvn-value-stable? env.sources clen))
@@ -56538,37 +56005,23 @@
                   [_ (No)]))])])]))
 
 (define (opt-bounds-dom-range-phi-input
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [needle : i64]) : OptRangeMergeInput
-  (let
-    [phi-inputs-at-57165-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-57165-3.len 0)
-      (No)
-      (let
-        [phi-input-at-57165-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-57165-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-57165-3.value]
-        [label : i64 phi-input-at-57165-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-57165-3.slots
-            (+ phi-inputs-at-57165-3.start 1)
-            (- phi-inputs-at-57165-3.len 1))]
-        (if (= label needle)
-          (Some value)
-          (opt-bounds-dom-range-phi-input rest needle))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when (= input.label needle) (return (Some (clone input.value))))))
+  (No))
 
 (define (opt-bounds-dom-range-phis-agree-from?
   [instrs : (& ir.CompilerIrInstrSeq)]
   [left : i64]
   [right : i64]) : bool
   (for [pos (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    (match (ir.compiler-ir-instr-seq-borrow instrs pos)
       [(Phi _ inputs _)
         (unless
-          (match (opt-bounds-dom-range-phi-input
-            (compiler-opt-global-shared-view inputs)
-            left)
+          (match (opt-bounds-dom-range-phi-input inputs left)
             [(No) false]
             [(Some left-value)
               (match (opt-bounds-dom-range-phi-input inputs right)
@@ -57302,7 +56755,7 @@
                     (while (and (not found) (< j n))
                       (match (opt-cfg-index-id
                         index
-                        (ir.compiler-ir-phi-input-seq-ref inputs j).label)
+                        (ir.compiler-ir-phi-input-seq-borrow inputs j).label)
                         [(Some pred)
                           (if (opt-dom-info-dominates-id? doms id pred)
                             (set! found true)
@@ -60210,11 +59663,14 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
     unit
-    (match (ir.compiler-ir-param-seq-ref params index)
+    (match (ir.compiler-ir-param-seq-borrow params index)
       [(Param _ ty var-id)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Mov var-id (Var (+ base index)) ty))
+          (ir.CompilerIrInstr.Mov
+            var-id
+            (Var (+ base index))
+            (ast.ty-node-persist ty)))
         (opt-tailrec-push-assign-movs! params base (+ index 1) (&mut builder))])))
 
 (define (opt-tailrec-push-assign-movs-hybrid!
@@ -60227,7 +59683,7 @@
     unit
     (let
       [arg (ir.compiler-ir-value-seq-ref args index)]
-      (match (ir.compiler-ir-param-seq-ref params index)
+      (match (ir.compiler-ir-param-seq-borrow params index)
         [(Param _ ty var-id)
           (if (match arg
             [(Var source) (= source var-id)]
@@ -60235,7 +59691,10 @@
             unit
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
-              (ir.CompilerIrInstr.Mov var-id (Var (+ base index)) ty)))
+              (ir.CompilerIrInstr.Mov
+                var-id
+                (Var (+ base index))
+                (ast.ty-node-persist ty))))
           (opt-tailrec-push-assign-movs-hybrid!
             params
             args
@@ -60254,14 +59713,15 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (or (>= index params.len) (>= index args.len))
     unit
-    (match (ir.compiler-ir-param-seq-ref params index)
+    (match (ir.compiler-ir-param-seq-borrow params index)
       [(Param _ ty _)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.Mov
             (+ base index)
-            (ir.compiler-ir-value-seq-ref args index)
-            ty))
+            (ir.compiler-ir-clone-value
+              (ir.compiler-ir-value-seq-borrow args index))
+            (ast.ty-node-persist ty)))
         (opt-tailrec-push-stage-movs!
           params
           args
@@ -61039,7 +60499,7 @@
   [iphi : i64]) : OptUnrollMaybePhis
   (if (>= index phi-count)
     (Some (Nil))
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst inputs ty)
         (if (= dst iphi)
           (opt-unroll-collect-other-phis
@@ -61061,7 +60521,9 @@
                   iphi)
                   [(Some rest)
                     (Some
-                      (opt-unroll-phi-list-cons (Phi dst init back ty) rest))]
+                      (opt-unroll-phi-list-cons
+                        (Phi dst init back (ast.ty-node-persist ty))
+                        rest))]
                   [(No) (No)])
                 (No))]
             [(No) (No)]))]
@@ -61253,39 +60715,25 @@
 (define (opt-unroll-phi-inputs-bound-remainder?
   [blocks : (& ir.CompilerIrBlockList)]
   [user : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [bound : (& ir.CompilerIrValue)]
   [cap : i64]
   [any? : bool]) : bool
-  (let
-    [phi-inputs-at-67451-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-67451-3.len 0)
-      any?
-      (let
-        [phi-input-at-67451-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-67451-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-67451-3.value]
-        [label : i64 phi-input-at-67451-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-67451-3.slots
-            (+ phi-inputs-at-67451-3.start 1)
-            (- phi-inputs-at-67451-3.len 1))]
-        (if (opt-unroll-edge-bounds-remainder?
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (unless
+        (opt-unroll-edge-bounds-remainder?
           blocks
-          label
+          input.label
           user
-          (& value)
+          (& input.value)
           bound
           cap)
-          (opt-unroll-phi-inputs-bound-remainder?
-            blocks
-            user
-            rest
-            bound
-            cap
-            true)
-          false)))))
+        (return false))))
+  (if (<= inputs.len 0)
+    any?
+    true))
 
 ;; `bound - seed <= cap` provable? See the note above.
 (define (opt-unroll-trip-remainder-bounded?
@@ -61404,7 +60852,7 @@
     [index : i64 (opt-unroll-def-index (& instrs.slots) phi-count last inext)]
     (if (< index 0)
       (No)
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(BinOp _ op lhs rhs ity)
           (let
             ;; 1 for `Add`, 2 for `Sub`, 0 for any other op.
@@ -61423,7 +60871,7 @@
                         (OptSelfLoopStep
                           (= kind 2)
                           step
-                          ity
+                          (ast.ty-node-persist ity)
                           (opt-unroll-resolve-copy instrs phi-count last src 16)))]
                     [_ (Form (= kind 2))])]
                 [_ (Form (= kind 2))])))]
@@ -61447,7 +60895,7 @@
     [index : i64 (opt-unroll-def-index (& instrs.slots) 0 phi-count iphi)]
     (if (< index 0)
       (No)
-      (match (ir.compiler-ir-instr-seq-ref instrs index)
+      (match (ir.compiler-ir-instr-seq-borrow instrs index)
         [(Phi _ inputs iphi-ty)
           (match (opt-unroll-split-phi-inputs (& inputs) label)
             [(Split seed back pred-label)
@@ -61459,7 +60907,7 @@
                   last
                   (& back)
                   inext))
-                (Some iphi-ty seed pred-label)
+                (Some (ast.ty-node-persist iphi-ty) seed pred-label)
                 (No))]
             [(No) (No)])]
         [_ (No)]))))
@@ -62964,7 +62412,8 @@
             (opt-unroll-remap-set
               remap
               dst
-              (ir.compiler-ir-value-seq-ref values index))
+              (ir.compiler-ir-clone-value
+                (ir.compiler-ir-value-seq-borrow values index)))
             (let
               [others-2 (opt-unroll-phi-list-tail others)]
               (opt-unroll-write-phi-seeds-from
@@ -63342,11 +62791,13 @@
               (ir.CompilerIrInstr.Phi
                 (array-ref ku-ids index)
                 (ir.compiler-ir-phi-input-seq-prepend
-                  (ir.compiler-ir-value-seq-ref inits index)
+                  (ir.compiler-ir-clone-value
+                    (ir.compiler-ir-value-seq-borrow inits index))
                   guard-label
                   (&
                     (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.compiler-ir-value-seq-ref chains index)
+                      (ir.compiler-ir-clone-value
+                        (ir.compiler-ir-value-seq-borrow chains index))
                       unrolled-label
                       (& (ir.compiler-ir-phi-input-seq-empty)))))
                 ty))
@@ -63383,7 +62834,7 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index count)
     unit
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst _ ty)
         (if (= dst iphi)
           (begin
@@ -63404,7 +62855,7 @@
                             inext3)
                           unrolled-label
                           (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                ty))
+                (ast.ty-node-persist ty)))
             (opt-unroll-push-tail-instrs!
               instrs
               (+ index 1)
@@ -63434,9 +62885,10 @@
                       (ir.CompilerIrInstr.Phi
                         dst
                         (ir.compiler-ir-phi-input-seq-prepend
-                          (ir.compiler-ir-value-seq-ref
-                            guard-values
-                            chain-index)
+                          (ir.compiler-ir-clone-value
+                            (ir.compiler-ir-value-seq-borrow
+                              guard-values
+                              chain-index))
                           guard-label
                           (&
                             (ir.compiler-ir-phi-input-seq-prepend
@@ -63444,12 +62896,13 @@
                               loop-label
                               (&
                                 (ir.compiler-ir-phi-input-seq-prepend
-                                  (ir.compiler-ir-value-seq-ref
-                                    chains
-                                    chain-index)
+                                  (ir.compiler-ir-clone-value
+                                    (ir.compiler-ir-value-seq-borrow
+                                      chains
+                                      chain-index))
                                   unrolled-label
                                   (& (ir.compiler-ir-phi-input-seq-empty)))))))
-                        ty))
+                        (ast.ty-node-persist ty)))
                     (opt-unroll-push-tail-instrs!
                       instrs
                       (+ index 1)
@@ -64606,7 +64059,7 @@
   [found : OptFillCallMaybeSite]) : OptFillCallMaybeSite
   (if (>= index last)
     found
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(StorePtr ptr value ty)
         (match found
           [(Some _) (No)]
@@ -64631,7 +64084,7 @@
                                 site.gep-index
                                 site.base
                                 k
-                                ty)))]))]
+                                (ast.ty-node-persist ty))))]))]
                   [_ (No)])]
               [_ (No)])])]
       [(or (Mov _ _ _) (Gep _ _ _ _))
@@ -64666,7 +64119,7 @@
   [iphi : i64]) : OptFillCallMaybeSite
   (if (>= index last)
     (No)
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Gep dst base offset _)
         (if (not (= dst ptr-var))
           (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)
@@ -64683,7 +64136,13 @@
                         last
                         (opt_i64_i64_map.with-capacity 32))]
                     (opt-used-contains set (opt-loop-call-value-var base)))))
-                (Some (OptFillCallSite index index base 0 (I64)))
+                (Some
+                  (OptFillCallSite
+                    index
+                    index
+                    (ir.compiler-ir-clone-value base)
+                    0
+                    (I64)))
                 (No))]
             [_ (No)]))]
       [_ (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)])))
@@ -65208,7 +64667,7 @@
   [found : OptCopyCallMaybeSite]) : OptCopyCallMaybeSite
   (if (>= index last)
     found
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(StorePtr ptr value ty)
         (match found
           [(Some _) (No)]
@@ -65246,7 +64705,11 @@
                               iphi
                               width
                               (Some
-                                (OptCopyCallSite index ptr (Var src-var) width)))
+                                (OptCopyCallSite
+                                  index
+                                  (ir.compiler-ir-clone-value ptr)
+                                  (Var src-var)
+                                  width)))
                             (No))]
                         [_ (No)]))]
                   [_ (No)])]
@@ -65970,7 +65433,7 @@
   [cond-var : i64]
   [exit-label : i64]) : OptUnrollConstMaybeShape
   (for [index (iterator.range 0 phi-count)]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst inputs ity)
         (let
           [iphi-tag : i64 (opt-unroll-const-scalar-ty-tag ity)]
@@ -66038,7 +65501,7 @@
                                             (opt-normalize-int-to-i64 seed ity)
                                             step
                                             trips
-                                            ity
+                                            (ast.ty-node-persist ity)
                                             others
                                             pred-label))))]
                                   [(No) unit])))])])]
@@ -66762,13 +66225,13 @@
   [groupable : i64]) : i64
   (if (>= index last)
     groupable
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(BoundsCheck check-index check-length _)
         (match (opt-unroll-const-guard-length-root
           (owned_view.compiler-owned-reference-shared-view instrs)
           phi-count
           last
-          check-length
+          (ir.compiler-ir-clone-value check-length)
           16)
           [(No)
             (opt-unroll-const-guard-scan
@@ -67767,7 +67230,7 @@
     [(Var next-var)
       (if (< cond-index 2)
         (No)
-        (match (ir.compiler-ir-instr-seq-ref instrs (- cond-index 1))
+        (match (ir.compiler-ir-instr-seq-borrow instrs (- cond-index 1))
           [(BinOp inc-dst inc-op inc-lhs inc-rhs ity)
             (match inc-op
               [(Add)
@@ -67775,7 +67238,7 @@
                   [(Var index-var)
                     (match inc-rhs
                       [(I64 step)
-                        (match (ir.compiler-ir-instr-seq-ref
+                        (match (ir.compiler-ir-instr-seq-borrow
                           instrs
                           (- cond-index 2))
                           [(Mov move-dst move-src move-ty)
@@ -67873,7 +67336,7 @@
                                                     index-var
                                                     next-var
                                                     step
-                                                    ity
+                                                    (ast.ty-node-persist ity)
                                                     bound
                                                     cmp-op
                                                     memory-bases
@@ -72985,43 +72448,27 @@
   [phi-count : i64]
   [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [depth : i64]
   [set : OptBceMaskSet]) : OptBceMaskSet
-  (let
-    [phi-inputs-at-78668-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-78668-3.len 0)
-      (No)
-      (let
-        [phi-input-at-78668-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-78668-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-78668-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-78668-3.slots
-            (+ phi-inputs-at-78668-3.start 1)
-            (- phi-inputs-at-78668-3.len 1))]
-        [next : OptBceMaskSet
-          (opt-bce-version-mask-collect
-            instrs
-            phi-count
-            last
-            defs
-            (& value)
-            depth
-            set)]
-        [phi-inputs-at-78682-9 : ir.CompilerIrPhiInputSeq
-          (compiler-opt-global-shared-view rest)]
-        (if (<= phi-inputs-at-78682-9.len 0)
-          next
-          (opt-bce-version-mask-collect-inputs
-            instrs
-            phi-count
-            last
-            defs
-            rest
-            depth
-            next))))))
+  (if (<= inputs.len 0)
+    (No)
+    (let
+      [masks : OptBceMaskSet set]
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (set!
+            masks
+            (opt-bce-version-mask-collect
+              instrs
+              phi-count
+              last
+              defs
+              (& input.value)
+              depth
+              masks))))
+      masks)))
 
 ;; The masked-index derivation for one check: collect the index's invariant
 ;; bounds and state each one against this length.
@@ -73390,7 +72837,8 @@
           (opt-bce-version-and-chain-array
             cell
             (&mut instrs)
-            (ir.compiler-ir-value-seq-ref values 0)
+            (ir.compiler-ir-clone-value
+              (ir.compiler-ir-value-seq-borrow values 0))
             values
             1)]
         (Some (ir.compiler-ir-instr-builder-to-seq instrs) guard-value)))))
@@ -76304,7 +75752,7 @@
               defs
               latch
               preheader
-              (& (ir.compiler-ir-instr-seq-ref instrs index))
+              (ir.compiler-ir-instr-seq-borrow instrs index)
               lhs
               rhs
               bottom?)
@@ -77092,28 +76540,17 @@
 ;; inputs of exit blocks' phis (those gain a parallel fast-edge input).
 (define (opt-bce-mb-outside-phi-uses
   [set : opt_i64_i64_map.Map]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [body-labels : OptLabelSet]) : opt_i64_i64_map.Map
   (let
-    [phi-inputs-at-82412-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-82412-3.len 0)
-      set
+    [uses : opt_i64_i64_map.Map set]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-82412-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-82412-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-82412-3.value]
-        [label : i64 phi-input-at-82412-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-82412-3.slots
-            (+ phi-inputs-at-82412-3.start 1)
-            (- phi-inputs-at-82412-3.len 1))]
-        (opt-bce-mb-outside-phi-uses
-          (if (opt-label-contains body-labels label)
-            set
-            (opt-collect-value-uses set (& value)))
-          rest
-          body-labels)))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (unless
+          (opt-label-contains body-labels input.label)
+          (set! uses (opt-collect-value-uses uses (& input.value))))))
+    uses))
 
 (define (opt-bce-mb-outside-uses-seq
   [set : opt_i64_i64_map.Map]
@@ -77477,30 +76914,21 @@
 ;; the wiring is about to build already exists (the far-use repair below
 ;; materializes one), so reuse it instead of adding a second copy.
 (define (opt-bce-mb-merge-phi-inputs?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [var : i64]
   [preds : OptLabelSet]
   [seen : i64]) : bool
-  (let
-    [phi-inputs-at-82890-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-82890-3.len 0)
-      (= seen (opt-label-count preds))
-      (let
-        [phi-input-at-82890-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-82890-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-82890-3.value]
-        [label : i64 phi-input-at-82890-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-82890-3.slots
-            (+ phi-inputs-at-82890-3.start 1)
-            (- phi-inputs-at-82890-3.len 1))]
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (unless
         (and
-          (match value
+          (match (& input.value)
             [(Var id) (= id var)]
             [_ false])
-          (opt-label-contains preds label)
-          (opt-bce-mb-merge-phi-inputs? rest var preds (+ seen 1)))))))
+          (opt-label-contains preds input.label))
+        (return false))))
+  (= (+ seen inputs.len) (opt-label-count preds)))
 
 ;; The var of such a phi in this block, or -1.
 (define (opt-bce-mb-existing-merge-phi
@@ -77510,7 +76938,7 @@
   [preds : OptLabelSet]) : i64
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     -1
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi dst inputs _)
         (if (opt-bce-mb-merge-phi-inputs? inputs var preds 0)
           dst
@@ -77937,50 +77365,27 @@
   [clone-labels : OptLabelSet]
   [defs : (& defs opt_i64_i64_map.Map)]
   [user : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [stubs : OptLabelSet]) : OptBceMbMaybeLabels
   (let
-    [phi-inputs-at-83364-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-83364-3.len 0)
-      (Some stubs)
+    [joined : OptLabelSet stubs]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-83364-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-83364-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-83364-3.value]
-        [label : i64 phi-input-at-83364-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-83364-3.slots
-            (+ phi-inputs-at-83364-3.start 1)
-            (- phi-inputs-at-83364-3.len 1))]
-        (if (or
-          (opt-label-contains clone-labels label)
-          (not (opt-bce-mb-value-group-def? (& value) defs)))
-          (opt-bce-mb-phi-stub-inputs
-            pred-map
-            all-blocks
-            clone-labels
-            defs
-            user
-            rest
-            stubs)
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (unless
+          (or
+            (opt-label-contains clone-labels input.label)
+            (not (opt-bce-mb-value-group-def? (& input.value) defs)))
           (match (opt-bce-mb-exit-join-labels
             pred-map
             all-blocks
             clone-labels
-            label
+            input.label
             user
-            stubs)
-            [(No) (No)]
-            [(Some next)
-              (opt-bce-mb-phi-stub-inputs
-                pred-map
-                all-blocks
-                clone-labels
-                defs
-                user
-                rest
-                next)]))))))
+            joined)
+            [(No) (return (No))]
+            [(Some next) (set! joined next)]))))
+    (Some joined)))
 
 (define (opt-bce-mb-phi-stub-labels-seq
   [pred-map : (& pred-map OptPredMap)]
@@ -77993,7 +77398,7 @@
   [stubs : OptLabelSet]) : OptBceMbMaybeLabels
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (Some stubs)
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
         (match (opt-bce-mb-phi-stub-inputs
           pred-map
@@ -78361,12 +77766,12 @@
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (if (< index phi-count)
-          (match (ir.compiler-ir-instr-seq-ref instrs index)
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
             [(Phi dst inputs ty)
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-bce-mb-far-rewrite-inputs (& inputs) wire far-labels env)
-                ty)]
+                (ast.ty-node-persist ty))]
             [_ (ir.compiler-ir-instr-seq-ref instrs index)])
           (ir.compiler-ir-instr-seq-ref instrs index))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
@@ -79868,29 +79273,24 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [phi-id : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [found : ir.CompilerIrMaybeValue]
   [ok : (&mut ok (__tl_dyn-array bool))]) : ir.CompilerIrMaybeValue
   (let
-    [phi-inputs-at-86012-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-86012-3.len 0)
-      found
+    [seed : ir.CompilerIrMaybeValue found]
+    (for [index (iterator.range 0 inputs.len)]
       (let
-        [phi-input-at-86012-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-86012-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-86012-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-86012-3.slots
-            (+ phi-inputs-at-86012-3.start 1)
-            (- phi-inputs-at-86012-3.len 1))]
-        (opt-bce-mb-self-phi-inputs
-          body-blocks
-          defs
-          phi-id
-          rest
-          (opt-bce-mb-self-phi-input body-blocks defs phi-id (& value) found ok)
-          ok)))))
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (set!
+          seed
+          (opt-bce-mb-self-phi-input
+            body-blocks
+            defs
+            phi-id
+            (& input.value)
+            seed
+            ok))))
+    seed))
 
 (define (opt-bce-mb-self-phi-value
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
@@ -80192,43 +79592,27 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [preheader : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [depth : i64]
   [set : OptBceMaskSet]) : OptBceMaskSet
-  (let
-    [phi-inputs-at-86396-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-86396-3.len 0)
-      (No)
-      (let
-        [phi-input-at-86396-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-86396-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-86396-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-86396-3.slots
-            (+ phi-inputs-at-86396-3.start 1)
-            (- phi-inputs-at-86396-3.len 1))]
-        [next : OptBceMaskSet
-          (opt-bce-mb-mask-collect
-            all-blocks
-            body-blocks
-            defs
-            preheader
-            (& value)
-            depth
-            set)]
-        [phi-inputs-at-86410-9 : ir.CompilerIrPhiInputSeq
-          (compiler-opt-global-shared-view rest)]
-        (if (<= phi-inputs-at-86410-9.len 0)
-          next
-          (opt-bce-mb-mask-collect-inputs
-            all-blocks
-            body-blocks
-            defs
-            preheader
-            rest
-            depth
-            next))))))
+  (if (<= inputs.len 0)
+    (No)
+    (let
+      [masks : OptBceMaskSet set]
+      (for [index (iterator.range 0 inputs.len)]
+        (let
+          [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+          (set!
+            masks
+            (opt-bce-mb-mask-collect
+              all-blocks
+              body-blocks
+              defs
+              preheader
+              (& input.value)
+              depth
+              masks))))
+      masks)))
 
 (define (opt-bce-mb-masked-guard
   [all-blocks : (& ir.CompilerIrBlockList)]
@@ -82842,31 +82226,11 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [label : i64]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
-        (when (opt-bce-fold-phi-input-from? inputs label) (return true))]
+        (when (opt-bool-branch-phi-input-has-label? inputs label) (return true))]
       [_ unit]))
   false)
-
-(define (opt-bce-fold-phi-input-from?
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [label : i64]) : bool
-  (let
-    [phi-inputs-at-89254-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-89254-3.len 0)
-      false
-      (let
-        [phi-input-at-89254-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-89254-3 0)]
-        [input-label : i64 phi-input-at-89254-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-89254-3.slots
-            (+ phi-inputs-at-89254-3.start 1)
-            (- phi-inputs-at-89254-3.len 1))]
-        (if (= input-label label)
-          true
-          (opt-bce-fold-phi-input-from? rest label))))))
 
 ;; May the edge `label -> dropped` disappear? Only when nothing in `dropped`
 ;; selects a value on it. A successor that cannot be found rejects.
@@ -84483,13 +83847,13 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [next (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref checks next)
+      (match (ir.compiler-ir-instr-seq-borrow checks next)
         [(BoundsCheck _ length ok-label)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.BoundsCheck
               (owned_view.compiler-owned-reference-shared-view index)
-              length
+              (ir.compiler-ir-clone-value length)
               (if copy?
                 (ir.compiler-ir-label
                   (&
@@ -88163,14 +87527,15 @@
             marks)])]))
 
 ;; A base/index operand is safe to re-evaluate at every use when it is not the
-;; Gep's own dst and has exactly one source (a literal is always fine).
+;; Gep's own dst and has exactly one source, or is a stable literal/address.
+;; Implicit mutable global reads must stay at the original capture point.
 (define (opt-gep-split-source-ok?
   [value : (& ir.CompilerIrValue)]
   [self : i64]
   [defs : (& defs (__tl_dyn-array i64))]) : bool
   (match value
     [(Var v) (and (!= v self) (= (array-ref defs v) 1))]
-    [_ true]))
+    [_ (opt-successor-sink-stable-value? value)]))
 
 (define (opt-gep-split-candidate?
   [v : i64]
@@ -89889,7 +89254,8 @@
         (opt-successor-sink-subst-value
           frame
           remap
-          (ir.compiler-ir-value-seq-ref values index))))
+          (ir.compiler-ir-clone-value
+            (ir.compiler-ir-value-seq-borrow values index)))))
     (ir.CompilerIrValueSeq slots values.len)))
 
 (define (opt-successor-sink-subst-instr
@@ -89973,24 +89339,14 @@
 
 (define (opt-successor-sink-phi-zero-label
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : OptSuccessorSinkMaybeLabel
-  (let
-    [phi-inputs-at-97131-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-97131-3.len 0)
-      (No)
-      (let
-        [phi-input-at-97131-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-97131-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-97131-3.value]
-        [label : i64 phi-input-at-97131-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-97131-3.slots
-            (+ phi-inputs-at-97131-3.start 1)
-            (- phi-inputs-at-97131-3.len 1))]
-        (if (opt-successor-sink-value-zero? blocks (& value))
-          (Some label)
-          (opt-successor-sink-phi-zero-label blocks rest))))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptSuccessorSinkMaybeLabel
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (opt-successor-sink-value-zero? blocks (& input.value))
+        (return (Some input.label)))))
+  (No))
 
 (define (opt-successor-sink-phi-unit-step-value?
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -90020,24 +89376,14 @@
 (define (opt-successor-sink-phi-unit-step-label
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [phi-var : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]) : OptSuccessorSinkMaybeLabel
-  (let
-    [phi-inputs-at-97177-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-97177-3.len 0)
-      (No)
-      (let
-        [phi-input-at-97177-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-97177-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-97177-3.value]
-        [label : i64 phi-input-at-97177-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-97177-3.slots
-            (+ phi-inputs-at-97177-3.start 1)
-            (- phi-inputs-at-97177-3.len 1))]
-        (if (opt-successor-sink-phi-unit-step-value? blocks phi-var (& value))
-          (Some label)
-          (opt-successor-sink-phi-unit-step-label blocks phi-var rest))))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptSuccessorSinkMaybeLabel
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (opt-successor-sink-phi-unit-step-value? blocks phi-var (& input.value))
+        (return (Some input.label)))))
+  (No))
 
 (define (opt-successor-sink-iv-phi-shape
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -90045,15 +89391,10 @@
   [inputs : (& ir.CompilerIrPhiInputSeq)]) : OptSuccessorSinkMaybeInductionShape
   (if (not (= (ir.compiler-ir-phi-input-seq-count inputs) 2))
     (No)
-    (match (opt-successor-sink-phi-zero-label
-      blocks
-      (owned_view.compiler-owned-reference-shared-view inputs))
+    (match (opt-successor-sink-phi-zero-label blocks inputs)
       [(No) (No)]
       [(Some seed-label)
-        (match (opt-successor-sink-phi-unit-step-label
-          blocks
-          phi-var
-          (owned_view.compiler-owned-reference-shared-view inputs))
+        (match (opt-successor-sink-phi-unit-step-label blocks phi-var inputs)
           [(No) (No)]
           [(Some step-label)
             (if (= seed-label step-label)
@@ -90103,36 +89444,20 @@
   [base : (& base ir.CompilerIrValue)]
   [scale : i64]
   [want-step : bool]
-  [inputs : ir.CompilerIrPhiInputSeq]) : OptSuccessorSinkMaybeLabel
-  (let
-    [phi-inputs-at-97261-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-97261-3.len 0)
-      (No)
-      (let
-        [phi-input-at-97261-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-97261-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-97261-3.value]
-        [label : i64 phi-input-at-97261-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-97261-3.slots
-            (+ phi-inputs-at-97261-3.start 1)
-            (- phi-inputs-at-97261-3.len 1))]
-        (if (if want-step
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptSuccessorSinkMaybeLabel
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (if want-step
           (opt-successor-sink-pointer-step-value?
             blocks
             phi-var
             scale
-            (& value))
-          (opt-successor-sink-pointer-seed-value? blocks base (& value)))
-          (Some label)
-          (opt-successor-sink-pointer-edge-label
-            blocks
-            phi-var
-            base
-            scale
-            want-step
-            rest))))))
+            (& input.value))
+          (opt-successor-sink-pointer-seed-value? blocks base (& input.value)))
+        (return (Some input.label)))))
+  (No))
 
 (define (opt-successor-sink-pointer-phi-shape
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -90148,7 +89473,7 @@
       base
       scale
       false
-      (owned_view.compiler-owned-reference-shared-view inputs))
+      inputs)
       [(No) (No)]
       [(Some seed-label)
         (match (opt-successor-sink-pointer-edge-label
@@ -90157,7 +89482,7 @@
           base
           scale
           true
-          (owned_view.compiler-owned-reference-shared-view inputs))
+          inputs)
           [(No) (No)]
           [(Some step-label)
             (if (= seed-label step-label)
@@ -90167,38 +89492,27 @@
 (define (opt-successor-sink-phi-update-scale
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [phi-var : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]) : option_i64.Option
-  (let
-    [phi-inputs-at-97322-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-97322-3.len 0)
-      (None)
-      (let
-        [phi-input-at-97322-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-97322-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-97322-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-97322-3.slots
-            (+ phi-inputs-at-97322-3.start 1)
-            (- phi-inputs-at-97322-3.len 1))]
-        [found : option_i64.Option
-          (match value
-            [(Var input-var)
-              (match (opt-find-def
-                (ir.compiler-ir-block-list-view blocks)
-                input-var)
-                [(Some instr)
-                  (match instr
-                    [(Gep _ base offset _)
-                      (if (opt-value-is-var? base phi-var)
-                        (opt-successor-sink-value-i64 blocks offset)
-                        (None))]
-                    [_ (None)])]
-                [(No) (None)])]
-            [_ (None)])]
-        (match found
-          [(Some scale) (Some scale)]
-          [(None) (opt-successor-sink-phi-update-scale blocks phi-var rest)])))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : option_i64.Option
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var input-var)
+          (match (opt-find-def
+            (ir.compiler-ir-block-list-view blocks)
+            input-var)
+            [(Some instr)
+              (match instr
+                [(Gep _ base offset _)
+                  (when
+                    (opt-value-is-var? base phi-var)
+                    (match (opt-successor-sink-value-i64 blocks offset)
+                      [(Some scale) (return (Some scale))]
+                      [(None) unit]))]
+                [_ unit])]
+            [(No) unit])]
+        [_ unit])))
+  (None))
 
 (define (opt-successor-sink-mul-scale-source
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -90306,43 +89620,28 @@
 (define (opt-successor-sink-phi-init-recipe
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [phi-var : i64]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [mul : ir.CompilerIrInstr]) : OptSuccessorSinkMaybeRecipe
-  (let
-    [phi-inputs-at-97479-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-97479-3.len 0)
-      (No)
-      (let
-        [phi-input-at-97479-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-97479-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-97479-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-97479-3.slots
-            (+ phi-inputs-at-97479-3.start 1)
-            (- phi-inputs-at-97479-3.len 1))]
-        (match value
-          [(Var input-var)
-            (match (opt-find-def
-              (ir.compiler-ir-block-list-view blocks)
-              input-var)
-              [(Some instr)
-                (match instr
-                  [(Gep _ base offset ty)
-                    (if (and
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var input-var)
+          (match (opt-find-def
+            (ir.compiler-ir-block-list-view blocks)
+            input-var)
+            [(Some instr)
+              (match instr
+                [(Gep _ base offset ty)
+                  (when
+                    (and
                       (not (opt-value-is-var? base phi-var))
                       (opt-successor-sink-value-zero? blocks (& offset)))
-                      (Some mul base ty)
-                      (opt-successor-sink-phi-init-recipe
-                        blocks
-                        phi-var
-                        rest
-                        mul))]
-                  [_
-                    (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])]
-              [(No)
-                (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])]
-          [_ (opt-successor-sink-phi-init-recipe blocks phi-var rest mul)])))))
+                    (return (Some mul base ty)))]
+                [_ unit])]
+            [(No) unit])]
+        [_ unit])))
+  (No))
 
 ;; Induction strength reduction has already rewritten the original
 ;; `gep base, (iv * scale)` to a pointer phi by the time this late pass runs.
@@ -90355,10 +89654,7 @@
   [producer : (& ir.CompilerIrInstr)]) : OptSuccessorSinkMaybeRecipe
   (match (owned_view.compiler-owned-reference-shared-view producer)
     [(Phi _ inputs _)
-      (match (opt-successor-sink-phi-update-scale
-        context.blocks
-        phi-var
-        (compiler-opt-global-shared-view inputs))
+      (match (opt-successor-sink-phi-update-scale context.blocks phi-var inputs)
         [(Some scale)
           (match (opt-successor-sink-find-scale-mul
             context.blocks
@@ -90370,7 +89666,7 @@
               (match (opt-successor-sink-phi-init-recipe
                 context.blocks
                 phi-var
-                (compiler-opt-global-shared-view inputs)
+                inputs
                 (compiler-opt-global-shared-view mul))
                 [(Some _ base ptr-ty)
                   (match (opt-successor-sink-mul-scale-var
@@ -91748,7 +91044,7 @@
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     (for [at (iterator.range 0 count)]
-      (match (ir.compiler-ir-instr-seq-ref instrs at)
+      (match (ir.compiler-ir-instr-seq-borrow instrs at)
         [(Phi dst inputs ty)
           (if (opt-uniform-phi-env-holds? env dst)
             unit
@@ -91757,7 +91053,7 @@
               (ir.CompilerIrInstr.Phi
                 dst
                 (opt-uniform-phi-subst-inputs env (& inputs))
-                ty)))]
+                (ast.ty-node-persist ty))))]
         [_
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
@@ -94990,10 +94286,10 @@
   [phi-count : i64]) : OptUboundMaybeCheck
   (if (>= phi-count (ir.compiler-ir-instr-seq-count instrs))
     (No)
-    (match (ir.compiler-ir-instr-seq-ref instrs phi-count)
+    (match (ir.compiler-ir-instr-seq-borrow instrs phi-count)
       [(BoundsCheck idx len ok)
         (match idx
-          [(Var iphi) (Some iphi len ok)]
+          [(Var iphi) (Some iphi (ir.compiler-ir-clone-value len) ok)]
           [_ (No)])]
       [_ (No)])))
 
@@ -95052,14 +94348,19 @@
             (No)
             (match cond
               [(Var cond-var)
-                (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+                (match (ir.compiler-ir-instr-seq-borrow instrs (- count 2))
                   [(BinOp dst op lhs rhs ty)
                     (if (and
                       (= dst cond-var)
                       (opt-binop-eq (& op) (& (Lt)))
                       (opt-type-eq type-segment-bases ty (& (I64))))
                       (match lhs
-                        [(Var back) (Some cond-var back rhs false-label)]
+                        [(Var back)
+                          (Some
+                            cond-var
+                            back
+                            (ir.compiler-ir-clone-value rhs)
+                            false-label)]
                         [_ (No)])
                       (No))]
                   [_ (No)])]
@@ -97260,24 +96561,13 @@
     found))
 
 (define (opt-bg-inputs-need-relabel?
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [plans : (& plans OptBgPlanList)]) : bool
-  (let
-    [phi-inputs-at-102936-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-102936-3.len 0)
-      false
-      (let
-        [phi-input-at-102936-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-102936-3 0)]
-        [label : i64 phi-input-at-102936-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-102936-3.slots
-            (+ phi-inputs-at-102936-3.start 1)
-            (- phi-inputs-at-102936-3.len 1))]
-        (or
-          (not (= (opt-bg-plan-ok-of plans label) label))
-          (opt-bg-inputs-need-relabel? rest plans))))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [label : i64 (ir.compiler-ir-phi-input-seq-borrow inputs index).label]
+      (unless (= (opt-bg-plan-ok-of plans label) label) (return true))))
+  false)
 
 ;; `B_ok` inherits `B`'s terminator, so every phi input that named `B` names the
 ;; fast block after the split. A block whose phis name no split block keeps its
@@ -97312,7 +96602,7 @@
     [cursor : i64 0]
     [needed? : bool false]
     (while (< cursor count)
-      (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+      (match (ir.compiler-ir-instr-seq-borrow instrs cursor)
         [(Phi _ inputs _)
           (if (opt-bg-inputs-need-relabel? inputs plans)
             (begin
@@ -98130,10 +97420,8 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             (for [j (iterator.range 0 count)]
               (let
-                [instr (ir.compiler-ir-instr-seq-ref instrs j)]
-                (opt-def-counts-instr!
-                  (&mut defs)
-                  (compiler-opt-global-shared-view instr))
+                [instr (ir.compiler-ir-instr-seq-borrow instrs j)]
+                (opt-def-counts-instr! (&mut defs) instr)
                 (opt-collect-instr-uses-array
                   (compiler-opt-global-shared-view uses)
                   (& instr)))))])
@@ -100162,14 +99450,14 @@
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             (for [j (iterator.range 0 count)]
               (let
-                [instr (ir.compiler-ir-instr-seq-ref instrs j)]
+                [instr (ir.compiler-ir-instr-seq-borrow instrs j)]
                 (match (compiler-opt-global-shared-view instr)
                   [(Phi _ inputs _)
                     (let
                       [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
                       (for [k (iterator.range 0 len)]
                         (let
-                          [input (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                          [input (ir.compiler-ir-phi-input-seq-borrow inputs k)]
                           (match input.value
                             [(Var v)
                               (when
@@ -100191,9 +99479,7 @@
                       (set! (array-ref def-block dst) b)
                       (set! (array-ref def-index dst) j))]
                   [_ unit])
-                (opt-def-counts-instr!
-                  (&mut def-count)
-                  (compiler-opt-global-shared-view instr))
+                (opt-def-counts-instr! (&mut def-count) instr)
                 (opt-collect-instr-uses-array
                   (compiler-opt-global-shared-view uses)
                   (& instr)))))]))
@@ -100216,7 +99502,7 @@
     [block : i64 (array-ref facts.def-block var)]
     (if (< block 0)
       (Jump -1)
-      (match (ir.compiler-ir-block-seq-ref seq block)
+      (match (ir.compiler-ir-block-seq-borrow seq block)
         [(Block _ instrs)
           (ir.compiler-ir-instr-seq-ref instrs (array-ref facts.def-index var))]))))
 
@@ -104075,54 +103361,29 @@
             [(Block _ instrs) (opt-inline-bounds-leaf-seq-ok? (& instrs) np)])
           false)])))
 
-(define (opt-inline-phi-input-label?
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [label : i64]) : bool
-  (let
-    [phi-inputs-at-108929-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-108929-3.len 0)
-      false
-      (let
-        [phi-input-at-108929-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-108929-3 0)]
-        [input-label : i64 phi-input-at-108929-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-108929-3.slots
-            (+ phi-inputs-at-108929-3.start 1)
-            (- phi-inputs-at-108929-3.len 1))]
-        (if (= input-label label)
-          true
-          (opt-inline-phi-input-label? rest label))))))
-
 (define (opt-inline-instr-seq-phi-label-from?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [label : i64]) : bool
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
-        (when (opt-inline-phi-input-label? inputs label) (return true))]
+        (when (opt-bool-branch-phi-input-has-label? inputs label) (return true))]
       ;; Inliner input is SSA, where phis form the instruction prefix.
       [_ (break)]))
   false)
 
 (define (opt-inline-phi-input-labels-add
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [labels : OptLabelSet]) : OptLabelSet
   (let
-    [phi-inputs-at-108957-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-108957-3.len 0)
-      labels
-      (let
-        [phi-input-at-108957-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-108957-3 0)]
-        [label : i64 phi-input-at-108957-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-108957-3.slots
-            (+ phi-inputs-at-108957-3.start 1)
-            (- phi-inputs-at-108957-3.len 1))]
-        (opt-inline-phi-input-labels-add rest (opt-label-add labels label))))))
+    [out : OptLabelSet labels]
+    (for [index (iterator.range 0 inputs.len)]
+      (set!
+        out
+        (opt-label-add
+          out
+          (ir.compiler-ir-phi-input-seq-borrow inputs index).label)))
+    out))
 
 (define (opt-inline-instr-seq-phi-labels-add-from
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -104130,7 +103391,7 @@
   [labels : OptLabelSet]) : OptLabelSet
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     labels
-    (match (ir.compiler-ir-instr-seq-ref instrs index)
+    (match (ir.compiler-ir-instr-seq-borrow instrs index)
       [(Phi _ inputs _)
         (opt-inline-instr-seq-phi-labels-add-from
           instrs
@@ -104495,7 +103756,7 @@
 ;; caller invocation, so it only outweighs the retired boundary where that
 ;; boundary is also retired once per caller invocation. See clause 5 of the
 ;; single-site header above opt-inline-single-site-min-params for each side.
-(define (opt-inline-instr-call? [instr : ir.CompilerIrInstr]) : bool
+(define (opt-inline-instr-call? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
     [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
          (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
@@ -108409,7 +107670,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : i64 0]
     (for [i (iterator.range 0 count)]
-      (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-ref instrs i))
+      (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-borrow instrs i))
         (+= out 1)
         unit))
     out))
@@ -110990,6 +110251,10 @@
   [func : (& ir.CompilerIrFunction)]
   [offset : i64]) : i64
   (let
+    ;; Standalone pricing has no frame-omission decision. Do not inherit the
+    ;; preceding emitted function's extra register across a compile boundary.
+    [saved-rbp-pool : bool reg.compiler-reg-rbp-pool-enabled]
+    [_standalone-pool : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
     [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
     ;; RG-1: and the allocator's home tracer, for the same reason the pass
     ;; tracer is silenced around a measured plan.
@@ -111031,6 +110296,8 @@
     [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
     [_restore-weights : unit
       (reg.compiler-reg-block-weights-set-frequency! true)]
+    [_restore-pool : unit
+      (reg.compiler-reg-set-rbp-pool-enabled! saved-rbp-pool)]
     cost))
 
 ;; INL-15: the block weights of the tier's currency, for the allocator's cost
@@ -114397,6 +113664,7 @@
     (let
       [devirt : ir.CompilerIrFunctionSeq
         (opt-pure-call-inline-memory-install!
+          pools
           type-segment-bases
           (&
             (opt-tailrec-function-seq!
@@ -114954,6 +114222,62 @@
     [scc : OptSccResult (opt-scc-compute calls)]
     (OptProgramIndex index calls scc)))
 
+;; --- extern effect identities -------------------------------------------------
+;;
+;; Calls name an extern by its language identity, while its runtime effects
+;; belong to the declared link identity. This table maps every declared extern
+;; of the program being optimized to that link. Provided entries are the program
+;; functions of that name, whose summaries come from their bodies, so they are
+;; not recorded; no other declaration shares a program function's identity.
+;; Declarations that disagree on the link record -1, an identity no effect table
+;; classifies. Like opt-licm-global-headers it outlives one program's arenas, so
+;; every program entry installs its own table before reading any summary.
+(define opt-effect-links : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+(define (opt-effect-links-install! [externs : (& ir.CompilerIrExternSeq)]) : unit
+  (let
+    [out
+      (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
+    (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs at)
+        [(Extern name _ _ _ _ link _ provided)
+          (unless
+            provided
+            (opt_i64_i64_map.insert-ref!
+              (&mut out)
+              name
+              (match (opt_i64_i64_map.get (& out) name)
+                [(LookupFound earlier)
+                  (if (= earlier link)
+                    link
+                    -1)]
+                [(LookupMissing) link])))]))
+    (set! opt-effect-links out)))
+
+;; The identity a direct call to `name` reaches: a declared extern's link
+;; identity, otherwise `name` itself. Every classification of a callee outside
+;; the program's functions starts from it.
+(define (opt-effect-callee [name : i64]) : i64
+  (match (opt_i64_i64_map.get
+    (& opt-effect-links)
+    (ir.compiler-ir-symbol-id name))
+    [(LookupFound link) link]
+    [(LookupMissing) name]))
+
+;; A runtime effect class is keyed on the helper's own identity. A call whose
+;; identity reaches a different link is not that helper, even when it is
+;; spelled like one, so it has the unknown effect of any other extern.
+(define (opt-direct-call-effect [name : i64]) : ir.CompilerIrEffect
+  (if (= (opt-effect-callee name) name)
+    (ir.compiler-ir-direct-call-effect-id name)
+    (ir.CompilerIrEffect.Unknown)))
+
+;; The private globals a call to a callee outside the program's functions may
+;; write, decided by the identity it reaches.
+(define (opt-external-call-write-mask [name : i64]) : i64
+  (opt-global-mod-ref-external-mask (opt-effect-callee name)))
+
 (define (opt-program-index-empty) : OptProgramIndex
   (let
     [functions : ir.CompilerIrFunctionSeq (ir.compiler-ir-function-seq-empty)]
@@ -115094,9 +114418,10 @@
           (array-ref rows slot))))
     out))
 
-;; Per-function write rows closed over the direct call graph, each joined with
-;; `extra` (the writes every function may make), as the summary maps store
-;; them.
+;; Private-global rows closed over the direct call graph. Each declared extern
+;; gets its link's external-call row plus `extra`: escaped storage remains
+;; writable through runtime pointers. An extern whose row would be empty gets
+;; none, since a lookup of a name without a row applies the same link rule.
 (define (opt-program-closed-rows-map
   [index : (& index OptProgramIndex)]
   [rows : (&mut rows (__tl_dyn-array i64))]
@@ -115108,7 +114433,20 @@
     (while (< slot (array-length rows))
       (set! (array-ref rows slot) (bit-or (array-ref rows slot) extra))
       (+= slot 1))
-    (opt-program-rows-map index rows false capacity)))
+    (let
+      [out (opt-program-rows-map index rows false capacity)]
+      [at (opt_i64_i64_map.next-occupied (& opt-effect-links) 0)]
+      (while (< at (opt_i64_i64_map.capacity (& opt-effect-links)))
+        (match (opt_i64_i64_map.entry-at (& opt-effect-links) at)
+          [(EntrySome name link)
+            (let
+              [mask (bit-or (opt-global-mod-ref-external-mask link) extra)]
+              (unless
+                (= mask 0)
+                (opt_i64_i64_map.insert-ref! (&mut out) name mask)))]
+          [(EntryNone) unit])
+        (set! at (opt_i64_i64_map.next-occupied (& opt-effect-links) (+ at 1))))
+      out)))
 
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
@@ -115603,7 +114941,7 @@
         args
         0)]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         ;; The runtime control-flow family is the nonreturning abort set;
         ;; it writes no memory the caller can observe afterwards because
         ;; there is no afterwards. The non-call arm below already gives
@@ -115826,11 +115164,13 @@
 ;; exactly what `opt-load-cse-state-direct-call` looks up for a call-site name.
 ;; An uninitialized builtin id is -1 and is never a call-site name, so it is
 ;; skipped rather than seeded (mirroring `compiler-ir-runtime-memory-write-id?`).
+;; So is a builtin whose spelling the program declares as an extern linked
+;; elsewhere: calls with that identity reach the link (opt-effect-callee).
 (define (opt-call-memory-seed-builtin
   [out : opt_i64_i64_map.Map]
   [name-id : i64]
   [summary : i64]) : opt_i64_i64_map.Map
-  (if (< name-id 0)
+  (if (or (< name-id 0) (not (= (opt-effect-callee name-id) name-id)))
     out
     (let
       [next : opt_i64_i64_map.Map out]
@@ -116022,12 +115362,15 @@
     rows))
 
 ;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
-;; verdict, which is the summary this builder produced before SUM-3.
+;; verdict, which is the summary this builder produced before SUM-3. The
+;; function list declares no externs.
 (define (opt-call-memory-build
   [type-segment-bases : i64]
   [functions : (& ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
+    [_externs : unit
+      (opt-effect-links-install! (& (ir.compiler-ir-extern-seq-empty)))]
     [index : OptProgramIndex (opt-program-index-build functions)]
     (opt-call-memory-build-with-descriptor-globals
       type-segment-bases
@@ -117389,6 +116732,7 @@
       [count : i64 (opt-function-seq-count reachable-functions)]
       [capacity : i64 (opt-function-index-capacity count)]
       [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
+      [_externs : unit (opt-effect-links-install! externs)]
       [summaries : OptProgramSummaries
         (if (<= count (opt-summary-function-limit))
           (opt-program-call-summaries
@@ -117851,8 +117195,8 @@
 ;;       (opt-global-mod-ref-call-mask), and the union of those rows over the
 ;;       function's returning calls -- opt-global-cell-call-writes -- is
 ;;       exactly the set of cells this condition refuses. A callee outside the
-;;       program's function list is an EXTERN: no IR body, hence no `Store`,
-;;       and under (b) no pointer it holds can name a cell, so it writes none.
+;;       program's function list uses the external-call effect: arbitrary externs
+;;       may re-enter user code and therefore write any cell.
 ;;       An INDIRECT call (CallIndirect, either C-ABI store-result form,
 ;;       SpmdCall, TailCallIndirect) may land on any function of the program,
 ;;       so it contributes "any cell" and refuses every G -- and so does every
@@ -118000,10 +117344,9 @@
 
 ;; Condition (c) as a MASK over global cells: what the RETURNING calls this
 ;; scan saw may write, in the packed OptGlobalModRef encoding. An unresolved
-;; call form contributes "any cell"; a named callee contributes its row, which
-;; is 0 for an extern (no IR body, hence no `Store`) and "any cell" whenever
-;; the program carries no table -- so a table-less program refuses exactly the
-;; functions v1 refused. The walk stops as soon as the union saturates.
+;; call form contributes "any cell"; a named callee contributes its row or its
+;; external-call effect. An arbitrary extern or an unavailable table refuses
+;; every cell. The walk stops as soon as the union saturates.
 (define (opt-global-cell-call-writes-list
   [mod-ref : (& mod-ref OptGlobalModRef)]
   [names : OptLabelSet]
@@ -118225,8 +117568,8 @@
 ;;   * a write through a pointer that names a cell. `CompilerIrValue.GlobalAddr`
 ;;     is the only IR value form that produces a cell address, so when the
 ;;     program's address-taken set is EMPTY no pointer in the program can name a
-;;     cell, and no `StorePtr`, `CopyBytes`, vector store, syscall or extern
-;;     callee can reach one. That is the same whole-program argument
+;;     cell, and no `StorePtr`, `CopyBytes`, vector store or syscall can
+;;     directly reach one. That is the same whole-program argument
 ;;     opt-licm-direct-call-keeps-globals-clean? already rests on; this table
 ;;     requires it as a precondition and is not built at all when it fails, so
 ;;     the argument is never stretched.
@@ -118234,11 +117577,12 @@
 ;;     through this table. An INDIRECT one (`CallIndirect`, the two C-ABI
 ;;     store-result forms, `SpmdCall`, `TailCallIndirect`) may land on any
 ;;     function of the program and so contributes "any cell", as does any
-;;     instruction whose effect is `Unknown` or `CpuProbe`. An EXTERN callee has
-;;     no IR body, hence performs no `Store`, and under the empty address-taken
-;;     precondition cannot reach a cell through a pointer either, so it
-;;     contributes nothing -- the same verdict opt-call-memory-apply-direct-call
-;;     gives a name outside the program's function set.
+;;     instruction whose effect is `Unknown` or `CpuProbe`. An arbitrary EXTERN
+;;     callee may re-enter a TypeLisp callback or exported function, so it also
+;;     contributes "any cell". Compiler-owned runtime helpers with known
+;;     effects do not call user code; their pointer writes still obey the empty
+;;     address-taken precondition. Both direct queries and the transitive rows
+;;     use this same external-call classification.
 ;;
 ;; THE LATTICE AND THE FIXPOINT. A row is a bit set: one bit per global that is
 ;; a direct `Store` target somewhere in the program (bits 0..61), plus bit 62
@@ -118264,10 +117608,8 @@
   ;; this map is never stored, so no execution writes its cell at all and every
   ;; query for it is false. The storage table indexes every non-scalar global.
   (index opt_i64_i64_map.Map)
-  ;; function symbol id -> that function's packed write set. Every function of
-  ;; the program has a row; an absent name is an extern: no IR body, and under
-  ;; the empty address-taken precondition no pointer it holds can name a cell,
-  ;; so it writes none.
+  ;; Function or declared extern identity -> packed write set, including re-entry.
+  ;; Every program function has a row; absent names use the external-call rule.
   (writes opt_i64_i64_map.Map))
 
 ;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
@@ -118322,8 +117664,32 @@
     (opt-global-mod-ref-any? mask)
     (not (= (bit-and mask (opt-global-mod-ref-cell-bit index name)) 0))))
 
-;; The cells a DIRECT callee may write. No table, or a resolved row; an absent
-;; name is an extern and writes none (see the header's exhaustive list).
+;; Compiler-owned runtime helpers never call user code, so a call to one cannot
+;; re-enter a TypeLisp function that writes a private global. The proof is
+;; narrower than a helper's general memory effect: the byte copies remain
+;; unknown write barriers. Atomic helpers keep their general effect because
+;; they order other threads' writes before the caller's later reads.
+(define (opt-runtime-call-excludes-reentry? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (= name cbi.compiler-builtin-id-tl-memcpy)
+      (= name cbi.compiler-builtin-id-tl-memcpy-fresh)
+      (cbi.compiler-builtin-backend-fixed-fault-id? name)
+      (cbi.compiler-builtin-backend-runtime-core-id? name)
+      (and
+        (cbi.compiler-builtin-backend-runtime-stdlib-type-lisp-id? name)
+        (not (cbi.compiler-builtin-backend-runtime-atomic-id? name))))))
+
+;; Any other external callee may invoke a TypeLisp callback that writes private
+;; cells or storage without receiving a global address itself. `name` is an
+;; effect identity (opt-effect-callee).
+(define (opt-global-mod-ref-external-mask [name : i64]) : i64
+  (if (opt-runtime-call-excludes-reentry? name)
+    0
+    (opt-global-mod-ref-effect-mask (ir.compiler-ir-direct-call-effect-id name))))
+
+;; A direct callee's row, or the conservative external-call effect.
 (define (opt-global-mod-ref-call-mask
   [mod-ref : (& mod-ref OptGlobalModRef)]
   [name : i64]) : i64
@@ -118333,7 +117699,7 @@
       (& mod-ref.writes)
       (ir.compiler-ir-symbol-id name))
       [(LookupFound mask) mask]
-      [(LookupMissing) 0])))
+      [(LookupMissing) (opt-external-call-write-mask name)])))
 
 ;; The cells a `Store name` writes: exactly name's, when there is a table.
 (define (opt-global-mod-ref-instr-store-mask
@@ -118362,11 +117728,10 @@
     [(or (Pure) (MemoryRead) (ControlFlow) (MemoryWrite)) 0]
     [(or (CpuProbe) (Unknown)) (opt-global-mod-ref-any)]))
 
-;; One instruction's own cell writes, joined into `mask`. A direct call adds
-;; nothing here: a program callee's row reaches its callers through the closure
-;; (opt-global-mod-ref-writes), and any other callee is an extern, which writes
-;; no cell (see the header's exhaustive list).
+;; Internal callees contribute through the call-graph closure. External calls
+;; seed their re-entry effect here so it propagates through internal callers.
 (define (opt-global-mod-ref-instr-mask
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [mask : i64]
   [instr : ir.CompilerIrInstr]) : i64
@@ -118374,7 +117739,10 @@
     mask
     (match (compiler-opt-global-shared-view instr)
       [(Store name _ _) (opt-global-mod-ref-store-mask index name)]
-      [(or (Call _ _ _ _) (TailCall _ _ _)) 0]
+      [(or (Call _ name _ _) (TailCall name _ _))
+        (if (opt-program-function? program name)
+          0
+          (opt-external-call-write-mask name))]
       ;; The one call form the effect table classifies `ControlFlow` rather
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
@@ -118399,6 +117767,7 @@
               blocks
               (cast 0 : i64)
               opt-global-mod-ref-instr-mask
+              program
               index))]))
     (opt-program-closed-rows-map program (&mut rows) 0 capacity)))
 
@@ -119102,6 +118471,7 @@
 
 ;; One instruction's OWN storage writes, callees excluded.
 (define (opt-global-obj-instr-own-mask
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : (& owners opt_i64_i64_map.Map)]
   [instr : (& ir.CompilerIrInstr)]) : i64
@@ -119112,11 +118482,15 @@
       (opt-global-obj-owner-mask
         index
         (opt-global-obj-owner-of-value owners (& ptr)))]
-    [(or (Call _ _ _ _) (TailCall _ _ _)) 0]
+    [(or (Call _ name _ _) (TailCall name _ _))
+      (if (opt-program-function? program name)
+        0
+        (opt-external-call-write-mask name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
     [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
 
 (define (opt-global-obj-own-instr!
+  [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : OptGlobalObjOwners]
   [escaped : (&mut escaped (__tl_dyn-array i64))]
@@ -119141,7 +118515,9 @@
               escaped
               index)))])
     (opt-global-obj-escape-refs! refs.ref-list escaped index)
-    (bit-or mask (opt-global-obj-instr-own-mask index owners.map (& instr)))))
+    (bit-or
+      mask
+      (opt-global-obj-instr-own-mask program index owners.map (& instr)))))
 
 ;; --- pass 0: what every call site passes to every parameter ------------------
 ;;
@@ -119299,6 +118675,7 @@
                   blocks
                   (cast 0 : i64)
                   opt-global-obj-own-instr!
+                  program
                   index
                   (compiler-opt-global-shared-view owners)
                   escaped)
@@ -119852,8 +119229,8 @@
 
 ;; The length of the array a var's Vec box names. Three shapes, in the order the
 ;; IR produces them: a box whose two words this function itself wrote, a fresh
-;; `tl_alloc` filled by one `copy_bytes`, and a call to a constructor whose
-;; summary names the parameter its `make-array` length came from.
+;; runtime allocation filled by one `copy_bytes`, and a call to a constructor
+;; whose summary names the parameter its `make-array` length came from.
 ;; A length value in its canonical spelling: the lowering emits a `mov` of the
 ;; literal or of the caller's variable before the constructor call, so two
 ;; writes of one length carry different vars until the movs are followed.
@@ -120002,9 +119379,13 @@
         [(Some instr _)
           (match instr
             [(Call _ name args _)
-              (if (ir.compiler-ir-symbol-eq?
-                name
-                cbi.compiler-builtin-id-tl-alloc)
+              (if (or
+                (ir.compiler-ir-symbol-eq?
+                  name
+                  cbi.compiler-builtin-id-tl-alloc)
+                (ir.compiler-ir-symbol-eq?
+                  name
+                  cbi.compiler-builtin-id-tl-alloc-global))
                 (if (and
                   (= (array-ref tables.ncopy var) 1)
                   (> (array-ref tables.copy var) 0))
@@ -120492,22 +119873,11 @@
   [ctx : (& ctx OptLenEqCtx)]
   [taint : (& taint OptLenEqTaint)]
   [bad : (&mut bad opt_i64_i64_map.Map)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : unit
-  (let
-    [phi-inputs-at-125823-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-125823-3.len 0)
-      unit
-      (let
-        [phi-input-at-125823-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-125823-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-125823-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-125823-3.slots
-            (+ phi-inputs-at-125823-3.start 1)
-            (- phi-inputs-at-125823-3.len 1))]
-        (opt-len-eq-refuse-value! ctx taint bad value)
-        (opt-len-eq-phi-refuse! ctx taint bad rest)))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : unit
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (opt-len-eq-refuse-value! ctx taint bad (& input.value)))))
 
 ;; A `load` through a box address yields the `.slots` DESCRIPTOR at word 0 and
 ;; the `.len` SCALAR at word 1. Only the first is a pointer into the object this
@@ -122784,12 +122154,15 @@
 
 ;; The three-argument form, for callers with no program facts or per-callee
 ;; memory summary in hand: P-B's length-equality table then refuses every
-;; global whose box reaches a call, which is what an absent summary means.
+;; global whose box reaches a call, which is what an absent summary means. The
+;; function list declares no externs.
 (define (opt-global-cell-summary-build
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]) : OptGlobalCellSummary
   (let
+    [_externs : unit
+      (opt-effect-links-install! (& (ir.compiler-ir-extern-seq-empty)))]
     [facts : OptProgramFacts (opt-program-facts-build functions)]
     (opt-global-cell-summary-build-with-call-memory
       type-segment-bases
@@ -124305,7 +123678,8 @@
   [spans : ir.CompilerSourceSpans]
   [level : i64]
   [profile-state : profile_state.CompilerProfileState]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerOptimizedProgram
+  [representations : ir.CompilerIrRepresentationIndex]
+  [input-retirement : OptInputRetirement]) : CompilerOptimizedProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs)
       (if (= level 0)
@@ -124324,6 +123698,7 @@
           (let
             ;; LICM-GDP: the header-typed-global table is per program.
             [_licm-headers : unit (opt-licm-global-headers-reset!)]
+            [_effect-links : unit (opt-effect-links-install! (& externs))]
             [_licm-deref : unit
               (opt-licm-deref-program-facts!
                 type-segment-bases
@@ -124397,8 +123772,8 @@
                     ;; Gather the survivors, already resident in the
                     ;; optimizer-input arena, and release the inline arena
                     ;; before the loop; see `opt-optimizer-input-carrier`.
-                    ;; `pruned-globals` names the driver's globals, which live in
-                    ;; the lower-IR arena and are untouched by this release.
+                    ;; The driver's globals, externs and spans live outside
+                    ;; the lower-IR arena; only its function bodies retire.
                     [optimizer-functions : ir.CompilerIrFunctionSeq
                       (opt-optimizer-input-carry
                         pools
@@ -124410,6 +123785,15 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena))]
+                    ;; Every surviving body is now independent of the source
+                    ;; owner. The synchronous authority and its owner must
+                    ;; themselves remain outside the retired storage.
+                    [_retire-source-input : unit
+                      (when
+                        (= level 2)
+                        (match input-retirement
+                          [(Retain) unit]
+                          [(Retire owner release-input) (release-input owner)]))]
                     [summaries : OptProgramSummaries
                       (opt-build-program-summaries
                         type-segment-bases
@@ -124514,6 +123898,12 @@
                               (& inline-spans)
                               (& optimized))))))))]))))]))
 
+;; Optional authority to retire source function storage after the level-2
+;; carrier handoff. The callback is synchronous and does not own its context.
+(defenum OptInputRetirement
+  (Retain)
+  (Retire i64 (-> i64 unit)))
+
 ;; One optimizer run: the pools the program's types live in, the level, the
 ;; job's compile-profile state, and the program's representation index when the
 ;; caller already has one (`representations?`); without it the run builds the
@@ -124523,7 +123913,8 @@
   (level i64)
   (profile-state profile_state.CompilerProfileState)
   (representations? bool)
-  (representations ir.CompilerIrRepresentationIndex))
+  (representations ir.CompilerIrRepresentationIndex)
+  (input-retirement OptInputRetirement))
 
 ;; A run with a fresh profile state and the program's own representation index.
 (define (optimize-request [pools : ast.AstNodePoolContext] [level : i64]) : OptimizeRequest
@@ -124532,7 +123923,8 @@
     level
     (profile_state.compiler-profile-state-new)
     false
-    (ir.compiler-ir-representation-index-empty)))
+    (ir.compiler-ir-representation-index-empty)
+    (OptInputRetirement.Retain)))
 
 (define (optimize-program
   [program : ir.CompilerIrProgram]
@@ -124553,7 +123945,8 @@
         request.representations
         (ir.compiler-ir-representation-index-build
           type-segment-bases
-          (& program))))))
+          (& program)))
+      request.input-retirement)))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools
 ;; call it.
@@ -125607,23 +125000,14 @@
 (define (opt-scratch-phi-input-derived?
   [roots : (& roots OptScratchRootList)]
   [facts : (& facts OptAliasFacts)]
-  [inputs : ir.CompilerIrPhiInputSeq]) : bool
-  (let
-    [phi-inputs-at-131116-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-131116-3.len 0)
-      false
-      (let
-        [phi-input-at-131116-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-131116-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-131116-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-131116-3.slots
-            (+ phi-inputs-at-131116-3.start 1)
-            (- phi-inputs-at-131116-3.len 1))]
-        (or
-          (opt-scratch-value-derived? roots facts value)
-          (opt-scratch-phi-input-derived? roots facts rest))))))
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : bool
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (when
+        (opt-scratch-value-derived? roots facts (& input.value))
+        (return true))))
+  false)
 
 (define (opt-scratch-instr-loop-carried-candidate?
   [roots : (& roots OptScratchRootList)]
@@ -129395,7 +128779,7 @@
         (opt-global-mod-ref-any)
         (opt-global-mod-ref-call-mask table name))]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(or (MemoryRead) (ControlFlow)) 0]
         [_ (opt-global-mod-ref-any)])]))
 
@@ -129482,7 +128866,7 @@
                   global-args?
                   0))]
             [(LookupMissing)
-              (match (ir.compiler-ir-direct-call-effect-id name)
+              (match (opt-direct-call-effect name)
                 ;; The runtime control-flow family is the nonreturning abort
                 ;; set (tl_abort_label / tl_oob_abort / tl_div_abort /
                 ;; tl_shift_abort). No instruction after such a call ever runs,
@@ -130012,7 +129396,53 @@
           (ir.compiler-ir-function-seq-ref functions slot))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
+;; Whether FUNC has a capture `opt-global-snapshot-function` may rewrite.
+(define (opt-global-snapshot-function-candidate?
+  [summaries : (& summaries OptProgramSummaries)]
+  [func : (& func ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ _ _ _ blocks _)
+      (opt-blocks-any?
+        blocks
+        opt-global-snapshot-candidate?
+        (& summaries.global-cell))]))
+
+;; Normalize FUNCTIONS as `opt-global-snapshot-normalize-functions` does, for
+;; bodies that outlive the call. Each function with a candidate capture is
+;; rewritten in one phase of a scratch arena and a deep copy of the result is
+;; kept, through the job's explicit POOLS; its value sources, use counts and
+;; intermediate block lists are dead once the copy is made. A function without
+;; a candidate is kept as is.
+(define (opt-global-snapshot-normalize-functions-retained
+  [pools : ast.AstNodePoolContext]
+  [summaries : (& summaries OptProgramSummaries)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [policy : OptGlobalSnapshotPolicy]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [scratch : arena.Arena (arena.make)]
+    (for [slot (iterator.range 0 functions.len)]
+      (let
+        [func : ir.CompilerIrFunction
+          (ir.compiler-ir-function-seq-ref functions slot)]
+        (if (opt-global-snapshot-function-candidate? summaries (& func))
+          (let
+            [phase : arena.ArenaPhase (arena.phase scratch)]
+            [rewritten : ir.CompilerIrFunction
+              (in-arena
+                scratch
+                (opt-global-snapshot-function summaries call-memory policy func))]
+            [kept : ir.CompilerIrFunction
+              (ir.compiler-ir-clone-function pools (& rewritten))]
+            (arena.rewind-safe! phase)
+            (ir.compiler-ir-function-builder-push! (&mut builder) kept))
+          (ir.compiler-ir-function-builder-push! (&mut builder) func))))
+    (arena.destroy-safe! scratch)
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
 (define (opt-pure-call-inline-memory-install!
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
   (let
@@ -130029,7 +129459,8 @@
     ;; boundary. Cleanup removes only dead captures before the inline census.
     (let
       [summaries (opt-program-summaries-empty)]
-      (opt-global-snapshot-normalize-functions
+      (opt-global-snapshot-normalize-functions-retained
+        pools
         (& summaries)
         (& opt-pure-call-inline-memory)
         (OptGlobalSnapshotPolicy true false)
@@ -131083,13 +130514,16 @@
                         guard
                         0
                         (- guard.len 1))
-                      (match (ir.compiler-ir-instr-seq-ref
+                      (match (ir.compiler-ir-instr-seq-borrow
                         guard
                         (- guard.len 1))
                         [(Branch cond _ _)
                           (ir.compiler-ir-instr-builder-push!
                             (&mut again)
-                            (ir.CompilerIrInstr.Branch cond prefix exit))]
+                            (ir.CompilerIrInstr.Branch
+                              (ir.compiler-ir-clone-value cond)
+                              prefix
+                              exit))]
                         [_ unit])
                       (ir.compiler-ir-block-builder-push!
                         (&mut out)
@@ -131749,27 +131183,16 @@
 (define (opt-load-gvn-element-base-phi?
   [hs : (& hs OptLoadHeaderSet)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [inputs : ir.CompilerIrPhiInputSeq]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [depth : i64]) : bool
-  (let
-    [phi-inputs-at-137024-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-137024-3.len 0)
-      true
-      (let
-        [phi-input-at-137024-3
-          (ir.compiler-ir-phi-input-seq-borrow phi-inputs-at-137024-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-137024-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-137024-3.slots
-            (+ phi-inputs-at-137024-3.start 1)
-            (- phi-inputs-at-137024-3.len 1))]
-        (match value
-          [(Var v)
-            (if (opt-load-gvn-element-base? hs blocks v depth)
-              (opt-load-gvn-element-base-phi? hs blocks rest depth)
-              false)]
-          [_ false])))))
+  (for [index (iterator.range 0 inputs.len)]
+    (let
+      [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+      (match (& input.value)
+        [(Var v)
+          (unless (opt-load-gvn-element-base? hs blocks v depth) (return false))]
+        [_ (return false)])))
+  true)
 
 ;; Scan one instruction for loop-carry safety: calls and clear-alls are out,
 ;; stores must be element-based.
@@ -134380,7 +133803,7 @@
         ;; row must name no storage.
         (or (not obj.built?) (= (opt-global-mod-ref-call-mask obj name) 0)))]
     [(LookupMissing)
-      (match (ir.compiler-ir-direct-call-effect-id name)
+      (match (opt-direct-call-effect name)
         [(or (MemoryRead) (ControlFlow)) true]
         [_ false])]))
 

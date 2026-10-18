@@ -1169,6 +1169,17 @@
   (semantic-node i32)
   (span AstSourceSpan))
 
+;; Compact slots retain both complete i32 ids: the first word holds the
+;; record's first i32 field in bits 0-31 and its second in bits 32-63. The
+;; coordinate word holds the line delta (end line - start line, 0-254) in bits
+;; 0-7, the u12 end column in bits 8-19, the u12 start column in bits 20-31 and
+;; the signed i32 start line in bits 32-63. Every other coordinate takes tag 255
+;; in bits 0-7 (the rest zero), and the first word then holds an exact
+;; logical-record pointer. Overflow slots are table-owned and recycled when a
+;; record becomes compact.
+(define ast-expr-span-packed-escape-tag : i64
+  255)
+
 (defenum AstMaybeSourceSpan
   (No)
   (Some AstSourceSpan))
@@ -1198,10 +1209,11 @@
   (* ast-expr-node-pool-segment-size ast-expr-span-slot-bytes))
 
 ;; Span records live in segments that never relocate (#8772). A pool's record
-;; table is a block of `ast-expr-span-record-max-segments + 2` words in the
+;; table is a block of `ast-expr-span-record-max-segments + 4` words in the
 ;; pool's base arena: word 0 is the number of records addressable without
 ;; growth, word 1 is segment 0's capacity and word `2 + K` is the address of
-;; segment K's first record, 0 while the segment is absent. Segment 0 starts at
+;; segment K's first record, 0 while the segment is absent. The last two words
+;; retain the owning arena and a list of reusable overflow slots. Segment 0 starts at
 ;; `ast-expr-span-record-initial-capacity` records and doubles up to
 ;; `ast-expr-span-record-segment-size`; every later segment holds that many
 ;; records and is added without copying. So a large pool never keeps a dead
@@ -1222,12 +1234,6 @@
   ;; the table.
   1024)
 
-;; Record kinds share the table code: 0 canonical, 1 ReSpan.
-(define ast-expr-span-record-kind-canonical : i64
-  0)
-(define ast-expr-span-record-kind-respan : i64
-  1)
-
 (define (ast-expr-span-table-word [table : i64] [index : i64]) : i64
   (unsafe
     (ptr-read (ptr-offset (int->ptr table : (Ptr i64)) index))))
@@ -1244,105 +1250,235 @@
   `(unsafe
     (ptr-read (int->ptr ,table : (Ptr i64)))))
 
-;: Canonical record INDEX of TABLE (which must be addressable).
-(defmacro (ast-expr-canonical-record-get [table : Expr] [index : Expr]) : Expr
+;: Byte address of physical record INDEX; the caller proved it addressable.
+(defmacro (ast-expr-packed-span-record-address [table : Expr] [index : Expr]) : Expr
   `(let
     [record-table : i64 ,table]
     [record-index : i64 ,index]
-    (unsafe
-      (ptr-read
-        (ptr-offset
-          (int->ptr
-            (ptr-read
-              (ptr-offset
-                (int->ptr record-table : (Ptr i64))
-                (+ (shr record-index 16) 2)))
-            : (Ptr AstExprCanonicalSpanRecord))
-          (bit-and record-index 65535))))))
+    (+
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr record-table : (Ptr i64))
+            (+ (shr record-index 16) 2))))
+      (* (bit-and record-index 65535) 16))))
+
+;: Decode one id without constructing coordinates. OFFSET is 0 or 1.
+(defmacro (ast-expr-packed-span-record-node
+  [table : Expr]
+  [index : Expr]
+  [offset : Expr]) : Expr
+  `(let
+    [address : i64 (ast-expr-packed-span-record-address ,table ,index)]
+    [tag : u8
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))]
+    [data : i64
+      (if (= tag (cast ast-expr-span-packed-escape-tag : u8))
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        address)]
+    (cast
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr data : (Ptr i32)) ,offset)))
+      : i64)))
+
+;: Decode by value; no packed row or overflow pointer escapes the accessor.
+(define (ast-expr-canonical-record-get [table : i64] [index : i64]) : AstExprCanonicalSpanRecord
+  (let
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [ids : i64
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr i64))))]
+    [coordinates : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) 1)))]
+    [tag : i64 (bit-and coordinates 255)]
+    (if (= tag ast-expr-span-packed-escape-tag)
+      (unsafe
+        (ptr-read (int->ptr ids : (Ptr AstExprCanonicalSpanRecord))))
+      (let
+        [start-line : i64 (shr coordinates 32)]
+        (AstExprCanonicalSpanRecord
+          (cast ids : i32)
+          (cast (shr ids 32) : i32)
+          (AstSourceSpan
+            (cast start-line : i32)
+            (cast (bit-and (shr coordinates 20) 4095) : i32)
+            (cast (+ start-line tag) : i32)
+            (cast (bit-and (shr coordinates 8) 4095) : i32)))))))
 
 (defmacro (ast-expr-canonical-record-set!
   [table : Expr]
   [index : Expr]
   [record : Expr]) : Expr
   `(let
-    [record-table : i64 ,table]
-    [record-index : i64 ,index]
     [record-value : AstExprCanonicalSpanRecord ,record]
-    (unsafe
-      (ptr-write!
-        (ptr-offset
-          (int->ptr
-            (ptr-read
-              (ptr-offset
-                (int->ptr record-table : (Ptr i64))
-                (+ (shr record-index 16) 2)))
-            : (MutPtr AstExprCanonicalSpanRecord))
-          (bit-and record-index 65535))
-        record-value))))
+    (ast-expr-packed-span-record-set!
+      ,table
+      ,index
+      (unsafe
+        (ptr-cast (ptr-addr-of record-value) : (Ptr AstExprCanonicalSpanRecord))))))
 
-(defmacro (ast-expr-respan-record-get [table : Expr] [index : Expr]) : Expr
-  `(let
-    [record-table : i64 ,table]
-    [record-index : i64 ,index]
-    (unsafe
-      (ptr-read
-        (ptr-offset
-          (int->ptr
-            (ptr-read
-              (ptr-offset
-                (int->ptr record-table : (Ptr i64))
-                (+ (shr record-index 16) 2)))
-            : (Ptr AstExprReSpan))
-          (bit-and record-index 65535))))))
+(define (ast-expr-respan-record-get [table : i64] [index : i64]) : AstExprReSpan
+  (let
+    [record-value : AstExprCanonicalSpanRecord
+      (ast-expr-canonical-record-get table index)]
+    (AstExprReSpan
+      record-value.semantic-node
+      record-value.owner-node
+      record-value.span)))
 
 (defmacro (ast-expr-respan-record-set!
   [table : Expr]
   [index : Expr]
   [record : Expr]) : Expr
   `(let
-    [record-table : i64 ,table]
-    [record-index : i64 ,index]
     [record-value : AstExprReSpan ,record]
-    (unsafe
-      (ptr-write!
-        (ptr-offset
-          (int->ptr
-            (ptr-read
-              (ptr-offset
-                (int->ptr record-table : (Ptr i64))
-                (+ (shr record-index 16) 2)))
-            : (MutPtr AstExprReSpan))
-          (bit-and record-index 65535))
-        record-value))))
+    (ast-expr-packed-span-record-set!
+      ,table
+      ,index
+      (unsafe
+        (ptr-cast (ptr-addr-of record-value) : (Ptr AstExprCanonicalSpanRecord))))))
 
-;; A fresh segment of RECORDS records of KIND in OWNER; returns its data address.
-(define (ast-expr-span-segment-new [owner : i64] [kind : i64] [records : i64]) : i64
-  (if (= kind ast-expr-span-record-kind-canonical)
-    (let
-      [segment : (__tl_dyn-array AstExprCanonicalSpanRecord)
-        (in-arena
-          (arena.Arena owner)
-          (__tl_make-array AstExprCanonicalSpanRecord records))]
+;; Logical setters own the complete 24-byte record while these private writers
+;; consume its bytes synchronously. Neither writer retains the input pointer.
+(define (ast-expr-packed-span-record-set!
+  [table : i64]
+  [index : i64]
+  [record-data : (Ptr AstExprCanonicalSpanRecord)]) : unit
+  (let
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [data : (Ptr i32)
+      (unsafe
+        (ptr-cast record-data : (Ptr i32)))]
+    [start-line : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
-        : i64))
-    (let
-      [segment : (__tl_dyn-array AstExprReSpan)
-        (in-arena (arena.Arena owner) (__tl_make-array AstExprReSpan records))]
+          (ptr-read (ptr-offset data 2)))
+        : i64)]
+    [start-col : i64
       (cast
         (unsafe
-          (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
-        : i64))))
+          (ptr-read (ptr-offset data 3)))
+        : i64)]
+    [end-line : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 4)))
+        : i64)]
+    [end-col : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset data 5)))
+        : i64)]
+    [delta : i64 (- end-line start-line)]
+    [compact? : bool
+      (and
+        (= (shr (bit-or start-col end-col) 12) 0)
+        (< (cast delta : u64) (cast 255 : u64)))]
+    [old-tag : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))
+        : i64)]
+    (if (or (not compact?) (= old-tag ast-expr-span-packed-escape-tag))
+      (ast-expr-span-record-overflow-write! table index record-data compact?)
+      (unsafe
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (ptr-read (ptr-cast record-data : (Ptr i64))))
+        (ptr-write!
+          (ptr-offset (int->ptr address : (MutPtr i64)) 1)
+          (bit-or
+            (shl start-line 32)
+            (bit-or (shl start-col 20) (bit-or (shl end-col 8) delta))))))))
 
-;: A record table for KIND in OWNER whose segment 0 holds CAPACITY records,
+;; Wide writes reuse their existing slot. On a compact transition, recycle it
+;; and clear the tag before retrying: the valid input then takes the hot path,
+;; so the retry cannot allocate or recurse again.
+(define (ast-expr-span-record-overflow-write!
+  [table : i64]
+  [index : i64]
+  [record-data : (Ptr AstExprCanonicalSpanRecord)]
+  [compact? : bool]) : unit
+  (let
+    [address : i64 (ast-expr-packed-span-record-address table index)]
+    [free-index : i64 (+ ast-expr-span-record-max-segments 3)]
+    [old-tag : i64
+      (cast
+        (unsafe
+          (ptr-read (ptr-offset (int->ptr address : (Ptr u8)) 8)))
+        : i64)]
+    [old-slot : i64
+      (if (= old-tag ast-expr-span-packed-escape-tag)
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        0)]
+    (if compact?
+      (begin
+        (unsafe
+          (ptr-write!
+            (int->ptr old-slot : (MutPtr i64))
+            (ast-expr-span-table-word table free-index)))
+        (ast-expr-span-table-word-set! table free-index old-slot)
+        (unsafe
+          (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) 1) 0))
+        (ast-expr-packed-span-record-set! table index record-data))
+      (let
+        [free : i64 (ast-expr-span-table-word table free-index)]
+        [slot : i64
+          (cond
+            [(not (= old-slot 0)) old-slot]
+            [(not (= free 0))
+              (ast-expr-span-table-word-set!
+                table
+                free-index
+                (unsafe
+                  (ptr-read (int->ptr free : (Ptr i64)))))
+              free]
+            [else
+              (let
+                [owner : i64
+                  (ast-expr-span-table-word
+                    table
+                    (+ ast-expr-span-record-max-segments 2))]
+                [storage : (__tl_dyn-array AstExprCanonicalSpanRecord)
+                  (in-arena
+                    (arena.Arena owner)
+                    (__tl_make-array AstExprCanonicalSpanRecord 1))]
+                (cast
+                  (unsafe
+                    (ptr->int (__tl_array-data storage)))
+                  : i64))])]
+        (unsafe
+          (ptr-write!
+            (int->ptr slot : (MutPtr AstExprCanonicalSpanRecord))
+            (ptr-read record-data))
+          (ptr-write! (int->ptr address : (MutPtr i64)) slot)
+          (ptr-write!
+            (ptr-offset (int->ptr address : (MutPtr i64)) 1)
+            ast-expr-span-packed-escape-tag))))))
+
+;; make-array zero-fills even reused arenas. Unused slots start with tag zero;
+;; table segment addresses and the overflow free-list head also start at zero.
+(define (ast-expr-span-segment-new [owner : i64] [records : i64]) : i64
+  (let
+    [segment : (__tl_dyn-array i64)
+      (in-arena (arena.Arena owner) (__tl_make-array i64 (* records 2)))]
+    (cast
+      (unsafe
+        (ptr->int (__tl_array-data segment)))
+      : i64)))
+
+;: A record table in OWNER whose segment 0 holds CAPACITY records,
 ;: clamped to the initial capacity and one full segment.
-(define (ast-expr-span-table-new [owner : i64] [kind : i64] [capacity : i64]) : i64
+(define (ast-expr-span-table-new [owner : i64] [capacity : i64]) : i64
   (let
     [words : (__tl_dyn-array i64)
       (in-arena
         (arena.Arena owner)
-        (__tl_make-array i64 (+ ast-expr-span-record-max-segments 2)))]
+        (__tl_make-array i64 (+ ast-expr-span-record-max-segments 4)))]
     [table : i64
       (cast
         (unsafe
@@ -1355,14 +1491,16 @@
         [(> capacity ast-expr-span-record-segment-size)
           ast-expr-span-record-segment-size]
         [else capacity])]
-    (for [index (iterator.range 3 (+ ast-expr-span-record-max-segments 2))]
-      (ast-expr-span-table-word-set! table index 0))
+    (ast-expr-span-table-word-set!
+      table
+      (+ ast-expr-span-record-max-segments 2)
+      owner)
     (ast-expr-span-table-word-set! table 0 first)
     (ast-expr-span-table-word-set! table 1 first)
     (ast-expr-span-table-word-set!
       table
       2
-      (ast-expr-span-segment-new owner kind first))
+      (ast-expr-span-segment-new owner first))
     table))
 
 ;; Copy segment 0 into one of exactly REQUESTED records (at most a full
@@ -1372,7 +1510,6 @@
 (define (ast-expr-span-table-grow-first-to!
   [table : i64]
   [owner : i64]
-  [kind : i64]
   [requested : i64]) : unit
   (let
     [old-capacity : i64 (ast-expr-span-table-word table 1)]
@@ -1384,35 +1521,27 @@
     (when
       (> capacity old-capacity)
       (let
-        [new-base : i64 (ast-expr-span-segment-new owner kind capacity)]
-        (if (= kind ast-expr-span-record-kind-canonical)
-          (for [index (iterator.range 0 old-capacity)]
+        [new-base : i64 (ast-expr-span-segment-new owner capacity)]
+        ;; The table is shared by all snapshots. Old segment-zero addresses
+        ;; never escape, so copying packed slots preserves unique overflow owners.
+        (for [index (iterator.range 0 old-capacity)]
+          (let
+            [word : i64 (* index 2)]
             (unsafe
               (ptr-write!
-                (ptr-offset
-                  (int->ptr new-base : (MutPtr AstExprCanonicalSpanRecord))
-                  index)
-                (ptr-read
-                  (ptr-offset
-                    (int->ptr old-base : (Ptr AstExprCanonicalSpanRecord))
-                    index)))))
-          (for [index (iterator.range 0 old-capacity)]
-            (unsafe
+                (ptr-offset (int->ptr new-base : (MutPtr i64)) word)
+                (ptr-read (ptr-offset (int->ptr old-base : (Ptr i64)) word)))
               (ptr-write!
-                (ptr-offset (int->ptr new-base : (MutPtr AstExprReSpan)) index)
+                (ptr-offset (int->ptr new-base : (MutPtr i64)) (+ word 1))
                 (ptr-read
-                  (ptr-offset (int->ptr old-base : (Ptr AstExprReSpan)) index))))))
+                  (ptr-offset (int->ptr old-base : (Ptr i64)) (+ word 1)))))))
         (ast-expr-span-table-word-set! table 2 new-base)
         (ast-expr-span-table-word-set! table 1 capacity)
         (ast-expr-span-table-word-set! table 0 capacity)))))
 
 ;: Make record INDEX of TABLE addressable: grow segment 0 by doubling while it
 ;: is below a full segment, otherwise add the missing segments (never copying).
-(define (ast-expr-span-table-ensure!
-  [table : i64]
-  [owner : i64]
-  [kind : i64]
-  [index : i64]) : unit
+(define (ast-expr-span-table-ensure! [table : i64] [owner : i64] [index : i64]) : unit
   (unless
     (< index (ast-expr-span-table-capacity table))
     (let
@@ -1425,12 +1554,11 @@
           [capacity : i64 (ast-expr-span-table-word table 1)]
           (while (<= capacity index)
             (set! capacity (* capacity 2)))
-          (ast-expr-span-table-grow-first-to! table owner kind capacity))
+          (ast-expr-span-table-grow-first-to! table owner capacity))
         (begin
           (ast-expr-span-table-grow-first-to!
             table
             owner
-            kind
             ast-expr-span-record-segment-size)
           (for [missing (iterator.range 1 (+ segment 1))]
             (when
@@ -1440,7 +1568,6 @@
                 (+ missing 2)
                 (ast-expr-span-segment-new
                   owner
-                  kind
                   ast-expr-span-record-segment-size))))
           (ast-expr-span-table-word-set!
             table
@@ -1612,14 +1739,12 @@
 (define ast-node-canonical-span-records : i64
   (ast-expr-span-table-new
     (arena.tl_arena_current)
-    ast-expr-span-record-kind-canonical
     ast-expr-span-record-initial-capacity))
 (define ast-node-canonical-span-count : i64
   0)
 (define ast-node-respan-records : i64
   (ast-expr-span-table-new
     (arena.tl_arena_current)
-    ast-expr-span-record-kind-respan
     ast-expr-span-record-initial-capacity))
 (define ast-node-respan-count : i64
   0)
@@ -1739,7 +1864,6 @@
   (ast-expr-span-table-ensure!
     ast-node-canonical-span-records
     node-pool-base-arena
-    ast-expr-span-record-kind-canonical
     ast-node-canonical-span-count))
 
 ;; In-place rewrites of persistent nodes (#8757). A session that caches parsed
@@ -1846,7 +1970,6 @@
   (ast-expr-span-table-ensure!
     ast-node-respan-records
     node-pool-base-arena
-    ast-expr-span-record-kind-respan
     ast-node-respan-count))
 
 (define (ast-expr-semantic-node-from-span-slot
@@ -1860,21 +1983,13 @@
       [index : i64 (- slot 1)]
       (if (>= index canonical-count)
         -1
-        (cast
-          (__tl-project-field
-            (ast-expr-canonical-record-get canonical-records index)
-            semantic-node)
-          : i64)))
+        (ast-expr-packed-span-record-node canonical-records index 0)))
     (if (< slot 0)
       (let
         [index : i64 (- (- 0 slot) 1)]
         (if (>= index respan-count)
           -1
-          (cast
-            (__tl-project-field
-              (ast-expr-respan-record-get respans index)
-              semantic-node)
-            : i64)))
+          (ast-expr-packed-span-record-node respans index 1)))
       -1)))
 
 (define (ast-expr-span-record-direct-active! [id : i64] [span : AstSourceSpan]) : unit
@@ -2324,15 +2439,9 @@
     [span-slot-segment-bases : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
     [canonical-span-records : i64
-      (ast-expr-span-table-new
-        base-arena
-        ast-expr-span-record-kind-canonical
-        ast-expr-span-record-initial-capacity)]
+      (ast-expr-span-table-new base-arena ast-expr-span-record-initial-capacity)]
     [respan-records : i64
-      (ast-expr-span-table-new
-        base-arena
-        ast-expr-span-record-kind-respan
-        ast-expr-span-record-initial-capacity)]
+      (ast-expr-span-table-new base-arena ast-expr-span-record-initial-capacity)]
     [storage-root : i64 (ast-node-pool-arena-make)]
     (for [segment-index (iterator.range 0 segment-count)]
       (let
@@ -2408,7 +2517,6 @@
   (ast-expr-span-table-ensure!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     pool.canonical-span-count)
   pool)
 
@@ -2618,7 +2726,6 @@
   (ast-expr-span-table-grow-first-to!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     capacity))
 
 (define (ast-expr-node-pool-state-canonical-records-grow-in-place!
@@ -2626,7 +2733,6 @@
   (ast-expr-span-table-ensure!
     pool.canonical-span-records
     pool.base-arena
-    ast-expr-span-record-kind-canonical
     pool.canonical-span-count))
 
 (define (ast-expr-node-pool-state-respan-records-grow-in-place!
@@ -2634,7 +2740,6 @@
   (ast-expr-span-table-ensure!
     pool.respan-records
     pool.base-arena
-    ast-expr-span-record-kind-respan
     pool.respan-count))
 
 (define (ast-expr-node-pool-state-note-span-in-place!
@@ -3164,6 +3269,8 @@
     (ty-node-persist-type-list-into items (&mut out) 0)
     out))
 
+;; A deep copy of a type read through a reference: the child lists get fresh
+;; storage in the current arena and child ids are copied as they are.
 (define (ty-node-persist [node : (& AstType)]) : AstType
   (let
     [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]

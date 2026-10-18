@@ -27,6 +27,91 @@
 (import stdlib.arena)
 (import compiler_owned_view as owned_view)
 
+(test
+  compiler-lower-let-source-fact-fallback
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [name : i64 (ci.intern "branded-source")]
+    [init : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [inner : i64 (ast.ast-node-pool-context-type-push pools (String))]
+    [source : ast.AstType (Region 77 inner)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (clone source))]
+    [facts : tc_core.TcCheckedLetBindingFactState
+      (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [transition : tc_core.TcCheckedLetBindingTransition
+      (tc_core.TcCheckedLetBindingTransition 0 -1)]
+    (ast.ast-node-pool-context-install! pools)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
+        [_ false])
+      "missing checked facts infer the source brand")
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      name
+      init
+      (I64)
+      transition)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      11
+      0
+      name
+      init
+      (Bool)
+      transition)
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type ctx env 11 0 name (No) init)
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
+        [_ false])
+      "inconsistent checked facts infer the source brand")
+    (tc_core.tc-checked-let-binding-facts-begin! facts true)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-let-binding-fact-record!
+      facts
+      12
+      0
+      name
+      init
+      (clone source)
+      transition)
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (test.assert-true
+      (match (lower.lower-let-binding-source-type
+        ctx
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) name (String))
+        12
+        0
+        name
+        (No)
+        init)
+        [(Ok (Region region nested)) (and (= region 77) (= nested inner))]
+        [_ false])
+      "an exact checked proof retains its semantic type")
+    (tc_core.tc-checked-let-binding-facts-finish! facts)
+    (ast.ast-node-pool-context-install! saved)))
+
 ;; The functions of a successful lowering. Checks match on it and fail on No.
 (defenum LowerTestFunctions
   (No)
@@ -941,6 +1026,62 @@
     [span-ok : bool (compiler-lower-maybe-span-start-ok? found-span 11 3)]
     (and diag-ok span-ok)))
 
+(test
+  compiler-lower-typecheck-error-transport
+  (let
+    [primary : ast.AstSourceSpan (ast.ast-source-span 23 7 23 11)]
+    [secondary : ast.AstSourceSpan (ast.ast-source-span 19 2 19 8)]
+    [outer : ast.AstSourceSpan (ast.ast-source-span 41 3 41 16)]
+    [expr-id : i64
+      (ast.ast-expr-spanned
+        (ast.ast-node-push (Literal (ast.AstLiteral.Int 0 "0")))
+        outer)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [messages : (Array String 2)
+      (array
+        (tc_core.tc-located-error
+          primary
+          (tc_core.tc-kind-message (TypeMismatch) "typecheck: operand mismatch"))
+        (tc_core.tc-rich-error-one-secondary
+          primary
+          (tc_core.tc-kind-message (TypeMismatch) "typecheck: operand mismatch")
+          "keep the original brand"
+          secondary
+          "brand introduced here"))]
+    (for [index (iterator.range 0 2)]
+      (for [route (iterator.range 0 2)]
+        (let
+          [message : String (clone (array-ref messages index))]
+          [diag : cdiag.CompilerDiagnostic
+            (if (= route 0)
+              (lower.lower-diagnostic message)
+              (lower.lower-diagnostic-at-expr-with-pools
+                pools
+                (ast.ast-node-get expr-id)
+                message))]
+          [labels : cdiag.CompilerDiagnosticLabelList
+            (cdiag.compiler-diagnostic-secondary-spans (& diag))]
+          (test.assert-true
+            (and
+              (= (cdiag.compiler-diagnostic-line (& diag)) 23)
+              (= (cdiag.compiler-diagnostic-col (& diag)) 7)
+              (string.eq
+                (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                "E0206")
+              (string.eq
+                (cdiag.compiler-diagnostic-message (& diag))
+                "typecheck: operand mismatch")
+              (= (cdiag.compiler-diagnostic-label-list-count (& labels)) index))
+            "lowering preserves the producer's span, code and labels")
+          (when
+            (= index 1)
+            (test.assert-true
+              (match (cdiag.compiler-diagnostic-help (& diag))
+                [(CompilerDiagnosticSomeString text)
+                  (string.eq text "keep the original brand")]
+                [_ false])
+              "lowering preserves typecheck help")))))))
+
 (define (compiler-lower-compound-expression-diagnostic-span-ok?) : bool
   (let
     [span : ast.AstSourceSpan (ast.ast-source-span 17 5 17 12)]
@@ -1316,20 +1457,29 @@
         [(Err _) false])]
     [(Err _) false]))
 
-;; Call and operator operands copy storage only when later evaluation can
-;; write it. Unrelated writes retain only their assignment copy; a write to
-;; the operand also needs its snapshot.
+;; Call and operator operands, and indirect callees in ordinary and tail
+;; calls, copy storage only when later evaluation can write it. Unrelated
+;; writes and calls retain only their assignment copy; a write to the operand
+;; or callee also needs its snapshot.
 (define (compiler-lower-operand-snapshot-source) : String
   "(define (first [a : i64] [_b : i64]) : i64 a)
+(define (id [a : i64]) : i64 a)
 (define (plain [x : i64] [y : i64]) : i64 (first x (+ y 1)))
 (define (unrelated [x : i64] [y : i64]) : i64 (first x (begin (set! y 2) y)))
 (define (assigned [x : i64]) : i64 (first x (begin (set! x 2) 0)))
 (define (plain-op [x : i64] [y : i64]) : i64 (+ x (+ y 1)))
 (define (unrelated-op [x : i64] [y : i64]) : i64 (+ x (begin (set! y 2) y)))
 (define (assigned-op [x : i64]) : i64 (+ x (begin (set! x 2) 0)))
+(define (callee-call [f : (-> i64 i64)] [x : i64]) : i64 (+ 0 (f (first x 1))))
+(define (callee-unrelated [f : (-> i64 i64)] [x : i64]) : i64 (+ 0 (f (begin (set! x 2) x))))
+(define (callee-assigned [f : (-> i64 i64)] [g : (-> i64 i64)]) : i64 (+ 0 (f (begin (set! f g) 1))))
+(define (tail-callee-call [f : (-> i64 i64)] [x : i64]) : i64 (f (first x 1)))
+(define (tail-callee-assigned [f : (-> i64 i64)] [g : (-> i64 i64)]) : i64 (f (begin (set! f g) 1)))
 (define (main) : i64
   (+ (plain 1 2) (unrelated 1 2) (assigned 1)
-     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)))")
+     (plain-op 1 2) (unrelated-op 1 2) (assigned-op 1)
+     (callee-call id 1) (callee-unrelated id 1) (callee-assigned id id)
+     (tail-callee-call id 1) (tail-callee-assigned id id)))")
 
 (define (compiler-lower-operand-snapshot-shape-ok?) : bool
   (match (lower-test-functions
@@ -1341,7 +1491,12 @@
         (= (lower-test-count functions "assigned" (CopyMov)) 2)
         (= (lower-test-count functions "plain-op" (CopyMov)) 0)
         (= (lower-test-count functions "unrelated-op" (CopyMov)) 1)
-        (= (lower-test-count functions "assigned-op" (CopyMov)) 2))]
+        (= (lower-test-count functions "assigned-op" (CopyMov)) 2)
+        (= (lower-test-count functions "callee-call" (CopyMov)) 0)
+        (= (lower-test-count functions "callee-unrelated" (CopyMov)) 1)
+        (= (lower-test-count functions "callee-assigned" (CopyMov)) 2)
+        (= (lower-test-count functions "tail-callee-call" (CopyMov)) 0)
+        (= (lower-test-count functions "tail-callee-assigned" (CopyMov)) 2))]
     [_ false]))
 
 (test
@@ -1349,6 +1504,47 @@
   (test.assert-true
     (compiler-lower-operand-snapshot-shape-ok?)
     "snapshot only storage that later evaluation can write"))
+
+(test
+  compiler-lower-never-callee
+  (let
+    [bodies : (Array String 4)
+      (array
+        "(let [f inc] ((begin (return 42) f) (argument)))"
+        "(let [f inc] [value : i64 ((begin (return 42) f) (argument))] (+ value 1))"
+        "(let [f (get)] ((begin (return 42) f) (argument)))"
+        "((begin (return 42) (get)) (argument))")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (test.assert-true
+        (compiler-lower-ok?
+          (str_cat.str-cat
+            "(extern (get) : (CFunc non-null (-> i64 i64)))
+(define (inc [value : i64]) : i64 (+ value 1))
+(define (argument) : i64 41)
+(define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")"))
+        (str_cat.str-cat "Never callee, case " (string.int->string index))))))
+
+(test
+  compiler-lower-never-callee-live-boundaries
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc nullable (-> i64 i64)))
+         (define (main) : i64 (let [f (get)] (f 41)))"
+      "typecheck: nullable C function pointer must be checked before calling")
+    "an executing nullable C pointer still requires a check")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(extern (get) : (CFunc unsafe-non-null (-> i64 i64)))
+         (define (main) : i64 (let [f (get)] (f 41)))"
+      "typecheck: C function pointer requires unsafe context")
+    "an executing unsafe C pointer still requires unsafe")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(define (main) : i64 (let [f 42] (f 41)))"
+      "typecheck: call target is not a function")
+    "an executing scalar cannot be called"))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
@@ -2190,6 +2386,28 @@
         (>= (lower-test-count functions "main" (Load)) 1))]
     [_ false]))
 
+(test
+  compiler-lower-clone-reference-receiver-once
+  (match (lower-test-functions
+    (compiler-lower-clone-source-with-prelude
+      "(defstruct Cell (name String))
+(define (observe [source : (& source Cell)]) : (& source Cell) source)
+(define (copy [source : (& source Cell)]) : Cell
+  (clone (deref (observe source))))
+(define (main) : i64
+  (let [source (Cell \"source\")] [copy (copy (& source))] 0))"))
+    [(Some functions)
+      (test.assert-true
+        (and
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::observe")
+            1)
+          (=
+            (lower-test-function-call-count functions ".::copy" ".::clone$Cell")
+            1))
+        "cloning a shared referent evaluates its receiver once and deep-clones once")]
+    [_ (test.assert-true false "a supported non-Copy referent clone lowers")]))
+
 (define (compiler-lower-clone-shape-ok?) : bool
   (match (lower-test-functions
     (compiler-lower-clone-source-with-prelude (compiler-lower-clone-source)))
@@ -2246,25 +2464,52 @@
           0))]
     [_ false]))
 
+(define (lower-test-runtime-memcpy-instr-count
+  [count : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (+
+    count
+    (match instr
+      [(Call _ name _ _)
+        (if (= name cbi.compiler-builtin-id-tl-memcpy)
+          1
+          0)]
+      [_ 0])))
+
+(define (lower-test-runtime-memcpy-count
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find functions name)
+    [(Some (Function _ _ _ _ blocks _))
+      (optimize.opt-blocks-fold
+        blocks
+        (cast 0 : i64)
+        lower-test-runtime-memcpy-instr-count)]
+    [(No) -1]))
+
+(test
+  lower-runtime-copy-source-identity
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(define (copy [destination : (&mut destination (Array i64 25))]
+                      [source : (& source (Array i64 25))]) : unit
+         (set! (deref destination) (deref source)))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-runtime-memcpy-count functions "copy")
+        1
+        "a fixed-size aggregate copy names the runtime source identity")]
+    [(No) (test.assert-true false "aggregate copy fixture lowers")]))
+
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
   (match (lower-test-functions
     (compiler-lower-clone-source-with-prelude
       (compiler-lower-clone-dynarray-bulk-source)))
     [(Some functions)
       (and
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-i64-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-i64-items") 1)
         (= (lower-test-count functions ".::copy-i64-items" (Branch)) 0)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-word-items"
-            "tl_memcpy")
-          1)
+        (= (lower-test-runtime-memcpy-count functions ".::copy-word-items") 1)
         (= (lower-test-count functions ".::copy-word-items" (Branch)) 0)
         (=
           (lower-test-function-call-count

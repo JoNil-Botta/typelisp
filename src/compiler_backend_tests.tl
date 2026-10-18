@@ -1,4 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import stdlib.iterator)
+(import stdlib.test)
 (import stdlib.io)
 (import stdlib.arena)
 (import compiler_object as cobj)
@@ -4553,8 +4555,8 @@
   (match (backend.compiler-backend-emit-pack-words
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 7)
-    (Bool true)
+    (& (I64 7))
+    (& (Bool true))
     "-16(%rbp)"
     "-24(%rbp)"
     false
@@ -4565,8 +4567,8 @@
       (match (backend.compiler-backend-emit-pack-words
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
-        (I64 9)
-        (Char 'A')
+        (& (I64 9))
+        (& (Char 'A'))
         "%r12"
         "%r13"
         false
@@ -4595,8 +4597,8 @@
     (match (backend.compiler-backend-emit-pack-words
       (ast.ast-node-pool-reader-type-segment-bases)
       gp-assignments
-      (Var 0)
-      (Var 1)
+      (& (Var 0))
+      (& (Var 1))
       "-16(%rbp)"
       "-24(%rbp)"
       false
@@ -4608,8 +4610,8 @@
         (match (backend.compiler-backend-emit-pack-words
           (ast.ast-node-pool-reader-type-segment-bases)
           xmm-assignments
-          (Var 0)
-          (Var 1)
+          (& (Var 0))
+          (& (Var 1))
           "-16(%rbp)"
           "-24(%rbp)"
           true
@@ -13229,7 +13231,7 @@ f:
 (define (compiler-backend-zero-load-ok?) : bool
   (match (backend.compiler-backend-emit-load-value
     (regalloc.compiler-reg-assignment-table-empty)
-    (I64 0)
+    (& (I64 0))
     "%rax"
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(Ok asm) (string.eq asm "    xorl %eax, %eax\n")]
@@ -21358,8 +21360,212 @@ f:
     (compiler-backend-spmd-mask-entry-validation-ok?)
     (compiler-backend-spmd-mask-entry-spill-first-ok?)))
 
+;; The expected immediates are ISA fixtures, independent of the production
+;; predicate selector. Both ABIs exercise the instruction spine with explicit
+;; register and spill homes; integer predicates retain their original bytes.
+(define (compiler-backend-vector-compare-predicate-case?
+  [type-index : i64]
+  [op-index : i64]
+  [avx512 : bool]
+  [spill : bool]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [types : (Array String 10)
+      (array "f32" "f64" "i8" "u8" "i16" "u16" "i32" "u32" "i64" "u64")]
+    [ops : (Array String 6) (array "eq" "ne" "lt" "le" "gt" "ge")]
+    [predicates : (Array i64 6) (array 0 4 1 2 6 5)]
+    [bits : i64
+      (cond
+        [(= type-index 0) 32]
+        [(= type-index 1) 64]
+        [(< type-index 4) 8]
+        [(< type-index 6) 16]
+        [(< type-index 8) 32]
+        [else 64])]
+    [floating : bool (< type-index 2)]
+    [lanes : i64
+      (/
+        (if avx512
+          512
+          256)
+        bits)]
+    [predicate : i64
+      (+
+        (array-ref predicates op-index)
+        (if (and floating (>= op-index 4))
+          8
+          0))]
+    [mnemonic : String
+      (if floating
+        (if (= bits 32)
+          "vcmpps"
+          "vcmppd")
+        (str_cat.str-cat
+          "vpcmp"
+          (if (= (% type-index 2) 1)
+            "u"
+            "")
+          (match bits
+            [8 "b"]
+            [16 "w"]
+            [32 "d"]
+            [_ "q"])))]
+    [width : String
+      (if avx512
+        "zmm"
+        "ymm")]
+    [lhs : String
+      (str_cat.str-cat
+        "%"
+        width
+        (if spill
+          "14"
+          "6"))]
+    [rhs : String
+      (if (and avx512 spill)
+        "-128(%rbp)"
+        (str_cat.str-cat
+          "%"
+          width
+          (if spill
+            "15"
+            "7")))]
+    [dst : String
+      (if avx512
+        (if spill
+          "%k7"
+          "%k1")
+        (if spill
+          "%ymm14"
+          "%ymm8"))]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    [instrs : ir.CompilerIrInstrSeq
+      (irt.instrs
+        (str_cat.str-cat
+          "%2 = vector_compare_"
+          (string.copy (array-ref ops op-index))
+          " %0, %1 lanes "
+          (string.int->string lanes)
+          " : "
+          (string.copy (array-ref types type-index))))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        (if spill
+          "%0=spill:-64 %1=spill:-128 %2=spill:-192"
+          (if avx512
+            "%0=%vec6 %1=%vec7 %2=%k1"
+            "%0=%vec6 %1=%vec7 %2=%vec8")))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      instrs
+      homes
+      3
+      target
+      state)
+      [(Ok asm)
+        (let
+          [expected : String
+            (str_cat.str-cat
+              "    "
+              mnemonic
+              " $"
+              (string.int->string predicate)
+              ", "
+              rhs
+              ", "
+              lhs
+              ", "
+              dst
+              "\n")]
+          (and
+            (asm-has? asm expected)
+            (if spill
+              (asm-has? asm "-64(%rbp)" "-128(%rbp)" "-192(%rbp)")
+              (string.eq asm expected))))]
+      [(Err _) false])))
+
+(define (compiler-backend-vector-compare-invalid? [avx512 : bool]) : bool
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_mode : unit
+      (backend.compiler-backend-set-current-mode!
+        (backend.compiler-backend-state-function-state state)
+        (if avx512
+          (Avx512)
+          (Avx2)))]
+    (match (compiler-backend-emit-test-instrs-target-with-backend-state
+      (irt.instrs
+        (if avx512
+          "%2 = vector_compare_add %0, %1 lanes 8 : f64"
+          "%2 = vector_compare_add %0, %1 lanes 4 : f64"))
+      (reg-homes
+        (if avx512
+          "%0=%vec6 %1=%vec7 %2=%k1"
+          "%0=%vec6 %1=%vec7 %2=%vec8"))
+      3
+      (backend.CompilerBackendTarget.Linux)
+      state)
+      [(Err diag)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+          (if avx512
+            "backend: unsupported AVX-512 vector compare"
+            "backend: unsupported AVX2 vector compare"))]
+      [(Ok _) false])))
+
+(define (compiler-backend-vector-compare-predicates-ok?) : bool
+  (let
+    [host : i64 0]
+    [ok : bool true]
+    (while (< host 2)
+      (let
+        [mode : i64 0]
+        (while (< mode 2)
+          (let
+            [type-index : i64 0]
+            (while (<
+              type-index
+              (if (= mode 0)
+                2
+                10))
+              (let
+                [op : i64 0]
+                (while (< op 6)
+                  (let
+                    [spill : i64 0]
+                    (while (< spill 2)
+                      (unless
+                        (compiler-backend-vector-compare-predicate-case?
+                          type-index
+                          op
+                          (= mode 1)
+                          (= spill 1)
+                          (if (= host 0)
+                            (backend.CompilerBackendTarget.Linux)
+                            (backend.CompilerBackendTarget.Windows)))
+                        (set! ok false))
+                      (set! spill (+ spill 1))))
+                  (set! op (+ op 1))))
+              (set! type-index (+ type-index 1))))
+          (set! mode (+ mode 1))))
+      (set! host (+ host 1)))
+    (and
+      ok
+      (compiler-backend-vector-compare-invalid? false)
+      (compiler-backend-vector-compare-invalid? true))))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
+    (compiler-backend-vector-compare-predicates-ok?)
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
     (compiler-backend-lane-id-rodata-ok?)
@@ -23425,8 +23631,8 @@ f:
         (Var 0)
         (I64 1)
         (U64)
-        (I64 9)
-        (I64)
+        (& (I64 9))
+        (& (I64))
         index
         0
         index.backend-state)
@@ -31700,6 +31906,45 @@ f:
       "    movq %rax, %r10\n    addq $16, %r10\n"
       "    movq %r8, 16(%r8)\n")))
 
+(define (compiler-backend-inline-global-alloc-target-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [bound : String
+      (match target
+        [(Linux) "    cmpq 24(%r9), %r8\n"]
+        [(Windows) "    cmpq 64(%r9), %r8\n"])]
+    [slow : String
+      (match target
+        [(Linux) "_slow:\n    movl $16, %edi\n    call tl_alloc_global\n"]
+        [(Windows) "_slow:\n    movl $16, %ecx\n    call tl_alloc_global\n"])]
+    (asm-ok?
+      (compiler-backend-emit-source-opt2-for-target
+        "(define values : (Array i64 2) (array 0 0))
+(define (replace [x : i64]) : unit
+  (with-scratch (set! values (array x (+ x 1)))))
+(define (main) : i64
+  (set! (array-ref values 0) (begin (replace 41) -1))
+  (array-ref values 1))"
+        target)
+      (has
+        "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
+        "_retry:\n    leaq 16(%rax), %r8\n"
+        bound
+        "    lock cmpxchgq %r8, 16(%r9)\n    jne "
+        slow)
+      (lacks "_slow:\n    call .L_tl_alloc16\n"))))
+
+(test
+  backend-inline-global-alloc
+  (unless
+    (and
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-inline-global-alloc-target-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic
+      "global container allocation must reserve atomically and grow through its private root")))
+
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
     (= (backend.compiler-backend-fast-alloc-size (One (I64 1))) 8)
@@ -33326,7 +33571,7 @@ f:
             backend-state
             assignments
             (Var 5)
-            (Var 6))
+            (& (Var 6)))
           7
           "%r8")
         "%r10"))))
@@ -37471,6 +37716,91 @@ b_keep:
       (= (array-ref bounds 7) 41)
       (= (array-ref bounds 8) 0))))
 
+(test
+  backend-global-symbol-emission-owner
+  (let
+    [name : i64 (ci.intern "shared-data")]
+    [alpha : i64 (ci.intern "foreign_alpha")]
+    [beta : i64 (ci.intern "foreign_beta")]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [other : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [profile : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
+    (for [mode (iterator.range 0 4)]
+      (let
+        [link : String
+          (if (= mode 0)
+            "foreign_alpha"
+            "foreign_beta")]
+        [_index : backend.CompilerBackendProgramIndex
+          (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+            state
+            bases
+            (ir.compiler-ir-function-seq-empty)
+            (if (= mode 2)
+              (ir.compiler-ir-extern-seq-empty)
+              (ir.compiler-ir-extern-seq1
+                (ir.CompilerIrExtern.Extern
+                  name
+                  name
+                  "shared-data"
+                  ast.AstType.I64
+                  ast.AstExternAbi.C
+                  (if (= mode 0)
+                    alpha
+                    beta)
+                  (ast.ast-extern-link-input-list-new)
+                  false)))
+            profile)]
+        [expected : String
+          (if (= mode 2)
+            "_tl_shared_data(%rip)"
+            (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-value-global-memory-operand
+            state
+            bases
+            (ir.CompilerIrValue.Global name)
+            ast.AstType.I64)
+          (clone expected)
+          "compare folds use the current program's link symbol")
+        (backend.compiler-backend-state-user-symbol-cache-reset! state)
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-remat-global-cell-operand
+            state
+            (ir.CompilerIrValue.Global name))
+          (clone expected)
+          "function cache reset keeps program symbol authority")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-float-value-memory-operand
+            (regalloc.compiler-reg-assignment-table-empty)
+            (ir.CompilerIrValue.Global name)
+            (& (ast.AstType.F32))
+            state)
+          expected
+          "float folds use the same global cell")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-state-global-symbol-id other name)
+          "_tl_shared_data"
+          "another backend job does not inherit extern aliases")
+        (when
+          (= mode 1)
+          (backend.compiler-backend-state-clear-emission-arena! state)
+          (test.assert-owned-string-eq
+            (backend.compiler-backend-state-global-symbol-id state name)
+            "_tl_shared_data"
+            "returning from emission unpublishes symbols"))))
+    (backend.compiler-backend-state-release-final-arenas! state)
+    (test.assert-owned-string-eq
+      (backend.compiler-backend-state-global-symbol-id state name)
+      "_tl_shared_data"
+      "retiring the backend unpublishes program symbol authority")))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-signed-div-guard-shapes-ok?)
@@ -38045,7 +38375,7 @@ b_keep:
     assignments
     var-id
     reg
-    (F64)
+    (& (F64))
     backend-state))
 
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
@@ -41248,13 +41578,15 @@ user_fn:
             false
             false
             backtrace
-            31)))]
+            63)))]
     (and
       (asm-has?
         rewritten
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
+        "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"
         "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
         "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
@@ -41265,8 +41597,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          7
-          5))
+          9
+          7))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

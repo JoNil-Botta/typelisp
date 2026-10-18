@@ -31,6 +31,15 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
+;; Whole-program entries arm the checked tier; a fixture must restore the
+;; caller's mode so later band-only and explicitly armed probes stay distinct.
+(defmacro (with-test-inline-mode [body : comptime.Expr]) : comptime.Expr
+  `(let
+    [armed : bool (opt.opt-inline-checked-armed?)]
+    [result ,body]
+    (opt.opt-inline-checked-set-active! armed)
+    result))
+
 ;; Dense fixture literals expand to one right-sized builder and forward pushes.
 ;; Each expansion owns its backing array, so separate tests cannot accidentally
 ;; share mutable instruction storage.
@@ -453,11 +462,35 @@
 (define (opt-test-optimize-program-with-level
   [program : ir.CompilerIrProgram]
   [level : i64]) : ir.CompilerIrProgram
-  (match (opt.optimize-program-with-spans-and-level
-    (& program)
-    (ir.compiler-source-spans-empty)
-    level)
+  (match (with-test-inline-mode
+    (opt.optimize-program-with-spans-and-level
+      (& program)
+      (ir.compiler-source-spans-empty)
+      level))
     [(Program optimized _) optimized]))
+
+(test
+  whole-program-fixture-restores-inline-mode
+  (let
+    [previous : bool (opt.opt-inline-checked-armed?)]
+    (for [mode (iterator.range 0 2)]
+      (let
+        [armed : bool (= mode 1)]
+        (opt.opt-inline-checked-set-active! armed)
+        (let
+          [_optimized : ir.CompilerIrProgram
+            (opt-test-optimize-program-with-level
+              (opt-spans-program (irt.instrs "return 0"))
+              2)]
+          (test.assert-bool-eq
+            (opt.opt-inline-checked-armed?)
+            armed
+            "whole-program fixtures restore the caller's inliner mode"))))
+    (opt.opt-inline-checked-set-active! false)
+    (test.assert-true
+      (compiler-optimize-inline-shared-accessor-call-free-ok?)
+      "a full-program fixture does not arm a later band-only fixture")
+    (opt.opt-inline-checked-set-active! previous)))
 
 ;; The inline stage with no optimizer-input arena: final bodies escape into the
 ;; current arena, as they do for every caller that is not the level-2 program
@@ -2545,10 +2578,11 @@
         (opt-test-span-symbol "main")
         (& live)
         (opt-test-span 31 5))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      1)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        1))
       [(Program _ optimized-spans)
         (and
           (= (ir.compiler-source-spans-instr-count (& optimized-spans)) 1)
@@ -2578,10 +2612,11 @@
         (opt-test-span-symbol "main")
         (& folded)
         (opt-test-span 41 7))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -2611,10 +2646,11 @@
         (opt-test-span-symbol "main")
         (& second)
         (opt-test-span 61 11))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program-with-frame instrs 5))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program-with-frame instrs 5))
+        spans
+        2))
       [(Program optimized optimized-spans)
         (and
           (opt-span-lookup-ok?
@@ -2639,10 +2675,11 @@
     [addr : ir.CompilerIrInstr (AddrOf 3 2)]
     [instrs : ir.CompilerIrInstrSeq
       (opt-test-instrs (clone producer) (clone addr) (irt.instr "return 42"))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      (opt-spans-base)
-      1)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        (opt-spans-base)
+        1))
       [(Program optimized _)
         (and
           (= (opt-count-exact-instr-program optimized producer) 0)
@@ -2725,10 +2762,11 @@
     [ok : bool
       (begin
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.optimize-program-with-spans-and-level
-          (& (opt-inline-span-program symbols))
-          spans
-          2)
+        (match (with-test-inline-mode
+          (opt.optimize-program-with-spans-and-level
+            (& (opt-inline-span-program symbols))
+            spans
+            2))
           [(Program _ optimized-spans)
             (and
               (opt-span-lookup-ok?
@@ -2758,10 +2796,11 @@
         (opt-test-span 91 17))]
     [cloned-call : ir.CompilerIrInstr
       (Call 1 symbols.opaque (One (I64 7)) (I64))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-inline-span-program symbols))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-inline-span-program symbols))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -3392,6 +3431,174 @@
         (>= (opt-input-arena-leaf-calls (& functions) "main") 0)
         "main survives")]))
 
+;; The callback context lives outside the source function arena.
+(defstruct OptInputRetirementTestState
+  (source (__tl_dyn-array i64))
+  (calls (__tl_dyn-array i64)))
+
+(define (opt-test-retire-input! [address : i64]) : unit
+  (let
+    [state : OptInputRetirementTestState
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr OptInputRetirementTestState))))]
+    [source : i64 (array-ref state.source 0)]
+    (test.assert-true (> source 0) "input retirement runs only once")
+    (test.assert-false
+      (= (arena.tl_arena_current) source)
+      "the source arena is not current at the handoff")
+    (+= (array-ref state.calls 0) 1)
+    (set! (array-ref state.source 0) 0)
+    (unsafe
+      (arena.tl_arena_destroy source))))
+
+(define (opt-test-input-retirement
+  [pools : ast.AstNodePoolContext]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]
+  [authority? : bool]) : unit
+  (let
+    [source : i64 (arena.tl_arena_make)]
+    [source-functions : ir.CompilerIrFunctionSeq
+      (in-arena
+        (arena.Arena source)
+        (ir.compiler-ir-clone-function-seq pools (& functions)))]
+    [function-count : i64 functions.len]
+    [control : ir.CompilerIrProgram
+      (match (with-test-inline-mode
+        (opt.optimize-program
+          (Program
+            (ir.compiler-ir-global-seq-empty)
+            functions
+            (ir.compiler-ir-extern-seq-empty))
+          (ir.compiler-source-spans-empty)
+          (opt.optimize-request pools level)))
+        [(Program result _) result])]
+    [state : OptInputRetirementTestState
+      (OptInputRetirementTestState (__tl_make-array source) (__tl_make-array 0))]
+    [request : opt.OptimizeRequest (opt.optimize-request pools level)]
+    (when
+      authority?
+      (set!
+        request.input-retirement
+        (opt.OptInputRetirement.Retire
+          (unsafe
+            (cast (ptr->int (ptr-addr-of state)) : i64))
+          opt-test-retire-input!)))
+    (match (with-test-inline-mode
+      (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          (in-arena
+            (arena.Arena source)
+            (ir.compiler-ir-clone-function-seq pools (& source-functions)))
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        request))
+      [(Program result _)
+        (test.assert-i64-eq
+          (array-ref state.calls 0)
+          (if (and authority? (= level 2))
+            1
+            0)
+          "only level 2 consumes explicit retirement authority")
+        (test.assert-true
+          (opt-test-program-eq
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (clone control)
+            (clone result))
+          "retirement preserves the complete optimized program")
+        (unless
+          (= (array-ref state.source 0) 0)
+          (test.assert-i64-eq
+            source-functions.len
+            function-count
+            "retained source functions remain readable")
+          (set! (array-ref state.source 0) 0)
+          (unsafe
+            (arena.tl_arena_destroy source)))
+        (when
+          (>= level 1)
+          (test.assert-true
+            (opt-test-program-eq
+              (ast.ast-node-pool-context-type-segment-bases pools)
+              control
+              result)
+            "optimized output survives source retirement"))])))
+
+(test
+  optimizer-input-retirement-authority-and-levels
+  (for [level (iterator.range 0 3)]
+    (for [authority (iterator.range 0 2)]
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (opt-input-arena-functions)
+        level
+        (= authority 1))
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (ir.compiler-ir-function-seq-empty)
+        level
+        (= authority 1)))))
+
+(define (opt-test-input-retirement-pools) : unit
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [job : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [filler : i64 (ast.ast-node-pool-context-type-push job (Bool))]
+    (for [i (iterator.range 0 1100)]
+      (set!
+        filler
+        (ast.ast-node-pool-context-type-push job (Array filler (+ i 1)))))
+    (test.assert-true
+      (> filler ast.ast-type-node-pool-segment-size)
+      "job types cross a segment")
+    (for [collision (iterator.range 0 2)]
+      (let
+        [lifetimes : ast.AstLifetimeList
+          (ast.ast-lifetime-cons 71 (& (ast.ast-lifetime-list-new)))]
+        [nominal : ast.AstType
+          (StructArgs (opt-test-symbol "retained") (box lifetimes))]
+        [array : ast.AstType (ast.ast-ty-array-with-pools job (& nominal) 4)]
+        [boxed : ast.AstType (ast.ast-ty-box-with-pools job (& array))]
+        [reference : ast.AstType (ast.ast-ty-ref-with-pools job 71 (& boxed))]
+        [tuple : ast.AstType
+          (Tuple
+            (box
+              (ast.ast-type-cons-with-pools
+                job
+                (& reference)
+                (& (ast.ast-type-list-new)))))]
+        [function : ast.AstType
+          (ast.ast-ty-func-with-pools
+            job
+            (ast.ast-type-cons-with-pools
+              job
+              (& tuple)
+              (& (ast.ast-type-list-new)))
+            (& tuple))]
+        [body : ir.CompilerIrFunction
+          (opt-inline-job-pool-function "main" function (irt.instrs "return 7"))]
+        [ambient : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 4 16)]
+        (when
+          (= collision 1)
+          (for [i (iterator.range 0 1200)]
+            (ast.ast-node-pool-context-type-push ambient (Array 0 (+ i 1)))))
+        (ast.ast-node-pool-context-install! ambient)
+        (opt-test-input-retirement
+          job
+          (ir.compiler-ir-function-seq-prepend
+            (& body)
+            (& (ir.compiler-ir-function-seq-empty)))
+          2
+          true)))
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
+  optimizer-input-retirement-explicit-pool-nested-types
+  (opt-test-input-retirement-pools))
+
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten
 ;; callers: six rewritten callers add exactly six times the rows one adds.
@@ -3487,10 +3694,11 @@
         (opt-test-span-symbol "main")
         (& call)
         (opt-test-span 101 19))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      spans
-      2)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        spans
+        2))
       [(Program _ optimized-spans)
         (opt-span-lookup-ok?
           optimized-spans
@@ -3524,10 +3732,11 @@
         (opt-test-span-symbol "main")
         (& tail)
         (opt-test-span 131 25))]
-    (match (opt.optimize-program-with-spans-and-level
-      (& (opt-spans-program instrs))
-      (ir.compiler-ir-global-shared-view spans)
-      0)
+    (match (with-test-inline-mode
+      (opt.optimize-program-with-spans-and-level
+        (& (opt-spans-program instrs))
+        (ir.compiler-ir-global-shared-view spans)
+        0))
       [(Program _ optimized-spans)
         (and
           (= (ir.compiler-source-spans-instr-count (& spans)) 2)
@@ -3721,6 +3930,7 @@
       1)))
 
 (define (opt-aggregate-test-alloc) : ir.CompilerIrInstr
+  (cbi.compiler-builtin-initialize-for-parse!)
   (Call
     1
     cbi.compiler-builtin-id-tl-alloc
@@ -12374,9 +12584,10 @@
         (opt.compiler-opt-global-shared-view program)
         2)]
     [defaulted : ir.CompilerIrProgram
-      (match (opt.optimize-program-with-spans
-        (& program)
-        (ir.compiler-source-spans-empty))
+      (match (with-test-inline-mode
+        (opt.optimize-program-with-spans
+          (& program)
+          (ir.compiler-source-spans-empty)))
         [(Program optimized _) optimized])]
     [fixed-program : ir.CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]
@@ -15254,13 +15465,13 @@
               [(Phi _ inputs _)
                 (and
                   (= (ir.compiler-ir-phi-input-seq-count inputs) 3)
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.zero"))
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.one"))
-                  (opt.opt-inline-phi-input-label?
+                  (opt.opt-bool-branch-phi-input-has-label?
                     inputs
                     (ir.compiler-ir-label "inl.entry.0.other")))]
               [_ false])
@@ -37799,7 +38010,7 @@
       (match block
         [(Block _ instrs)
           (match (ir.compiler-ir-instr-seq-ref instrs 0)
-            [(Phi _ inputs _) (opt.opt-phi-input-count inputs)]
+            [(Phi _ inputs _) (ir.compiler-ir-phi-input-seq-count inputs)]
             [_ (- 0 1)])])]))
 
 ;; Does the named block hold a BinOp with the given opcode AND the given i64
@@ -43652,7 +43863,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -44389,7 +44600,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -44867,6 +45078,85 @@
                 [_ false])
               false)])]
       [_ false])))
+
+(define (opt-gep-split-mutable-source-check
+  [base : String]
+  [offset : String]
+  [call? : bool]
+  [split? : bool]
+  [valid? : bool]) : bool
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n%2 = gep "
+          base
+          ", "
+          offset
+          " : i64\n"
+          (if call?
+            "%4 = call mutate() : unit\n"
+            "store @g, %0 : u64\nstore @offset, 2 : i64\n")
+          "%3 = load %2 : i64\nstore_ptr %2, %1 : i64\nreturn %3"))]
+    [function : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "gep_mutable_capture")
+        (irt.params "base=%0:u64, value=%1:i64")
+        (I64)
+        5
+        (clone blocks)
+        Ordinary)]
+    [rewritten : ir.CompilerIrFunction
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& function))]
+    [actual : ir.CompilerIrBlockList (opt.opt-function-blocks (& rewritten))]
+    (and
+      ;; RuntimeGlobal is invalid as an instruction operand: refusal must
+      ;; retain that verifier rejection instead of turning it into a read.
+      (= (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))) valid?)
+      (=
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& rewritten))))
+        valid?)
+      (if split?
+        (=
+          (opt-gep-split-test-gep-count (ir.compiler-ir-block-list-view actual))
+          3)
+        (opt.opt-block-list-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& blocks)
+          (& actual))))))
+
+(test
+  gep-split-mutable-global-capture
+  (let
+    [bases : (Array String 9)
+      (array "@g" "runtime-init@g" "%0" "%0" "@g" "&@g" "4096" "%0" "%0")]
+    [offsets : (Array String 9)
+      (array
+        "0"
+        "0"
+        "@offset"
+        "runtime-init@offset"
+        "@offset"
+        "0"
+        "1"
+        "-1"
+        "%1")]
+    (for [mode (iterator.range 0 9)]
+      (for [effect (iterator.range 0 2)]
+        (test.assert-true
+          (opt-gep-split-mutable-source-check
+            (clone (array-ref bases mode))
+            (clone (array-ref offsets mode))
+            (= effect 1)
+            (>= mode 5)
+            (not (or (= mode 1) (= mode 3))))
+          (str_cat.str-cat
+            "GEP capture keeps mutable operands across effects, case "
+            (string.int->string mode)
+            "/"
+            (string.int->string effect)))))))
 
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
@@ -57836,13 +58126,12 @@
 ;; v1 refused a function outright as soon as any RETURNING call remained. The
 ;; condition is now per CELL: a direct callee contributes exactly the cells its
 ;; P18 mod-ref row says it (transitively) may `set!`, and only a call this walk
-;; cannot resolve to a name still refuses everything. Every fixture below is
+;; cannot prove excludes user-code re-entry refuses every cell. Every fixture below is
 ;; the SAME reader -- fixture A's body plus one returning call -- and differs
 ;; only in what the program says that call can write.
 ;;
-;;   P1 extern      the callee is no function of this program: no IR body,
-;;                  hence no `Store`, and under (b) no pointer that names a
-;;                  cell -> both word cells hoist
+;;   N0 extern      an arbitrary extern may invoke a callback that stores a
+;;                  private cell without receiving any cell address
 ;;   P2 other cell  the callee sets `gc_m` -> both word cells still hoist
 ;;   N1 the cell    the callee sets `gc_k` -> gc_k keeps per-use semantics,
 ;;                  while `gc_arr`, which nothing writes, still hoists
@@ -57870,11 +58159,13 @@
     [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
     [reader : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 1)]
-    ;; P1: `gc_callee` is absent from the program's function list
+    ;; N0: an absent direct callee can re-enter a global-writing callback
     [out-extern : ir.CompilerIrFunction
       (opt.opt-global-cell-function
         (opt-gc-test-summaries symbols (opt-gc-test-functions1 reader))
         (opt.compiler-opt-global-shared-view reader))]
+    [blocks-extern : ir.CompilerIrBlockList
+      (opt.opt-function-blocks out-extern)]
     ;; P2: it is present, and sets a cell this reader never reads
     [out-other : ir.CompilerIrFunction
       (opt.opt-global-cell-function
@@ -57933,7 +58224,12 @@
     [blocks-indirect : ir.CompilerIrBlockList
       (opt.opt-function-blocks out-indirect)]
     (cond
-      [(not (= (opt-gc-test-call-hoist-ok? out-extern symbols.callee) 42)) 1]
+      [(not (= (opt.opt-function-frame out-extern) 10)) 1]
+      [(not (= (opt-gc-test-block-instr-count blocks-extern 0) 1)) 17]
+      [(match (opt-gc-test-instr-at blocks-extern 1 0)
+          [(Gep _ base _ _) (not (opt-gc-test-is-global-named? base "gc_arr"))]
+          [_ true])
+        18]
       [(not (= (opt-gc-test-call-hoist-ok? out-other symbols.callee) 42)) 2]
       [(not (= (opt-gc-test-arr-only-hoist-ok? out-k) 42)) 3]
       [(not (= (opt-gc-test-arr-only-hoist-ok? out-trans) 42)) 4]
@@ -57994,8 +58290,8 @@
       (opt.opt-global-cell-function summaries-b reader-b)]
     [blocks-b : ir.CompilerIrBlockList (opt.opt-function-blocks out-b)]
     ;; fixture C: an INDIRECT call may land on any function of the program, so
-    ;; it may write any cell and (c) excludes the WHOLE function -- the only
-    ;; whole-function refusal left. Which cells a NAMED callee writes is
+    ;; it may write any cell and (c) excludes the WHOLE function, as does an
+    ;; arbitrary extern. Which cells a NAMED callee writes is
     ;; compiler-optimize-global-cell-call-mod-ref-self-test.
     [reader-c : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 3)]
@@ -61071,8 +61367,8 @@
 
 ;; `lp_callee` seen as the PROGRAM sees it. The per-global mod-ref table reads
 ;; every callee's row off its body, and a name absent from the program's
-;; function list is an extern (no IR body, hence no `set!`). `lp_callee` is a
-;; program function whose memory class these fixtures vary through
+;; function list is an arbitrary extern that may re-enter user code. `lp_callee`
+;; is a program function whose memory class these fixtures vary through
 ;; `direct-call-clean` alone, so it has to be in the list and it has to stay
 ;; opaque to the table: the indirect call is what makes its row "may write any
 ;; cell", which is exactly the fact these fixtures assume when they expect an
@@ -61962,6 +62258,10 @@
       (opt.opt-global-mod-ref-call-mask mod-ref symbols.opaque)]
     [extern-mask : i64
       (opt.opt-global-mod-ref-call-mask mod-ref symbols.extern)]
+    [runtime-mask : i64
+      (opt.opt-global-mod-ref-call-mask
+        mod-ref
+        cbi.compiler-builtin-id-tl-region-mark)]
     ;; the loop decisions, all under an empty direct-call-clean map
     [via-a : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.write-a))]
@@ -61977,6 +62277,10 @@
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.opaque))]
     [via-extern : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-call-body-blocks symbols symbols.extern))]
+    [via-runtime : ir.CompilerIrBlockList
+      (opt-mr-promoted
+        cells
+        (opt-mr-call-body-blocks symbols cbi.compiler-builtin-id-tl-region-mark))]
     [in-loop-store : ir.CompilerIrBlockList
       (opt-mr-promoted cells (opt-mr-store-body-blocks symbols))]
     ;; the same write-a loop in a program that takes a cell's address: the
@@ -62016,8 +62320,9 @@
       [(not (= elem-mask 0)) 9]
       ;; an indirect call may reach any `Store` in the program
       [(not (opt.opt-global-mod-ref-any? opaque-mask)) 10]
-      ;; an extern has no IR body and so performs no `Store`
-      [(not (= extern-mask 0)) 11]
+      ;; An arbitrary extern may re-enter; a trusted runtime helper cannot.
+      [(not (opt.opt-global-mod-ref-any? extern-mask)) 11]
+      [(not (= runtime-mask 0)) 36]
       ;; one `GlobalAddr` anywhere withdraws the table
       [addr-mod-ref.built? 12]
       [(not
@@ -62093,8 +62398,11 @@
       ;; a callee whose only writes go through a pointer refuses neither
       [(not (= (opt-lp-loop-body-cell-operands via-elem) 0)) 26]
       [(not (= (opt-lp-preheader-cell-loads via-elem) 2)) 27]
-      [(not (= (opt-lp-loop-body-cell-operands via-extern) 0)) 28]
-      [(not (= (opt-lp-preheader-cell-loads via-extern) 2)) 29]
+      ;; Arbitrary externs refuse both cells, including a no-argument call.
+      [(not (= (opt-lp-loop-body-cell-operands via-extern) 2)) 28]
+      [(not (= (opt-lp-preheader-cell-loads via-extern) 0)) 29]
+      [(not (= (opt-lp-loop-body-cell-operands via-runtime) 0)) 37]
+      [(not (= (opt-lp-preheader-cell-loads via-runtime) 2)) 38]
       ;; an indirect call inside the callee refuses both
       [(not (= (opt-lp-loop-body-cell-operands via-opaque) 2)) 30]
       [(not (= (opt-lp-preheader-cell-loads via-opaque) 0)) 31]
@@ -62199,7 +62507,8 @@
   (grow i64)
   (pass-c i64)
   (reader i64)
-  (nop i64))
+  (nop i64)
+  (allocator i64))
 
 (define (opt-le-test-symbols) : OptLeTestSymbols
   (OptLeTestSymbols
@@ -62228,7 +62537,8 @@
     (opt-test-symbol "le_grow")
     (opt-test-symbol "le_pass_c")
     (opt-test-symbol "le_reader")
-    (opt-test-symbol "le_nop")))
+    (opt-test-symbol "le_nop")
+    cbi.compiler-builtin-id-tl-alloc))
 
 (define (opt-le-function
   [name : i64]
@@ -62295,6 +62605,7 @@
 ;; into a fresh box, and hand the box to `tail` (a `Store` or a `Return`).
 ;; `first` is the first of five var ids.
 (define (opt-le-build-instrs
+  [allocator : i64]
   [ctor : i64]
   [first : i64]
   [length : ir.CompilerIrValue]
@@ -62306,7 +62617,7 @@
       (opt-test-instr-seq-prepend
         (Call (+ first 2) ctor (Two length (Var (+ first 1))) (I64))
         (opt-test-instr-seq-prepend
-          (opt-le-alloc16 (+ first 3))
+          (Call (+ first 3) allocator (One (I64 16)) (I64))
           (opt-test-instr-seq-prepend
             (CopyBytes (Var (+ first 3)) (Var (+ first 2)) 16)
             tail))))))
@@ -62318,15 +62629,22 @@
   (opt-le-function
     name
     (opt-le-params 0)
-    (opt-le-build-instrs ctor 1 (I64 1) (opt-fz-return-var 4))))
+    (opt-le-build-instrs
+      cbi.compiler-builtin-id-tl-alloc
+      ctor
+      1
+      (I64 1)
+      (opt-fz-return-var 4))))
 
 ;; One cell write inside a reset region.
 (define (opt-le-reset-step
+  [allocator : i64]
   [ctor : i64]
   [first : i64]
   [cell : i64]
   [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-le-build-instrs
+    allocator
     ctor
     first
     (Var 0)
@@ -62340,14 +62658,21 @@
     symbols.reset
     (opt-le-params 1)
     (opt-le-reset-step
+      symbols.allocator
       symbols.ctor
       1
       symbols.a
       (opt-le-reset-step
+        symbols.allocator
         symbols.ctor
         11
         symbols.b
-        (opt-le-reset-step symbols.ctor 21 symbols.c (opt-mr-return-zero))))))
+        (opt-le-reset-step
+          symbols.allocator
+          symbols.ctor
+          21
+          symbols.c
+          (opt-mr-return-zero))))))
 
 ;; The same two stores with `between` called in the middle.
 (define (opt-le-reset-pair-function
@@ -62360,18 +62685,29 @@
     name
     (opt-le-params 1)
     (opt-le-reset-step
+      symbols.allocator
       symbols.ctor
       1
       first-cell
       (opt-test-instr-seq-prepend
         (opt-le-call-instr 30 between)
-        (opt-le-reset-step symbols.ctor 11 second-cell (opt-mr-return-zero))))))
+        (opt-le-reset-step
+          symbols.allocator
+          symbols.ctor
+          11
+          second-cell
+          (opt-mr-return-zero))))))
 
 (define (opt-le-reset-h-function [symbols : OptLeTestSymbols]) : ir.CompilerIrFunction
   (opt-le-function
     symbols.reset-h
     (opt-le-params 1)
-    (opt-le-reset-step symbols.ctor-short 1 symbols.h (opt-mr-return-zero))))
+    (opt-le-reset-step
+      symbols.allocator
+      symbols.ctor-short
+      1
+      symbols.h
+      (opt-mr-return-zero))))
 
 ;; `push-ref!`'s grow, reduced to the one instruction that matters: the `.slots`
 ;; word of a `&mut` parameter written through.
@@ -63131,12 +63467,65 @@
           (ir.compiler-ir-function-seq-prepend
             (& reader)
             (& (ir.compiler-ir-function-seq-empty)))))]
-    [out (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [expected (opt-snapshot-test-function after)]
     [actual (ir.compiler-ir-function-seq-borrow (& out) 0)]
     [ok (opt.opt-function-eq bases (& actual) (& expected))]
     (opt.opt-pure-call-inline-memory-reset!)
     ok))
+
+;; The inline stage's normalization keeps each rewritten body as a deep copy of
+;; a scratch-phase rewrite (#8997): a candidate's body is normalized, and a
+;; function without a candidate capture is kept as it is.
+(test
+  global-snapshot-retained-normalization-keeps-candidate-free-functions
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture
+      (opt-snapshot-test-function
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add %0, %1 : i64
+           return %2")]
+    [reader : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "snapshot_reader")
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        0
+        (irt.blocks "entry:
+  return 0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        (& functions))]
+    [expected
+      (opt-snapshot-test-function
+        "entry:
+           %1 = call snapshot_reader() : i64
+           %2 = add @mr_a, %1 : i64
+           return %2")]
+    [rewritten (ir.compiler-ir-function-seq-borrow (& out) 0)]
+    [kept (ir.compiler-ir-function-seq-borrow (& out) 1)]
+    [normalized : bool (opt.opt-function-eq bases (& rewritten) (& expected))]
+    [kept-reader : bool (opt.opt-function-eq bases (& kept) (& reader))]
+    (opt.opt-pure-call-inline-memory-reset!)
+    (test.assert-true normalized "a candidate's rewritten body is normalized")
+    (test.assert-true kept-reader "a candidate-free function is kept as is")))
 
 (test
   global-snapshot-before-inlining
@@ -63220,7 +63609,10 @@
     [_normalize : unit
       (in-arena
         (arena.Arena scratch)
-        (opt.opt-pure-call-inline-memory-install! bases (& functions))
+        (opt.opt-pure-call-inline-memory-install!
+          (ast.ast-node-pool-reader-context-current)
+          bases
+          (& functions))
         unit)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [_destroy : unit
@@ -63263,7 +63655,11 @@
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
         (& (opt-cl-test-functions symbols)))]
-    [before-inline (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [before-inline
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [summaries
       (opt.opt-build-program-summaries
@@ -63565,6 +63961,633 @@
       true
       (& func))
       [(Result next _) (opt.opt-function-blocks next)])))
+
+;; Both tables must propagate extern re-entry through direct and tail calls,
+;; including a recursive component whose bodies precede the external leaf.
+(defstruct OptExternalModRefCase
+  (body String)
+  (may-write bool))
+
+(test
+  global-mod-ref-extern-reentry
+  (let
+    [cases
+      (array
+        (OptExternalModRefCase
+          "%1 = call invoke(fn@callback) : i64
+return %1"
+          true)
+        (OptExternalModRefCase "%1 = call invoke_saved() : i64
+return %1" true)
+        (OptExternalModRefCase "tailcall invoke_saved() : i64" true)
+        (OptExternalModRefCase
+          "store_ptr %0, fn@callback : u64
+%1 = call invoke_saved() : i64
+return %1"
+          true)
+        ;; IR-text symbols are generated identities, even when their spelling
+        ;; matches a trusted runtime helper.
+        (OptExternalModRefCase "%1 = call tl_region_mark() : u64
+return 0" true)
+        (OptExternalModRefCase "%1 = call tl_alloc(8) : u64
+return 0" true)
+        (OptExternalModRefCase "tailcall .L_tl_abort() : i64" true)
+        (OptExternalModRefCase "return 0" false))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (let
+        [case (clone (array-ref cases index))]
+        [program
+          (irt.program
+            (str_cat.str-cat
+              "global @callback_cell : i64 = 0
+               global @callback_object : (__tl_dyn-array i64) = unit
+               function @wrapper(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+                 %1 = call cycle_a(%0) : i64
+                 return %1
+               }
+               function @cycle_a(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+                 %1 = call cycle_b(%0) : i64
+                 return %1
+               }
+               function @cycle_b(pointer=%0:u64) -> i64 vars 3 {
+               entry:
+                 %1 = call cycle_a(%0) : i64
+                 %2 = call leaf(%0) : i64
+                 return %2
+               }
+               function @leaf(pointer=%0:u64) -> i64 vars 2 {
+               entry:
+"
+              (clone case.body)
+              "
+}
+               function @callback() -> i64 vars 0 {
+               entry:
+                 store @callback_cell, 1 : i64
+                 return 1
+               }"))]
+        (match program
+          [(Program globals functions _)
+            (let
+              [cells
+                (opt.opt-global-cell-summary-build
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& functions))]
+              [objects
+                (opt-test-global-obj-build
+                  globals
+                  functions
+                  cells.addr-taken
+                  32)]
+              [names (array "wrapper" "cycle_a" "cycle_b" "leaf")]
+              (test.assert-true cells.mod-ref.built? "cell table is available")
+              (test.assert-true objects.built? "storage table is available")
+              (for [at (iterator.range 0 (array-length names))]
+                (let
+                  [name (opt-test-symbol (clone (array-ref names at)))]
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask cells.mod-ref name))
+                      case.may-write)
+                    (clone case.body))
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask objects name))
+                      case.may-write)
+                    (clone case.body))))
+              (test.assert-i64-eq
+                (opt.opt-global-mod-ref-call-mask
+                  objects
+                  cbi.compiler-builtin-id-tl-region-mark)
+                0
+                "the source-identity runtime helper excludes callback re-entry")
+              ;; A direct query of a name absent from the program uses the
+              ;; same conservative rule as the transitive rows above.
+              (test.assert-true
+                (and
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      cells.mod-ref
+                      (opt-test-symbol "missing")))
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      objects
+                      (opt-test-symbol "missing")))
+                  (opt.opt-global-mod-ref-any?
+                    (opt.opt-global-mod-ref-call-mask
+                      (& (opt.opt-global-mod-ref-none))
+                      cbi.compiler-builtin-id-tl-region-mark)))
+                "unresolved calls and unavailable tables stay conservative"))])))))
+
+;; The runtime copy entries access their pointer operands and never invoke
+;; user code. IR-text symbols deliberately have separate generated identities.
+(test
+  runtime-copy-reentry-identity
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [ids
+      (array
+        cbi.compiler-builtin-id-tl-memcpy
+        cbi.compiler-builtin-id-tl-memcpy-fresh
+        cbi.compiler-builtin-id-tl-mem-copy-fwd
+        cbi.compiler-builtin-id-tl-mem-copy8-fwd)]
+    [names
+      (array "tl_memcpy" "tl_memcpy_fresh" "tl_mem_copy_fwd" "tl_mem_copy8_fwd")]
+    (for [index (iterator.range 0 (array-length ids))]
+      (let
+        [id (array-ref ids index)]
+        [generated (opt-test-symbol (clone (array-ref names index)))]
+        (test.assert-i64-eq
+          (opt.opt-global-mod-ref-external-mask id)
+          0
+          "runtime copies do not re-enter user code")
+        (test.assert-true
+          (and
+            (ir.compiler-ir-effect-eq?
+              (ir.compiler-ir-direct-call-effect-id generated)
+              Unknown)
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-global-mod-ref-external-mask generated)))
+          "a generated lookalike retains unknown re-entry effects")))))
+
+;; IR text has no extern declaration syntax; only this metadata is constructed.
+(define (opt-mod-ref-test-extern [name : i64] [link : i64] [provided : bool]) : ir.CompilerIrExtern
+  (ir.CompilerIrExtern.Extern
+    name
+    name
+    "alias"
+    (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+    (ast.AstExternAbi.C)
+    link
+    (ast.ast-extern-link-input-list-new)
+    provided))
+
+(test
+  global-mod-ref-extern-link-identity
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [links
+      (array
+        cbi.compiler-builtin-id-tl-region-mark
+        (opt-test-symbol "opaque_link")
+        (opt-test-symbol "tl_region_mark")
+        (opt-test-symbol "exported_callback")
+        cbi.compiler-builtin-id-tl-region-mark)]
+    (for [index (iterator.range 0 (array-length links))]
+      (let
+        [provided (= index 3)]
+        [callee
+          (if provided
+            "internal"
+            "alias")]
+        [name (opt-test-symbol (clone callee))]
+        [builder (ir.compiler-ir-extern-builder-with-capacity 2)]
+        [_extern
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern name (array-ref links index) provided))]
+        [_conflict
+          (when
+            (= index 4)
+            (ir.compiler-ir-extern-builder-push!
+              (&mut builder)
+              (opt-mod-ref-test-extern
+                name
+                (opt-test-symbol "opaque_link")
+                false)))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        [program
+          (irt.program
+            (str_cat.str-cat
+              "global @cell : i64 = 0
+               global @object : (__tl_dyn-array i64) = unit
+               function @wrapper() -> i64 vars 1 {
+               entry:
+                 %0 = call "
+              callee
+              "() : i64
+                 return 0
+               }
+               function @internal() -> i64 vars 0 {
+               entry:
+                 store @cell, 7 : i64
+                 return 0
+               }"))]
+        (match program
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cell summaries.global-cell.mod-ref]
+              [object summaries.global-cell.obj-mod-ref]
+              [queries (array name (opt-test-symbol "wrapper"))]
+              (test.assert-true
+                (and cell.built? object.built?)
+                "both tables are available")
+              (for [at (iterator.range 0 (array-length queries))]
+                (let
+                  [query (array-ref queries at)]
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-mask-may-write?
+                        cell.index
+                        (opt.opt-global-mod-ref-call-mask cell query)
+                        (opt-test-symbol "cell"))
+                      (not (= index 0)))
+                    "a declared runtime link is precise; opaque/conflicting links and provided writers are not")
+                  (test.assert-true
+                    (=
+                      (opt.opt-global-mod-ref-any?
+                        (opt.opt-global-mod-ref-call-mask object query))
+                      (and (not (= index 0)) (not provided)))
+                    "the storage table uses the same link identity and preserves provided function bodies"))))])))))
+
+;; Externs spelled like trusted runtime helpers. `link` is where each one goes;
+;; a matching program links every spelling to itself instead.
+(define (opt-alias-test-externs [link : i64] [matching? : bool]) : ir.CompilerIrExternSeq
+  (let
+    [names
+      (array
+        cbi.compiler-builtin-id-tl-region-mark
+        cbi.compiler-builtin-id-tl-oob-abort
+        cbi.compiler-builtin-id-tl-alloc)]
+    [builder (ir.compiler-ir-extern-builder-with-capacity 3)]
+    (for [at (iterator.range 0 (array-length names))]
+      (let
+        [name (array-ref names at)]
+        (ir.compiler-ir-extern-builder-push!
+          (&mut builder)
+          (opt-mod-ref-test-extern
+            name
+            (if matching?
+              name
+              link)
+            false))))
+    (ir.compiler-ir-extern-builder-snapshot-seq (& builder))))
+
+;; `(set! mr_a 0)`, a read, a call, a second read: the second may reuse the
+;; stored value only if the call writes no cell.
+(define (opt-alias-test-reader-blocks
+  [symbols : OptMrTestSymbols]
+  [callee : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (Store symbols.a (I64 0) (I64))
+        (Mov 1 (Global symbols.a) (I64))
+        (Call 2 callee Nil (I64))
+        (BinOp 3 (Sub) (Global symbols.a) (Var 1) (I64))
+        (irt.instr "return %3")))))
+
+;; The same shape through a pointer: the second load may reuse the first only if
+;; the call writes no memory.
+(define (opt-alias-test-pointer-blocks [callee : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (irt.instr "%2 = load %1 : i64")
+        (Call 3 callee Nil (I64))
+        (irt.instr "%4 = load %1 : i64")
+        (irt.instr "%5 = sub %4, %2 : i64")
+        (irt.instr "return %5")))))
+
+;; The tail-call wrapper the transitive reader goes through.
+(define (opt-alias-test-wrapper [name : i64]) : ir.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (opt-test-instrs
+      (TailCall cbi.compiler-builtin-id-tl-region-mark Nil (I64)))))
+
+(define (opt-alias-test-summaries
+  [symbols : OptMrTestSymbols]
+  [wrapper : i64]
+  [externs : ir.CompilerIrExternSeq]) : opt.OptProgramSummaries
+  (opt.opt-build-program-summaries
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (& (opt-mr-test-globals symbols))
+    (& externs)
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-alias-test-wrapper wrapper))
+        (& (opt-mr-test-functions symbols))))
+    2))
+
+;; `blocks` after load GVN under the program's summaries.
+(define (opt-alias-test-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    (ast.ast-node-pool-reader-type-segment-bases)
+    (opt.opt-cfg-context-build (clone blocks))
+    params
+    (clone summaries.call-memory)
+    (clone summaries.global-cell)
+    blocks))
+
+;; Cell operands left in the reader after load GVN.
+(define (opt-alias-test-reads-after-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [out (opt-alias-test-gvn summaries (ir.compiler-ir-param-seq-empty) blocks)]
+    (opt-lp-count-label
+      (ir.compiler-ir-block-list-view out)
+      (ir.compiler-ir-label "entry")
+      false)))
+
+;; Pointer loads left in the reader after load GVN.
+(define (opt-alias-test-loads-after-gvn
+  [summaries : (& summaries opt.OptProgramSummaries)]
+  [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [out (opt-alias-test-gvn summaries (opt-gvn-pointer-params) blocks)]
+    (opt-count-load-blocks (ir.compiler-ir-block-list-view out))))
+
+;; A declaration spelled like a runtime helper but linked to code that may
+;; re-enter TypeLisp is classified by its link everywhere a direct callee's
+;; effect is read: load reuse in straight-line code and through a tail-call
+;; wrapper, loop promotion, transitive summaries, trap detection and builtin
+;; seeds. The matching program shows each check still proves the real helper.
+(test
+  extern-runtime-spelling-uses-link-effects
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [symbols (opt-mr-test-symbols)]
+    [wrapper (opt-test-symbol "alias_wrapper")]
+    [opaque (opt-test-symbol "alias_reentering_link")]
+    [mark cbi.compiler-builtin-id-tl-region-mark]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [matching? (= variant 1)]
+        [summaries
+          (opt-alias-test-summaries
+            symbols
+            wrapper
+            (opt-alias-test-externs opaque matching?))]
+        [cells summaries.global-cell]
+        [none (opt.opt-global-mod-ref-none)]
+        [empty (opt_i64_i64_map.with-capacity 1)]
+        [label
+          (if matching?
+            "a declaration linked to its own runtime spelling keeps the helper's proof"
+            "a runtime spelling linked elsewhere has the unknown external effect")]
+        (test.assert-true
+          (=
+            (ir.compiler-ir-effect-eq?
+              (opt.opt-direct-call-effect mark)
+              (ir.CompilerIrEffect.MemoryRead))
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-direct-call-noreturn? cbi.compiler-builtin-id-tl-oob-abort)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-licm-store-summary-for-direct-call (& empty) mark).call-or-unknown?
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-load-call-table-row (& empty) (& none) mark))
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-guard-dedup-call-clean? (& empty) (& none) mark)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt_i64_i64_map.contains?
+              (& summaries.call-memory)
+              cbi.compiler-builtin-id-tl-alloc)
+            matching?)
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-call-memory-summary-unknown?
+              (opt_i64_i64_map.get-value-or (& summaries.call-memory) wrapper 0))
+            (not matching?))
+          (clone label))
+        (test.assert-true
+          (=
+            (opt.opt-global-mod-ref-any?
+              (opt.opt-global-mod-ref-call-mask (& cells.mod-ref) mark))
+            (not matching?))
+          (clone label))
+        ;; straight-line reuse, directly and through the wrapper
+        (test.assert-i64-eq
+          (opt-alias-test-reads-after-gvn
+            (& summaries)
+            (opt-alias-test-reader-blocks symbols mark))
+          (if matching?
+            0
+            1)
+          (clone label))
+        (test.assert-i64-eq
+          (opt-alias-test-reads-after-gvn
+            (& summaries)
+            (opt-alias-test-reader-blocks symbols wrapper))
+          (if matching?
+            0
+            1)
+          (clone label))
+        (test.assert-i64-eq
+          (opt-alias-test-loads-after-gvn
+            (& summaries)
+            (opt-alias-test-pointer-blocks mark))
+          (if matching?
+            1
+            2)
+          (clone label))
+        ;; loop promotion
+        (test.assert-i64-eq
+          (opt-lp-loop-body-cell-operands
+            (&
+              (opt-mr-promoted (& cells) (opt-mr-call-body-blocks symbols mark))))
+          (if matching?
+            0
+            2)
+          (clone label))))))
+
+;; One program that may pass `esc_obj`'s storage to an extern and one that
+;; does not. Both store a cell so the tables are built.
+(define (opt-escape-test-program [escapes? : bool]) : ir.CompilerIrProgram
+  (irt.program
+    (str_cat.str-cat
+      "global @esc_cell : i64 = 0
+       global @esc_obj : (__tl_dyn-array i64) = unit
+       function @esc_writer() -> i64 vars 2 {
+       entry:
+         store @esc_cell, 1 : i64
+"
+      (if escapes?
+        "         %1 = call esc_sink(@esc_obj) : i64
+"
+        "         %1 = call esc_sink(0) : i64
+")
+      "         return %1
+       }")))
+
+;; Escaped storage stays writable through a runtime-linked extern's pointer
+;; arguments: its storage row must carry the escaped bit even though its link
+;; cannot re-enter TypeLisp.
+(test
+  global-obj-extern-row-keeps-escaped-storage
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [copy (opt-test-symbol "esc_copy")]
+    [object (opt-test-symbol "esc_obj")]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [escapes? (= variant 0)]
+        [builder (ir.compiler-ir-extern-builder-with-capacity 1)]
+        [_copy
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              copy
+              cbi.compiler-builtin-id-tl-memcpy
+              false))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        (match (opt-escape-test-program escapes?)
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cells summaries.global-cell.mod-ref]
+              [storage summaries.global-cell.obj-mod-ref]
+              (test.assert-true
+                (and cells.built? storage.built?)
+                "both tables are available")
+              (test.assert-i64-eq
+                (opt.opt-global-mod-ref-call-mask (& cells) copy)
+                0
+                "a runtime copy cannot re-enter a cell writer")
+              (test.assert-true
+                (not (opt_i64_i64_map.contains? (& cells.writes) copy))
+                "an extern whose row would be empty has none")
+              (test.assert-true
+                (=
+                  (opt.opt-global-mod-ref-mask-may-write?
+                    storage.index
+                    (opt.opt-global-mod-ref-call-mask (& storage) copy)
+                    object)
+                  escapes?)
+                "only escaped storage is writable through the runtime copy"))])))))
+
+;; Declarations of one name that disagree on the link classify as no runtime
+;; helper, whichever comes first; agreeing duplicates keep the helper's proof.
+(test
+  extern-conflicting-links-either-order
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [alias (opt-test-symbol "conflict_alias")]
+    [opaque (opt-test-symbol "conflict_opaque")]
+    [mark cbi.compiler-builtin-id-tl-region-mark]
+    [cell (opt-test-symbol "conflict_cell")]
+    (for [order (iterator.range 0 3)]
+      (let
+        [builder (ir.compiler-ir-extern-builder-with-capacity 2)]
+        [_first
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              alias
+              (if (= order 1)
+                opaque
+                mark)
+              false))]
+        [_second
+          (ir.compiler-ir-extern-builder-push!
+            (&mut builder)
+            (opt-mod-ref-test-extern
+              alias
+              (if (= order 0)
+                opaque
+                mark)
+              false))]
+        [externs (ir.compiler-ir-extern-builder-snapshot-seq (& builder))]
+        (match (irt.program
+          "global @conflict_cell : i64 = 0
+           function @conflict_writer() -> i64 vars 1 {
+           entry:
+             store @conflict_cell, 1 : i64
+             %0 = call conflict_alias() : i64
+             return %0
+           }")
+          [(Program globals functions _)
+            (let
+              [summaries
+                (opt.opt-build-program-summaries
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (& globals)
+                  (& externs)
+                  (& functions)
+                  2)]
+              [cells summaries.global-cell.mod-ref]
+              (test.assert-true cells.built? "cell table is available")
+              (test.assert-true
+                (=
+                  (opt.opt-global-mod-ref-mask-may-write?
+                    cells.index
+                    (opt.opt-global-mod-ref-call-mask (& cells) alias)
+                    cell)
+                  (< order 2))
+                "conflicting links join to the unknown effect in either order"))])))))
+
+;; Compiler-owned runtime helpers never call user code. The atomic helpers keep
+;; their effect, and a generated lookalike is no helper at all.
+(test
+  runtime-helpers-exclude-reentry
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [helpers
+      (array
+        cbi.compiler-builtin-id-tl-str-view
+        cbi.compiler-builtin-id-tl-substring
+        cbi.compiler-builtin-id-tl-arena-current
+        cbi.compiler-builtin-id-tl-arena-set
+        cbi.compiler-builtin-id-tl-arena-make
+        cbi.compiler-builtin-id-tl-arena-destroy
+        cbi.compiler-builtin-id-tl-alloc-global
+        cbi.compiler-builtin-id-tl-mem-copy-fwd)]
+    (for [at (iterator.range 0 (array-length helpers))]
+      (test.assert-i64-eq
+        (opt.opt-global-mod-ref-external-mask (array-ref helpers at))
+        0
+        "a runtime helper cannot re-enter a global writer"))
+    (test.assert-true
+      (and
+        (opt.opt-global-mod-ref-any?
+          (opt.opt-global-mod-ref-external-mask
+            cbi.compiler-builtin-id-tl-atomic-i64-load-ptr))
+        (opt.opt-global-mod-ref-any?
+          (opt.opt-global-mod-ref-external-mask (opt-test-symbol "tl_str_view"))))
+      "atomic helpers and generated lookalikes keep the external effect")))
 
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64
   (let
@@ -64313,9 +65336,15 @@
       7]
     [else 42]))
 
-(define (compiler-optimize-len-eq-families-self-test) : i64
+(define (compiler-optimize-len-eq-families-self-test [global-storage? : bool]) : i64
   (let
-    [symbols : OptLeTestSymbols (opt-le-test-symbols)]
+    [symbols : OptLeTestSymbols
+      (let
+        [symbols (opt-le-test-symbols)]
+        (when
+          global-storage?
+          (set! symbols.allocator cbi.compiler-builtin-id-tl-alloc-global))
+        symbols)]
     [cells : opt.OptGlobalCellSummary (opt-le-test-cells symbols)]
     [family-a : i64 (opt-le-family cells symbols.a)]
     [fused : ir.CompilerIrBlockList
@@ -66100,7 +67129,7 @@
   (test.assert-i64-eq
     (compiler-optimize-global-cell-call-mod-ref-self-test)
     42
-    "condition (c) is per cell: an extern or other-cell callee still hoists, a direct or transitive writer of the cell does not, and an indirect call refuses the function"))
+    "condition (c) is per cell: an other-cell callee still hoists, a direct or transitive writer of the cell does not, and an arbitrary extern or indirect call refuses the function"))
 
 (test
   global-cell-observable-store
@@ -66135,7 +67164,7 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-mod-ref-self-test)
     42
-    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
+    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing callee and a trusted runtime helper refuse nothing, an arbitrary extern, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
 
 (test
   global-obj-storage-write-table
@@ -66645,9 +67674,16 @@
 (test
   len-eq-static-length-equality-families
   (test.assert-i64-eq
-    (compiler-optimize-len-eq-families-self-test)
+    (compiler-optimize-len-eq-families-self-test false)
     42
     "two global Vec cells reset together in one straight-line region with one length are proven length-equal, and a dominating check on one retires the check on the other; a member whose box reaches a parameter-writing callee is dropped, a call that may read a member between the two stores breaks the region, the Vec.len field invariant discharges the unsigned check against the array length, and a constructor whose .len word is not its array length refuses it"))
+
+(test
+  len-eq-global-storage-length-equality-families
+  (test.assert-i64-eq
+    (compiler-optimize-len-eq-families-self-test true)
+    42
+    "private global container copies preserve length families and field bounds; escaped boxes and intervening readers still refuse the proof"))
 
 (test
   cfg-straighten-below-threader
@@ -69096,9 +70132,7 @@
         (opt-block-instr-at block 0))
         [(Phi _ inputs _)
           (and
-            (opt.opt-bool-branch-phi-input-has-label?
-              (owned_view.compiler-owned-shared-view inputs)
-              ok)
+            (opt.opt-bool-branch-phi-input-has-label? inputs ok)
             (not (opt.opt-bool-branch-phi-input-has-label? inputs head)))]
         [_ false])
       (return 10))
@@ -71658,7 +72692,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 99)]
     [(Some value)
@@ -78379,7 +79413,7 @@
   (match blocks
     [(slice) 0]
     [(slice block & rest)
-      (match (owned_view.compiler-owned-reference-shared-view block)
+      (match block
         [(Block block-label instrs)
           (if (= block-label label)
             (opt-count-storeptr-instrs instrs)

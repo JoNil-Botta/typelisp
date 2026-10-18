@@ -10,6 +10,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_optimize_tests as ot)
 (import compiler_optimize as opt)
+(import compiler_regalloc as reg)
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
@@ -2137,10 +2138,11 @@
             [(Phi _ inputs _)
               (if (opt.opt-phi-input-seq-eq
                 inputs
-                (match (irt.instr
-                  "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
-                  [(Phi _ expected _) expected]
-                  [_ (ir.compiler-ir-phi-input-seq-empty)]))
+                (&
+                  (match (irt.instr
+                    "%1 = phi [0, entry], [%0, inl.latch.0.cont] : i64")
+                    [(Phi _ expected _) expected]
+                    [_ (ir.compiler-ir-phi-input-seq-empty)])))
                 (match (opt.opt-cfg-find-block
                   blocks
                   (ir.compiler-ir-label "exit"))
@@ -2152,10 +2154,11 @@
                           [(Phi _ exit-inputs _)
                             (opt.opt-phi-input-seq-eq
                               exit-inputs
-                              (match (irt.instr
-                                "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
-                                [(Phi _ expected _) expected]
-                                [_ (ir.compiler-ir-phi-input-seq-empty)]))]
+                              (&
+                                (match (irt.instr
+                                  "%2 = phi [%1, header], [%0, inl.latch.0.cont] : i64")
+                                  [(Phi _ expected _) expected]
+                                  [_ (ir.compiler-ir-phi-input-seq-empty)])))]
                           [_ false])])])
                 false)]
             [_ false])])]))
@@ -2715,6 +2718,47 @@
   (test.assert-true
     (ot.compiler-optimize-inline-checked-depth-weighting-ok?)
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
+
+(test
+  inline-checked-register-pool-isolation
+  (let
+    [func
+      (irt.func
+        "function @checked_pool(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> unit vars 7 {
+         entry:
+           %6 = call opaque() : unit
+           store @sink, %0 : i64
+           store @sink, %1 : i64
+           store @sink, %2 : i64
+           store @sink, %3 : i64
+           store @sink, %4 : i64
+           store @sink, %5 : i64
+           return
+         }")]
+    [original : bool reg.compiler-reg-rbp-pool-enabled]
+    [_cold : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
+    [cold : i64
+      (opt.opt-inline-checked-alloc-cost
+        (ast.ast-node-pool-reader-type-segment-bases)
+        func
+        0)]
+    [cold-restored : bool (not reg.compiler-reg-rbp-pool-enabled)]
+    [_emitted : unit (reg.compiler-reg-set-rbp-pool-enabled! true)]
+    [after-emission : i64
+      (opt.opt-inline-checked-alloc-cost
+        (ast.ast-node-pool-reader-type-segment-bases)
+        func
+        0)]
+    [emitted-restored : bool reg.compiler-reg-rbp-pool-enabled]
+    [_restore : unit (reg.compiler-reg-set-rbp-pool-enabled! original)]
+    (test.assert-i64-eq
+      cold
+      after-emission
+      "inline pricing ignores the preceding backend register pool")
+    (test.assert-true cold-restored "a cold caller keeps its register pool")
+    (test.assert-true
+      emitted-restored
+      "an emitted caller keeps its register pool")))
 
 (test
   dominance-frontier-table-matches-scan

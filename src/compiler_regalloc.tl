@@ -21559,73 +21559,54 @@
 ;; Members inherit the root's location via compiler-reg-expand-class-assignments.
 ;; The merged coarse interval drives interference; a singleton var's coarse
 ;; interval already equals its live range, so non-coalesced values are unaffected.
-(define (compiler-reg-interval-seq-insert-merged
+(define (compiler-reg-sort-root-segments
   [segments : CompilerRegIntervalSeq]
-  [var : i64]
-  [start : i64]
-  [end : i64]) : CompilerRegIntervalSeq
+  [root : i64]) : CompilerRegIntervalSeq
   (let
-    [out : CompilerRegIntervalSeq
-      (compiler-reg-interval-seq-with-capacity
-        (+ (compiler-reg-interval-seq-count segments) 1))]
-    [merged-start : i64 start]
-    [merged-end : i64 end]
-    [inserted : bool false]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count segments))
-      (let
-        [head : CompilerRegInterval
-          (compiler-reg-interval-seq-ref segments index)]
-        (let
-          [head-start : i64 head.start]
-          [head-end : i64 head.end]
-          (cond
-            [(< head-end merged-start)
-              (set! out (compiler-reg-interval-seq-append (& out) head))]
-            [(< merged-end head-start)
-              (unless
-                inserted
-                (set!
-                  out
-                  (compiler-reg-interval-seq-append
-                    (& out)
-                    (CompilerRegInterval var merged-start merged-end)))
-                (set! inserted true))
-              (set! out (compiler-reg-interval-seq-append (& out) head))]
-            [else
-              (if (< head-start merged-start)
-                (set! merged-start head-start)
-                unit)
-              (if (> head-end merged-end)
-                (set! merged-end head-end)
-                unit)]))
-        (set! index (+ index 1))))
-    (if inserted
-      out
-      (compiler-reg-interval-seq-append
-        (& out)
-        (CompilerRegInterval var merged-start merged-end)))))
-
-(define (compiler-reg-union-segments
-  [src : CompilerRegIntervalSeq]
-  [root : i64]
-  [dst : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
-  (let
-    [out : CompilerRegIntervalSeq dst]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count src))
-      (let
-        [interval : CompilerRegInterval
-          (compiler-reg-interval-seq-ref src index)]
-        (set!
-          out
-          (compiler-reg-interval-seq-insert-merged
-            out
-            root
-            interval.start
-            interval.end)))
+    [count : i64 segments.len]
+    [index : i64 1]
+    [ordered : bool true]
+    ;; Each member is normally ordered already. Preserve that linear path
+    ;; when concatenating the class also leaves its segments in order.
+    (while (and ordered (< index count))
+      (when
+        (compiler-reg-interval-before?
+          (array-ref segments.slots index)
+          (array-ref segments.slots (- index 1)))
+        (set! ordered false))
       (set! index (+ index 1)))
-    out))
+    (let
+      [sorted : CompilerRegIntervalSeq
+        (if ordered
+          segments
+          (compiler-reg-candidate-sort segments))]
+      [items : (__tl_dyn-array CompilerRegInterval) sorted.slots]
+      [written : i64 0]
+      (set! index 0)
+      ;; The sorted storage is owned by this union. Compaction may replace slots
+      ;; without mutating a member's original live segments.
+      (while (< index count)
+        (let
+          [start : i64 (__tl-project-field (array-ref items index) start)]
+          [end : i64 (__tl-project-field (array-ref items index) end)]
+          (if (and
+            (> written 0)
+            (<= start (__tl-project-field (array-ref items (- written 1)) end)))
+            (let
+              [previous : CompilerRegInterval (array-ref items (- written 1))]
+              ;; Sharing an endpoint merges; a gap of even one position does not.
+              (when
+                (> end previous.end)
+                (set!
+                  (array-ref items (- written 1))
+                  (CompilerRegInterval root previous.start end))))
+            (begin
+              (set!
+                (array-ref items written)
+                (CompilerRegInterval root start end))
+              (set! written (+ written 1)))))
+        (set! index (+ index 1)))
+      (CompilerRegIntervalSeq items written))))
 
 (define (compiler-reg-merged-root-index
   [coalesce : (& coalesce CompilerRegCoalesceMap)]
@@ -21649,7 +21630,7 @@
     (compiler-reg-fill-i64-array (&mut root-starts) -1)
     (compiler-reg-fill-i64-array (&mut root-ends) -1)
     ;; Object-array entries are not valid empty sequences by default. Initialise
-    ;; every root explicitly before accumulating its sorted segment union.
+    ;; every root explicitly before gathering its member segments.
     (while (< v n)
       (set! (array-ref root-segs v) (compiler-reg-interval-seq-empty))
       (set! v (+ v 1)))
@@ -21677,20 +21658,41 @@
             (compiler-reg-global-array-element-shared-view root-ends rr))
             (set! (array-ref root-ends rr) (array-ref orig-ends v))
             unit)
-          ;; The root carries the UNION of its
-          ;; members' segments. Normal coalescing only merges
-          ;; non-interfering members, but same-value coalescing deliberately
-          ;; admits overlapping members, so keep the root segment list
-          ;; sorted and non-overlapping while preserving genuine holes.
           (set!
             (array-ref root-segs rr)
-            (compiler-reg-union-segments
+            (compiler-reg-interval-seq-append-all
+              (compiler-reg-global-array-element-shared-view root-segs rr)
               (if (< v (array-length orig-segs))
                 (compiler-reg-global-array-element-shared-view orig-segs v)
-                (compiler-reg-interval-seq-empty))
-              rr
-              (compiler-reg-global-array-element-shared-view root-segs rr))))
+                (compiler-reg-interval-seq-empty)))))
         unit)
+      (set! v (+ v 1)))
+    ;; Same-value coalescing admits overlapping members. Sort each class once,
+    ;; then form its non-overlapping union without filling genuine holes.
+    (set! v 0)
+    (while (< v n)
+      (let
+        [count : i64 (__tl-project-field (array-ref root-segs v) len)]
+        (cond
+          [(= count 1)
+            ;; A singleton already forms a union. Give its interval the root's
+            ;; identity without sharing a mutable record with the member index.
+            (let
+              [item : CompilerRegInterval
+                (array-ref (__tl-project-field (array-ref root-segs v) slots) 0)]
+              (set!
+                (array-ref (__tl-project-field (array-ref root-segs v) slots) 0)
+                (CompilerRegInterval v item.start item.end)))]
+          [(> count 1)
+            (let
+              [segments : CompilerRegIntervalSeq
+                (replace!
+                  (array-ref root-segs v)
+                  (compiler-reg-interval-seq-empty))]
+              (set!
+                (array-ref root-segs v)
+                (compiler-reg-sort-root-segments segments v)))]
+          [else unit]))
       (set! v (+ v 1)))
     (CompilerRegIntervalIndex root-starts root-ends root-segs)))
 

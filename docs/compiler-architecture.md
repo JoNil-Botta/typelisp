@@ -16,6 +16,33 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Lowering retains source binding types, including arena brands and lifetime
+arguments, in its semantic `TcTypeEnv`. It reuses frozen checked let-binding
+facts keyed by original declaration, enclosing body, binding ordinal, name and
+initializer. The declaration map uses source module/name identity so pruning
+cannot change the selected proof; ambiguous names require inference. These
+proofs compare exact structural types, including allocation regions. A conflict
+invalidates only the affected binding.
+Semantic indexing requires complete facts and uses a cold declaration walk.
+Lowering retains available facts without disabling trusted surface hydration.
+Missing cached-prefix facts, inconsistent facts and generated dispatch bodies
+use the shared let-binding rules for annotations and inferred values. The job
+owns the retained payload arena through lowering and releases it on both success
+and failure.
+Closure capture loads retain the inherited semantic bindings and owner markers;
+their slot types describe only runtime storage.
+Physical IR storage types are derived separately with regions erased.
+Semantic queries for operands and nested calls therefore receive the same
+brands as the original checked binding. An `in-arena` body also retains its
+source allocation region alongside the runtime restore marker.
+Encoded typechecker errors cross the
+lowering boundary through the shared decoder, preserving the producer's code,
+primary span, help and secondary labels.
+The move checker matches expression payloads while retaining their source
+views. Conflict primaries name the read, and retained move/invalidation facts
+name the origin even under an unspanned synthetic function or lambda body.
+The unspanned root of a normalized dotted field read is viewed at that read.
+
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
 - the lowerer's target-aware C ABI shapes;
@@ -128,9 +155,21 @@ and hidden-result shapes through both direct and stored code pointers.
 
 `lower-indirect-call` owns typed dispatch to the C ABI lowering path. Every
 indirect call site uses that dispatcher; lexical provenance flags cannot choose
-a different calling convention for the same type. Global
+a different calling convention for the same type. A callee that lowers to
+`Never` returns its exit state before argument evaluation or callable dispatch.
+Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+Ordinary and tail indirect lowering copy the selected callable (a closure
+descriptor sharing its environment, or a C code pointer) before lowering
+arguments only when an argument can write the storage it was read from: a local
+by the argument operand snapshot rule, a global cell unless every argument only
+reads. Function names and values the callee expression computed are not
+copied, so their direct-call facts survive.
+Scalar global reads, including folds and rematerialized reads, use
+the prepared program's symbol index. That index resolves extern metadata and
+ordinary module symbols identically to unfolded loads, and is replaced at
+each emission boundary and unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.
@@ -504,12 +543,19 @@ current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
-Lower scratch ends after lowering. At opt1/2 the original function IR can end
-after optimizer copy-out; at opt0 it lasts through the final IR consumer.
+Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
+synchronous retirement authority: the exact lower owner's stable address and a
+driver callback. After the surviving bodies reach the optimizer-input carrier
+and the inline arena is released, the callback retires that owner's original
+function IR before program summaries and function optimization. The optimizer
+does not import the lowerer or select an ambient job. Its callback context stays
+outside the retired arena; calls without authority retain their source storage.
+At opt1 the original IR ends after optimizer copy-out; at opt0 it lasts through
+the final IR consumer. Later driver cleanup remains idempotent.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
-those headers and bytes can belong to lower IR, which retires after emission.
+at opt0 those headers and bytes can belong to lower IR until emission finishes.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to
@@ -701,6 +747,17 @@ row owns. Origin records are written and scanned by marker id (reset-aware
 builtin ids). The views render Int and Float text as a shared view of the
 interned spelling. A consumer that keeps a spelling past an intern reset copies
 it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
+
+Canonical and ReSpan records expose their full logical node IDs and four i32
+coordinates. Physical slots use 16 bytes: both complete i32 IDs occupy one
+word; the other holds the signed start line, two u12 columns and line deltas
+0–254. Other coordinates use tag 255 and an exact logical record in the table's
+owning arena. Accessors decode by value; packed and overflow pointers never
+escape. Logical setters own their input while synchronous private byte writers
+consume it. Shared table headers retain the arena owner and recycle overflow
+slots across wide-to-compact rewrites. Segment-zero growth copies physical
+slots without duplicating overflow ownership; snapshots keep the same table
+address.
 
 Macro generation copy-out persists expression payloads in place: all expression
 ids, wrapper targets, and wrapper spans remain unchanged. It shares the row-write
@@ -1006,6 +1063,25 @@ are popped in lowering order. This rule is specific to unit-valued field stores;
 `replace!`, which returns the old value, retains its separate place lowering.
 
 Memory-class aggregate expressions carry addresses into inline storage.
+Whole-global assignment copies the shallow container through the private
+`tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
+store preserves the backend's global-writer and inline-storage eligibility
+analysis; mutating one permanent home would incorrectly retarget a receiver
+captured before the replacement. A private atomic arena starts with one static
+page and uses ordinary arena growth after it fills. Constant allocations up to
+64 bytes reserve space with an inline compare-and-swap; other allocations
+temporarily select the private root, then restore the caller's current arena.
+Every segment has program lifetime, so an allocation can finish on an older
+head while another thread grows the arena. The root and its segments are never
+exposed to source reset or destruction. Payloads retain their checked source lifetimes;
+this transport does not clone them. Global initialization and ordinary heap
+allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
+this helper and its private arena only when referenced on either target. Each
+platform wrapper has its own catalog row; ordinary allocator variants keep
+their original payloads. Internal mutable diagnostic state keeps its latest
+unbound-name snapshot in one fixed array slot, avoiding a new retained global
+container for every lookup and reset.
+
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,
 enum payload, fixed-array projection, conditional merge, or nested loop; the
@@ -1088,6 +1164,11 @@ remove an address fact. Both global-cell summaries and aggregate live-in
 analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
+
+GEP use splitting may re-evaluate only stable literals, addresses and
+single-definition variables. `Global` and `RuntimeGlobal` are implicit mutable
+reads, so a GEP containing either operand retains its original capture point
+across intervening writes and calls.
 
 LICM also proves that loop writes cannot change the loaded word. Same-root
 stores can be separated by non-overlapping constant byte ranges, using the
@@ -1334,6 +1415,14 @@ metrics; the trace journal is copied before the planning arena is destroyed.
 Typed scalar reconstruction of split records makes an added owned payload or
 variant require an explicit update to that boundary.
 
+Coalesced register classes gather member live segments into fresh root storage.
+Singletons only retag their interval; already ordered lists bypass sorting.
+Other lists sort once by start/end/variable before compacting the union in place. Overlapping
+segments and shared endpoints merge; even a one-position gap remains a hole.
+The root's coarse bounds remain the minimum start and maximum end of its
+members. Gathering and compaction leave the member indexes and parent map
+unchanged, including when same-value coalescing admits overlapping members.
+
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only
@@ -1350,6 +1439,27 @@ final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes
 bound overlapping analyses within a large function; the existing function and
 assembly-stream arenas continue to bound accumulation across functions.
+
+Global-cell and global-storage write summaries treat arbitrary extern calls as
+possibly writing every global: an extern can invoke a callback or an exported
+function without receiving a global address. Direct queries and call-graph
+closure use the same rule, including tail calls and recursive components.
+Only compiler-owned runtime helpers (the backend runtime, stdlib runtime and
+fault-helper builtin sets, and the byte copies) exclude this re-entry; atomic
+helpers do not, because they order other threads' writes. Their pointer writes
+still obey the analyses' address and escape preconditions: an extern's storage
+row keeps every escaped global. Lowered runtime copies carry the source builtin
+identity that supplies this proof.
+
+A call names an extern by its language identity; the optimizer maps it to the
+declared link identity (`opt-effect-callee`) before classifying it. The re-entry
+proof reads the link. A runtime effect class (memory read, memory write,
+non-returning) applies only when the call's identity is the helper itself, so a
+declaration spelled like a helper but linked elsewhere keeps the unknown effect
+in load reuse, transitive call summaries, trap detection and builtin seeds.
+Declarations that disagree on the link classify as unknown. Exported entries
+retain their function bodies' summaries. These private-global masks do not
+describe arbitrary memory writes.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a
@@ -1911,6 +2021,11 @@ references. Code lookup is ASCII case-insensitive. `typelisp explain --list`
 prints the registry and `typelisp explain --search <term>` searches its titles
 and prose. The code list, with owners and construction sites, is in
 [diagnostic-codes.md](../docs/diagnostic-codes.md).
+
+Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
+source context is attached. Resolver helpers keep plain internal messages;
+forwarded parser/typechecker diagnostics retain their own codes and provenance.
+The `E03..` inventory lists every loader conversion, including package imports.
 
 ## Async process ownership
 

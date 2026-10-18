@@ -12164,7 +12164,8 @@
     ;; dependency-native results. Retaining the declaration also ensures the
     ;; catalog registry is consulted only after ordinary import visibility and
     ;; shadowing resolve this exact transformer.
-    [(or (DefMacro _ _ _ _ _) (DefStruct _ _ _ _ _) (Module _))
+    [(or (DefMacro _ _ _ _ _) (DefEnum _ _ _ _) (DefEnumLifetimes _ _ _ _ _)
+         (DefStruct _ _ _ _ _) (Module _))
       (CompilerLoadSomeDecl decl)]
     [(Unsafe inner-box)
       (let

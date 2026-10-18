@@ -83,7 +83,7 @@
         (match (lower.lower-function-escaping
           ctx
           parent
-          (lower.lower-global-shared-view types)
+          (clone types)
           (ci.intern-generated-canonical-name "function-env-ok")
           params
           (I64)
@@ -92,7 +92,7 @@
             (Var first))
           (Known -1 0)
           (ir.compiler-source-spans-empty)
-          (lower.lower-global-shared-view names)
+          (clone names)
           (lower.CompilerLowerMode.LinuxScalar))
           [(Ok functions _)
             (test.assert-true
@@ -122,7 +122,7 @@
     (match (lower.lower-function-escaping
       ctx
       parent
-      (lower.lower-global-shared-view types)
+      (clone types)
       (ci.intern-generated-canonical-name "function-env-error")
       (ast.ast-param-list-new)
       (I64)

@@ -1,4 +1,5 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
+(import stdlib.iterator)
 (import stdlib.vector)
 (import compiler_semantic_index)
 
@@ -231,11 +232,8 @@
   [dst : (&mut dst (__tl_dyn-array LspCallFrame))]
   [src : (& src (__tl_dyn-array LspCallFrame))]
   [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref dst i) (array-ref src i))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 count)]
+    (set! (array-ref dst i) (array-ref src i))))
 
 (define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)]) : unit
   (let
@@ -256,11 +254,11 @@
     (lsp-call-frames-grow! frames)
     unit)
   (set! (array-ref frames.slots frames.len) value)
-  (set! frames.len (+ frames.len 1)))
+  (+= frames.len 1))
 
 (define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)]) : unit
   (if (> frames.len 0)
-    (set! frames.len (- frames.len 1))
+    (-= frames.len 1)
     unit))
 
 (define (lsp-call-frames-clear! [frames : (&mut frames LspCallFrames)]) : unit
@@ -317,9 +315,9 @@
     (lsp-fold-ranges-grow! folds)
     unit)
   (set! (array-ref folds.slots folds.len) value)
-  (set! folds.len (+ folds.len 1)))
+  (+= folds.len 1))
 
 (define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
   (if (> docs.len 0)
-    (set! docs.len (- docs.len 1))
+    (-= docs.len 1)
     unit))

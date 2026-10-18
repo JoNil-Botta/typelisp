@@ -31,7 +31,7 @@
         (cast (string.string-ref prefix index) : u8))
         (set! matches false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     matches))
 
 ;: Validate the envelope and return the claimed raw length and token offset.
@@ -64,8 +64,8 @@
               (if (> raw-len (/ (- max-i64 digit) 10))
                 (set! overflow true)
                 (set! raw-len (+ (* raw-len 10) digit)))
-              (set! digits (+ digits 1))
-              (set! index (+ index 1))))
+              (+= digits 1)
+              (+= index 1)))
           (cond
             [overflow (Err "compiler lzss: raw length overflows i64")]
             [(= digits 0) (Err "compiler lzss: missing raw length")]
@@ -213,7 +213,7 @@
                 (ptr-read (ptr-offset in-data compressed-index)))
               : i64)]
           [token : i64 0]
-          (set! compressed-index (+ compressed-index 1))
+          (+= compressed-index 1)
           (while (and valid (< token 8))
             (if (= (bit-and flags 1) 1)
               (begin
@@ -221,8 +221,8 @@
                   (ptr-write!
                     (ptr-offset out-data out-index)
                     (ptr-read (ptr-offset in-data compressed-index))))
-                (set! compressed-index (+ compressed-index 1))
-                (set! out-index (+ out-index 1)))
+                (+= compressed-index 1)
+                (+= out-index 1))
               (let
                 [packed : i64
                   (bit-or
@@ -238,7 +238,7 @@
                       : i64))]
                 [offset : i64 (+ (shr packed 4) 1)]
                 [length : i64 (+ (bit-and packed 15) 3)]
-                (set! compressed-index (+ compressed-index 2))
+                (+= compressed-index 2)
                 (if (> offset out-index)
                   (begin
                     (set! valid false)
@@ -249,9 +249,9 @@
                       out-index
                       offset
                       length)
-                    (set! out-index (+ out-index length))))))
+                    (+= out-index length)))))
             (set! flags (shr flags 1))
-            (set! token (+ token 1)))))
+            (+= token 1))))
       (cond
         [(or (not valid) (>= out-index raw-len)) unit]
         [(>= compressed-index compressed-len)
@@ -264,7 +264,7 @@
                 (array-ref payload (+ compressed-start compressed-index))
                 : i64)]
             [bit : i64 0]
-            (set! compressed-index (+ compressed-index 1))
+            (+= compressed-index 1)
             (while (and valid (< bit 8) (< out-index raw-len))
               (if (!= (bit-and flags (shl 1 bit)) 0)
                 (if (>= compressed-index compressed-len)
@@ -275,8 +275,8 @@
                     (set!
                       (array-ref out out-index)
                       (array-ref payload (+ compressed-start compressed-index)))
-                    (set! compressed-index (+ compressed-index 1))
-                    (set! out-index (+ out-index 1))))
+                    (+= compressed-index 1)
+                    (+= out-index 1)))
                 (if (< (- compressed-len compressed-index) 2)
                   (begin
                     (set! valid false)
@@ -298,7 +298,7 @@
                           : i64))]
                     [offset : i64 (+ (shr packed 4) 1)]
                     [length : i64 (+ (bit-and packed 15) 3)]
-                    (set! compressed-index (+ compressed-index 2))
+                    (+= compressed-index 2)
                     (cond
                       [(> offset out-index)
                         (set! valid false)
@@ -315,8 +315,8 @@
                           out-index
                           offset
                           length)
-                        (set! out-index (+ out-index length))]))))
-              (set! bit (+ bit 1))))]))
+                        (+= out-index length)]))))
+              (+= bit 1)))]))
     (cond
       [(not valid) (Err error)]
       [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]

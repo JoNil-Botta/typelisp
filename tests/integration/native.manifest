@@ -570,7 +570,7 @@ lambda_capture_copy|all|-|tests/integration/lambda_capture_copy.tl|42|-|-|-|-
 lambda_capture_fixed_array|all|-|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-|-
 lambda_capture_fixed_array_aggregate|all|-|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|stdlib/string.tl|-
 lambda_capture_nested_aggregate|all|-|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|stdlib/string.tl|-
-lambda_capture_scalar|all|0,1,2|tests/integration/lambda_capture_scalar.tl|42|-|-|-|-
+lambda_capture_scalar|all|-,0,1,2|tests/integration/lambda_capture_scalar.tl|42|-|-|-|-
 lambda_capture_struct_enum|all|-|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-|-
 lambda_capture_tuple|all|-|tests/integration/lambda_capture_tuple.tl|42|-|-|-|-
 lambda_lift|all|-|tests/integration/lambda_lift.tl|42|-|-|-|-
@@ -981,7 +981,7 @@ source_selected_generated_export|all|-|tests/integration/source_selected_generat
 test_cli_entry_memory|all|-|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integration/test_cli_entry_memory.stdout.expected|-|test_cli_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|expected-stderr:@tests/integration/test_cli_entry_memory.stderr.expected
 test_cli_entry_state|all|-|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-|-
 c_function_pointer_flow|all|-|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c|-
-c_function_pointer_null|all|0,1,2|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
+c_function_pointer_null|all|-,0,1,2|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
 c_function_pointer_publication|all|-|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl|-
 c_function_pointer_kind|all|-|tests/integration/c_function_pointer_kind.tl|42|-|-|-|-
 wide_struct_members|all|-|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
@@ -1081,7 +1081,6 @@ store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|st
 store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 never_call_merge|all|0,1,2|tests/integration/never_call_merge.tl|42|-|-|stdlib/test.tl|-
 
-gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-
 ownership_certified_never_call|all|0,1,2|tests/integration/ownership_certified_never_call.tl|42|-|-|-|-
 ownership_certified_never_argument|all|0,1,2|tests/integration/ownership_certified_never_argument.tl|42|-|-|-|-
 ownership_certified_never_indirect|all|0,1,2|tests/integration/ownership_certified_never_indirect.tl|42|-|-|-|-

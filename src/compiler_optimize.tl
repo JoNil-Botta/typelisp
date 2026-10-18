@@ -98740,9 +98740,14 @@
     ;;
     ;; Verification is consolidated at the cluster head: one full verify of the
     ;; switch-form output, threaded through `verified?`, replaces each cluster
-    ;; pass's entry verify. Every mutating pass still post-verifies its own
-    ;; rewrite (falling back to its input on rejection), so a verified input
-    ;; stays verified across the chain.
+    ;; pass's entry verify. Every rewriting pass still post-verifies its own
+    ;; rewrite, so a verified input stays verified across the chain. Behind
+    ;; `opt-branch-function-rewrite` and in `preheaders` a rejection is an
+    ;; internal error naming the pass (#9013); the other passes keep their
+    ;; input. The in-place passes without a post-verify (dead_phi,
+    ;; store_owned_erase, bounds_dom_le, load_combine, the affine fold) must
+    ;; preserve verification: a break there surfaces as the next gated pass's
+    ;; internal error.
     [verified? : bool
       (opt-verify-ok?
         (&
@@ -99024,8 +99029,8 @@
     ;; slots stay consistent with the promoted blocks. It reuses the context
     ;; the post-LFTR LICM handed back: affine folding only rewrites
     ;; instructions, so that pass's output blocks preserve the same CFG. Its
-    ;; entry verify rides the loop-cluster verification: every pass in between
-    ;; post-verifies its own rewrite (falling back to its verified input), so a
+    ;; entry verify rides the loop-cluster verification: every rewriting pass
+    ;; in between post-verifies its own rewrite (see the cluster head), so a
     ;; verified cluster input arrives here still verified.
     [s
       (opt-stage

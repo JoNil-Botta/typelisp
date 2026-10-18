@@ -602,21 +602,17 @@
         [field-span : ast.AstSourceSpan field-origin.span]
         (and
           (= (parser.compiler-parse-semantic-origin-run-len (& run)) 4)
-          (string.eq
-            (reader.sp-text
-              (parser.compiler-parse-semantic-origin-kind-marker
-                type-origin.kind))
-            "__tl_semantic_origin_type_definition")
+          (=
+            (parser.compiler-parse-semantic-origin-kind-tag type-origin.kind)
+            0)
           (string.eq (ci.intern-str type-origin.written-name) "Same")
           (= (ast.ast-source-span-start-line type-span) 3)
           (= (ast.ast-source-span-start-col type-span) 12)
           (= (ast.ast-source-span-end-line type-span) 3)
           (= (ast.ast-source-span-end-col type-span) 16)
-          (string.eq
-            (reader.sp-text
-              (parser.compiler-parse-semantic-origin-kind-marker
-                field-origin.kind))
-            "__tl_semantic_origin_struct_field_definition")
+          (=
+            (parser.compiler-parse-semantic-origin-kind-tag field-origin.kind)
+            2)
           (string.eq (ci.intern-str field-origin.written-name) "same-field")
           (= (ast.ast-source-span-start-line field-span) 3)
           (= (ast.ast-source-span-start-col field-span) 18)
@@ -662,7 +658,7 @@
         (set! ok (= (lazy-semantic-origin-same-count decls 0) 2))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (main) : i64

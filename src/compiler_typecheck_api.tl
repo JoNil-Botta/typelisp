@@ -155,6 +155,10 @@
 (define (typecheck-compiler-request-checked [request : TypecheckRequest]) : tc_core.ResultCompilerTypecheckChecked
   (let
     [observer-job : tc_core.TcJobState request.job-state]
+    [_parser-owner : unit
+      (tc_core.tc-job-state-set-parser-control!
+        observer-job
+        (parser.compiler-parse-control-from-cfg request.cfgs))]
     [previous-observer : tc_core.TcSemanticObserver
       (tc_core.tc-job-state-semantic-observer observer-job)]
     [_observer-installed : unit

@@ -19,6 +19,430 @@
 (import (option.option i64) as option_i64)
 (import compiler_parse_core as parser)
 
+(define (compiler-parse-origin-column-fixture [index : i64]) : parser.ParseSemanticOriginRecord
+  (let
+    [span : token.SourceSpan
+      (cond
+        [(= (% index 8) 0) (token.SourceSpan -1 -10 -2 -30)]
+        [(= (% index 8) 1) (token.SourceSpan 9223372036854775807 0 -1 1)]
+        [(= (% index 8) 2) (token.SourceSpan -400 4095 -146 4095)]
+        [(= (% index 8) 3) (token.SourceSpan 1 4096 1 4097)]
+        [(= (% index 8) 4) (token.SourceSpan 1 1 256 2)]
+        [(= (% index 8) 5) (token.SourceSpan -2147483648 1 2147483647 2)]
+        [(= (% index 8) 6) (token.SourceSpan 0 0 0 0)]
+        [else (token.SourceSpan 4294967299 4294967301 4294967299 4294967302)])]
+    (parser.ParseSemanticOriginRecord
+      0
+      (% index 13)
+      (if (= (% index 2) 0)
+        (+ 4294967296 index)
+        (+ -9223372036854775807 index))
+      (token.span-start-line span)
+      (token.span-start-col span)
+      (token.span-end-line span)
+      (token.span-end-col span))))
+
+(define (compiler-parse-test-origin-run
+  [control : i64]
+  [decls : (& ast.AstDeclList)]) : parser.CompilerParseSemanticOriginRun
+  (match (parser.compiler-parse-semantic-origin-run-in-state control decls 0)
+    [(Some run) run]
+    [(None) (io.panic "missing typed semantic-origin run")]))
+
+(define (compiler-parse-test-origin-name
+  [control : i64]
+  [key : i64]
+  [slot : i64]) : i64
+  (match (parser.compiler-parse-semantic-origin-run-key-slot-in-state
+    control
+    key
+    slot)
+    [(Some run)
+      (parser.compiler-parse-semantic-origin-run-get
+        (& run)
+        0
+        (parser.compiler-parse-semantic-origin-fallback)).written-name]
+    [(None) -42]))
+
+(test
+  compiler-parse-origin-columns-alias-order-and-copy
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [control : i64 (parser.compiler-parse-state-control-addr (& state))]
+    [storage : i64 (parser.compiler-parse-origin-storage control)]
+    [source : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+    [dest : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+    [copied : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+    [origins : parser.ParseSemanticOriginVec
+      (parser.parse-semantic-origin-vec-with-capacity 2)]
+    [key : i64 1125899906842624]
+    [slot : i64 34359738368]
+    [reader-mark : i64 (reader.sp-node-pool-len)]
+    (ast.ast-decl-list-push (&mut source) (Module 0))
+    (ast.ast-decl-list-push (&mut dest) (Module 0))
+    (ast.ast-decl-list-push (&mut copied) (Module 0))
+    (parser.parse-semantic-origin-vec-push!
+      (&mut origins)
+      (compiler-parse-origin-column-fixture 0))
+    (parser.parse-semantic-origin-vec-push!
+      (&mut origins)
+      (compiler-parse-origin-column-fixture 1))
+    (parser.compiler-parse-semantic-origin-register-run!
+      storage
+      (& source)
+      0
+      (& origins)
+      0
+      2)
+    (parser.compiler-parse-decl-origin-copy-direct-records!
+      storage
+      (& source)
+      (& copied)
+      0
+      (parser.CompilerParseOriginCopyRange
+        reader-mark
+        (reader.sp-node-pool-len)
+        0
+        (parser.compiler-parse-origin-word storage 3)
+        false))
+    (test.assert-i64-eq
+      (parser.compiler-parse-origin-word storage 2)
+      2
+      "copying declarations shares immutable occurrence payload")
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-name
+        control
+        (parser.compiler-parse-decl-list-storage-key (& copied))
+        0)
+      4294967296
+      "copied run resolves before a reader row is appended")
+    (let
+      [unpublished : parser.CompilerParseSemanticOriginRun
+        (compiler-parse-test-origin-run control (& source))]
+      [runs : i64 (parser.compiler-parse-origin-word storage 3)]
+      (parser.compiler-parse-decl-origin-copy-direct-records!
+        storage
+        (& source)
+        (& dest)
+        0
+        (parser.CompilerParseOriginCopyRange
+          reader-mark
+          (reader.sp-node-pool-len)
+          0
+          runs
+          true))
+      (test.assert-i64-eq
+        (parser.compiler-parse-origin-word storage 3)
+        runs
+        "detached transfer reuses run-directory entries")
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-len (& unpublished))
+        0
+        "detached transfer invalidates unpublished source handles")
+      (test.assert-i64-eq
+        (compiler-parse-test-origin-run control (& dest)).count
+        2
+        "detached transfer publishes the shared range under its destination key"))
+    (parser.compiler-parse-origin-append-reference! storage key slot 0 1)
+    (parser.compiler-parse-decl-origin-register-alias-record!
+      (& dest)
+      0
+      1
+      key
+      slot
+      false)
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-run control (& dest)).count
+      1
+      "full-width alias key and slot resolve")
+    (parser.compiler-parse-semantic-origin-register-run!
+      storage
+      (& dest)
+      0
+      (& origins)
+      1
+      1)
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-name
+        control
+        (parser.compiler-parse-decl-list-storage-key (& dest))
+        0)
+      -9223372036854775806
+      "new direct run wins over an older alias")
+    (parser.compiler-parse-decl-origin-register-alias-record!
+      (& dest)
+      0
+      1
+      key
+      slot
+      false)
+    (parser.compiler-parse-decl-origin-register-alias-record!
+      (& dest)
+      0
+      1
+      key
+      (+ slot 1)
+      true)
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-name
+        control
+        (parser.compiler-parse-decl-list-storage-key (& dest))
+        0)
+      4294967296
+      "new alias wins and repeat aliases carry no semantic run")
+    (parser.compiler-parse-origin-append-reference!
+      storage
+      (+ key 164)
+      slot
+      0
+      1)
+    (for [index (iterator.range 0 64)]
+      (reader.sp-node-push
+        (Int
+          (+ key 100 index)
+          (parser.compiler-parse-marker "__tl_decl_origin_alias")
+          (token.SourceSpan slot 1 (+ key 101 index) slot)))
+      unit)
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-name control (+ key 100) slot)
+      -42
+      "sixty-four aliases exhaust the bounded lookup")
+    (test.assert-i64-eq
+      (compiler-parse-test-origin-name control (+ key 101) slot)
+      4294967296
+      "sixty-three aliases reach their direct run")
+    (reader.sp-node-pool-truncate! reader-mark)
+    (parser.compiler-parse-origin-reset! storage)))
+
+(test
+  compiler-parse-origin-columns-failed-and-inactive-forms
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
+    [control : i64 (parser.compiler-parse-state-control-addr (& state))]
+    [storage : i64 (parser.compiler-parse-origin-storage control)]
+    [cfgs : sym_i64_env.SymI64Env
+      (parser.compiler-parse-state-cfgs (& state) (parser.compiler-cfg-empty))]
+    (test.assert-true
+      (match (parser.parse-ast-source-with-cfg
+        "(module failed (defstruct Gone (x i64))) (define)"
+        cfgs)
+        [(Err _) true]
+        [_ false])
+      "malformed input fails after parsing a nested module")
+    (test.assert-i64-eq
+      (parser.compiler-parse-origin-word storage 2)
+      0
+      "failed program retires nested occurrence payload")
+    (test.assert-i64-eq
+      (parser.compiler-parse-origin-word storage 3)
+      0
+      "failed program retires nested run headers")
+    (test.assert-true
+      (match (parser.parse-ast-source-with-cfg
+        "(cfg absent (module ignored (defstruct Gone (x i64))))"
+        cfgs)
+        [(Ok _) true]
+        [_ false])
+      "inactive nested form parses successfully")
+    (test.assert-i64-eq
+      (parser.compiler-parse-origin-word storage 3)
+      0
+      "inactive form publishes no typed run")
+    (parser.compiler-parse-origin-reset! storage)))
+
+(test
+  compiler-parse-origin-columns-growth-rollback-and-isolation
+  (let
+    [state-a : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [state-b : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-new))]
+    [control-a : i64 (parser.compiler-parse-state-control-addr (& state-a))]
+    [control-b : i64 (parser.compiler-parse-state-control-addr (& state-b))]
+    [storage-a : i64 (parser.compiler-parse-origin-storage control-a)]
+    [storage-b : i64 (parser.compiler-parse-origin-storage control-b)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+    [origins : parser.ParseSemanticOriginVec
+      (parser.parse-semantic-origin-vec-with-capacity 1031)]
+    [reader-start : i64 (reader.sp-node-pool-len)]
+    (test.assert-i64-eq
+      (parser.compiler-parse-origin-word storage-a 0)
+      0
+      "idle store is lazy")
+    (parser.compiler-parse-semantic-origin-register-run!
+      storage-a
+      (& decls)
+      0
+      (& origins)
+      0
+      0)
+    (test.assert-true
+      (match (parser.compiler-parse-semantic-origin-run-in-state
+        control-a
+        (& decls)
+        0)
+        [(None) true]
+        [_ false])
+      "empty registration publishes no run")
+    (for [index (iterator.range 0 1031)]
+      (parser.parse-semantic-origin-vec-push!
+        (&mut origins)
+        (compiler-parse-origin-column-fixture index)))
+    (parser.compiler-parse-semantic-origin-register-run!
+      storage-a
+      (& decls)
+      0
+      (& origins)
+      0
+      1031)
+    (let
+      [run : parser.CompilerParseSemanticOriginRun
+        (compiler-parse-test-origin-run control-a (& decls))]
+      [mark : parser.CompilerParseOriginCheckpoint
+        (parser.compiler-parse-origin-checkpoint storage-a)]
+      (test.assert-i64-eq
+        (reader.sp-node-pool-len)
+        reader-start
+        "typed headers and payload use no reader rows")
+      (for [index (iterator.range 0 1031)]
+        (let
+          [expected : parser.ParseSemanticOriginRecord
+            (compiler-parse-origin-column-fixture index)]
+          [actual : parser.CompilerParseSemanticOrigin
+            (parser.compiler-parse-semantic-origin-run-get
+              (& run)
+              index
+              (parser.compiler-parse-semantic-origin-fallback))]
+          (test.assert-i64-eq
+            actual.written-name
+            expected.written-name
+            "full i64 name survives")
+          (test.assert-i64-eq
+            actual.ordinal
+            index
+            "run order survives segment crossing")
+          (test.assert-i64-eq
+            (parser.compiler-parse-semantic-origin-kind-tag actual.kind)
+            expected.kind-tag
+            "all thirteen kinds survive")
+          (test.assert-true
+            (and
+              (= actual.span.start-line (cast expected.start-line : i32))
+              (= actual.span.start-col (cast expected.start-col : i32))
+              (= actual.span.end-line (cast expected.end-line : i32))
+              (= actual.span.end-col (cast expected.end-col : i32)))
+            "compact and overflow coordinates preserve the old i32 conversion")))
+      (for [index (iterator.range 0 1025)]
+        (parser.compiler-parse-semantic-origin-register-run!
+          storage-a
+          (& decls)
+          0
+          (& origins)
+          0
+          1))
+      (let
+        [retired : parser.CompilerParseSemanticOriginRun
+          (compiler-parse-test-origin-run control-a (& decls))]
+        (parser.compiler-parse-origin-rollback! storage-a mark)
+        (parser.compiler-parse-semantic-origin-register-run!
+          storage-a
+          (& decls)
+          0
+          (& origins)
+          0
+          1)
+        (test.assert-i64-eq
+          (parser.compiler-parse-semantic-origin-run-len (& retired))
+          0
+          "rollback invalidates a reused run index"))
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-len (& run))
+        1031
+        "growth and suffix rollback retain older handles")
+      (parser.compiler-parse-semantic-origin-register-run!
+        storage-b
+        (& decls)
+        0
+        (& origins)
+        1
+        1)
+      (let
+        [other : parser.CompilerParseSemanticOriginRun
+          (compiler-parse-test-origin-run control-b (& decls))]
+        [actual : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
+            (& other)
+            0
+            (parser.compiler-parse-semantic-origin-fallback))]
+        (test.assert-i64-eq
+          actual.written-name
+          -9223372036854775806
+          "colliding keys resolve within their job")
+        (set! (array-ref state-b.intern-owner 0) (ci.intern-compat-state-new))
+        (test.assert-i64-eq
+          (parser.compiler-parse-semantic-origin-run-len (& other))
+          0
+          "replacement interner identity invalidates a run even at the same generation"))
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-len (& run))
+        1031
+        "another job cannot invalidate a retained handle")
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-get
+          (& run)
+          -1
+          (parser.compiler-parse-semantic-origin-fallback)).ordinal
+        -1
+        "negative index falls back")
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-get
+          (& run)
+          1031
+          (parser.compiler-parse-semantic-origin-fallback)).ordinal
+        -1
+        "past-end index falls back")
+      (let
+        [span : token.SourceSpan
+          (token.SourceSpan -4294967296 4294967296 -4294967295 4294967297)]
+        [builder : reader.SpannedSexprBuilder
+          (reader.spanned-sexpr-builder-new)]
+        (for [index (iterator.range 0 2500)]
+          (set!
+            builder
+            (reader.spanned-sexpr-builder-push
+              builder
+              (reader.spanned-sexpr-empty span))))
+        (match (reader.spanned-sexpr-list-from-builder builder span)
+          [(List _ count actual-span)
+            (test.assert-i64-eq
+              count
+              2500
+              "ordinary reader builder still grows")
+            (test.assert-i64-eq
+              (token.span-start-col actual-span)
+              4294967296
+              "ordinary reader spans retain i64 coordinates")]
+          [_ (io.panic "reader builder lost its list")]))
+      (reader.sp-node-pool-reset!)
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-len (& run))
+        1031
+        "reader growth and reset cannot retire an explicit parser owner")
+      (parser.compiler-parse-origin-reset! storage-a)
+      (test.assert-i64-eq
+        (parser.compiler-parse-semantic-origin-run-len (& run))
+        0
+        "reset invalidates retained handles before freeing payload")
+      (parser.compiler-parse-origin-reset! storage-b))))
+
 ;; Named compatibility adapter for parser-only tests that deliberately exercise
 ;; the installed serial table. Production parse paths use the dispatch owner.
 (define (compiler-parse-name-text [name-id : i64]) : String

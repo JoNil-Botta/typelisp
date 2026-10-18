@@ -701,6 +701,27 @@ list only appends; cached module environments bind its new suffix only when
 both source environments retain their store, head and scoped-state capability.
 The `tc-poison-module-env-cache-identity-and-suffix` test guards that identity.
 
+Semantic occurrence runs belong to `CompilerParseState`, paired with its
+interner, and survive file scratch teardown and cached loader reuse. Its lazy
+arena stores fixed 1024-entry segments: separate i64 written-name and packed
+span columns, a u8 kind column, and a run directory. The shared AST span encoder
+retains signed i32 start lines, u12 columns and line deltas through 254;
+exceptional spans use exact i32 overflow records. Conversion from reader i64
+coordinates happens before packing, with the same casts as the run accessor.
+Names, declaration keys, slots and alias ranges retain their full i64 width.
+Run directory entries retain a reader boundary for precedence against unchanged
+reader aliases and a serial for stale-handle checks. Compaction updates those
+boundaries; detached declarations share immutable occurrence ranges and retire
+scratch declaration keys. A failed parse rolls back only its appended entries;
+serials do not rewind. Reset invalidates handles before destroying the payload
+arena. Driver file cleanup retains the owner while session caches remain live.
+Production registration and lookup carry the parser capability through cfgs,
+`TypecheckRequest` and `TcJobState`; returned runs retain that capability and
+generation. Named standalone adapters use the existing default parser state.
+The load lifetime ledger's `reader-origin-storage` includes both the reader and
+semantic owner; allocation-profile snapshots expose them individually, including
+segment directories, overflow storage and retained slack.
+
 Lexer tokens are scan scratch. Their geometric growth replaces dedicated
 storage after moving the live prefix, then retires the superseded owner and
 restores the caller's active arena. Token storage is not published until

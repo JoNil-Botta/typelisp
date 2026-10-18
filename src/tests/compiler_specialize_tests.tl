@@ -1583,6 +1583,36 @@
               "generated/second.tl"))])]
     [(Err _) false]))
 
+;; Normalization builds its reflections CTFE environment only on first read.
+;; This keyless pair reaches both readers through the path-carrying entry
+;; point that lowering uses: the CTFE-evaluated key of each declaration, and
+;; the payload comparison when the second registers under the first's key.
+(define (compiler-generated-decl-lazy-env-paths-reuse-ok?) : bool
+  (match (compiler-generated-decl-reuse-program)
+    [(Ok program)
+      (match (compiler-specialize-program-with-paths
+        program
+        (ast.ast-decl-root-path-cons
+          "generated/first.tl"
+          (ast.ast-decl-root-path-cons
+            "generated/second.tl"
+            (ast.ast-decl-path-list-new)))
+        "generated/fallback.tl")
+        [(Ok normalized out-paths)
+          (let
+            [decls : ast.AstDeclList
+              (compiler-specialize-program-decls normalized)]
+            (and
+              (=
+                (compiler-specialize-decl-list-count-visible decls "Box_String")
+                1)
+              (= (ast.ast-decl-path-list-len (& out-paths)) 1)
+              (string.eq
+                (ast.ast-decl-path-list-get (& out-paths) 0 "")
+                "generated/first.tl")))]
+        [(Err _) false])]
+    [(Err _) false]))
+
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (compiler-generated-decl-reuse-program)
     [(Ok program)
@@ -1889,6 +1919,7 @@
   (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
   (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
   (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
+  (unless (compiler-generated-decl-lazy-env-paths-reuse-ok?) (return 0))
   (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
   (unless (compiler-generated-registry-map-ok?) (return 0))
   (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))

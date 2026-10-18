@@ -3401,9 +3401,40 @@
       (str_cat.str-cat "conflicting generated item: " item))
     (str_cat.str-cat "generated identity: " key)))
 
+;; Normalization's reflections CTFE environment. Only two paths read it: the
+;; key of a generated declaration that carries no metadata key is evaluated by
+;; CTFE, and a declaration registered again under an existing key has its
+;; payload compared with the first one's. Both are rare, and the environment
+;; reflects the whole program into the pool base arena, so it is built on the
+;; first read instead of before the walk.
+(defstruct GenLazyCtfeEnv
+  (env (__tl_dyn-array ctfe.CtfeEnv))
+  (built (__tl_dyn-array bool)))
+
+(define (gen-lazy-ctfe-env-new) : GenLazyCtfeEnv
+  (GenLazyCtfeEnv
+    (__tl_make-array (ctfe.ctfe-env-empty))
+    (__tl_make-array false)))
+
+;: Build the environment over PROGRAM unless an earlier read already did;
+;; readers then borrow `(array-ref lazy.env 0)`.
+(define (gen-lazy-ctfe-env-force!
+  [owner : (& owner SpecOwnerContext)]
+  [lazy : (& lazy GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : unit
+  (unless
+    (array-ref lazy.built 0)
+    (set!
+      (array-ref lazy.env 0)
+      (spec-owner-ctfe-env
+        owner
+        (& (ctfe.ctfe-reflections-from-program program))))
+    (set! (array-ref lazy.built 0) true)))
+
 (define (gen-register-generated-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [env : (& env ctfe.CtfeEnv)]
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]
   [template : (& ast.AstDecl)]
   [module-id : i64]
   [item-id : i64]
@@ -3447,7 +3478,13 @@
               (owned_view.compiler-owned-reference-shared-view template))
             module-id))]
       [(Some existing)
-        (if (gen-decl-eq-with-owner owner env (& existing) template)
+        (if (begin
+          (gen-lazy-ctfe-env-force! owner env program)
+          (gen-decl-eq-with-owner
+            owner
+            (& (array-ref env.env 0))
+            (& existing)
+            template))
           (Ok (ast.ast-decl-list-new) registry module-id)
           (let
             [key : String
@@ -3473,10 +3510,17 @@
   [owner : (& owner SpecOwnerContext)]
   [meta-key : String]
   [args : (& args ast.AstExprList)]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenKey
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenKey
   (if (> (string.string-length meta-key) 0)
     (Ok meta-key (ctfe.ctfe-fuel-limit))
-    (gen-key-exprs-with-owner owner args env (ctfe.ctfe-fuel-limit))))
+    (begin
+      (gen-lazy-ctfe-env-force! owner env program)
+      (gen-key-exprs-with-owner
+        owner
+        args
+        (& (array-ref env.env 0))
+        (ctfe.ctfe-fuel-limit)))))
 
 (define (gen-decl-runtime-template [decl : (& ast.AstDecl)]) : ast.AstDecl
   ;; Strip generation provenance, not the aggregate's semantic marker flags.
@@ -3490,7 +3534,8 @@
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : (& GenRegistry)]
-  [env : (& env ctfe.CtfeEnv)]
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]
   [generator : String]
   [item : String]
   [args : (& ast.AstExprList)]
@@ -3538,11 +3583,13 @@
             owner
             (spec-place-shared-view meta-key)
             args
-            env)
+            env
+            program)
             [(Ok arg-key _)
               (gen-register-generated-decl-with-owner
                 owner
                 env
+                program
                 (& (gen-decl-runtime-template decl))
                 module-id
                 actual-id
@@ -3575,7 +3622,8 @@
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDecl
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDecl
   (match decl
     [(Module name) (Ok (gen-single-decl-list decl) registry name)]
     [_
@@ -3590,6 +3638,7 @@
               module-id
               (& registry)
               env
+              program
               generator
               item
               (& args)
@@ -3637,7 +3686,8 @@
   [decls : ast.AstDeclList]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDecls
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDecls
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [cursor : ast.AstDeclList decls]
@@ -3689,7 +3739,8 @@
               (& decl)
               cur-module-id
               (spec-place-shared-view cur-registry)
-              env)
+              env
+              program)
               [(Ok rewritten-decls decl-registry decl-module)
                 (let
                   [out-start : i64 (ast.ast-decl-list-len (& out))]
@@ -3722,7 +3773,8 @@
   [fallback-path : String]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDeclsWithPaths
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDeclsWithPaths
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-cursor : ast.AstDeclList decls]
@@ -3799,7 +3851,8 @@
                 (& decl)
                 cur-module-id
                 (spec-place-shared-view cur-registry)
-                env)
+                env
+                program)
                 [(Ok rewritten-decls decl-registry decl-module)
                   (let
                     [out-start : i64 (ast.ast-decl-list-len (& out))]
@@ -3846,16 +3899,14 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [env : ctfe.CtfeEnv
-          (spec-owner-ctfe-env
-            owner
-            (& (ctfe.ctfe-reflections-from-program program)))]
+        [env : GenLazyCtfeEnv (gen-lazy-ctfe-env-new)]
         (match (gen-rewrite-decls-with-owner
           owner
           decls
           -1
           (gen-registry-empty)
-          env)
+          (& env)
+          program)
           [(Ok rewritten _ _) (Ok (ast.ast-program rewritten))]
           [(Err diag) (Err diag)]))]))
 
@@ -3868,10 +3919,7 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [env : ctfe.CtfeEnv
-          (spec-owner-ctfe-env
-            owner
-            (& (ctfe.ctfe-reflections-from-program program)))]
+        [env : GenLazyCtfeEnv (gen-lazy-ctfe-env-new)]
         (match (gen-rewrite-decls-with-paths-and-owner
           owner
           decls
@@ -3879,7 +3927,8 @@
           fallback-path
           -1
           (gen-registry-empty)
-          env)
+          (& env)
+          program)
           [(Ok rewritten rewritten-paths _ _)
             (Ok (ast.ast-program rewritten) rewritten-paths)]
           [(Err diag) (Err diag)]))]))

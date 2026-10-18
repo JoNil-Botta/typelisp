@@ -11,6 +11,10 @@
   0)
 (define index-calls : i64
   0)
+(define read-receiver-calls : i64
+  0)
+(define array-evaluation-order : i64
+  0)
 (define evaluation-order : i64
   0)
 
@@ -35,8 +39,12 @@
   (bump (&mut (deref slot)))
   (deref slot).x)
 
+(define (observe-box [slot : (& slot (Box i64))]) : (& slot (Box i64))
+  (set! read-receiver-calls (+ read-receiver-calls 1))
+  slot)
+
 (define (read-box [slot : (& slot (Box i64))]) : i64
-  (deref (deref slot)))
+  (deref (deref (observe-box slot))))
 
 (define (replace-box-text [slot : (&mut slot (Box String))]) : bool
   (let
@@ -54,12 +62,17 @@
 
 (define (selected-index) : i64
   (set! index-calls (+ index-calls 1))
+  (set! array-evaluation-order (+ (* array-evaluation-order 10) 1))
   0)
+
+(define (array-replacement) : Pt
+  (set! array-evaluation-order (+ (* array-evaluation-order 10) 2))
+  (Pt "array-new" 27))
 
 (define (replace-element [slots : (&mut slots (Array Pt 1))]) : i64
   (let
     [old : Pt
-      (replace! (array-ref (deref slots) (selected-index)) (Pt "array-new" 27))]
+      (replace! (array-ref (deref slots) (selected-index)) (array-replacement))]
     (if (string.eq old.name "array-old")
       old.x
       -1)))
@@ -96,6 +109,8 @@
       (= (deref number) 8)
       (= receiver-calls 1)
       (= index-calls 1)
+      (= read-receiver-calls 1)
+      (= array-evaluation-order 12)
       (= evaluation-order 12))
       42
       1)))

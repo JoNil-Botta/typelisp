@@ -30843,7 +30843,7 @@
               receiver-state
               base
               receiver-ty
-              (tc_core.tc-env-key-name-text field)
+              field
               place)]))]
     [(BoxTake pointer-box)
       (let
@@ -40667,33 +40667,58 @@
                 origin))]))]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))]))
 
+;; The layout of an inline struct field or tuple slot of `place-ty`. Tuple
+;; slots use `ast-tuple-set-field-id-from-index` ids.
+(define (lower-inline-field-info
+  [ctx : tc_core.TcContext]
+  [place-ty : ast.AstType]
+  [field-id : i64]
+  [origin : ast.AstExpr]) : ResultLowerFieldInfo
+  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx place-ty))
+    [(Tuple elems)
+      (lower-tuple-elem-info
+        ctx
+        (deref elems)
+        (ast.ast-tuple-set-index-from-field-id field-id)
+        0)]
+    [(or (Struct name) (StructArgs name _))
+      (lower-struct-field-info
+        ctx
+        name
+        (tc_core.tc-nominal-name-id-display name)
+        (tc_core.tc-env-key-name-text field-id))]
+    [_
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: expected inline field place")))]))
+
+(define (lower-inline-field-address
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [place-ty : ast.AstType]
+  [field-id : i64]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (try (lower-inline-field-info ctx place-ty field-id origin))
+    [(Info offset field-ty)
+      (match (lower-gep-byte state base offset)
+        [(Expr ptr-state ptr _)
+          (Ok (Expr ptr-state ptr (tc_core.tc-type-without-regions field-ty)))])]))
+
 (define (lower-struct-field-address-from-place
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [receiver-ty : ast.AstType]
-  [field : String]
+  [field-id : i64]
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))
-    [(or (Struct struct-name) (StructArgs struct-name _))
-      (let
-        [info : LowerFieldInfo
-          (try
-            (lower-struct-field-info
-              ctx
-              struct-name
-              (tc_core.tc-nominal-name-id-display struct-name)
-              field))]
-        (match info
-          [(Info offset field-ty)
-            (match (lower-gep-byte state base offset)
-              [(Expr ptr-state ptr _)
-                (Ok
-                  (Expr
-                    ptr-state
-                    ptr
-                    (tc_core.tc-type-without-regions field-ty)))])]))]
+    [(or (Struct _) (StructArgs _ _))
+      (lower-inline-field-address ctx state base receiver-ty field-id origin)]
     [(MutRef _ referent-ty)
       (match (lower-emit-load state base receiver-ty)
         [(Expr ref-state ref-value _)
@@ -40702,7 +40727,7 @@
             ref-state
             ref-value
             (tc_core.tc-context-type-get ctx referent-ty)
-            field
+            field-id
             origin)])]
     [(Ref _ _)
       (Err
@@ -40728,16 +40753,14 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-resolve-type ctx (lower-global-shared-view tuple-ty)))
-    [(Tuple elem-tys)
-      (let
-        [info : LowerFieldInfo
-          (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
-        (match info
-          [(Info offset elem-ty)
-            (match (lower-gep-byte state base offset)
-              [(Expr ptr-state ptr _)
-                (Ok
-                  (Expr ptr-state ptr (tc_core.tc-type-without-regions elem-ty)))])]))]
+    [(Tuple _)
+      (lower-inline-field-address
+        ctx
+        state
+        base
+        tuple-ty
+        (ast.ast-tuple-set-field-id-from-index index)
+        origin)]
     [(MutRef _ referent-ty)
       (match (lower-emit-load state base tuple-ty)
         [(Expr ref-state ref-value _)
@@ -40837,7 +40860,7 @@
               receiver-state
               receiver-base
               receiver-ty
-              (tc_core.tc-env-key-name-text field)
+              field
               origin)]))]
     [(TupleRef tuple-box index)
       (let
@@ -40963,78 +40986,56 @@
     (lower-global-shared-view origin))
     [(Err message) (Err message)]
     [(Ok selected destination receiver-ty)
-      (let
-        [resolved
-          (tc_core.tc-type-strip-region
-            (tc_core.tc-resolve-type ctx (lower-global-shared-view receiver-ty)))]
-        (match (lower-global-shared-view destination)
-          [(ArrayElement (box place))
-            (when
-              (match (& resolved)
-                [(or (Struct _) (StructArgs _ _) (Tuple _)) true]
-                [_ false])
-              (let
-                [info
-                  (try
-                    (match resolved
-                      [(Tuple elems)
-                        (lower-tuple-elem-info
-                          ctx
-                          (deref elems)
-                          (ast.ast-tuple-set-index-from-field-id field-id)
-                          0)]
-                      [(or (Struct name) (StructArgs name _))
-                        (lower-struct-field-info
-                          ctx
-                          name
-                          (tc_core.tc-nominal-name-id-display name)
-                          (tc_core.tc-env-key-name-text field-id))]
-                      [_
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              origin
-                              "lower: expected inline field place")))]))]
-                (match info
-                  [(Info offset field-ty)
-                    (return
-                      (Ok
-                        selected
-                        (LowerStoreDestination.ArrayElement
-                          (box
-                            (LowerArrayStorePlace
-                              place.receiver-box
-                              place.index-box
-                              place.receiver-value
-                              place.index-value
-                              place.index-type
-                              place.container-type
-                              place.element-type
-                              (+ place.byte-offset offset))))
-                        (tc_core.tc-type-without-regions field-ty)))])))]
-          [_ unit])
-        (let
-          [address
-            (try (lower-store-destination-address ctx selected destination))]
-          (match address
-            [(Expr addressed base _)
-              (lower-store-place-fixed
-                (if (ast.ast-tuple-set-field-id? field-id)
-                  (lower-tuple-field-address-from-place
-                    ctx
-                    addressed
-                    base
-                    receiver-ty
-                    (ast.ast-tuple-set-index-from-field-id field-id)
-                    origin)
-                  (lower-struct-field-address-from-place
-                    ctx
-                    addressed
-                    base
-                    receiver-ty
-                    (tc_core.tc-env-key-name-text field-id)
-                    origin)))])))]))
+      (match (lower-global-shared-view destination)
+        [(ArrayElement (box place))
+          (when
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type
+                ctx
+                (lower-global-shared-view receiver-ty)))
+              [(or (Struct _) (StructArgs _ _) (Tuple _)) true]
+              [_ false])
+            (match (try
+              (lower-inline-field-info
+                ctx
+                (lower-global-shared-view receiver-ty)
+                field-id
+                origin))
+              [(Info offset field-ty)
+                (return
+                  (Ok
+                    selected
+                    (LowerStoreDestination.ArrayElement
+                      (box
+                        (LowerArrayStorePlace
+                          place.receiver-box
+                          place.index-box
+                          place.receiver-value
+                          place.index-value
+                          place.index-type
+                          place.container-type
+                          place.element-type
+                          (+ place.byte-offset offset))))
+                    (tc_core.tc-type-without-regions field-ty)))]))]
+        [_ unit])
+      (match (try (lower-store-destination-address ctx selected destination))
+        [(Expr addressed base _)
+          (lower-store-place-fixed
+            (if (ast.ast-tuple-set-field-id? field-id)
+              (lower-tuple-field-address-from-place
+                ctx
+                addressed
+                base
+                receiver-ty
+                (ast.ast-tuple-set-index-from-field-id field-id)
+                origin)
+              (lower-struct-field-address-from-place
+                ctx
+                addressed
+                base
+                receiver-ty
+                field-id
+                origin)))])]))
 
 (define (lower-store-place-fixed [address : ResultLowerExpr]) : ResultLowerStorePlace
   (match address
@@ -41054,22 +41055,6 @@
   [value-box : i64]
   [origin : ast.AstExpr]) : ResultLowerStorePlace
   (match (ast.ast-expr-unspan (& place))
-    [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
-          [(Ok virtual-id)
-            (lower-store-place
-              ctx
-              state
-              env
-              type-env
-              (lower-context-expr-get ctx virtual-id)
-              value-box
-              origin)]
-          [(Err message)
-            (Err (box (lower-diagnostic-at-expr ctx origin message)))])
-        (lower-store-place-fixed
-          (lower-mutable-var-address-id ctx state env type-env name origin)))]
     [(StructGet receiver-box field)
       (lower-store-field-place
         ctx
@@ -41490,7 +41475,7 @@
   [type-env : tc_core.TcTypeEnv]
   [receiver : ast.AstExpr]
   [receiver-ty : ast.AstType]
-  [field : String]
+  [field-id : i64]
   [field-ir-ty : ast.AstType]
   [value : ast.AstExpr]
   [value-box : i64]
@@ -41553,7 +41538,7 @@
                         stored-root-state
                         (lower-global-shared-view storage-ptr)
                         (lower-global-shared-view storage-ty)
-                        field
+                        field-id
                         (lower-global-shared-view origin)))]
                   (match place-lowered
                     [(Expr place-state field-ptr _)
@@ -41605,57 +41590,6 @@
             origin
             "lower: set! struct field requires local storage")))]))
 
-(define (lower-tuple-set
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [receiver : ast.AstExpr]
-  [receiver-ty : ast.AstType]
-  [index : i64]
-  [value : ast.AstExpr]
-  [value-box : i64]
-  [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (tc_core.tc-tuple-set-element-type ctx receiver-ty index)
-    [(Ok elem-ty)
-      (match (lower-store-field-place
-        ctx
-        state
-        env
-        type-env
-        (lower-global-shared-view receiver)
-        (ast.ast-tuple-set-field-id-from-index index)
-        value-box
-        (lower-global-shared-view origin))
-        [(Ok selected destination _)
-          (let
-            [stored
-              (try
-                (lower-store-expr-into-place-result
-                  ctx
-                  selected
-                  env
-                  type-env
-                  destination
-                  (lower-global-shared-view value)
-                  (tc_core.tc-type-without-regions elem-ty)
-                  (lower-global-shared-view value)))]
-            (match stored
-              [(Expr store-state _ _)
-                (let
-                  [refreshed
-                    (try
-                      (lower-refresh-register-resident-root-after-store
-                        ctx
-                        store-state
-                        env
-                        type-env
-                        receiver
-                        origin))]
-                  (Ok (Expr refreshed Unit (Unit))))]))]
-        [(Err message) (Err message)])]
-    [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))]))
-
 (define (lower-struct-set
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -41681,82 +41615,72 @@
         type-env
         (lower-global-shared-view receiver))])
     [(Ok receiver-ty)
-      (if (ast.ast-tuple-set-field-id? field-id)
-        (lower-tuple-set
-          ctx
-          state
-          env
-          type-env
-          receiver
-          receiver-ty
-          (ast.ast-tuple-set-index-from-field-id field-id)
-          value
-          value-box
-          origin)
-        (match (tc_core.tc-struct-set-field-type-id
-          ctx
-          (lower-global-shared-view receiver-ty)
-          field-id)
-          [(Ok field-ty)
-            (let
-              [field : String (tc_core.tc-env-key-name-text field-id)]
-              [field-ir-ty : ast.AstType
-                (tc_core.tc-type-without-regions field-ty)]
-              (if (lower-register-resident-local-place?
+      ;; Tuple slots use `ast-tuple-set-field-id-from-index` ids.
+      (match (tc_core.tc-struct-set-field-type-id
+        ctx
+        (lower-global-shared-view receiver-ty)
+        field-id)
+        [(Ok field-ty)
+          (let
+            [field-ir-ty : ast.AstType
+              (tc_core.tc-type-without-regions field-ty)]
+            (if (and
+              (not (ast.ast-tuple-set-field-id? field-id))
+              (lower-register-resident-local-place?
                 ctx
                 env
                 (lower-global-shared-view receiver)
-                (lower-global-shared-view receiver-ty))
-                (lower-struct-set-register-resident-local
-                  ctx
-                  state
-                  env
-                  type-env
-                  receiver
-                  receiver-ty
-                  field
-                  field-ir-ty
-                  value
-                  value-box
-                  origin)
-                (match (lower-store-field-place
-                  ctx
-                  state
-                  env
-                  type-env
-                  (lower-global-shared-view receiver)
-                  field-id
-                  value-box
-                  (lower-global-shared-view origin))
-                  [(Ok selected destination _)
-                    (let
-                      [stored
-                        (try
-                          (lower-store-expr-into-place-result
-                            ctx
-                            selected
-                            env
-                            type-env
-                            destination
-                            (lower-global-shared-view value)
-                            field-ir-ty
-                            value))]
-                      (match stored
-                        [(Expr store-state _ _)
-                          (let
-                            [refreshed
-                              (try
-                                (lower-refresh-register-resident-root-after-store
-                                  ctx
-                                  store-state
-                                  env
-                                  type-env
-                                  receiver
-                                  origin))]
-                            (Ok (Expr refreshed Unit (Unit))))]))]
-                  [(Err message) (Err message)])))]
-          [(Err message)
-            (Err (box (lower-diagnostic-at-expr ctx origin message)))]))]
+                (lower-global-shared-view receiver-ty)))
+              (lower-struct-set-register-resident-local
+                ctx
+                state
+                env
+                type-env
+                receiver
+                receiver-ty
+                field-id
+                field-ir-ty
+                value
+                value-box
+                origin)
+              (match (lower-store-field-place
+                ctx
+                state
+                env
+                type-env
+                (lower-global-shared-view receiver)
+                field-id
+                value-box
+                (lower-global-shared-view origin))
+                [(Ok selected destination _)
+                  (let
+                    [stored
+                      (try
+                        (lower-store-expr-into-place-result
+                          ctx
+                          selected
+                          env
+                          type-env
+                          destination
+                          (lower-global-shared-view value)
+                          field-ir-ty
+                          value))]
+                    (match stored
+                      [(Expr store-state _ _)
+                        (let
+                          [refreshed
+                            (try
+                              (lower-refresh-register-resident-root-after-store
+                                ctx
+                                store-state
+                                env
+                                type-env
+                                receiver
+                                origin))]
+                          (Ok (Expr refreshed Unit (Unit))))]))]
+                [(Err message) (Err message)])))]
+        [(Err message)
+          (Err (box (lower-diagnostic-at-expr ctx origin message)))])]
     [(Err message) (Err (box (lower-diagnostic-at-expr ctx receiver message)))]))
 
 (define (lower-array-store-place

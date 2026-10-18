@@ -41,11 +41,31 @@
   (c-fn-check (resolve))
   ((c-fn-check (resolve)) 41))
 
+(define (wide-literal) : u64
+  (cast 0x7ff0000000000000 : u64))
+
+(define (large-literal) : i64
+  (cast 4294967338 : i64))
+
+(define (negative-literal) : i64
+  (cast -4294967338 : i64))
+
+(define (max-literal) : u64
+  (cast 0xffffffffffffffff : u64))
+
+(define (max-round-trip) : i64
+  (cast (cast 0xffffffffffffffff : u64) : i64))
+
 (define (main) : i64
   (let
     [ptr : (MutPtr i64) (values)]
     (if (and
       (= (numeric 42) 297)
+      (= (large-literal) 4294967338)
+      (= (negative-literal) -4294967338)
+      (= (wide-literal) 0x7ff0000000000000)
+      (= (max-literal) 0xffffffffffffffff)
+      (= (max-round-trip) -1)
       (= (floating 42.75) 42)
       (= (write-and-read ptr) 42)
       (= (round-trip ptr) 42)

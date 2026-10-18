@@ -5552,6 +5552,70 @@
         sink)]
     [(TcSelectedChildren.No) (tc-selected-unrepresented result sink)]))
 
+(define (tc-selected-integer-cast-operand
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
+    [(TcSelectedResult.Ok _ occurrence next)
+      (match next
+        [(TcSelectedSink.Query)
+          (TcSelectedResult.Ok
+            ast.AstType.I64
+            TcSelectedOccurrence.Unrepresented
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (match occurrence
+            [(TcSelectedOccurrence.Unrepresented)
+              (TcSelectedResult.Ok
+                ast.AstType.I64
+                TcSelectedOccurrence.Unrepresented
+                (TcSelectedSink.Capture store lease bindings))]
+            [(TcSelectedOccurrence.Selected child)
+              (match (typed.typed-occurrence-get! store lease child)
+                [(typed.TypedNodeResult.Err error)
+                  (TcSelectedResult.Err
+                    (tc-selected-error error)
+                    (TcSelectedSink.Capture store lease bindings))]
+                [(typed.TypedNodeResult.Ok node)
+                  (let
+                    [operation : typed.TypedOperation (clone node.operation)]
+                    [syntax : typed.TypedSyntax (clone node.syntax)]
+                    [source : ownership.OwnershipSource
+                      (match (tc-selected-occurrence-origin-copy!
+                        store
+                        lease
+                        child)
+                        [(TcSelectedOriginResult.Ok source) source]
+                        [(TcSelectedOriginResult.Err error)
+                          (return
+                            (TcSelectedResult.Err
+                              (tc-selected-error error)
+                              (TcSelectedSink.Capture store lease bindings)))])]
+                    (unless
+                      (match (& operation)
+                        [(typed.TypedOperation.Literal (ast.AstLiteral.Int _ _))
+                          true]
+                        [_ false])
+                      (return
+                        (TcSelectedResult.Err
+                          "typecheck: invalid selected integer cast literal"
+                          (TcSelectedSink.Capture store lease bindings))))
+                    ;; An explicit cast preserves a literal's complete 64-bit
+                    ;; pattern before the destination truncates or converts it.
+                    ;; Keep the existing source/macro origin without rewalking
+                    ;; syntax or imposing a contextual literal range check.
+                    (tc-selected-publish
+                      (ResultTcType.Ok ast.AstType.I64)
+                      syntax
+                      source
+                      operation
+                      (__tl_make-array typed.TypedOccurrenceId 0)
+                      (TcSelectedSink.Capture store lease bindings)))])])])]))
+
 (define (tc-infer-selected-cast
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -5564,13 +5628,18 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-id
-    ctx
-    env
-    inner-id
-    ast.AstMaybeType.No
-    (tc-global-shared-view source)
-    sink)
+  (match (let
+    [result : (TcSelectedResult store lease intern bind)
+      (tc-infer-selected-id
+        ctx
+        env
+        inner-id
+        ast.AstMaybeType.No
+        (tc-global-shared-view source)
+        sink)]
+    (if (tc-integer-literal-expr? ctx (tc-context-expr-get ctx inner-id))
+      (tc-selected-integer-cast-operand result)
+      result))
     [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
     [(TcSelectedResult.Ok inner-ty child next)
       (let

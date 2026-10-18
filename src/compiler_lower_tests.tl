@@ -417,7 +417,7 @@
 (test
   compiler-lower-normalized-primitives
   (let
-    [bodies : (Array String 10)
+    [bodies : (Array String 13)
       (array
         "(cast (cast value : i8) : i64)"
         "(cast (cast value : u8) : i64)"
@@ -428,7 +428,10 @@
         "(cast (cast value : u64) : i64)"
         "(cast (cast value : f32) : i64)"
         "(cast (cast value : f64) : i64)"
-        "(cast (cast value : char) : i64)")]
+        "(cast (cast value : char) : i64)"
+        "(cast 0x7ff0000000000000 : i64)"
+        "(cast 4294967338 : i64)"
+        "(cast (cast 0xffffffffffffffff : u64) : i64)")]
     (for [index (iterator.range 0 (array-length bodies))]
       (test.assert-true
         (match (lower-test-functions

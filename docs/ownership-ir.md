@@ -1705,6 +1705,10 @@ representation, whose later ownership solving does not insert instructions.
 Malformed or duplicate call positions and aborts without an executable effect
 are hard errors. A non-null C callee emits the existing `CallIndirectC` ABI
 instruction from its captured place; a nullable runtime callee is a hard error.
+The selected producer retains an explicitly cast integer literal with its full
+64-bit pattern, preserving its existing syntax/origin record. Unconstrained
+integer defaults must not truncate that operand to i32 before the cast. The
+ordinary contextual literal range checks still apply outside this operation.
 Scalar casts, raw-pointer values and scalar reads/writes, null tests, pointer
 conversions and pointer offsets also emit from their captured operands. Pointer
 offsets use the existing layout authority to stride inline aggregates by their

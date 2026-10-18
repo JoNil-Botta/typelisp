@@ -2213,6 +2213,12 @@ pointer evaluation before a later argument mutates its source, typed memory
 reads/writes, pointer round trips, full inline-aggregate stride, and C pointer
 checks in branches and in sequence. The resolver count detects duplicate
 evaluation. The existing null-C-pointer fixture also runs all three opt levels,
-retaining exit134 and its exact stderr. Graph tests cover ten cast forms, six
+retaining exit134 and its exact stderr. Graph tests cover thirteen cast forms, six
 raw-pointer forms (including exact loads), four null-check flows and four
 malformed primitive payloads that must fail at the runtime consumer.
+
+Explicit casts of integer literals retain the complete 64-bit pattern before
+conversion, including values beyond i32 and full u64 hexadecimal patterns.
+Keep the named wide/negative/max literal functions in the native primitive
+fixture: compiling the casts only in an otherwise unmigrated caller would not
+exercise the canonical path. Contextual literal range checks remain separate.

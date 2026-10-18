@@ -15348,3 +15348,72 @@
           (& ty)))
       compact
       "over a compact marker, it keeps the marker's Spanned view")))
+
+(test
+  tc-selected-integer-cast-literal-context
+  (for [mode (iterator.range 0 2)]
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+      [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [lease : (typed.TypedBodyLease interns)
+        (tc-selected-test-lease ctx (& interns))]
+      [store : typed.TypedStore (tc-selected-test-store (& lease))]
+      [atom : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+      [literal : i64
+        (if (= mode 0)
+          atom
+          (ast.ast-expr-spanned-with-pools
+            pools
+            atom
+            (ast.ast-source-span 12 5 12 7)))]
+      [casted : i64
+        (ast.ast-expr-cast-with-pools pools literal (& (ast.AstType.I64)))]
+      [plain : typed.TypedOccurrenceId
+        (tc-selected-test-infer!
+          ctx
+          (&mut store)
+          (& lease)
+          literal
+          ast.AstType.I32)]
+      [root : typed.TypedOccurrenceId
+        (tc-selected-test-infer!
+          ctx
+          (&mut store)
+          (& lease)
+          casted
+          ast.AstType.I64)]
+      [child : typed.TypedOccurrenceId
+        (match (typed.typed-child-get! (&mut store) (& lease) root 0)
+          [(typed.TypedChildResult.Ok child) child]
+          [_ (io.panic "integer cast: missing literal")])]
+      (test.assert-true
+        (and
+          (tc-selected-test-type? (&mut store) (& lease) plain ast.AstType.I32)
+          (tc-selected-test-type? (&mut store) (& lease) child ast.AstType.I64)
+          (not (typed.typed-handle-equal? (& plain.handle) (& child.handle)))
+          (match (tc_core.tc-selected-occurrence-origin-copy!
+            (&mut store)
+            (& lease)
+            child)
+            [(tc_core.TcSelectedOriginResult.Ok source)
+              (and
+                (string.eq source.path "selected.tl")
+                (=
+                  source.line
+                  (if (= mode 0)
+                    7
+                    12))
+                (=
+                  source.column
+                  (if (= mode 0)
+                    3
+                    5)))]
+            [_ false]))
+        "cast literal has its own full-width occurrence and preserves source origin")
+      (typed.typed-store-retire! (&mut store)))))

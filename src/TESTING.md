@@ -145,6 +145,14 @@ pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
 
+`clone_reference_referent.tl` checks non-Copy struct, enum and array clones
+through shared/mutable references, projected and compound results, macro
+expansion, receiver evaluation count, independent storage and Box cleanup at
+opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
+preserve ordinary prefix/initializer moves, source use-after-move, callable
+shadowing and the unsupported direct-reference clone boundary. Keep these
+alongside the existing move-out-of-reference and clone capability controls.
+
 ## Linux thread storage
 
 `tests/integration/thread_local_word.tl` checks the private Linux runtime word
@@ -356,8 +364,11 @@ The `fixed-array-reference-value-and-place-access` virtual-source matrix rejects
 non-Copy transfers through shared and mutable array references across bindings,
 arguments, results, branches, containers and stores, including matching
 signature lifetimes and reference-valued receivers. Copy aggregates and fields,
-borrowed elements, deep clones and observing primitives stay accepted. Reborrow and replacement
-controls distinguish reading a place from transferring its element. The public
+borrowed elements, deep clones and observing primitives stay accepted. Clone
+result flows through control structures keep condition, initializer, scrutinee,
+prefix and index transfers checked; ordinary projection receivers keep value
+semantics for their control-flow inputs. Reborrow and replacement controls
+distinguish reading a place from transferring its element. The public
 `fixed-array-reference-*` cases pin E0208 and source locations through check and
 compile for both targets at every optimization level. `array_reference_reads.tl`
 runs the corresponding positive paths and owned moves in the native matrix.

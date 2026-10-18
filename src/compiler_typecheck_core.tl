@@ -69753,10 +69753,12 @@
               (tc-global-shared-view loop-carried)
               moved
               (tc-global-shared-view effective-head)
-              (not
+              (if (not
                 (tc-call-param-moves-argument?
                   ctx
-                  (tc-global-shared-view raw-ty)))))]
+                  (tc-global-shared-view raw-ty)))
+                (MovePlaceReadAccess)
+                (MoveValueAccess))))]
         [moved2
           (try
             (tc-move-after-consuming-value
@@ -69973,33 +69975,55 @@
 ;; Core clone and length/index inspectors observe their source-level place,
 ;; without transferring its owner handle. Only the canonical, unshadowed clone
 ;; observes its operand; ordinary by-value calls get no such exemption.
-(define (tc-move-global-place-inspector-call?
+(defenum TcMoveAccess
+  (MoveValueAccess)
+  (MovePlaceReadAccess)
+  (MoveResultReadAccess))
+
+;; A result read follows value-producing paths; a projection's place read
+;; does not turn control-flow temporaries into owned aliases of their inputs.
+(define (tc-move-result-access [access : TcMoveAccess]) : TcMoveAccess
+  (match access
+    [(MoveResultReadAccess) access]
+    [_ (MoveValueAccess)]))
+
+(define (tc-move-receiver-access [access : TcMoveAccess]) : TcMoveAccess
+  (match access
+    [(MoveResultReadAccess) access]
+    [_ (MovePlaceReadAccess)]))
+
+;; Match the compiler-special clone's typing and shadowing rules. Its result
+;; is observed through control flow; length/index inspectors only read places.
+(define (tc-call-read-access
   [expr-bases : i64]
-  [_ctx : TcContext]
-  [_env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]) : TcMoveAccess
   (let
     [raw-id : i64 (tc-expr-var-name-id expr-bases func)]
-    (if (>= raw-id 0)
+    (if (< raw-id 0)
+      (MoveValueAccess)
       (let
         [hygiene-global : bool
           (tc-hygiene-global-name-id?
-            (tc-context-structural-session _ctx)
+            (tc-context-structural-session ctx)
             raw-id)]
         [name-id : i64
           (tc-builtin-call-name-id
-            (tc-context-structural-session _ctx)
+            (tc-context-structural-session ctx)
             raw-id
             hygiene-global)]
-        (if (< name-id 0)
-          false
-          (or
-            (cbi.compiler-builtin-typecheck-length-call-id? name-id)
-            (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
-            (and
+        (cond
+          [(< name-id 0) (MoveValueAccess)]
+          [(and
               (cbi.compiler-builtin-typecheck-clone-id? name-id)
-              (not (tc-source-value-bound-id? _ctx _env name-id))))))
-      false)))
+              (not (tc-source-value-bound-id? ctx env name-id)))
+            (MoveResultReadAccess)]
+          [(or
+              (cbi.compiler-builtin-typecheck-length-call-id? name-id)
+              (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id))
+            (MovePlaceReadAccess)]
+          [else (MoveValueAccess)])))))
 
 (define (tc-move-local-call-capability [locals : TcMovedSet] [name-id : i64]) : i64
   (tc-closure-local-fact-capability (tc-closure-local-fact-code locals name-id)))
@@ -70187,7 +70211,7 @@
               moved
               (& args)
               0
-              true)]
+              (MovePlaceReadAccess))]
           [(tc-move-check-constructor-call? ctx (tc-global-shared-view func))
             (tc-move-check-aggregate-exprs-with-types
               ctx
@@ -70199,11 +70223,13 @@
               (tc-global-shared-view args)
               (tc-global-shared-view params))]
           [(or
-              (tc-move-global-place-inspector-call?
+              (match (tc-call-read-access
                 expr-bases
                 ctx
                 env
                 (tc-global-shared-view func))
+                [(MoveValueAccess) false]
+                [_ true])
               ;; Safe thread spawn requires one direct lambda and separately validates
               ;; and transfers every capture below. Do not reject that intentional
               ;; one-way transfer merely because its public `(-> ...)` parameter cannot
@@ -70222,7 +70248,7 @@
               moved
               (& args)
               0
-              (tc-move-global-place-inspector-call?
+              (tc-call-read-access
                 expr-bases
                 ctx
                 env
@@ -70487,7 +70513,7 @@
     moved
     (& exprs)
     0
-    false))
+    (MoveValueAccess)))
 
 (define (tc-move-check-exprs-at
   [ctx : TcContext]
@@ -70498,7 +70524,7 @@
   [moved : TcMovedSet]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [place-read : bool]) : TcMoveResult
+  [access : TcMoveAccess]) : TcMoveResult
   (if (>= index exprs.len)
     (Ok moved)
     (let
@@ -70514,7 +70540,12 @@
             (ast.ast-expr-segment-bases-get
               expr-bases
               (ast.ast-expr-list-get exprs index 0))
-            place-read))]
+            (match access
+              [(MoveResultReadAccess)
+                (if (= index (- exprs.len 1))
+                  access
+                  (MoveValueAccess))]
+              [_ access])))]
       (tc-move-check-exprs-at
         ctx
         expr-bases
@@ -70524,7 +70555,7 @@
         moved1
         exprs
         (+ index 1)
-        place-read))))
+        access))))
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]
@@ -70534,7 +70565,8 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : ast.AstLetBindingList]
-  [body-box : i64]) : TcMoveResult
+  [body-box : i64]
+  [access : TcMoveAccess]) : TcMoveResult
   (tc-move-check-let-bindings-at
     ctx
     expr-bases
@@ -70544,7 +70576,8 @@
     moved
     (& bindings)
     0
-    body-box))
+    body-box
+    access))
 
 (define (tc-move-add-local-binding
   [ctx : TcContext]
@@ -70577,16 +70610,18 @@
   [moved : TcMovedSet]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]
-  [body-box : i64]) : TcMoveResult
+  [body-box : i64]
+  [access : TcMoveAccess]) : TcMoveResult
   (if (>= index (ast.ast-let-binding-list-len bindings))
-    (tc-move-check-expr-id
+    (tc-move-check-expr-access
       ctx
       expr-bases
       env
       locals
       loop-carried
       moved
-      body-box)
+      (ast.ast-expr-segment-bases-get expr-bases body-box)
+      access)
     (match (ast.ast-let-binding-list-get
       bindings
       index
@@ -70667,7 +70702,8 @@
                   init)
                 bindings
                 (+ index 1)
-                body-box))]
+                body-box
+                access))]
           [end-moved
             (try
               (if obligated?
@@ -70887,7 +70923,8 @@
   [moved : TcMovedSet]
   [parameter-id : i64]
   [scrut-ty : ast.AstType]
-  [arms : ast.AstMatchArmList]) : TcMoveResult
+  [arms : ast.AstMatchArmList]
+  [access : TcMoveAccess]) : TcMoveResult
   (tc-move-check-arms-at
     ctx
     expr-bases
@@ -70901,7 +70938,8 @@
     0
     (tc-moved-empty)
     -1
-    false))
+    false
+    access))
 
 ;; An arm that never completes normally cannot reach the join, so its moves,
 ;; borrows and reinitializations say nothing about the code after it. That is
@@ -71067,7 +71105,8 @@
   [index : i64]
   [reference : TcMovedSet]
   [reference-body-box : i64]
-  [reference? : bool]) : TcMoveResult
+  [reference? : bool]
+  [access : TcMoveAccess]) : TcMoveResult
   (if (>= index arms.len)
     (Ok moved)
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
@@ -71089,7 +71128,7 @@
                 pattern))]
           [arm-moved
             (try
-              (tc-move-check-expr
+              (tc-move-check-expr-access
                 ctx
                 expr-bases
                 arm-env
@@ -71105,7 +71144,8 @@
                     bound)
                   bound
                   parameter-id)
-                (tc-global-shared-view body)))]
+                (tc-global-shared-view body)
+                access))]
           [arm-visible : TcMovedSet
             (tc-move-remove-bound-root-states arm-moved bound)]
           ;; Every arm that completes normally must leave the
@@ -71157,7 +71197,8 @@
                 (+ index 1)
                 next-reference
                 next-reference-body-box
-                next-reference?))]
+                next-reference?
+                access))]
           (Ok (tc-moved-union visible-arm-moved rest-moved)))])))
 
 (define (tc-move-check-expr-id
@@ -71333,53 +71374,143 @@
           "typecheck: slice-split-at expects exactly two arguments"
           "typecheck: slice-view expects exactly three arguments")))))
 
-;; Borrowing a place observes every receiver and index but never performs the
-;; by-value transfer represented by public `deref`. Rebuild only the place
-;; spine with the seed's non-consuming BoxGet node, then reuse the ordinary
-;; move checker for conflict diagnostics and index evaluation.
-(define (tc-move-borrow-place-read-expr-id
-  [expr-bases : i64]
-  [expr : ast.AstExpr]) : i64
+;; A one-argument call of the compiler-special `clone` reads its operand. The
+;; builtin test is the call typing's own (hygiene name, then shadowing by a
+;; value bound in scope or owned by the module), so a call of a binding or
+;; function named `clone` keeps its arguments unchanged.
+(define (tc-clone-read-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : ast.AstExprList]) : ast.AstExprList
+  (if (= args.len 1)
+    (match (tc-call-read-access
+      (tc-context-expr-bases ctx)
+      ctx
+      env
+      (tc-context-expr-get ctx func-id))
+      [(MoveResultReadAccess)
+        (let
+          [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+          (ast.ast-expr-list-push
+            (&mut out)
+            (tc-read-value-expr-id
+              (tc-context-expr-bases ctx)
+              (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
+          out)]
+      [_ args])
+    args))
+
+;; The borrow-conflict walk needs non-consuming deref nodes for clone inputs;
+;; the move walk carries the same demand directly. Only value-producing paths
+;; inherit the read: conditions, initializers, scrutinees, call arguments and
+;; sequence prefixes keep their moves. Never mutate or mark a shared node.
+(define (tc-read-value-expr-id [expr-bases : i64] [expr : ast.AstExpr]) : i64
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (ast.ast-expr-spanned
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         span)]
     [(Ann inner-box ty-id)
       (ast.ast-expr-ann-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         ty-id)]
     [(Cast inner-box ty-id)
       (ast.ast-expr-cast-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases inner-box))
         ty-id)]
+    [(MacroExpansion inner-box provenance name)
+      (ast.ast-expr-macro-expansion
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        provenance
+        name)]
+    [(or (Begin items) (Unsafe items))
+      (let
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity items.len)]
+        (for [index (iterator.range 0 items.len)]
+          (let
+            [id : i64 (ast.ast-expr-list-get (& items) index 0)]
+            (ast.ast-expr-list-push
+              (&mut out)
+              (if (= index (- items.len 1))
+                (tc-read-value-expr-id
+                  expr-bases
+                  (ast.ast-expr-segment-bases-get expr-bases id))
+                id))))
+        (ast.ast-node-push
+          (match expr
+            [(Unsafe _) (Unsafe out)]
+            [_ (Begin out)])))]
+    [(If condition then-box else-box)
+      (ast.ast-expr-if
+        condition
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases then-box))
+        (tc-read-value-expr-id
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases else-box)))]
+    [(Let payload)
+      (match (& (deref payload))
+        [(Let bindings body)
+          (let
+            [out : ast.AstLetBindingList
+              (ast.ast-let-binding-list-with-capacity bindings.len)]
+            (ast.ast-let-binding-list-append-from (&mut out) bindings 0)
+            (ast.ast-expr-let
+              out
+              (tc-read-value-expr-id
+                expr-bases
+                (ast.ast-expr-segment-bases-get expr-bases body))))])]
+    [(Match payload)
+      (match (& (deref payload))
+        [(Match scrutinee arms)
+          (let
+            [out : ast.AstMatchArmList
+              (ast.ast-match-arm-list-with-capacity arms.len)]
+            (for [index (iterator.range 0 arms.len)]
+              (match (ast.ast-match-arm-list-get
+                arms
+                index
+                (ast.ast-match-arm-fallback))
+                [(Arm pattern body)
+                  (ast.ast-match-arm-list-push
+                    (&mut out)
+                    (ast.AstMatchArm.Arm
+                      pattern
+                      (tc-read-value-expr-id
+                        expr-bases
+                        (ast.ast-expr-segment-bases-get expr-bases body))))]))
+            (ast.ast-expr-match scrutinee out))])]
     [(StructGet receiver-box field)
       (ast.ast-expr-struct-get-id
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         field)]
     [(TupleRef receiver-box index)
       (ast.ast-expr-tuple-ref
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         index)]
     [(ArrayRef receiver-box index-box)
       (ast.ast-expr-array-ref
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box))
         index-box)]
     [(or (BoxGet receiver-box) (BoxTake receiver-box))
       (ast.ast-expr-box-get
-        (tc-move-borrow-place-read-expr-id
+        (tc-read-value-expr-id
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
     [_ (ast.ast-node-push expr)]))
@@ -71467,10 +71598,8 @@
     locals
     loop-carried
     moved
-    (ast.ast-expr-segment-bases-get
-      expr-bases
-      (tc-move-borrow-place-read-expr-id expr-bases place))
-    true))
+    place
+    (MoveResultReadAccess)))
 
 (define (tc-move-cleanup-overwrite-message) : String
   (tc-kind-message
@@ -73067,10 +73196,11 @@
     loop-carried
     moved
     expr
-    false))
+    (MoveValueAccess)))
 
-;; Only the place spine is observed: indexes, arguments and replacement values
-;; remain value uses. Array-derived moves cannot inherit a receiver's ownership.
+;; Only explicitly observed results inherit read access through control flow.
+;; Projection receivers read places; indexes, arguments and stored values move.
+;; Array-derived values cannot inherit a referenced receiver's ownership.
 (define (tc-move-check-expr-access
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73079,10 +73209,12 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
-  [place-read : bool]) : TcMoveResult
+  [access : TcMoveAccess]) : TcMoveResult
   (when
     (and
-      (not place-read)
+      (match access
+        [(MoveValueAccess) true]
+        [_ false])
       (> (tc-reference-read-kind ctx expr-bases env (& expr) true) 0))
     (let
       [ty (try (tc-expr ctx env (tc-global-shared-view expr)))]
@@ -73287,7 +73419,7 @@
               (tc-global-shared-view loop-carried)
               moved
               (ast.ast-expr-segment-bases-get expr-bases left-box)
-              true))]
+              (MovePlaceReadAccess)))]
         ;; The right operand of `and` / `or` may be skipped, so it must
         ;; leave every obligated local as it found it.
         [short-circuit? : bool
@@ -73310,7 +73442,7 @@
               loop-carried
               moved1
               (ast.ast-expr-segment-bases-get expr-bases right-box)
-              true))]
+              (MovePlaceReadAccess)))]
         (if (and
           short-circuit?
           (not (tc-move-arm-diverges? ctx expr-bases right-box)))
@@ -73415,7 +73547,7 @@
                         moved1
                         (& args)
                         0
-                        (tc-move-global-place-inspector-call?
+                        (tc-call-read-access
                           expr-bases
                           ctx
                           env
@@ -73440,8 +73572,19 @@
             expr
             slice-kind
             args)))]
-    [(or (BracketClause items) (Begin items) (Unsafe items) (WithRegion _ items)
-         (WithScratch items) (Syscall items))
+    [(or (Begin items) (Unsafe items))
+      (tc-move-check-exprs-at
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (& items)
+        0
+        (tc-move-result-access access))]
+    [(or (BracketClause items) (WithRegion _ items) (WithScratch items)
+         (Syscall items))
       (tc-move-check-exprs ctx expr-bases env locals loop-carried moved items)]
     [(If cond-box then-branch-box else-branch-box)
       (let
@@ -73457,24 +73600,26 @@
               cond-box))]
         [movedt
           (try
-            (tc-move-check-expr-id
+            (tc-move-check-expr-access
               ctx
               expr-bases
               env
               (tc-moved-clone locals)
               (tc-moved-clone loop-carried)
               (tc-moved-clone movedc)
-              then-branch-box))]
+              (ast.ast-expr-segment-bases-get expr-bases then-branch-box)
+              (tc-move-result-access access)))]
         [movede
           (try
-            (tc-move-check-expr-id
+            (tc-move-check-expr-access
               ctx
               expr-bases
               env
               (tc-moved-clone locals)
               (tc-moved-clone loop-carried)
               (tc-moved-clone movedc)
-              else-branch-box))]
+              (ast.ast-expr-segment-bases-get expr-bases else-branch-box)
+              (tc-move-result-access access)))]
         ;; Both arms kept the entry facts, so their union is either
         ;; of them and no arm needs a divergence summary.
         (if (and
@@ -73520,7 +73665,8 @@
             (tc-moved-clone loop-carried)
             moved
             bindings
-            body-box)])]
+            body-box
+            (tc-move-result-access access))])]
     [(Lambda lambda-box)
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(Lambda params maybe-ret body-box)
@@ -73713,7 +73859,7 @@
               loop-carried
               moved
               inner
-              true))]
+              (tc-move-receiver-access access)))]
         (match (tc-move-tuple-element-path
           expr-bases
           (tc-global-shared-view expr))
@@ -73789,7 +73935,7 @@
         loop-carried
         moved
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        place-read)]
+        access)]
     [(or (BoxGet inner-box) (StringData inner-box) (ArrayData inner-box))
       (tc-move-check-expr-access
         ctx
@@ -73799,7 +73945,7 @@
         loop-carried
         moved
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        true)]
+        (tc-move-receiver-access access))]
     [(or (FixedMakeArray _ inner-box) (MakeArray _ inner-box) (Box inner-box)
          (PtrNullCheck inner-box) (PtrRead inner-box) (PtrCast inner-box _)
          (PtrToInt inner-box) (IntToPtr inner-box _))
@@ -73823,7 +73969,7 @@
               (tc-global-shared-view loop-carried)
               moved
               array
-              true))]
+              (tc-move-receiver-access access)))]
         [moved2
           (try
             (tc-move-check-expr
@@ -73885,7 +74031,7 @@
                   (tc-global-shared-view loop-carried)
                   moved
                   (tc-global-shared-view array)
-                  true))]
+                  (MovePlaceReadAccess)))]
             [moved2
               (try
                 (tc-move-check-expr
@@ -74072,7 +74218,7 @@
                   (tc-global-shared-view loop-carried)
                   moved
                   (tc-global-shared-view receiver)
-                  true))]
+                  (MovePlaceReadAccess)))]
             [_
               (try
                 (tc-move-check-cleanup-overwrite
@@ -74126,7 +74272,7 @@
               (tc-global-shared-view loop-carried)
               moved
               array
-              true))]
+              (MovePlaceReadAccess)))]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 value))]
     [(StringRef str-box index-box)
       (let
@@ -74143,7 +74289,7 @@
               (tc-global-shared-view loop-carried)
               moved
               str
-              true))]
+              (MovePlaceReadAccess)))]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 index))]
     [(While cond-box body-box)
       (let
@@ -74348,7 +74494,8 @@
                       moveds1
                       scrut)
                     scrut-ty
-                    arms))]
+                    arms
+                    (tc-move-result-access access)))]
               [(Err _)
                 (tc-move-check-arms
                   ctx
@@ -74359,7 +74506,8 @@
                   (tc-global-shared-view moveds)
                   (tc-param-storage-origin-id ctx expr-bases env moveds scrut)
                   (Unit)
-                  arms)]))])]
+                  arms
+                  (tc-move-result-access access))]))])]
     [(Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(Foreach index index-ty start-box end-box body-box)
@@ -74643,7 +74791,7 @@
               loop-carried
               moved
               inner
-              true))]
+              (tc-move-receiver-access access)))]
         (match (tc-move-struct-field-path
           expr-bases
           (tc-global-shared-view expr))
@@ -74718,57 +74866,69 @@
             exprs
             expr)])]
     [(BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [moved1
-          (try
-            (tc-move-check-expr-access
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view locals)
-              (tc-global-shared-view loop-carried)
-              moved
-              (tc-global-shared-view inner)
-              true))]
-        (match (tc-expr ctx env (tc-global-shared-view expr))
-          [(Ok result-ty)
-            (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
-              (match (tc-expr ctx env (tc-global-shared-view inner))
-                [(Ok receiver-ty)
-                  (match (tc-type-strip-region
-                    (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-                    [(Box _)
-                      (tc-move-after-consuming-value
-                        ctx
-                        expr-bases
-                        env
-                        locals
-                        loop-carried
-                        moved1
-                        inner
-                        receiver-ty)]
-                    [(Ref _ _)
-                      (Err
-                        (tc-move-out-of-reference-message
+      (if (match access
+        [(MoveResultReadAccess) true]
+        [_ false])
+        (tc-move-check-expr-access
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)
+          (MoveResultReadAccess))
+        (let
+          [inner : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          [moved1
+            (try
+              (tc-move-check-expr-access
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved
+                (tc-global-shared-view inner)
+                (MovePlaceReadAccess)))]
+          (match (tc-expr ctx env (tc-global-shared-view expr))
+            [(Ok result-ty)
+              (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
+                (match (tc-expr ctx env (tc-global-shared-view inner))
+                  [(Ok receiver-ty)
+                    (match (tc-type-strip-region
+                      (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+                      [(Box _)
+                        (tc-move-after-consuming-value
+                          ctx
                           expr-bases
-                          expr
-                          result-ty
-                          1
-                          (tc-move-out-of-deref-help)))]
-                    [(MutRef _ _)
-                      (Err
-                        (tc-move-out-of-reference-message
-                          expr-bases
-                          expr
-                          result-ty
-                          2
-                          (tc-move-out-of-deref-help)))]
-                    [_ (Ok moved1)])]
-                [(Err _) (Ok moved1)])
-              (Ok moved1))]
-          [(Err _) (Ok moved1)]))]
+                          env
+                          locals
+                          loop-carried
+                          moved1
+                          inner
+                          receiver-ty)]
+                      [(Ref _ _)
+                        (Err
+                          (tc-move-out-of-reference-message
+                            expr-bases
+                            expr
+                            result-ty
+                            1
+                            (tc-move-out-of-deref-help)))]
+                      [(MutRef _ _)
+                        (Err
+                          (tc-move-out-of-reference-message
+                            expr-bases
+                            expr
+                            result-ty
+                            2
+                            (tc-move-out-of-deref-help)))]
+                      [_ (Ok moved1)])]
+                  [(Err _) (Ok moved1)])
+                (Ok moved1))]
+            [(Err _) (Ok moved1)])))]
     [(BoxSet box-box value-box)
       (let
         [_
@@ -74794,7 +74954,7 @@
                 (tc-global-shared-view loop-carried)
                 moved
                 box-expr
-                true))]
+                (MovePlaceReadAccess)))]
           [_
             (try
               (tc-move-check-cleanup-overwrite
@@ -87294,6 +87454,7 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        [args : ast.AstExprList (tc-clone-read-args ctx env func-box args)]
         [slice-kind : TcSliceViewCallKind
           (tc-slice-view-call-kind ctx env (tc-global-shared-view func))]
         (if (= slice-kind TcSliceViewCallKind.None)
@@ -88050,9 +88211,7 @@
           [read-inner : ast.AstExpr
             (ast.ast-expr-segment-bases-get
               expr-bases
-              (tc-move-borrow-place-read-expr-id
-                expr-bases
-                (tc-global-shared-view inner)))]
+              (tc-read-value-expr-id expr-bases (tc-global-shared-view inner)))]
           (if (= (tc-moved-len borrowed) 0)
             (let
               [borrowed1

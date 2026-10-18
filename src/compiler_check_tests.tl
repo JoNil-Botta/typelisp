@@ -141,7 +141,35 @@
         (tuple
           "(Array String 2)"
           "i64"
-          "(let [clone consume] (clone (array-ref p 0)))"))]
+          "(let [clone consume] (clone (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (if (= (consume (array-ref p 0)) 0) (array-ref p 1) \"owned\"))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (match (consume (array-ref p 0)) [_ (array-ref p 1)]))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (let [moved : (in p String) (array-ref p 0)] moved))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (begin (consume (array-ref p 0)) (array-ref p 1)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (unsafe (consume (array-ref p 0)) (array-ref p 1)))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0)")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (let [q p] (array-ref q 0)) 0)"))]
     [good
       (array
         (tuple "(Array i64 2)" "i64" "(+ (array-ref p 0) (array-ref p 1))")
@@ -165,7 +193,43 @@
         (tuple
           "(Array (Array String 1) 1)"
           "(Array String 1)"
-          "(clone (array-ref p 0))"))]
+          "(clone (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (ann (array-ref p 0) : (in p String)))")
+        (tuple "(Array i64 2)" "i64" "(clone (cast (array-ref p 0) : i64))")
+        (tuple "(Array String 2)" "String" "(clone (begin 0 (array-ref p 0)))")
+        (tuple "(Array String 2)" "String" "(clone (unsafe 0 (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (if (= index 0) (array-ref p 0) (array-ref p 1)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (let [flag true] (if flag (array-ref p 0) (array-ref p 1))))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (match (= index 0) [true (array-ref p 0)] [false (array-ref p 1)]))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(clone (array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(clone (array-ref (let [q p] (array-ref q 0)) 0))")
+        (tuple "(Array Item 2)" "String" "(clone (array-ref p 0).text)")
+        (tuple
+          "(Array (Tuple String i64) 1)"
+          "String"
+          "(clone (tuple-ref (array-ref p 0) 0))")
+        (tuple
+          "(Array (Box String) 1)"
+          "String"
+          "(clone (deref (array-ref p 0)))"))]
     (for [kind (iterator.range 0 2)]
       (let
         [reference : String

@@ -43,8 +43,11 @@
 (define (move-owned [items : (Array String 2)]) : String
   (array-ref items 0))
 
+(defmacro (read-first [items : Expr]) : Expr
+  `(array-ref ,items 0))
+
 (define (clone-first [items : (& (Array String 2))]) : String
-  (clone (array-ref items 0)))
+  (clone (read-first items)))
 
 (define (touch [value : (&mut i64)]) : unit
   (set! (deref value) 7))

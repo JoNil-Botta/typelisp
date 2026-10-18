@@ -403,6 +403,11 @@ vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_m
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
+clone_reference_prefix_move_reject|check-fail|tests/safety/clone_reference_prefix_move_reject.tl|-|use of moved value `cell`
+clone_reference_prefix_deref_reject|check-fail|tests/safety/clone_reference_prefix_deref_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_shadow_reject|check-fail|tests/safety/clone_reference_shadow_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_let_move_reject|check-fail|tests/safety/clone_reference_let_move_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|clone unsupported type (& source Cell)
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
 gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
 gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches

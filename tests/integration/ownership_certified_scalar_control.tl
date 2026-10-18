@@ -135,8 +135,8 @@
 (define (exited-call [value : i64]) : i64
   (sum value (return 42)))
 
-(define (exited-callee [func : (-> i64 i64 i64)]) : i64
-  ((begin
+(define (exited-callee [func : (-> i64 i64 i64)] [leave : bool]) : i64
+  ((if leave
       (return 42)
       func)
     1
@@ -150,7 +150,8 @@
     (= (captured-left 42) 42)
     (= (exited-binary 1) 42)
     (= (exited-call 1) 42)
-    (= (exited-callee sum) 42)
+    (= (exited-callee sum true) 42)
+    (= (exited-callee sum false) 101)
     (= (exited-callee-annotation) 42)
     (= (captured-call 42) 42)
     (= (nested-calls) 42)

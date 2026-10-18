@@ -1678,7 +1678,9 @@ the job arena. The certificate's nonzero address identifies this immutable
 owned graph; its existing owner/revision/pool/interner checks guard lookup.
 Lowering verifies the current declaration signature and emits runtime effects
 and edges exclusively from the graph. A malformed retained graph or emission
-failure is a hard error, never an AST retry. Debug type roots use the existing
+failure is a hard error, never an AST retry. Runtime abort sites retain their
+checked source locations in release builds as well as debug builds, using the
+same instruction classifier as ordinary emission. Debug type roots use the existing
 layout registry after signature validation. Source-only SPMD sites omitted by
 control flow keep their identities through the shared provenance enumerator
 and publisher; this adapter emits no runtime operations. Active SPMD forms are

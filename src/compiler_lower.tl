@@ -15452,10 +15452,10 @@
       instr)
     state))
 
-(define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
+(define (lower-runtime-abort-instr? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(BoundsCheck _ _ _) true]
-    [(BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? (& op))]
+    [(BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? op)]
     [(Call _ name _ _)
       (let
         [text : String (ir.compiler-ir-symbol-text name)]
@@ -15473,7 +15473,7 @@
     (ir.compiler-debug-info-enabled?)
     (and
       (not (lower-state-current-decl-generated? state))
-      (lower-runtime-abort-instr? (lower-global-shared-view instr))))
+      (lower-runtime-abort-instr? (& instr))))
     (let
       [data : (Box LowerStateData) (lower-state-box state)]
       [pools : ast.AstNodePoolContext
@@ -73837,7 +73837,13 @@
   [source : (& source own.OwnershipSource)]
   [instruction : ir.CompilerIrInstr]) : unit
   (when
-    (ir.compiler-debug-info-enabled?)
+    (or
+      (ir.compiler-debug-info-enabled?)
+      (and
+        (lower-runtime-abort-instr? (& instruction))
+        (not
+          (compiler-lower-state-current-decl-generated
+            (compiler-lower-state-from-name-cache state.names)))))
     (set!
       state.spans
       (ir.compiler-source-spans-insert-instr-located

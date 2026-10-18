@@ -367,6 +367,95 @@
           "view call admission preserves region and invalidation checks")))))
 
 (test
+  compiler-lower-normalized-abort-provenance
+  (let
+    [operations : (Array String 5) (array "/" "%" "shl" "shr" "+")]
+    [saved-debug : bool (ir.compiler-debug-info-enabled?)]
+    (for [mode (iterator.range 0 2)]
+      (ir.compiler-debug-info-set-enabled! (= mode 1))
+      (for [index (iterator.range 0 (array-length operations))]
+        (let
+          [source : String
+            (str_cat.str-cat
+              "(define (main) : i64\n  (let [left : i64 1] [right : i64 0]\n    ("
+              (clone (array-ref operations index))
+              " left right)))")]
+          (test.assert-true
+            (match (lower.lower-compiler-source source)
+              [(lower.ResultCompilerLower.Ok program spans owner)
+                (let
+                  [found : i64 0]
+                  [located : i64 0]
+                  (match program
+                    [(ir.CompilerIrProgram.Program _ functions _ _authority)
+                      (for [function (iterator.range 0 functions.len)]
+                        (match (ir.compiler-ir-function-seq-borrow
+                          (& functions)
+                          function)
+                          [(ir.CompilerIrFunction.Function
+                              name
+                              _
+                              _
+                              _
+                              (ir.CompilerIrBlockList.Array blocks)
+                              _)
+                            (for [block (iterator.range 0 blocks.len)]
+                              (match (ir.compiler-ir-block-seq-borrow
+                                blocks
+                                block)
+                                [(ir.CompilerIrBlock.Block _ instructions)
+                                  (for [instruction
+                                    (iterator.range 0 instructions.len)]
+                                    (let
+                                      [current
+                                        (ir.compiler-ir-instr-seq-borrow
+                                          instructions
+                                          instruction)]
+                                      (match current
+                                        [(ir.CompilerIrInstr.BinOp _ _ _ _ _)
+                                          (+= found 1)
+                                          (match (ir.compiler-source-spans-lookup-instr-location
+                                            (& spans)
+                                            (ir.compiler-ir-symbol-typed-id
+                                              name)
+                                            current)
+                                            [(Some location)
+                                              (when
+                                                (and
+                                                  (string.eq
+                                                    (ci.intern-str
+                                                      location.path-id)
+                                                    "<source>")
+                                                  (=
+                                                    (ast.ast-source-span-start-line
+                                                      location.span)
+                                                    3)
+                                                  (=
+                                                    (ast.ast-source-span-start-col
+                                                      location.span)
+                                                    5))
+                                                (+= located 1))]
+                                            [(No) unit])]
+                                        [_ unit])))]))]
+                          [_ unit]))])
+                  (lower.compiler-lower-arena-state-release!
+                    (lower.compiler-lower-state-arenas owner))
+                  (and
+                    (= found 1)
+                    (=
+                      located
+                      (if (or (= mode 1) (< index 4))
+                        1
+                        0))))]
+              [(lower.ResultCompilerLower.Err diagnostic)
+                (io.println
+                  "abort origin lower failed: {}"
+                  (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+                false])
+            "checked arithmetic keeps abort locations without requiring debug info"))))
+    (ir.compiler-debug-info-set-enabled! saved-debug)))
+
+(test
   compiler-lower-normalized-scalar-control
   (test.assert-true
     (match (lower-test-functions

@@ -16131,57 +16131,56 @@
         (match (tc-call-target-expr-id ctx env func-id)
           [(ResultTcType.Err _) TcSelectedCallTarget.Legacy]
           [(ResultTcType.Ok fn-ty)
-            (begin
-              (match (tc-selected-c-function-signature
-                ctx
-                env
-                (tc-global-shared-view fn-ty))
-                [(ast.AstMaybeType.Some signature)
-                  (return
-                    (if (tc-selected-foreign-signature-ok?
-                      ctx
-                      (clone signature)
-                      (typed.typed-function-arity (& signature)))
-                      (TcSelectedCallTarget.Foreign
-                        -2
-                        (tc-resolve-type ctx fn-ty))
-                      TcSelectedCallTarget.Legacy))]
-                [(ast.AstMaybeType.No) unit])
-              (match (tc-global-shared-view fn-ty)
-                [(ast.AstType.Func params ret)
-                  (if (and
-                    (tc-type-copyable? ctx (tc-global-shared-view fn-ty))
-                    (tc-selected-call-signature-ok?
+            (match (tc-selected-c-function-signature
+              ctx
+              env
+              (tc-global-shared-view fn-ty))
+              [(ast.AstMaybeType.Some signature)
+                (return
+                  (if (tc-selected-foreign-signature-ok?
+                    ctx
+                    (clone signature)
+                    (typed.typed-function-arity (& signature)))
+                    (TcSelectedCallTarget.Foreign
+                      -2
+                      (tc-resolve-type ctx fn-ty))
+                    TcSelectedCallTarget.Legacy))]
+              [(ast.AstMaybeType.No) unit])
+            (match (tc-global-shared-view fn-ty)
+              [(ast.AstType.Func params ret)
+                (if (and
+                  (tc-type-copyable? ctx (tc-global-shared-view fn-ty))
+                  (tc-selected-call-signature-ok?
+                    ctx
+                    env
+                    (tc-global-shared-view func)
+                    (ast.ast-type-list-box-shared-view
+                      (tc-global-shared-view params))
+                    (ast.ty-node-get ret)))
+                  (TcSelectedCallTarget.Ordinary
+                    ;; A type's generated cleanup function is named directly:
+                    ;; its symbol handle keys the call.
+                    (if (let
+                      [param-list : ast.AstTypeList
+                        (ast.ast-type-list-box-shared-view
+                          (tc-global-shared-view params))]
+                      (tc-selected-discharge-call?
+                        ctx
+                        (tc-global-shared-view func)
+                        (& param-list)))
+                      (tc-move-value-symbol-handle-id
+                        ctx
+                        (tc-expr-var-name-id
+                          (tc-context-expr-segment-bases ctx)
+                          (tc-global-shared-view func)))
+                      -2)
+                    fn-ty
+                    (tc-call-region-args-allowed-for-func
                       ctx
                       env
-                      (tc-global-shared-view func)
-                      (ast.ast-type-list-box-shared-view
-                        (tc-global-shared-view params))
-                      (ast.ty-node-get ret)))
-                    (TcSelectedCallTarget.Ordinary
-                      ;; A type's generated cleanup function is named directly:
-                      ;; its symbol handle keys the call.
-                      (if (let
-                        [param-list : ast.AstTypeList
-                          (ast.ast-type-list-box-shared-view
-                            (tc-global-shared-view params))]
-                        (tc-selected-discharge-call?
-                          ctx
-                          (tc-global-shared-view func)
-                          (& param-list)))
-                        (tc-move-value-symbol-handle-id
-                          ctx
-                          (tc-expr-var-name-id
-                            (tc-context-expr-segment-bases ctx)
-                            (tc-global-shared-view func)))
-                        -2)
-                      fn-ty
-                      (tc-call-region-args-allowed-for-func
-                        ctx
-                        env
-                        (tc-global-shared-view func)))
-                    TcSelectedCallTarget.Legacy)]
-                [_ TcSelectedCallTarget.Legacy]))])]
+                      (tc-global-shared-view func)))
+                  TcSelectedCallTarget.Legacy)]
+              [_ TcSelectedCallTarget.Legacy])])]
       ;; An immediately called lambda (typed as a direct call, where its
       ;; reference captures cannot escape) is called through its closure.
       [(TcDirectLambdaCheck.Ok fn-ty)

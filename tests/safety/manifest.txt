@@ -278,6 +278,56 @@ mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mut
 mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
 mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
 mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_parameter_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_local_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_alias_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_call_store_same_name_reject|check-fail|tests/safety/caller_lifetime_call_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_incoming_alias_same_name_ok|check-ok|tests/safety/caller_lifetime_incoming_alias_same_name_ok.tl|-|-
+caller_lifetime_named_storage_borrow_ok|check-ok|tests/safety/caller_lifetime_named_storage_borrow_ok.tl|-|-
+caller_lifetime_parameter_deref_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_deref_store_same_name_reject.tl|-|cannot store reference into longer-lived &mut referent
+caller_lifetime_parameter_tuple_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_tuple_store_same_name_reject.tl|-|tuple element type mismatch
+caller_lifetime_parameter_array_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_array_store_same_name_reject.tl|-|array elements must have same type
+caller_lifetime_parameter_box_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_box_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_parameter_push_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_push_same_name_reject.tl|-|cannot store reference into longer-lived array
+caller_lifetime_parameter_return_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_return_same_name_reject.tl|-|return type mismatch
+caller_lifetime_local_aggregate_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_aggregate_store_same_name_reject.tl|-|cannot store reference into longer-lived &mut referent
+caller_lifetime_nested_shadow_store_reject|check-fail|tests/safety/caller_lifetime_nested_shadow_store_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_annotated_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_annotated_alias_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_match_binder_store_same_name_reject|check-fail|tests/safety/caller_lifetime_match_binder_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_annotation_before_shadow_ok|check-ok|tests/safety/caller_lifetime_annotation_before_shadow_ok.tl|-|-
+caller_lifetime_local_annotation_ok|check-ok|tests/safety/caller_lifetime_local_annotation_ok.tl|-|-
+caller_lifetime_incoming_storage_same_name_ok|check-ok|tests/safety/caller_lifetime_incoming_storage_same_name_ok.tl|-|-
+caller_lifetime_resource_field_store_same_name_reject|check-fail|tests/safety/caller_lifetime_resource_field_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_tuple_value_store_same_name_reject|check-fail|tests/safety/caller_lifetime_tuple_value_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_global_and_lambda_names_ok|check-ok|tests/safety/caller_lifetime_global_and_lambda_names_ok.tl|-|-
+caller_lifetime_owned_for_item_store_same_name_reject|check-fail|tests/safety/caller_lifetime_owned_for_item_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_nested_resource_store_same_name_reject|check-fail|tests/safety/caller_lifetime_nested_resource_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_lambda_param_return_same_name_reject|check-fail|tests/safety/caller_lifetime_lambda_param_return_same_name_reject.tl|-|lambda return type mismatch
+caller_lifetime_renamed_body_ok|run-exit|tests/safety/caller_lifetime_renamed_body_ok.tl|6|-
+caller_lifetime_pointer_store_same_name_reject|check-fail|tests/safety/caller_lifetime_pointer_store_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+caller_lifetime_written_types_ok|check-ok|tests/safety/caller_lifetime_written_types_ok.tl|-|-
+caller_lifetime_shadowed_local_mix_ok|check-ok|tests/safety/caller_lifetime_shadowed_local_mix_ok.tl|-|-
+caller_lifetime_renamed_local_loan_reject|check-fail|tests/safety/caller_lifetime_renamed_local_loan_reject.tl|-|cannot assign to borrowed place `x`
+caller_lifetime_parameter_nested_constructor_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_nested_constructor_store_same_name_reject.tl|-|cannot store reference into longer-lived &mut referent
+caller_lifetime_shadowed_let_result_reject|check-fail|tests/safety/caller_lifetime_shadowed_let_result_reject.tl|-|reference value would escape lexical scope
+caller_lifetime_parameter_slice_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_slice_store_same_name_reject.tl|-|cannot store reference into longer-lived array
+caller_lifetime_call_literal_args_ok|check-ok|tests/safety/caller_lifetime_call_literal_args_ok.tl|-|-
+caller_lifetime_array_literal_order_ok|check-ok|tests/safety/caller_lifetime_array_literal_order_ok.tl|-|-
+caller_lifetime_constructor_region_flow_ok|check-ok|tests/safety/caller_lifetime_constructor_region_flow_ok.tl|-|-
+caller_lifetime_call_inference_order_ok|check-ok|tests/safety/caller_lifetime_call_inference_order_ok.tl|-|-
+caller_lifetime_constructor_tuple_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_tuple_arg_same_name_reject.tl|-|cannot store reference into longer-lived &mut referent
+caller_lifetime_constructor_array_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_array_arg_same_name_reject.tl|-|return type mismatch
+caller_lifetime_call_mut_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_call_mut_arg_same_name_reject.tl|-|call `put` argument 2 (parameter `m`) type mismatch
+caller_lifetime_constructor_region_flow_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_region_flow_same_name_reject.tl|-|cannot store reference into longer-lived struct field
+array_literal_shorter_element_escape_reject|check-fail|tests/safety/array_literal_shorter_element_escape_reject.tl|-|reference value would escape lexical scope
+call_lifetime_inference_order_reject|check-fail|tests/safety/call_lifetime_inference_order_reject.tl|-|call `put` argument 2 (parameter `m`) type mismatch
+call_lifetime_inference_order_swapped_reject|check-fail|tests/safety/call_lifetime_inference_order_swapped_reject.tl|-|call `put` argument 1 (parameter `m`) type mismatch
+caller_lifetime_reassigned_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_reassigned_alias_store_same_name_reject.tl|-|assignment type mismatch
+array_literal_tagged_elements_ok|check-ok|tests/safety/array_literal_tagged_elements_ok.tl|-|-
+caller_lifetime_tagged_store_ok|check-ok|tests/safety/caller_lifetime_tagged_store_ok.tl|-|-
+array_literal_arena_tag_join_reject|check-fail|tests/safety/array_literal_arena_tag_join_reject.tl|-|array elements must have same type
+array_literal_arena_tag_keep_reject|check-fail|tests/safety/array_literal_arena_tag_keep_reject.tl|-|array elements must have same type
+caller_lifetime_nullary_variant_ok|check-ok|tests/safety/caller_lifetime_nullary_variant_ok.tl|-|-
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

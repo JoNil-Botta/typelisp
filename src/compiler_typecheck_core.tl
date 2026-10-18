@@ -2651,7 +2651,11 @@
   (param-write-arena i64)
   ;; The address of the one-slot TcBorrowLoopExits cell; see
   ;; tc-body-borrow-exits-swap!.
-  (borrow-exits-cell i64))
+  (borrow-exits-cell i64)
+  ;; The checked function's signature lifetimes checked under a caller
+  ;; identity (#8890), Nil outside tc-check-fn-decl-body; see
+  ;; tc-annotation-caller-lifetimes.
+  (caller-lifetimes TcNameIdList))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3347,7 +3351,8 @@
         0
         (tc_i64_i64_map.with-capacity 0)
         0
-        (tc-borrow-loop-exits-cell-new)))
+        (tc-borrow-loop-exits-cell-new)
+        TcNameIdList.Nil))
     (TcBodyState
       (cast
         (unsafe
@@ -3598,6 +3603,20 @@
                 (& frame.repeat-borrowed)
                 (tc-moved-clone borrowed))
               (tc-moved-clone borrowed))))))))
+
+(define (tc-body-caller-lifetimes [state : TcBodyState]) : TcNameIdList
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).caller-lifetimes)))
+
+(define (tc-body-caller-lifetimes-set!
+  [state : TcBodyState]
+  [collisions : TcNameIdList]) : unit
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    (unsafe
+      (set! (deref data).caller-lifetimes collisions))))
 
 (define (tc-body-move-operand-control? [state : TcBodyState]) : bool
   (let
@@ -26827,9 +26846,9 @@
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
     "; source lifetime `"
-    (ci.intern-str source)
+    (tc-lifetime-name-render source)
     "` does not outlive required lifetime `"
-    (ci.intern-str required)
+    (tc-lifetime-name-render required)
     "`"))
 
 (define (tc-lifetime-coercion-invariant-detail
@@ -26847,9 +26866,9 @@
       (str_cat.str-cat "; " label " is invariant")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " is invariant"))))
@@ -26909,9 +26928,9 @@
       (str_cat.str-cat "; " label " failed")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " failed"))))
@@ -26948,9 +26967,9 @@
                 (str_cat.str-cat
                   (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
                   "; required lifetime `"
-                  (ci.intern-str required)
+                  (tc-lifetime-name-render required)
                   "` does not outlive source lifetime `"
-                  (ci.intern-str source)
+                  (tc-lifetime-name-render source)
                   "` for contravariant lifetime parameter "
                   (string.int->string (+ index 1))
                   " of `"
@@ -26959,9 +26978,9 @@
             [(TcVarianceInvariant)
               (str_cat.str-cat
                 "; source lifetime `"
-                (ci.intern-str source)
+                (tc-lifetime-name-render source)
                 "` cannot satisfy required lifetime `"
-                (ci.intern-str required)
+                (tc-lifetime-name-render required)
                 "` because lifetime parameter "
                 (string.int->string (+ index 1))
                 " of `"
@@ -27091,11 +27110,16 @@
         (tc-global-shared-view actual)
         (tc-global-shared-view expected)
         message)]
+    [renamed : bool
+      (tc-types-differ-by-caller-lifetimes? ctx (& actual) (& expected))]
     [detail : String (tc-type-coercion-failure-detail ctx env expected actual)]
     [text : String
       (str_cat.str-cat
         base
-        (cdiag.compiler-diagnostic-untagged-message (string.copy (& detail))))]
+        (cdiag.compiler-diagnostic-untagged-message (string.copy (& detail)))
+        (if renamed
+          (tc-caller-lifetime-note)
+          ""))]
     (if (and
       (not context-kind)
       (cdiag.compiler-diagnostic-typecheck-tagged? (& detail)))
@@ -28744,35 +28768,109 @@
       unit))
   Ok)
 
+;; The element type of an array literal whose first element has type FIRST and
+;; whose other elements are EXPRS, joined left to right: an element of the same
+;; type as the elements before it, region tags aside as main's same-type test
+;; takes them, keeps their type, and otherwise the type one coerces to without
+;; dropping a region tag. So a longer-lived and a shorter-lived reference type
+;; mix in either order.
 (define (tc-check-array-rest
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (tc-check-array-rest-at ctx env (& exprs) elem-ty))
+  [first : ast.AstType]) : ResultTcType
+  (tc-check-array-rest-at ctx env (& exprs) first))
 
 (define (tc-check-array-rest-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (for [index (iterator.range 0 exprs.len)]
-    (let
-      [ty
-        (try
-          (tc-expr-with-expected-or-actual-id
+  [first : ast.AstType]) : ResultTcType
+  (let
+    [elem-ty : ast.AstType first]
+    (for [index (iterator.range 0 exprs.len)]
+      (let
+        [ty
+          (try
+            (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              (ast.ast-expr-list-get exprs index 0)
+              (tc-global-shared-view elem-ty)))]
+        (set! elem-ty (try (tc-array-element-join ctx env elem-ty ty)))))
+    (Ok elem-ty)))
+
+(define (tc-array-element-join
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [elem-ty : ast.AstType]
+  [ty : ast.AstType]) : ResultTcType
+  ;; A coercion may drop a region tag, so the type that gives way must carry
+  ;; none.
+  (let
+    [elem-id : i64 (ast.ast-node-pool-reader-type-push (& elem-ty))]
+    [ty-id : i64 (ast.ast-node-pool-reader-type-push (& ty))]
+    (cond
+      [(tc-type-eq (ast.ty-node-get elem-id) (ast.ty-node-get ty-id))
+        (Ok elem-ty)]
+      [(and
+          (not (tc-type-has-region-tag? (& ty)))
+          (tc-type-coercible?
             ctx
             env
-            (ast.ast-expr-list-get exprs index 0)
-            (tc-global-shared-view elem-ty)))]
-      [_
-        (try
-          (tc-expect
+            (ast.ty-node-get elem-id)
+            (ast.ty-node-get ty-id)))
+        (Ok elem-ty)]
+      [(and
+          (not (tc-type-has-region-tag? (& elem-ty)))
+          (tc-type-coercible?
+            ctx
+            env
+            (ast.ty-node-get ty-id)
+            (ast.ty-node-get elem-id)))
+        (Ok ty)]
+      [else
+        (Err
+          (tc-type-mismatch-message
             ty
-            (tc-global-shared-view elem-ty)
-            "typecheck: array elements must have same type"))]
-      unit))
-  Ok)
+            elem-ty
+            "typecheck: array elements must have same type"))])))
+
+;; Whether TY carries a region tag anywhere.
+(define (tc-type-has-region-tag? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(Region _ _) true]
+    [(or (Ref _ inner) (MutRef _ inner) (Invalidate _ inner) (Array inner _)
+         (DynArray inner) (Box inner) (Ptr inner) (MutPtr inner) (Slice inner))
+      (let
+        [element : ast.AstType (ast.ty-node-get inner)]
+        (tc-type-has-region-tag? (& element)))]
+    [(Tuple elems)
+      (for [index (iterator.range 0 (ast.ast-type-list-len (deref elems)))]
+        (let
+          [element : ast.AstType
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (deref elems)
+                index
+                (ast.ast-type-id-fallback)))]
+          (when (tc-type-has-region-tag? (& element)) (return true))))
+      false]
+    [(Func args ret)
+      (let
+        [result : ast.AstType (ast.ty-node-get ret)]
+        (when (tc-type-has-region-tag? (& result)) (return true))
+        (for [index (iterator.range 0 (ast.ast-type-list-len (deref args)))]
+          (let
+            [arg : ast.AstType
+              (ast.ty-node-get
+                (ast.ast-type-list-get
+                  (deref args)
+                  index
+                  (ast.ast-type-id-fallback)))]
+            (when (tc-type-has-region-tag? (& arg)) (return true))))
+        false)]
+    [_ false]))
 
 (define (tc-signature-lifetime-type-list-collect-into
   [types : ast.AstTypeList]
@@ -28896,17 +28994,58 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
-  (tc-bind-params-at ctx env (& params) 0 Nil))
+  (let
+    [collisions : TcNameIdList
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))]
+    (if (tc-name-id-list-empty? collisions)
+      (tc-bind-params-at ctx env (& params) 0 Nil Nil)
+      ;; A lambda inside a function checked under caller identities: its
+      ;; parameter types name them as its annotations do, and their markers
+      ;; stay below the function's parameters rather than bound again above
+      ;; its own (#8890).
+      (let
+        [rewritten : ast.AstParamList
+          (tc-param-list-rewritten-caller-lifetimes ctx env params)]
+        (tc-bind-params-at
+          ctx
+          env
+          (& rewritten)
+          0
+          Nil
+          (tc-caller-lifetime-ids
+            (tc-context-structural-session ctx)
+            collisions))))))
+
+;; PARAMS bound as `tc-bind-params` binds them, except that the markers of
+;; CALLERS, caller lifetimes a parameter or local of the body spells
+;; (`tc-fn-caller-lifetime-collisions`), lie below the parameters: such a
+;; parameter's own storage never outlives them (#8890).
+(define (tc-bind-params-below-callers
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params ast.AstParamList)]
+  [callers : TcNameIdList]) : TcTypeEnv
+  (tc-bind-params-at
+    ctx
+    (tc-bind-signature-lifetime-markers env params callers)
+    (& params)
+    0
+    Nil
+    callers))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [lifetimes : TcNameIdList]) : TcTypeEnv
+  [lifetimes : TcNameIdList]
+  [callers : TcNameIdList]) : TcTypeEnv
   (if (>= index (ast.ast-param-list-len params))
     (tc-bind-invalidate-marker
-      (tc-bind-signature-lifetime-markers env params lifetimes)
+      (tc-bind-signature-lifetime-markers
+        env
+        params
+        (tc-name-id-list-without-callers lifetimes callers))
       params)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
@@ -28921,7 +29060,16 @@
               (tc-resolve-type ctx (tc-global-shared-view ty))))
           params
           (+ index 1)
-          (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
+          (tc-signature-lifetime-type-collect-into ty name lifetimes)
+          callers)])))
+
+;; LIFETIMES without CALLERS, already bound below the parameters.
+(define (tc-name-id-list-without-callers
+  [lifetimes : TcNameIdList]
+  [callers : TcNameIdList]) : TcNameIdList
+  (if (tc-name-id-list-empty? callers)
+    lifetimes
+    (tc-name-id-list-difference lifetimes callers)))
 
 ;; --- `(:invalidate r T)` parameters (#6670) --------------------------------
 ;;
@@ -29016,21 +29164,39 @@
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier]
   [params : (& params ast.AstParamList)]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0 Nil))
+  (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0 Nil Nil))
+
+;; `tc-bind-params-below-callers` for the scoped carrier.
+(define (tc-type-env-scoped-carrier-bind-params-below-callers
+  [ctx : TcContext]
+  [carrier : TcTypeEnvScopedCarrier]
+  [params : (& params ast.AstParamList)]
+  [callers : TcNameIdList]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-bind-params-at
+    ctx
+    (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+      carrier
+      params
+      callers)
+    (& params)
+    0
+    Nil
+    callers))
 
 (define (tc-type-env-scoped-carrier-bind-params-at
   [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
+  [lifetimes : TcNameIdList]
+  [callers : TcNameIdList]) : TcTypeEnvScopedCarrier
   (if (>= index (ast.ast-param-list-len params))
     (let
       [out : TcTypeEnvScopedCarrier
         (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
           carrier
           params
-          lifetimes)]
+          (tc-name-id-list-without-callers lifetimes callers))]
       (match (tc-invalidate-marker-type params)
         [(Some marker)
           (tc-type-env-scoped-carrier-with-sidecar
@@ -29054,7 +29220,8 @@
               (tc-resolve-type ctx (tc-global-shared-view ty))))
           params
           (+ index 1)
-          (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
+          (tc-signature-lifetime-type-collect-into ty name lifetimes)
+          callers)])))
 
 (define (tc-bind-macro-params
   [ctx : TcContext]
@@ -31548,7 +31715,9 @@
             (tc-global-shared-view elem-ty)))]
       [_
         (try
-          (tc-expect
+          (tc-expect-noting-caller-lifetimes
+            ctx
+            env
             got
             (tc-global-shared-view elem-ty)
             "typecheck: array elements must have same type"))]
@@ -31642,15 +31811,8 @@
             (tc-dyn-array-literal-element-supported
               env
               (tc-global-shared-view first-ty)))]
-        (let
-          [_
-            (try
-              (tc-check-array-rest
-                ctx
-                env
-                rest
-                (tc-global-shared-view first-ty)))]
-          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& first-ty)))))))))
+        [elem-ty (try (tc-check-array-rest ctx env rest first-ty))]
+        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem-ty))))))))
 
 (define (tc-expr-dyn-array-literal-with-expected-or-actual
   [ctx : TcContext]
@@ -31761,7 +31923,9 @@
               (tc-global-shared-view want)))]
         [_
           (try
-            (tc-expect
+            (tc-expect-noting-caller-lifetimes
+              ctx
+              env
               (tc-global-shared-view got)
               (tc-global-shared-view want)
               "typecheck: tuple element type mismatch"))]
@@ -31951,7 +32115,16 @@
           env
           (tc-global-shared-view expected)
           (tc-global-shared-view actual))
-        (Ok (tc-contextual-result-type expected actual))]
+        (Ok
+          ;; A callee's formal spelling a lifetime the body checks under a
+          ;; caller identity, such as a constructor's own parameter, would
+          ;; relabel the argument with whatever that spelling names here
+          ;; (#8890).
+          (if (and
+            allow-mut-by-value-borrow
+            (tc-type-spells-caller-lifetime? ctx (& expected)))
+            actual
+            (tc-contextual-result-type expected actual)))]
       [(and
           allow-mut-by-value-borrow
           (tc-call-string-temporary-ref-compatible?
@@ -32199,7 +32372,11 @@
             [_
               (try
                 (tc-ensure-reference-type-does-not-escape-names
-                  (tc-global-shared-view body-ty)
+                  ;; By spelling, as lowering re-types it with the declared
+                  ;; lifetimes (#8890).
+                  (tc-type-declared-lifetimes
+                    ctx
+                    (tc-global-shared-view body-ty))
                   (tc-let-binding-list-add-bound-name-ids bindings Nil)))]
             (Ok body-ty))])]
     [(WithRegion region body)
@@ -32221,18 +32398,41 @@
       (let
         [_ (try (tc-normalize-dotted-local-field-node! ctx env place-box))]
         [lifetime : ast.AstBorrowLifetime
-          (ast.ast-borrow-lifetime-from-id lifetime-id)]
+          (tc-borrow-lifetime-caller-lifetimes ctx env lifetime-id)]
         [place : ast.AstExpr (tc-context-expr-get ctx place-box)]
-        (if (and mutable allow-mut-by-value-borrow)
-          (tc-borrow-expr-with-policy
-            ctx
-            (tc-context-expr-bases ctx)
-            env
-            mutable
-            lifetime
-            place
-            true)
-          (tc-expr ctx env expr)))]
+        (cond
+          [(and mutable allow-mut-by-value-borrow)
+            (tc-borrow-expr-with-policy
+              ctx
+              (tc-context-expr-bases ctx)
+              env
+              mutable
+              lifetime
+              place
+              true)]
+          ;; In a body checked under caller identities, a borrow through a
+          ;; caller reference expected at a same-spelled local's lifetime
+          ;; takes that shorter lifetime, which main gave it by comparing
+          ;; them as one id (#8890). Other borrows keep their own type, which
+          ;; ties their loan to the binding.
+          [(tc-name-id-list-empty?
+              (tc-body-caller-lifetimes (tc-context-body-state ctx)))
+            (tc-expr ctx env expr)]
+          [else
+            (match (tc-expr ctx env expr)
+              [(Ok actual)
+                (if (tc-type-borrows-caller-lifetime-spelled?
+                  ctx
+                  (& actual)
+                  (& expected))
+                  (tc-expr-result-with-expected-or-actual
+                    ctx
+                    env
+                    expected
+                    allow-mut-by-value-borrow
+                    (ResultTcType.Ok actual))
+                  (ResultTcType.Ok actual))]
+              [(Err message) (ResultTcType.Err message)])]))]
     [(Box inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
@@ -32266,7 +32466,12 @@
         [(No) (tc-init-expr ctx env expected)]
         [(Some ty)
           (let
-            [actual (try (tc-init-expr ctx env ty))]
+            [actual
+              (try
+                (tc-init-expr
+                  ctx
+                  env
+                  (tc-annotation-caller-lifetimes ctx env ty)))]
             (if (tc-type-compatible?
               (tc-global-shared-view expected)
               (tc-global-shared-view actual))
@@ -34273,8 +34478,12 @@
                   (csym.compiler-registries-variant-fields-indexed
                     (tc-context-symbols symbols-ctx)
                     handle))]
+              ;; A nullary variant holds no reference, so its lifetimes are
+              ;; free; spelled like a lifetime the checked function renames,
+              ;; they take the caller identity main took them for (#8890).
               (if (ast.ast-type-list-empty? (& fields))
-                (Ok (tc-tag-active-region env ret))
+                (Ok
+                  (tc-tag-active-region env (tc-type-caller-identities ctx ret)))
                 (Err
                   (tc-call-arity-count-message
                     (tc-context-expr-segment-bases ctx)
@@ -34440,12 +34649,39 @@
       (Ok subst)
       (Err (tc-call-lifetime-subst-mismatch-message)))))
 
+;; The substitution key that records FROM as fixed by an invariant occurrence.
+;; Lifetime ids are not negative, so it names no lifetime.
+(define (tc-lifetime-subst-pin-key [from : i64]) : i64
+  (- -2 from))
+
+(define (tc-lifetime-subst-pinned? [subst : TcLifetimeSubst] [from : i64]) : bool
+  (match (tc-lifetime-subst-lookup subst (tc-lifetime-subst-pin-key from))
+    [(Some _) true]
+    [(No) false]))
+
+;; SUBST binding FROM to TO, pinned there when VARIANCE is invariant.
+(define (tc-lifetime-subst-push-for-variance
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]
+  [variance : TcVariance]) : TcLifetimeSubst
+  (match variance
+    [(TcVarianceInvariant)
+      (tc-lifetime-subst-push
+        (tc-lifetime-subst-push subst from to)
+        (tc-lifetime-subst-pin-key from)
+        to)]
+    [_ (tc-lifetime-subst-push subst from to)]))
+
 ;; Call inference follows the formal occurrence's structural variance. A
 ;; covariant occurrence contributes an upper bound and therefore keeps the
 ;; shortest comparable actual lifetime; a contravariant occurrence contributes
 ;; a lower bound and keeps the longest. Invariant occurrences must agree
-;; exactly. Shadowing is safe because substitution lookup returns the newest
-;; binding first, and the fully substituted call is validated afterwards.
+;; exactly; one that meets a longer bound from covariant occurrences fixes the
+;; binding, so covariant and invariant occurrences agree in either order (a
+;; contravariant bound before an invariant one still fails). Shadowing is safe
+;; because substitution lookup returns the newest binding first, and the fully
+;; substituted call is validated afterwards.
 (define (tc-lifetime-subst-bind-for-variance
   [env : TcTypeEnv]
   [subst : TcLifetimeSubst]
@@ -34454,25 +34690,38 @@
   [variance : TcVariance]) : ResultTcLifetimeSubst
   (match (tc-lifetime-subst-lookup subst from)
     [(Some existing)
-      (if (= existing to)
-        (Ok subst)
-        (match variance
-          [(TcVarianceBivariant) (Ok subst)]
-          [(TcVarianceCovariant)
-            (cond
-              [(tc-lifetime-outlives-lifetime-id? env existing to)
-                (Ok (tc-lifetime-subst-push subst from to))]
-              [(tc-lifetime-outlives-lifetime-id? env to existing) (Ok subst)]
-              [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-          [(TcVarianceContravariant)
-            (cond
-              [(tc-lifetime-outlives-lifetime-id? env existing to) (Ok subst)]
-              [(tc-lifetime-outlives-lifetime-id? env to existing)
-                (Ok (tc-lifetime-subst-push subst from to))]
-              [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-          [(TcVarianceInvariant)
-            (Err (tc-call-lifetime-subst-mismatch-message))]))]
-    [(No) (Ok (tc-lifetime-subst-push subst from to))]))
+      (cond
+        [(= existing to)
+          (match variance
+            [(TcVarianceInvariant)
+              (if (tc-lifetime-subst-pinned? subst from)
+                (Ok subst)
+                (Ok
+                  (tc-lifetime-subst-push-for-variance subst from to variance)))]
+            [_ (Ok subst)])]
+        [else
+          (match variance
+            [(TcVarianceBivariant) (Ok subst)]
+            [(TcVarianceCovariant)
+              (cond
+                [(tc-lifetime-outlives-lifetime-id? env existing to)
+                  (Ok (tc-lifetime-subst-push subst from to))]
+                [(tc-lifetime-outlives-lifetime-id? env to existing) (Ok subst)]
+                [else (Err (tc-call-lifetime-subst-mismatch-message))])]
+            [(TcVarianceContravariant)
+              (cond
+                [(tc-lifetime-outlives-lifetime-id? env existing to) (Ok subst)]
+                [(tc-lifetime-outlives-lifetime-id? env to existing)
+                  (Ok (tc-lifetime-subst-push subst from to))]
+                [else (Err (tc-call-lifetime-subst-mismatch-message))])]
+            [(TcVarianceInvariant)
+              (if (and
+                (not (tc-lifetime-subst-pinned? subst from))
+                (tc-lifetime-outlives-lifetime-id? env existing to))
+                (Ok
+                  (tc-lifetime-subst-push-for-variance subst from to variance))
+                (Err (tc-call-lifetime-subst-mismatch-message)))])])]
+    [(No) (Ok (tc-lifetime-subst-push-for-variance subst from to variance))]))
 
 (define (tc-infer-call-lifetime-name
   [env : TcTypeEnv]
@@ -35528,7 +35777,10 @@
         [want : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
-        (if (tc-lifetime-subst-formal-inert? ctx (tc-global-shared-view want))
+        (if (tc-lifetime-subst-formal-inert?
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
           (tc-infer-call-lifetime-subst-at
             ctx
             env
@@ -35540,54 +35792,55 @@
             (+ index 1)
             lifetimes
             subst)
-          (match (let
-            [typed : ResultTcType
-              (tc-call-effective-arg-type
+          (match (tc-infer-call-own-arg-lifetime-subst
+            ctx
+            env
+            (& lifetimes)
+            subst
+            (ast.ast-expr-list-get args index 0)
+            params
+            index)
+            [(Ok own-subst)
+              (tc-infer-call-lifetime-subst-at
                 ctx
                 env
-                (tc-global-shared-view arg)
-                (tc-global-shared-view want))]
-            [typed-ok : bool
-              (match (& typed)
-                [(ResultTcType.Ok _) true]
-                [(ResultTcType.Err _) false])]
-            (if typed-ok
-              typed
-              (tc-call-arg-type-after-error
-                ctx
-                env
-                (tc-global-shared-view arg)
-                (tc-global-shared-view want)
-                typed)))
-            [(Ok got)
-              (match (tc-infer-lifetime-subst-from-type
-                ctx
-                env
-                (tc-global-shared-view lifetimes)
-                subst
-                (tc-global-shared-view want)
-                (tc-global-shared-view got)
-                (TcVarianceCovariant))
-                [(Ok next-subst)
-                  (tc-infer-call-lifetime-subst-at
+                func
+                all-args
+                all-params
+                args
+                params
+                (+ index 1)
+                lifetimes
+                own-subst)]
+            [(Err _)
+              (match (let
+                [typed : ResultTcType
+                  (tc-call-effective-arg-type
                     ctx
                     env
-                    func
-                    all-args
-                    all-params
-                    args
-                    params
-                    (+ index 1)
-                    lifetimes
-                    next-subst)]
-                [(Err _message)
-                  (match (tc-infer-lifetime-subst-from-mixed-source-type
+                    (tc-global-shared-view arg)
+                    (tc-global-shared-view want))]
+                [typed-ok : bool
+                  (match (& typed)
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])]
+                (if typed-ok
+                  typed
+                  (tc-call-arg-type-after-error
+                    ctx
+                    env
+                    (tc-global-shared-view arg)
+                    (tc-global-shared-view want)
+                    typed)))
+                [(Ok got)
+                  (match (tc-infer-lifetime-subst-from-type
                     ctx
                     env
                     (tc-global-shared-view lifetimes)
                     subst
                     (tc-global-shared-view want)
-                    (tc-global-shared-view got))
+                    (tc-global-shared-view got)
+                    (TcVarianceCovariant))
                     [(Ok next-subst)
                       (tc-infer-call-lifetime-subst-at
                         ctx
@@ -35600,30 +35853,138 @@
                         (+ index 1)
                         lifetimes
                         next-subst)]
-                    [(Err _)
-                      (let
-                        [canonical-want : ast.AstType
-                          (tc-canonicalize-inferred-type ctx want)]
-                        [canonical-got : ast.AstType
-                          (tc-canonicalize-inferred-type ctx got)]
-                        [required-want : ast.AstType
-                          (tc-lifetime-subst-type subst canonical-want)]
-                        (Err
-                          (tc-locate-error-at-expr
-                            (tc-context-expr-bases ctx)
-                            arg
-                            (tc-type-mismatch-message-in-context
-                              ctx
-                              env
-                              canonical-got
-                              required-want
-                              (tc-call-argument-message-prefix ctx func index)))))])])]
-            [(Err message)
-              (Err
-                (tc-locate-error-at-expr
-                  (tc-context-expr-bases ctx)
-                  arg
-                  message))]))))))
+                    [(Err _message)
+                      (match (tc-infer-lifetime-subst-from-mixed-source-type
+                        ctx
+                        env
+                        (tc-global-shared-view lifetimes)
+                        subst
+                        (tc-global-shared-view want)
+                        (tc-global-shared-view got))
+                        [(Ok next-subst)
+                          (tc-infer-call-lifetime-subst-at
+                            ctx
+                            env
+                            func
+                            all-args
+                            all-params
+                            args
+                            params
+                            (+ index 1)
+                            lifetimes
+                            next-subst)]
+                        [(Err _)
+                          (let
+                            [canonical-want : ast.AstType
+                              (tc-canonicalize-inferred-type ctx want)]
+                            [canonical-got : ast.AstType
+                              (tc-canonicalize-inferred-type ctx got)]
+                            [required-want : ast.AstType
+                              (tc-lifetime-subst-type subst canonical-want)]
+                            (Err
+                              (tc-locate-error-at-expr
+                                (tc-context-expr-bases ctx)
+                                arg
+                                (tc-type-mismatch-message-in-context
+                                  ctx
+                                  env
+                                  canonical-got
+                                  required-want
+                                  (tc-call-argument-message-prefix
+                                    ctx
+                                    func
+                                    index)))))])])]
+                [(Err message)
+                  (Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      arg
+                      message))])]))))))
+
+;; In a body checked under caller identities, a callee formal spelling such a
+;; lifetime names the callee's own lifetime parameter, which each call
+;; instantiates afresh, so the spelling must not name the body's binding inside
+;; argument INDEX, the node ARG-ID (#8890). The argument is typed against the
+;; formal with that spelling read as the caller's lifetime, then on its own,
+;; and LIFETIMES are inferred from the first type that fits. Err when this does
+;; not apply or neither fits.
+(define (tc-infer-call-own-arg-lifetime-subst
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [subst : TcLifetimeSubst]
+  [arg-id : i64]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]) : ResultTcLifetimeSubst
+  (if (or
+    (tc-name-id-list-empty?
+      (tc-body-caller-lifetimes (tc-context-body-state ctx)))
+    (not
+      (tc-type-spells-caller-lifetime? ctx (& (tc-call-formal-at params index)))))
+    (ResultTcLifetimeSubst.Err "")
+    (match (match (tc-expr-with-expected-or-actual-core-id
+      ctx
+      env
+      arg-id
+      (tc-type-caller-identities ctx (tc-call-formal-at params index))
+      true)
+      [(Ok got)
+        (tc-infer-lifetime-subst-from-type
+          ctx
+          env
+          (tc-lifetime-list-owned-copy lifetimes)
+          subst
+          (tc-call-formal-at params index)
+          got
+          (TcVarianceCovariant))]
+      [(Err message) (ResultTcLifetimeSubst.Err message)])
+      [(Ok caller-subst) (ResultTcLifetimeSubst.Ok caller-subst)]
+      [(Err _)
+        (match (tc-expr-id ctx env arg-id)
+          [(Ok got)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              env
+              (tc-lifetime-list-owned-copy lifetimes)
+              subst
+              (tc-call-formal-at params index)
+              got
+              (TcVarianceCovariant))]
+          [(Err message) (ResultTcLifetimeSubst.Err message)])])))
+
+(define (tc-call-formal-at [params : (& params ast.AstTypeList)] [index : i64]) : ast.AstType
+  (ast.ty-node-get
+    (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
+
+(define (tc-lifetime-list-owned-copy
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]) : ast.AstLifetimeList
+  (let
+    [out : ast.AstLifetimeList
+      (ast.ast-lifetime-list-with-capacity
+        (ast.ast-lifetime-list-len lifetimes))]
+    (ast.ast-lifetime-list-copy-into lifetimes (&mut out) 0)
+    out))
+
+;; TY with each lifetime the checked function renames replaced by its caller
+;; identity.
+(define (tc-type-caller-identities [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [identities : TcLifetimeSubst TcLifetimeSubst.Nil]
+    [cursor : TcNameIdList
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (set!
+          identities
+          (tc-lifetime-subst-push
+            identities
+            lifetime
+            (tc-caller-lifetime-identity session lifetime)))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (tc-type-caller-lifetime-subst identities ty)))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
@@ -38234,7 +38595,8 @@
                             (let
                               [_
                                 (try
-                                  (tc-ensure-region-value-can-flow-into
+                                  (tc-ensure-body-region-value-can-flow-into
+                                    ctx
                                     env
                                     target
                                     got
@@ -40998,8 +41360,10 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(Binding name maybe-ty init-box)
+      [(Binding name written-ty init-box)
         (let
+          [maybe-ty : ast.AstMaybeType
+            (tc-maybe-annotation-caller-lifetimes ctx env written-ty)]
           [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           [resolved-maybe-ty : ast.AstMaybeType
             (tc-let-binding-resolve-maybe-type ctx maybe-ty)]
@@ -42092,8 +42456,10 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(Binding name maybe-ty init-box)
+      [(Binding name written-ty init-box)
         (let
+          [maybe-ty : ast.AstMaybeType
+            (tc-maybe-annotation-caller-lifetimes ctx env written-ty)]
           [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           [init-ty
             (try
@@ -42176,7 +42542,7 @@
                             index
                             name
                             init-box
-                            binding-ty
+                            (tc-type-declared-lifetimes ctx binding-ty)
                             applied.transition)
                           applied.env)
                         (tc-bind-initialized-value-id
@@ -42228,7 +42594,7 @@
                           index
                           name
                           init-box
-                          binding-ty
+                          (tc-type-declared-lifetimes ctx binding-ty)
                           applied.transition)
                         applied.env)
                       (tc-bind-initialized-value-id
@@ -42755,7 +43121,12 @@
       (tc-spmd-inline-helper-stack-push-for-state! traversal name-id)]
     [result : ResultTcSpmdExprInfo
       (Err (tc-spmd-inline-helper-recursive-message))]
+    ;; The helper's annotations are its own, not the caller's (#8890).
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    [caller-lifetimes : TcNameIdList (tc-body-caller-lifetimes body-state)]
+    (tc-body-caller-lifetimes-set! body-state Nil)
     (set! result (tc-spmd-expr ctx expr-bases helper-env helper-spmd-env body))
+    (tc-body-caller-lifetimes-set! body-state caller-lifetimes)
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
     result))
 
@@ -43234,9 +43605,13 @@
     [previous : TcNameIdList
       (tc-spmd-inline-helper-stack-push-for-state! traversal name-id)]
     [result : ResultTcUnit (Err (tc-spmd-inline-helper-recursive-message))]
+    [body-state : TcBodyState (tc-context-body-state ctx)]
+    [caller-lifetimes : TcNameIdList (tc-body-caller-lifetimes body-state)]
+    (tc-body-caller-lifetimes-set! body-state Nil)
     (set!
       result
       (tc-spmd-masked-if-expr ctx expr-bases helper-env helper-spmd-env body))
+    (tc-body-caller-lifetimes-set! body-state caller-lifetimes)
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
     result))
 
@@ -52212,6 +52587,356 @@
         (set! rest (tc-name-id-list-rest rest))))
     out))
 
+(define (tc-store-escape-message [context : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: cannot store reference into longer-lived "
+    context
+    "; reference value would escape lexical scope"))
+
+;; `tc-expect` for a value stored into CONTEXT. In a body checked under caller
+;; identities a value that differs from the place only where it names a caller
+;; identity and the place the lifetime it renames compares by outlives, where
+;; main compared equal ids. A value that differs from the place
+;; only where the place names a caller identity and the value a lifetime spelled
+;; like it holds a shorter-lived reference there, which the store check reports
+;; as an escape (#8584, #8890).
+(define (tc-store-expect
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [actual : ast.AstType]
+  [expected : ast.AstType]
+  [message : String]
+  [context : String]) : ResultTcUnit
+  (if (tc-name-id-list-empty?
+    (tc-body-caller-lifetimes (tc-context-body-state ctx)))
+    (tc-expect actual expected message)
+    (let
+      [escapes : bool
+        (tc-type-shortens-caller-lifetimes? ctx (& actual) (& expected) false)]
+      [caller-found : bool
+        (tc-type-shortens-caller-lifetimes? ctx (& expected) (& actual) false)]
+      ;; Region tags aside, as main's `tc-expect` compares them; the store's
+      ;; region-flow check judges the tags.
+      (match (if caller-found
+        (tc-expect-in-context
+          ctx
+          env
+          (tc-type-without-regions actual)
+          (tc-type-without-regions expected)
+          message)
+        (tc-expect actual expected message))
+        [(Ok) Ok]
+        [(Err mismatch)
+          (Err
+            (if escapes
+              (tc-store-escape-message context)
+              mismatch))]))))
+
+;; `tc-expect` in a body checked under caller identities (#8890). A value that
+;; differs from EXPECTED only where it names a caller identity and EXPECTED,
+;; written in the body, the lifetime it renames coerces by outlives, region tags
+;; aside, as main took the two for one id. A mismatch between types that differ
+;; only where one names a caller identity and the other the lifetime it
+;; renames, which render alike, carries a note.
+(define (tc-expect-noting-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [actual : ast.AstType]
+  [expected : ast.AstType]
+  [message : String]) : ResultTcUnit
+  (let
+    [renamed : bool
+      (tc-types-differ-by-caller-lifetimes? ctx (& actual) (& expected))]
+    [caller-found : bool
+      (and
+        renamed
+        (tc-type-shortens-caller-lifetimes? ctx (& expected) (& actual) false))]
+    (match (if caller-found
+      (tc-expect-in-context
+        ctx
+        env
+        (tc-type-without-regions actual)
+        (tc-type-without-regions expected)
+        message)
+      (tc-expect actual expected message))
+      [(Ok) Ok]
+      [(Err mismatch)
+        (Err
+          (if renamed
+            (str_cat.str-cat mismatch (tc-caller-lifetime-note))
+            mismatch))])))
+
+(define (tc-caller-lifetime-note) : String
+  " (one type names this function's lifetime parameter where the other names a different lifetime spelled the same)")
+
+;; Whether ACTUAL and EXPECTED, in a body checked under caller identities, are
+;; one type but where, position by position, one names a caller identity and
+;; the other, by spelling, the lifetime it renames.
+(define (tc-types-differ-by-caller-lifetimes?
+  [ctx : TcContext]
+  [actual : (& actual ast.AstType)]
+  [expected : (& expected ast.AstType)]) : bool
+  (and
+    (not
+      (tc-name-id-list-empty?
+        (tc-body-caller-lifetimes (tc-context-body-state ctx))))
+    (tc-type-shortens-caller-lifetimes? ctx actual expected true)))
+
+;; Whether ACTUAL is EXPECTED, region tags aside, except that some lifetimes
+;; EXPECTED names as a caller identity ACTUAL names by the spelling it renames,
+;; or with EITHER, tags on both sides included, some lifetimes either names so
+;; and the other by spelling.
+(define (tc-type-shortens-caller-lifetimes?
+  [ctx : TcContext]
+  [actual : (& actual ast.AstType)]
+  [expected : (& expected ast.AstType)]
+  [either : bool]) : bool
+  ;; Without EITHER region tags are set aside; with it tags on both sides must
+  ;; correspond, so types that differ only in their tags do not count.
+  (match expected
+    [(Region expected-region inner)
+      (match actual
+        [(Region region actual-inner)
+          (if either
+            (and
+              (tc-lifetime-shortens-caller-lifetime?
+                ctx
+                region
+                expected-region
+                either)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                actual-inner
+                inner
+                either))
+            (let
+              [referent : ast.AstType (ast.ty-node-get inner)]
+              (tc-type-shortens-caller-lifetimes?
+                ctx
+                actual
+                (& referent)
+                either)))]
+        [_
+          (let
+            [referent : ast.AstType (ast.ty-node-get inner)]
+            (tc-type-shortens-caller-lifetimes? ctx actual (& referent) either))])]
+    [_
+      (match actual
+        [(Region _ inner)
+          (let
+            [referent : ast.AstType (ast.ty-node-get inner)]
+            (tc-type-shortens-caller-lifetimes?
+              ctx
+              (& referent)
+              expected
+              either))]
+        [(Ref lifetime inner)
+          (match expected
+            [(Ref expected-lifetime expected-inner)
+              (and
+                (tc-lifetime-shortens-caller-lifetime?
+                  ctx
+                  lifetime
+                  expected-lifetime
+                  either)
+                (tc-type-node-shortens-caller-lifetimes?
+                  ctx
+                  inner
+                  expected-inner
+                  either))]
+            [_ false])]
+        [(MutRef lifetime inner)
+          (match expected
+            [(MutRef expected-lifetime expected-inner)
+              (and
+                (tc-lifetime-shortens-caller-lifetime?
+                  ctx
+                  lifetime
+                  expected-lifetime
+                  either)
+                (tc-type-node-shortens-caller-lifetimes?
+                  ctx
+                  inner
+                  expected-inner
+                  either))]
+            [_ false])]
+        [(Array elem len)
+          (match expected
+            [(Array expected-elem expected-len)
+              (and
+                (= len expected-len)
+                (tc-type-node-shortens-caller-lifetimes?
+                  ctx
+                  elem
+                  expected-elem
+                  either))]
+            [_ false])]
+        [(DynArray elem)
+          (match expected
+            [(DynArray expected-elem)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                elem
+                expected-elem
+                either)]
+            [_ false])]
+        [(Slice elem)
+          (match expected
+            [(Slice expected-elem)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                elem
+                expected-elem
+                either)]
+            [_ false])]
+        [(Box elem)
+          (match expected
+            [(Box expected-elem)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                elem
+                expected-elem
+                either)]
+            [_ false])]
+        [(Ptr elem)
+          (match expected
+            [(Ptr expected-elem)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                elem
+                expected-elem
+                either)]
+            [_ false])]
+        [(MutPtr elem)
+          (match expected
+            [(MutPtr expected-elem)
+              (tc-type-node-shortens-caller-lifetimes?
+                ctx
+                elem
+                expected-elem
+                either)]
+            [_ false])]
+        [(Tuple elems)
+          (match expected
+            [(Tuple expected-elems)
+              (and
+                (=
+                  (ast.ast-type-list-len (deref elems))
+                  (ast.ast-type-list-len (deref expected-elems)))
+                (let
+                  [all : bool true]
+                  (for [index
+                    (iterator.range 0 (ast.ast-type-list-len (deref elems)))]
+                    (when
+                      (not
+                        (tc-type-node-shortens-caller-lifetimes?
+                          ctx
+                          (ast.ast-type-list-get
+                            (deref elems)
+                            index
+                            (ast.ast-type-id-fallback))
+                          (ast.ast-type-list-get
+                            (deref expected-elems)
+                            index
+                            (ast.ast-type-id-fallback))
+                          either))
+                      (set! all false)))
+                  all))]
+            [_ false])]
+        [(StructArgs name lifetimes)
+          (match expected
+            [(StructArgs expected-name expected-lifetimes)
+              (and
+                (= name expected-name)
+                (tc-lifetime-list-shortens-caller-lifetimes?
+                  ctx
+                  (deref lifetimes)
+                  (deref expected-lifetimes)
+                  either))]
+            [_ false])]
+        [(EnumArgs name lifetimes)
+          (match expected
+            [(EnumArgs expected-name expected-lifetimes)
+              (and
+                (= name expected-name)
+                (tc-lifetime-list-shortens-caller-lifetimes?
+                  ctx
+                  (deref lifetimes)
+                  (deref expected-lifetimes)
+                  either))]
+            [_ false])]
+        [_ false])]))
+
+(define (tc-type-node-shortens-caller-lifetimes?
+  [ctx : TcContext]
+  [actual : i64]
+  [expected : i64]
+  [either : bool]) : bool
+  (let
+    [actual-ty : ast.AstType (ast.ty-node-get actual)]
+    [expected-ty : ast.AstType (ast.ty-node-get expected)]
+    (or
+      (tc-type-shortens-caller-lifetimes?
+        ctx
+        (& actual-ty)
+        (& expected-ty)
+        either)
+      (tc-type-eq actual-ty expected-ty))))
+
+(define (tc-lifetime-list-shortens-caller-lifetimes?
+  [ctx : TcContext]
+  [actual : (& actual ast.AstLifetimeList)]
+  [expected : (& expected ast.AstLifetimeList)]
+  [either : bool]) : bool
+  (and
+    (= (ast.ast-lifetime-list-len actual) (ast.ast-lifetime-list-len expected))
+    (let
+      [all : bool true]
+      (for [index (iterator.range 0 (ast.ast-lifetime-list-len actual))]
+        (when
+          (not
+            (tc-lifetime-shortens-caller-lifetime?
+              ctx
+              (ast.ast-lifetime-list-get
+                actual
+                index
+                (ast.ast-lifetime-fallback))
+              (ast.ast-lifetime-list-get
+                expected
+                index
+                (ast.ast-lifetime-fallback))
+              either))
+          (set! all false)))
+      all)))
+
+;; Whether ACTUAL is EXPECTED or, where EXPECTED is a caller identity, the
+;; lifetime it renames; with EITHER, also EXPECTED that lifetime where ACTUAL is
+;; its caller identity.
+(define (tc-lifetime-shortens-caller-lifetime?
+  [ctx : TcContext]
+  [actual : i64]
+  [expected : i64]
+  [either : bool]) : bool
+  (or
+    (= actual expected)
+    (tc-lifetime-renames-to? ctx actual expected)
+    (and either (tc-lifetime-renames-to? ctx expected actual))))
+
+;; Whether CALLER is the caller identity the checked function renames LIFETIME
+;; to.
+(define (tc-lifetime-renames-to?
+  [ctx : TcContext]
+  [lifetime : i64]
+  [caller : i64]) : bool
+  (and
+    (tc-name-id-list-contains
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))
+      lifetime)
+    (=
+      (tc-caller-lifetime-identity (tc-context-structural-session ctx) lifetime)
+      caller)))
+
 ;; A referent lifetime outlives the `&mut` reference only while its name still
 ;; denotes the signature lifetime the referent type was written with.
 (define (tc-ensure-reference-lifetimes-can-store-at
@@ -52230,12 +52955,7 @@
             (tc-name-id-list-signature-lifetimes env implied))
           target-lifetime))
         Ok
-        (Err
-          (str_cat.str-cat
-            (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-            "typecheck: cannot store reference into longer-lived "
-            context
-            "; reference value would escape lexical scope")))]
+        (Err (tc-store-escape-message context)))]
     [(Err _)
       (Err
         (str_cat.str-cat
@@ -53970,10 +54690,15 @@
           [(No) (Ok (tc-bind-id env name ty))]
           [(Some annotation)
             (let
-              [expected : ast.AstType (tc-resolve-type ctx annotation)]
+              [expected : ast.AstType
+                (tc-resolve-type
+                  ctx
+                  (tc-annotation-caller-lifetimes ctx env annotation))]
               [_
                 (try
-                  (tc-expect
+                  (tc-expect-noting-caller-lifetimes
+                    ctx
+                    env
                     (tc-global-shared-view ty)
                     (tc-global-shared-view expected)
                     "typecheck: pattern binding type mismatch"))]
@@ -54463,10 +55188,15 @@
           [(No) (Ok (tc-bind-id env name actual))]
           [(Some annotation)
             (let
-              [expected : ast.AstType (tc-resolve-type ctx annotation)]
+              [expected : ast.AstType
+                (tc-resolve-type
+                  ctx
+                  (tc-annotation-caller-lifetimes ctx env annotation))]
               [_
                 (try
-                  (tc-expect
+                  (tc-expect-noting-caller-lifetimes
+                    ctx
+                    env
                     (tc-global-shared-view actual)
                     (tc-global-shared-view expected)
                     "typecheck: pattern binding type mismatch"))]
@@ -58554,6 +59284,41 @@
     [inner-ty (try (tc-expr ctx env inner))]
     (Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty))))))
 
+;; Boxed contents of type ACTUAL against the expected contents type, the type
+;; at node EXPECTED: incompatible contents keep their own type, for the consumer
+;; to reject, where the expected contents carry lifetimes; a reference matches
+;; through its referent, which the box copies. Contents without lifetimes take
+;; the expected type unchecked, as before (#8890).
+(define (tc-box-contents-match
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : i64]
+  [actual : ast.AstType]) : TcInferredTypeMatch
+  (if (tc-name-id-list-empty?
+    (tc-signature-lifetime-type-collect-into (ast.ty-node-get expected) -1 Nil))
+    (Compatible actual)
+    (let
+      [referent : i64
+        (match (ast.ty-node-get expected)
+          [(or (Ref _ _) (MutRef _ _)) -1]
+          [_
+            (match (& actual)
+              [(or (Ref _ inner) (MutRef _ inner)) inner]
+              [_ -1])])]
+      (if (< referent 0)
+        (tc-match-inferred-type-for-expected
+          ctx
+          env
+          actual
+          (ast.ty-node-get expected))
+        (match (tc-match-inferred-type-for-expected
+          ctx
+          env
+          (ast.ty-node-get referent)
+          (ast.ty-node-get expected))
+          [(Compatible _) (Compatible actual)]
+          [(Mismatch _) (Mismatch actual)])))))
+
 (define (tc-box-expr-with-expected-or-actual
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -58576,11 +59341,12 @@
               env
               inner
               (tc-global-shared-view expected-inner-ty)))]
-        (Ok
-          (tc-tag-active-region
-            env
-            (ast.ast-ty-box
-              (& (tc-contextual-result-type expected-inner-ty inner-ty))))))]
+        [boxed : ast.AstType
+          (match (tc-box-contents-match ctx env expected-inner inner-ty)
+            [(Compatible contents)
+              (tc-contextual-result-type expected-inner-ty contents)]
+            [(Mismatch contents) contents])]
+        (Ok (tc-tag-active-region env (ast.ast-ty-box (& boxed)))))]
     [_ (tc-box-expr ctx env inner)]))
 
 (define (tc-box-get-expr
@@ -58816,16 +59582,20 @@
             (tc-global-shared-view inner-ty)))]
       [_
         (try
-          (tc-expect
+          (tc-store-expect
+            ctx
+            env
             (tc-global-shared-view value-ty)
             (tc-global-shared-view inner-ty)
-            "typecheck: box assignment type mismatch"))]
+            "typecheck: box assignment type mismatch"
+            (string.copy (& target-context))))]
       (let
         [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
         (let
           [_
             (try
-              (tc-ensure-region-value-can-flow-into
+              (tc-ensure-body-region-value-can-flow-into
+                ctx
                 env
                 inner-ty
                 (tc-global-shared-view value-ty)
@@ -59576,7 +60346,9 @@
           (let
             [_
               (try
-                (tc-expect
+                (tc-expect-noting-caller-lifetimes
+                  ctx
+                  lambda-env
                   body-ty
                   (tc-resolve-type ctx (tc-global-shared-view ret))
                   "typecheck: lambda return type mismatch"))]
@@ -59644,13 +60416,15 @@
 (define (tc-lambda-expr-with-capture-check
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [maybe-ret : ast.AstMaybeType]
+  [written-params : ast.AstParamList]
+  [written-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcType
-  (match maybe-ret
+  (match (tc-maybe-annotation-caller-lifetimes ctx env written-ret)
     [(Some ret)
       (let
+        [params : ast.AstParamList
+          (tc-param-list-annotation-caller-lifetimes ctx env written-params)]
         [signature : TcElidedSignature
           (try
             (tc-elide-function-signature (tc-context-type-bases ctx) params ret))]
@@ -59663,6 +60437,8 @@
           allow-immutable-reference-captures))]
     [(No)
       (let
+        [params : ast.AstParamList
+          (tc-param-list-annotation-caller-lifetimes ctx env written-params)]
         [inputs : TcElidedParams
           (try
             (tc-elide-input-params-at
@@ -59924,7 +60700,8 @@
                 (let
                   [_
                     (try
-                      (tc-ensure-region-value-can-flow-into
+                      (tc-ensure-body-region-value-can-flow-into
+                        ctx
                         env
                         (tc-global-shared-view place-ty)
                         (tc-global-shared-view replacement-ty)
@@ -59979,13 +60756,20 @@
           (tc-global-shared-view elem-ty)))]
     [_
       (try
-        (tc-expect (tc-global-shared-view value-ty) elem-ty mismatch-message))]
+        (tc-store-expect
+          ctx
+          env
+          (tc-global-shared-view value-ty)
+          elem-ty
+          mismatch-message
+          "array"))]
     (let
       [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
       (let
         [_
           (try
-            (tc-ensure-region-value-can-flow-into
+            (tc-ensure-body-region-value-can-flow-into
+              ctx
               env
               array-ty
               (tc-global-shared-view value-ty)
@@ -60078,7 +60862,9 @@
             (tc-global-shared-view field-ty)))]
       [_
         (try
-          (tc-expect
+          (tc-store-expect
+            ctx
+            env
             (tc-global-shared-view value-ty)
             (tc-global-shared-view field-ty)
             (if (ast.ast-tuple-set-field-id? field-id)
@@ -60087,13 +60873,17 @@
                 "typecheck: tuple element assignment type mismatch")
               (tc-kind-message
                 (TypeMismatch)
-                "typecheck: struct field assignment type mismatch"))))]
+                "typecheck: struct field assignment type mismatch"))
+            (if (ast.ast-tuple-set-field-id? field-id)
+              "tuple element"
+              "struct field")))]
       (let
         [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
         (let
           [_
             (try
-              (tc-ensure-region-value-can-flow-into
+              (tc-ensure-body-region-value-can-flow-into
+                ctx
                 env
                 field-ty
                 (tc-global-shared-view value-ty)
@@ -60442,7 +61232,8 @@
               (let
                 [_
                   (try
-                    (tc-ensure-region-value-can-flow-into
+                    (tc-ensure-body-region-value-can-flow-into
+                      ctx
                       env
                       var-ty
                       (tc-global-shared-view value-ty)
@@ -60548,7 +61339,11 @@
     [expected-ty
       (try
         (if (>= expected-id 0)
-          (tc-for-owned-expected-type ctx expected-id)
+          (match (tc-for-owned-expected-type ctx expected-id)
+            [(Ok annotation)
+              (ResultTcType.Ok
+                (tc-annotation-caller-lifetimes ctx env annotation))]
+            [(Err message) (ResultTcType.Err message)])
           (ResultTcType.Ok (tc-global-shared-view elem-ty))))]
     [_
       (try
@@ -60681,14 +61476,20 @@
           " is compile-time only"))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
-        [(Some ty) (tc-init-expr ctx env ty)]
+        [(Some ty)
+          (tc-init-expr ctx env (tc-annotation-caller-lifetimes ctx env ty))]
         [(No)
           (Err
             "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
     [(Ann inner-box ty-id)
       (let
         [want-ty : ast.AstType
-          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
+          (tc-resolve-type
+            ctx
+            (tc-annotation-caller-lifetimes
+              ctx
+              env
+              (tc-context-type-get ctx ty-id)))]
         [got
           (try
             (tc-expr-with-expected-or-actual-id
@@ -60698,7 +61499,9 @@
               (tc-global-shared-view want-ty)))]
         [_
           (try
-            (tc-expect
+            (tc-expect-noting-caller-lifetimes
+              ctx
+              env
               (tc-global-shared-view got)
               (tc-global-shared-view want-ty)
               "typecheck: annotation type mismatch"))]
@@ -60717,7 +61520,11 @@
             [_
               (try
                 (tc-ensure-reference-type-does-not-escape-names
-                  (tc-global-shared-view body-ty)
+                  ;; By spelling, as lowering re-types it with the declared
+                  ;; lifetimes (#8890).
+                  (tc-type-declared-lifetimes
+                    ctx
+                    (tc-global-shared-view body-ty))
                   (tc-let-binding-list-add-bound-name-ids bindings Nil)))]
             (Ok body-ty))])]
     [(Lambda lambda-box)
@@ -60764,26 +61571,30 @@
             [rest : ast.AstExprList
               (ast.ast-expr-list-tail-from-ref (& exprs) 1)]
             [first-ty (try (tc-expr-id ctx env first))]
-            [_
-              (try
-                (tc-check-array-rest
-                  ctx
-                  env
-                  rest
-                  (tc-global-shared-view first-ty)))]
-            (Ok (ast.ast-ty-array (& first-ty) (tc-expr-list-len exprs))))))]
+            [elem-ty (try (tc-check-array-rest ctx env rest first-ty))]
+            (Ok (ast.ast-ty-array (& elem-ty) (tc-expr-list-len exprs))))))]
     [(DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(FixedMakeArray elem-ty-id len-box)
       (tc-fixed-make-array-expr
         ctx
         env
-        (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))
+        (tc-resolve-type
+          ctx
+          (tc-annotation-caller-lifetimes
+            ctx
+            env
+            (tc-context-type-get ctx elem-ty-id)))
         (tc-context-expr-get ctx len-box))]
     [(MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
         [elem : ast.AstType
-          (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))]
+          (tc-resolve-type
+            ctx
+            (tc-annotation-caller-lifetimes
+              ctx
+              env
+              (tc-context-type-get ctx elem-ty-id)))]
         [len-ty
           (try (tc-expr-with-expected-or-actual-id ctx env len-box (I64)))]
         (cond
@@ -60968,7 +61779,12 @@
       (let
         [inner-ty (try (tc-expr-id ctx env inner-box))]
         [target-ty : ast.AstType
-          (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
+          (tc-resolve-type
+            ctx
+            (tc-annotation-caller-lifetimes
+              ctx
+              env
+              (tc-context-type-get ctx ty-id)))]
         (if (and
           (tc-castable-type? (tc-global-shared-view inner-ty))
           (tc-castable-type? (tc-global-shared-view target-ty)))
@@ -60991,7 +61807,7 @@
           (tc-context-expr-bases ctx)
           env
           mutable
-          (ast.ast-borrow-lifetime-from-id lifetime-id)
+          (tc-borrow-lifetime-caller-lifetimes ctx env lifetime-id)
           (tc-context-expr-get ctx place-box)))]
     [(Unary op inner-box)
       (let
@@ -61448,7 +62264,10 @@
     [(Continue) (tc-loop-control-expr env "continue")]
     [(PtrNull ty-id)
       (let
-        [resolved : ast.AstType (tc-resolve-type ctx (ast.ty-node-get ty-id))]
+        [resolved : ast.AstType
+          (tc-resolve-type
+            ctx
+            (tc-annotation-caller-lifetimes ctx env (ast.ty-node-get ty-id)))]
         (match (tc-global-shared-view resolved)
           [(CFunc _ mode)
             (if (ast.ast-c-function-mode-nullable? mode)
@@ -61487,7 +62306,11 @@
     [(PtrCast ptr-box target-id)
       (let
         [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
-        (tc-ptr-cast-expr ctx env ptr (ast.ty-node-get target-id)))]
+        (tc-ptr-cast-expr
+          ctx
+          env
+          ptr
+          (tc-annotation-caller-lifetimes ctx env (ast.ty-node-get target-id))))]
     [(PtrToInt ptr-box)
       (let
         [ptr : ast.AstExpr (tc-context-expr-get ctx ptr-box)]
@@ -61495,7 +62318,11 @@
     [(IntToPtr value-box target-id)
       (let
         [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (tc-int-to-ptr-expr ctx env value (ast.ty-node-get target-id)))]
+        (tc-int-to-ptr-expr
+          ctx
+          env
+          value
+          (tc-annotation-caller-lifetimes ctx env (ast.ty-node-get target-id))))]
     [(StringData str-box)
       (let
         [str : ast.AstExpr (tc-context-expr-get ctx str-box)]
@@ -116170,6 +116997,724 @@
           params))]
     [_ params]))
 
+;; Lifetime names and value bindings share one name space, and a binding
+;; shadows a lifetime of the same spelling (#8890). A signature lifetime
+;; spelled like a scalar parameter, or like a name the body binds or reads,
+;; would then name that binding's storage inside the body, and a reference to
+;; callee-owned storage could flow into a caller-owned place typed with it.
+;; Such a lifetime is checked under a fresh identity that keeps its spelling for
+;; diagnostics, so the caller's lifetime and that storage never share an id.
+;; Lifetimes spelled like a parameter of another type, and `with-arena` regions
+;; spelled like a caller lifetime, keep main's behaviour (#8998). Callers keep
+;; the declared signature. The ordinal lies far beyond macro hygiene's.
+(define tc-caller-lifetime-ordinal : i64
+  1125899906842624)
+
+(define (tc-caller-lifetime-identity
+  [session : cis.InternStructuralSessionHandle]
+  [lifetime : i64]) : i64
+  (cis.intern-fresh-local-identity-raw
+    (cis.intern-structural-session-fresh-local-identity
+      session
+      tc-caller-lifetime-ordinal
+      lifetime)))
+
+;; The first segment of the dotted source name NAME, or NAME itself.
+(define (tc-dotted-name-first-segment-id [name : i64]) : i64
+  (let
+    [segment : i64 name]
+    (while (and
+      (>= segment 0)
+      (< segment (ci.intern-capacity))
+      (ci.intern-dotted? segment))
+      (set! segment (ci.intern-dotted-prefix-id segment)))
+    segment))
+
+;; The bit of NAME's position in CANDIDATES, or 0 when it is not one.
+;; Positions past 62 share the top bit, so a collision there renames them all.
+(define (tc-name-id-list-member-bit [candidates : TcNameIdList] [name : i64]) : i64
+  (let
+    [cursor : TcNameIdList candidates]
+    [index : i64 0]
+    [bit : i64 0]
+    (while (and (= bit 0) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (= (tc-name-id-list-head cursor) name)
+        (set!
+          bit
+          (shl
+            1
+            (if (< index 62)
+              index
+              62))))
+      (set! cursor (tc-name-id-list-rest cursor))
+      (+= index 1))
+    bit))
+
+;; Add to FOUND the bit of each name of NAMES that CANDIDATES holds.
+(define (tc-name-id-list-note-members!
+  [candidates : TcNameIdList]
+  [found : (&mut found i64)]
+  [names : TcNameIdList]) : unit
+  (let
+    [cursor : TcNameIdList names]
+    (while (not (tc-name-id-list-empty? cursor))
+      (set!
+        (deref found)
+        (bit-or
+          (deref found)
+          (tc-name-id-list-member-bit candidates (tc-name-id-list-head cursor))))
+      (set! cursor (tc-name-id-list-rest cursor)))))
+
+;; OUT plus the names of CANDIDATES whose bit FOUND has.
+(define (tc-name-id-list-append-members-of
+  [out : TcNameIdList]
+  [candidates : TcNameIdList]
+  [found : i64]) : TcNameIdList
+  (let
+    [result : TcNameIdList out]
+    [cursor : TcNameIdList candidates]
+    [index : i64 0]
+    (while (not (tc-name-id-list-empty? cursor))
+      (when
+        (!=
+          (bit-and
+            found
+            (shl
+              1
+              (if (< index 62)
+                index
+                62)))
+          0)
+        (set! result (tc-name-id-list-add result (tc-name-id-list-head cursor))))
+      (set! cursor (tc-name-id-list-rest cursor))
+      (+= index 1))
+    result))
+
+(define (tc-param-list-name-ids-at
+  [params : (& params ast.AstParamList)]
+  [index : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast.ast-param-list-len params))
+    out
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(Param name _ _)
+        (tc-param-list-name-ids-at
+          params
+          (+ index 1)
+          (tc-name-id-list-add out name))])))
+
+(define (tc-match-arm-list-bound-name-ids-at
+  [arms : (& arms ast.AstMatchArmList)]
+  [index : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast.ast-match-arm-list-len arms))
+    out
+    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
+      [(ast.AstMatchArm.Arm pattern _)
+        (tc-match-arm-list-bound-name-ids-at
+          arms
+          (+ index 1)
+          (tc-pattern-add-bound-name-ids pattern out))])))
+
+;; Add to BOUND the bit of each name of CANDIDATES, none a parameter's, that
+;; the expression EXPR-ID binds (a `let`, a match pattern, a lambda parameter
+;; or a resource), anywhere in it, and to READ the bit of each it reads, which
+;; catches the binding forms read by name (`for` items, foreach indexes); a
+;; dotted read counts for its first segment. An arena region is no read.
+;; A read of a top-level name counts too; renaming for it only binds that
+;; lifetime's marker below the parameters.
+(define (tc-expr-candidate-name-ids-into!
+  [expr-bases : i64]
+  [candidates : TcNameIdList]
+  [bound : (&mut bound i64)]
+  [read : (&mut read i64)]
+  [expr-id : i64]) : unit
+  (let
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
+    [leaf : bool
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+        [(ast.AstExpr.Var name)
+          (set!
+            (deref read)
+            (bit-or
+              (deref read)
+              (bit-or
+                (tc-name-id-list-member-bit candidates name)
+                (tc-name-id-list-member-bit
+                  candidates
+                  (tc-dotted-name-first-segment-id name)))))
+          true]
+        [(ast.AstExpr.Let let-box)
+          (match (__tl-box-place let-box)
+            [(ast.AstLet.Let bindings _)
+              (tc-name-id-list-note-members!
+                candidates
+                bound
+                (tc-let-binding-list-add-bound-name-ids-at (& bindings) Nil 0))
+              false])]
+        [(ast.AstExpr.Lambda lambda-box)
+          (match (__tl-box-place lambda-box)
+            [(ast.AstLambda.Lambda params _ _)
+              (tc-name-id-list-note-members!
+                candidates
+                bound
+                (tc-param-list-name-ids-at (& params) 0 Nil))
+              false])]
+        [(ast.AstExpr.Match match-box)
+          (match (__tl-box-place match-box)
+            [(ast.AstMatch.Match _ arms)
+              (tc-name-id-list-note-members!
+                candidates
+                bound
+                (tc-match-arm-list-bound-name-ids-at (& arms) 0 Nil))
+              false])]
+        [(ast.AstExpr.WithResource resource-box)
+          (match (__tl-box-place resource-box)
+            [(ast.AstWithResource.WithResource bindings _)
+              (for [index
+                (iterator.range
+                  0
+                  (ast.ast-resource-binding-list-len (& bindings)))]
+                (match (ast.ast-resource-binding-list-get
+                  (& bindings)
+                  index
+                  (ast.ast-resource-binding-fallback))
+                  [(Binding name _ _ _)
+                    (set!
+                      (deref bound)
+                      (bit-or
+                        (deref bound)
+                        (tc-name-id-list-member-bit candidates name)))]))
+              false])]
+        [_ false])]
+    (unless
+      leaf
+      (ast.ast-expr-for-each-child
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+        tc-expr-candidate-name-ids-into!
+        ast.ast-child-unit
+        ast.ast-child-unit
+        ast.ast-child-unit
+        expr-bases
+        candidates
+        bound
+        read))))
+
+;; Whether PARAMS has a parameter named NAME passed as one scalar word, whose
+;; borrow can only be of the callee's own copy.
+(define (tc-param-list-scalar-name-id?
+  [ctx : TcContext]
+  [params : (& params ast.AstParamList)]
+  [name-id : i64]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(Param name ty _)
+        (when
+          (= name name-id)
+          (return (tc-scalar-param-type? (tc-resolve-type ctx ty))))
+        unit]))
+  false)
+
+(define (tc-scalar-param-type? [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8) (F64) (F32) (Bool) (Char)
+         (Ptr _) (MutPtr _))
+      true]
+    [_ false]))
+
+;; OUT plus the lifetimes TY binds for incoming references outside function
+;; types: `tc-signature-lifetime-type-collect-into`'s, and slice elements'.
+(define (tc-caller-lifetime-type-collect-into
+  [ty : ast.AstType]
+  [out : TcNameIdList]) : TcNameIdList
+  (match ty
+    [(Func _ _) out]
+    [(Tuple elems)
+      (let
+        [result : TcNameIdList out]
+        (for [index (iterator.range 0 (ast.ast-type-list-len (deref elems)))]
+          (set!
+            result
+            (tc-caller-lifetime-type-collect-into
+              (ast.ty-node-get
+                (ast.ast-type-list-get
+                  (deref elems)
+                  index
+                  (ast.ast-type-id-fallback)))
+              result)))
+        result)]
+    [(or (Array elem _) (DynArray elem) (Box elem) (Ptr elem) (MutPtr elem)
+         (Region _ elem) (Slice elem))
+      (tc-caller-lifetime-type-collect-into (ast.ty-node-get elem) out)]
+    [(or (Ref lifetime inner) (MutRef lifetime inner)
+         (Invalidate lifetime inner))
+      (tc-caller-lifetime-type-collect-into
+        (ast.ty-node-get inner)
+        (tc-name-id-list-add out lifetime))]
+    [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
+      (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
+    [_ out]))
+
+;; Whether LIFETIME, a signature lifetime, is one this check can rename.
+(define (tc-caller-lifetime-renameable?
+  [session : cis.InternStructuralSessionHandle]
+  [lifetime : i64]) : bool
+  (and
+    (>= lifetime 0)
+    (ci.intern-renderable-id? lifetime)
+    (not (tc-elaborated-lifetime-hidden? lifetime))
+    (not (tc-program-lifetime-id? lifetime))
+    (cis.intern-structural-session-source-name-component-valid?
+      session
+      lifetime)))
+
+;; The lifetimes PARAMS bind for incoming references that a scalar parameter,
+;; or a name BODY binds or reads, spells. A borrow of such a binding would carry
+;; the caller's lifetime (#8890). A read counts because a macro the body calls,
+;; still unexpanded here, can bind a name passed to it. A lifetime only the
+;; result names stays tied to the parameter it spells, as does one spelled like
+;; a parameter of any other type; the body is walked only for lifetimes spelled
+;; like no parameter.
+(define (tc-fn-caller-lifetime-collisions
+  [ctx : TcContext]
+  [params : (& params ast.AstParamList)]
+  [body-id : i64]) : TcNameIdList
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [signature : TcNameIdList Nil]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param _ ty _)
+          (set! signature (tc-caller-lifetime-type-collect-into ty signature))]))
+    (if (tc-name-id-list-empty? signature)
+      Nil
+      (let
+        [collisions : TcNameIdList Nil]
+        [candidates : TcNameIdList Nil]
+        [cursor : TcNameIdList signature]
+        (while (not (tc-name-id-list-empty? cursor))
+          (let
+            [lifetime : i64 (tc-name-id-list-head cursor)]
+            (when
+              (and
+                (not (tc-name-id-list-contains collisions lifetime))
+                (not (tc-name-id-list-contains candidates lifetime))
+                (tc-caller-lifetime-renameable? session lifetime))
+              (cond
+                [(not (tc-param-list-has-name-id-at? params lifetime))
+                  (set! candidates (tc-name-id-list-add candidates lifetime))]
+                [(tc-param-list-scalar-name-id? ctx params lifetime)
+                  (set! collisions (tc-name-id-list-add collisions lifetime))]
+                [else unit]))
+            (set! cursor (tc-name-id-list-rest cursor))))
+        (if (tc-name-id-list-empty? candidates)
+          collisions
+          (let
+            [bound : i64 0]
+            [read : i64 0]
+            (tc-expr-candidate-name-ids-into!
+              (tc-context-expr-bases ctx)
+              candidates
+              (&mut bound)
+              (&mut read)
+              body-id)
+            (tc-name-id-list-append-members-of
+              collisions
+              candidates
+              (bit-or bound read))))))))
+
+;; Each lifetime of COLLISIONS mapped to its caller identity.
+(define (tc-caller-lifetime-renames
+  [session : cis.InternStructuralSessionHandle]
+  [collisions : TcNameIdList]) : TcLifetimeSubst
+  (let
+    [renames : TcLifetimeSubst TcLifetimeSubst.Nil]
+    [rest : TcNameIdList collisions]
+    (while (not (tc-name-id-list-empty? rest))
+      (let
+        [lifetime : i64 (tc-name-id-list-head rest)]
+        (set!
+          renames
+          (tc-lifetime-subst-push
+            renames
+            lifetime
+            (tc-caller-lifetime-identity session lifetime)))
+        (set! rest (tc-name-id-list-rest rest))))
+    renames))
+
+;; The caller identities of COLLISIONS.
+(define (tc-caller-lifetime-ids
+  [session : cis.InternStructuralSessionHandle]
+  [collisions : TcNameIdList]) : TcNameIdList
+  (let
+    [out : TcNameIdList Nil]
+    [rest : TcNameIdList collisions]
+    (while (not (tc-name-id-list-empty? rest))
+      (set!
+        out
+        (tc-name-id-list-add
+          out
+          (tc-caller-lifetime-identity session (tc-name-id-list-head rest))))
+      (set! rest (tc-name-id-list-rest rest)))
+    out))
+
+(define (tc-param-list-lifetime-subst
+  [subst : TcLifetimeSubst]
+  [params : ast.AstParamList]) : ast.AstParamList
+  (match subst
+    [(Nil) params]
+    [_
+      (let
+        [out : ast.AstParamList
+          (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
+        (for [index (iterator.range 0 (ast.ast-param-list-len (& params)))]
+          (match (ast.ast-param-list-get
+            (& params)
+            index
+            (ast.ast-param-fallback))
+            [(Param name ty mutable?)
+              (ast.ast-param-list-push
+                (&mut out)
+                (ast.AstParam.Param
+                  name
+                  (tc-lifetime-subst-type subst ty)
+                  mutable?))]))
+        out)]))
+
+(define (tc-type-caller-lifetime-subst
+  [subst : TcLifetimeSubst]
+  [ty : ast.AstType]) : ast.AstType
+  (match subst
+    [(Nil) ty]
+    [_ (tc-lifetime-subst-type subst ty)]))
+
+;; Whether the caller lifetime CALLER, renamed from LIFETIME, is what LIFETIME
+;; names in ENV: no parameter, local or inner signature lifetime spelled
+;; LIFETIME is bound after CALLER's marker (#8890). Top-level names lie below
+;; the marker and never shadow it.
+(define (tc-caller-lifetime-visible?
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [caller : i64]) : bool
+  (if (tc-type-env-scoped-runtime-active? env)
+    (let
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session carrier.env)]
+      [shadow : i64
+        (tc-type-env-scoped-stack-find-lifetime-index
+          (& carrier.sidecar.stack)
+          session
+          lifetime)]
+      [marker : i64
+        (tc-type-env-scoped-stack-find-lifetime-index
+          (& carrier.sidecar.stack)
+          session
+          caller)]
+      (cond
+        [(>= shadow 0) (< shadow marker)]
+        [(>= marker 0) true]
+        [else
+          (tc-caller-lifetime-visible-persistent?
+            (tc-type-env-scoped-carrier-persistent carrier)
+            lifetime
+            caller)]))
+    (tc-caller-lifetime-visible-persistent? env lifetime caller)))
+
+;; `tc-caller-lifetime-visible?` over a persistent ENV: CALLER's marker comes
+;; before any binding or inner signature marker spelled LIFETIME, or neither is
+;; bound.
+(define (tc-caller-lifetime-visible-persistent?
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [caller : i64]) : bool
+  (let
+    [marker-id : i64 (tc-signature-lifetime-marker-id)]
+    [cursor : TcTypeEnv env]
+    [answer : i64 0]
+    (while (= answer 0)
+      (match (tc-type-env-view cursor)
+        [(Nil) (set! answer 1)]
+        [(Cache _ scan-through _ rest _)
+          (if scan-through
+            (set! cursor rest)
+            (set! answer 1))]
+        [(Bind key ty rest)
+          (cond
+            [(= key lifetime) (set! answer 2)]
+            [(= key marker-id)
+              (match ty
+                [(Var id)
+                  (cond
+                    [(= id caller) (set! answer 1)]
+                    [(= id lifetime) (set! answer 2)]
+                    [else (set! cursor rest)])]
+                [_ (set! cursor rest)])]
+            [else (set! cursor rest)])]))
+    (= answer 1)))
+
+;; ANNOTATION, written in the checked function's body, with each lifetime
+;; checked under a caller identity that no binding in ENV shadows replaced by
+;; that identity, so the annotation names its lexical owner (#8890).
+(define (tc-annotation-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [annotation : ast.AstType]) : ast.AstType
+  (let
+    [collisions : TcNameIdList
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))]
+    (if (tc-name-id-list-empty? collisions)
+      annotation
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (tc-context-structural-session ctx)]
+        [visible : TcLifetimeSubst TcLifetimeSubst.Nil]
+        [cursor : TcNameIdList collisions]
+        (while (not (tc-name-id-list-empty? cursor))
+          (let
+            [lifetime : i64 (tc-name-id-list-head cursor)]
+            [caller : i64 (tc-caller-lifetime-identity session lifetime)]
+            (when
+              (tc-caller-lifetime-visible? env lifetime caller)
+              (set! visible (tc-lifetime-subst-push visible lifetime caller)))
+            (set! cursor (tc-name-id-list-rest cursor))))
+        (tc-type-caller-lifetime-subst visible annotation)))))
+
+;; Whether ACTUAL is a reference whose lifetime is the caller identity of the
+;; lifetime EXPECTED, a reference, spells.
+(define (tc-type-borrows-caller-lifetime-spelled?
+  [ctx : TcContext]
+  [actual : (& actual ast.AstType)]
+  [expected : (& expected ast.AstType)]) : bool
+  (let
+    [caller : i64
+      (match actual
+        [(or (Ref lifetime _) (MutRef lifetime _)) lifetime]
+        [_ -1])]
+    [spelling : i64
+      (match expected
+        [(or (Ref lifetime _) (MutRef lifetime _)) lifetime]
+        [_ -1])]
+    (and
+      (>= caller 0)
+      (>= spelling 0)
+      (tc-name-id-list-contains
+        (tc-body-caller-lifetimes (tc-context-body-state ctx))
+        spelling)
+      (=
+        (tc-caller-lifetime-identity
+          (tc-context-structural-session ctx)
+          spelling)
+        caller))))
+
+;; `tc-ensure-region-value-can-flow-into` for a value stored into CONTEXT. In a
+;; body checked under caller identities a caller lifetime also flows into a
+;; region named by the lifetime it renames, which main took for one id (#8890).
+(define (tc-ensure-body-region-value-can-flow-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-ty : ast.AstType]
+  [value-ty : ast.AstType]
+  [context : String]) : ResultTcUnit
+  (if (tc-name-id-list-empty?
+    (tc-body-caller-lifetimes (tc-context-body-state ctx)))
+    (tc-ensure-region-value-can-flow-into env target-ty value-ty context)
+    ;; A value region flows only into some target region, so a target without
+    ;; one takes no region-tagged value, as main's check rejects it.
+    (let
+      [target-regions : TcNameIdList (tc-type-collect-regions target-ty)]
+      [cursor : TcNameIdList
+        (tc-name-id-list-without-program (tc-type-collect-regions value-ty))]
+      [flows : bool true]
+      (while (and flows (not (tc-name-id-list-empty? cursor)))
+        (let
+          [region : i64 (tc-name-id-list-head cursor)]
+          (when
+            (not
+              (or
+                (tc-region-can-flow-into-any env region target-regions)
+                (tc-caller-identity-renames-any? ctx region target-regions)))
+            (set! flows false)))
+        (set! cursor (tc-name-id-list-rest cursor)))
+      (if flows
+        Ok
+        (Err
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+            "typecheck: cannot store region-tagged value into "
+            context
+            "; region value would escape"))))))
+
+;; Whether CALLER is the caller identity of a lifetime in REGIONS.
+(define (tc-caller-identity-renames-any?
+  [ctx : TcContext]
+  [caller : i64]
+  [regions : TcNameIdList]) : bool
+  (let
+    [cursor : TcNameIdList regions]
+    [found : bool false]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (tc-lifetime-renames-to? ctx (tc-name-id-list-head cursor) caller)
+        (set! found true))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    found))
+
+;; Whether TY spells, in a reference, a container, a pointer, a function type or
+;; a nominal lifetime argument, a lifetime the checked function renames.
+(define (tc-type-spells-caller-lifetime?
+  [ctx : TcContext]
+  [ty : (& ty ast.AstType)]) : bool
+  (let
+    [collisions : TcNameIdList
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))]
+    (and
+      (not (tc-name-id-list-empty? collisions))
+      (tc-type-spells-lifetime-in? ty collisions))))
+
+(define (tc-type-spells-lifetime-in?
+  [ty : (& ty ast.AstType)]
+  [lifetimes : TcNameIdList]) : bool
+  (match ty
+    [(or (Ref lifetime inner) (MutRef lifetime inner))
+      (or
+        (tc-name-id-list-contains lifetimes lifetime)
+        (let
+          [referent : ast.AstType (ast.ty-node-get inner)]
+          (tc-type-spells-lifetime-in? (& referent) lifetimes)))]
+    [(or (Array elem _) (DynArray elem) (Box elem) (Region _ elem) (Ptr elem)
+         (MutPtr elem) (Slice elem))
+      (let
+        [element : ast.AstType (ast.ty-node-get elem)]
+        (tc-type-spells-lifetime-in? (& element) lifetimes))]
+    [(Func args ret)
+      (let
+        [result : ast.AstType (ast.ty-node-get ret)]
+        (when (tc-type-spells-lifetime-in? (& result) lifetimes) (return true))
+        (for [index (iterator.range 0 (ast.ast-type-list-len (deref args)))]
+          (let
+            [arg : ast.AstType
+              (ast.ty-node-get
+                (ast.ast-type-list-get
+                  (deref args)
+                  index
+                  (ast.ast-type-id-fallback)))]
+            (when (tc-type-spells-lifetime-in? (& arg) lifetimes) (return true))))
+        false)]
+    [(Tuple elems)
+      (for [index (iterator.range 0 (ast.ast-type-list-len (deref elems)))]
+        (let
+          [element : ast.AstType
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (deref elems)
+                index
+                (ast.ast-type-id-fallback)))]
+          (when
+            (tc-type-spells-lifetime-in? (& element) lifetimes)
+            (return true))))
+      false]
+    [(or (EnumArgs _ args) (StructArgs _ args) (VarArgs _ args))
+      (for [index (iterator.range 0 (ast.ast-lifetime-list-len (deref args)))]
+        (when
+          (tc-name-id-list-contains
+            lifetimes
+            (ast.ast-lifetime-list-get
+              (deref args)
+              index
+              (ast.ast-lifetime-fallback)))
+          (return true)))
+      false]
+    [_ false]))
+
+;; TY with each caller identity of the checked function mapped back to the
+;; lifetime it renames: a fact recorded for lowering keeps the declared
+;; lifetimes, which lowering binds the parameters with (#8890).
+(define (tc-type-declared-lifetimes [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  (let
+    [collisions : TcNameIdList
+      (tc-body-caller-lifetimes (tc-context-body-state ctx))]
+    (if (tc-name-id-list-empty? collisions)
+      ty
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (tc-context-structural-session ctx)]
+        [declared : TcLifetimeSubst TcLifetimeSubst.Nil]
+        [cursor : TcNameIdList collisions]
+        (while (not (tc-name-id-list-empty? cursor))
+          (let
+            [lifetime : i64 (tc-name-id-list-head cursor)]
+            (set!
+              declared
+              (tc-lifetime-subst-push
+                declared
+                (tc-caller-lifetime-identity session lifetime)
+                lifetime))
+            (set! cursor (tc-name-id-list-rest cursor))))
+        (tc-lifetime-subst-type declared ty)))))
+
+;; The lifetime a borrow names, by tc-annotation-caller-lifetimes' rule.
+(define (tc-borrow-lifetime-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime-id : i64]) : ast.AstBorrowLifetime
+  (cond
+    [(< lifetime-id 0) (ast.AstBorrowLifetime.Inferred)]
+    [(tc-name-id-list-contains
+        (tc-body-caller-lifetimes (tc-context-body-state ctx))
+        lifetime-id)
+      (let
+        [caller : i64
+          (tc-caller-lifetime-identity
+            (tc-context-structural-session ctx)
+            lifetime-id)]
+        (ast.AstBorrowLifetime.Named
+          (if (tc-caller-lifetime-visible? env lifetime-id caller)
+            caller
+            lifetime-id)))]
+    [else (ast.AstBorrowLifetime.Named lifetime-id)]))
+
+;; PARAMS, a lambda's, with their types rewritten as annotations are: a
+;; lambda's lifetimes name the enclosing ones (#8890).
+(define (tc-param-list-annotation-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : ast.AstParamList]) : ast.AstParamList
+  (if (tc-name-id-list-empty?
+    (tc-body-caller-lifetimes (tc-context-body-state ctx)))
+    params
+    (tc-param-list-rewritten-caller-lifetimes ctx env (& params))))
+
+(define (tc-param-list-rewritten-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params ast.AstParamList)]) : ast.AstParamList
+  (let
+    [out : ast.AstParamList
+      (ast.ast-param-list-with-capacity (ast.ast-param-list-len params))]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name ty mutable?)
+          (ast.ast-param-list-push
+            (&mut out)
+            (ast.AstParam.Param
+              name
+              (tc-annotation-caller-lifetimes ctx env ty)
+              mutable?))]))
+    out))
+
+(define (tc-maybe-annotation-caller-lifetimes
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [annotation : ast.AstMaybeType]) : ast.AstMaybeType
+  (match annotation
+    [(Some written)
+      (ast.AstMaybeType.Some (tc-annotation-caller-lifetimes ctx env written))]
+    [(No) (ast.AstMaybeType.No)]))
+
 ;: Check one function declaration's body against its registered signature.
 (define (tc-check-fn-decl-body
   [ctx : TcContext]
@@ -116201,37 +117746,57 @@
         (tc-scoped-state-set-semantic-observer!
           (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))
           (tc-context-semantic-observer ctx)))]
+    ;; Signature lifetimes a binding could shadow take their caller identity
+    ;; (#8890); the declared signature is what callers and observers see.
+    [collisions : TcNameIdList
+      (tc-fn-caller-lifetime-collisions ctx (& registered-params) body-box)]
+    [caller-lifetimes : TcLifetimeSubst
+      (tc-caller-lifetime-renames
+        (tc-context-structural-session ctx)
+        collisions)]
+    [callers : TcNameIdList
+      (tc-caller-lifetime-ids (tc-context-structural-session ctx) collisions)]
+    [checked-params : ast.AstParamList
+      (tc-param-list-lifetime-subst caller-lifetimes registered-params)]
+    [checked-ret : ast.AstType
+      (tc-type-caller-lifetime-subst caller-lifetimes resolved-ret)]
+    [checked-raw-ret : ast.AstType
+      (tc-type-caller-lifetime-subst caller-lifetimes ret)]
     [carrier : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-bind-return-type
-        (tc-type-env-scoped-carrier-bind-params
+        (tc-type-env-scoped-carrier-bind-params-below-callers
           ctx
           (tc-type-env-scoped-carrier-from-env global-env)
-          registered-params)
-        (tc-global-shared-view resolved-ret))]
+          checked-params
+          callers)
+        (tc-global-shared-view checked-ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     ;; The scoped carrier keeps parameters out of the persistent spine. Final
     ;; result matching runs after the carrier is restored, so retain an ordinary
     ;; environment for lifetime-outlives queries at that boundary.
     [comparison-env : TcTypeEnv
       (tc-bind-return-type
-        (tc-bind-params ctx global-env registered-params)
-        (tc-global-shared-view resolved-ret))]
+        (tc-bind-params-below-callers ctx global-env checked-params callers)
+        (tc-global-shared-view checked-ret))]
     [scoped-save : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter! carrier)]
     [body-state : TcBodyState (tc-context-body-state ctx)]
+    [enclosing-caller-lifetimes : TcNameIdList
+      (tc-body-caller-lifetimes body-state)]
     [semantic-observer : TcSemanticObserver
       (if (= tc-semantic-observed-jobs 0)
         (TcSemanticObserver 0)
         (tc-context-semantic-observer ctx))]
     [typed-result : ResultTcType
       (begin
+        (tc-body-caller-lifetimes-set! body-state collisions)
         (tc-body-early-exit-function-start! body-state)
         (tc-body-type-facts-start-recording! body-state)
         (tc-expr-with-expected-or-actual-id
           ctx
           env
           body-box
-          (tc-global-shared-view resolved-ret)))]
+          (tc-global-shared-view checked-ret)))]
     [_semantic-function-leave : unit
       (when
         (!= semantic-observer.address 0)
@@ -116254,7 +117819,7 @@
                 ctx
                 comparison-env
                 inferred
-                (tc-global-shared-view resolved-ret))]
+                (tc-global-shared-view checked-ret))]
             [got : ast.AstType
               (match (tc-global-shared-view matched-got)
                 [(or (Compatible actual) (Mismatch actual)) actual])]
@@ -116267,14 +117832,14 @@
                       ctx
                       comparison-env
                       actual
-                      (tc-global-shared-view resolved-ret)
+                      (tc-global-shared-view checked-ret)
                       "typecheck: return type mismatch"))])]
             (tc-body-type-facts-start-consuming! body-state)
             (match expect-result
               [(Ok)
                 (match (tc-ensure-region-value-can-flow-into
                   env
-                  (tc-global-shared-view resolved-ret)
+                  (tc-global-shared-view checked-ret)
                   (tc-global-shared-view got)
                   "return value")
                   [(Ok)
@@ -116282,9 +117847,9 @@
                       ctx
                       (tc-context-expr-bases ctx)
                       env
-                      registered-params
+                      checked-params
                       body-box
-                      resolved-ret)
+                      checked-ret)
                       [(Ok)
                         (let
                           [result : ResultTcUnit
@@ -116292,8 +117857,8 @@
                               ctx
                               (tc-context-expr-bases ctx)
                               env
-                              registered-params
-                              ret
+                              checked-params
+                              checked-raw-ret
                               body-box)]
                           (match (& result)
                             [(Ok)
@@ -116333,6 +117898,7 @@
         [(Err message)
           (tc-body-type-facts-clear! body-state)
           (Err message)])]
+    (tc-body-caller-lifetimes-set! body-state enclosing-caller-lifetimes)
     (when
       (!= semantic-observer.address 0)
       (tc-context-set-semantic-observer! ctx semantic-observer))

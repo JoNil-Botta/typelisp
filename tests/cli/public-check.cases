@@ -17,10 +17,183 @@ file bad-inline.tl
   (+ true 1))
 end-file
 
+file invalidation.tl
+(import stdlib.arena)
+(define (release [owner : (arena.Arena r) (:invalidate r)]) : unit
+  (arena.destroy-safe! owner))
+end-file
+
 case check-hello
 run check examples/hello.tl
 stderr empty
 stdout contains Type checking passed!
+
+case loader-error-codes
+target linux-x86_64 windows-x86_64
+each check compile
+file helper.tl
+(define answer : i64 42)
+end-file
+file missing.tl
+(import missing_module_8981)
+(define (main) : i64 0)
+end-file
+file include.tl
+(include-str contents "missing_8981.txt")
+(define (main) : i64 0)
+end-file
+file resolution.tl
+(import helper.answer.extra)
+(define (main) : i64 0)
+end-file
+file selected.tl
+(import helper.absent)
+(define (main) : i64 0)
+end-file
+file ambiguous.tl
+(import helper.answer)
+(define answer : i64 0)
+(define (main) : i64 0)
+end-file
+file identity.tl
+(import mismatched)
+(define (main) : i64 0)
+end-file
+file mismatched.tl
+(module different)
+(define answer : i64 42)
+end-file
+file duplicate.tl
+(module first)
+(module second)
+(define (main) : i64 0)
+end-file
+file broken.tl
+(define answer : i64 (if true 1))
+end-file
+file cross-file.tl
+(import broken)
+(define (main) : i64 0)
+end-file
+step missing-source
+run {{each}} "{{dir}}/missing.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr contains missing_module_8981.tl:1:1
+step missing-include
+run {{each}} "{{dir}}/include.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0302]: compiler-load: cannot read include-str
+stderr contains include.tl:1:1
+step invalid-selection
+run {{each}} "{{dir}}/resolution.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0303]: compiler-load: import 'helper.answer.extra'
+stderr contains resolution.tl:1:1
+step missing-selection
+run {{each}} "{{dir}}/selected.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'helper' has no selected item 'absent'
+stderr contains selected.tl:1:1
+step ambiguous-binding
+run {{each}} "{{dir}}/ambiguous.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0305]: compiler-load: unqualified import 'answer'
+stderr contains ambiguous.tl:1:1
+stderr contains ambiguous.tl:2:22
+stderr contains 'answer' is declared here
+step module-identity
+# An explicit module declaration overrides the inferred file identity.
+# Explicit loader-API expectations remain covered by compiler_load_tests.
+run {{each}} "{{dir}}/identity.tl" --target {{target}}
+stderr empty
+step duplicate-module
+run {{each}} "{{dir}}/duplicate.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+stderr contains duplicate.tl:1:1
+step imported-parse-error
+run {{each}} "{{dir}}/cross-file.tl" --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0103]: parse: if is missing its else branch
+stderr contains broken.tl:1:22
+stderr not-contains error[E03
+
+case loader-explanations
+each E0301 E0302 E0303 E0304 E0305 E0307
+run explain {{each}}
+stderr empty
+stdout contains {{each}}:
+stdout contains Description:
+stdout contains Minimal failing example:
+stdout contains Fix:
+stdout contains See also:
+
+case loader-unpublished-identity-code
+run explain E0306
+exit 1
+stdout empty
+stderr contains explain: unknown diagnostic code `E0306`
+run explain --list
+stderr empty
+stdout not-contains E0306
+stdout contains E0307: duplicate module declaration
+
+case loader-package-include-resolution
+target linux-x86_64 windows-x86_64
+each include-str include-str-comptime include-str-lzss include-bin
+file typelisp.pkg
+(package
+  (name "include_resolution")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file -x src/main.tl
+({{each}} contents "pkg:missing/data.txt")
+(define (main) : i64 0)
+end-file
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0303]: compiler-load: unknown package alias 'missing'
+stderr contains main.tl:1:1
+stderr not-contains __tl_tc_
+
+case loader-include-explanation
+run explain E0303
+stderr empty
+stdout contains E0303: cannot resolve import or include
+stdout contains unknown pkg: alias
+stdout contains include-str-comptime
+stdout contains include-str-lzss or include-bin
+stdout contains pkg:missing/data.txt
+
+case loader-generated-error-codes
+target linux-x86_64 windows-x86_64
+each check compile
+step generated-missing-import
+run {{each}} tests/safety/decls_generated_missing_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+step generated-missing-selection
+run {{each}} tests/safety/decls_generated_missing_selected_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'decls_generated_conflict_left' has no selected item 'missing'
+step generated-alias-collision
+run {{each}} tests/safety/decls_generated_conflicting_import_reject.tl --target {{target}}
+exit nonzero
+stdout empty
+stderr contains error[E0305]: compiler-load: ambiguous import alias 'dep'
 
 case check-parser-recovery-diagnostics
 file main.tl
@@ -616,6 +789,277 @@ stderr contains error[E0222]
 stderr contains while global `held` is borrowed
 stderr contains (via observe -> install!)
 
+
+case check-invalidated-parameter-function-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define (destroy-and-read
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  ({{each}} owner)
+  (string.string-length text))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:9:25 || main.tl:8: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:9:25 || main.tl:8: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-lambda-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define callback
+  (lambda ([owner : (arena.Arena r) (:invalidate r)] [text : (in r String)]) : i64
+    ({{each}} owner)
+    (string.string-length text)))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:8:27 || main.tl:7: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:8:27 || main.tl:7: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-nested-let-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(define (destroy-and-read
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  (let [n : i64 1]
+    ({{each}} owner)
+    (+ n (string.string-length text))))
+
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:10:32 || main.tl:9: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `text`
+stderr order main.tl:10:32 || main.tl:9: || = help: clone the owner
+stderr contains move of `text` happened here
+stderr not-contains __tl_tc_
+
+case check-invalidated-parameter-read-before-destroy
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x main.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+(define (read-and-destroy
+  [owner : (arena.Arena r) (:invalidate r)]
+  [text : (in r String)]) : i64
+  (let [length (string.string-length text)]
+    ({{each}} owner)
+    length))
+(define (main) : i64 42)
+end-file
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main.s"
+stderr empty
+stdout contains Wrote
+
+# A dotted field read of an invalidated parameter is located at the read in
+# multi-expression, `begin` and single-expression bodies (#8994).
+case check-invalidated-parameter-field-read-span
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena.destroy-safe! invalidation.release
+sh cp "{{work}}/invalidation.tl" "{{dir}}/invalidation.tl"
+file -x multi.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  ({{each}} owner)
+  (+ pair.count (string.string-length pair.text)))
+
+(define (main) : i64 42)
+end-file
+file -x begin.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  (begin
+    ({{each}} owner)
+    pair.count))
+
+(define (main) : i64 42)
+end-file
+file -x single.tl
+(import stdlib.arena)
+(import stdlib.string)
+(import invalidation)
+
+(defstruct Pair
+  (text String)
+  (count i64))
+
+(define (read-fields
+  [owner : (arena.Arena r) (:invalidate r)]
+  [pair : (in r Pair)]) : i64
+  (+ (begin ({{each}} owner) 0)
+     (string.string-length pair.text)))
+
+(define (main) : i64 42)
+end-file
+step check-multi
+run check "{{dir}}/multi.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order multi.tl:13:6 || multi.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step check-begin
+run check "{{dir}}/begin.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order begin.tl:14:5 || begin.tl:13: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step check-single
+run check "{{dir}}/single.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order single.tl:13:28 || single.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step compile-multi
+run compile "{{dir}}/multi.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/multi.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order multi.tl:13:6 || multi.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+step compile-single
+run compile "{{dir}}/single.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/single.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: use of moved value `pair`
+stderr order single.tl:13:28 || single.tl:12: || = help: clone the owner
+stderr contains move of `pair` happened here
+stderr not-contains __tl_tc_
+
+# #7976 assignment diagnostics are located at the `set!` target, and an owner
+# macro expanded in the importer at its invocation in the importer's file,
+# never at the macro template's own line.
+case check-foreign-global-write-locations
+target linux-x86_64 windows-x86_64
+step selected
+run check tests/safety/foreign_global_selected_set_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_selected_set_reject.tl:7:11
+step lambda
+run check tests/safety/foreign_global_lambda_set_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_lambda_set_reject.tl:9:15
+step owner-macro
+run check tests/safety/foreign_global_macro_write_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+stderr contains foreign_global_macro_write_reject.tl:7:5
+stderr not-contains foreign_global_macro_write_reject.tl:24:
+
+# A safe destroy or rewind blocked by a live `with` cleanup owner is located at
+# its arena or phase argument (#7944).
+case check-with-owner-invalidation-location
+target linux-x86_64 windows-x86_64
+step destroy
+run check tests/safety/with_owner_destroy_use_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+stderr contains with_owner_destroy_use_reject.tl:23:30
+step rewind
+run check tests/safety/with_owner_rewind_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+stderr contains with_owner_rewind_reject.tl:23:29
 
 # Unsafe callable effects survive type inference, qualification and unsafe scope.
 case check-string-raw-copy-function-values

@@ -94,6 +94,20 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+## Loader diagnostic codes
+
+The `loader-error-codes` public CLI case checks source-facing loader failures
+through check/compile on both targets, including cross-file parse forwarding,
+explicit module identity overrides, and a local collision's secondary label.
+`compiler_load_tests.tl` checks explicit loader-API identity mismatches and
+code/category parity between ordinary and package walkers, legal import cycles,
+pending generators and missing text/binary includes. Registry and explain
+tests require every published loader code to remain documented.
+`loader-package-include-resolution` checks E0303 and the include's source span
+for an unknown package alias on both targets. `loader-unpublished-identity-code`
+keeps E0306 out of the public registry and explanations; explicit API identity
+constraints remain tested as E0303 resolution errors.
+
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
@@ -310,6 +324,24 @@ the instructions and expected replacements use parsed IR text. Keep these
 checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
+
+The public-check `check-invalidated-parameter-*` cases retain read locations,
+invalidation secondary labels, ownership help and decoded E0208 diagnostics
+for multi-expression functions, lambdas and nested lets. Both direct safe
+destroy and imported invalidation helpers run through `check` and `compile`
+on both targets; compile covers opt0/1/2. Read-before-destroy cases must pass.
+`tc-copy-projection-source-views-reuse-checked-receiver-facts` also keeps the
+checked receiver lookup through source and macro views, with non-Copy and
+unknown fields retaining their consuming dereference.
+`check-invalidated-parameter-field-read-span` locates dotted field reads
+(`pair.count`, `pair.text`) at the read in multi-expression, `begin` and
+single-expression bodies; `compiler-check-invalidated-field-read-spans-ok?`
+pins the same primaries and origin labels through the virtual-source checker,
+and `tc-move-located-view-names-the-enclosing-read` the view itself.
+`check-foreign-global-write-locations` keeps #7976 writes at the `set!` target,
+and an owner macro's write at its invocation in the importer's file;
+`check-with-owner-invalidation-location` keeps E0212 at the arena or phase
+argument.
 
 `match_copy_loan_ends_ok` overwrites freshly borrowed enum, tuple, array and
 projected storage after pattern binding, including dynamic indexes, or-patterns,

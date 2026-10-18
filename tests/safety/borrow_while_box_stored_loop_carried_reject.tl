@@ -3,8 +3,11 @@
 (define (read-cell [cell : (Box (& n i64))]) : i64
   1)
 
-(define (main [n : i64] [cell : (Box (& n i64))] [limit : i64]) : i64
+(define (main [limit : i64]) : i64
   (let
+    [m : i64 0]
+    [n : i64 1]
+    [cell : (Box (& n i64)) (box (& m))]
     [i : i64 0]
     (begin
       (while (< i limit)

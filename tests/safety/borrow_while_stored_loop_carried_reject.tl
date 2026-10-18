@@ -3,8 +3,10 @@
 (define (read-items [items : (__tl_dyn-array (& n i64))]) : i64
   1)
 
-(define (main [n : i64] [items : (__tl_dyn-array (& n i64))] [limit : i64]) : i64
+(define (main [limit : i64]) : i64
   (let
+    [n : i64 1]
+    [items : (__tl_dyn-array (& n i64)) (init)]
     [i : i64 0]
     (begin
       (while (< i limit)

@@ -123780,7 +123780,8 @@
         request.representations
         (ir.compiler-ir-representation-index-build
           type-segment-bases
-          (& program)))
+          (& program)
+          (ir.compiler-ir-representation-index-empty)))
       request.input-retirement)))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools

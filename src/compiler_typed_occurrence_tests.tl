@@ -899,7 +899,17 @@
         (& registries)
         (cast 73 : u64))]
     [store : typed.TypedStore (typed-test-store (& lease))]
-    [origin : typed.TypedOriginId (typed-test-origin! (&mut store) (& lease))]
+    [origin : typed.TypedOriginId
+      (match (typed.typed-origin-add!
+        (&mut store)
+        (& lease)
+        (own.OwnershipSource
+          "full-width.tl"
+          9223372036854775807
+          4294967296
+          "capture"))
+        [(typed.TypedOriginResult.Ok id) id]
+        [_ (io.panic "typed occurrence: full-width origin fixture")])]
     [type : typed.TypedTypeId
       (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
     [valid : bool true]
@@ -968,6 +978,18 @@
             local-ok
             global-ok
             (typed-test-stale-binder? (&mut store) (& lease) local)))))
+    (set!
+      valid
+      (and
+        valid
+        (match (typed.typed-origin-get! (&mut store) (& lease) origin)
+          [(typed.TypedOriginView.Ok source)
+            (and
+              (= source.line 9223372036854775807)
+              (= source.column 4294967296)
+              (string.eq source.path "full-width.tl")
+              (string.eq source.expansion "capture"))]
+          [_ false])))
     (typed.typed-store-retire! (&mut store))
     valid))
 

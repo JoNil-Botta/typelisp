@@ -154,6 +154,16 @@ indirect call site uses that dispatcher; lexical provenance flags cannot choose
 a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+Ordinary and tail indirect lowering copy the selected callable (a closure
+descriptor sharing its environment, or a C code pointer) before lowering
+arguments only when an argument can write the storage it was read from: a local
+by the argument operand snapshot rule, a global cell unless every argument only
+reads. Function names and values the callee expression computed are not
+copied, so their direct-call facts survive.
+Scalar global reads, including folds and rematerialized reads, use
+the prepared program's symbol index. That index resolves extern metadata and
+ordinary module symbols identically to unfolded loads, and is replaced at
+each emission boundary and unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.
@@ -722,6 +732,17 @@ row owns. Origin records are written and scanned by marker id (reset-aware
 builtin ids). The views render Int and Float text as a shared view of the
 interned spelling. A consumer that keeps a spelling past an intern reset copies
 it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
+
+Canonical and ReSpan records expose their full logical node IDs and four i32
+coordinates. Physical slots use 16 bytes: both complete i32 IDs occupy one
+word; the other holds the signed start line, two u12 columns and line deltas
+0–254. Other coordinates use tag 255 and an exact logical record in the table's
+owning arena. Accessors decode by value; packed and overflow pointers never
+escape. Logical setters own their input while synchronous private byte writers
+consume it. Shared table headers retain the arena owner and recycle overflow
+slots across wide-to-compact rewrites. Segment-zero growth copies physical
+slots without duplicating overflow ownership; snapshots keep the same table
+address.
 
 Macro generation copy-out persists expression payloads in place: all expression
 ids, wrapper targets, and wrapper spans remain unchanged. It shares the row-write

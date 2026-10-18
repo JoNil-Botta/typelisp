@@ -4987,10 +4987,13 @@ arena-owned storage escape the scoped region.
 - Direct calls: the callee is a known function name.
 - Indirect calls: the callee is a variable or parameter of function type,
   including a named top-level function passed as a function value.
-- Arguments are evaluated left-to-right. Each argument passes the value it had
-  when it was evaluated. A later argument that assigns or writes the variable,
-  field or element an earlier argument read does not change the earlier
-  argument's value. Writes through a borrow, a raw pointer or a callee count too.
+- The callee expression is evaluated once, before the arguments, and the
+  arguments are evaluated left-to-right. The call uses the callable value the
+  callee expression produced, and each argument passes the value it had when it
+  was evaluated. An argument that assigns or writes the variable, field or
+  element that the callee expression or an earlier argument read changes
+  neither the function called nor the earlier argument's value. Writes through
+  a borrow, a raw pointer or a function the argument calls count too.
 - Arguments are passed per the platform calling convention (§11); arguments
   beyond register capacity are passed on the stack.
 

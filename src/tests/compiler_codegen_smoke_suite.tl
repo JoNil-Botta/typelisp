@@ -69,7 +69,11 @@
       (compiler_driver_smoke_tests.compiler-driver-pic-smoke-main)]
     [(string.eq name "driver-reader-context")
       (cbi.compiler-builtin-initialize-for-parse!)
-      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main)]
+      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main 1)]
+    [(string.eq name "driver-reader-context-opt0")
+      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main 0)]
+    [(string.eq name "driver-reader-context-opt2")
+      (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main 2)]
     [(string.eq name "driver-generated-cfg")
       (compiler_driver_smoke_tests.compiler-driver-generated-cfg-smoke-main)]
     [(string.eq name "driver-typecheck-cache-owner")
@@ -126,6 +130,12 @@
       (compiler-smoke-suite-require-child
         "driver-reader-context"
         "compiler smoke suite: compiler_driver_reader_context_smoke failed")
+      (compiler-smoke-suite-require-child
+        "driver-reader-context-opt0"
+        "compiler smoke suite: driver reader-context opt0 failed")
+      (compiler-smoke-suite-require-child
+        "driver-reader-context-opt2"
+        "compiler smoke suite: driver reader-context opt2 failed")
       (compiler-smoke-suite-require-child
         "driver-generated-cfg"
         "compiler smoke suite: generated cfg isolation failed")

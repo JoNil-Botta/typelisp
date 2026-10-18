@@ -864,3 +864,58 @@ run run "{{root}}/stdlib/tests/wire_byte_buf_live_extent.tl" --target {{host-tar
 exit 134
 stdout empty
 stderr contains tl: array index out of bounds
+
+
+case compile-branded-arena-operands
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena_branded_operands thread_safe_i64_vec
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/operands.s"
+exit 0
+stdout contains Wrote
+stderr empty
+
+case compile-branded-arena-batch
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each -
+file caller.tl
+(import arena_branded_operands)
+(define (main) : i64
+  (arena_branded_operands.main))
+end-file
+run compile "{{native-dir}}/caller.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/tests/integration" -o "{{dir}}/cold.s"
+exit 0
+stderr empty
+sh for n in first second; do printf '%s|%s\n' "{{native-dir}}/caller.tl" "{{native-dir}}/$n.s"; done > "{{dir}}/batch.txt"
+run compile --batch "{{dir}}/batch.txt" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/tests/integration"
+exit 0
+stderr empty
+same "{{dir}}/cold.s" "{{dir}}/first.s"
+same "{{dir}}/cold.s" "{{dir}}/second.s"
+
+case check-branded-arena-operand-errors
+target linux-x86_64 windows-x86_64
+opt -
+each arena_branded_operand_wrong_brand_reject arena_bare_operand_brand_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0206]
+stderr contains type mismatch
+stderr contains -->
+stderr not-contains __tl_tc_
+
+case compile-branded-arena-operand-errors
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each arena_branded_operand_wrong_brand_reject arena_bare_operand_brand_reject
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/invalid.s"
+exit nonzero
+stdout empty
+stderr contains error[E0206]
+stderr contains type mismatch
+stderr contains -->
+stderr not-contains __tl_tc_

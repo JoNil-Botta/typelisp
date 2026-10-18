@@ -235,6 +235,7 @@
   (name-id i64)
   (init-id i64)
   (binding-ty ast.AstType)
+  (inconsistent bool)
   (transition TcCheckedLetBindingTransition)
   ;; Previous fact with the same composite hash. Full identity is compared on
   ;; lookup, so hash collisions cannot alias bindings.
@@ -247,17 +248,19 @@
 
 (defstruct TcCheckedLetBindingFactStateData
   (enabled bool)
+  (complete-required bool)
+  (recording bool)
   (current-declaration-ordinal i64)
   (facts (__tl_dyn-array TcCheckedLetBindingFact))
   (capacity i64)
   (len i64)
   (by-hash tc_i64_i64_map.Map)
+  (declaration-ordinals tc_i64_i64_map.Map)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
   ;; a separately resettable arena rather than leaking boxes into the job arena.
   (payload-arena i64)
   (return-arena i64)
-  (owner-arena i64)
-  (inconsistent bool))
+  (owner-arena i64))
 
 (defstruct TcCheckedLetBindingFactState
   (address i64))
@@ -779,15 +782,17 @@
       (array-ref cell 0)
       (TcCheckedLetBindingFactStateData
         false
+        false
+        false
         -1
         (__tl_make-array TcCheckedLetBindingFact 0)
         0
         0
         (tc_i64_i64_map.with-capacity 1)
+        (tc_i64_i64_map.with-capacity 1)
         0
         0
-        (arena.tl_arena_current)
-        false))
+        (arena.tl_arena_current)))
     (TcCheckedLetBindingFactState
       (cast
         (unsafe
@@ -1670,9 +1675,10 @@
       (if (= payload 0)
         (begin
           (set! (deref data).enabled false)
+          (set! (deref data).complete-required false)
+          (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
-          (set! (deref data).len 0)
-          (set! (deref data).inconsistent false))
+          (set! (deref data).len 0))
         (begin
           (if (= (arena.tl_arena_current) payload)
             (arena.tl_arena_set (deref data).return-arena)
@@ -1683,18 +1689,23 @@
             (set!
               (deref data).facts
               (__tl_make-array TcCheckedLetBindingFact 0))
-            (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1)))
+            (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1))
+            (set!
+              (deref data).declaration-ordinals
+              (tc_i64_i64_map.with-capacity 1)))
           (set! (deref data).enabled false)
+          (set! (deref data).complete-required false)
+          (set! (deref data).recording false)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).capacity 0)
           (set! (deref data).len 0)
           (set! (deref data).payload-arena 0)
           (set! (deref data).return-arena 0)
-          (set! (deref data).inconsistent false)
           (arena.tl_arena_destroy payload))))))
 
 (define (tc-checked-let-binding-facts-begin!
-  [state : TcCheckedLetBindingFactState]) : unit
+  [state : TcCheckedLetBindingFactState]
+  [complete-required : bool]) : unit
   (tc-checked-let-binding-fact-state-release-storage! state)
   (let
     [return-arena : i64 (arena.tl_arena_current)]
@@ -1706,14 +1717,18 @@
           (tc-checked-let-binding-fact-state-ptr state)]
         (unsafe
           (set! (deref data).enabled true)
+          (set! (deref data).complete-required complete-required)
+          (set! (deref data).recording true)
           (set! (deref data).current-declaration-ordinal -1)
           (set! (deref data).facts (__tl_make-array TcCheckedLetBindingFact 64))
           (set! (deref data).capacity 64)
           (set! (deref data).len 0)
           (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 128))
+          (set!
+            (deref data).declaration-ordinals
+            (tc_i64_i64_map.with-capacity 128))
           (set! (deref data).payload-arena payload)
-          (set! (deref data).return-arena return-arena)
-          (set! (deref data).inconsistent false))))))
+          (set! (deref data).return-arena return-arena))))))
 
 (define (tc-checked-let-binding-facts-finish!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -1723,6 +1738,147 @@
   [state : TcCheckedLetBindingFactState]) : bool
   (unsafe
     (deref (tc-checked-let-binding-fact-state-view state)).enabled))
+
+;; Semantic indexing requires complete proofs. Lowering can infer missing
+;; bindings, so retaining its proofs must not disable trusted surface hydration.
+(define (tc-checked-let-binding-facts-complete-required?
+  [state : TcCheckedLetBindingFactState]) : bool
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (and data.enabled data.complete-required)))
+
+;; Recording grows the fact array and both maps by doubling inside the payload
+;; generation, so every superseded copy stays there next to the live one.
+;; Copy the live facts (exactly sized), their persisted types and both maps
+;; into a fresh generation and destroy the old one; lowering then retains only
+;; the proofs it may look up.
+(define (tc-checked-let-binding-facts-compact!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (unless
+      (or (not data.enabled) (= data.payload-arena 0))
+      (let
+        [fresh : i64 (arena.tl_arena_make)]
+        [compacted : TcCheckedLetBindingFactStateData
+          (in-arena
+            (arena.Arena fresh)
+            (let
+              [count : i64 data.len]
+              [facts : (__tl_dyn-array TcCheckedLetBindingFact)
+                (__tl_make-array
+                  TcCheckedLetBindingFact
+                  (if (< count 1)
+                    1
+                    count))]
+              (for [index (iterator.range 0 count)]
+                (let
+                  [fact (& (array-ref data.facts index))]
+                  (set!
+                    (array-ref facts index)
+                    (TcCheckedLetBindingFact
+                      fact.declaration-ordinal
+                      fact.body-id
+                      fact.binding-ordinal
+                      fact.name-id
+                      fact.init-id
+                      (ast.ty-node-persist (& fact.binding-ty))
+                      fact.inconsistent
+                      (TcCheckedLetBindingTransition
+                        fact.transition.arena-owner-kind
+                        fact.transition.phase-owner-id)
+                      fact.hash-next))))
+              (TcCheckedLetBindingFactStateData
+                data.enabled
+                data.complete-required
+                data.recording
+                data.current-declaration-ordinal
+                facts
+                (if (< count 1)
+                  1
+                  count)
+                count
+                (clone data.by-hash)
+                (clone data.declaration-ordinals)
+                fresh
+                data.return-arena
+                data.owner-arena)))]
+        (tc-checked-let-binding-fact-state-data-set! state compacted)
+        (unsafe
+          (arena.tl_arena_destroy data.payload-arena))))))
+
+(define (tc-checked-let-binding-facts-freeze!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (tc-checked-let-binding-facts-compact! state)
+  (unsafe
+    (let
+      [data : (MutPtr TcCheckedLetBindingFactStateData)
+        (tc-checked-let-binding-fact-state-ptr state)]
+      (set! (deref data).recording false)
+      (set! (deref data).current-declaration-ordinal -1))))
+
+;; Declaration positions change when checked lowering prunes unreachable
+;; declarations. Resolve the original ordinal from the source module/name;
+;; an overloaded or repeated name is ambiguous and must use inference instead.
+(define (tc-checked-let-binding-declaration-key
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : i64
+  (let
+    [value : ast.AstDecl (owned_view.compiler-owned-reference-shared-view decl)]
+    (match value
+      [(DefFn _ name _ _ _ _)
+        (csym.compiler-symbol-module-key-id-by-id module-id name)]
+      [(Unsafe inner)
+        (tc-checked-let-binding-declaration-key
+          module-id
+          (& (__tl-box-place inner)))]
+      [_ -1])))
+
+(define (tc-checked-let-binding-facts-record-declaration!
+  [state : TcCheckedLetBindingFactState]
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (when
+      (and data.enabled data.recording)
+      (let
+        [key : i64 (tc-checked-let-binding-declaration-key module-id decl)]
+        (when
+          (>= key 0)
+          (let
+            [ordinal : i64 data.current-declaration-ordinal]
+            [value : i64
+              (match (tc_i64_i64_map.get (& data.declaration-ordinals) key)
+                [(LookupFound previous)
+                  (if (= previous ordinal)
+                    ordinal
+                    -1)]
+                [(LookupMissing) ordinal])]
+            (in-arena
+              (arena.Arena data.payload-arena)
+              (tc_i64_i64_map.insert-ref!
+                (&mut data.declaration-ordinals)
+                key
+                value))
+            (tc-checked-let-binding-fact-state-data-set! state data)))))))
+
+(define (tc-checked-let-binding-facts-declaration-ordinal
+  [state : TcCheckedLetBindingFactState]
+  [module-id : i64]
+  [decl : (& decl ast.AstDecl)]) : i64
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (if data.enabled
+      (tc_i64_i64_map.get-value-or
+        (& data.declaration-ordinals)
+        (tc-checked-let-binding-declaration-key module-id decl)
+        -1)
+      -1)))
 
 (define (tc-checked-let-binding-facts-set-current-declaration!
   [state : TcCheckedLetBindingFactState]
@@ -1770,7 +1926,7 @@
     [data : TcCheckedLetBindingFactStateData
       (tc-checked-let-binding-fact-state-data state)]
     [declaration-ordinal : i64 data.current-declaration-ordinal]
-    (if (and data.enabled (>= declaration-ordinal 0))
+    (if (and data.enabled data.recording (>= declaration-ordinal 0))
       (let
         [key-hash : i64
           (tc-checked-let-binding-key-hash
@@ -1797,12 +1953,12 @@
                 ;; the same final binding and transition.
                 (unless
                   (and
-                    (tc-type-eq fact.binding-ty binding-ty)
+                    ;; Proof identity includes allocation-region wrappers.
+                    (ast.ast-type-eq? fact.binding-ty binding-ty)
                     (tc-checked-let-binding-transition-eq?
                       fact.transition
                       transition))
-                  (set! data.inconsistent true)
-                  (tc-checked-let-binding-fact-state-data-set! state data))
+                  (set! (array-ref data.facts cursor).inconsistent true))
                 (return unit))
               (set! cursor fact.hash-next))))
         (if (>= data.len data.capacity)
@@ -1825,6 +1981,7 @@
               name-id
               init-id
               persisted
+              false
               transition
               head))
           ;; Hashmap growth allocates in the active arena. Force it into the
@@ -1847,10 +2004,8 @@
   (let
     [data : TcCheckedLetBindingFactStateData
       (tc-checked-let-binding-fact-state-data state)]
-    (if (or (not data.enabled) data.inconsistent)
-      (if data.inconsistent
-        (Inconsistent)
-        (Missing))
+    (if (not data.enabled)
+      (Missing)
       (let
         [key-hash : i64
           (tc-checked-let-binding-key-hash
@@ -1872,7 +2027,10 @@
               binding-ordinal
               name-id
               init-id)
-              (return (Hit fact.binding-ty fact.transition))
+              (return
+                (if fact.inconsistent
+                  (Inconsistent)
+                  (Hit fact.binding-ty fact.transition)))
               (set! cursor fact.hash-next))))
         (Missing)))))
 
@@ -40773,8 +40931,8 @@
   [env : TcTypeEnv]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : ResultTcType
-  ;; This path exists only to extend the environment while expression macros
-  ;; are being expanded. The complete expanded let is checked afterward by
+  ;; Extend semantic environments during expression macro expansion and
+  ;; post-check lowering. The complete expanded let is checked by
   ;; `tc-let-bindings-for-body`, which proves concrete closure capability and
   ;; captured-lifetime uses against the rest of the bindings and body. Admit a
   ;; direct lambda here so a macro-produced reference-capturing closure can
@@ -117002,16 +117160,16 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   ;; A cached prefix contains only its summary, not semantic observations from
-  ;; the declarations it skipped. Retained let facts and clone-root collection
-  ;; therefore take the ordinary declaration walk even when an interactive
-  ;; prefix cache is on.
+  ;; the declarations it skipped. Consumers requiring complete let facts take
+  ;; the ordinary walk. Lowering may infer missing facts after trusted surface
+  ;; hydration; clone-root collection retains its interactive-cache guard below.
   (cond
     [(or
         (not
           (or
             (= tc-semantic-observed-jobs 0)
             (= (tc-context-semantic-observer ctx).address 0)))
-        (tc-checked-let-binding-facts-enabled?
+        (tc-checked-let-binding-facts-complete-required?
           (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))))
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
     [(surface_facts.surface-typecheck-facts-active?)
@@ -117498,6 +117656,12 @@
                 (tc-job-state-checked-let-binding-facts
                   (tc-context-job-state ctx))
                 (- rest.offset 1))]
+            [_record-checked-let-declaration : unit
+              (tc-checked-let-binding-facts-record-declaration!
+                (tc-job-state-checked-let-binding-facts
+                  (tc-context-job-state ctx))
+                cur-module-id
+                (& decl))]
             (match (tc-global-shared-view decl)
               [(Module next-module)
                 (tc-context-capture-active-pools! ctx)

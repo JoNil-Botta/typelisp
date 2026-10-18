@@ -822,6 +822,7 @@ mem_copy_fwd_runtime_contract|all|-|tests/integration/mem_copy_fwd_runtime_contr
 arena_atomic_rewind_destroy_safe|all|-|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_aggregate|all|-|tests/integration/arena_branded_atomic_aggregate.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 arena_branded_atomic_place_destroy|all|-|tests/integration/arena_branded_atomic_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+arena_branded_operands|all|0,1,2|tests/integration/arena_branded_operands.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 resource_with_order|all|-|tests/integration/resource_with_order.tl|42|-|-|-|-
 resource_with_arg_cycle|all|-|tests/integration/resource_with_arg_cycle.tl|42|-|-|-|-
 sync_channel_thread_runtime|all|-|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
@@ -969,6 +970,11 @@ global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|
 
 packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
 packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+
+gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-
+
 global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
 global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
+extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib

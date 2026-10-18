@@ -3392,6 +3392,172 @@
         (>= (opt-input-arena-leaf-calls (& functions) "main") 0)
         "main survives")]))
 
+;; The callback context lives outside the source function arena.
+(defstruct OptInputRetirementTestState
+  (source (__tl_dyn-array i64))
+  (calls (__tl_dyn-array i64)))
+
+(define (opt-test-retire-input! [address : i64]) : unit
+  (let
+    [state : OptInputRetirementTestState
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr OptInputRetirementTestState))))]
+    [source : i64 (array-ref state.source 0)]
+    (test.assert-true (> source 0) "input retirement runs only once")
+    (test.assert-false
+      (= (arena.tl_arena_current) source)
+      "the source arena is not current at the handoff")
+    (+= (array-ref state.calls 0) 1)
+    (set! (array-ref state.source 0) 0)
+    (unsafe
+      (arena.tl_arena_destroy source))))
+
+(define (opt-test-input-retirement
+  [pools : ast.AstNodePoolContext]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]
+  [authority? : bool]) : unit
+  (let
+    [source : i64 (arena.tl_arena_make)]
+    [source-functions : ir.CompilerIrFunctionSeq
+      (in-arena
+        (arena.Arena source)
+        (ir.compiler-ir-clone-function-seq pools (& functions)))]
+    [function-count : i64 functions.len]
+    [control : ir.CompilerIrProgram
+      (match (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          functions
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        (opt.optimize-request pools level))
+        [(Program result _) result])]
+    [state : OptInputRetirementTestState
+      (OptInputRetirementTestState (__tl_make-array source) (__tl_make-array 0))]
+    [request : opt.OptimizeRequest (opt.optimize-request pools level)]
+    (when
+      authority?
+      (set!
+        request.input-retirement
+        (opt.OptInputRetirement.Retire
+          (unsafe
+            (cast (ptr->int (ptr-addr-of state)) : i64))
+          opt-test-retire-input!)))
+    (match (opt.optimize-program
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (in-arena
+          (arena.Arena source)
+          (ir.compiler-ir-clone-function-seq pools (& source-functions)))
+        (ir.compiler-ir-extern-seq-empty))
+      (ir.compiler-source-spans-empty)
+      request)
+      [(Program result _)
+        (test.assert-i64-eq
+          (array-ref state.calls 0)
+          (if (and authority? (= level 2))
+            1
+            0)
+          "only level 2 consumes explicit retirement authority")
+        (test.assert-true
+          (opt-test-program-eq
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (clone control)
+            (clone result))
+          "retirement preserves the complete optimized program")
+        (unless
+          (= (array-ref state.source 0) 0)
+          (test.assert-i64-eq
+            source-functions.len
+            function-count
+            "retained source functions remain readable")
+          (set! (array-ref state.source 0) 0)
+          (unsafe
+            (arena.tl_arena_destroy source)))
+        (when
+          (>= level 1)
+          (test.assert-true
+            (opt-test-program-eq
+              (ast.ast-node-pool-context-type-segment-bases pools)
+              control
+              result)
+            "optimized output survives source retirement"))])))
+
+(test
+  optimizer-input-retirement-authority-and-levels
+  (for [level (iterator.range 0 3)]
+    (for [authority (iterator.range 0 2)]
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (opt-input-arena-functions)
+        level
+        (= authority 1))
+      (opt-test-input-retirement
+        (ast.ast-node-pool-reader-context-current)
+        (ir.compiler-ir-function-seq-empty)
+        level
+        (= authority 1)))))
+
+(define (opt-test-input-retirement-pools) : unit
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [job : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [filler : i64 (ast.ast-node-pool-context-type-push job (Bool))]
+    (for [i (iterator.range 0 1100)]
+      (set!
+        filler
+        (ast.ast-node-pool-context-type-push job (Array filler (+ i 1)))))
+    (test.assert-true
+      (> filler ast.ast-type-node-pool-segment-size)
+      "job types cross a segment")
+    (for [collision (iterator.range 0 2)]
+      (let
+        [lifetimes : ast.AstLifetimeList
+          (ast.ast-lifetime-cons 71 (& (ast.ast-lifetime-list-new)))]
+        [nominal : ast.AstType
+          (StructArgs (opt-test-symbol "retained") (box lifetimes))]
+        [array : ast.AstType (ast.ast-ty-array-with-pools job (& nominal) 4)]
+        [boxed : ast.AstType (ast.ast-ty-box-with-pools job (& array))]
+        [reference : ast.AstType (ast.ast-ty-ref-with-pools job 71 (& boxed))]
+        [tuple : ast.AstType
+          (Tuple
+            (box
+              (ast.ast-type-cons-with-pools
+                job
+                (& reference)
+                (& (ast.ast-type-list-new)))))]
+        [function : ast.AstType
+          (ast.ast-ty-func-with-pools
+            job
+            (ast.ast-type-cons-with-pools
+              job
+              (& tuple)
+              (& (ast.ast-type-list-new)))
+            (& tuple))]
+        [body : ir.CompilerIrFunction
+          (opt-inline-job-pool-function "main" function (irt.instrs "return 7"))]
+        [ambient : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 4 16)]
+        (when
+          (= collision 1)
+          (for [i (iterator.range 0 1200)]
+            (ast.ast-node-pool-context-type-push ambient (Array 0 (+ i 1)))))
+        (ast.ast-node-pool-context-install! ambient)
+        (opt-test-input-retirement
+          job
+          (ir.compiler-ir-function-seq-prepend
+            (& body)
+            (& (ir.compiler-ir-function-seq-empty)))
+          2
+          true)))
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
+  optimizer-input-retirement-explicit-pool-nested-types
+  (opt-test-input-retirement-pools))
+
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten
 ;; callers: six rewritten callers add exactly six times the rows one adds.
@@ -15254,13 +15420,13 @@
               [(Phi _ inputs _)
                 (and
                   (= (ir.compiler-ir-phi-input-seq-count inputs) 3)
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.zero"))
-                  (opt.opt-inline-phi-input-label?
-                    (opt.compiler-opt-global-shared-view inputs)
+                  (opt.opt-bool-branch-phi-input-has-label?
+                    inputs
                     (ir.compiler-ir-label "inl.entry.0.one"))
-                  (opt.opt-inline-phi-input-label?
+                  (opt.opt-bool-branch-phi-input-has-label?
                     inputs
                     (ir.compiler-ir-label "inl.entry.0.other")))]
               [_ false])
@@ -37799,7 +37965,7 @@
       (match block
         [(Block _ instrs)
           (match (ir.compiler-ir-instr-seq-ref instrs 0)
-            [(Phi _ inputs _) (opt.opt-phi-input-count inputs)]
+            [(Phi _ inputs _) (ir.compiler-ir-phi-input-seq-count inputs)]
             [_ (- 0 1)])])]))
 
 ;; Does the named block hold a BinOp with the given opcode AND the given i64
@@ -43652,7 +43818,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -44389,7 +44555,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
@@ -44867,6 +45033,85 @@
                 [_ false])
               false)])]
       [_ false])))
+
+(define (opt-gep-split-mutable-source-check
+  [base : String]
+  [offset : String]
+  [call? : bool]
+  [split? : bool]
+  [valid? : bool]) : bool
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n%2 = gep "
+          base
+          ", "
+          offset
+          " : i64\n"
+          (if call?
+            "%4 = call mutate() : unit\n"
+            "store @g, %0 : u64\nstore @offset, 2 : i64\n")
+          "%3 = load %2 : i64\nstore_ptr %2, %1 : i64\nreturn %3"))]
+    [function : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "gep_mutable_capture")
+        (irt.params "base=%0:u64, value=%1:i64")
+        (I64)
+        5
+        (clone blocks)
+        Ordinary)]
+    [rewritten : ir.CompilerIrFunction
+      (opt.opt-gep-split-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& function))]
+    [actual : ir.CompilerIrBlockList (opt.opt-function-blocks (& rewritten))]
+    (and
+      ;; RuntimeGlobal is invalid as an instruction operand: refusal must
+      ;; retain that verifier rejection instead of turning it into a read.
+      (= (opt.opt-verify-ok? (& (opt.opt-verify-function (& function)))) valid?)
+      (=
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& rewritten))))
+        valid?)
+      (if split?
+        (=
+          (opt-gep-split-test-gep-count (ir.compiler-ir-block-list-view actual))
+          3)
+        (opt.opt-block-list-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& blocks)
+          (& actual))))))
+
+(test
+  gep-split-mutable-global-capture
+  (let
+    [bases : (Array String 9)
+      (array "@g" "runtime-init@g" "%0" "%0" "@g" "&@g" "4096" "%0" "%0")]
+    [offsets : (Array String 9)
+      (array
+        "0"
+        "0"
+        "@offset"
+        "runtime-init@offset"
+        "@offset"
+        "0"
+        "1"
+        "-1"
+        "%1")]
+    (for [mode (iterator.range 0 9)]
+      (for [effect (iterator.range 0 2)]
+        (test.assert-true
+          (opt-gep-split-mutable-source-check
+            (clone (array-ref bases mode))
+            (clone (array-ref offsets mode))
+            (= effect 1)
+            (>= mode 5)
+            (not (or (= mode 1) (= mode 3))))
+          (str_cat.str-cat
+            "GEP capture keeps mutable operands across effects, case "
+            (string.int->string mode)
+            "/"
+            (string.int->string effect)))))))
 
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
@@ -63159,12 +63404,65 @@
           (ir.compiler-ir-function-seq-prepend
             (& reader)
             (& (ir.compiler-ir-function-seq-empty)))))]
-    [out (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [expected (opt-snapshot-test-function after)]
     [actual (ir.compiler-ir-function-seq-borrow (& out) 0)]
     [ok (opt.opt-function-eq bases (& actual) (& expected))]
     (opt.opt-pure-call-inline-memory-reset!)
     ok))
+
+;; The inline stage's normalization keeps each rewritten body as a deep copy of
+;; a scratch-phase rewrite (#8997): a candidate's body is normalized, and a
+;; function without a candidate capture is kept as it is.
+(test
+  global-snapshot-retained-normalization-keeps-candidate-free-functions
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [fixture
+      (opt-snapshot-test-function
+        "entry:
+           %0 = mov @mr_a : i64
+           %1 = call snapshot_reader() : i64
+           %2 = add %0, %1 : i64
+           return %2")]
+    [reader : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "snapshot_reader")
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        0
+        (irt.blocks "entry:
+  return 0")
+        Ordinary)]
+    [functions
+      (ir.compiler-ir-function-seq-prepend
+        (& fixture)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [out
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        (& functions))]
+    [expected
+      (opt-snapshot-test-function
+        "entry:
+           %1 = call snapshot_reader() : i64
+           %2 = add @mr_a, %1 : i64
+           return %2")]
+    [rewritten (ir.compiler-ir-function-seq-borrow (& out) 0)]
+    [kept (ir.compiler-ir-function-seq-borrow (& out) 1)]
+    [normalized : bool (opt.opt-function-eq bases (& rewritten) (& expected))]
+    [kept-reader : bool (opt.opt-function-eq bases (& kept) (& reader))]
+    (opt.opt-pure-call-inline-memory-reset!)
+    (test.assert-true normalized "a candidate's rewritten body is normalized")
+    (test.assert-true kept-reader "a candidate-free function is kept as is")))
 
 (test
   global-snapshot-before-inlining
@@ -63248,7 +63546,10 @@
     [_normalize : unit
       (in-arena
         (arena.Arena scratch)
-        (opt.opt-pure-call-inline-memory-install! bases (& functions))
+        (opt.opt-pure-call-inline-memory-install!
+          (ast.ast-node-pool-reader-context-current)
+          bases
+          (& functions))
         unit)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [_destroy : unit
@@ -63291,7 +63592,11 @@
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
         (& (opt-cl-test-functions symbols)))]
-    [before-inline (opt.opt-pure-call-inline-memory-install! bases functions)]
+    [before-inline
+      (opt.opt-pure-call-inline-memory-install!
+        (ast.ast-node-pool-reader-context-current)
+        bases
+        functions)]
     [_reset : unit (opt.opt-pure-call-inline-memory-reset!)]
     [summaries
       (opt.opt-build-program-summaries
@@ -69137,9 +69442,7 @@
         (opt-block-instr-at block 0))
         [(Phi _ inputs _)
           (and
-            (opt.opt-bool-branch-phi-input-has-label?
-              (owned_view.compiler-owned-shared-view inputs)
-              ok)
+            (opt.opt-bool-branch-phi-input-has-label? inputs ok)
             (not (opt.opt-bool-branch-phi-input-has-label? inputs head)))]
         [_ false])
       (return 10))
@@ -71699,7 +72002,7 @@
   [dst : i64]
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
-    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (& (opt-flag-exit-test-phi-inputs blocks label dst))
     (ir.compiler-ir-label (& pred)))
     [(No) (- 0 99)]
     [(Some value)

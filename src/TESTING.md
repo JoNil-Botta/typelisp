@@ -5,12 +5,50 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
+aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
+public check/compile
+cases also reject different arena brands and explicit bare annotations with
+E0206 and a located diagnostic. `compiler-lower-typecheck-error-transport`
+passes located and rich errors through both lowering diagnostic entry points,
+checking the original primary span, code, help and secondary labels.
+The checked let-binding fact tests cover declaration/body identity, ambiguous
+names, frozen reads, generation reset and growth while a scratch arena is
+active. Both retained maps must remain valid after that scratch is destroyed;
+lowering must use semantic inference when a checked fact is unavailable.
+The branded operand CLI cases also compare cold and repeated batch assembly.
+They also compile `thread_safe_i64_vec.tl` for both targets at every opt level:
+captured atomic owners must retain their semantic markers when a checked local
+type carries that owner's allocation region. Conflicting checked proofs with
+different regions must leave unrelated bindings available. The compile-profile
+verifier pins trusted prelude hydration at zero declaration checks, checks
+assembly parity with forced source, and rejects source/producer
+mismatches. Semantic-index smoke tests with `--cfg test` assert that building
+the index does not typecheck let initializers again.
+
 `backend-colored-vector-id-extent` keeps nine wide values live across an
 ordinary call and exercises allocation, stack coloring, final liveness and
 emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
 the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
+
+`extern_data_memory.tl` links C data symbols at opt0/1/2 on both hosts.
+Its assembly-shape case pins both compare operand positions, arithmetic folds,
+float and narrow reads against their exact extern metadata symbols. The
+`backend-global-symbol-emission-owner` test reuses a backend owner with two
+extern spellings and then no extern, resets function caches, and checks a second
+owner's isolation and final retirement.
+
+`indirect_callee_snapshot.tl` retains the callable before argument effects for
+language closures and C pointers, including local, parameter, language and C
+global and field storage, a capturing closure, raw pointer writes,
+conditional/wrapped/factory callees and unchanged-callee controls.
+Factory and invocation counts pin single evaluation. The native manifest runs
+all three optimization levels on both hosts; keep the mixed-float, stack, null
+and unsafe callable ABI families beside this ordering regression. The
+`compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
+tail callees are copied only when an argument writes their storage.
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
@@ -33,6 +71,12 @@ and unchanged AVX-512 signed/unsigned integer predicates.
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
+
+`gep_global_capture.tl` retains a raw pointer's selected global base and offset
+across rebinding and checks the old pointee alongside the new global value at
+opt0/1/2 on both hosts. The `gep-split-mutable-global-capture` optimizer test
+covers implicit `Global` and `RuntimeGlobal` reads in both GEP operands across
+stores and calls, with stable literal, address and SSA splitting controls.
 
 `global_aggregate_storage_lifetime.tl` checks shallow global container storage
 after scratch and explicit arena destruction, nested scopes, repeated writes,
@@ -434,6 +478,13 @@ stays live. Run these at opt0/1/2. Lower-test helpers that keep function IR copy
 it into their test arena before releasing the source lower owner; an extracted
 sequence must not outlive its arena. Keep buffered output alive through its
 final render/write and preserve the mainless-module opt0 symbol check.
+The reader-context smoke optimizes both jobs at opt0/1/2 with explicit
+retirement authority and an unrelated empty reader pool installed. Opt2 must
+clear A's lower-IR cell while B's source remains live, then clear B's cell;
+post-opt cleanup is idempotent and both backends still emit identical assembly.
+The optimizer's `optimizer-input-retirement-*` tests cover absent authority,
+empty functions, all levels, and nested Func/Tuple/Array/Box/reference/lifetime
+payloads beyond a pool segment with empty and conflicting ambient pools.
 `backend-owned-object-payload-lifetime` checks returned Linux and Windows
 object strings and rendered bytes after lower IR retirement and a subsequent
 source compilation. It also retires the input arena of both shared literal
@@ -671,6 +722,13 @@ and post-plan trace reasons must match the small fixture after the scratch
 owner retires. `compiler-regalloc-self-test` runs its liveness-census check
 only in a build with `--cfg test`; that flag alone does not run source-local
 inline test declarations.
+
+The root-segment union tests compare gathered/sorted unions against the former
+insertion fold on deterministic generated member sets. They cover empty and
+single-member classes, unsorted and nested ranges, shared endpoints, genuine
+holes, invalid or missing parent entries, absent segment rows and inactive
+members. Exact snapshots preserve the original member arrays; a golden case
+pins endpoint sharing, one-position gaps and the upper i64 boundary.
 
 ### src/ reachability
 

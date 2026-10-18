@@ -279,7 +279,12 @@
         (cast origin.start-col : i32)
         (cast origin.end-line : i32)
         (cast origin.end-col : i32))]
-    [coordinates : i64 (ast.ast-source-span-pack span)]
+    [coordinates : i64
+      (ast.ast-source-span-pack
+        span.start-line
+        span.start-col
+        span.end-line
+        span.end-col)]
     [kind : i64
       (compiler-parse-semantic-origin-kind-tag
         (compiler-parse-semantic-origin-kind-from-tag origin.kind-tag))]

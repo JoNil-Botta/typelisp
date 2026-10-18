@@ -1182,12 +1182,17 @@
 
 ;; The escape value has no coordinates. Callers retain an exact AstSourceSpan
 ;; separately when a column or line delta cannot be represented.
-(define (ast-source-span-pack [span : AstSourceSpan]) : i64
-  (let
-    [start-line : i64 (cast span.start-line : i64)]
-    [start-col : i64 (cast span.start-col : i64)]
-    [end-col : i64 (cast span.end-col : i64)]
-    [delta : i64 (- (cast span.end-line : i64) start-line)]
+(defmacro (ast-source-span-pack
+  [start-line : Expr]
+  [start-col : Expr]
+  [end-line : Expr]
+  [end-col : Expr]) : Expr
+  `(let
+    [start-line : i64 (cast ,start-line : i64)]
+    [start-col : i64 (cast ,start-col : i64)]
+    [end-line : i64 (cast ,end-line : i64)]
+    [end-col : i64 (cast ,end-col : i64)]
+    [delta : i64 (- end-line start-line)]
     (if (and
       (= (shr (bit-or start-col end-col) 12) 0)
       (< (cast delta : u64) (cast 255 : u64)))
@@ -1196,14 +1201,15 @@
         (bit-or (shl start-col 20) (bit-or (shl end-col 8) delta)))
       ast-expr-span-packed-escape-tag)))
 
-(define (ast-source-span-unpack [coordinates : i64]) : AstSourceSpan
-  (let
-    [start-line : i64 (shr coordinates 32)]
+(defmacro (ast-source-span-unpack [coordinates : Expr]) : Expr
+  `(let
+    [coordinate-word : i64 ,coordinates]
+    [start-line : i64 (shr coordinate-word 32)]
     (AstSourceSpan
       (cast start-line : i32)
-      (cast (bit-and (shr coordinates 20) 4095) : i32)
-      (cast (+ start-line (bit-and coordinates 255)) : i32)
-      (cast (bit-and (shr coordinates 8) 4095) : i32))))
+      (cast (bit-and (shr coordinate-word 20) 4095) : i32)
+      (cast (+ start-line (bit-and coordinate-word 255)) : i32)
+      (cast (bit-and (shr coordinate-word 8) 4095) : i32))))
 
 (defenum AstMaybeSourceSpan
   (No)
@@ -1374,7 +1380,13 @@
     [coordinates : i64
       (ast-source-span-pack
         (unsafe
-          (ptr-read (ptr-cast (ptr-offset data 2) : (Ptr AstSourceSpan)))))]
+          (ptr-read (ptr-offset data 2)))
+        (unsafe
+          (ptr-read (ptr-offset data 3)))
+        (unsafe
+          (ptr-read (ptr-offset data 4)))
+        (unsafe
+          (ptr-read (ptr-offset data 5))))]
     [compact? : bool (not (= coordinates ast-expr-span-packed-escape-tag))]
     [old-tag : i64
       (cast

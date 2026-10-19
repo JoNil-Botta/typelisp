@@ -71658,6 +71658,10 @@
                     (lower-comptime-runtime-skip-module? next-module-str)]
                   [marker : i64 marker-index]
                   [_next-marker : unit (+= marker-index 1)]
+                  (lower-module-view-epochs-release-before!
+                    lower-state
+                    (&mut view-epochs)
+                    marker)
                   (match (lower-module-local-view-cached
                     lower-state
                     ctx
@@ -71672,10 +71676,6 @@
                       (set! cur-type-cache view.type-cache)
                       (set! cur-module next-module-str)
                       (set! cur-module-id next-module)
-                      (lower-module-view-epochs-release-before!
-                        lower-state
-                        (&mut view-epochs)
-                        marker)
                       (if skip-runtime
                         (match (lower-skip-runtime-until-next-module-with-paths
                           rest

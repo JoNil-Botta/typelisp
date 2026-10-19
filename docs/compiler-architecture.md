@@ -187,6 +187,27 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Package function externs carry `AstExternAbi.TypeLisp` and use their dependency
+bodies' internal convention. Lowering applies the same physical parameter and
+result types, including floating register words and hidden result-pointer
+positions. These declarations do not enter native C aggregate or borrowed-Slice
+checks. Before releasing typecheck caches, the driver seeds the job-owned
+representation index from resolved nominal layouts, then merges IR evidence.
+Thus a two-word value supplied only by a dependency needs no local `Pack` to
+retain its width and register classes. Encoded structural transport types also
+contribute their group facts when they occur only in an extern signature.
+Conflicting IR evidence stays unknown; no typecheck-owned layout escapes.
+The Windows batch/COFF entry point captures the same index before retiring
+frontend layouts. Its optimizer and object-or-assembly fallback share the
+primary backend's retained index until package scope cleanup. Backend admission
+rejects a TypeLisp extern's nominal value signature unless its representation
+is known. Layout capture records one-word representations too. The IR builder
+protects missing TypeLisp extern facts before ordinary occurrences, native C
+externs or referents can infer one word; that fallback is insufficient. Missing or conflicting facts produce a
+diagnostic before either assembly or object emission. Physical structural
+transports retain their explicit signature encoding, and referents do not
+require by-value layout facts.
+
 Borrowed pattern bindings share one type/lowering contract:
 `tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
 shared reference, and otherwise retains a reference to the part. Lowering uses

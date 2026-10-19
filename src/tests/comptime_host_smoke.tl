@@ -872,7 +872,7 @@
               tlci.tlci-host-callback-status-diagnostic)
             (string.eq
               (host.compiler-comptime-host-diagnostic-text)
-              "type unquote expects a type expression")
+              "__tl_tc_kind:E0506:type unquote expects a type expression")
             (not (host.compiler-comptime-host-result-ready?))))))))
 
 (define (host-smoke-result-bool? [expected : bool]) : bool

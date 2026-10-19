@@ -419,6 +419,21 @@ proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
 
+`compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
+gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
+projection happens in the lowerer, so generic, Linux and Windows modes have
+identical geometry. Scalar admits width 1; AVX2/AVX-512 admit logical widths
+1, 4, 8, 16, 32 and 64. A plan is a value descriptor with indexed, ordered
+pieces, with no mutable collection or ambient state. Checked piece access
+covers each logical lane once, even when a view needs several physical vectors
+or occupies only a prefix of one. Each piece carries a mask span that maps its
+logical lanes to physical lanes starting at zero and clears unoccupied lanes.
+The checked `u64` reference projection accepts arbitrary active sets and rejects
+bits beyond the logical width without shifting by 64. All descriptor arithmetic
+follows width/count validation. Conversion (#7163) and tiled-coordinate (#7192)
+consumers use these pieces and spans for their IR mask transport; this geometry
+does not itself select instructions or change source admission or fallback.
+
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
 length). Fixed arrays reach the same plans through views, not a path of their

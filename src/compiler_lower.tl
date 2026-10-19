@@ -27,6 +27,7 @@
 (import compiler_profile_state as profile_state)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
+(import compiler_spmd_logical_gang as spmd_gang)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -44992,17 +44993,12 @@
 (define (lower-simd-lanes-for-elem
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : i64
-  (let
-    [elem-bytes : i64
-      (match (tc_core.tc-type-without-regions ty)
-        [(or (I64) (U64) (F64)) 8]
-        [(or (F32) (I32) (U32)) 4]
-        [(or (I16) (U16)) 2]
-        [(or (I8) (U8)) 1]
-        [_ 0])]
-    (if (= elem-bytes 0)
-      0
-      (/ (lower-simd-vector-bytes mode) elem-bytes))))
+  (if (lower-mode-simd? mode)
+    (spmd_gang.compiler-spmd-native-lanes
+      (lower-spmd-numeric-backend mode)
+      (spmd_numeric.compiler-spmd-numeric-lane
+        (tc_core.tc-type-without-regions ty)))
+    0))
 
 (define (lower-expr-is-var?
   [ctx : tc_core.TcContext]

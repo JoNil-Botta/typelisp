@@ -3,6 +3,7 @@
 ;; codes remain distinct in the core table even though their ownership class is
 ;; uniformly Copy. Unsupported representations never produce a certificate.
 (import compiler_ast_types as ast)
+(import compiler_intern as ci)
 (import compiler_typed_occurrence as typed)
 (import compiler_ownership_core as own)
 (cfg ownership-mir-dump (import compiler_ownership_dump as ownership_dump))
@@ -1561,7 +1562,9 @@
   ;; and a write through one writes through that shared reference.
   (downgraded-loans (__tl_dyn-array i64))
   ;; Opaque-referent loans of a `&mut` reached through a view's loan, with that
-  ;; loan: a write through the referent writes through the view.
+  ;; loan: a write through the referent writes through the view. A key
+  ;; `-2 - place` names a binder of a borrowed match on a fresh view, with that
+  ;; view's loan: the binding is a view of its part, reached through that loan.
   (opaque-route-loans (__tl_dyn-array i64))
   (opaque-route-parents (__tl_dyn-array i64))
   ;; 1 + the index of the binder of each typed binder handle index, and of
@@ -4537,7 +4540,8 @@
 ;; reaches (all its elements' referents share one synthetic place, and the
 ;; access reads the whole array, using every loan it holds). A mutable
 ;; reference reached through a shared loan grants shared access only (Rust
-;; E0596/E0594 through `& &mut T`): its referent's loan is shared.
+;; E0596/E0594 through `& &mut T`): its referent's loan is shared. A binder
+;; of a match on a view is reached through that view's loan.
 (define (normalize-opaque-referent-of!
   [state : (&mut state NormalizeState)]
   [route : (& route NormalizePlaceRoute)]
@@ -4545,11 +4549,15 @@
   [reference-kind : i64]) : NormalizeRouteResult
   (let
     [none : NormalizePlaceRoute (NormalizePlaceRoute -1 -1 -1 false false)]
+    [via : i64
+      (if (>= route.loan 0)
+        route.loan
+        (normalize-route-parent (& state) (- -2 route.place)))]
     [kind : i64
       (if (and
         (= reference-kind 2)
-        (>= route.loan 0)
-        (not (normalize-writable-loan? (& state) route.loan)))
+        (>= via 0)
+        (not (normalize-writable-loan? (& state) via)))
         1
         reference-kind)]
     (if (or (< state.form-block 0) (= kind 0) (< type 0))
@@ -4594,13 +4602,16 @@
             [(and (= reference-kind 2) (= kind 1))
               (__tl_array-push! state.downgraded-loans loan)]
             [(and
-              (= kind 2)
-              (>= route.loan 0)
-              (not
-                (own.ownership-loan-exclusive?
-                  (& (array-ref state.body.loans route.loan)))))
+              (>= via 0)
+              (or
+                (< route.loan 0)
+                (and
+                  (= kind 2)
+                  (not
+                    (own.ownership-loan-exclusive?
+                      (& (array-ref state.body.loans via)))))))
               (__tl_array-push! state.opaque-route-loans loan)
-              (__tl_array-push! state.opaque-route-parents route.loan)]
+              (__tl_array-push! state.opaque-route-parents via)]
             [else unit])
           ;; A reference behind another reference is read through that
           ;; reference's loan here (its own loans are used at this read);
@@ -5722,13 +5733,7 @@
 
 ;; Whether `loan` is a view's loan (`normalize-borrow!`).
 (define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (while (and (not found) (< index (array-length state.view-loans)))
-      (when (= (array-ref state.view-loans index) loan) (set! found true))
-      (set! index (+ index 1)))
-    found))
+  (normalize-i64-member? (& state.view-loans) loan))
 
 ;; The loan a write through `loan` would also go through: a view's parent
 ;; (the reference it was read through), or the view an opaque referent's
@@ -5738,32 +5743,40 @@
     (match (& (array-ref state.body.loans loan).origin)
       [(own.OwnershipLoanOrigin.Parent parent) parent.index]
       [(own.OwnershipLoanOrigin.Direct) -1])
-    (let
-      [index : i64 0]
-      [found : i64 -1]
-      (while (and (< found 0) (< index (array-length state.opaque-route-loans)))
-        (when
-          (= (array-ref state.opaque-route-loans index) loan)
-          (set! found (array-ref state.opaque-route-parents index)))
-        (set! index (+ index 1)))
-      found)))
+    (normalize-route-parent state loan)))
+
+;; The loan recorded for `key` in `opaque-route-loans`, or -1.
+(define (normalize-route-parent [state : (& state NormalizeState)] [key : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (< index (array-length state.opaque-route-loans)))
+      (when
+        (= (array-ref state.opaque-route-loans index) key)
+        (set! found (array-ref state.opaque-route-parents index)))
+      (set! index (+ index 1)))
+    found))
 
 ;; The first loan on the path of a write through `loan` that cannot be
 ;; written, or -1 (-1 itself names an owned place). A place is writable only
 ;; when every reference on its path is mutable (Rust's supporting prefixes),
 ;; and a view keeps the path it was read through: an exclusive loan is
-;; writable when what it was reached through is, a view's shared loan when its
-;; parent is (it is a mutable view), and any other shared loan is not.
+;; writable when what it was reached through is, a view's shared loan (or a
+;; view binder's, routed through its view) when its parent is (it is a mutable
+;; view), and any other shared loan is not.
 (define (normalize-unwritable-loan
   [state : (& state NormalizeState)]
   [loan : i64]) : i64
-  (cond
-    [(< loan 0) -1]
-    [(or
+  (if (< loan 0)
+    -1
+    (let
+      [parent : i64 (normalize-write-parent state loan)]
+      (if (or
+        (>= parent 0)
         (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
         (normalize-view-loan? state loan))
-      (normalize-unwritable-loan state (normalize-write-parent state loan))]
-    [else loan]))
+        (normalize-unwritable-loan state parent)
+        loan))))
 
 (define (normalize-writable-loan?
   [state : (& state NormalizeState)]
@@ -5781,40 +5794,15 @@
     (>= loan 0)
     (let
       [next : i64 (normalize-write-parent (& state) loan)]
-      (when
-        (not
-          (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan))))
-        (let
-          [origin : own.OwnershipLoanOrigin
-            (match (& (array-ref state.body.loans loan).origin)
-              [(own.OwnershipLoanOrigin.Parent parent)
-                (own.OwnershipLoanOrigin.Parent
-                  (own.OwnershipLoanId
-                    (typed.typed-body-copy (& parent.body))
-                    parent.index))]
-              [(own.OwnershipLoanOrigin.Direct) own.OwnershipLoanOrigin.Direct])]
-          (set!
-            (array-ref state.body.loans loan)
-            (own.OwnershipLoan
-              (normalize-place-id
-                (& state)
-                (array-ref state.body.loans loan).place.index)
-              own.OwnershipLoanKind.Exclusive
-              origin
-              (own.ownership-source-copy
-                (& (array-ref state.body.loans loan).source))))))
+      (set!
+        (array-ref state.body.loans loan).kind
+        own.OwnershipLoanKind.Exclusive)
       (normalize-view-loan-exclusive! state next))))
 
 (define (normalize-downgraded-loan?
   [state : (& state NormalizeState)]
   [loan : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (while (and (not found) (< index (array-length state.downgraded-loans)))
-      (when (= (array-ref state.downgraded-loans index) loan) (set! found true))
-      (set! index (+ index 1)))
-    found))
+  (normalize-i64-member? (& state.downgraded-loans) loan))
 
 ;; A mutable borrow or write of a place behind a shared reference would grant
 ;; exclusive authority that reference does not have (Rust E0596/E0594). Access
@@ -7859,6 +7847,20 @@
       (set! cursor (+ cursor 1)))
     (< found 0)))
 
+;; A binder of a borrowed match whose scrutinee is a fresh view
+;; (`normalize-borrow!`) views a part of it, reached through that view's loan
+;; (`normalize-opaque-referent-of!`).
+(define (normalize-note-view-binder!
+  [state : (&mut state NormalizeState)]
+  [scrutinee : i64]
+  [binder : i64]) : unit
+  (let
+    [view : i64 (normalize-direct-origin (& state) scrutinee)]
+    (when
+      (normalize-view-loan? (& state) view)
+      (__tl_array-push! state.opaque-route-loans (- -2 binder))
+      (__tl_array-push! state.opaque-route-parents view))))
+
 ;; The arm's bindings, in pattern order from `first`: a by-value binder takes
 ;; its position (a copy, or a move that leaves the position empty); a borrowed
 ;; binder is a reference derived from the scrutinee reference.
@@ -7942,6 +7944,10 @@
                   (own.OwnershipOperation.Assign
                     (normalize-place-id (& state) place))
                   source))
+              (normalize-note-view-binder!
+                state
+                (array-ref state.pattern-sources index)
+                place)
               (try
                 (normalize-note-flow!
                   state
@@ -9082,6 +9088,13 @@
         (__tl_array-push! out (array-ref items index)))
       (set! index (+ index 1)))))
 
+;; The reserved `program` lifetime (`tc-program-lifetime-id?`).
+(define (normalize-program-lifetime? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (ci.intern-renderable-id? name)
+    (string.eq (ci.intern-str name) "program")))
+
 (define (normalize-i64-member?
   [items : (& items (__tl_dyn-array i64))]
   [value : i64]) : bool
@@ -9267,6 +9280,9 @@
   (call-count (__tl_dyn-array i64))
   (universal-first i64)
   (universal-count i64)
+  ;; The universal node a call's `program` region flows into, in the
+  ;; liveness graph only; -1 in the other.
+  (program i64)
   ;; Per place: whether it is a parameter binder. Only a parameter's (and the
   ;; return's) signature lifetimes are the universal regions; any other root
   ;; whose type spells one has regions of its own, related to them only by
@@ -9334,6 +9350,7 @@
         (__tl_make-array i64 state.call-sigs.len)
         0
         0
+        -1
         (__tl_make-array bool state.place-count))]
     [index : i64 0]
     (while (< index (array-length state.binders))
@@ -9343,11 +9360,18 @@
           (array-ref nodes.parameter? (array-ref state.binders index).place)
           true))
       (set! index (+ index 1)))
+    ;; `program` outlives every region (Rust's `'static`): in the liveness
+    ;; graph one more universal node, of no name a type spells, stands for it
+    ;; (`normalize-region-edges`).
+    (when
+      share?
+      (set! nodes.program 0)
+      (normalize-node-add! (&mut nodes) -1 -2))
     (set! index 0)
     (while (< index (array-length shapes.universal))
       (normalize-node-add! (&mut nodes) -1 (array-ref shapes.universal index))
       (set! index (+ index 1)))
-    (set! nodes.universal-count (array-length shapes.universal))
+    (set! nodes.universal-count nodes.keys.len)
     (set! index 0)
     (while (< index state.place-count)
       (set! (array-ref nodes.place-first index) nodes.keys.len)
@@ -9960,6 +9984,20 @@
           (array-ref shapes.call-ret-shapes.items index)))
       (set! index (+ index 1)))
     (normalize-shape-outlives! (&mut edges) nodes shapes -1 shapes.return-shape)
+    ;; `program` outlives every region, as Rust's `'static`: a call's
+    ;; `program` region flows into the universal one, live to the exit, so a
+    ;; `&mut` stored or reborrowed for `program` stays borrowed for the rest of
+    ;; the body (a second one would alias it).
+    (when
+      (>= nodes.program 0)
+      (set! index 0)
+      (while (< index nodes.keys.len)
+        (when
+          (and
+            (<= (array-ref nodes.keys.items index) -2)
+            (normalize-program-lifetime? (array-ref nodes.names.items index)))
+          (normalize-region-edge! (&mut edges) index nodes.program))
+        (set! index (+ index 1))))
     edges))
 
 ;; Well-formedness: in key `key`'s shape, each region outlives the reference

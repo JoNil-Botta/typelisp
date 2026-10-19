@@ -1800,6 +1800,10 @@
   ;; The body of the borrowed enum match arm whose payloads are being bound,
   ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
   (deferred-arm-body i64)
+  ;; Whether the patterns being bound are a mutable view's (a match the checker
+  ;; certified a write through, `tc-selected-mutable-view?`): their bindings
+  ;; are the viewed storage. Cleared in each arm's body.
+  (view-match bool)
   ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
   ;; (every root) until lower-bind-source-params sets it.
   (mut-borrow-scope i64)
@@ -1874,6 +1878,7 @@
         (No)
         (lower_i64_i64_map.with-capacity 1)
         -1
+        false
         -1
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
@@ -15295,6 +15300,16 @@
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (__tl-project-set-field (__tl-box-place data) deferred-arm-body body-id)))
+
+(define (lower-state-view-match? [state : LowerState]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) view-match)))
+
+(define (lower-state-set-view-match! [state : LowerState] [view? : bool]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field (__tl-box-place data) view-match view?)))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (let
@@ -30565,7 +30580,7 @@
               (lower-global-shared-view scrutinee)
               arms)
               [(Ok expr-ty)
-                (lower-match ctx state env type-env scrutinee arms expr-ty)]
+                (lower-match ctx state env type-env scrutinee-box arms expr-ty)]
               [(Err _)
                 (lower-expr-typechecked ctx state env type-env expr origin)]))])]
     [_
@@ -31496,9 +31511,7 @@
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
-            (lower-match ctx state env type-env scrutinee arms expr-ty))])]
+          (lower-match ctx state env type-env scrutinee-box arms expr-ty)])]
     [(StringRef str-box index-box)
       (let
         [str : ast.AstExpr (lower-context-expr-get ctx str-box)]
@@ -32239,9 +32252,7 @@
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
-            (lower-match ctx state env type-env scrutinee arms expected-ty))])]
+          (lower-match ctx state env type-env scrutinee-box arms expected-ty)])]
     [(Box inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -44086,15 +44097,7 @@
             (lower-state-function-state state)
             place)
             [(tc_core.ResultTcType.Ok ty)
-              (lower-match-mode
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx scrutinee)
-                arms
-                ty
-                mode)]
+              (lower-match-mode ctx state env type-env scrutinee arms ty mode)]
             [(tc_core.ResultTcType.Err error)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr ctx place error)))])])]
@@ -66875,7 +66878,8 @@
   [scrutinee : ast.AstExpr]
   [arms : ast.AstMatchArmList]
   [expr-ty : ast.AstType]
-  [mode : LowerResultMode]) : ResultLowerExpr
+  [mode : LowerResultMode]
+  [view? : bool]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env scrutinee)
     [(ResultLowerExpr.Ok scrut-lowered)
       (match scrut-lowered
@@ -66898,7 +66902,8 @@
                     scrut-var
                     scrut-ty
                     arms
-                    (lower-match-cont-new ctx merge-label expr-ty mode))])])])]
+                    (lower-match-cont-new ctx merge-label expr-ty mode)
+                    view?)])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-match-borrowed-enum
@@ -66962,7 +66967,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [scrutinee : ast.AstExpr]
+  [scrutinee-id : i64]
   [arms : ast.AstMatchArmList]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (lower-match-mode
@@ -66970,7 +66975,7 @@
     state
     env
     type-env
-    scrutinee
+    scrutinee-id
     arms
     expr-ty
     (LowerResultMode.Value)))
@@ -66980,67 +66985,92 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [scrutinee : ast.AstExpr]
+  [scrutinee-id : i64]
   [arms : ast.AstMatchArmList]
   [expr-ty : ast.AstType]
   [mode : LowerResultMode]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan (& scrutinee))
-    [(ast.AstExpr.Borrow mutable _ place-box)
-      (if mutable
-        (lower-match-value ctx state env type-env scrutinee arms expr-ty mode)
-        (let
-          [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-          (match (tc_core.tc-expr
+  (let
+    [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-id)]
+    (match (ast.ast-expr-unspan (& scrutinee))
+      [(ast.AstExpr.Borrow mutable _ place-box)
+        (if mutable
+          (lower-match-value
             ctx
+            state
+            env
             type-env
-            (lower-global-shared-view scrutinee))
-            [(tc_core.ResultTcType.Ok scrut-ty)
-              (match (tc_core.tc-type-strip-region
-                (tc_core.tc-resolve-type ctx scrut-ty))
-                [(ast.AstType.Ref borrow-lifetime referent-box)
-                  (let
-                    [referent-ty : ast.AstType
-                      (tc_core.tc-type-strip-region
-                        (tc_core.tc-resolve-type
-                          ctx
-                          (tc_core.tc-context-type-get ctx referent-box)))]
-                    (match (& referent-ty)
-                      [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
-                        (lower-match-borrowed-enum
-                          ctx
-                          state
-                          env
-                          type-env
-                          place
-                          borrow-lifetime
-                          referent-ty
-                          arms
-                          expr-ty
-                          mode)]
-                      [_
-                        (lower-match-value
-                          ctx
-                          state
-                          env
-                          type-env
-                          scrutinee
-                          arms
-                          expr-ty
-                          mode)]))]
-                [_
-                  (lower-match-value
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrutinee
-                    arms
-                    expr-ty
-                    mode)])]
-            [(tc_core.ResultTcType.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr ctx scrutinee message)))])))]
-    [_ (lower-match-value ctx state env type-env scrutinee arms expr-ty mode)]))
+            scrutinee
+            arms
+            expr-ty
+            mode
+            false)
+          (let
+            [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+            (match (tc_core.tc-expr
+              ctx
+              type-env
+              (lower-global-shared-view scrutinee))
+              [(tc_core.ResultTcType.Ok scrut-ty)
+                (match (tc_core.tc-type-strip-region
+                  (tc_core.tc-resolve-type ctx scrut-ty))
+                  [(ast.AstType.Ref borrow-lifetime referent-box)
+                    (let
+                      [referent-ty : ast.AstType
+                        (tc_core.tc-type-strip-region
+                          (tc_core.tc-resolve-type
+                            ctx
+                            (tc_core.tc-context-type-get ctx referent-box)))]
+                      (match (& referent-ty)
+                        [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
+                          (lower-match-borrowed-enum
+                            ctx
+                            state
+                            env
+                            type-env
+                            place
+                            borrow-lifetime
+                            referent-ty
+                            arms
+                            expr-ty
+                            mode)]
+                        [_
+                          (lower-match-value
+                            ctx
+                            state
+                            env
+                            type-env
+                            scrutinee
+                            arms
+                            expr-ty
+                            mode
+                            false)]))]
+                  [_
+                    (lower-match-value
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrutinee
+                      arms
+                      expr-ty
+                      mode
+                      false)])]
+              [(tc_core.ResultTcType.Err message)
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic-at-expr ctx scrutinee message)))])))]
+      ;; A mutable view's patterns bind the viewed storage
+      ;; (`lower-bind-owned-pattern-name`).
+      [_
+        (lower-match-value
+          ctx
+          state
+          env
+          type-env
+          scrutinee
+          arms
+          expr-ty
+          mode
+          (lower-mutable-view-init? ctx scrutinee-id))])))
 
 (define (lower-box-pattern-for-type?
   [ctx : tc_core.TcContext]
@@ -67103,7 +67133,9 @@
 ;; the written-roots scan shows that neither the binding's name nor the name
 ;; owning that root is ever written (a written alias gets its own copy, so
 ;; writes never go through a shared alias). Otherwise the binding gets a copy,
-;; a fresh root it owns. Reference and register bindings are values.
+;; a fresh root it owns. Reference and register bindings are values. A
+;; binding of a mutable view's match is the viewed storage itself
+;; (`lower-state-view-match?`): its writes land there.
 (define (lower-bind-owned-pattern-name
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -67117,7 +67149,9 @@
       state
       (sym_i64_env.sym-i64-bind-id env name var-id)
       (tc_core.tc-bind-id type-env name ty))
-    (if (lower-binding-may-alias-storage? state name var-id)
+    (if (or
+      (lower-state-view-match? state)
+      (lower-binding-may-alias-storage? state name var-id))
       (ResultLowerEnv.Ok
         state
         (sym_i64_env.sym-i64-bind-id env name var-id)
@@ -68356,6 +68390,22 @@
   [type-env : tc_core.TcTypeEnv]
   [body : ast.AstExpr]
   [cont : LowerMatchCont]) : ResultLowerMatchArm
+  (let
+    [view? : bool (lower-state-view-match? state)]
+    (lower-state-set-view-match! state false)
+    (match (lower-match-arm-body-in ctx state env type-env body cont)
+      [(ResultLowerMatchArm.Ok body-state next)
+        (lower-state-set-view-match! body-state view?)
+        (ResultLowerMatchArm.Ok body-state next)]
+      [(ResultLowerMatchArm.Err message) (ResultLowerMatchArm.Err message)])))
+
+(define (lower-match-arm-body-in
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [body : ast.AstExpr]
+  [cont : LowerMatchCont]) : ResultLowerMatchArm
   (match cont
     [(LowerMatchCont.Place merge-label expr-ty vars reachable?)
       (match (lower-capture-store-place
@@ -68477,7 +68527,9 @@
   [scrut-var : i64]
   [scrut-ty : ast.AstType]
   [source-arms : ast.AstMatchArmList]
-  [cont : LowerMatchCont]) : ResultLowerExpr
+  [cont : LowerMatchCont]
+  ;; A mutable view's match: its patterns bind the viewed storage.
+  [view? : bool]) : ResultLowerExpr
   (let
     [arms : ast.AstMatchArmList
       (lower-match-split-or-arms
@@ -68485,7 +68537,9 @@
         state
         (lower-match-pattern-scrut-ty ctx (lower-global-shared-view scrut-ty))
         source-arms)]
-    (lower-match-dispatch-arms
+    [outer? : bool (lower-state-view-match? state)]
+    (lower-state-set-view-match! state view?)
+    (match (lower-match-dispatch-arms
       ctx
       state
       env
@@ -68493,7 +68547,11 @@
       scrut-var
       scrut-ty
       arms
-      cont)))
+      cont)
+      [(ResultLowerExpr.Ok (LowerExpr.Expr done value ty))
+        (lower-state-set-view-match! done outer?)
+        (ResultLowerExpr.Ok (LowerExpr.Expr done value ty))]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
 ;; The type a match's patterns test: a borrowed enum's referent, as
 ;; `lower-match-dispatch-arms` matches it, else the scrutinee type.
@@ -72150,7 +72208,8 @@
   [arms : ast.AstMatchArmList]
   [ret-ty : ast.AstType]
   [sret-var : i64]
-  [origin : ast.AstExpr]) : ResultLowerState
+  [origin : ast.AstExpr]
+  [view? : bool]) : ResultLowerState
   (if (lower-borrowed-enum-match-scrutinee?
     ctx
     type-env
@@ -72175,7 +72234,8 @@
                   scrut-var
                   scrut-ty
                   arms
-                  (Tail ret-ty sret-var)))])]))))
+                  (Tail ret-ty sret-var)
+                  view?))])]))))
 
 (define (lower-tail-expr
   [ctx : tc_core.TcContext]
@@ -72276,7 +72336,8 @@
               arms
               ret-ty
               sret-var
-              expr))])]
+              expr
+              (lower-mutable-view-init? ctx scrutinee-box)))])]
     [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)]))
 
 (define (lower-param-count [params : (& params ast.AstParamList)]) : i64

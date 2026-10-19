@@ -9840,9 +9840,105 @@
             "typecheck"))))
     ok))
 
+;; A binding of a match on a view is a view of its part, with the view's
+;; writability: written in place, lent mutably and matched again through
+;; `&mut` only, holding the matched path exclusively while it is still
+;; written; through any `&` every write is a write through `&`.
+(define (compiler-typecheck-view-match-binder-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct In (b (Box String)) (n i64))
+(defenum E (A In) (B i64))
+(defenum F (C E) (D))
+(defstruct Out (e E) (f F) (t i64))
+(define (look [p : (& p Out)]) : i64 p.t)
+(define (bump-in [q : (&mut q In)]) : unit (set! q.n (+ q.n 1)))
+"]
+    [valid : (Array String 6)
+      (array
+        "(define (f [p : (&mut p Out)]) : unit (match p.e [(E.A x) (set! x.n 7)] [(E.B _) unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (match p.e [(E.A x) (set! (deref x.b) \"zz\")] [(E.B _) unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (match p.e [(E.A x) (let [_o (replace! x.n 3)] unit)] [(E.B _) unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (match p.e [(E.A x) (bump-in (&mut x))] [(E.B _) unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.e] (match v [(E.A x) (set! x.n 7)] [(E.B _) unit])))"
+        "(define (f [p : (&mut p Out)]) : unit (match p.f [(F.C g) (match g [(E.A x) (set! x.n 7)] [(E.B _) unit])] [F.D unit]))")]
+    [invalid : (Array String 5)
+      (array
+        "(define (f [p : (& p Out)]) : unit (match p.e [(E.A x) (set! x.n 7)] [(E.B _) unit]))"
+        "(define (f [p : (& p Out)]) : unit (match p.f [(F.C g) (match g [(E.A x) (set! x.n 7)] [(E.B _) unit])] [F.D unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (match p.e [(E.A x) (let [t (look p)] (set! x.n t))] [(E.B _) unit]))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.e] (match v [(E.A x) (begin (set! x.n 3) (let [_w p.e] (set! x.n 4)))] [(E.B _) unit])))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.e] (match v [(E.A y) (match v [(E.A z) (let [_s z.b] (set! (deref y.b) \"zz\"))] [(E.B _) unit])] [(E.B _) unit])))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            "E0207"
+            "typecheck"))))
+    ok))
+
+;; A `&mut program` reference is Rust's `&'static mut`: a struct holding one
+;; declares no lifetimes and is used like any owned value, a reborrow through
+;; a path is bounded by it, a `&mut` reborrowed into a `program` region stays
+;; borrowed for the rest of the body, and a call never instantiates `program`.
+(define (compiler-typecheck-program-mut-holder-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Holder (m (&mut program Pt)))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+(define (keep [r : (&mut program Pt)]) : unit unit)
+"]
+    [valid : (Array String 5)
+      (array
+        "(define (probe [h : Holder]) : i64 (begin (set! (deref h.m).x 5) (deref h.m).x))"
+        "(define (probe [r : (&mut program Pt)]) : Holder (Holder r))"
+        "(define (probe [r : (&mut program Pt)]) : i64 (let [h (Holder r)] (deref h.m).x))"
+        "(define (probe [h : (&mut Holder)]) : unit (bump (&mut (deref (deref h).m))))"
+        "(define (probe [h : Holder]) : (&mut program Pt) h.m)")]
+    [invalid : (Array String 5)
+      (array
+        "(define (probe [r : (&mut program Pt)]) : unit (begin (keep r) (keep r)))"
+        "(define (probe [r : (&mut program Pt)]) : i64 (let [a (Holder r)] (bump r) (deref a.m).x))"
+        "(define (probe [r : (&mut program Pt)]) : (Tuple Holder Holder) (tuple (Holder r) (Holder r)))"
+        "(define (probe [h : (&mut Holder)]) : (&mut program Pt) (&mut (deref (deref h).m)))"
+        "(define (probe) : unit (let [p (Pt \"a\" 1)] (keep (&mut p))))")]
+    [codes : (Array String 5) (array "E0207" "E0207" "E0207" "E0210" "E0210")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
     (compiler-typecheck-view-writability-ok?)
+    (compiler-typecheck-view-match-binder-ok?)
+    (compiler-typecheck-program-mut-holder-ok?)
     (compiler-typecheck-place-read-receivers-ok?)
     (compiler-typecheck-place-through-shared-ok?)
     (compiler-typecheck-replace-place-own-value-ok?)

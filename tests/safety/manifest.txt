@@ -1955,3 +1955,34 @@ view_mut_owner_use_reject|check-fail|tests/safety/view_mut_owner_use_reject.tl|-
 view_mut_second_view_reject|check-fail|tests/safety/view_mut_second_view_reject.tl|-|cannot mutably borrow borrowed place `p.s`
 view_shared_field_set_reject|check-fail|tests/safety/view_shared_field_set_reject.tl|-|cannot mutably borrow `p.s.n` behind a shared reference
 view_of_view_shared_reject|check-fail|tests/safety/view_of_view_shared_reject.tl|-|cannot mutably borrow `p.m.i.b` behind a shared reference
+
+# A binding of a match on a view is a view of its part and keeps the view's
+# writability: through `&mut` only, writes land in the referent and the matched
+# path is held exclusively while the binding is still written; through any `&`
+# a write is rejected.
+view_match_binder_set_ok|run-exit|tests/safety/view_match_binder_set_ok.tl|8|-
+view_match_binder_let_view_ok|run-exit|tests/safety/view_match_binder_let_view_ok.tl|8|-
+view_match_binder_box_ok|run-exit|tests/safety/view_match_binder_box_ok.tl|4|-
+view_match_binder_replace_ok|run-exit|tests/safety/view_match_binder_replace_ok.tl|21|-
+view_match_binder_borrow_ok|run-exit|tests/safety/view_match_binder_borrow_ok.tl|3|-
+view_match_binder_loop_ok|run-exit|tests/safety/view_match_binder_loop_ok.tl|6|-
+view_match_binder_shared_reject|check-fail|tests/safety/view_match_binder_shared_reject.tl|-|cannot mutably borrow `x.n` behind a shared reference
+view_match_binder_owner_use_reject|check-fail|tests/safety/view_match_binder_owner_use_reject.tl|-|cannot mutably borrow borrowed place `p`
+view_match_binder_second_view_reject|check-fail|tests/safety/view_match_binder_second_view_reject.tl|-|cannot mutably borrow borrowed place `p.e`
+view_match_binder_alias_reject|check-fail|tests/safety/view_match_binder_alias_reject.tl|-|cannot mutably borrow borrowed place `p.e`
+
+# A `(&mut program T)` is Rust's `&'static mut`: a struct holding one declares
+# no lifetimes and is used like any owned value; a reborrow through a path is
+# bounded by it, a `&mut` reborrowed into a `program` region stays borrowed for
+# the rest of the body (main accepts the aliasing), and one reached through a
+# `&` is not writable. A call never instantiates the reserved `program`, so a
+# borrow of a local cannot stand in for it (main accepts that escape), unless a
+# parameter named `program` shadows it.
+program_mut_holder_uses_ok|check-ok|tests/safety/program_mut_holder_uses_ok.tl|-|-
+program_mut_holder_alias_reject|check-fail|tests/safety/program_mut_holder_alias_reject.tl|-|cannot mutably borrow borrowed place `r`
+program_mut_reborrow_twice_reject|check-fail|tests/safety/program_mut_reborrow_twice_reject.tl|-|cannot mutably borrow borrowed place `r`
+program_mut_holder_reborrow_escape_reject|check-fail|tests/safety/program_mut_holder_reborrow_escape_reject.tl|-|source lifetime `h` does not outlive required lifetime `program`
+program_mut_slot_shared_match_reject|check-fail|tests/safety/program_mut_slot_shared_match_reject.tl|-|mutable borrow through a shared reference
+program_param_borrow_escape_reject|check-fail|tests/safety/program_param_borrow_escape_reject.tl|-|source lifetime `text` does not outlive required lifetime `program`
+program_mut_param_borrow_escape_reject|check-fail|tests/safety/program_mut_param_borrow_escape_reject.tl|-|source lifetime `p` does not outlive required lifetime `program`
+program_param_shadow_ok|run-exit|tests/safety/program_param_shadow_ok.tl|3|-

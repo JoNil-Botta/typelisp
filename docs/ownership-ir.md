@@ -87,9 +87,14 @@ through, exclusive for its whole life when every reference on its path is
 `&mut` (`normalize-exclusive-ok`), and rejects the write otherwise. The
 expressions reading or copying such a mutable view are reported with the
 normalized body (`mutable-views`), and lowering binds them to the viewed
-storage instead of a copy. A borrowed match on a view still binds its
-patterns as opaque shared references, so a write through such a binder is
-rejected (E0207) even behind `&mut` (main accepts it). A read through a
+storage instead of a copy. A match on a view, or on a view binder, matches
+a fresh view of the place (`tc-selected-view-binder-scrutinee`); each of its
+bindings is a view of its part, whose opaque referent loan is routed through
+that view's loan (`opaque-route-loans`, `normalize-opaque-referent-of!`), so a write
+through a binding follows the same rule and makes the matched path exclusive,
+and lowering binds the patterns of such a match to the viewed storage
+(`lower-state-view-match?`). A `&mut` payload bound through a shared view is
+downgraded like any other `&mut` reached through a `&`. A read through a
 reference that may point to several places sees the loans of all of them, so
 writing a place only one of them borrows can be rejected while another is
 read (main rejects that too; Rust accepts it). A raw address
@@ -784,7 +789,19 @@ the lifetimes the typechecker already carries in every type it publishes.
   typechecker instantiates projection types with the root's names. A
   parameter's signature lifetimes and the return type's are universal regions,
   shared by every parameter and live at every return. Each call instantiates
-  its callee's signature lifetimes as fresh regions of its own.
+  its callee's signature lifetimes as fresh regions of its own, except the
+  reserved `program`, which outlives every region as Rust's `'static` does: a
+  call's `program` region flows into a universal `program` region, so a `&mut`
+  reborrowed into a `(&mut program T)` parameter or field stays borrowed for
+  the rest of the body (`normalize-region-edges`;
+  `program_mut_reborrow_twice_reject`, `program_mut_holder_alias_reject`).
+  Typing never instantiates it at a call either, so only a `program`
+  reference reaches such a parameter; a callee parameter named `program`
+  names its own lifetime, which the call's published signature renames
+  (`tc-call-program-shadow`, `tc-call-published-signature`). A struct field
+  of type `(&mut program T)` holds no loan of the body
+  (`tc-selected-holds-reference-in?`), so its holder needs no lifetime
+  parameter.
 - **Shapes.** A type's shape lists its lifetime positions in order, each with
   its variance and the reference it lies under. `&` is covariant; the
   referent of `&mut` and a function type are invariant. A struct's or enum's
@@ -1199,6 +1216,20 @@ implicit `f32` to `f64` widening now expect the rejections.
 | Overwriting an initialized array of cleanup-owning values (SPEC 4.7.1) would lose the old elements' cleanups; main accepted it, for holders of references too. | `cleanup_array_overwrite_reject`, `mir_cleanup_holder_array_overwrite_reject` |
 | Variance through a C function pointer: a lifetime used in a `CFunc` signature is contravariant in its parameters, as in a function type; main counted it bivariant and accepted shortening it. | `variance_cfunc_parameter_reject` |
 | Raw string helpers behind safe names (#7945): `substring-copy-checked` and the integer-digit writers write through raw pointers and need `unsafe` here; main declares them safe. | `string_raw_substring_reject`, `string_raw_integer_byte_reject`, `string_raw_integer_digits_reject` |
+
+Added since, each accepted by main 4e46ce356 (the published stage0): a `&mut`
+reborrowed into a `program` region aliased by a second reborrow, a reborrow of
+a holder's `&mut program` field returned as `program`, a borrow of a local
+passed for a `program` parameter and stored past the local, a store through a
+`&mut program` payload bound through a shared view, a store through a binding
+of a match on a shared view, and a read of the owner while a written match
+binding still holds its path (`program_mut_reborrow_twice_reject`,
+`program_mut_holder_alias_reject`,
+`program_mut_holder_reborrow_escape_reject`,
+`program_param_borrow_escape_reject`,
+`program_mut_param_borrow_escape_reject`,
+`program_mut_slot_shared_match_reject`, `view_match_binder_shared_reject`,
+`view_match_binder_owner_use_reject`).
 
 ## Revalidated base and existing authorities
 

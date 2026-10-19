@@ -1839,7 +1839,8 @@ which section 3.4's `deref` rule rejects ("cannot move non-Copy value through
 shared reference"). A view keeps the references it was read through. Read
 through `&mut` references only, it is a *mutable view*: writing its elements
 or fields, `replace!` of its parts and lending it with `(&mut ...)` write the
-referent itself, and a view read through it, or a copy of it, is mutable too.
+referent itself, and a view read through it, a copy of it, or a binding of a
+`match` on it (a view of the matched part) is mutable too.
 A mutable view that is written holds its path exclusively while it is used, as
 a `&mut` reborrow does: using the owner, or another view of the same storage,
 before the view's last use is rejected ("cannot ... borrowed place"). A view
@@ -2530,6 +2531,36 @@ stand in for it:
 
 (define (make-named) : Named
   (Named "world"))
+```
+
+A call never instantiates the reserved `program` lifetime: a `program`
+parameter, like a `program` field, takes only a `program` reference, never a
+borrow of a local ("source lifetime ... does not outlive required lifetime
+`program`"). A parameter named `program` names its own lifetime instead, as any
+parameter named like a lifetime does. A `(&mut program T)` is Rust's
+`&'static mut T`. A struct field of that type needs no lifetime parameter, and
+its holder is read, written through, passed, stored and matched like any owned
+value. A reborrow of the field through a reference to the holder lives no
+longer than that reference, so it cannot be returned as a `program` one. A
+`&mut` reborrowed into a `program` position (a `(&mut program T)` parameter or
+field) may be kept for the rest of the program, so it stays borrowed for the
+rest of the body: a later use of it, or a second such reborrow, is rejected
+("cannot mutably borrow borrowed place").
+
+```lisp test=check name=program-mut-holder-ok
+(defstruct Counter
+  (n i64))
+
+(defstruct Holder
+  (counter (&mut program Counter)))
+
+(define (wrap [c : (&mut program Counter)]) : Holder
+  (Holder c))
+
+(define (bump [h : Holder]) : i64
+  (begin
+    (set! (deref h.counter).n (+ (deref h.counter).n 1))
+    (deref h.counter).n))
 ```
 
 A store through a mutable reference is checked against the destination's own

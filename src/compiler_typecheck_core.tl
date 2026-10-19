@@ -8928,9 +8928,12 @@
                               (TcSelectedScrutinee.Legacy settled)]
                             [(TcSelectedResult.Err message settled)
                               (TcSelectedScrutinee.Err message settled)])
-                          (tc-infer-selected-scrutinee-value
+                          (tc-selected-view-binder-scrutinee
                             ctx
                             env
+                            ty
+                            id
+                            indices
                             scrut-id
                             source
                             after)))])]
@@ -8942,6 +8945,56 @@
                     source
                     next)])])
           (tc-infer-selected-scrutinee-value ctx env scrut-id source sink)))]))
+
+;; A view binder (a value read through a reference, bound by value) is matched
+;; through a fresh view of its referent, as a part read through a reference is
+;; (`tc-selected-referent-scrutinee`): its bindings are views of that view's
+;; parts, writable when its path is (`normalize-pattern-bindings!`). Any other
+;; place is read as a value.
+(define (tc-selected-view-binder-scrutinee
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [id : typed.TypedPlaceId]
+  [indices : (__tl_dyn-array typed.TypedOccurrenceId)]
+  [scrut-id : i64]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedScrutinee
+    store
+    lease
+    intern
+    bind)
+  (let
+    [root : i64 id.handle.index]
+    (if (tc-selected-view-scrutinee?
+      ctx
+      (tc-selected-strip-arena-tags ctx env (tc-global-shared-view ty)))
+      (match (tc-selected-view-receiver
+        ctx
+        env
+        (tc-global-shared-view source)
+        (TcSelectedPlaceResult.Ok
+          (tc-global-shared-view ty)
+          (TcSelectedPlace.Selected id indices)
+          sink))
+        [(TcSelectedPlaceResult.Ok
+            _
+            (TcSelectedPlace.Selected derefed parts)
+            next)
+          (if (= derefed.handle.index root)
+            (tc-infer-selected-scrutinee-value ctx env scrut-id source next)
+            (tc-selected-referent-scrutinee
+              ty
+              derefed
+              parts
+              scrut-id
+              source
+              next))]
+        [(TcSelectedPlaceResult.Ok _ _ next)
+          (tc-infer-selected-scrutinee-value ctx env scrut-id source next)]
+        [(TcSelectedPlaceResult.Err message next)
+          (TcSelectedScrutinee.Err message next)])
+      (tc-infer-selected-scrutinee-value ctx env scrut-id source sink))))
 
 ;; The FormPlace of a by-value scrutinee place.
 (define (tc-selected-position-form
@@ -14343,17 +14396,18 @@
       (tc-selected-loan-array? ctx (tc-global-shared-view resolved))
       (tc-selected-program-reference? ctx (tc-global-shared-view resolved)))))
 
-;; A shared reference of the reserved `program` lifetime to a supported
-;; referent: it outlives every other lifetime, so a value holding it holds no
-;; loan the graph must track, though it is still read through as a reference.
+;; A reference of the reserved `program` lifetime to a supported referent, as
+;; Rust's `'static`: it outlives every other lifetime, so a value holding it
+;; holds no loan the graph must track, though it is still read (and, when
+;; mutable, written) through as a reference, and a `&mut` stays move-only.
 (define (tc-selected-program-reference?
   [ctx : TcContext]
   [resolved : ast.AstType]) : bool
   (match (tc-global-shared-view resolved)
-    [(ast.AstType.Ref lifetime _)
+    [(or (ast.AstType.Ref lifetime _) (ast.AstType.MutRef lifetime _))
       (and
         (tc-program-lifetime-id? lifetime)
-        (= (tc-selected-reference-kind ctx (tc-global-shared-view resolved)) 1))]
+        (> (tc-selected-reference-kind ctx (tc-global-shared-view resolved)) 0))]
     [_ false]))
 
 ;; A parameter type the call slice represents: a value, or a reference whose
@@ -17629,21 +17683,33 @@
                   (ast.ast-type-list-box-shared-view params-box)]
                 [declared-ret : ast.AstType (ast.ty-node-get ret-id)]
                 [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-                ;; A constructor never instantiates the reserved `program`
-                ;; lifetime: a field's `program` reference takes only a
-                ;; `program` reference (`tc-call-lifetime-constructor-type`).
-                [lifetimes : ast.AstLifetimeList
-                  (if (= key -1)
-                    (tc-name-id-list-to-lifetime-list
-                      (tc-name-id-list-without-program
-                        (tc-type-collect-reference-lifetimes-into
-                          (tc-global-shared-view declared-ret)
-                          (tc-type-list-collect-reference-lifetimes
-                            (tc-global-shared-view declared-params)
-                            TcNameIdList.Nil))))
-                    (tc-call-function-lifetimes
+                [collected : TcNameIdList
+                  (tc-type-collect-reference-lifetimes-into
+                    (tc-global-shared-view declared-ret)
+                    (tc-type-list-collect-reference-lifetimes
                       (tc-global-shared-view declared-params)
-                      (tc-global-shared-view declared-ret)))]
+                      TcNameIdList.Nil))]
+                ;; A declared callee's parameter spelled `program` names its
+                ;; own lifetime there (`tc-call-program-shadow`); a
+                ;; constructor's fields cannot.
+                [shadow : i64
+                  (if (and
+                    (>= key 0)
+                    (tc-name-id-list-spells-program? collected))
+                    (tc-call-program-shadow
+                      ctx
+                      key
+                      (ast.ast-type-list-len (& declared-params)))
+                    -1)]
+                ;; A call never instantiates the reserved `program` lifetime,
+                ;; which outlives every other as Rust's `'static` does: a
+                ;; `program` parameter or field takes only a `program`
+                ;; reference (`tc-call-lifetime-constructor-type`).
+                [lifetimes : ast.AstLifetimeList
+                  (tc-name-id-list-to-lifetime-list
+                    (if (< shadow 0)
+                      (tc-name-id-list-without-program collected)
+                      collected))]
                 ;; A lifetime that only says how long the call borrows its
                 ;; argument is the call-temporary lifetime: the call infers
                 ;; nothing from it (`tc-call-lifetime-function-type`).
@@ -17847,7 +17913,9 @@
                                                 key)]
                                             [else
                                               (typed.TypedCallKind.Declared key)])
-                                          (tc-global-shared-view fn-ty)
+                                          (tc-call-published-signature
+                                            shadow
+                                            (tc-global-shared-view fn-ty))
                                           syntax
                                           source
                                           (tc-selected-with-callee
@@ -37974,27 +38042,64 @@
 
 ;: The list without the reserved `program` lifetime (itself when it has none).
 (define (tc-name-id-list-without-program [items : TcNameIdList]) : TcNameIdList
+  (if (tc-name-id-list-spells-program? items)
+    (let
+      [out : TcNameIdList Nil]
+      [rest : TcNameIdList items]
+      (while (not (tc-name-id-list-empty? rest))
+        (let
+          [lifetime : i64 (tc-name-id-list-head rest)]
+          (unless
+            (tc-program-lifetime-id? lifetime)
+            (set! out (tc-name-id-list-add out lifetime))))
+        (set! rest (tc-name-id-list-rest rest)))
+      out)
+    items))
+
+(define (tc-name-id-list-spells-program? [items : TcNameIdList]) : bool
   (let
     [cursor : TcNameIdList items]
-    [has-program : bool false]
-    (while (and (not has-program) (not (tc-name-id-list-empty? cursor)))
+    [found : bool false]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
       (when
         (tc-program-lifetime-id? (tc-name-id-list-head cursor))
-        (set! has-program true))
+        (set! found true))
       (set! cursor (tc-name-id-list-rest cursor)))
-    (if has-program
-      (let
-        [out : TcNameIdList Nil]
-        [rest : TcNameIdList items]
-        (while (not (tc-name-id-list-empty? rest))
-          (let
-            [lifetime : i64 (tc-name-id-list-head rest)]
-            (unless
-              (tc-program-lifetime-id? lifetime)
-              (set! out (tc-name-id-list-add out lifetime))))
-          (set! rest (tc-name-id-list-rest rest)))
-        out)
-      items)))
+    found))
+
+;; A parameter of the declared callee with symbol index `key` spelled
+;; `program` names its own lifetime in the signature, as any parameter named
+;; like a lifetime does, shadowing the reserved one
+;; (`tc-signature-lifetime-needs-marker?`): that name, or -1. A function
+;; value's type names no parameters, so its `program` is the reserved one.
+(define (tc-call-program-shadow [ctx : TcContext] [key : i64] [count : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (< index count))
+      (match (match (csym.compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        key)
+        [(Ok declared) (tc-call-decl-param-name-at declared index)]
+        [(Err _) TcMaybeNameId.No])
+        [(TcMaybeNameId.Some name)
+          (when (tc-program-lifetime-id? name) (set! found name))]
+        [(TcMaybeNameId.No) unit])
+      (set! index (+ index 1)))
+    found))
+
+;; The signature a call publishes for the ownership graph, where a `program`
+;; lifetime is the reserved one (`normalize-region-edges`): a shadowing
+;; parameter's own `program` is renamed to a hidden lifetime.
+(define (tc-call-published-signature [shadow : i64] [fn-ty : ast.AstType]) : ast.AstType
+  (if (< shadow 0)
+    fn-ty
+    (tc-lifetime-subst-type
+      (tc-lifetime-subst-push
+        TcLifetimeSubst.Nil
+        shadow
+        cbi.compiler-builtin-id-fix-empty)
+      fn-ty)))
 
 ;; A returned reference lifetime must be tied to an input parameter or be the
 ;; reserved `program` lifetime (SPEC 3.10, lifetime-parameterized aggregates).
@@ -38175,6 +38280,8 @@
       (tc-name-id-list-head lifetimes)
       (tc-tag-reference-lifetimes (tc-name-id-list-rest lifetimes) ty))))
 
+;; The reserved `program` lifetime confines no value (it outlives every
+;; region), so a field's `program` reference tags nothing.
 (define (tc-constructor-target-type
   [env : TcTypeEnv]
   [params : ast.AstTypeList]
@@ -38182,7 +38289,8 @@
   (tc-tag-active-region
     env
     (tc-tag-reference-lifetimes
-      (tc-type-list-collect-reference-lifetimes params Nil)
+      (tc-name-id-list-without-program
+        (tc-type-list-collect-reference-lifetimes params Nil))
       ret)))
 
 (define (tc-project-from-region-container
@@ -120055,10 +120163,16 @@
   [walk : (&mut walk TcSelectedHoldsWalk)]
   [ty : ast.AstType]) : bool
   (match (tc-resolve-type ctx ty)
-    [(ast.AstType.MutRef _ _) true]
-    ;; A shared reference of the reserved `program` lifetime outlives every
-    ;; other, so holding one names no lifetime of its own (only what its
-    ;; referent holds).
+    ;; A reference of the reserved `program` lifetime outlives every other,
+    ;; as Rust's `'static` does, so holding one names no lifetime of its own
+    ;; (only what its referent holds): its loans are the program region's,
+    ;; never a loan of this body. A `&mut program` stays move-only, and a
+    ;; reborrow or write through it is bounded by the path it is reached
+    ;; through (`normalize-opaque-referent-of!`).
+    [(ast.AstType.MutRef lifetime inner)
+      (or
+        (not (tc-program-lifetime-id? lifetime))
+        (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get inner)))]
     [(ast.AstType.Ref lifetime inner)
       (or
         (and (not walk.mut?) (not (tc-program-lifetime-id? lifetime)))

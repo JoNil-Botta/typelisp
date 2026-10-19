@@ -230,7 +230,25 @@ mutable loan and a view of a view through `&mut`, the `view_*_reject` rows keep
 the owner and other views unusable while a mutable view is written and every
 write through a `&` path rejected, and the `view_mut_write` native matrix runs
 each write form, a copied view and a loop at opt0/1/2. The move-test table
-`compiler-typecheck-view-writability-ok?` checks both sides.
+`compiler-typecheck-view-writability-ok?` checks both sides. A binding of a
+match on a view keeps the view's writability: the `view_match_binder_*_ok`
+rows pin main's exit values for a field store, box contents, `replace!`, a
+mutable loan, a match on a view binder and a loop; the `view_match_binder_*`
+rejects keep the owner, another view of the path and a second match's binding
+unusable while a binding is written, and reject every write through a `&`
+path; the `view_match_binder_write` native matrix runs each form, an
+or-pattern, two payloads and a binding of a binding at opt0/1/2, and
+`compiler-typecheck-view-match-binder-ok?` checks both sides.
+
+A `(&mut program T)` is Rust's `&'static mut`: `program_mut_holder_uses_ok`
+(main's typecheck-smoke holder among them) reads, writes, passes, stores,
+moves and matches holders of one; the `program_mut_*_reject` rows reject a
+`&mut` reborrowed into a `program` region and used again (main accepts the
+aliasing), a reborrow through a holder returned as `program`, a store through
+a payload bound through `&`, and a borrow of a local passed for a `program`
+parameter (`program_param_*`; `program_param_shadow_ok` keeps a parameter named
+`program` an ordinary borrow); `compiler-typecheck-program-mut-holder-ok?`
+checks both sides.
 
 ## Linux thread storage
 

@@ -5,6 +5,20 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`compiler-lower-function-env-scratch` lowers several functions against one
+persistent module environment, including binding-store growth and a rejected
+function. It checks parent bindings and cache metadata after each scratch
+rewind, retirement of address-keyed memos, and readable escaped IR and errors.
+Run the lowering suite at opt0/1/2; poisoned full self-compiles also exercise
+post-rewind consumers across functions, closures and generated helpers.
+
+`array_field_store_growth.tl` exercises field stores after dynamic-array
+growth for register and memory-class elements, nested struct/tuple projections,
+one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
+safety rows keep final bounds checks after the value's effects and reject
+immutable receivers; intermediate projection traps remain independently pinned
+by `set_intermediate_bounds_before_value_trap.tl`.
+
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an
 extra register, and checks that pricing restores its caller's pool. The IR
@@ -84,6 +98,25 @@ and unchanged AVX-512 signed/unsigned integer predicates.
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
+
+`package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
+runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
+covers 8/16/24-byte integer structures, signed boundaries, floating and mixed
+register classes, stack pressure, hidden result pointers, references and
+borrowed strings. Saved values cross another call before use, including a
+tuple whose physical group appears only in the dependency signature. The
+lowering and IR smoke tests keep layout-only group facts, malformed transport
+types and conflicting group observations covered. The package runtime lifetime
+test compares ordinary and Windows package assembly at all three levels for
+constructor-free nominal groups with all four integer/SSE word masks. It runs
+on either host and checks the retained output after scope cleanup. Native Slice
+extern rejection remains in the safety corpus. The backend admission fixture
+exercises missing indices and entries, conflicting widths and register classes,
+and valid one-word/all four two-word layouts in parameter and result positions.
+Both assembly and object emitters on both targets must reject unresolved
+TypeLisp extern layouts while retaining native C extern behavior. Rebuilding the
+index must preserve missing facts even when native or pointer declarations of
+the same nominal type appear first.
 
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at

@@ -1626,6 +1626,12 @@ storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
 
+Inline-storage coloring tracks addresses through its known alias forms. A
+`Pack` can retain such an address in a register group after the original pointer
+dies; its operands therefore participate in the shared escape visitor. Without
+a complete lifetime proof for the packed result, the backing range stays private.
+Packing only values without tracked storage roots does not invalidate a range.
+
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or

@@ -30315,10 +30315,7 @@
     [(PtrRead ptr-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
-        [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
-        (match lowered
-          [(Expr ptr-state ptr-value _)
-            (lower-array-elem-ref-result ctx ptr-state ptr-value expr-ty)]))]
+        (lower-ptr-read ctx state env type-env ptr expr-ty origin))]
     [(PtrWrite ptr-box value-box)
       (let
         [ptr : ast.AstExpr (lower-context-expr-get ctx ptr-box)]
@@ -38199,6 +38196,139 @@
             (lower-global-shared-view result-ty)))
           [(Expr data-state data-value _)
             (Ok (Expr data-state data-value result-ty))])])))
+
+(define (lower-singleton-cell-value-id
+  [ctx : tc_core.TcContext]
+  [ptr : (& ptr ast.AstExpr)]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    (match (ast.ast-expr-unspan-with-pools pools ptr)
+      [(PtrCast data-id _)
+        (match (ast.ast-expr-unspan-with-pools
+          pools
+          (& (lower-context-expr-get ctx data-id)))
+          [(ArrayData array-id)
+            (match (ast.ast-expr-unspan-with-pools
+              pools
+              (& (lower-context-expr-get ctx array-id)))
+              [(Array values)
+                (if (= values.len 1)
+                  (ast.ast-expr-list-get (& values) 0 -1)
+                  -1)]
+              [_ -1])]
+          [_ -1])]
+      [_ -1])))
+
+;; These values store exactly one initialized machine word. Size alone cannot
+;; establish this for inline aggregates, fat references or function descriptors.
+(define (lower-singleton-cell-word-type?
+  [ctx : tc_core.TcContext]
+  [ty : (& ty ast.AstType)]) : bool
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type
+          ctx
+          (owned_view.compiler-owned-reference-shared-view ty)))]
+    (and
+      (= (lower-type-size ctx resolved) 8)
+      (not (lower-type-inline-storage? ctx resolved))
+      (= (lower-type-register-words ctx (lower-global-shared-view resolved)) 0)
+      (match (& resolved)
+        [(or (I64) (U64) (F64) (Ptr _) (MutPtr _) (DynArray _) (Box _) (String)
+             (Ref _ _) (MutRef _ _))
+          true]
+        [_ false]))))
+
+(define (lower-singleton-cell-bits
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [from-ty : ast.AstType]
+  [to-ty : ast.AstType]) : LowerExpr
+  (if (tc_core.tc-type-eq
+    (lower-global-shared-view from-ty)
+    (lower-global-shared-view to-ty))
+    (Expr state value to-ty)
+    (match (& from-ty)
+      [(F64)
+        (match (lower-bitcast-value state value from-ty (U64))
+          [(Expr bits-state bits _)
+            (lower-cast-value bits-state bits (U64) to-ty)])]
+      [_
+        (match (& to-ty)
+          [(F64)
+            (match (lower-cast-value state value from-ty (U64))
+              [(Expr bits-state bits _)
+                (lower-bitcast-value bits-state bits (U64) to-ty)])]
+          [_ (lower-cast-value state value from-ty to-ty)])])))
+
+(define (lower-ptr-read
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [ptr : ast.AstExpr]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [value-id : i64 (lower-singleton-cell-value-id ctx ptr)]
+    ;; The immediate cell's address cannot escape or be written between its
+    ;; single store and load. Earlier checking still owns borrow/lifetime rules.
+    (when
+      (and (>= value-id 0) (lower-singleton-cell-word-type? ctx result-ty))
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-id)]
+        (match (lower-expr-result-type-or-check
+          ctx
+          env
+          type-env
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
+          value)
+          [(Ok value-ty)
+            (let
+              [stored-ty : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type ctx value-ty))]
+              (when
+                (lower-singleton-cell-word-type? ctx stored-ty)
+                (let
+                  [lowered : LowerExpr
+                    (try
+                      (lower-expr-expected
+                        ctx
+                        state
+                        env
+                        type-env
+                        (lower-global-shared-view value)
+                        (lower-global-shared-view stored-ty)
+                        value))]
+                  (match lowered
+                    [(Expr value-state value-ir actual-ty)
+                      (when
+                        (tc_core.tc-never-type? actual-ty)
+                        (return (Ok (Expr value-state Unit (Never)))))
+                      (match (lower-singleton-cell-bits
+                        value-state
+                        value-ir
+                        stored-ty
+                        result-ty)
+                        [(Expr bits-state bits bits-ty)
+                          ;; A load snapshots its operand even when that word
+                          ;; names a mutable local/global read before later effects.
+                          (return
+                            (lower-materialize-at-expr
+                              ctx
+                              bits-state
+                              bits
+                              bits-ty
+                              origin))])]))))]
+          [(Err _) unit])))
+    (let
+      [lowered : LowerExpr (try (lower-expr ctx state env type-env ptr))]
+      (match lowered
+        [(Expr ptr-state ptr-value _)
+          (lower-array-elem-ref-result ctx ptr-state ptr-value result-ty)]))))
 
 (define (lower-array-data
   [ctx : tc_core.TcContext]

@@ -22,6 +22,7 @@
 ;; the loader's per-file scratch and pool resets. Revalidating it re-reads every
 ;; disk entry, which lets a caller that later writes files detect an input that
 ;; went stale in between.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.crypto_sha256 as sha256)
@@ -202,14 +203,12 @@
   (let
     [bytes : (__tl_dyn-array u8) (compiler-source-string-array text)]
     [count : i64 (array-length bytes)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [byte : u8 (array-ref bytes index)]
         (if (and (>= byte (cast 65 : u8)) (<= byte (cast 90 : u8)))
           (set! (array-ref bytes index) (+ byte (cast 32 : u8)))
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     (byte_buf.to-string (byte_buf.from-array bytes))))
 
 ;; Windows file names compare case-insensitively (ASCII); every other host
@@ -356,7 +355,7 @@
                   (& input.path))
                   (set! seen true)
                   unit)
-                (set! earlier (+ earlier 1))))
+                (+= earlier 1)))
             seen)]
         (cond
           [(or
@@ -419,8 +418,8 @@
                             (string.copy (& input.path))
                             (string.copy (& input.bytes))
                             content))
-                        (set! total (+ total size))])])])])
-        (set! index (+ index 1))))
+                        (+= total size)])])])])
+        (+= index 1)))
     (if failed
       (Err failure)
       (Ok (CompilerSourceOverlay generation root cwd entries limits)))))
@@ -464,7 +463,7 @@
           (& (array-ref slots index).path))
           (set! offender index)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (< offender 0)
       (Ok)
       (let
@@ -503,7 +502,7 @@
         (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
           (set! found index)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (compiler-source-overlay-entry
@@ -663,9 +662,8 @@
   [ledger : (& ledger CompilerSourceLedger)]) : source_path_vec.Vec
   (let
     [count : i64 (ledger_entry_vec.len (& ledger.entries))]
-    [index : i64 0]
     [stale : source_path_vec.Vec (source_path_vec.new)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [entry : CompilerSourceLedgerEntry
           (compiler-source-ledger-get ledger index)]
@@ -689,8 +687,7 @@
                 (source_path_vec.push-ref!
                   (&mut stale)
                   (string.copy (& entry.path)))))]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     stale))
 
 ;; Check that every admitted entry was consumed by the check. An entry the
@@ -701,9 +698,8 @@
   [ledger : (& ledger CompilerSourceLedger)]) : source_path_vec.Vec
   (let
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
-    [index : i64 0]
     [unread : source_path_vec.Vec (source_path_vec.new)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [entry : CompilerSourceOverlayEntry
           (compiler-source-overlay-entry overlay index)]
@@ -714,8 +710,7 @@
             [(Overlay) true]
             [_ false]))
           unit
-          (source_path_vec.push-ref! (&mut unread) (string.copy (& entry.path))))
-        (set! index (+ index 1))))
+          (source_path_vec.push-ref! (&mut unread) (string.copy (& entry.path))))))
     unread))
 
 (define (compiler-source-ledger-find
@@ -731,5 +726,5 @@
         (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
           (set! found index)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))

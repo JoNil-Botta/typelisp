@@ -6,6 +6,7 @@
 ;; or mutate one process-global counter or summary table. Allocate ranked
 ;; summary tables only when that reporting mode (or this module's tests) is
 ;; actually selected.
+(cfg (any compile-profile test) (import stdlib.iterator))
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
@@ -210,14 +211,11 @@
     [metrics : CompilerProfileMetrics]
     [start : i64]
     [end : i64]) : unit
-    (let
-      [metric : i64 start]
-      (while (< metric end)
-        (compiler-profile-metrics-set!
-          (compiler-profile-state-shared-view metrics)
-          metric
-          0)
-        (set! metric (+ metric 1))))))
+    (for [metric (iterator.range start end)]
+      (compiler-profile-metrics-set!
+        (compiler-profile-state-shared-view metrics)
+        metric
+        0))))
 
 (cfg
   (any compile-profile test)

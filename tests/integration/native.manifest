@@ -988,3 +988,4 @@ store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|st
 store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
+reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-

@@ -2056,7 +2056,6 @@ Names cross the package-discovery scratch/interner boundary as strings and are
 interned only after installing the child session; environments containing
 parent-session IDs cannot cross that boundary.
 
-
 `typelisp expand` and LSP `tl/expandMacro` share the query in
 `compiler_expand_query.tl`. It checks the source through the production
 pipeline, then walks checked `MacroExpansion` nodes to select the innermost

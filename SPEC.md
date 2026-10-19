@@ -9781,11 +9781,10 @@ Shared compile options use the same value validation and diagnostic wording
 wherever a command accepts them. `--target`, `--backend-mode`, `--opt-level`
 and debug selection are singletons; `--debug`, `-g` and `--backtrace` select
 the same option, so combining them is a duplicate. `--cfg` and `--stdlib-root`
-are repeatable and require nonempty values. Source and package `build`/`run`
-carry cfg names through preflight, dependency workers and compilation.
+are repeatable and require nonempty values. Source `build` and package
+`build`/`run` carry cfg names through preflight, dependency workers and compilation.
 `fmt` validates target/cfg/root arguments but retains every CST branch and
 does not load imports. `lsp` rejects unrecognized command-line arguments.
-
 
 `compile -o <file>` writes assembly or IR to the given path, `--emit-ir`
 emits the lowered and optimized IR instead of assembly, `--pic` emits

@@ -42,6 +42,45 @@ $OutputDirPath = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     Join-Path $Root $OutputDir
 }
 
+# Only a missing mutable alias selects another release. An explicit tag or
+# a checksum mismatch must retain its original failure boundary.
+$RequireSums = ($Tag -eq "stage0-latest")
+
+function Test-Stage0NotFound {
+    param($Failure)
+    $ResponseProperty = $Failure.Exception.PSObject.Properties['Response']
+    return $ResponseProperty -and $ResponseProperty.Value -and ([int] $ResponseProperty.Value.StatusCode -eq 404)
+}
+
+function Get-ImmutableMainRelease {
+    $Api = "https://api.github.com/repos/$Repo"
+    for ($Page = 1; ; $Page++) {
+        $PageText = (Invoke-WebRequest -Uri "$Api/releases?per_page=100&page=$Page" -UseBasicParsing).Content
+        if (-not $PageText.TrimStart().StartsWith('[')) { throw "invalid stage0 release list" }
+        $Items = @($PageText | ConvertFrom-Json)
+        $Candidates = $Items | Where-Object {
+            $_.draft -eq $false -and $_.prerelease -eq $false -and $_.published_at -and
+            $_.tag_name -cmatch '^stage0-[0-9]{8}-[0-9]{6}-r[0-9]+$' -and
+            $_.target_commitish -cmatch '^[0-9a-f]{40}$' -and
+            @($_.assets | Where-Object { $_.name -eq $SingleAsset -and $_.state -eq 'uploaded' -and $_.size -gt 0 }).Count -gt 0 -and
+            @($_.assets | Where-Object { $_.name -eq 'SHA256SUMS' -and $_.state -eq 'uploaded' -and $_.size -gt 0 }).Count -gt 0
+        } | Sort-Object -Property published_at, tag_name -Descending
+        foreach ($Candidate in $Candidates) {
+            try {
+                $Comparison = (Invoke-WebRequest -Uri "$Api/compare/$($Candidate.tag_name)...main" -UseBasicParsing).Content | ConvertFrom-Json
+            } catch {
+                if (Test-Stage0NotFound $_) { continue }
+                throw
+            }
+            if ($Comparison.base_commit.sha -ceq $Candidate.target_commitish -and $Comparison.status -cin @('ahead', 'identical')) {
+                return $Candidate.tag_name
+            }
+        }
+        if ($Items.Count -lt 100) { break }
+    }
+    throw "no published immutable main release with $SingleAsset and SHA256SUMS"
+}
+
 # Match the POSIX fetcher's bounded whole-generation retry. The prepared-draft
 # publication protocol keeps the stage0-latest gap short, but release/tag and
 # CDN propagation can still expose a transient 404 or mismatched checksum.
@@ -83,6 +122,7 @@ try {
             }
             $Target
         } catch {
+            if (Test-Stage0NotFound $_) { $script:ReleaseUnavailable = $true }
             Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
             throw
         }
@@ -91,6 +131,7 @@ try {
     $FetchSucceeded = $false
     for ($Attempt = 1; $Attempt -le $FetchAttempts; $Attempt++) {
         $Asset = $SingleAsset
+        $script:ReleaseUnavailable = $false
         $AssetTmp = $null
         Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
@@ -103,8 +144,9 @@ try {
                 Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS" -OutFile $SumsTmp -UseBasicParsing
                 $HaveSums = $true
             } catch {
-                if ($Tag -eq "stage0-latest") {
-                    throw "SHA256SUMS is not visible for stage0-latest yet"
+                if (Test-Stage0NotFound $_) { $script:ReleaseUnavailable = $true }
+                if ($RequireSums) {
+                    throw "SHA256SUMS is not visible for $Tag yet"
                 }
                 Write-Warning "SHA256SUMS not found for $Tag; verified non-empty asset only"
             }
@@ -133,6 +175,14 @@ try {
             break
         } catch {
             $FetchError = $_.Exception.Message
+            if ($Tag -eq 'stage0-latest' -and $script:ReleaseUnavailable) {
+                $FallbackTag = Get-ImmutableMainRelease
+                [Console]::Error.WriteLine("[stage0] stage0-latest unavailable; falling back to $Repo@$FallbackTag")
+                $Tag = $FallbackTag
+                $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
+                $Attempt--
+                continue
+            }
             Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
             if ($Attempt -ge $FetchAttempts) {

@@ -5,6 +5,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import type { IncomingMessage } from 'http';
+import { Stage0HttpError, stage0BaseUrl, immutableMainRelease, expectedHashFor } from './stage0Release';
 
 // Auto-managed stage0 compiler download.
 //
@@ -99,7 +100,7 @@ function httpGet(url: string, redirectsLeft = 5): Promise<IncomingMessage> {
 
         if (status !== 200) {
           response.resume();
-          reject(new Error(`HTTP ${status} for ${url}`));
+          reject(new Stage0HttpError(status, url));
           return;
         }
 
@@ -145,17 +146,6 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex');
 }
 
-// Parse a `sha256sum` manifest line for the given asset: "<64 hex>  <name>".
-function expectedHashFor(sums: string, asset: string): string | undefined {
-  for (const line of sums.split(/\r?\n/)) {
-    const match = line.match(/^([0-9A-Fa-f]{64})\s+\*?(.+?)\s*$/);
-    if (match && match[2] === asset) {
-      return match[1].toLowerCase();
-    }
-  }
-  return undefined;
-}
-
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fsp.access(filePath);
@@ -189,7 +179,8 @@ export async function ensureStage0(
   const dir = path.join(context.globalStorageUri.fsPath, 'stage0');
   await fsp.mkdir(dir, { recursive: true });
   const dest = path.join(dir, platform.outputName);
-  const baseUrl = `https://github.com/${config.repo}/releases/download/${config.releaseTag}`;
+  let releaseTag = config.releaseTag;
+  let baseUrl = stage0BaseUrl(config.repo, releaseTag);
   const haveCached = await fileExists(dest);
 
   // Cheap freshness probe: the manifest is tiny, the binary is not.
@@ -204,6 +195,17 @@ export async function ensureStage0(
     }
   } catch (error) {
     log.appendLine(`[stage0] could not reach SHA256SUMS: ${describe(error)}`);
+    if (releaseTag === 'stage0-latest' && error instanceof Stage0HttpError && error.status === 404) {
+      try {
+        releaseTag = await immutableMainRelease(config.repo, platform.assetName, fetchText);
+        baseUrl = stage0BaseUrl(config.repo, releaseTag);
+        log.appendLine(`[stage0] stage0-latest unavailable; falling back to ${config.repo}@${releaseTag}`);
+        expected = expectedHashFor(await fetchText(`${baseUrl}/SHA256SUMS`), platform.assetName);
+        manifestReachable = true;
+      } catch (fallbackError) {
+        log.appendLine(`[stage0] immutable fallback failed: ${describe(fallbackError)}`);
+      }
+    }
   }
 
   if (!force && haveCached && expected) {
@@ -224,7 +226,7 @@ export async function ensureStage0(
       title: 'TypeLisp: downloading stage0 compiler',
       cancellable: false
     },
-    () => downloadWithRetry(baseUrl, dir, dest, platform, expected, log)
+    () => downloadWithRetry(config.repo, releaseTag, config.releaseTag === 'stage0-latest', dir, dest, platform, expected, log)
   );
 
   if (installed) {
@@ -238,7 +240,9 @@ export async function ensureStage0(
 }
 
 async function downloadWithRetry(
-  baseUrl: string,
+  repo: string,
+  releaseTag: string,
+  requireSums: boolean,
   dir: string,
   dest: string,
   platform: Extract<PlatformResult, { supported: true }>,
@@ -249,19 +253,23 @@ async function downloadWithRetry(
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const tmp = path.join(dir, `.download.${process.pid}.${attempt}.tmp`);
+    const baseUrl = stage0BaseUrl(repo, releaseTag);
     try {
       // Re-read the manifest each attempt: stage0-latest is republished by
       // delete-then-recreate, so the asset and its checksum can briefly come
       // from different generations. Refetching both rides out that window.
       let expected = initialExpected;
       try {
-        expected = expectedHashFor(
+        const manifestExpected = expectedHashFor(
           await fetchText(`${baseUrl}/SHA256SUMS`),
           platform.assetName
-        ) ?? expected;
-      } catch {
-        // Keep whatever we had; verified-non-empty fallback below still applies.
+        );
+        if (requireSums && !manifestExpected) throw new Error(`SHA256SUMS does not list ${platform.assetName}`);
+        expected = manifestExpected ?? expected;
+      } catch (error) {
+        if (requireSums) throw error;
       }
+      if (requireSums && !expected) throw new Error(`SHA256SUMS does not list ${platform.assetName}`);
 
       log.appendLine(`[stage0] downloading ${platform.assetName} (attempt ${attempt}/${attempts})`);
       await downloadToFile(`${baseUrl}/${platform.assetName}`, tmp);
@@ -292,6 +300,17 @@ async function downloadWithRetry(
     } catch (error) {
       await fsp.rm(tmp, { force: true }).catch(() => undefined);
       log.appendLine(`[stage0] attempt ${attempt}/${attempts} failed: ${describe(error)}`);
+      if (releaseTag === 'stage0-latest' && error instanceof Stage0HttpError && error.status === 404) {
+        try {
+          releaseTag = await immutableMainRelease(repo, platform.assetName, fetchText);
+          initialExpected = undefined;
+          log.appendLine(`[stage0] stage0-latest unavailable; falling back to ${repo}@${releaseTag}`);
+          attempt -= 1;
+          continue;
+        } catch (fallbackError) {
+          log.appendLine(`[stage0] immutable fallback failed: ${describe(fallbackError)}`);
+        }
+      }
       if (attempt < attempts) {
         await delay(1500);
       }

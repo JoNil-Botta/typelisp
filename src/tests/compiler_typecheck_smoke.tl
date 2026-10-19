@@ -4972,7 +4972,7 @@
         (tc_core.tc-macro-state-source-names macro-a))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new-with-source-names-and-body-state
-        (ast.ast-program (ast.ast-decl-list-new))
+        (& (ast.ast-program (ast.ast-decl-list-new)))
         (compiler_symbols.compiler-symbols-empty)
         (compiler_symbols.compiler-registries-empty)
         ""

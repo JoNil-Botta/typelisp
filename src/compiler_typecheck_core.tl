@@ -116387,6 +116387,13 @@
     (tc-chain-state-set! store (tc-chain-state-address env.store))
     (TcTypeEnv store env.head env.abi-pad)))
 
+;; A rewound function store invalidates address-keyed memos and any diagnostic
+;; snapshot naming its environment. Call only after the result has escaped.
+(define (tc-type-env-retire-function-store! [job-state : TcJobState]) : unit
+  (+= tc-type-env-store-epoch 1)
+  (tc-unbound-suggestion-snapshot-reset!)
+  (tc-nominal-owner-cache-reset-for-job! job-state))
+
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -116437,16 +116444,7 @@
           (arena.tl_arena_set scratch-head)
           (arena.tl_region_reset mark)
           (arena.tl_arena_set new-enclosing))
-        ;; The function store and its nodes were just rewound: retire
-        ;; every memo keyed by a store handle or node address, and the
-        ;; unbound-name snapshot, which names a function-local env and
-        ;; was consumed above.
-        (+= tc-type-env-store-epoch 1)
-        (tc-unbound-suggestion-snapshot-reset!)
-        ;; Single-entry name caches may hold strings allocated in the
-        ;; scratch that was just rewound; invalidate them before
-        ;; anything can compare against freed memory.
-        (tc-nominal-owner-cache-reset-for-job! (tc-context-job-state ctx))
+        (tc-type-env-retire-function-store! (tc-context-job-state ctx))
         escaped))))
 
 ;; Reusable scratch arena for per-declaration checks that are not function

@@ -5,6 +5,13 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`compiler-lower-function-env-scratch` lowers several functions against one
+persistent module environment, including binding-store growth and a rejected
+function. It checks parent bindings and cache metadata after each scratch
+rewind, retirement of address-keyed memos, and readable escaped IR and errors.
+Run the lowering suite at opt0/1/2; poisoned full self-compiles also exercise
+post-rewind consumers across functions, closures and generated helpers.
+
 `array_field_store_growth.tl` exercises field stores after dynamic-array
 growth for register and memory-class elements, nested struct/tuple projections,
 one-time index selection and mutable slices at opt0/1/2 on both hosts. Its

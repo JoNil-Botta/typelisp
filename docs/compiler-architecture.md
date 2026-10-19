@@ -555,6 +555,14 @@ current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
+Function lowering forks the persistent type-environment store inside its
+existing scratch extent. Parameters, return/cleanup markers and local bindings
+append there while the immutable module tail stays borrowed. The inherited
+chain index detaches before a write. After IR, spans or an error escape,
+rewinding retires the store's address-keyed memos and diagnostic snapshot through
+the same helper used by function typechecking; no local environment reaches a
+later function.
+
 Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
 synchronous retirement authority: the exact lower owner's stable address and a
 driver callback. After the surviving bodies reach the optimizer-input carrier

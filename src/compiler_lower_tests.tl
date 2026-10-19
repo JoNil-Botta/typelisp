@@ -93,7 +93,7 @@
           (Known -1 0)
           (ir.compiler-source-spans-empty)
           (clone names)
-          (lower.CompilerLowerMode.LinuxScalar))
+          (lower.CompilerLowerMode.Scalar))
           [(Ok functions _)
             (test.assert-true
               (> (ir.compiler-ir-function-seq-count (& functions)) 0)
@@ -130,7 +130,7 @@
       (Known -1 0)
       (ir.compiler-source-spans-empty)
       names
-      (lower.CompilerLowerMode.LinuxScalar))
+      (lower.CompilerLowerMode.Scalar))
       [(Err diagnostic)
         (test.assert-true
           (>

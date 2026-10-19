@@ -8278,7 +8278,7 @@
       (ci.intern-str lifetime-name-id)
       (let
         [source-name-id : i64
-          (ci.intern-active-syntax-source-name-id-or lifetime-name-id -1)]
+          (ci.intern-active-syntax-source-name-id-or lifetime-name-id true -1)]
         (if (ci.intern-renderable-id? source-name-id)
           (ci.intern-str source-name-id)
           (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))

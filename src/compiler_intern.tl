@@ -800,9 +800,13 @@
 ;; interner. The encoded owner prefix and live table length validate `raw`
 ;; before the component lane is read, so a foreign or stale identity never
 ;; aliases the active table. Macro locals also require a live definition from
-;; that owner. Semantic compiler paths use an explicit
+;; that owner. Diagnostic callers opt into macro spellings; the owner-less IR
+;; adapter keeps macro names opaque. Semantic compiler paths use an explicit
 ;; InternStructuralSessionHandle instead.
-(define (intern-active-syntax-source-name-id-or [raw : i64] [fallback : i64]) : i64
+(define (intern-active-syntax-source-name-id-or
+  [raw : i64]
+  [macro-names? : bool]
+  [fallback : i64]) : i64
   (let
     [kind : i64 (intern-active-structural-record-kind-or raw -1)]
     [valid? : bool
@@ -815,11 +819,11 @@
           (and
             (>= (intern-composite-left-id-unchecked raw) 0)
             (= (intern-composite-middle-id-unchecked raw) 0))]
-        [(= kind (intern-structural-kind-macro-global))
+        [(and macro-names? (= kind (intern-structural-kind-macro-global)))
           (let
             [role : i64 (intern-composite-left-id-unchecked raw)]
             (or (= role 0) (= role 1)))]
-        [(= kind (intern-structural-kind-macro-local))
+        [(and macro-names? (= kind (intern-structural-kind-macro-local)))
           (=
             (intern-active-structural-record-kind-or
               (intern-composite-left-id-unchecked raw)

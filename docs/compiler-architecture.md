@@ -359,8 +359,10 @@ uses the installed structural owner through the zero-handle adapter.
 Typechecker lifetime diagnostics also distinguish source pool IDs from syntax
 identities. Their shared renderer uses the existing compatibility syntax-name
 boundary to validate the installed structural owner, including a macro
-local's definition identity. Foreign, stale and malformed identities use the
-total `<id:N>` fallback before any string-pool lookup. Coercion details and
+local's definition identity, with macro spelling enabled explicitly. The
+ownerless IR adapter keeps macro identities opaque. Foreign, stale and malformed
+identities use the total `<id:N>` fallback before any string-pool lookup.
+Coercion details and
 recursive type rendering use that same boundary.
 
 A function's frame is laid out before its body is emitted. Below the slot and

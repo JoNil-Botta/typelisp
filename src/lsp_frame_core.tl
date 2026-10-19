@@ -767,12 +767,14 @@
     [_ Missing]))
 
 (define (lsp-json-string-field [value : (& value json.Json)] [key : String]) : LspJsonText
-  (match (lsp-json-field-ref value (& key))
-    [(Found field)
-      (match field
-        [(JsonString text) (Ok (string.copy text))]
-        [_ Missing])]
-    [(Missing) Missing]))
+  (let
+    [value : json.Json (owned_view.compiler-owned-reference-shared-view value)]
+    (match (json.object-get value (& key))
+      [(JsonFound field)
+        (match field
+          [(JsonString text) (Ok text)]
+          [_ Missing])]
+      [(JsonMissing) Missing])))
 
 (define (lsp-json-string-field-default
   [value : json.Json]
@@ -14696,9 +14698,7 @@
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newText")
         [(Ok new-text)
-          (if (lsp-json-has-field?
-            (owned_view.compiler-owned-shared-view params)
-            "path")
+          (if (lsp-json-has-field? (& params) "path")
             (match (lsp-json-path-field (& params))
               [(Ok path-items)
                 (lsp-write-structural-edit-result
@@ -14847,10 +14847,10 @@
         text
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))))))
 
-(define (lsp-json-has-field? [value : json.Json] [key : String]) : bool
-  (match (json.object-get value (& key))
-    [(JsonFound _) true]
-    [(JsonMissing) false]))
+(define (lsp-json-has-field? [value : (& value json.Json)] [key : String]) : bool
+  (match (lsp-json-field-ref value (& key))
+    [(Found _) true]
+    [(Missing) false]))
 
 (define (lsp-json-list-all-strings? [items : (& items json.JsonSeq)]) : bool
   (let
@@ -15276,9 +15276,7 @@
             (lsp-text-is-valid-forms
               (owned_view.compiler-owned-shared-view new-body)))
             (lsp-write-replace-body-validation-error id docs new-body)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
+            (if (lsp-json-has-field? (& params) "path")
               (match (lsp-json-path-field (& params))
                 [(Ok path-items)
                   (lsp-write-structural-edit-result
@@ -15489,9 +15487,7 @@
       [(string.eq method "tl/replace")
         (match (lsp-json-string-field params "newText")
           [(Ok new-text)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
+            (if (lsp-json-has-field? (& params) "path")
               (let
                 [path-items (try (lsp-json-path-field params))]
                 (lsp-replace-form-by-path-with-decls
@@ -15543,9 +15539,7 @@
       [(string.eq method "tl/replaceBody")
         (match (lsp-json-string-field params "newBody")
           [(Ok new-body)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
+            (if (lsp-json-has-field? (& params) "path")
               (let
                 [path-items (try (lsp-json-path-field params))]
                 (lsp-replace-body-by-path-with-decls

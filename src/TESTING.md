@@ -455,6 +455,24 @@ checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
 
+The `fixed-array-reference-value-and-place-access` virtual-source matrix rejects
+non-Copy transfers through shared and mutable array and Slice references,
+including `slice-view` results, across bindings, arguments, results, branches,
+containers and stores, including matching signature lifetimes and
+reference-valued receivers. A `string-data` operand is a place read whose
+control-flow inputs keep their transfers. Copy aggregates and fields,
+borrowed elements, deep clones and observing primitives stay accepted. Clone
+result flows through control structures keep condition, initializer, scrutinee,
+prefix and index transfers checked; ordinary projection receivers keep value
+semantics for their control-flow inputs. Reborrow and replacement controls
+distinguish reading a place from transferring its element. The public
+`fixed-array-reference-*` cases pin E0208 and source locations through check and
+compile for both targets at every optimization level. `array_reference_reads.tl`
+runs the corresponding positive paths, Slice borrows, clones and replacement,
+and owned moves in the native matrix. The `array_shared_element_move_reject` and
+`slice_shared_element_move_reject` safety rows return a borrowed element under
+the reference's own lifetime.
+
 The public-check `check-invalidated-parameter-*` cases retain read locations,
 invalidation secondary labels, ownership help and decoded E0208 diagnostics
 for multi-expression functions, lambdas and nested lets. Both direct safe
@@ -544,6 +562,21 @@ report the author's message. The package fixture's `package-first` pair repeats
 the operand-count guard and puts rejecting arms before and after the selected
 arms on the dependency route, which `verify-package-native-tlci.sh` runs
 natively and through forced-source CTFE.
+
+## Logical SPMD gang geometry
+
+`compiler_spmd_logical_gang_tests.tl` covers every admitted numeric lane,
+backend and logical width with ordered coverage and lane-by-lane mask oracles.
+It checks empty/full sets, every singleton and prefix boundary, alternating
+patterns and non-prefix edges, including bit 63 and unoccupied physical lanes.
+Coordinate/conversion cases pin eight i64 pieces and narrowing into a partial
+physical vector. Malformed descriptors and extreme signed integers exercise
+validation before division, multiplication or shifts; diagnostics are exact.
+The closed backend enum excludes unsupported modes at type checking.
+Run the companion at opt0/1/2 with a freshly built compiler and both stdlib/src
+roots. `compiler-lower-native-lane-table` checks all nine lowerer modes against
+the previous numeric width table, including non-numeric rejection. The existing
+SPMD differential and shape gates retain end-to-end lowering coverage.
 
 ## SPMD decision provenance
 

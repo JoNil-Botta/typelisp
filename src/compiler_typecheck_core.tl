@@ -39861,8 +39861,24 @@
     ;; lexical extent restores the caller only after the cache is complete.
     [cache-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+    [probe-cache-start : i64
+      (cfg compile-profile
+        (compiler-tc-macro-lifetime-arena-bytes
+          (ast.ast-node-pool-context-base-arena pools))
+        0)]
     [able-cache : clone_support.CloneNameSet
       (in-arena cache-arena (tc-clone-able-set-build ctx))]
+    (cfg compile-profile
+      (io.print-error
+        (str_cat.str-cat "probe9049-clone-cache|"
+          (string.int->string
+            (- (compiler-tc-macro-lifetime-arena-bytes
+                 (ast.ast-node-pool-context-base-arena pools))
+               probe-cache-start))
+          "|" (string.int->string
+            (clone_support.clone-name-set-capacity (& able-cache)))
+          "|" (string.int->string
+            (clone_support.clone-name-set-len (& able-cache))) "\n")))
     (unsafe
       (set! (deref data).able-cache able-cache)
       (set! (deref data).able-ready true))))

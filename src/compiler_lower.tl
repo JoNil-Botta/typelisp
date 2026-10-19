@@ -3181,6 +3181,16 @@
     [point : String]
     [pools : ast.AstNodePoolContext]) : unit
     (compiler-lower-profile-counter
+      (str_cat.str-cat "probe9049.pool_base." (lower-global-shared-view point))
+      (tc_core.compiler-tc-macro-lifetime-arena-bytes
+        (ast.ast-node-pool-context-base-arena pools)))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat "probe9049.alloc_live." (lower-global-shared-view point))
+      (profile.alloc-live))
+    (compiler-lower-profile-counter
+      (str_cat.str-cat "probe9049.peak." (lower-global-shared-view point))
+      (profile.compile-wide-peak-current))
+    (compiler-lower-profile-counter
       (str_cat.str-cat "ast_expr_pool." (lower-global-shared-view point) ".len")
       (ast.ast-node-pool-context-expr-len pools))
     (compiler-lower-profile-counter

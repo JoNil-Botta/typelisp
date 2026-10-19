@@ -43007,28 +43007,31 @@
   [origin : ast.AstExpr]) : LowerExpr
   (match (lower-store-place-element-index state (& place))
     [(LowerExpr.Expr indexed index _)
-      (lower-store-place-resolve-address
-        ctx
-        (match (& place.pending)
-          [(LowerPendingBounds.Check bound length)
-            (lower-state-record-latest-bounds-check-at-expr
-              ctx
-              (lower-emit-bounds-check
-                indexed
-                (clone (deref bound))
-                (clone (deref length)))
-              (lower-global-shared-view origin))]
-          [_ indexed])
-        (LowerStorePlace
-          place.dynamic?
-          place.dynamic-when
-          place.base
-          index
-          place.offset
-          place.ty
-          place.element?
-          place.pending)
-        origin)]))
+      (let
+        [checked : LowerState
+          (match (& place.pending)
+            [(LowerPendingBounds.Check bound length)
+              (lower-state-record-latest-bounds-check-at-expr
+                ctx
+                (lower-emit-bounds-check
+                  indexed
+                  (clone (deref bound))
+                  (clone (deref length)))
+                (lower-global-shared-view origin))]
+            [_ indexed])]
+        (lower-store-place-resolve-address
+          ctx
+          checked
+          (LowerStorePlace
+            place.dynamic?
+            place.dynamic-when
+            place.base
+            index
+            place.offset
+            place.ty
+            place.element?
+            place.pending)
+          origin))]))
 
 ;; Runs the bounds check `place` owes now, before the value: an element step
 ;; into it, an indirection or a branch join reads the selected element, so it
@@ -43039,21 +43042,21 @@
   [state : LowerState]
   [place : LowerStorePlace]
   [origin : ast.AstExpr]) : ResultLowerStorePlace
-  (match (lower-store-place-materialize
-    ctx
-    (match (& place.pending)
-      [(LowerPendingBounds.None) state]
-      [(LowerPendingBounds.Check bound length)
-        (lower-state-record-latest-bounds-check-at-expr
-          ctx
-          (lower-emit-bounds-check
-            state
-            (clone (deref bound))
-            (clone (deref length)))
-          origin)]
-      [(LowerPendingBounds.Current _ _)
-        (lower-store-place-dynamic-check ctx state (& place) origin)])
-    place)
+  (match (let
+    [checked : LowerState
+      (match (& place.pending)
+        [(LowerPendingBounds.None) state]
+        [(LowerPendingBounds.Check bound length)
+          (lower-state-record-latest-bounds-check-at-expr
+            ctx
+            (lower-emit-bounds-check
+              state
+              (clone (deref bound))
+              (clone (deref length)))
+            origin)]
+        [(LowerPendingBounds.Current _ _)
+          (lower-store-place-dynamic-check ctx state (& place) origin)])]
+    (lower-store-place-materialize ctx checked place))
     [(ResultLowerStorePlace.Ok checked settled)
       (ResultLowerStorePlace.Ok
         checked

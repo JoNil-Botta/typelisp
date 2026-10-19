@@ -19958,20 +19958,19 @@ f:
   (match result
     [(Err boxed)
       (let
-        [diag : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-box-shared-view boxed)]
+        [diag : (& diag cdiag.CompilerDiagnostic) (& (deref boxed))]
         ;; A boxed String shares the first message field's layout. Inspect
         ;; record metadata too, before accepting the transported reason.
         (and
-          (= (cdiag.compiler-diagnostic-line (& diag)) line)
-          (= (cdiag.compiler-diagnostic-col (& diag)) col)
-          (string.eq (cdiag.compiler-diagnostic-path (& diag)) path)
+          (= (cdiag.compiler-diagnostic-line diag) line)
+          (= (cdiag.compiler-diagnostic-col diag) col)
+          (string.eq (cdiag.compiler-diagnostic-path diag) path)
           (string.eq
             (cdiag.compiler-diagnostic-level-render
-              (cdiag.compiler-diagnostic-level (& diag)))
+              (cdiag.compiler-diagnostic-level diag))
             "error")
-          (string.eq (cdiag.compiler-diagnostic-code-or-empty (& diag)) "")
-          (string.eq (cdiag.compiler-diagnostic-message (& diag)) message)))]
+          (string.eq (cdiag.compiler-diagnostic-code-or-empty diag) "")
+          (string.eq (cdiag.compiler-diagnostic-message diag) message)))]
     [_ false]))
 
 (define (compiler-backend-simd-copy-diagnostics-ok?) : bool
@@ -19983,7 +19982,7 @@ f:
         [record-ok : bool
           (compiler-backend-copy-diagnostic-matches?
             (compiler-backend-simd-copy-error kind failure)
-            (owned_view.compiler-owned-shared-view message)
+            (clone message)
             ""
             1
             1)]

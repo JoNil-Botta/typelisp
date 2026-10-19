@@ -1060,6 +1060,12 @@ run build "{{dir}}/selected.tl" -o "{{dir}}/selected{{exe}}" --opt-level 0
 stderr empty
 exec "{{dir}}/selected{{exe}}"
 exit 17
+step missing-source-with-cfg
+run build "{{dir}}/missing.tl" -o "{{dir}}/missing{{exe}}" --cfg selected
+exit 1
+stdout empty
+stderr contains compiler-load:
+test ! -e "{{dir}}/missing{{exe}}"
 
 # Cfg names survive worker argv, the discovery interner boundary, dependency
 # compilation, root compilation and repeated builds with different selections.
@@ -1095,3 +1101,28 @@ stderr empty
 run run --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --opt-level 0 -- --cfg runtime-only
 exit 42
 stderr empty
+
+case common-build-cfg-doctest
+file pkg/typelisp.pkg
+(package (name "cfg_docs") (version "0.1.0") (kind bin))
+end-file
+file pkg/src/main.tl
+;: ```typelisp
+;: (cfg selected (define (probe) : i64 42))
+;: (define (use) : i64 (probe))
+;: ```
+(define (main) : i64 0)
+end-file
+run build "{{dir}}/pkg/src/main.tl" -o "{{dir}}/docs{{exe}}" --cfg selected --opt-level 0
+stderr empty
+run build "{{dir}}/pkg/src/main.tl" -o "{{dir}}/rejected{{exe}}" --opt-level 0
+exit 1
+stderr contains unbound name probe
+test ! -e "{{dir}}/rejected{{exe}}"
+each build run
+run {{each}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --cfg selected --opt-level 0
+stderr empty
+run {{each}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+exit 1
+stderr contains unbound name probe
+end-each

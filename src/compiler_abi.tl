@@ -10,6 +10,12 @@
   (Linux)
   (Windows))
 
+;; Calling convention is independent of the target. Backend-owned boundaries
+;; keep the platform contract; calls between TypeLisp bodies use Internal.
+(defenum CompilerCallConvention
+  (Internal)
+  (Platform))
+
 ;; Canonical physical-register codes shared by regalloc and the backend.
 ;;
 ;; GP codes deliberately match the x86 low register encoding.  XMM and the
@@ -278,23 +284,32 @@
     [(Linux) false]
     [(Windows) true]))
 
-(define (compiler-abi-gp-arg-register-count [abi : CompilerRegTargetAbi]) : i64
+;; Terminal queries share facts until the conventions diverge. Forwarding
+;; queries retain the caller's convention.
+(define (compiler-abi-gp-arg-register-count
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 6]
     [(Windows) 4]))
 
-(define (compiler-abi-float-arg-register-count [abi : CompilerRegTargetAbi]) : i64
+(define (compiler-abi-float-arg-register-count
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 8]
     [(Windows) 4]))
 
-(define (compiler-abi-arg-banks-independent? [abi : CompilerRegTargetAbi]) : bool
+(define (compiler-abi-arg-banks-independent?
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : bool
   (match abi
     [(Linux) true]
     [(Windows) false]))
 
 (define (compiler-abi-gp-arg-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -314,11 +329,16 @@
         [(= idx 3) compiler-reg-id-r9]
         [else compiler-reg-id-invalid])]))
 
-(define (compiler-abi-gp-arg-register [abi : CompilerRegTargetAbi] [idx : i64]) : String
-  (compiler-abi-register-spelling (compiler-abi-gp-arg-register-id abi idx)))
+(define (compiler-abi-gp-arg-register
+  [abi : CompilerRegTargetAbi]
+  [convention : CompilerCallConvention]
+  [idx : i64]) : String
+  (compiler-abi-register-spelling
+    (compiler-abi-gp-arg-register-id abi convention idx)))
 
 (define (compiler-abi-float-arg-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -332,10 +352,14 @@
 
 (define (compiler-abi-float-arg-register
   [abi : CompilerRegTargetAbi]
+  [convention : CompilerCallConvention]
   [idx : i64]) : String
-  (compiler-abi-register-spelling (compiler-abi-float-arg-register-id abi idx)))
+  (compiler-abi-register-spelling
+    (compiler-abi-float-arg-register-id abi convention idx)))
 
-(define (compiler-abi-outgoing-shadow-space [abi : CompilerRegTargetAbi]) : i64
+(define (compiler-abi-outgoing-shadow-space
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 0]
     [(Windows) 32]))
@@ -343,7 +367,9 @@
 ;; System V classifies a by-value aggregate into eightbytes: it travels in
 ;; registers when its classes fit and is copied onto the stack otherwise. Win64
 ;; passes any aggregate wider than eight bytes by reference instead.
-(define (compiler-abi-aggregate-eightbyte-classes? [abi : CompilerRegTargetAbi]) : bool
+(define (compiler-abi-aggregate-eightbyte-classes?
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : bool
   (match abi
     [(Linux) true]
     [(Windows) false]))
@@ -351,46 +377,54 @@
 ;; System V variadic calls report the number of vector registers they use in
 ;; `%al`. Win64 instead duplicates each floating variadic argument into its
 ;; integer register.
-(define (compiler-abi-varargs-vector-count-in-al? [abi : CompilerRegTargetAbi]) : bool
+(define (compiler-abi-varargs-vector-count-in-al?
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : bool
   (match abi
     [(Linux) true]
     [(Windows) false]))
 
 (define (compiler-abi-caller-saved-gp-register?
   [abi : CompilerRegTargetAbi]
+  [convention : CompilerCallConvention]
   [reg-id : i64]) : bool
   (let
     [index : i64 0]
     [found : bool false]
     (while (and
       (not found)
-      (< index (compiler-abi-caller-saved-gp-register-count abi)))
+      (< index (compiler-abi-caller-saved-gp-register-count abi convention)))
       (set!
         found
-        (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
+        (=
+          (compiler-abi-caller-saved-gp-register-id abi convention index)
+          reg-id))
       (set! index (+ index 1)))
     found))
 
 (define (compiler-abi-stack-call-arg-for-banks?
   [abi : CompilerRegTargetAbi]
+  [convention : CompilerCallConvention]
   [is-float : bool]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : bool
-  (if (compiler-abi-arg-banks-independent? abi)
+  (if (compiler-abi-arg-banks-independent? abi convention)
     (if is-float
-      (>= float-idx (compiler-abi-float-arg-register-count abi))
-      (>= int-idx (compiler-abi-gp-arg-register-count abi)))
-    (>= position (compiler-abi-gp-arg-register-count abi))))
+      (>= float-idx (compiler-abi-float-arg-register-count abi convention))
+      (>= int-idx (compiler-abi-gp-arg-register-count abi convention)))
+    (>= position (compiler-abi-gp-arg-register-count abi convention))))
 
 (define (compiler-abi-caller-saved-gp-register-count
-  [abi : CompilerRegTargetAbi]) : i64
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 9]
     [(Windows) 7]))
 
 (define (compiler-abi-caller-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -417,13 +451,15 @@
         [else compiler-reg-id-invalid])]))
 
 (define (compiler-abi-callee-saved-gp-register-count
-  [abi : CompilerRegTargetAbi]) : i64
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 5]
     [(Windows) 7]))
 
 (define (compiler-abi-callee-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -446,13 +482,15 @@
         [else compiler-reg-id-invalid])]))
 
 (define (compiler-abi-caller-saved-xmm-register-count
-  [abi : CompilerRegTargetAbi]) : i64
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 16]
     [(Windows) 6]))
 
 (define (compiler-abi-caller-saved-xmm-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (if (< idx 0)
     compiler-reg-id-invalid
@@ -467,13 +505,15 @@
           compiler-reg-id-invalid)])))
 
 (define (compiler-abi-callee-saved-xmm-register-count
-  [abi : CompilerRegTargetAbi]) : i64
+  [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 0]
     [(Windows) 10]))
 
 (define (compiler-abi-callee-saved-xmm-register-id
   [abi : CompilerRegTargetAbi]
+  [_convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux) compiler-reg-id-invalid]

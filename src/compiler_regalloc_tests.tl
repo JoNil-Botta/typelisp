@@ -6630,22 +6630,22 @@
         (cabi.compiler-abi-vector-register-id 31))
       ;; ABI tables return canonical IDs, including their invalid boundaries.
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Linux) 0)
+        (cabi.compiler-abi-gp-arg-register-id (Linux) (Platform) 0)
         cabi.compiler-reg-id-rdi)
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Windows) 3)
+        (cabi.compiler-abi-gp-arg-register-id (Windows) (Platform) 3)
         cabi.compiler-reg-id-r9)
       (=
-        (cabi.compiler-abi-float-arg-register-id (Linux) 7)
+        (cabi.compiler-abi-float-arg-register-id (Linux) (Platform) 7)
         (cabi.compiler-abi-xmm-register-id 7))
       (=
-        (cabi.compiler-abi-callee-saved-xmm-register-id (Windows) 9)
+        (cabi.compiler-abi-callee-saved-xmm-register-id (Windows) (Platform) 9)
         (cabi.compiler-abi-xmm-register-id 15))
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Windows) 4)
+        (cabi.compiler-abi-gp-arg-register-id (Windows) (Platform) 4)
         cabi.compiler-reg-id-invalid)
       (=
-        (cabi.compiler-abi-caller-saved-xmm-register-id (Windows) 6)
+        (cabi.compiler-abi-caller-saved-xmm-register-id (Windows) (Platform) 6)
         cabi.compiler-reg-id-invalid))))
 
 (cfg
@@ -15109,7 +15109,8 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-caller-saved-gp-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15120,7 +15121,10 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-caller-saved-gp-register-id target-abi index))))
+          (cabi.compiler-abi-caller-saved-gp-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : reg.CompilerRegIdSeq
@@ -15136,7 +15140,8 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-caller-saved-xmm-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15147,14 +15152,18 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index))))
+          (cabi.compiler-abi-caller-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-callee-saved-xmm-registers-from-abi
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-callee-saved-xmm-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-callee-saved-xmm-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15165,7 +15174,10 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index))))
+          (cabi.compiler-abi-callee-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : reg.CompilerRegIdSeq

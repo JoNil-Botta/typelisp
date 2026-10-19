@@ -5,6 +5,14 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`backend-call-conventions` checks every IR call form, C and TypeLisp extern
+aliases, variadic signatures, private by-value copies and call-fact lifetime.
+`backend-call-convention-facts-parity` compares all convention-dependent ABI
+facts on both targets, including invalid register indices and mixed-bank stack
+boundaries. Run these at opt0/1/2; a convention-only refactor also needs exact
+before/after Linux and Windows assembly for the integration corpus and compiler,
+plus the bootstrap fixpoints.
+
 `compiler-lower-function-env-scratch` lowers several functions against one
 persistent module environment, including binding-store growth and a rejected
 function. It checks parent bindings and cache metadata after each scratch

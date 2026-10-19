@@ -67,6 +67,32 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+`CompilerCallConvention` is independent of the target: every register, bank,
+clobber, stack-placement and shadow-space query receives `Internal` or
+`Platform`. Both currently return the same facts. IR function bodies, closure
+descriptors and private SPMD calls use `Internal`; C externs (including varargs),
+C function pointers and C store-result calls use `Platform`. TypeLisp package
+externs retain `Internal`. Backend runtime and C-entered trampolines retain
+their platform contract.
+
+`compiler-reg-call-instr-convention` owns call-form classification. Program
+indexing seeds its direct-name facts from extern ABI metadata for logical,
+source and link identities; function definitions take precedence over extern
+aliases. These facts share the existing reset and suppression lifetime
+with memory-transport facts. These are independent bits: a private by-value
+TypeLisp parameter needs memory transport without selecting the platform ABI.
+C exports retain `Platform` for their raw link entry, while their IR function
+name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
+atomic and volatile operations read the same convention as their argument setup.
+The allocator and both backend emission paths carry the selected convention
+through argument preferences, marshalling and outgoing frame sizing. Incoming
+parameter and saved-register facts use the function's `Internal` contract;
+caller-clobber allocation remains conservative across the call family.
+`backend-call-conventions` pins classification and fact lifetime, and
+`backend-call-convention-facts-parity` checks both targets, register boundaries
+and mixed argument banks. Full before/after assembly and bootstrap comparisons
+guard the no-output-change invariant.
+
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread
 pointer; named TPOFF relocations locate the arena pointer, optional backtrace
@@ -414,10 +440,11 @@ Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
 their input. Appending a list copies it, so a walk must not append each block's
 rewrite onto an already-built rest.
 
-Every `CompilerIrFunction` states its calling convention as a
+Every `CompilerIrFunction` also records its parameter protocol as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
-alike). The private descriptor, `CompilerIrSpmdPrivateAbi`, is immutable facts
+alike). Both variants use `Internal`. The private descriptor,
+`CompilerIrSpmdPrivateAbi`, is immutable facts
 under its own schema (`spmd-private-v1`, distinct from the imported catalog's
 `spmd-call-v1` row): callee, backend, lanes, every physical parameter in
 signature order with its ordinal, role (active mask; source parameter with its

@@ -1703,6 +1703,8 @@ region_read_expectation_ok|run-exit|tests/safety/region_read_expectation_ok.tl|4
 region_read_result_move_reject|check-fail|tests/safety/region_read_result_move_reject.tl|tests/safety/region_read_result_move_reject.tl:5:3|cannot move a `String` out of a shared reference
 region_read_binding_move_reject|check-fail|tests/safety/region_read_binding_move_reject.tl|tests/safety/region_read_binding_move_reject.tl:5:28|cannot move a `String` out of a shared reference
 region_read_argument_move_reject|check-fail|tests/safety/region_read_argument_move_reject.tl|tests/safety/region_read_argument_move_reject.tl:7:11|cannot move a `String` out of a shared reference
+region_view_field_shared_write_reject|check-fail|tests/safety/region_view_field_shared_write_reject.tl|tests/safety/region_view_field_shared_write_reject.tl:16:20|cannot mutably borrow `view` behind a shared reference
+region_view_field_call_result_write_reject|check-fail|tests/safety/region_view_field_call_result_write_reject.tl|tests/safety/region_view_field_call_result_write_reject.tl:19:13|cannot mutably borrow `view.n` behind a shared reference
 mir_array_literal_move_ok|run-exit|tests/safety/mir_array_literal_move_ok.tl|42|-
 mir_array_literal_move_twice_reject|check-fail|tests/safety/mir_array_literal_move_twice_reject.tl|tests/safety/mir_array_literal_move_twice_reject.tl:9:21|use of moved value `items[0]`
 mir_array_literal_move_computed_read_reject|check-fail|tests/safety/mir_array_literal_move_computed_read_reject.tl|tests/safety/mir_array_literal_move_computed_read_reject.tl:10:27|use of moved value `items`

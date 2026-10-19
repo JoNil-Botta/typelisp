@@ -1,7 +1,7 @@
 ;; compiler_ir_types.tl - Self-hosted compiler IR model.
 ;;
-;; Functions contain blocks, blocks contain typed instructions, and
-;; instructions use explicit vars/values.
+;; Shared IR and its supporting closure stay independent of consuming layers.
+;; See docs/compiler-core-ir-dependencies.md and its required dependency guard.
 (import stdlib.iterator)
 (import stdlib.string)
 (import compiler_intern as ci)

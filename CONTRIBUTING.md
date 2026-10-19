@@ -196,19 +196,15 @@ Extend shared code instead of adding another copy, flag, wrapper or narrative:
 
 ## Architecture Notes
 
-The compiler is written in TypeLisp under [`src/`](src). Key modules:
-
-- `src/lex.tl`, `src/read.tl` — the lexer and the spanned s-expression reader
-- `src/compiler_parse_core.tl` — builds the AST from the reader's forms
-- `src/compiler_typecheck_core.tl` — type inference and checking
-- `src/compiler_lower.tl` — lowering to the 3-address IR
-- `src/compiler_optimize.tl` — IR optimization passes
-- `src/compiler_backend.tl` — x86_64 code generation
-- `src/main.tl` — the unified toolchain CLI; the bootstrap and the published
-  stage0 binary both build it
-
-[`docs/compiler-architecture.md`](docs/compiler-architecture.md) describes the
-pipeline and its ownership rules.
+Before changing compiler structure or a shared interface, read the
+[architecture entry point](docs/compiler-architecture.md) and affected linked
+decisions. Use the canonical implementation, or improve it with evidence and
+update its code, consumers, decisions and checks together. Workers must correct
+stale guidance as they learn; there is no permanent architecture owner or
+separate design approval. Explicitly supersede obsolete rules, remove replaced
+paths or state their necessary retirement condition, and retain semantic and
+resource proofs. SPEC and executable evidence take precedence over a historical
+design note. The entry point links the current module and API authorities.
 
 ### Compiler arena ownership
 

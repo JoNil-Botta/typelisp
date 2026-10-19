@@ -5,6 +5,12 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`compiler-lower-clone-reach-plan-scratch` copies empty, odd-length and grown
+keep plans to the pool owner, destroys their source arena, then checks selected
+declaration paths and their owner/provenance metadata. The existing reachable
+clone and chunk-boundary cases exercise clone-root capture and generated
+helpers through the complete lowering route.
+
 `compiler-lower-function-env-scratch` lowers several functions against one
 persistent module environment, including binding-store growth and a rejected
 function. It checks parent bindings and cache metadata after each scratch

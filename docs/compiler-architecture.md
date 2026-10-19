@@ -563,6 +563,13 @@ rewinding retires the store's address-keyed memos and diagnostic snapshot throug
 the same helper used by function typechecking; no local environment reaches a
 later function.
 
+The up-front reachability walk's pruned program, paths and working data live
+in a temporary arena. Clone-root collection consumes the program while that
+arena is live and retains only declaration keys in its own owner. The keep
+plan is copied into the existing pool owner before the temporary arena is
+destroyed. The walk's empty cached descriptors are reset in the enclosing
+owner first; no lower-state cache retains its retired storage.
+
 Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
 synchronous retirement authority: the exact lower owner's stable address and a
 driver callback. After the surviving bodies reach the optimizer-input carrier

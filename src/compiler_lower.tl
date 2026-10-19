@@ -73228,15 +73228,23 @@
               ;; optimize, and codegen are gated on reachability. This up-front
               ;; walk records the dense declaration selection consumed both by
               ;; typecheck's clone-root observer and by the final linear prune.
-              (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
-                lower-state
-                pools
-                (lower-global-shared-view entry-path)
-                (lower-global-shared-view specialized)
-                (lower-global-shared-view specialized-paths)
-                prune-names
-                (Empty))
-                [(Program reach-program _reach-paths reach-keep-plan)
+              ;; It runs in a scratch arena: once the clone roots have captured
+              ;; their stable keys from the reach program, only the keep plan is
+              ;; still needed, so it is copied into the pool base arena and the
+              ;; walk's program, paths and working state are released instead
+              ;; of riding the pool base arena to the end of lowering.
+              [prune-scratch-arena : i64 (arena.tl_arena_make)]
+              (match (in-arena
+                (arena.Arena prune-scratch-arena)
+                (lower-prune-unreachable-functions-with-clone-roots-and-plan
+                  lower-state
+                  pools
+                  (lower-global-shared-view entry-path)
+                  (lower-global-shared-view specialized)
+                  (lower-global-shared-view specialized-paths)
+                  prune-names
+                  (Empty)))
+                [(Program reach-program _reach-paths reach-keep-plan-scratch)
                   (begin
                     (if (= prune-names-arena 0)
                       unit
@@ -73263,6 +73271,18 @@
                       job-state
                       reach-program)
                     (let
+                      [reach-keep-plan : LowerDeclKeepPlan
+                        (lower-decl-keep-plan-copy-into-pools
+                          reach-keep-plan-scratch
+                          (& pools))]
+                      ;; The walk's final reset allocated empty descriptors in
+                      ;; its caller arena. Retire those handles in this owner
+                      ;; before releasing that outer scratch extent.
+                      [_retire-prune-state : unit
+                        (lower-reach-scratch-state-reset! lower-state)]
+                      [_release-prune-scratch : unit
+                        (unsafe
+                          (arena.tl_arena_destroy prune-scratch-arena))]
                       [detach-source? : bool
                         (compiler-lower-checked-dest-pools-active? lower-state)]
                       [source-compaction : ast.AstProgramCompaction

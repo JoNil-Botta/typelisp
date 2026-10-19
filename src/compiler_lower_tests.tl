@@ -28,6 +28,66 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-clone-reach-plan-scratch
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [owner : i64 (ci.intern "reach-plan-owner")]
+    [provenance : i64 (ci.intern "reach-plan-provenance")]
+    [counts : (Array i64 3) (array 0 3 80)]
+    (for [case-index (iterator.range 0 (array-length counts))]
+      (let
+        [count : i64 (array-ref counts case-index)]
+        [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+        [scratch : i64 (arena.tl_arena_make)]
+        (for [index (iterator.range 0 count)]
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut paths)
+            (str_cat.str-cat "decl-" (string.int->string index))
+            owner
+            provenance))
+        (let
+          [escaped : lower.LowerDeclKeepPlan
+            (in-arena
+              (arena.Arena scratch)
+              (let
+                [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+                (for [index (iterator.range 0 count)]
+                  (set! (array-ref keep index) (- 1 (bit-and index 1))))
+                (lower.lower-decl-keep-plan-copy-into-pools
+                  (lower.LowerDeclKeepPlan keep count)
+                  (& pools))))]
+          [_released : unit
+            (unsafe
+              (arena.tl_arena_destroy scratch))]
+          [selected : ast.AstDeclPathList
+            (lower.lower-decl-keep-plan-apply-paths escaped paths)]
+          [ordinal : i64 0]
+          (test.assert-true
+            (= (ast.ast-decl-path-list-len (& selected)) (/ (+ count 1) 2))
+            "the escaped plan keeps exactly the selected declarations")
+          (for [index (iterator.range 0 count)]
+            (when
+              (= (bit-and index 1) 0)
+              (test.assert-true
+                (and
+                  (string.eq
+                    (ast.ast-decl-path-list-get (& selected) ordinal "")
+                    (str_cat.str-cat "decl-" (string.int->string index)))
+                  (=
+                    (ast.ast-decl-path-list-owner-id (& selected) ordinal -1)
+                    owner)
+                  (=
+                    (ast.ast-decl-path-list-provenance-id
+                      (& selected)
+                      ordinal
+                      -1)
+                    provenance))
+                "selection, owner and provenance survive the source arena")
+              (+= ordinal 1))))))))
+
+(test
   compiler-lower-function-env-scratch
   (let
     [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]

@@ -49713,9 +49713,9 @@
             (opt.opt-label-ref right-labels id))
           (set! same false)))
       (for [id (iterator.range 0 (array-length left-seq))]
-        (match (array-ref left-seq id)
+        (match (& (array-ref left-seq id))
           [(Block label _)
-            (match (array-ref right-seq id)
+            (match (& (array-ref right-seq id))
               [(Block other _) (when (!= label other) (set! same false))])]))
       (for [id (iterator.range -1 (+ (array-length index.labels) 1))]
         (when

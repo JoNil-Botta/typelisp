@@ -74,6 +74,31 @@
         (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
     [(Err _) false]))
 
+(define (lazy-selected-after-summary-ok?) : bool
+  (load.compiler-load-test-mkdir "target/cl_lazy_selected")
+  (lazy-write-text
+    "target/cl_lazy_selected/provider.tl"
+    "(module provider)
+(define (answer) : i64 42)")
+  (lazy-write-text
+    "target/cl_lazy_selected/entry.tl"
+    "(import provider as unused)
+(import provider.answer as value)
+(define (main) : i64 (value))")
+  (match (load_tests.compiler-load-file-with-paths
+    "target/cl_lazy_selected/entry.tl"
+    (sym_i64_env.sym-i64-empty))
+    [(Ok decls _ _ seen)
+      (and
+        (= (load_tests.compiler-load-lazy-import-skip-count) 1)
+        (load_tests.compiler-load-test-seen-contains? seen "provider")
+        (load_tests.compiler-load-decl-list-has-selected-import?
+          decls
+          "provider"
+          "answer"
+          "value"))]
+    [(Err _) false]))
+
 (define (lazy-removed-array-module-rejected?) : bool
   (load.compiler-load-test-mkdir "target/cl_removed_array_module")
   (lazy-write-text
@@ -672,6 +697,9 @@
   (unless
     (lazy-used-dotted-import-ok?)
     (return (io.panic "lazy used dotted import smoke mismatch")))
+  (unless
+    (lazy-selected-after-summary-ok?)
+    (return (io.panic "lazy selected import after summary smoke mismatch")))
   (unless
     (lazy-removed-array-module-rejected?)
     (return (io.panic "removed array module import was accepted")))

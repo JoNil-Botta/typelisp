@@ -324,6 +324,10 @@
                   [(Err diag)
                     (Err (cdiag.compiler-diagnostic-list-box-single diag))]))))])]
     (tc_core.tc-job-state-set-semantic-observer! observer-job previous-observer)
+    ;; Only query-local views refer to the positional index. Later lowering
+    ;; queries rebuild it from their retained program in the same job.
+    (tc_core.tc-module-decl-index-release!
+      (tc_core.tc-job-state-macro-state observer-job))
     checked-result))
 
 (define (typecheck-compiler-program-with-paths-checked-cache

@@ -990,15 +990,24 @@ A global's IR initializer takes one of three forms:
   - The direct-object encoder has no static-array record, so such programs
     take the assembly path.
 
-Mutable typecheck caches, indexes and traversal state belong to the compiler
-job's `TcJobState`, never to process-wide cells, so resetting or destroying one
-job cannot disturb another. Persistent lifetime-outlives answers use lazy fixed
+Migrated mutable typecheck caches, indexes and traversal state belong to the
+compiler job's `TcJobState`, so resetting or destroying one job cannot disturb
+another's migrated state. Persistent lifetime-outlives answers use lazy fixed
 storage in the job's existing type-resolution cache. Entries retain scalar
 store/head and lifetime identities only; store retirement epochs, structural
 session owner/reset generation, installed intern owner/generation and the job's
 reset epoch
 reject stale or reused identities. Allocation always selects the job owner
 arena, including when a function scratch arena is current.
+
+The module declaration/import index has a lazy typed header in that job's
+state directory and an independently retained payload arena containing only
+integer module keys, shape codes and declaration positions. Its stamp uses the
+owning source-name table identity/reset generation, never the installed
+interner. Splice invalidation revalidates an unchanged module/import shape;
+file-result cleanup and terminal retirement clear all header views before
+destroying the payload. A different job or scratch arena may be current during
+allocation or cleanup without becoming the owner.
 
 A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are

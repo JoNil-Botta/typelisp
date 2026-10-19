@@ -2490,13 +2490,11 @@
             (ir.compiler-ir-instr-effect (& hygienic-alloc))
             Unknown))
         4]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view runtime-alloc))
+      [(match (opt.opt-aggregate-direct-alloc runtime-alloc)
           [(Some _ _ _) false]
           [(No) true])
         5]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view hygienic-alloc))
+      [(match (opt.opt-aggregate-direct-alloc hygienic-alloc)
           [(No) false]
           [(Some _ _ _) true])
         6]
@@ -49715,9 +49713,9 @@
             (opt.opt-label-ref right-labels id))
           (set! same false)))
       (for [id (iterator.range 0 (array-length left-seq))]
-        (match (array-ref left-seq id)
+        (match (& (array-ref left-seq id))
           [(Block label _)
-            (match (array-ref right-seq id)
+            (match (& (array-ref right-seq id))
               [(Block other _) (when (!= label other) (set! same false))])]))
       (for [id (iterator.range -1 (+ (array-length index.labels) 1))]
         (when

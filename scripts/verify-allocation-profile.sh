@@ -99,6 +99,8 @@ validate_profile() {
         required["load/load-provenance"] = 0
         required["load/lexer-token-buffer"] = 0
         required["load/reader-node-pool"] = 0
+        required["load/semantic-origin-storage"] = 0
+        required["lower/semantic-origin-storage"] = 0
         required["load/typecheck-aggregate-layout-cache"] = 0
         required["typecheck.macro.peak/macro-enclosing"] = 0
         required["typecheck.macro.peak/macro-scratch"] = 0

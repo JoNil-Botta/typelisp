@@ -551,7 +551,9 @@ without consuming the receiver. Moving a non-Copy value from an owned Box
 consumes the Box handle; moving a non-Copy value through either reference kind
 is rejected unless a future replacement operation explicitly supports it. The
 operand of the compiler-special `clone` is the exception: there a non-Copy
-`(deref value)` is read, not moved, and keeps its receiver (section 7.6).
+`(deref value)` is read, not moved, and keeps its receiver (section 7.6). The
+same rule covers an element read through a fixed-array or `Slice` reference
+(section 4.7.2).
 
 `(set! (deref value) replacement)` writes through an owned Box or mutable
 reference storage place. Shared references are read-only. The replacement must
@@ -4569,6 +4571,7 @@ are accepted. Their elements follow the same uniform by-value rule:
 | Ordinary `(array-ref items literal-index)` value use | A `Copyable` element is copied. A move-only element moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
 | Ordinary `(array-ref items computed-index)` value use | A `Copyable` element is copied. Moving a non-`Copy` element is rejected because the checker cannot identify one exact moved path. Moving a compatibility dynamic-array element is likewise rejected; generated consuming collections use checked private `__tl_array-take!`. |
 | `(set! (array-ref items index) value)` | A `Copyable` right-hand side is copied and a move-only right-hand side moves. Literal-index stores update exact-path reinitialization facts. Overwriting a live cleanup-owning element remains rejected without an explicit cleanup transfer. |
+| `(array-ref r index)` value use where `r` reaches the array through a `&` or `&mut` reference, including a `Slice` reference such as a `slice-view` result | A `Copyable` element is copied. The reference does not own a non-`Copy` element, so any by-value use of one (binding, argument, constructor or literal element, store, result, or a `match` scrutinee) is a move out of the reference and is rejected with `E0208`, whatever the reference's lifetime. Borrow the element with `(& ...)`, move it out of a `&mut` place with `replace!` (§5.10.1), or `clone` it (§7.6). |
 
 Without a Drop system, overwriting another live move-only element may leave its
 old arena-owned storage unreachable until the arena is reclaimed; overwriting a

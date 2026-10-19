@@ -3767,7 +3767,7 @@
         [_ (None)])]
     [_ (None)]))
 
-(define (opt-aggregate-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+(define (opt-aggregate-direct-alloc [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeAggregateAlloc
   (match instr
     [(Call dst name args ty)
       (if (and
@@ -3776,7 +3776,7 @@
         (match (opt-aggregate-tl-alloc-size (& args))
           [(Some size)
             (if (> size 0)
-              (Some dst ty size)
+              (Some dst (ast.ty-node-persist ty) size)
               (No))]
           [(None) (No)])
         (No))]
@@ -3969,7 +3969,7 @@
         (Ok ptrs accesses)
         (Reject))
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         (if (not seen-alloc)
           (match (opt-aggregate-direct-alloc instr)
             [(Some dst alloc-ty alloc-size)
@@ -4048,7 +4048,10 @@
                 [(Some offset)
                   (opt_aggregate_access_vec.push-ref!
                     (&mut accesses)
-                    (OptAggregateAccess.Load dst offset load-ty))
+                    (OptAggregateAccess.Load
+                      dst
+                      offset
+                      (ast.ty-node-persist load-ty)))
                   (opt-aggregate-scan-instrs
                     type-segment-bases
                     base
@@ -4088,7 +4091,7 @@
                 accesses
                 (& ptr)
                 (& value)
-                store-ty)]
+                (ast.ty-node-persist store-ty))]
             [_
               (if (opt-aggregate-instr-has-pointer? instr base ptrs)
                 (Reject)
@@ -4383,8 +4386,7 @@
           (for [index (iterator.range 0 count)]
             (let
               [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-              (match (opt-aggregate-direct-alloc
-                (compiler-opt-global-shared-view instr))
+              (match (opt-aggregate-direct-alloc instr)
                 [(Some base ty size)
                   (match (opt-aggregate-promote-lookup slots base)
                     [(Some storage)
@@ -4924,9 +4926,7 @@
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (Some dst (String) 16)
         (No))]
-    [_
-      (opt-aggregate-direct-alloc
-        (owned_view.compiler-owned-reference-shared-view instr))]))
+    [_ (opt-aggregate-direct-alloc instr)]))
 
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
@@ -17389,7 +17389,7 @@
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
       (if (< pos (array-length index.reachable))
-        (match (array-ref seq pos)
+        (match (& (array-ref seq pos))
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
               (&mut work)
@@ -30655,7 +30655,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [loop : (& loop OptNaturalLoop)]
   [preheader : i64]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionFact
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionFact
   (match instr
     [(Phi phi-var inputs ty)
       (if (opt-induction-i64-type? ty)
@@ -30670,7 +30670,9 @@
               phi-var
               next-var
               (& ty))
-              [(Some step) (Some (Fact phi-var start next-var step ty))]
+              [(Some step)
+                (Some
+                  (Fact phi-var start next-var step (ast.ty-node-persist ty)))]
               [(None)
                 ;; SSA renaming often routes the latch recurrence through a
                 ;; copy chain; chase it to the arithmetic before giving up.
@@ -30682,7 +30684,14 @@
                       phi-var
                       resolved
                       (& ty))
-                      [(Some step) (Some (Fact phi-var start next-var step ty))]
+                      [(Some step)
+                        (Some
+                          (Fact
+                            phi-var
+                            start
+                            next-var
+                            step
+                            (ast.ty-node-persist ty)))]
                       [(None) (No)])]
                   [(None) (No)])])]
           [(No) (No)])
@@ -30701,7 +30710,7 @@
       body-blocks
       loop
       preheader
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some fact) (return (Some fact))]
       [(No) unit]))
   (No))
@@ -31293,7 +31302,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionDerived
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionDerived
   (match fact
     [(Fact phi-var _ _ step _)
       (match instr
@@ -31309,7 +31318,7 @@
                   (& rhs)
                   phi-var
                   step
-                  ty)
+                  (ast.ty-node-persist ty))
                 (No))]
             [(Add)
               (opt-induction-add-inv-derived
@@ -31319,7 +31328,7 @@
                 step
                 (& lhs)
                 (& rhs)
-                ty)]
+                (ast.ty-node-persist ty))]
             [_ (No)])]
         [(Gep _ base offset ty)
           (match (opt-induction-value-offset offsets offset phi-var)
@@ -31327,7 +31336,11 @@
               (if (and
                 (opt-induction-gep-stride-pays? type-segment-bases 1 (& ty))
                 (opt-induction-value-base-invariant? loop-defs base))
-                (Some (Gep base derived-offset ty))
+                (Some
+                  (Gep
+                    (ir.compiler-ir-clone-value base)
+                    derived-offset
+                    (ast.ty-node-persist ty)))
                 (No))]
             [(None)
               (match offset
@@ -31340,7 +31353,11 @@
                           scale
                           (& ty))
                         (opt-induction-value-base-invariant? loop-defs base))
-                        (Some (GepScaled base scale ty))
+                        (Some
+                          (GepScaled
+                            (ir.compiler-ir-clone-value base)
+                            scale
+                            (ast.ty-node-persist ty)))
                         (No))]
                     [(LookupMissing) (No)])]
                 [_ (No)])])]
@@ -31555,7 +31572,7 @@
       offsets
       scaled
       loop-defs
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some derived)
         (opt-induction-collect-derived-instr-seq-from
           type-segment-bases
@@ -93551,9 +93568,10 @@
 ;; retires them, which also releases the frame slots.
 (defenum OptCtorFwdCopy
   (NoCopy)
-  ;; destination address value, source var, byte size, call result var (-1 for
-  ;; `CopyBytes`, which defines nothing).
-  (Copy ir.CompilerIrValue i64 i64 i64))
+  ;; destination address var (-1 when the address is not a var, which no site
+  ;; resolves), source var, byte size, call result var (-1 for `CopyBytes`,
+  ;; which defines nothing).
+  (Copy i64 i64 i64 i64))
 
 ;; Destination base var, its constant byte offset, and the index of the address
 ;; computation inside the block (-1 when the address enters the block already
@@ -93599,31 +93617,35 @@
     [(Slice _) 0]
     [_ -1]))
 
-(define (opt-ctor-fwd-memcpy-symbol? [symbol : i64]) : bool
-  (string.eq (ir.compiler-ir-symbol-text symbol) "tl_memcpy"))
-
 ;; A whole-aggregate copy out of an IR var: `CopyBytes` (the 16..112 B inline
-;; band) or the `tl_memcpy` runtime call lowering emits above that band.
-(define (opt-ctor-fwd-match-copy [instr : ir.CompilerIrInstr]) : OptCtorFwdCopy
+;; band) or the `tl_memcpy` runtime call lowering emits above that band. The
+;; instruction is read in place; only var ids come out.
+(define (opt-ctor-fwd-match-copy [instr : (& instr ir.CompilerIrInstr)]) : OptCtorFwdCopy
   (match instr
     [(CopyBytes dst src size)
       (match src
         [(Var src-var)
           (if (> size 0)
-            (Copy dst src-var size -1)
+            (Copy (opt-aggregate-split-value-var-or dst -1) src-var size -1)
             (NoCopy))]
         [_ (NoCopy)])]
     [(Call call-dst name args _)
       (match args
         [(Array values)
           (if (= (array-length values) 3)
-            (match (compiler-opt-global-array-element-shared-view values 2)
+            (match (& (array-ref values 2))
               [(I64 size)
-                (match (compiler-opt-global-array-element-shared-view values 1)
+                (match (& (array-ref values 1))
                   [(Var src-var)
-                    (if (and (> size 0) (opt-ctor-fwd-memcpy-symbol? name))
+                    (if (and
+                      (> size 0)
+                      (ir.compiler-ir-symbol-eq?
+                        name
+                        cbi.compiler-builtin-id-tl-memcpy))
                       (Copy
-                        (compiler-opt-global-array-element-shared-view values 0)
+                        (opt-aggregate-split-value-var-or
+                          (& (array-ref values 0))
+                          -1)
                         src-var
                         size
                         call-dst)
@@ -93637,22 +93659,31 @@
 ;; Cheap per-block admission: a block can only hold the pattern when it has both
 ;; a frame `addr_of` and a whole-aggregate copy out of a var. Everything else
 ;; (the exact use census, which allocates) is gated behind this.
+;;
+;; The copy test here is the opcode alone -- any `CopyBytes`, any call to
+;; `tl_memcpy` -- a superset of opt-ctor-fwd-match-copy, which the per-block
+;; scan still applies to every instruction. This scan runs over every
+;; instruction of every function, so it is kept a plain counted loop over the
+;; slot storage bound once, with no call in its body: loop versioning then
+;; checks `count <= length(slots)` once per block and the fast loop reads each
+;; element without a bounds check. A call in the body, or an early exit once
+;; both are seen, would take that away.
 (define (opt-ctor-fwd-block-candidate? [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots (& instrs.slots)]
     [saw-addr : bool false]
     [saw-copy : bool false]
-    [i : i64 0]
-    (while (and (< i count) (not (and saw-addr saw-copy)))
+    (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (match (compiler-opt-global-shared-view instr)
+        [instr (& (array-ref slots i))]
+        (match instr
           [(AddrOf _ _) (set! saw-addr true)]
-          [_
-            (match (opt-ctor-fwd-match-copy instr)
-              [(Copy _ _ _ _) (set! saw-copy true)]
-              [(NoCopy) unit])])
-        (+= i 1)))
+          [(CopyBytes _ _ _) (set! saw-copy true)]
+          [(Call _ name _ _)
+            (when
+              (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-memcpy)
+              (set! saw-copy true))]
+          [_ unit])))
     (and saw-addr saw-copy)))
 
 (define (opt-ctor-fwd-blocks-have-candidate?
@@ -93853,41 +93884,40 @@
       (+= i 1))
     found))
 
-;; Resolve the copy destination address into `(base var, byte offset, address
-;; instruction index)`.
+;; Resolve the copy destination address var into `(base var, byte offset,
+;; address instruction index)`. A negative var is a destination that is not a
+;; var, which never resolves.
 (define (opt-ctor-fwd-resolve-dest
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [copy-index : i64]
-  [dest-value : (& ir.CompilerIrValue)]) : OptCtorFwdDest
-  (match dest-value
-    [(Var dest-var)
-      (let
-        [def-index : i64
-          (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
-        [gep-offset : i64
-          (if (< def-index 0)
-            -1
-            (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
-              [(Gep _ source offset elem-ty)
-                (match elem-ty
-                  [(U8)
-                    (match source
-                      [(Var _)
-                        (match offset
-                          [(I64 k) k]
-                          [_ -1])]
-                      [_ -1])]
-                  [_ -1])]
-              [_ -1]))]
-        (if (>= gep-offset 0)
+  [dest-var : i64]) : OptCtorFwdDest
+  (if (< dest-var 0)
+    (NoDest)
+    (let
+      [def-index : i64 (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
+      [gep-offset : i64
+        (if (< def-index 0)
+          -1
           (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
-            [(Gep _ source _ _)
-              (match source
-                [(Var source-var) (Dest source-var gep-offset def-index)]
-                [_ (NoDest)])]
-            [_ (NoDest)])
-          (Dest dest-var 0 def-index)))]
-    [_ (NoDest)]))
+            [(Gep _ source offset elem-ty)
+              (match elem-ty
+                [(U8)
+                  (match source
+                    [(Var _)
+                      (match offset
+                        [(I64 k) k]
+                        [_ -1])]
+                    [_ -1])]
+                [_ -1])]
+            [_ -1]))]
+      (if (>= gep-offset 0)
+        (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
+          [(Gep _ source _ _)
+            (match source
+              [(Var source-var) (Dest source-var gep-offset def-index)]
+              [_ (NoDest)])]
+          [_ (NoDest)])
+        (Dest dest-var 0 def-index)))))
 
 ;; Validate one gep off the temp. Returns the index of its store, `copy-index`
 ;; when the gep has no uses at all, or -1 when the gep disqualifies the site.
@@ -94048,7 +94078,7 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [uses : (& uses (__tl_dyn-array i64))]
   [copy-index : i64]
-  [dest-value : (& ir.CompilerIrValue)]
+  [dest-var : i64]
   [temp : i64]
   [size : i64]
   [result-var : i64]
@@ -94077,7 +94107,7 @@
         (< slot 0)
         (not (= (opt-ctor-fwd-use-count uses slot) 1)))
         false
-        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-value)
+        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-var)
           [(NoDest) false]
           [(Dest dest-base dest-off dest-def)
             (let
@@ -94172,22 +94202,23 @@
             (set! (array-ref plan i) -1)
             (set! (array-ref bases i) 0))
           (for [i (iterator.range 0 count)]
-            (match (opt-ctor-fwd-match-copy
-              (ir.compiler-ir-instr-seq-ref instrs i))
-              [(Copy dest-value temp size result-var)
-                (if (opt-ctor-fwd-try-site
-                  instrs
-                  uses
-                  i
-                  (& dest-value)
-                  temp
-                  size
-                  result-var
-                  (&mut plan)
-                  (&mut bases))
-                  (set! changed true)
-                  unit)]
-              [(NoCopy) unit]))
+            (let
+              [instr (ir.compiler-ir-instr-seq-ref instrs i)]
+              (match (opt-ctor-fwd-match-copy (& instr))
+                [(Copy dest-var temp size result-var)
+                  (if (opt-ctor-fwd-try-site
+                    instrs
+                    uses
+                    i
+                    dest-var
+                    temp
+                    size
+                    result-var
+                    (&mut plan)
+                    (&mut bases))
+                    (set! changed true)
+                    unit)]
+                [(NoCopy) unit])))
           (if changed
             (Block
               label
@@ -98278,6 +98309,39 @@
         state.changed?
         (owned_view.compiler-owned-reference-shared-view state))]))
 
+;; #9013. `opt-pass-with-ctx-result` by ownership instead of views: the state is
+;; taken apart, its function and context are moved into `step` under the names
+;; `func` and `ctx`, and the state is rebuilt around the function and context
+;; `step` returns, with the context exact. Nothing else keeps the input,
+;; so a pass that consumes its function does so with the checker's backing.
+(defmacro (opt-pass-move
+  [state : Expr]
+  [func : Expr]
+  [ctx : Expr]
+  [step : Expr]) : Expr
+  (match func
+    [(Expr.Var func-name)
+      (match ctx
+        [(Expr.Var ctx-name)
+          (comptime.expr-let-scope
+            func-name
+            `(__tl-project-field ,state func)
+            (comptime.expr-let-scope
+              ctx-name
+              `(__tl-project-field ,state ctx)
+              `(match ,step
+                [(OptFunctionCtxResult.Result move-next move-next-ctx)
+                  (OptPassState
+                    (__tl-project-field ,state type-segment-bases)
+                    (__tl-project-field ,state profile-state)
+                    (__tl-project-field ,state priced?)
+                    move-next
+                    move-next-ctx
+                    true
+                    (__tl-project-field ,state changed?))])))]
+        [_ (comptime-error "opt-pass-move: ctx must be a bare name")])]
+    [_ (comptime-error "opt-pass-move: func must be a bare name")]))
+
 ;; A branch rewrite hands back its input context unchanged when it declines, so
 ;; that context is exact only if the input's was.
 (define (opt-pass-with-rewrite
@@ -98777,41 +98841,35 @@
     ;; internal error.
     [verified? : bool
       (opt-verify-ok?
-        (&
-          (let
-            [func (opt-pass-func s)]
-            (opt-verify-function-with-context func s.ctx))))]
+        (& (opt-verify-function-with-context (& s.func) (& s.ctx))))]
     [s
       (opt-stage
         "preheaders"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-loop-preheaders-function-with-context-result
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-loop-preheaders-function-with-context-result ctx verified? func)))]
     [s
       (opt-stage
         "rotate_ssa"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-rotate-ssa-function-with-context-result
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-rotate-ssa-function-with-context-result ctx verified? func)))]
     [s
       (opt-stage
         "scratch_reset"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-scratch-reset-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-scratch-reset-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Retire dead phi webs before the loop passes read them: a dead phi cycle
     ;; reads its loop-defined input like any other reader, and both `flag_exit`
     ;; and `bce_version` reject a loop whose defs are read outside it. DCE at
@@ -98827,18 +98885,19 @@
     [licm-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-licm-function-with-context-result-and-direct-call-clean
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& summaries.direct-call-clean)
-              (& summaries.return-alias)
-              (& summaries.global-cell)
-              false
-              (& (opt-pass-func s))))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& summaries.direct-call-clean)
+            (& summaries.return-alias)
+            (& summaries.global-cell)
+            false
+            (& func)))
         "licm")]
     ;; The lowerer's checked moves into owned places arrive as `store_owned`;
     ;; everything below LICM reads them as the ordinary `store_ptr` they are.
@@ -98855,25 +98914,27 @@
     ;; ordinary bounded rematerialization chain.
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-successor-sink-function-with-context-result
-              type-segment-bases
-              (opt-pass-ctx s)
-              (opt-pass-func s)))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-successor-sink-function-with-context-result
+            type-segment-bases
+            ctx
+            func))
         "pre_induction_sink")]
     [s
       (opt-stage
         "induction"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-induction-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-induction-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Monotone-flag loop-exit conversion runs on induction's output and ahead
     ;; of versioning: the loop it hands the versioner has lost its flag test
     ;; and its clearing arm, so the clone the versioner has to fit inside
@@ -98881,13 +98942,14 @@
     [s
       (opt-stage
         "flag_exit"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-flag-exit-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-flag-exit-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Bounds-check loop versioning runs on induction's output so its
     ;; check-free fast clone reaches the unroller INSIDE the same pipeline
     ;; iteration (a lowered while loop rotates in iteration 1 and only reaches
@@ -98895,16 +98957,17 @@
     [bce-version-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
       (opt-pass-observed
-        (opt-pass-with-ctx-result
-          (&
-            (opt-bce-version-function-with-context-result
-              type-segment-bases
-              (& summaries.direct-call-clean)
-              (& summaries.global-cell.len-eq)
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s))
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-bce-version-function-with-context-result
+            type-segment-bases
+            (& summaries.direct-call-clean)
+            (& summaries.global-cell.len-eq)
+            ctx
+            verified?
+            func))
         "bce_version")]
     ;; P-B's late slot: the versioner has had every loop now, so the
     ;; length-equality relation is read inside loop bodies too (see
@@ -98938,13 +99001,14 @@
     [s
       (opt-stage
         "fill_call"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-fill-call-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-fill-call-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Element copies become one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd
     ;; (i64/u64 slots) call, and for the same reason fills do: it has to happen
     ;; BEFORE the unroller, both because the unrolled body is what costs 3.5
@@ -98954,13 +99018,14 @@
     [s
       (opt-stage
         "copy_call"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-copy-call-function-with-context-result
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-copy-call-function-with-context-result
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Canonical counted-loop unrolling (x4) runs on the versioned blocks. A
     ;; successful rewrite versions at most one loop per pipeline iteration and
     ;; rebuilds the context for the new CFG, so the stages below keep valid
@@ -98968,14 +99033,15 @@
     [s
       (opt-stage
         "unroll"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-unroll-function-with-context-result
-              type-segment-bases
-              (opt-pass-ctx s)
-              verified?
-              (opt-pass-func s)))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-unroll-function-with-context-result
+            type-segment-bases
+            ctx
+            verified?
+            func)))]
     ;; Byte-compose load combining runs immediately after the unroller: a
     ;; constant-trip loop unrolled THIS iteration exposes its straight-line
     ;; compose here, and the round's DCE below removes the dead byte
@@ -98994,14 +99060,15 @@
     [s
       (opt-stage
         "lftr"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-lftr-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-lftr-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; LFTR materializes an end pointer in an inner loop's preheader after the
     ;; ordinary LICM run. Give that fresh invariant (and any induction-created
     ;; address recipe) one motion opportunity in the same pipeline iteration;
@@ -99010,18 +99077,19 @@
     [s
       (opt-stage
         "post_lftr_licm"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-licm-function-with-context-result-and-direct-call-clean
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& summaries.direct-call-clean)
-              (& summaries.return-alias)
-              (& summaries.global-cell)
-              true
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& summaries.direct-call-clean)
+            (& summaries.return-alias)
+            (& summaries.global-cell)
+            true
+            (& func))))]
     ;; Invariant-offset Gep splitting. Two orderings pin it here. It has to
     ;; follow bce_version, because only the fast clone drops the BoundsCheck
     ;; that keeps the `invariant + counter` Add multi-use, and a split that
@@ -99033,14 +99101,15 @@
     [s
       (opt-stage
         "gep_offset"
-        (opt-pass-with-ctx-result
-          (&
-            (opt-gep-offset-function-with-context-result
-              type-segment-bases
-              (& (opt-pass-ctx s))
-              verified?
-              (& (opt-pass-func s))))
-          (& s)))]
+        (opt-pass-move
+          s
+          func
+          ctx
+          (opt-gep-offset-function-with-context-result
+            type-segment-bases
+            (& ctx)
+            verified?
+            (& func))))]
     ;; Affine chain folding must see the unroller's output INSIDE the same
     ;; pipeline iteration: a lowered while loop spends iteration 1 on
     ;; SSA+rotation and unrolls in iteration 2 (the fixpoint cap), so the

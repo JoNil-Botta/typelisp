@@ -300,7 +300,7 @@
           (set! out text))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     out))
 
 ;; Captured from the per-declaration recursion before the run-iteration landed.

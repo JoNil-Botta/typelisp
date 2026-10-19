@@ -21,6 +21,306 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_parse_core as parser)
 (import sym_i64_env)
+(cfg test (import stdlib.iterator))
+(cfg test (import stdlib.test))
+
+(test
+  fixed-array-reference-reborrow-and-replacement
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/array_reference_reborrow.tl"
+      "(define (touch [p : (&mut i64)]) : unit (set! (deref p) 2))
+(define (via [p : (&mut (Array (&mut i64) 1))]) : unit
+  (touch (array-ref p 0)))
+(define (main) : i64 42)")
+    "a reference argument reborrows an element through mutable array access")
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/array_reference_replace.tl"
+      "(define (via [p : (&mut (Array String 2))]) : String
+  (replace! (array-ref p 0) \"new\"))
+(define (main) : i64 42)")
+    "replacement owns the old value after installing its successor")
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/slice_reference_replace.tl"
+      "(define (via [p : (&mut (Slice String))]) : String
+  (replace! (array-ref p 0) \"new\"))
+(define (main) : i64 42)")
+    "replacement moves an element out of a mutable Slice reference"))
+
+(cfg
+  test
+  (define (compiler-check-array-reference-case-source
+    [reference : (& reference str)]
+    [row : (& row (Tuple String String String))]) : String
+    (str_cat.str-cat
+      "(defstruct Bag (items (Array String 2)))\n"
+      "(defstruct Item (text String) (number i64))\n"
+      "(defstruct Triple (x i64) (y i64) (z i64))\n"
+      "(defstruct Holder (text String))\n"
+      "(define (consume [text : String]) : i64 7)\n"
+      "(define (observe [text : (& str)]) : i64 7)\n"
+      "(define (relay [p : ("
+      (string.copy reference)
+      " p (Array String 2))]) : ("
+      (string.copy reference)
+      " p (Array String 2)) p)\n"
+      "(define (via [p : ("
+      (string.copy reference)
+      " p "
+      (string.copy (& (tuple-ref (deref row) 0)))
+      ")][index : i64]) : "
+      (string.copy (& (tuple-ref (deref row) 1)))
+      "\n  "
+      (string.copy (& (tuple-ref (deref row) 2)))
+      ")\n"
+      "(define (main) : i64 42)\n")))
+
+(test
+  fixed-array-reference-value-and-place-access
+  (let
+    [bad
+      (array
+        (tuple "(Array String 2)" "i64" "(consume (array-ref p 0))")
+        (tuple "(Array String 2)" "i64" "(consume (array-ref p index))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [s : String (array-ref p 0)] (consume s))")
+        (tuple "(Array String 2)" "i64" "(let [s (array-ref p 0)] (consume s))")
+        (tuple "(Array String 2)" "String" "(array-ref p 0)")
+        (tuple "(Array String 2)" "String" "(begin 0 (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(if (= index 0) (array-ref p 0) \"fallback\")")
+        (tuple "(Array String 2)" "Holder" "(Holder (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "(Tuple String i64)"
+          "(tuple (array-ref p 0) 1)")
+        (tuple "(Array String 2)" "(Array String 1)" "(array (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [s : String \"old\"] (set! s (array-ref p 0)) (consume s))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : (Array String 1) (array \"old\")] (set! (array-ref out 0) (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : Holder (Holder \"old\")] (set! out.text (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "unit"
+          "(let [out : (Tuple String i64) (tuple \"old\" 1)] (set! (tuple-ref out 0) (array-ref p 0)))")
+        (tuple "Bag" "i64" "(consume (array-ref p.items 0))")
+        (tuple "(Array String 2)" "(in p String)" "(array-ref p 0)")
+        (tuple "(Array String 2)" "(in p (Box String))" "(box (array-ref p 0))")
+        (tuple "(Array String 2)" "i64" "(consume (array-ref (relay p) 0))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(consume (array-ref (tuple-ref (tuple p) 0) 0))")
+        (tuple "(Array Item 2)" "String" "(array-ref p 0).text")
+        (tuple "(Array (Box i64) 1)" "(Box i64)" "(array-ref p 0)")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (array-ref p 0) 0)")
+        (tuple "(Array String 0)" "String" "(array-ref p 0)")
+        (tuple "(Array String 1)" "String" "(array-ref p 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(observe (& (array-ref p (consume (array-ref p 0)))))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [alias consume] (alias (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (array-ref p (consume (array-ref p 0))))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(let [clone consume] (clone (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (if (= (consume (array-ref p 0)) 0) (array-ref p 1) \"owned\"))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (match (consume (array-ref p 0)) [_ (array-ref p 1)]))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (let [moved : (in p String) (array-ref p 0)] moved))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (begin (consume (array-ref p 0)) (array-ref p 1)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (unsafe (consume (array-ref p 0)) (array-ref p 1)))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0)")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(array-ref (let [q p] (array-ref q 0)) 0)")
+        (tuple "(Slice String)" "i64" "(consume (array-ref p 0))")
+        (tuple "(Slice String)" "(in p String)" "(array-ref p index)")
+        (tuple
+          "(Array String 2)"
+          "(in p String)"
+          "(array-ref (slice-view p 0 2) 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(consume (array-ref (slice-view p 0 2) 1))")
+        (tuple
+          "(Array (Array String 1) 2)"
+          "(in p String)"
+          "(array-ref (array-ref (slice-view p 0 2) 0) 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(begin (unsafe (string-data (if (= index 0) (array-ref p 0) (array-ref p 1)))) 0)"))]
+    [good
+      (array
+        (tuple "(Array i64 2)" "i64" "(+ (array-ref p 0) (array-ref p 1))")
+        (tuple "(Array Triple 1)" "Triple" "(array-ref p 0)")
+        (tuple "(Array Item 2)" "i64" "(array-ref p 0).number")
+        (tuple "(Array String 2)" "i64" "(observe (& (array-ref p 0)))")
+        (tuple "(Array String 2)" "i64" "(observe (array-ref p 0))")
+        (tuple "(Array String 2)" "bool" "(= (array-ref p 0) \"hello\")")
+        (tuple
+          "(Array (Array String 2) 1)"
+          "i64"
+          "(array-length (array-ref p 0))")
+        (tuple
+          "(Array (Tuple String i64) 1)"
+          "i64"
+          "(tuple-ref (array-ref p 0) 1)")
+        (tuple "(Array String 2)" "(& p str)" "(& (array-ref p 0))")
+        (tuple "(Array String 2)" "String" "(clone (array-ref p 0))")
+        (tuple "(Array Item 2)" "Item" "(clone (array-ref p 0))")
+        (tuple "(Array (Box i64) 1)" "(Box i64)" "(clone (array-ref p 0))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "(Array String 1)"
+          "(clone (array-ref p 0))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (ann (array-ref p 0) : (in p String)))")
+        (tuple "(Array i64 2)" "i64" "(clone (cast (array-ref p 0) : i64))")
+        (tuple "(Array String 2)" "String" "(clone (begin 0 (array-ref p 0)))")
+        (tuple "(Array String 2)" "String" "(clone (unsafe 0 (array-ref p 0)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (if (= index 0) (array-ref p 0) (array-ref p 1)))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (let [flag true] (if flag (array-ref p 0) (array-ref p 1))))")
+        (tuple
+          "(Array String 2)"
+          "String"
+          "(clone (match (= index 0) [true (array-ref p 0)] [false (array-ref p 1)]))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(clone (array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0))")
+        (tuple
+          "(Array (Array String 1) 1)"
+          "String"
+          "(clone (array-ref (let [q p] (array-ref q 0)) 0))")
+        (tuple "(Array Item 2)" "String" "(clone (array-ref p 0).text)")
+        (tuple
+          "(Array (Tuple String i64) 1)"
+          "String"
+          "(clone (tuple-ref (array-ref p 0) 0))")
+        (tuple
+          "(Array (Box String) 1)"
+          "String"
+          "(clone (deref (array-ref p 0)))")
+        (tuple "(Slice i64)" "i64" "(array-ref p index)")
+        (tuple "(Slice String)" "i64" "(observe (array-ref p 0))")
+        (tuple "(Slice String)" "(& p str)" "(& (array-ref p 0))")
+        (tuple "(Slice String)" "String" "(clone (array-ref p index))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(observe (array-ref (slice-view p 0 2) 1))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(begin (unsafe (string-data (array-ref p 0))) 0)")
+        (tuple
+          "(Array i64 2)"
+          "i64"
+          "(spmd-reduce sum ([i : i64 0 2]) 0 (array-ref p i))")
+        (tuple
+          "(Slice i64)"
+          "i64"
+          "(spmd-reduce sum ([i : i64 0 index]) 0 (array-ref p i))"))]
+    (for [kind (iterator.range 0 2)]
+      (let
+        [reference : String
+          (if (= kind 0)
+            "&"
+            "&mut")]
+        (for [index (iterator.range 0 (array-length bad))]
+          (let
+            [source : String
+              (compiler-check-array-reference-case-source
+                (& reference)
+                (& (array-ref bad index)))]
+            [rejected : bool
+              (match (check_core.compiler-check-source
+                "tests/array_reference_transfer.tl"
+                source)
+                [(Ok _ _) false]
+                [(Err diagnostics _)
+                  (let
+                    [first : cdiag.CompilerDiagnostic
+                      (cdiag.compiler-diagnostic-list-first
+                        (& (deref diagnostics)))]
+                    (and
+                      (=
+                        (cdiag.compiler-diagnostic-list-count
+                          (& (deref diagnostics)))
+                        1)
+                      (match (cdiag.compiler-diagnostic-code (& first))
+                        [(CompilerDiagnosticSomeString code)
+                          (string.eq code "E0208")]
+                        [CompilerDiagnosticNoString false])))])]
+            (test.assert-true
+              rejected
+              (str_cat.str-cat
+                "borrowed fixed-array transfer: "
+                (string.copy (& (tuple-ref (array-ref bad index) 2)))))))
+        (for [index (iterator.range 0 (array-length good))]
+          (test.assert-true
+            (compiler-check-source-ok?
+              "tests/array_reference_read.tl"
+              (compiler-check-array-reference-case-source
+                (& reference)
+                (& (array-ref good index))))
+            (str_cat.str-cat
+              "fixed-array observation: "
+              (string.copy (& (tuple-ref (array-ref good index) 2))))))))))
 
 (define (compiler-check-fix-test-position-index
   [source : (& source str)]

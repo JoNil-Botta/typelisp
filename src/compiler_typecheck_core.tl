@@ -666,7 +666,8 @@
   ;; One job-owned non-fatal channel is shared with lowering and codegen by
   ;; the compiler driver. Its payload arena remains lazy for ordinary jobs.
   (advisory-sink cdiag.CompilerAdvisorySink)
-  (semantic-observer TcSemanticObserver))
+  (semantic-observer TcSemanticObserver)
+  (parser-control i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -941,7 +942,8 @@
           0
           0
           (cdiag.compiler-advisory-sink-new)
-          (TcSemanticObserver 0)))
+          (TcSemanticObserver 0)
+          0))
       (TcJobState
         (cast
           (unsafe
@@ -2882,6 +2884,19 @@
     ctx
     env
     (ExpressionEnter expression)))
+
+(define (tc-job-state-parser-control [state : TcJobState]) : i64
+  (tc-job-state-field state parser-control i64))
+
+(define (tc-job-state-set-parser-control! [state : TcJobState] [control : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr state.address : (MutPtr u8))
+          (comptime (offset-of (type TcJobStateData) parser-control)))
+        : (MutPtr i64))
+      control)))
 
 (define (tc-job-state-semantic-observer [state : TcJobState]) : TcSemanticObserver
   (tc-job-state-field state semantic-observer TcSemanticObserver))
@@ -5609,6 +5624,22 @@
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
       (tc-canonical-diagnostic (cdiag.compiler-diagnostic-at-start "" message))]))
+
+;; A seen-module selection can bypass the load walk's selected-item check.
+;; Recover canonical import diagnostics only on failure;
+;; macro setup must still allow exports from pending declaration generators.
+(define (tc-top-env-error-diagnostic
+  [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [selected-policy : cload.CompilerLoadSelectedImportPolicy]
+  [message : String]) : (Box cdiag.CompilerDiagnostic)
+  (match (cload.compiler-load-check-unqualified-imports
+    ""
+    decls
+    paths
+    selected-policy)
+    [(Err diag) diag]
+    [(Ok) (box (tc-diag-at-start message))]))
 
 (define (tc-located-error-prefix) : String
   "__tl_tc_loc|")
@@ -115364,7 +115395,12 @@
                                           (compiler-tc-macro-profile-emit))
                                         (Err diag))]))]
                               [(Err message)
-                                (Err (box (tc-diag-at-start message)))])]
+                                (Err
+                                  (tc-top-env-error-diagnostic
+                                    (& active-decls)
+                                    (& active-paths)
+                                    PendingSelectedImports
+                                    message))])]
                           [(Err message) (Err (box (tc-diag-at-start message)))])))]
                   [(Err message)
                     (Err
@@ -118522,10 +118558,15 @@
                                   (tc-context-capture-active-pools! ctx)
                                   (Partial diag ctx top-env paths)]))])]
                       [(Err message)
-                        (Err
-                          (box
-                            (cdiag.compiler-diagnostic-list-single
-                              (tc-diag-at-start message))))])]
+                        (match (& program)
+                          [(Program decls)
+                            (Err
+                              (cdiag.compiler-diagnostic-list-box-single
+                                (tc-top-env-error-diagnostic
+                                  decls
+                                  (& paths)
+                                  CompleteSelectedImports
+                                  message)))])])]
                   [(Err diag)
                     (Err (cdiag.compiler-diagnostic-list-box-single diag))])]
               [(Err message)

@@ -227,3 +227,6 @@ end
 case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct
 contains|main:
 end
+
+case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|none|direct
+end

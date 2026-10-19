@@ -1,5 +1,19 @@
 # Selfhost compiler testing
 
+`linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
+and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
+The internal test runs no external tools. It checks duplicate/empty/byte names,
+ordered duplicate symbol hints, BSD sorted and extended index names, both BSD
+byte orders, odd payloads and internal alignment padding. Every byte offset of
+the GNU fixture is tried as an index target; only ordinary member headers pass.
+Every incomplete structure in six small 32-/64-bit index layouts is rejected,
+including repacked payload truncations with otherwise valid target offsets;
+the signature-only empty archive remains valid.
+Keep the exact-limit/one-below cases for all `ArchiveLimits` resources, unsigned
+overflow diagnostics, malformed names/tables, special ordering and stable
+input/revision identities. Run the suite with a fresh compiler at opt0/1/2;
+the complete inline suite runs the same cases on Linux and Windows.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
@@ -156,6 +170,14 @@ The arena-debug gate repeats all three fixtures with debug, profile, and backtra
 instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
+
+The parser origin-column tests exercise all thirteen kinds, compact-span
+boundaries and exact overflow after i64-to-i32 conversion, full-width name IDs
+and alias keys/slots, segment and directory growth, retained handles, suffix
+rollback, detached directory transfer, alias precedence and the 64-step depth
+bound. They also check independent jobs, failed/inactive nested modules and
+ordinary reader builder growth/reset. The load and semantic-index smokes cover
+cached file reuse and source-arena retirement on the production paths.
 
 ## Loader diagnostic codes
 
@@ -1737,7 +1759,13 @@ generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
 import that compiles successfully is not evidence of valid expansion.
 
 Source selected imports of generated exports are the mirror case. The
-`source_selected_generated_export` native row selects values, a function, a
+public-check `loader-selected-*` cases pin E0304 and the selected import's own
+span for both import orders, used and unused missing selections, source and
+package checking, and compilation. A cross-file case keeps pending generator
+exports valid while reporting a different missing item. Valid source, package
+and embedded-stdlib selections remain accepted, and the lazy loader smoke
+requires a selected item to materialize a provider after a summary-only import.
+The `source_selected_generated_export` native row selects values, a function, a
 struct, an enum and its constructors that exist only after the provider's
 module-scope generators have run, through a direct generator, an imported
 declaration macro with operands, nested generation, a target-conditional

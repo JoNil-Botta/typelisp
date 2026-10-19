@@ -23,7 +23,7 @@
   (json.JsonArray
     (box
       (json.list-cons
-        (json.JsonString path)
+        (json.JsonString (fs.path-normalize (& path)))
         (json.list-cons
           (json.JsonString role)
           (json.list-cons
@@ -52,7 +52,8 @@
     [needle : String (text-item (& fixture) 2)]
     [files : json.JsonSeq (boundary.json-array (item (& fixture) 3))]
     [dir : String (fs.path-join work (& name))]
-    [root : String (fs.path-join (& dir) "root.tl")]
+    [root-path : String (fs.path-join (& dir) "root.tl")]
+    [root : String (fs.path-normalize (& root-path))]
     [policy-path : String (fs.path-join (& dir) "policy.json")]
     [policy : json.JsonSeq (prelude-policy)]
     [index : i64 0]

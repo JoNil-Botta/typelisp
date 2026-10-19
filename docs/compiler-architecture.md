@@ -681,6 +681,15 @@ state, then destroys the session and transport arenas, so no transport field
 stays globally reachable after its owner is gone. The LSP frame smoke covers
 reset and reinstall after the input was consumed and both outputs written.
 
+Parsed LSP messages pass envelope admission before any stateful dispatch.
+Requests require the exact JSON-RPC version, a string method and a valid ID
+type when present; invalid envelopes emit `-32600` without entering document
+or analysis handlers. Valid client responses are ignored, while a valid
+notification still reaches its handler without receiving a response. Field
+inspection borrows the parsed JSON owner; it neither clones request payloads
+nor retains references beyond dispatch. Method parameter validation remains
+separate from this envelope boundary.
+
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
 function's rewound scratch with the parent's head and capabilities, and the

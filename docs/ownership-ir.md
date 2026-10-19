@@ -281,11 +281,16 @@ ancestor summaries from direct children; each visited node is charged. They
 do not scan unrelated places or reserve a quadratic cost per instruction.
 Loan permission checks charge each inspected loan and visited parent link;
 there is no per-instruction reservation of the maximum loan/place product.
+The forward walk keeps loan states as bit planes (one bit per loan for each
+state bit), so a block's copy, join and expiry cost words, and a permission
+check examines only active loans while charging every loan the scan passes.
 The definition census is linear in loans plus graph points. Structural
 duplicate-place validation still uses a bounded quadratic scan, and backward
-liveness sweeps can require repeated passes on unfavorably numbered CFGs. The
-node cap is a hard ceiling, not a guarantee every graph beneath it fits the
-work budget.
+liveness sweeps can require repeated passes on unfavorably numbered CFGs. A
+pass revisits only blocks whose successors' entry rows changed; any other
+block is charged the work of its last visit, which would repeat exactly, so
+the charged work is that of the full sweeps. The node cap is a hard ceiling,
+not a guarantee every graph beneath it fits the work budget.
 
 `ownership-inspect` runs the same solver and canonical transfer effects with
 optional bounded diagnostic tables. It records masks before expiry, after

@@ -275,15 +275,25 @@
 
 ;; Diagnostic strings are owned output too. Charge every rendered occurrence,
 ;; including shared strings, so a small graph cannot amplify huge provenance
-;; into an unbounded dump under a small work budget.
+;; into an unbounded dump under a small work budget. One unit and both texts'
+;; bytes are one charge: work only grows, so the sum runs out exactly when one
+;; of its parts would.
 (define (ownership-source-charge!
   [work : (&mut work i64)]
   [limit : i64]
   [source : (& source OwnershipSource)]) : bool
-  (and
-    (ownership-charge! work limit 1)
-    (ownership-charge! work limit (string.string-length (& source.path)))
-    (ownership-charge! work limit (string.string-length (& source.expansion)))))
+  (let
+    [units : i64
+      (+
+        1
+        (+
+          (string.string-length (& source.path))
+          (string.string-length (& source.expansion))))]
+    (if (> units (- limit (deref work)))
+      false
+      (begin
+        (set! (deref work) (+ (deref work) units))
+        true))))
 
 (defmacro (ownership-fail
   [kind : Expr]
@@ -344,43 +354,61 @@
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipTypeId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.types))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.types))))
 
 (define (ownership-place-id?
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipPlaceId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.places))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.places))))
 
 (define (ownership-block-id?
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipBlockId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.blocks))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.blocks))))
 
 (define (ownership-loan-id?
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipLoanId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.loans))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.loans))))
 
 (define (ownership-cleanup-id?
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipCleanupId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.cleanups))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.cleanups))))
 
 (define (ownership-obligation-id?
   [body : (& body OwnershipBody)]
   [id : (& id OwnershipObligationId)]) : bool
   (and
-    (ownership-body-id-equal? (& body.id) (& id.body))
-    (ownership-index? id.index (array-length body.obligations))))
+    (= body.id.owner id.body.owner)
+    (= body.id.generation id.body.generation)
+    (= body.id.revision id.body.revision)
+    (>= id.index 0)
+    (< id.index (array-length body.obligations))))
 
 (define (ownership-obligation-parent [owner : (& owner OwnershipObligation)]) : i64
   (match (& owner.parent)
@@ -1342,12 +1370,12 @@
           (let
             [instr : (& body OwnershipInstruction)
               (& (array-ref block.instructions j))]
+            [path : i64 (string.string-length (& instr.source.path))]
+            ;; `ownership-source-charge!`
+            [units : i64
+              (+ 1 (+ path (string.string-length (& instr.source.expansion))))]
             (when
-              (not
-                (ownership-source-charge!
-                  (&mut work)
-                  limits.max-work
-                  (& instr.source)))
+              (> units (- limits.max-work work))
               (return
                 (ownership-fail
                   OwnershipFailureKind.Resource
@@ -1356,6 +1384,7 @@
                   -1
                   fallback
                   "ownership provenance work exhausted")))
+            (set! work (+ work units))
             (when
               (not
                 (ownership-operation-charge!
@@ -1535,6 +1564,69 @@
       (if on?
         (bit-or (array-ref cells cell) mask)
         (bit-and (array-ref cells cell) (bit-not mask))))))
+
+;; The forward walk keeps loan states as bit planes of W =
+;; `ownership-loan-words` words each: plane 0 holds state bit 1 (not issued on
+;; some path) of every loan, plane 1 bit 2 (active), plane 2 bit 4 (ended), and
+;; plane 3 marks the exclusive loans. A block's input row is planes 0-2, so a
+;; join, copy or expiry costs words, not loans.
+(define (ownership-loan-code
+  [state : (& state (__tl_dyn-array i64))]
+  [loan : i64]) : i64
+  (let
+    [words : i64 (/ (array-length state) 4)]
+    [cell : i64 (/ loan 64)]
+    [shift : i64 (bit-and loan 63)]
+    (bit-or
+      (bit-and (shr (array-ref state cell) shift) 1)
+      (bit-or
+        (shl (bit-and (shr (array-ref state (+ words cell)) shift) 1) 1)
+        (shl (bit-and (shr (array-ref state (+ (* 2 words) cell)) shift) 1) 2)))))
+
+(define (ownership-loan-code-set!
+  [state : (&mut state (__tl_dyn-array i64))]
+  [loan : i64]
+  [code : i64]) : unit
+  (let
+    [words : i64 (/ (array-length state) 4)]
+    [plane : i64 0]
+    (while (< plane 3)
+      (ownership-loan-bit-set!
+        state
+        (* plane words)
+        loan
+        (!= (bit-and code (shl 1 plane)) 0))
+      (set! plane (+ plane 1)))))
+
+;; Planes for one state code per loan (1..7), with the exclusive loans of
+;; `body` marked; `ownership-loan-codes!` reads them back.
+(define (ownership-loan-planes
+  [body : (& body OwnershipBody)]
+  [codes : (& codes (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
+  (let
+    [count : i64 (array-length codes)]
+    [words : i64 (ownership-loan-words count)]
+    [planes : (__tl_dyn-array i64) (__tl_make-array i64 (* 4 words))]
+    [i : i64 0]
+    (ownership-i64-fill! (&mut planes) 0)
+    (while (< i count)
+      (ownership-loan-code-set! (&mut planes) i (array-ref codes i))
+      (when
+        (and
+          (< i (array-length body.loans))
+          (ownership-loan-exclusive? (& (array-ref body.loans i))))
+        (ownership-loan-bit-set! (&mut planes) (* 3 words) i true))
+      (set! i (+ i 1)))
+    planes))
+
+(define (ownership-loan-codes!
+  [planes : (& planes (__tl_dyn-array i64))]
+  [codes : (&mut codes (__tl_dyn-array i64))]) : unit
+  (let
+    [i : i64 0]
+    (while (< i (array-length codes))
+      (set! (array-ref codes i) (ownership-loan-code planes i))
+      (set! i (+ i 1)))))
 
 ;; Whether `loan` is demanded at liveness row `point`.
 (define (ownership-loan-live?
@@ -2131,35 +2223,61 @@
           loan-next
           reissued)))))
 
+;; The reborrows of each loan in increasing index order: `children` holds the
+;; first child of each loan, then each loan's next sibling (-1 for none).
+(define (ownership-loan-children [body : (& body OwnershipBody)]) : (__tl_dyn-array
+    i64)
+  (let
+    [loans : i64 (array-length body.loans)]
+    [children : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 loans))]
+    [child : i64 loans]
+    (ownership-i64-fill! (&mut children) -1)
+    (while (> child 0)
+      (set! child (- child 1))
+      (let
+        [parent : i64 (ownership-loan-parent (& (array-ref body.loans child)))]
+        (when
+          (>= parent 0)
+          (set!
+            (array-ref children (+ loans child))
+            (array-ref children parent))
+          (set! (array-ref children parent) child))))
+    children))
+
 (define (ownership-live-kill-definition!
   [body : (& body OwnershipBody)]
   [demands : (& demands OwnershipLoanDemands)]
+  [children : (& children (__tl_dyn-array i64))]
   [state : (&mut state (__tl_dyn-array i64))]
   [definition : i64]
   [work : (&mut work i64)]
   [limit : i64]) : bool
   (let
     [loans : i64 (array-length body.loans)]
-    [child : i64 (+ definition 1)]
+    [child : i64 (array-ref children definition)]
+    ;; The later loans scanned for children so far, each one unit: every
+    ;; loan after the definition up to the retaining child, or to the end.
+    [scanned : i64 definition]
+    [units : i64 0]
     [retained? : bool false]
     ;; Liveness is ancestor-closed. A demanded descendant therefore has a
     ;; demanded immediate child on this chain, directly or through a holder.
     ;; Removing only a leaf preserves that invariant and keeps the old
     ;; generation alive across parent reissue.
-    (while (and (not retained?) (< child loans))
-      (unless (ownership-charge! work limit 1) (return false))
-      (when
-        (= (ownership-loan-parent (& (array-ref body.loans child))) definition)
-        (when (ownership-loan-bit? state 0 child) (set! retained? true))
-        (let
-          [p : i64 (array-ref demands.loan-first child)]
-          (while (and (not retained?) (>= p 0))
-            (unless (ownership-charge! work limit 1) (return false))
-            (when
-              (ownership-loan-bit? state 0 (+ loans p))
-              (set! retained? true))
-            (set! p (array-ref demands.loan-next p)))))
-      (set! child (+ child 1)))
+    (while (and (not retained?) (>= child 0))
+      (set! units (+ units (- child scanned)))
+      (set! scanned child)
+      (when (ownership-loan-bit? state 0 child) (set! retained? true))
+      (let
+        [p : i64 (array-ref demands.loan-first child)]
+        (while (and (not retained?) (>= p 0))
+          (set! units (+ units 1))
+          (when (ownership-loan-bit? state 0 (+ loans p)) (set! retained? true))
+          (set! p (array-ref demands.loan-next p))))
+      (set! child (array-ref children (+ loans child))))
+    (unless retained? (set! units (+ units (- (- loans 1) scanned))))
+    ;; Work only grows: the sum runs out exactly when a unit of it would.
+    (unless (ownership-charge! work limit units) (return false))
     ;; The plain demands end here: each is the new issue's own (its retention
     ;; and its first uses), or comes with a holder's demand of the same use. A
     ;; holder's demand ends here only when the loan cannot be issued again: on
@@ -2292,7 +2410,6 @@
     (while (< point points)
       (let
         [w : i64 0]
-        [p : i64 0]
         (while (< w stride)
           (let
             [word : i64 (array-ref inner (+ (* point wide) w))]
@@ -2302,17 +2419,181 @@
                 (bit-and word (- (shl 1 tail) 1))
                 word)))
           (set! w (+ w 1)))
-        (while (< p demands.pairs)
-          (when
-            (ownership-loan-bit? inner (* point wide) (+ loans p))
-            (ownership-loan-bit-set!
-              (&mut live)
-              (* point stride)
-              (array-ref demands.pair-loan p)
-              true))
-          (set! p (+ p 1))))
+        ;; Pair bits follow the loan bits; only the set ones are visited.
+        (set! w (/ loans 64))
+        (while (< w wide)
+          (let
+            [rest : i64
+              (if (and (= w (/ loans 64)) (!= tail 0))
+                (bit-and (array-ref inner (+ (* point wide) w)) (shl -1 tail))
+                (array-ref inner (+ (* point wide) w)))]
+            [p : i64 (- (* w 64) loans)]
+            (while (!= rest 0)
+              (if (= (bit-and rest 255) 0)
+                (begin
+                  (set! rest (bit-and (shr rest 8) 72057594037927935))
+                  (set! p (+ p 8)))
+                (begin
+                  (when
+                    (!= (bit-and rest 1) 0)
+                    (ownership-loan-bit-set!
+                      (&mut live)
+                      (* point stride)
+                      (array-ref demands.pair-loan p)
+                      true))
+                  (set! rest (bit-and (shr rest 1) 9223372036854775807))
+                  (set! p (+ p 1))))))
+          (set! w (+ w 1))))
       (set! point (+ point 1)))
     live))
+
+;; Each block's two successors (-1 for none): `2b` and `2b + 1`.
+(define (ownership-live-successors [body : (& body OwnershipBody)]) : (__tl_dyn-array
+    i64)
+  (let
+    [successors : (__tl_dyn-array i64)
+      (__tl_make-array i64 (* 2 (array-length body.blocks)))]
+    [b : i64 0]
+    (while (< b (array-length body.blocks))
+      (set!
+        (array-ref successors (* 2 b))
+        (ownership-successor (& (array-ref body.blocks b).terminator) 0))
+      (set!
+        (array-ref successors (+ (* 2 b) 1))
+        (ownership-successor (& (array-ref body.blocks b).terminator) 1))
+      (set! b (+ b 1)))
+    successors))
+
+;; Whether block `b` has not been visited, or a successor's entry row changed
+;; since its last visit (`ownership-loan-liveness`).
+(define (ownership-live-stale?
+  [successors : (& successors (__tl_dyn-array i64))]
+  [seen : (& seen (__tl_dyn-array i64))]
+  [stamp : (& stamp (__tl_dyn-array i64))]
+  [b : i64]) : bool
+  (let
+    [first : i64 (array-ref successors (* 2 b))]
+    [second : i64 (array-ref successors (+ (* 2 b) 1))]
+    (or
+      (< (array-ref seen b) 0)
+      (and (>= first 0) (> (array-ref stamp first) (array-ref seen b)))
+      (and (>= second 0) (> (array-ref stamp second) (array-ref seen b))))))
+
+;; One visit of block `b` in the backward demand solve: the successors' entry
+;; rows are joined, the instructions run backward, and each point's row joins
+;; the state there. Bit 1 of `flags` reports a changed row, and bit 2 a changed
+;; entry row (the block's first point). The result is -1, or the instruction
+;; where the work budget ran out (the instruction count for the block's own
+;; reservation). A reservation of one unit and `wide` words twice (four
+;; times for the block) is a single sum: work only grows, so the sum runs out
+;; exactly when one of its parts would.
+(define (ownership-live-visit!
+  [body : (& body OwnershipBody)]
+  [demands : (& demands OwnershipLoanDemands)]
+  [children : (& children (__tl_dyn-array i64))]
+  [offsets : (& offsets (__tl_dyn-array i64))]
+  [inner : (&mut inner (__tl_dyn-array i64))]
+  [state : (&mut state (__tl_dyn-array i64))]
+  [b : i64]
+  [work : (&mut work i64)]
+  [limit : i64]
+  [flags : (&mut flags i64)]) : i64
+  (let
+    [loans : i64 (array-length body.loans)]
+    [wide : i64 (array-length state)]
+    [block : (& body OwnershipBlock) (& (array-ref body.blocks b))]
+    [i : i64 0]
+    [edge : i64 0]
+    [j : i64 (array-length block.instructions)]
+    [step : i64 (+ 1 (* 2 wide))]
+    (unless (ownership-charge! work limit (+ 1 (* 4 wide))) (return j))
+    (while (< i wide)
+      (set! (array-ref state i) 0)
+      (set! i (+ i 1)))
+    (while (< edge 2)
+      (let
+        [target : i64 (ownership-successor (& block.terminator) edge)]
+        (when
+          (>= target 0)
+          (set! i 0)
+          (while (< i wide)
+            (set!
+              (array-ref state i)
+              (bit-or
+                (array-ref state i)
+                (array-ref inner (+ (* (array-ref offsets target) wide) i))))
+            (set! i (+ i 1))))
+        (set! edge (+ edge 1))))
+    (when
+      (ownership-live-join-row!
+        inner
+        state
+        (* (+ (array-ref offsets b) j) wide))
+      (set!
+        (deref flags)
+        (if (= j 0)
+          3
+          1)))
+    (while (> j 0)
+      (set! j (- j 1))
+      (unless (ownership-charge! work limit step) (return j))
+      (let
+        [op : (& body OwnershipOperation)
+          (& (array-ref block.instructions j).operation)]
+        [definition : i64 (ownership-loan-definition op)]
+        [point : i64 (+ (array-ref offsets b) j)]
+        [pair : i64 (array-ref demands.point-pair point)]
+        [overwritten : i64 (array-ref demands.point-kill point)]
+        (when
+          (>= definition 0)
+          (unless
+            (ownership-live-kill-definition!
+              body
+              demands
+              children
+              state
+              definition
+              work
+              limit)
+            (return j))
+          (ownership-live-use!
+            body
+            state
+            (ownership-loan-parent (& (array-ref body.loans definition)))))
+        (when
+          (>= overwritten 0)
+          (unless
+            (ownership-live-kill-holder!
+              body
+              demands
+              state
+              b
+              j
+              (array-ref offsets b)
+              work
+              limit)
+            (return j)))
+        (if (>= pair 0)
+          (begin
+            ;; The pair holds the use itself; the loan's ancestors are
+            ;; demanded as before.
+            (ownership-loan-bit-set! state 0 (+ loans pair) true)
+            (ownership-live-use!
+              body
+              state
+              (ownership-loan-parent
+                (& (array-ref body.loans (array-ref demands.pair-loan pair))))))
+          (ownership-live-use! body state (ownership-loan-used op)))
+        (when
+          (ownership-live-join-row! inner state (* point wide))
+          (set!
+            (deref flags)
+            (bit-or
+              (deref flags)
+              (if (= j 0)
+                3
+                1))))))
+    -1))
 
 ;; The table is body-owned and solved from graph uses; no caller-supplied end
 ;; point or liveness fact is accepted. PRECONDITION: ownership-validate succeeded
@@ -2376,136 +2657,70 @@
               [inner : (__tl_dyn-array i64)
                 (__tl_make-array i64 (* points wide))]
               [state : (__tl_dyn-array i64) (__tl_make-array i64 wide)]
+              [children : (__tl_dyn-array i64) (ownership-loan-children body)]
+              ;; Per block: the clock at its last visit (-1 before any), the
+              ;; clock when its entry row last changed, and the work its last
+              ;; visit charged. The clock counts entry row changes.
+              [seen : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+              [stamp : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+              ;; The successors of block `b` (-1 for none) at `2b` and `2b + 1`.
+              [successors : (__tl_dyn-array i64)
+                (ownership-live-successors body)]
+              [cost : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+              [clock : i64 0]
+              [flags : i64 0]
               [changed : bool true]
-              (ownership-i64-fill! (&mut inner) 0)
+              (ownership-i64-fill! (&mut seen) -1)
               (while changed
                 (set! changed false)
                 (set! b blocks)
                 (while (> b 0)
                   (set! b (- b 1))
-                  (let
-                    [block : (& body OwnershipBlock)
-                      (& (array-ref body.blocks b))]
-                    [i : i64 0]
-                    [edge : i64 0]
-                    [j : i64 (array-length block.instructions)]
-                    (unless
-                      (and
-                        (ownership-charge! (&mut work) limits.max-work 1)
-                        (ownership-product-charge!
+                  ;; A block whose successors' entry rows are unchanged since
+                  ;; its last visit would repeat that visit exactly: the same
+                  ;; rows and the same work. The work is charged again without
+                  ;; the visit; when that charge fails, the visit finds where.
+                  (when
+                    (or
+                      (ownership-live-stale?
+                        (& successors)
+                        (& seen)
+                        (& stamp)
+                        b)
+                      (not
+                        (ownership-charge!
                           (&mut work)
                           limits.max-work
-                          wide
-                          4))
-                      (return
-                        (OwnershipLoanLivenessResult.Err
-                          (ownership-liveness-exhausted body b j))))
-                    (while (< i wide)
-                      (set! (array-ref state i) 0)
-                      (set! i (+ i 1)))
-                    (while (< edge 2)
-                      (let
-                        [target : i64
-                          (ownership-successor (& block.terminator) edge)]
-                        (when
-                          (>= target 0)
-                          (set! i 0)
-                          (while (< i wide)
-                            (set!
-                              (array-ref state i)
-                              (bit-or
-                                (array-ref state i)
-                                (array-ref
-                                  inner
-                                  (+ (* (array-ref offsets target) wide) i))))
-                            (set! i (+ i 1))))
-                        (set! edge (+ edge 1))))
-                    (when
-                      (ownership-live-join-row!
-                        (&mut inner)
-                        (& state)
-                        (* (+ (array-ref offsets b) j) wide))
-                      (set! changed true))
-                    (while (> j 0)
-                      (set! j (- j 1))
-                      (unless
-                        (and
-                          (ownership-charge! (&mut work) limits.max-work 1)
-                          (ownership-product-charge!
-                            (&mut work)
-                            limits.max-work
-                            wide
-                            2))
+                          (array-ref cost b))))
+                    (let
+                      [before : i64 work]
+                      [stop : i64 0]
+                      (set! (array-ref seen b) clock)
+                      (set! flags 0)
+                      (set!
+                        stop
+                        (ownership-live-visit!
+                          body
+                          (& demands)
+                          (& children)
+                          (& offsets)
+                          (&mut inner)
+                          (&mut state)
+                          b
+                          (&mut work)
+                          limits.max-work
+                          (&mut flags)))
+                      (when
+                        (>= stop 0)
                         (return
                           (OwnershipLoanLivenessResult.Err
-                            (ownership-liveness-exhausted body b j))))
-                      (let
-                        [op : (& body OwnershipOperation)
-                          (& (array-ref block.instructions j).operation)]
-                        [definition : i64 (ownership-loan-definition op)]
-                        [point : i64 (+ (array-ref offsets b) j)]
-                        [pair : i64 (array-ref demands.point-pair point)]
-                        [overwritten : i64 (array-ref demands.point-kill point)]
-                        (when
-                          (>= definition 0)
-                          (unless
-                            (ownership-live-kill-definition!
-                              body
-                              (& demands)
-                              (&mut state)
-                              definition
-                              (&mut work)
-                              limits.max-work)
-                            (return
-                              (OwnershipLoanLivenessResult.Err
-                                (ownership-liveness-exhausted body b j))))
-                          (ownership-live-use!
-                            body
-                            (&mut state)
-                            (ownership-loan-parent
-                              (& (array-ref body.loans definition)))))
-                        (when
-                          (>= overwritten 0)
-                          (unless
-                            (ownership-live-kill-holder!
-                              body
-                              (& demands)
-                              (&mut state)
-                              b
-                              j
-                              (array-ref offsets b)
-                              (&mut work)
-                              limits.max-work)
-                            (return
-                              (OwnershipLoanLivenessResult.Err
-                                (ownership-liveness-exhausted body b j)))))
-                        (if (>= pair 0)
-                          (begin
-                            ;; The pair holds the use itself; the loan's
-                            ;; ancestors are demanded as before.
-                            (ownership-loan-bit-set!
-                              (&mut state)
-                              0
-                              (+ loans pair)
-                              true)
-                            (ownership-live-use!
-                              body
-                              (&mut state)
-                              (ownership-loan-parent
-                                (&
-                                  (array-ref
-                                    body.loans
-                                    (array-ref demands.pair-loan pair))))))
-                          (ownership-live-use!
-                            body
-                            (&mut state)
-                            (ownership-loan-used op)))
-                        (when
-                          (ownership-live-join-row!
-                            (&mut inner)
-                            (& state)
-                            (* point wide))
-                          (set! changed true)))))))
+                            (ownership-liveness-exhausted body b stop))))
+                      (set! (array-ref cost b) (- work before))
+                      (when (!= flags 0) (set! changed true))
+                      (when
+                        (!= (bit-and flags 2) 0)
+                        (set! clock (+ clock 1))
+                        (set! (array-ref stamp b) clock))))))
               (if (= demands.pairs 0)
                 (OwnershipLoanLivenessResult.Ok
                   (OwnershipLoanLiveness offsets stride inner))
@@ -2525,19 +2740,47 @@
                     (OwnershipLoanLivenessResult.Err
                       (ownership-liveness-exhausted body 0 0))))))])))))
 
+;; An active loan the graph no longer demands at `point` ends: its state bit 2
+;; becomes bit 4, a word of loans at a time (`ownership-loan-code`).
+(define (ownership-loan-expire-row!
+  [state : (&mut state (__tl_dyn-array i64))]
+  [liveness : (& liveness OwnershipLoanLiveness)]
+  [point : i64]) : unit
+  (let
+    [words : i64 (/ (array-length state) 4)]
+    [base : i64 (* point liveness.stride)]
+    [w : i64 0]
+    (while (< w words)
+      (let
+        [gone : i64
+          (bit-and
+            (array-ref state (+ words w))
+            (bit-not (array-ref liveness.live (+ base w))))]
+        (when
+          (!= gone 0)
+          (set!
+            (array-ref state (+ words w))
+            (bit-xor (array-ref state (+ words w)) gone))
+          (set!
+            (array-ref state (+ (* 2 words) w))
+            (bit-or (array-ref state (+ (* 2 words) w)) gone))))
+      (set! w (+ w 1)))))
+
+;; The expiry on one state code per loan.
 (define (ownership-loan-expire!
   [state : (&mut state (__tl_dyn-array i64))]
   [liveness : (& liveness OwnershipLoanLiveness)]
   [point : i64]) : unit
   (let
+    [planes : (__tl_dyn-array i64)
+      (__tl_make-array i64 (* 4 (ownership-loan-words (array-length state))))]
     [i : i64 0]
+    (ownership-i64-fill! (&mut planes) 0)
     (while (< i (array-length state))
-      (when
-        (and
-          (!= (bit-and (array-ref state i) 2) 0)
-          (not (ownership-loan-live? liveness point i)))
-        (set! (array-ref state i) (bit-or (bit-and (array-ref state i) 5) 4)))
-      (set! i (+ i 1)))))
+      (ownership-loan-code-set! (&mut planes) i (array-ref state i))
+      (set! i (+ i 1)))
+    (ownership-loan-expire-row! (&mut planes) liveness point)
+    (ownership-loan-codes! (& planes) state)))
 
 (define (ownership-loan-ancestor?
   [body : (& body OwnershipBody)]
@@ -2586,6 +2829,12 @@
 ;; Only the granting chain is exempt. Every visited loan and parent link is
 ;; charged, so shallow/disjoint graphs pay for actual work rather than L*P.
 ;; -2 is resource exhaustion; -1 means no conflict.
+;; The scan visits loans in index order up to the answer. Only an active loan
+;; this access can conflict with (any for a write, an exclusive one for a
+;; read) is examined, taken from the state's planes a word at a time; every
+;; loan scanned counts one unit and each parent link visited one more. The
+;; units are charged once, at the answer: work only grows, so the budget
+;; runs out by then exactly when it would run out on some unit before it.
 (define (ownership-loan-conflict
   [body : (& body OwnershipBody)]
   [state : (& state (__tl_dyn-array i64))]
@@ -2595,41 +2844,67 @@
   [work : (&mut work i64)]
   [limit : i64]) : i64
   (let
-    [i : i64 0]
-    (while (< i (array-length state))
-      (unless (ownership-charge! work limit 1) (return -2))
-      (when
-        (and
-          (!= (bit-and (array-ref state i) 2) 0)
-          (or write? (ownership-loan-exclusive? (& (array-ref body.loans i)))))
-        (let
-          [exempt : i64
-            (ownership-loan-ancestor-charged body i grant work limit)]
-          (when (< exempt 0) (return -2))
-          (when
-            (= exempt 0)
-            (let
-              [inside : i64
-                (ownership-descendant-charged
-                  body
-                  place
-                  (array-ref body.loans i).place.index
-                  work
-                  limit)]
-              (when (< inside 0) (return -2))
-              (when (= inside 1) (return i))
-              (let
-                [outside : i64
-                  (ownership-descendant-charged
-                    body
-                    (array-ref body.loans i).place.index
-                    place
-                    work
-                    limit)]
-                (when (< outside 0) (return -2))
-                (when (= outside 1) (return i)))))))
-      (set! i (+ i 1)))
-    -1))
+    [words : i64 (/ (array-length state) 4)]
+    [w : i64 0]
+    [scanned : i64 0]
+    [units : i64 0]
+    (while (< w words)
+      (let
+        [rest : i64 (array-ref state (+ words w))]
+        [i : i64 (* w 64)]
+        (unless
+          write?
+          (set! rest (bit-and rest (array-ref state (+ (* 3 words) w)))))
+        (while (!= rest 0)
+          (if (= (bit-and rest 255) 0)
+            (begin
+              (set! rest (bit-and (shr rest 8) 72057594037927935))
+              (set! i (+ i 8)))
+            (begin
+              (when
+                (!= (bit-and rest 1) 0)
+                (set! units (+ units (- (+ i 1) scanned)))
+                (set! scanned (+ i 1))
+                (when
+                  (and
+                    (=
+                      (ownership-loan-ancestor-charged
+                        body
+                        i
+                        grant
+                        (&mut units)
+                        9223372036854775807)
+                      0)
+                    (or
+                      (=
+                        (ownership-descendant-charged
+                          body
+                          place
+                          (array-ref body.loans i).place.index
+                          (&mut units)
+                          9223372036854775807)
+                        1)
+                      (=
+                        (ownership-descendant-charged
+                          body
+                          (array-ref body.loans i).place.index
+                          place
+                          (&mut units)
+                          9223372036854775807)
+                        1)))
+                  (return
+                    (if (ownership-charge! work limit units)
+                      i
+                      -2))))
+              (set! rest (bit-and (shr rest 1) 9223372036854775807))
+              (set! i (+ i 1))))))
+      (set! w (+ w 1)))
+    (if (ownership-charge!
+      work
+      limit
+      (+ units (- (array-length body.loans) scanned)))
+      -1
+      -2)))
 
 (define (ownership-loan-access
   [body : (& body OwnershipBody)]
@@ -2672,7 +2947,7 @@
   [block : i64]
   [instruction : i64]
   [source : (& source OwnershipSource)]) : OwnershipResult
-  (if (= (array-ref state loan) 2)
+  (if (= (ownership-loan-code state loan) 2)
     OwnershipResult.Ok
     (ownership-loan-failure
       block
@@ -2706,7 +2981,7 @@
         ;; accesses; an exclusive one would alias it.
         (when
           (and
-            (!= (bit-and (array-ref state definition) 2) 0)
+            (!= (bit-and (ownership-loan-code state definition) 2) 0)
             (ownership-loan-exclusive? loan))
           (return
             (ownership-loan-failure
@@ -2952,8 +3227,9 @@
 ;; diagnostic fixed-point inspection. The result remains an error even though
 ;; inspection may use the syntactic successor state of an invalid prefix.
 ;; PRECONDITION: immutable validated body/instruction, one nonempty mask (1..7)
-;; per loan, and a bounded liveness table/row produced for that same body.
-(define (ownership-loan-transfer!
+;; per loan in the planes of `ownership-loan-code`, and a bounded liveness
+;; table/row produced for that same body.
+(define (ownership-loan-step!
   [body : (& body OwnershipBody)]
   [state : (&mut state (__tl_dyn-array i64))]
   [live : (& live OwnershipLoanLiveness)]
@@ -2967,10 +3243,40 @@
     [checked : OwnershipResult
       (ownership-loan-check body state live after instr block index work limit)]
     [definition : i64 (ownership-loan-definition (& instr.operation))]
-    (when (>= definition 0) (set! (array-ref state definition) 2))
+    (when (>= definition 0) (ownership-loan-code-set! state definition 2))
     (match (& instr.operation)
-      [(OwnershipOperation.EndLoan loan) (set! (array-ref state loan.index) 4)]
+      [(OwnershipOperation.EndLoan loan)
+        (ownership-loan-code-set! state loan.index 4)]
       [_ unit])
+    (if (ownership-result-ok? (& checked))
+      OwnershipResult.Ok
+      checked)))
+
+;; The same transfer on one state code per loan.
+(define (ownership-loan-transfer!
+  [body : (& body OwnershipBody)]
+  [state : (&mut state (__tl_dyn-array i64))]
+  [live : (& live OwnershipLoanLiveness)]
+  [after : i64]
+  [instr : (& instr OwnershipInstruction)]
+  [block : i64]
+  [index : i64]
+  [work : (&mut work i64)]
+  [limit : i64]) : OwnershipResult
+  (let
+    [planes : (__tl_dyn-array i64) (ownership-loan-planes body state)]
+    [checked : OwnershipResult
+      (ownership-loan-step!
+        body
+        (&mut planes)
+        live
+        after
+        instr
+        block
+        index
+        work
+        limit)]
+    (ownership-loan-codes! (& planes) state)
     checked))
 
 ;; Ephemeral adjacency built only after structural validation. Each node has
@@ -3014,6 +3320,19 @@
   (let
     [cursor : i64 place]
     [parent : i64 (array-ref places.parent place)]
+    ;; A whole local without fields is one charged cell.
+    (when
+      (and (< parent 0) (< (array-ref places.first-child place) 0))
+      (unless (ownership-charge! work limit 1) (return false))
+      (let
+        [cell : i64 (/ place 16)]
+        [shift : i64 (* 4 (bit-and place 15))]
+        (set!
+          (array-ref state cell)
+          (bit-or
+            (bit-and (array-ref state cell) (bit-not (shl 15 shift)))
+            (shl (bit-and value 15) shift))))
+      (return true))
     ;; Stackless subtree traversal. Every descent and ascent is bounded by
     ;; the validated tree and charged before touching the corresponding row.
     (while (>= cursor 0)
@@ -3407,17 +3726,27 @@
   (let
     [checked : OwnershipResult
       (ownership-initialization-check body state instr block index)]
-    (match (ownership-initialization-effects!
-      body
-      places
-      state
-      instr
-      block
-      index
-      work
-      limit)
-      [(OwnershipResult.Err error) (OwnershipResult.Err error)]
-      [(OwnershipResult.Ok) checked])))
+    (if (ownership-result-ok? (& checked))
+      (ownership-initialization-effects!
+        body
+        places
+        state
+        instr
+        block
+        index
+        work
+        limit)
+      (match (ownership-initialization-effects!
+        body
+        places
+        state
+        instr
+        block
+        index
+        work
+        limit)
+        [(OwnershipResult.Err error) (OwnershipResult.Err error)]
+        [(OwnershipResult.Ok) checked]))))
 
 ;; This low-level transfer helper requires an already validated body, as before.
 ;; It creates the same adjacency used by the combined checker; it is not a
@@ -3669,9 +3998,11 @@
         (set! b (+ b 1)))
       true)))
 
+;; Rows keep one state code per loan, read from the walk's planes.
 (define (ownership-observe-row!
   [observation : (&mut observation OwnershipObservation)]
   [state : (& state (__tl_dyn-array i64))]
+  [loans : i64]
   [block : i64]
   [instruction : i64]
   [phase : i64]
@@ -3680,32 +4011,32 @@
   (if (not observation.enabled?)
     true
     (let
-      [loans : i64 (array-length state)]
       [row : i64
         (* (+ (array-ref observation.offsets block) instruction) loans)]
       [i : i64 0]
       (unless (ownership-charge! work limit loans) (return false))
       (while (< i loans)
-        (begin
+        (let
+          [code : i64 (ownership-loan-code state i)]
           (cond
             [(= phase 0)
               (set!
                 (array-ref observation.before-expiry (+ row i))
                 (ownership-loan-state-join
                   (array-ref observation.before-expiry (+ row i))
-                  (array-ref state i)))]
+                  code))]
             [(= phase 1)
               (set!
                 (array-ref observation.before (+ row i))
                 (ownership-loan-state-join
                   (array-ref observation.before (+ row i))
-                  (array-ref state i)))]
+                  code))]
             [else
               (set!
                 (array-ref observation.after (+ row i))
                 (ownership-loan-state-join
                   (array-ref observation.after (+ row i))
-                  (array-ref state i)))])
+                  code))])
           (set! i (+ i 1))))
       true)))
 
@@ -3883,9 +4214,14 @@
                 (array-ref body.blocks body.entry.index).source
                 "ownership observation budget exhausted")))]
         [inputs : (__tl_dyn-array i64) (__tl_make-array i64 (* blocks words))]
+        ;; Loan states are planes (`ownership-loan-code`): a block's input
+        ;; row holds planes 0-2, and the walk's state adds the exclusive plane.
+        [loan-words : i64 (ownership-loan-words loans)]
+        [loan-row : i64 (* 3 (ownership-loan-words loans))]
         [loan-inputs : (__tl_dyn-array i64)
-          (__tl_make-array i64 (* blocks loans))]
-        [loan-state : (__tl_dyn-array i64) (__tl_make-array i64 loans)]
+          (__tl_make-array i64 (* blocks (* 3 (ownership-loan-words loans))))]
+        [loan-state : (__tl_dyn-array i64)
+          (__tl_make-array i64 (* 4 (ownership-loan-words loans)))]
         [reached : (__tl_dyn-array bool) (__tl_make-array bool blocks)]
         [queued : (__tl_dyn-array bool) (__tl_make-array bool blocks)]
         [order : (__tl_dyn-array i64)
@@ -3926,7 +4262,14 @@
         (set! (array-ref reached body.entry.index) true)
         (set! i 0)
         (while (< i loans)
-          (set! (array-ref loan-inputs (+ (* body.entry.index loans) i)) 1)
+          (ownership-loan-bit-set!
+            (&mut loan-inputs)
+            (* body.entry.index loan-row)
+            i
+            true)
+          (when
+            (ownership-loan-exclusive? (& (array-ref body.loans i)))
+            (ownership-loan-bit-set! (&mut loan-state) (* 3 loan-words) i true))
           (set! i (+ i 1)))
         (set! (array-ref queued body.entry.index) true)
         ;; Blocks are visited in reverse postorder, sweep after sweep, each
@@ -3982,122 +4325,134 @@
                         (array-ref inputs (+ (* block-id words) i)))
                       (set! i (+ i 1)))
                     (set! i 0)
-                    (while (< i loans)
+                    (while (< i loan-row)
                       (set!
                         (array-ref loan-state i)
-                        (array-ref loan-inputs (+ (* block-id loans) i)))
+                        (array-ref loan-inputs (+ (* block-id loan-row) i)))
                       (set! i (+ i 1)))
                     (while (< j (array-length block.instructions))
-                      (begin
-                        (unless
-                          (ownership-charge! (&mut work) limits.max-work 1)
-                          (return
-                            (ownership-fail
-                              OwnershipFailureKind.Resource
-                              block-id
-                              j
-                              -1
-                              (array-ref block.instructions j).source
-                              "ownership solver work exhausted")))
-                        (unless
+                      (unless
+                        (ownership-charge! (&mut work) limits.max-work 1)
+                        (return
+                          (ownership-fail
+                            OwnershipFailureKind.Resource
+                            block-id
+                            j
+                            -1
+                            (array-ref block.instructions j).source
+                            "ownership solver work exhausted")))
+                      (unless
+                        (or
+                          (not observation.enabled?)
                           (ownership-observe-row!
                             observation
                             (& loan-state)
+                            loans
                             block-id
                             j
                             0
                             (&mut work)
-                            limits.max-work)
-                          (return
-                            (ownership-fail
-                              OwnershipFailureKind.Resource
-                              block-id
-                              j
-                              -1
-                              block.source
-                              "ownership observation work exhausted")))
-                        (when
-                          (> loans 0)
-                          (begin
-                            (when
-                              (not
-                                (ownership-loan-step-charge!
-                                  (&mut work)
-                                  limits.max-work
-                                  places
-                                  loans))
-                              (return
-                                (ownership-fail
-                                  OwnershipFailureKind.Resource
-                                  block-id
-                                  j
-                                  -1
-                                  (array-ref block.instructions j).source
-                                  "ownership loan solver work exhausted")))
-                            (ownership-loan-expire!
-                              (&mut loan-state)
-                              (& liveness)
-                              (+ (array-ref liveness.offsets block-id) j))
-                            (unless
+                            limits.max-work))
+                        (return
+                          (ownership-fail
+                            OwnershipFailureKind.Resource
+                            block-id
+                            j
+                            -1
+                            block.source
+                            "ownership observation work exhausted")))
+                      (when
+                        (> loans 0)
+                        (begin
+                          ;; `ownership-loan-step-charge!`
+                          (unless
+                            (ownership-charge!
+                              (&mut work)
+                              limits.max-work
+                              loans)
+                            (return
+                              (ownership-fail
+                                OwnershipFailureKind.Resource
+                                block-id
+                                j
+                                -1
+                                (array-ref block.instructions j).source
+                                "ownership loan solver work exhausted")))
+                          (ownership-loan-expire-row!
+                            (&mut loan-state)
+                            (& liveness)
+                            (+ (array-ref liveness.offsets block-id) j))
+                          (unless
+                            (or
+                              (not observation.enabled?)
                               (ownership-observe-row!
                                 observation
                                 (& loan-state)
+                                loans
                                 block-id
                                 j
                                 1
                                 (&mut work)
-                                limits.max-work)
-                              (return
-                                (ownership-fail
-                                  OwnershipFailureKind.Resource
+                                limits.max-work))
+                            (return
+                              (ownership-fail
+                                OwnershipFailureKind.Resource
+                                block-id
+                                j
+                                -1
+                                block.source
+                                "ownership observation work exhausted")))
+                          ;; Deferring and recording an Ok result are no-ops,
+                          ;; and so is the transfer of a MayUseLoan.
+                          (unless
+                            (ownership-may-use-loan?
+                              (& (array-ref block.instructions j)))
+                            (let
+                              [loaned : OwnershipResult
+                                (ownership-loan-step!
+                                  body
+                                  (&mut loan-state)
+                                  (& liveness)
+                                  (+ (array-ref liveness.offsets block-id) j 1)
+                                  (& (array-ref block.instructions j))
                                   block-id
                                   j
-                                  -1
-                                  block.source
-                                  "ownership observation work exhausted")))
-                            (match (let
-                              ;; An Invalidate's conflict is deferred before it
-                              ;; could be recorded (`ownership-defer-loan!`).
-                              [loaned : OwnershipResult
-                                (ownership-defer-loan!
-                                  (ownership-loan-transfer!
-                                    body
-                                    (&mut loan-state)
-                                    (& liveness)
-                                    (+
-                                      (array-ref liveness.offsets block-id)
-                                      j
-                                      1)
-                                    (& (array-ref block.instructions j))
-                                    block-id
-                                    j
-                                    (&mut work)
-                                    limits.max-work)
-                                  deferred
+                                  (&mut work)
+                                  limits.max-work)]
+                              (unless
+                                (ownership-result-ok? (& loaned))
+                                (match (ownership-record-result!
+                                  ;; An Invalidate's conflict is deferred before
+                                  ;; it could be recorded (`ownership-defer-loan!`).
+                                  (ownership-defer-loan!
+                                    loaned
+                                    deferred
+                                    first-failure
+                                    (ownership-invalidate?
+                                      (& (array-ref block.instructions j))))
+                                  observation
                                   first-failure
-                                  (ownership-invalidate?
-                                    (& (array-ref block.instructions j))))]
-                              (ownership-record-result!
-                                loaned
-                                observation
-                                first-failure
-                                (&mut work)
-                                limits.max-work))
-                              [(OwnershipResult.Err error)
-                                (return
-                                  (ownership-prefer-deferred
-                                    body
-                                    error
-                                    deferred))]
-                              [(OwnershipResult.Ok) unit])))
-                        (match (ownership-record-result!
-                          ;; A `RequireEmpty` has no effect; it is checked once the
-                          ;; states are final, so its report says what a place
-                          ;; holds on every path rather than on the paths joined
-                          ;; so far.
-                          (if (ownership-require-empty?
+                                  (&mut work)
+                                  limits.max-work)
+                                  [(OwnershipResult.Err error)
+                                    (return
+                                      (ownership-prefer-deferred
+                                        body
+                                        error
+                                        deferred))]
+                                  [(OwnershipResult.Ok) unit]))))))
+                      ;; A `RequireEmpty` has no effect; it is checked once the
+                      ;; states are final, so its report says what a place
+                      ;; holds on every path rather than on the paths joined so
+                      ;; far. A MayUseLoan neither reads nor writes a place.
+                      (unless
+                        (or
+                          (ownership-may-use-loan?
                             (& (array-ref block.instructions j)))
-                            OwnershipResult.Ok
+                          (ownership-require-empty?
+                            (& (array-ref block.instructions j))))
+                        (let
+                          [moved : OwnershipResult
                             (ownership-transfer-indexed!
                               body
                               (& place-index)
@@ -4106,42 +4461,55 @@
                               block-id
                               j
                               (&mut work)
-                              limits.max-work))
-                          observation
-                          first-failure
-                          (&mut work)
-                          limits.max-work)
-                          [(OwnershipResult.Err error)
-                            (return
-                              (ownership-prefer-deferred body error deferred))]
-                          [(OwnershipResult.Ok) unit])
-                        (unless
+                              limits.max-work)]
+                          (unless
+                            (ownership-result-ok? (& moved))
+                            (match (ownership-record-result!
+                              moved
+                              observation
+                              first-failure
+                              (&mut work)
+                              limits.max-work)
+                              [(OwnershipResult.Err error)
+                                (return
+                                  (ownership-prefer-deferred
+                                    body
+                                    error
+                                    deferred))]
+                              [(OwnershipResult.Ok) unit]))))
+                      (unless
+                        (or
+                          (not observation.enabled?)
                           (ownership-observe-row!
                             observation
                             (& loan-state)
+                            loans
                             block-id
                             j
                             2
                             (&mut work)
-                            limits.max-work)
-                          (return
-                            (ownership-fail
-                              OwnershipFailureKind.Resource
-                              block-id
-                              j
-                              -1
-                              block.source
-                              "ownership observation work exhausted")))
-                        (set! j (+ j 1))))
+                            limits.max-work))
+                        (return
+                          (ownership-fail
+                            OwnershipFailureKind.Resource
+                            block-id
+                            j
+                            -1
+                            block.source
+                            "ownership observation work exhausted")))
+                      (set! j (+ j 1)))
                     (unless
-                      (ownership-observe-row!
-                        observation
-                        (& loan-state)
-                        block-id
-                        j
-                        0
-                        (&mut work)
-                        limits.max-work)
+                      (or
+                        (not observation.enabled?)
+                        (ownership-observe-row!
+                          observation
+                          (& loan-state)
+                          loans
+                          block-id
+                          j
+                          0
+                          (&mut work)
+                          limits.max-work))
                       (return
                         (ownership-fail
                           OwnershipFailureKind.Resource
@@ -4152,19 +4520,22 @@
                           "ownership observation work exhausted")))
                     (when
                       (> loans 0)
-                      (ownership-loan-expire!
+                      (ownership-loan-expire-row!
                         (&mut loan-state)
                         (& liveness)
                         (+ (array-ref liveness.offsets block-id) j)))
                     (unless
-                      (ownership-observe-row!
-                        observation
-                        (& loan-state)
-                        block-id
-                        j
-                        1
-                        (&mut work)
-                        limits.max-work)
+                      (or
+                        (not observation.enabled?)
+                        (ownership-observe-row!
+                          observation
+                          (& loan-state)
+                          loans
+                          block-id
+                          j
+                          1
+                          (&mut work)
+                          limits.max-work))
                       (return
                         (ownership-fail
                           OwnershipFailureKind.Resource
@@ -4305,14 +4676,17 @@
                             block.source
                             (string.copy reason)))])
                     (unless
-                      (ownership-observe-row!
-                        observation
-                        (& loan-state)
-                        block-id
-                        j
-                        2
-                        (&mut work)
-                        limits.max-work)
+                      (or
+                        (not observation.enabled?)
+                        (ownership-observe-row!
+                          observation
+                          (& loan-state)
+                          loans
+                          block-id
+                          j
+                          2
+                          (&mut work)
+                          limits.max-work))
                       (return
                         (ownership-fail
                           OwnershipFailureKind.Resource
@@ -4344,9 +4718,9 @@
                                   (set! changed? true))
                                 (set! i (+ i 1))))
                             (set! i 0)
-                            (while (< i loans)
+                            (while (< i loan-row)
                               (let
-                                [cell : i64 (+ (* target loans) i)]
+                                [cell : i64 (+ (* target loan-row) i)]
                                 [prior : i64 (array-ref loan-inputs cell)]
                                 [joined : i64
                                   (ownership-loan-state-join
@@ -4475,6 +4849,11 @@
 (define (ownership-invalidate? [instr : (& instr OwnershipInstruction)]) : bool
   (match (& instr.operation)
     [(OwnershipOperation.Invalidate _) true]
+    [_ false]))
+
+(define (ownership-may-use-loan? [instr : (& instr OwnershipInstruction)]) : bool
+  (match (& instr.operation)
+    [(OwnershipOperation.MayUseLoan _ _) true]
     [_ false]))
 
 (define (ownership-require-empty? [instr : (& instr OwnershipInstruction)]) : bool
@@ -5124,10 +5503,17 @@
 
 (define (ownership-source-copy [source : (& source OwnershipSource)]) : OwnershipSource
   (OwnershipSource
-    (string.copy (& source.path))
+    (ownership-text-copy (& source.path))
     source.line
     source.column
-    (string.copy (& source.expansion))))
+    (ownership-text-copy (& source.expansion))))
+
+;; An owned copy of provenance text. Most expansion traces are empty, and an
+;; empty copy needs no allocation.
+(define (ownership-text-copy [text : (& text str)]) : String
+  (if (= (string.string-length text) 0)
+    ""
+    (string.copy text)))
 
 (defmacro (ownership-scope-fail
   [kind : Expr]

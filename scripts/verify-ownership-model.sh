@@ -382,9 +382,11 @@ for mutation in parent-retention shared-write end-demand loan-join second-succes
             original='(ownership-loan-state-join
                                     prior
                                     (array-ref loan-state i))'
-            replacement='(if (=
+            # Loan states are bit planes; a reached input never changes again,
+            # as a nonzero per-loan code would never be replaced.
+            replacement='(if (array-ref reached target)
                                     prior
-                                    0) (array-ref loan-state i) prior)'
+                                    (array-ref loan-state i))'
             obligation='Loan authority includes every reachable predecessor'
             expected='ownership-loan-crosscheck graph facts mismatch: mode=0 path=1'
             ;;
@@ -395,12 +397,12 @@ for mutation in parent-retention shared-write end-demand loan-join second-succes
             expected='ownership-loan-crosscheck graph facts mismatch: mode=7 path=1'
             ;;
         backedge)
-            original='                          (>= target 0)
-                          (set! i 0)
-                          (while (< i wide)'
-            replacement='                          (> target b)
-                          (set! i 0)
-                          (while (< i wide)'
+            original='          (>= target 0)
+          (set! i 0)
+          (while (< i wide)'
+            replacement='          (> target b)
+          (set! i 0)
+          (while (< i wide)'
             obligation='Liveness includes loop backedges'
             expected='ownership-loan-crosscheck graph facts mismatch: mode=7 path=1'
             ;;
@@ -443,9 +445,9 @@ for mutation in parent-retention shared-write end-demand loan-join second-succes
             expected='ownership-loan-crosscheck graph facts mismatch: mode=7 path=1'
             ;;
         parent-reissue)
-            original='            (!= (bit-and (array-ref state definition) 2) 0)
+            original='            (!= (bit-and (ownership-loan-code state definition) 2) 0)
             (ownership-loan-exclusive? loan))'
-            replacement='            (!= (bit-and (array-ref state definition) 2) 0)
+            replacement='            (!= (bit-and (ownership-loan-code state definition) 2) 0)
             true)'
             obligation='A shared loan issued again joins its retained earlier issue'
             expected='ownership-loan-crosscheck graph mismatch: mode=14 expected=true'
@@ -658,13 +660,16 @@ for mutation in join expiry borrow; do
             expected='ownership-loan-laws mismatch: law=scalar-union first=0 second=1 third=0'
             ;;
         expiry)
-            original='(set! (array-ref state i) (bit-or (bit-and (array-ref state i) 5) 4)))'
-            replacement='(set! (array-ref state i) (array-ref state i)))'
+            original='[gone : i64
+          (bit-and
+            (array-ref state (+ words w))
+            (bit-not (array-ref liveness.live (+ base w))))]'
+            replacement='[gone : i64 0]'
             expected='ownership-loan-laws mismatch: law=expiry-scalar first=2 second=0 third=2'
             ;;
         borrow)
-            original='(when (>= definition 0) (set! (array-ref state definition) 2))'
-            replacement='(when (>= definition 0) (set! (array-ref state definition) (array-ref state definition)))'
+            original='(when (>= definition 0) (ownership-loan-code-set! state definition 2))'
+            replacement='(when (>= definition 0) (ownership-loan-code-set! state definition (ownership-loan-code state definition)))'
             expected='ownership-loan-laws mismatch: law=transfer-inclusion first=0 second=0 third=0'
             ;;
     esac

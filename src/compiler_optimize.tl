@@ -51826,7 +51826,7 @@
             (opt-bounds-dom-nonneg-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               inputs
               fuel))]
         [_ false])]
@@ -52653,7 +52653,7 @@
             (opt-bounds-dom-induct-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               label
               nonneg?
               below?

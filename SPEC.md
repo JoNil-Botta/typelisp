@@ -4622,22 +4622,28 @@ move-only values and as copies for copyable values:
   destructor, deep clone, or implicit allocation. Non-Copy globals and active
   or nested cleanup-owning places reject; Copy globals follow ordinary safe
   whole-place mutation rules.
-- `match` scrutinees. Matching a move-only enum by value consumes the whole
-  enum value. Payload bindings then own the active payload values for that
-  arm. Matching `(& place)` when the borrowed referent is an enum is the
-  non-consuming borrowed form described below.
-- Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` consumes a
-  move-only tuple and transfers its slots to bindings from left to right. A
-  copyable tuple is copied at the by-value match boundary. Matching
-  `(& place)` binds the selected tuple slots by the borrowed-pattern binding
-  rule of section 5.13 instead and leaves the owner initialized subject to the
-  live borrow.
+- `match` scrutinees. A by-value `match` of a place moves only what the
+  selected arm's pattern binds by move (Rust's place semantics): a binding of
+  a move-only payload moves that payload out of the scrutinee, which is then
+  partially moved; a binding of a copyable payload copies it, and a wildcard
+  or a variant pattern without move bindings moves nothing, so the scrutinee
+  stays whole and usable after the `match`. A scrutinee that is not a place
+  (a call result) is a temporary the `match` consumes. Payload bindings own
+  the values they moved for that arm. Matching `(& place)` when the borrowed
+  referent is an enum is the non-consuming borrowed form described below.
+- Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` moves the
+  move-only slots its subpatterns bind, from left to right, and copies the
+  copyable ones; a slot matched by `_` stays in the tuple, so the slots not
+  moved remain usable. Matching `(& place)` binds the selected tuple slots by
+  the borrowed-pattern binding rule of section 5.13 instead and leaves the
+  owner initialized subject to the live borrow.
 - Fixed-array patterns. Matching an owned fixed array with
   `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
-  A move-only array is consumed and transfers its elements to bindings from
-  left to right; a copyable array is copied. Matching `(& place)` binds the
-  selected elements by the borrowed-pattern binding rule of section 5.13 and
-  leaves the owner initialized subject to the live borrow.
+  The move-only elements its subpatterns bind move out from left to right and
+  copyable ones are copied; an element matched by `_` stays in the array.
+  Matching `(& place)` binds the selected elements by the borrowed-pattern
+  binding rule of section 5.13 and leaves the owner initialized subject to the
+  live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -4831,15 +4837,10 @@ Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
 literal-index read moves a tracked path, while a `Copy` read copies. A by-value
-enum `match` is an
-exception: it moves the whole scrutinee first, then binds payload values owned
-by the selected arm. Constructor-shaped tuple destructuring likewise consumes
-the whole owned tuple and transfers every bound slot; direct partial move-out
-continues to use `(tuple-ref place literal-index)`. Dotted numeric tuple
+`match` of a place follows the same tracked-path rule: it moves only the
+payloads, tuple slots or array elements its patterns bind by move, and the
+rest of the scrutinee stays initialized (a partial move). Dotted numeric tuple
 projection syntax is not introduced.
-Constructor-shaped fixed-array destructuring likewise consumes the whole owned
-array and transfers every bound element from left to right; direct partial
-move-out continues to use `(array-ref place literal-index)`.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 

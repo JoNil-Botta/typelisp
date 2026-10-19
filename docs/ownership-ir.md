@@ -533,8 +533,10 @@ cleaning or writing an element. These guards do not make public representations
 unforgeable; they reject malformed representations at these raw-memory
 boundaries.
 
-The raw string copy, substring-copy, integer-byte/digit, formatter fill/copy and
-formatter Debug range helpers are unsafe declarations. Their callers make
+The raw string copy, substring-copy (`string.substring-copy-checked`),
+integer-byte/digit, formatter fill/copy and formatter Debug range helpers are
+unsafe declarations (main's `substring-copy-checked` was safe and copied any
+range it was given). Their callers make
 explicit unsafe calls after establishing their source and destination ranges.
 Public String copying and formatting APIs remain safe. The fixed-float and
 format-options wrappers validate public scale/precision inputs before deriving

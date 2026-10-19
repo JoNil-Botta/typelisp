@@ -70229,6 +70229,8 @@
 
 ;; A result read follows value-producing paths; a projection's place read
 ;; does not turn control-flow temporaries into owned aliases of their inputs.
+;; The forms that forward a result read (SPEC 7.6) must match the forms that
+;; `tc-read-value-expr-id` rebuilds for the borrow-conflict walk.
 (define (tc-move-result-access [access : TcMoveAccess]) : TcMoveAccess
   (match access
     [(MoveResultReadAccess) access]
@@ -71649,9 +71651,11 @@
     args))
 
 ;; The borrow-conflict walk needs non-consuming deref nodes for clone inputs;
-;; the move walk carries the same demand directly. Only value-producing paths
-;; inherit the read: conditions, initializers, scrutinees, call arguments and
-;; sequence prefixes keep their moves. Never mutate or mark a shared node.
+;; the move walk carries the same demand as `MoveResultReadAccess`, and both
+;; forward it through exactly these forms (SPEC 7.6). Only value-producing
+;; paths inherit the read: conditions, initializers, scrutinees, call arguments,
+;; sequence prefixes and data-pointer operands keep their ordinary rules. Never
+;; mutate or mark a shared node.
 (define (tc-read-value-expr-id [expr-bases : i64] [expr : ast.AstExpr]) : i64
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
@@ -74183,7 +74187,7 @@
         moved
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
         access)]
-    [(or (BoxGet inner-box) (StringData inner-box) (ArrayData inner-box))
+    [(BoxGet inner-box)
       (tc-move-check-expr-access
         ctx
         expr-bases
@@ -74193,6 +74197,18 @@
         moved
         (ast.ast-expr-segment-bases-get expr-bases inner-box)
         (tc-move-receiver-access access))]
+    ;; Data pointers observe their operand's storage in every context; like
+    ;; `tc-read-value-expr-id`, they do not forward a result read (SPEC 7.6).
+    [(or (StringData inner-box) (ArrayData inner-box))
+      (tc-move-check-expr-access
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        (MovePlaceReadAccess))]
     [(or (FixedMakeArray _ inner-box) (MakeArray _ inner-box) (Box inner-box)
          (PtrNullCheck inner-box) (PtrRead inner-box) (PtrCast inner-box _)
          (PtrToInt inner-box) (IntToPtr inner-box _))

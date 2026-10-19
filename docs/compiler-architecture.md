@@ -992,6 +992,12 @@ reset epoch
 reject stale or reused identities. Allocation always selects the job owner
 arena, including when a function scratch arena is current.
 
+Call lifetime substitutions retain invariant-binding facts in the existing
+append-only substitution store. Their negative metadata keys cannot alias a
+source lifetime id; a sibling retry sees only its own tail. An invariant
+occurrence may fix a compatible earlier covariant bound, and the substituted
+call is checked again against every argument before acceptance.
+
 A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such

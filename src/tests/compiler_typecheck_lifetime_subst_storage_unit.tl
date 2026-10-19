@@ -138,6 +138,44 @@
       (tc-lifetime-subst-wide-and-order-ok?))))
 
 (test
+  compiler-typecheck-lifetime-subst-invariant-facts
+  (let
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array (cast 0 : i64) 1 4611686018427387904 9223372036854775807)]
+    [root : tc_core.TcLifetimeSubst
+      (tc-lifetime-subst-must-bind
+        (tc-lifetime-subst-must-bind Nil 10 110)
+        20
+        120)]
+    [index : i64 0]
+    (while (< index (array-length names))
+      (let
+        [name : i64 (array-ref names index)]
+        [key : i64 (tc_core.tc-lifetime-subst-pin-key name)]
+        [pinned : tc_core.TcLifetimeSubst
+          (tc_core.tc-lifetime-subst-push-for-variance
+            root
+            name
+            777
+            (tc_core.TcVariance.TcVarianceInvariant))]
+        [sibling : tc_core.TcLifetimeSubst
+          (tc-lifetime-subst-must-bind root 30 130)]
+        (unless
+          (and
+            (< key 0)
+            (tc_core.tc-lifetime-subst-pinned? pinned name)
+            (not (tc_core.tc-lifetime-subst-pinned? root name))
+            (not (tc_core.tc-lifetime-subst-pinned? sibling name))
+            (tc-lifetime-subst-lookup-eq? pinned name 777)
+            (tc-lifetime-subst-lookup-missing? root name)
+            (tc-lifetime-subst-lookup-eq? pinned 10 110)
+            (tc-lifetime-subst-lookup-eq? sibling 20 120)
+            (= (tc_core.tc-lifetime-subst-apply pinned 31) 31))
+          (io.panic
+            "typecheck: invariant fact escaped its lifetime domain or snapshot")))
+      (set! index (+ index 1)))))
+
+(test
   compiler-typecheck-lifetime-subst-storage
   (unless
     (tc-lifetime-subst-storage-ok?)

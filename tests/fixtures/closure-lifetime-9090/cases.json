@@ -1,0 +1,140 @@
+{
+  "scope": "Research acceptance witnesses only; no production fix or main acceptance. Invalid fixtures are check-only. Canonical array positive and elided positives are expected-valid inputs with separately recorded existing rejections; do not reinterpret them as negative oracles.",
+  "cases": [
+    {
+      "file": "distinct-holder-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "fixed-incoming-control.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": null
+    },
+    {
+      "file": "resultful-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "repeated-formal-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "named-independent-store-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "elided-independent-store-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "aliased-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "annotated-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "nested-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "box-erasure-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "return-erasure-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "fixed-incoming-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    },
+    {
+      "file": "aliased-incoming-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    },
+    {
+      "file": "elided-owned-repeat-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    },
+    {
+      "file": "named-owned-repeat-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    },
+    {
+      "file": "boxed-call-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "return-box-erasure-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "nested-elided-result-capture-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "two-free-lifetimes-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "elided-owned-repeat-side-effects-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    },
+    {
+      "file": "canonical-array-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "canonical-array-incoming-control.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": null
+    },
+    {
+      "file": "canonical-array-return-box-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "canonical-macro-short-store.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "canonical-macro-incoming-control.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": null
+    },
+    {
+      "file": "canonical-macro-return-box-reject.tl",
+      "expectedCheck": "reject",
+      "safeNativeExit": null
+    },
+    {
+      "file": "elided-owned-unused-repeat-native.tl",
+      "expectedCheck": "accept",
+      "safeNativeExit": 42
+    }
+  ]
+}

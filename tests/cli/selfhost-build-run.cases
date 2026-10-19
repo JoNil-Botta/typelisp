@@ -1119,10 +1119,13 @@ run build "{{dir}}/pkg/src/main.tl" -o "{{dir}}/rejected{{exe}}" --opt-level 0
 exit 1
 stderr contains unbound name probe
 test ! -e "{{dir}}/rejected{{exe}}"
-each build run
-run {{each}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --cfg selected --opt-level 0
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --cfg selected --opt-level 0
 stderr empty
-run {{each}} --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
 exit 1
 stderr contains unbound name probe
-end-each
+run run --manifest-path "{{dir}}/pkg/typelisp.pkg" --cfg selected --opt-level 0
+stderr empty
+run run --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
+exit 1
+stderr contains unbound name probe

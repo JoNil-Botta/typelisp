@@ -126,6 +126,148 @@ stderr contains error[E0103]: parse: if is missing its else branch
 stderr contains broken.tl:1:22
 stderr not-contains error[E03
 
+case loader-selected-seen-span
+target linux-x86_64 windows-x86_64
+each p.answer value
+file plain_provider.tl
+(define answer : i64 42)
+end-file
+file -x entry.tl
+(import plain_provider as p)
+(import plain_provider.nothing as value)
+(define (main) : i64 (+ {{each}} (- p.answer p.answer)))
+end-file
+step source-seen-check
+run check "{{dir}}/entry.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains entry.tl:2:1
+step source-seen-compile
+run compile "{{dir}}/entry.tl" --target {{target}} -o "{{dir}}/seen.s"
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains entry.tl:2:1
+test ! -e "{{dir}}/seen.s"
+file -x entry.tl
+(import plain_provider.nothing as value)
+(import plain_provider as p)
+(define (main) : i64 (+ {{each}} (- p.answer p.answer)))
+end-file
+step source-first-check
+run check "{{dir}}/entry.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains entry.tl:1:1
+step source-first-compile
+run compile "{{dir}}/entry.tl" --target {{target}} -o "{{dir}}/first.s"
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains entry.tl:1:1
+test ! -e "{{dir}}/first.s"
+file typelisp.pkg
+(package (name "selected_span") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file src/plain_provider.tl
+(define answer : i64 42)
+end-file
+file -x src/main.tl
+(import plain_provider as p)
+(import plain_provider.nothing as value)
+(define (main) : i64 (+ {{each}} (- p.answer p.answer)))
+end-file
+step package-seen
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains src/main.tl:2:1
+file -x src/main.tl
+(import plain_provider.nothing as value)
+(import plain_provider as p)
+(define (main) : i64 (+ {{each}} (- p.answer p.answer)))
+end-file
+step package-first
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains src/main.tl:1:1
+
+case loader-selected-pending-span
+target linux-x86_64 windows-x86_64
+each check compile
+file plain_provider.tl
+(define answer : i64 42)
+end-file
+file generated.tl
+(defmacro (emit-made) : Decls `(define made : i64 42))
+(emit-made)
+end-file
+file consumer.tl
+(import generated.made as future)
+(import plain_provider as p)
+(import plain_provider.nothing as value)
+(define answer : i64 (+ future p.answer))
+end-file
+file entry.tl
+(import consumer as c)
+(define (main) : i64 c.answer)
+end-file
+step pending-before-missing
+run {{each}} "{{dir}}/entry.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'plain_provider' has no selected item 'nothing'
+stderr contains consumer.tl:3:1
+stderr not-contains has no selected item 'made'
+file consumer.tl
+(import generated.made as future)
+(import plain_provider as p)
+(import plain_provider.answer as value)
+(define answer : i64 (+ future (- value p.answer)))
+end-file
+step pending-valid
+run {{each}} "{{dir}}/entry.tl" --target {{target}}
+stderr empty
+
+case loader-selected-valid
+target linux-x86_64 windows-x86_64
+file typelisp.pkg
+(package (name "selected_valid") (version "0.1.0") (kind "bin") (entry "src/main.tl"))
+end-file
+file src/provider.tl
+(define answer : i64 40)
+(define (get) : i64 2)
+(defstruct Record (value i64))
+(defenum Choice (Some i64) (None))
+end-file
+file src/main.tl
+(import provider as unused)
+(import provider.answer as value)
+(import provider.get as get)
+(import provider.Record as Record)
+(import provider.Choice as Choice)
+(import provider.Some as Some)
+(import stdlib.string as unused-string)
+(import stdlib.string.string-length as length)
+(define (main) : i64
+  (let [record : Record (Record value)] [choice : Choice (Some (get))]
+    (match choice [(Some n) (+ record.value (+ n (length "")))] [_ 0])))
+end-file
+# Resolve the standard library through the embedded provider from an unrelated cwd.
+cwd {{dir}}
+run check "{{dir}}/src/main.tl" --target {{target}}
+stderr empty
+run compile "{{dir}}/src/main.tl" --target {{target}} -o "{{dir}}/valid.s"
+stderr empty
+test -s "{{dir}}/valid.s"
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+stderr empty
+
 case loader-explanations
 each E0301 E0302 E0303 E0304 E0305 E0307
 run explain {{each}}

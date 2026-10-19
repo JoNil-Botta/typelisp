@@ -94299,6 +94299,8 @@
 ;;
 ;;   * a two-predecessor header: a preheader that JUMPS to it, and a latch that
 ;;     BRANCHES to it on the true side of `back <s n`;
+;;     the header may itself be the latch, with the check and final branch
+;;     rewritten together;
 ;;   * the checked index is a header phi seeded by a NONNEGATIVE LITERAL from
 ;;     the preheader and carrying `back` from the latch. The phi's value is
 ;;     never inspected, only its two incoming edges -- which is what admits an
@@ -94679,7 +94681,7 @@
     [header-label : i64 (opt-cfg-index-label index header-id)]
     [pre-label : i64 (opt-cfg-index-label index pre-id)]
     [latch-label : i64 (opt-cfg-index-label index latch-id)]
-    (if (or (= pre-id latch-id) (= header-id pre-id) (= header-id latch-id))
+    (if (or (= pre-id latch-id) (= header-id pre-id))
       (No)
       (match (opt-cfg-index-block index header-id)
         [(No) (No)]
@@ -95016,60 +95018,59 @@
                 cmin-var
                 m-var
                 cs-var)]
-            [(= label site.header)
+            [(or (= label site.header) (= label site.latch))
               (ir.compiler-ir-block-builder-push!
                 out
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-ubound-map-instrs
+                (if (= label site.header)
+                  (let
+                    ;; Self-loops remap phis and drop the check before
+                    ;; replacing their final compare and branch.
+                    [mapped : ir.CompilerIrInstrSeq
+                      (opt-ubound-map-instrs
+                        (& instrs)
+                        0
+                        false
+                        site.pre
+                        join-label
+                        join-label
+                        phi-count)]
+                    (if (= label site.latch)
+                      (opt-ubound-latch-block
+                        label
+                        (& mapped)
+                        site.cmp
+                        site.back
+                        m-var
+                        site.header
+                        chk-label)
+                      (ir.CompilerIrBlock.Block label mapped)))
+                  (opt-ubound-latch-block
+                    label
                     (& instrs)
-                    0
-                    false
-                    site.pre
-                    join-label
-                    join-label
-                    phi-count)))
-              (opt-ubound-rewrite-blocks!
-                out
-                rest
-                (compiler-opt-global-shared-view site)
-                phi-count
-                lo-label
-                join-label
-                chk-label
-                trap-label
-                seed-ok
-                cmin-var
-                m-var
-                cs-var)]
-            [(= label site.latch)
-              (ir.compiler-ir-block-builder-push!
-                out
-                (opt-ubound-latch-block
-                  label
-                  (& instrs)
-                  site.cmp
-                  site.back
-                  m-var
-                  site.header
-                  chk-label))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (opt-ubound-chk-block
-                  chk-label
-                  site.back
-                  site.bound
-                  cs-var
-                  trap-label
-                  site.exit))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (opt-ubound-trap-block
-                  trap-label
-                  site.back
-                  site.len
-                  site.ok
-                  site.exit))
+                    site.cmp
+                    site.back
+                    m-var
+                    site.header
+                    chk-label)))
+              (when
+                (= label site.latch)
+                (ir.compiler-ir-block-builder-push!
+                  out
+                  (opt-ubound-chk-block
+                    chk-label
+                    site.back
+                    site.bound
+                    cs-var
+                    trap-label
+                    site.exit))
+                (ir.compiler-ir-block-builder-push!
+                  out
+                  (opt-ubound-trap-block
+                    trap-label
+                    site.back
+                    site.len
+                    site.ok
+                    site.exit)))
               (opt-ubound-rewrite-blocks!
                 out
                 rest

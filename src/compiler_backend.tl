@@ -1033,9 +1033,9 @@
       (if linux
         Elf
         Coff)
-      (compiler_abi.compiler-abi-gp-arg-register-count abi)
-      (compiler_abi.compiler-abi-float-arg-register-count abi)
-      (compiler_abi.compiler-abi-outgoing-shadow-space abi)
+      (compiler_abi.compiler-abi-gp-arg-register-count abi (Platform))
+      (compiler_abi.compiler-abi-float-arg-register-count abi (Platform))
+      (compiler_abi.compiler-abi-outgoing-shadow-space abi (Platform))
       false)))
 
 ;; TARGET's policy under the code model SHARED-OBJECT selects. Only an ELF
@@ -1092,7 +1092,8 @@
 (define (compiler-backend-target-sysv-aggregates?
   [target : CompilerBackendTarget]) : bool
   (compiler_abi.compiler-abi-aggregate-eightbyte-classes?
-    (compiler-backend-target-abi target)))
+    (compiler-backend-target-abi target)
+    (Platform)))
 
 ;; The target's name as diagnostics and fallback categories spell it.
 (define (compiler-backend-target-triple [target : CompilerBackendTarget]) : String
@@ -14162,7 +14163,9 @@
   [highest : i64]) : i64
   (if (>=
     idx
-    (compiler_abi.compiler-abi-callee-saved-xmm-register-count (Windows)))
+    (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+      (Windows)
+      (Internal)))
     highest
     (compiler-backend-win64-xmm-callee-highest-at
       backend-state
@@ -14171,7 +14174,10 @@
       (if (compiler-backend-callee-needs-save?
         backend-state
         assignments
-        (compiler_abi.compiler-abi-callee-saved-xmm-register-id (Windows) idx))
+        (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+          (Windows)
+          (Internal)
+          idx))
         idx
         highest))))
 
@@ -14405,11 +14411,16 @@
     (< idx 0)
     (>=
       idx
-      (compiler_abi.compiler-abi-callee-saved-xmm-register-count (Windows))))
+      (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+        (Windows)
+        (Internal))))
     ""
     (let
       [reg-id : i64
-        (compiler_abi.compiler-abi-callee-saved-xmm-register-id (Windows) idx)]
+        (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+          (Windows)
+          (Internal)
+          idx)]
       [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
       [tail : String
         (compiler-backend-emit-win64-xmm-callee-regs-at
@@ -14467,7 +14478,8 @@
   [backend-state : CompilerBackendState]) : String
   (if (>
     (compiler_abi.compiler-abi-callee-saved-xmm-register-count
-      (compiler-backend-target-abi target))
+      (compiler-backend-target-abi target)
+      (Internal))
     0)
     (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
@@ -14487,11 +14499,16 @@
   [idx : i64]) : String
   (if (>=
     idx
-    (compiler_abi.compiler-abi-callee-saved-xmm-register-count (Windows)))
+    (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+      (Windows)
+      (Internal)))
     ""
     (let
       [reg-id : i64
-        (compiler_abi.compiler-abi-callee-saved-xmm-register-id (Windows) idx)]
+        (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+          (Windows)
+          (Internal)
+          idx)]
       [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
       [tail : String
         (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
@@ -14843,10 +14860,15 @@
       (string.eq error "")
       (<
         idx
-        (compiler_abi.compiler-abi-callee-saved-xmm-register-count (Windows))))
+        (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+          (Windows)
+          (Internal))))
       (let
         [reg-id : i64
-          (compiler_abi.compiler-abi-callee-saved-xmm-register-id (Windows) idx)]
+          (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+            (Windows)
+            (Internal)
+            idx)]
         (if (compiler-backend-callee-needs-save?
           backend-state
           assignments
@@ -15169,6 +15191,7 @@
             [on-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                (Internal)
                 is-float
                 int-index
                 float-index
@@ -15194,10 +15217,12 @@
               (match (if is-float
                 (compiler-backend-target-float-arg-reg-for-banks
                   target
+                  (Internal)
                   float-index
                   position)
                 (compiler-backend-target-arg-reg-for-banks
                   target
+                  (Internal)
                   int-index
                   position))
                 [(Ok reg)
@@ -17277,7 +17302,8 @@
             0
             (-
               (compiler_abi.compiler-abi-callee-saved-xmm-register-count
-                (Windows))
+                (Windows)
+                (Internal))
               1)
             -1
             false
@@ -18734,6 +18760,7 @@
     (compiler-backend-target-abi
       (compiler-backend-function-state-abort-target
         (compiler-backend-state-function-state backend-state)))
+    (Platform)
     (if (> index 3)
       3
       index)))
@@ -21599,10 +21626,11 @@
 
 (define (compiler-backend-outgoing-stack-arg-slot
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [stack-idx : i64]) : String
   (str_cat.str-cat
     (string.int->string
-      (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+      (compiler-backend-outgoing-stack-arg-offset target convention stack-idx))
     "(%rsp)"
     ""))
 
@@ -21619,6 +21647,7 @@
 ;; each eightbyte through a scavenged GP register so no in-flight arg is clobbered.
 (define (compiler-backend-emit-group-stack-arg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [stack-idx : i64]
@@ -21657,11 +21686,17 @@
             (compiler-backend-emit-group-stack-word-copy
               word0
               scratch
-              (compiler-backend-outgoing-stack-arg-slot target stack-idx))
+              (compiler-backend-outgoing-stack-arg-slot
+                target
+                convention
+                stack-idx))
             (compiler-backend-emit-group-stack-word-copy
               word1
               scratch
-              (compiler-backend-outgoing-stack-arg-slot target (+ stack-idx 1))))))]
+              (compiler-backend-outgoing-stack-arg-slot
+                target
+                convention
+                (+ stack-idx 1))))))]
     [_
       (Err
         (box
@@ -21671,13 +21706,22 @@
 
 (define (compiler-backend-group-word-arg-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [sse? : bool]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : ResultBackendReg
   (if sse?
-    (compiler-backend-target-float-arg-reg-for-banks target float-idx position)
-    (compiler-backend-target-arg-reg-for-banks target int-idx position)))
+    (compiler-backend-target-float-arg-reg-for-banks
+      target
+      convention
+      float-idx
+      position)
+    (compiler-backend-target-arg-reg-for-banks
+      target
+      convention
+      int-idx
+      position)))
 
 ;; The staging register for one value written into an outgoing (or tail) stack
 ;; argument slot, and for an indirect call's final target load. Both follow
@@ -21694,6 +21738,7 @@
 
 (define (compiler-backend-emit-group-word-stack-arg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [word-index : i64]
@@ -21718,7 +21763,10 @@
           (compiler-backend-emit-group-stack-word-copy
             operand
             scratch
-            (compiler-backend-outgoing-stack-arg-slot target stack-idx))))]
+            (compiler-backend-outgoing-stack-arg-slot
+              target
+              convention
+              stack-idx))))]
     [_
       (Err
         (box
@@ -21729,6 +21777,7 @@
 (define (compiler-backend-emit-group-word-call-arg
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [word-index : i64]
@@ -21750,12 +21799,14 @@
         word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
       target
+      convention
       sse?
       int-idx
       float-idx
       position)
       (compiler-backend-emit-group-word-stack-arg
         target
+        convention
         assignments
         value
         word-index
@@ -21766,6 +21817,7 @@
         backend-state)
       (match (compiler-backend-group-word-arg-reg
         target
+        convention
         sse?
         int-idx
         float-idx
@@ -21879,6 +21931,7 @@
         word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
       target
+      (Internal)
       sse?
       int-idx
       float-idx
@@ -21898,6 +21951,7 @@
         backend-state)
       (match (compiler-backend-group-word-arg-reg
         target
+        (Internal)
         sse?
         int-idx
         float-idx
@@ -22997,6 +23051,7 @@
         ;; rsi and rdi join where the ABI makes them caller-saved.
         (if (compiler_abi.compiler-abi-caller-saved-gp-register?
           (compiler-backend-target-abi target)
+          (Internal)
           compiler_abi.compiler-reg-id-rsi)
           (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rsi
@@ -33966,6 +34021,7 @@
 (define (compiler-backend-emit-c-memory-stack-arg
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [stack-idx : i64]
@@ -33973,7 +34029,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [dst-offset : i64
-      (compiler-backend-outgoing-stack-arg-offset target stack-idx)]
+      (compiler-backend-outgoing-stack-arg-offset target convention stack-idx)]
     [src-reg : String (compiler-backend-stack-call-arg-stage backend-state)]
     [copy-xmm : String
       (let
@@ -36106,9 +36162,12 @@
         done-label
         ":\n"))))
 
-(define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
+(define (compiler-backend-call-register-count
+  [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]) : i64
   (compiler_abi.compiler-abi-gp-arg-register-count
-    (compiler-backend-target-abi target)))
+    (compiler-backend-target-abi target)
+    convention))
 
 ;; Number of f64 argument registers. System V uses xmm0..xmm7 (8) and
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
@@ -36128,12 +36187,14 @@
 ;; bank is exhausted (rdi..r9 / xmm0..xmm7).
 (define (compiler-backend-stack-call-arg-for-banks?
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [is-float : bool]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : bool
   (compiler_abi.compiler-abi-stack-call-arg-for-banks?
     (compiler-backend-target-abi target)
+    convention
     is-float
     int-idx
     float-idx
@@ -36363,6 +36424,7 @@
 (define (compiler-backend-program-index-extern-signatures-into
   [type-segment-bases : i64]
   [externs : compiler_ir_types.CompilerIrExternSeq]
+  [function-ids : (& backend_i64_i64_map.Map)]
   [signature-ids : backend_i64_i64_map.Map]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
@@ -36371,6 +36433,7 @@
   (compiler-backend-program-index-extern-signature-seq-into
     type-segment-bases
     externs
+    function-ids
     signature-ids
     names
     signatures
@@ -36381,6 +36444,7 @@
 (define (compiler-backend-program-index-extern-signature-seq-into
   [type-segment-bases : i64]
   [externs : compiler_ir_types.CompilerIrExternSeq]
+  [function-ids : (& backend_i64_i64_map.Map)]
   [signature-ids : backend_i64_i64_map.Map]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
@@ -36390,7 +36454,15 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     signature-ids
     (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
-      [(Extern extern-name-id source-name-id extern-name ty abi _ _ _)
+      [(Extern
+          extern-name-id
+          source-name-id
+          extern-name
+          ty
+          abi
+          link-symbol-id
+          _
+          _)
         (let
           [call-info : i64
             (compiler-backend-program-index-extern-call-info
@@ -36405,6 +36477,27 @@
               ty))
           (set! (array-ref call-infos out-index) call-info)
           (when
+            (compiler-backend-extern-call-info-c-abi? call-info)
+            ;; Function definitions take precedence over extern link aliases.
+            (unless
+              (backend_i64_i64_map.contains?
+                function-ids
+                (compiler_ir_types.compiler-ir-symbol-id extern-name-id))
+              (compiler_regalloc.compiler-reg-add-platform-call-name!
+                extern-name-id))
+            (unless
+              (backend_i64_i64_map.contains?
+                function-ids
+                (compiler_ir_types.compiler-ir-symbol-id source-name-id))
+              (compiler_regalloc.compiler-reg-add-platform-call-name!
+                source-name-id))
+            (unless
+              (backend_i64_i64_map.contains?
+                function-ids
+                (compiler_ir_types.compiler-ir-symbol-id link-symbol-id))
+              (compiler_regalloc.compiler-reg-add-platform-call-name!
+                link-symbol-id)))
+          (when
             (compiler-backend-extern-call-info-aggregate-params? call-info)
             (compiler_regalloc.compiler-reg-add-c-memory-call-name!
               extern-name-id)
@@ -36413,6 +36506,7 @@
           (compiler-backend-program-index-extern-signature-seq-into
             type-segment-bases
             externs
+            function-ids
             (compiler-backend-program-index-bind-extern-ids
               signature-ids
               extern-name-id
@@ -36763,6 +36857,7 @@
       (compiler-backend-program-index-extern-signatures-into
         type-segment-bases
         (compiler-backend-global-shared-view externs)
+        (& function-ids)
         (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
         (owned_view.compiler-owned-shared-view extern-names)
         (owned_view.compiler-owned-shared-view extern-signatures)
@@ -37138,6 +37233,7 @@
 (define (compiler-backend-linux-group-register-banks-fit?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [program-index : CompilerBackendProgramIndex]
   [ty : compiler_ast_types.AstType]
   [int-idx : i64]
@@ -37161,6 +37257,7 @@
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
+          convention
           w0-sse
           int-idx
           float-idx
@@ -37168,6 +37265,7 @@
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
+          convention
           w1-sse
           int1
           float1
@@ -37758,7 +37856,9 @@
           is-float
           (<
             float-idx
-            (compiler_abi.compiler-abi-float-arg-register-count Linux)))
+            (compiler_abi.compiler-abi-float-arg-register-count
+              Linux
+              (Platform))))
           (+ count 1)
           count)]
       (compiler-backend-varargs-linux-vector-count-at
@@ -37769,7 +37869,7 @@
         next-count))))
 
 (define (compiler-backend-windows-vararg-int-reg [position : i64]) : String
-  (compiler_abi.compiler-abi-gp-arg-register Windows position))
+  (compiler_abi.compiler-abi-gp-arg-register Windows (Platform) position))
 
 (define (compiler-backend-windows-vararg-dup-asm
   [type-segment-bases : i64]
@@ -37806,7 +37906,9 @@
       [reg : String (compiler-backend-windows-vararg-int-reg position)]
       (if (and
         (>= position fixed-count)
-        (< position (compiler_abi.compiler-abi-gp-arg-register-count Windows))
+        (<
+          position
+          (compiler_abi.compiler-abi-gp-arg-register-count Windows (Platform)))
         (compiler-backend-float-type? ty))
         (str_cat.str-cat
           "    movq %xmm"
@@ -37827,7 +37929,8 @@
     (if (< fixed-count 0)
       ""
       (if (compiler_abi.compiler-abi-varargs-vector-count-in-al?
-        (compiler-backend-target-abi target))
+        (compiler-backend-target-abi target)
+        (Platform))
         (str_cat.str-cat
           "    movb $"
           (string.int->string
@@ -38220,8 +38323,9 @@
 ;; 0,8,16,...; Windows packs them after the 32-byte shadow space.
 (define (compiler-backend-outgoing-stack-arg-offset
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [stack-idx : i64]) : i64
-  (+ (compiler-backend-outgoing-shadow-space target) (* stack-idx 8)))
+  (+ (compiler-backend-outgoing-shadow-space target convention) (* stack-idx 8)))
 
 ;; Byte offset from %rbp where the `stack-idx`-th INCOMING stack argument lives.
 ;; System V's first stack arg sits at 16(%rbp) (saved %rbp + return
@@ -38229,7 +38333,9 @@
 (define (compiler-backend-incoming-stack-arg-offset
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : i64
-  (+ (+ 16 (compiler-backend-outgoing-shadow-space target)) (* stack-idx 8)))
+  (+
+    (+ 16 (compiler-backend-outgoing-shadow-space target (Internal)))
+    (* stack-idx 8)))
 
 (define (compiler-backend-stack-slots-for-size [size : i64]) : i64
   (if (<= size 0)
@@ -38271,6 +38377,7 @@
 (define (compiler-backend-call-stack-arg-count
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : (& types compiler_ast_types.AstTypeList)]
   [c-abi? : bool]
@@ -38327,6 +38434,7 @@
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
+            convention
             args
             types
             c-abi?
@@ -38342,6 +38450,7 @@
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
+            convention
             args
             types
             c-abi?
@@ -38357,6 +38466,7 @@
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
+                convention
                 program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
@@ -38371,6 +38481,7 @@
             [w0-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w0-sse
                 int-idx
                 float-idx
@@ -38393,6 +38504,7 @@
             [w1-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w1-sse
                 int1
                 float1
@@ -38403,6 +38515,7 @@
               (compiler-backend-call-stack-arg-count
                 type-segment-bases
                 target
+                convention
                 args
                 types
                 c-abi?
@@ -38415,6 +38528,7 @@
               (compiler-backend-call-stack-arg-count
                 type-segment-bases
                 target
+                convention
                 args
                 types
                 c-abi?
@@ -38440,6 +38554,7 @@
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
+            convention
             args
             types
             c-abi?
@@ -38453,6 +38568,7 @@
             (+ position 1)
             (if (compiler-backend-stack-call-arg-for-banks?
               target
+              convention
               is-float
               int-idx
               float-idx
@@ -38464,6 +38580,7 @@
 (define (compiler-backend-type-list-stack-arg-count
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [types : compiler_ast_types.AstTypeList]
   [int-idx : i64]
   [float-idx : i64]
@@ -38473,6 +38590,7 @@
   (compiler-backend-type-list-stack-arg-count-at
     type-segment-bases
     target
+    convention
     (& types)
     0
     int-idx
@@ -38484,6 +38602,7 @@
 (define (compiler-backend-type-list-stack-arg-count-at
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [types : (& types compiler_ast_types.AstTypeList)]
   [type-index : i64]
   [int-idx : i64]
@@ -38520,6 +38639,7 @@
         (compiler-backend-type-list-stack-arg-count-at
           type-segment-bases
           target
+          convention
           types
           (+ type-index 1)
           int-idx
@@ -38538,6 +38658,7 @@
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
+                convention
                 program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
@@ -38552,6 +38673,7 @@
             [w0-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w0-sse
                 int-idx
                 float-idx
@@ -38573,6 +38695,7 @@
             [w1-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w1-sse
                 int1
                 float1
@@ -38583,6 +38706,7 @@
               (compiler-backend-type-list-stack-arg-count-at
                 type-segment-bases
                 target
+                convention
                 types
                 (+ type-index 1)
                 int-idx
@@ -38593,6 +38717,7 @@
               (compiler-backend-type-list-stack-arg-count-at
                 type-segment-bases
                 target
+                convention
                 types
                 (+ type-index 1)
                 (if w1-sse
@@ -38615,6 +38740,7 @@
           (compiler-backend-type-list-stack-arg-count-at
             type-segment-bases
             target
+            convention
             types
             (+ type-index 1)
             next-int
@@ -38622,6 +38748,7 @@
             (+ position 1)
             (if (compiler-backend-stack-call-arg-for-banks?
               target
+              convention
               is-float
               int-idx
               float-idx
@@ -38638,6 +38765,7 @@
   (compiler-backend-type-list-stack-arg-count
     type-segment-bases
     target
+    (Internal)
     (compiler-backend-call-param-types-index source-function program-index)
     0
     0
@@ -38729,10 +38857,13 @@
   [types : (& types compiler_ast_types.AstTypeList)]
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
     [tail-stack : i64
       (compiler-backend-call-stack-arg-count
         type-segment-bases
         target
+        convention
         args
         types
         false
@@ -38821,6 +38952,7 @@
                     (not
                       (compiler-backend-stack-call-arg-for-banks?
                         target
+                        (Internal)
                         false
                         int-idx
                         float-idx
@@ -38911,6 +39043,7 @@
 (define (compiler-backend-call-stack-arg-space
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
@@ -38920,6 +39053,7 @@
       (compiler-backend-call-stack-arg-count
         type-segment-bases
         target
+        convention
         args
         types
         c-abi?
@@ -38939,15 +39073,17 @@
 (define (compiler-backend-call-stack-arg-layout-space
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : i64
   (+
-    (compiler-backend-outgoing-shadow-space target)
+    (compiler-backend-outgoing-shadow-space target convention)
     (compiler-backend-call-stack-arg-space
       type-segment-bases
       target
+      convention
       args
       types
       c-abi?
@@ -38983,6 +39119,7 @@
 ;; positions-past-4) keeps a boundary group's second word inside the reservation.
 (define (compiler-backend-windows-stack-word-count
   [type-segment-bases : i64]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [arg-index : i64]
@@ -39007,6 +39144,7 @@
       (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
         (compiler-backend-windows-stack-word-count
           type-segment-bases
+          convention
           args
           types
           (+ arg-index 1)
@@ -39014,19 +39152,20 @@
           ;; both halves fit in the 4 Windows int arg registers (rcx,rdx,r8,r9)?
           (if (<=
             (+ position 2)
-            (compiler_abi.compiler-abi-gp-arg-register-count Windows))
+            (compiler_abi.compiler-abi-gp-arg-register-count Windows convention))
             stack-words
             (+ stack-words 2))
           program-index)
         (compiler-backend-windows-stack-word-count
           type-segment-bases
+          convention
           args
           types
           (+ arg-index 1)
           (+ position 1)
           (if (<
             position
-            (compiler_abi.compiler-abi-gp-arg-register-count Windows))
+            (compiler_abi.compiler-abi-gp-arg-register-count Windows convention))
             stack-words
             (+ stack-words 1))
           program-index)))))
@@ -39038,12 +39177,14 @@
 
 (define (compiler-backend-windows-stack-arg-space
   [type-segment-bases : i64]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-windows-words-stack-space
     (compiler-backend-windows-stack-word-count
       type-segment-bases
+      convention
       args
       types
       0
@@ -39059,12 +39200,14 @@
 (define (compiler-backend-linux-stack-arg-space
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-call-stack-arg-space
     type-segment-bases
     target
+    convention
     args
     types
     false
@@ -39086,6 +39229,7 @@
       (compiler-backend-type-list-stack-arg-count
         type-segment-bases
         target
+        (Internal)
         (compiler-backend-call-param-types-index callee program-index)
         0
         0
@@ -39195,6 +39339,7 @@
         [(or (Call _ name args _) (TailCall name args _))
           (compiler-backend-windows-stack-arg-space
             type-segment-bases
+            (compiler_regalloc.compiler-reg-direct-call-convention name)
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
@@ -39208,6 +39353,7 @@
             (+
               (compiler-backend-windows-stack-arg-space
                 type-segment-bases
+                (Platform)
                 args
                 (compiler-backend-call-param-types-index name program-index)
                 program-index)
@@ -39231,6 +39377,7 @@
           (compiler-backend-linux-stack-arg-space
             type-segment-bases
             target
+            (compiler_regalloc.compiler-reg-direct-call-convention name)
             args
             (compiler-backend-call-param-types-index name program-index)
             program-index)]
@@ -39253,6 +39400,7 @@
               (compiler-backend-call-stack-arg-space
                 type-segment-bases
                 target
+                (Platform)
                 args
                 (compiler-backend-call-param-types-index name program-index)
                 true
@@ -39299,12 +39447,17 @@
             max-space
             (compiler_regalloc.compiler-reg-max
               max-space
-              (compiler-backend-instr-outgoing-stack-space
-                type-segment-bases
-                target
-                instr
-                types
-                program-index))))
+              (+
+                (compiler-backend-outgoing-shadow-space
+                  target
+                  (compiler_regalloc.compiler-reg-call-instr-convention
+                    (& instr)))
+                (compiler-backend-instr-outgoing-stack-space
+                  type-segment-bases
+                  target
+                  instr
+                  types
+                  program-index)))))
         (set! index (+ index 1))))
     (CompilerBackendOutgoingFrameScan needed max-space)))
 
@@ -39369,16 +39522,15 @@
         types
         program-index)]
     (if scan.needed
-      ;; Reserve the max outgoing stack-arg space in the frame so calls need no
-      ;; per-call %rsp dip. Windows additionally contributes its shadow space.
-      (compiler-backend-round-up-16
-        (+ (compiler-backend-outgoing-shadow-space target) scan.max-space))
+      ;; The scan includes each callee's shadow space with its stack arguments.
+      (compiler-backend-round-up-16 scan.max-space)
       0)))
 
 (define (compiler-backend-emit-scalar-stack-call-arg-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
@@ -39389,7 +39541,10 @@
     [slot : String
       (str_cat.str-cat
         (string.int->string
-          (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+          (compiler-backend-outgoing-stack-arg-offset
+            target
+            convention
+            stack-idx))
         "(%rsp)\n"
         "")]
     (if is-float
@@ -40006,6 +40161,7 @@
 
 (define (compiler-backend-arg-moves-build-from
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [arg-index : i64]
   [count : i64]
@@ -40022,7 +40178,8 @@
         [reg : i64
           (compiler_abi.compiler-abi-gp-arg-register-id
             (compiler-backend-target-abi target)
-            (compiler-backend-call-bank-index target ints pos))]
+            convention
+            (compiler-backend-call-bank-index target convention ints pos))]
         (if (= reg compiler_abi.compiler-reg-id-invalid)
           unit
           (compiler-backend-arg-move-push!
@@ -40037,11 +40194,13 @@
 
 (define (compiler-backend-arg-moves-build-at
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [int-idx : i64]
   [position : i64]) : CompilerBackendArgMoveSeq
   (compiler-backend-arg-moves-build-from
     target
+    convention
     (compiler-backend-global-shared-view args)
     0
     (compiler-backend-call-args-count args)
@@ -40050,6 +40209,7 @@
 
 (define (compiler-backend-call-args-gp-fit-from?
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [index : i64]
   [count : i64]
   [int-idx : i64]
@@ -40060,12 +40220,14 @@
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
+          convention
           false
           int-idx
           0
           position))
       (compiler-backend-call-args-gp-fit-from?
         target
+        convention
         (+ index 1)
         count
         (+ int-idx 1)
@@ -40074,6 +40236,7 @@
 (define (compiler-backend-call-args-gp-parallel-from?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : (& types compiler_ast_types.AstTypeList)]
   [c-abi? : bool]
@@ -40084,7 +40247,13 @@
     [count : i64 (compiler-backend-call-args-count args)]
     (and
       (> count 0)
-      (compiler-backend-call-args-gp-fit-from? target 0 count int-idx position)
+      (compiler-backend-call-args-gp-fit-from?
+        target
+        convention
+        0
+        count
+        int-idx
+        position)
       (compiler-backend-types-all-gp-int?
         type-segment-bases
         target
@@ -40152,6 +40321,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -40223,6 +40393,7 @@
                 (compiler-backend-emit-c-memory-stack-arg
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   value
                   stack-idx
@@ -40233,6 +40404,7 @@
               out
               type-segment-bases
               target
+              convention
               arg-assignments
               args
               types
@@ -40255,6 +40427,7 @@
                 (compiler-backend-emit-c-memory-stack-arg
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   value
                   stack-idx
@@ -40265,6 +40438,7 @@
               out
               type-segment-bases
               target
+              convention
               arg-assignments
               args
               types
@@ -40284,6 +40458,7 @@
               (compiler-backend-linux-group-register-banks-fit?
                 type-segment-bases
                 target
+                convention
                 program-index
                 (compiler-backend-global-shared-view arg-ty)
                 int-idx
@@ -40298,6 +40473,7 @@
             [w0-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w0-sse
                 int-idx
                 float-idx
@@ -40323,6 +40499,7 @@
             [w1-stack : bool
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                convention
                 w1-sse
                 int1
                 float1
@@ -40335,6 +40512,7 @@
                   (try
                     (compiler-backend-emit-group-stack-arg
                       target
+                      convention
                       arg-assignments
                       value
                       stack-idx
@@ -40347,6 +40525,7 @@
                   out
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   args
                   types
@@ -40366,6 +40545,7 @@
                     (compiler-backend-emit-group-word-call-arg
                       type-segment-bases
                       target
+                      convention
                       arg-assignments
                       (compiler-backend-global-shared-view value)
                       0
@@ -40383,6 +40563,7 @@
                     (compiler-backend-emit-group-word-call-arg
                       type-segment-bases
                       target
+                      convention
                       arg-assignments
                       value
                       1
@@ -40400,6 +40581,7 @@
                   out
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   args
                   types
@@ -40421,6 +40603,7 @@
                   backend-state))))]
         [(compiler-backend-stack-call-arg-for-banks?
             target
+            convention
             is-float
             int-idx
             float-idx
@@ -40432,6 +40615,7 @@
                   out
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   value
                   arg-ty
@@ -40442,6 +40626,7 @@
               out
               type-segment-bases
               target
+              convention
               arg-assignments
               args
               types
@@ -40459,9 +40644,14 @@
           (match (if is-float
             (compiler-backend-target-float-arg-reg-for-banks
               target
+              convention
               float-idx
               position)
-            (compiler-backend-target-arg-reg-for-banks target int-idx position))
+            (compiler-backend-target-arg-reg-for-banks
+              target
+              convention
+              int-idx
+              position))
             [(Ok reg)
               (let
                 [_
@@ -40484,6 +40674,7 @@
                   out
                   type-segment-bases
                   target
+                  convention
                   arg-assignments
                   args
                   types
@@ -40534,6 +40725,7 @@
 ;; full, and the remaining args take one outgoing stack slot each.
 (define (compiler-backend-call-args-gp-register-prefix
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [count : i64]
   [int-idx : i64]
   [position : i64]) : i64
@@ -40543,6 +40735,7 @@
     (while (and (< index count) (not done))
       (if (compiler-backend-stack-call-arg-for-banks?
         target
+        convention
         false
         (+ int-idx index)
         0
@@ -40574,6 +40767,7 @@
 (define (compiler-backend-call-args-gp-overflow-from?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : (& types compiler_ast_types.AstTypeList)]
   [c-abi? : bool]
@@ -40587,6 +40781,7 @@
       (not
         (compiler-backend-call-args-gp-fit-from?
           target
+          convention
           0
           count
           int-idx
@@ -40632,6 +40827,7 @@
 (define (compiler-backend-call-args-gp-stack-first?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -40644,6 +40840,7 @@
     (compiler-backend-call-args-gp-overflow-from?
       type-segment-bases
       target
+      convention
       (compiler-backend-global-shared-view args)
       types
       c-abi?
@@ -40657,6 +40854,7 @@
       [prefix : i64
         (compiler-backend-call-args-gp-register-prefix
           target
+          convention
           count
           int-idx
           position)]
@@ -40666,6 +40864,7 @@
           assignments
           (compiler-backend-arg-moves-build-from
             target
+            convention
             (compiler-backend-global-shared-view args)
             0
             prefix
@@ -40673,6 +40872,7 @@
             position)
           (compiler-backend-arg-moves-build-from
             target
+            convention
             (compiler-backend-global-shared-view args)
             0
             prefix
@@ -40696,13 +40896,17 @@
 (define (compiler-backend-stack-arg-area-slot
   [area : CompilerBackendStackArgArea]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [stack-idx : i64]
   [backend-state : CompilerBackendState]) : String
   (match area
     [(OutgoingStackArgArea)
       (str_cat.str-cat
         (string.int->string
-          (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+          (compiler-backend-outgoing-stack-arg-offset
+            target
+            convention
+            stack-idx))
         "(%rsp)")]
     [(IncomingStackArgArea)
       (compiler-backend-tail-final-stack-slot target stack-idx backend-state)]))
@@ -40732,6 +40936,7 @@
 (define (compiler-backend-scalar-arg-plan
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -40770,6 +40975,7 @@
             (compiler-backend-call-arg-at args index)))
         (if (compiler-backend-stack-call-arg-for-banks?
           target
+          convention
           is-float
           ints
           floats
@@ -40784,10 +40990,16 @@
               (if is-float
                 (compiler_abi.compiler-abi-float-arg-register-id
                   (compiler-backend-target-abi target)
-                  (compiler-backend-call-bank-index target floats pos))
+                  convention
+                  (compiler-backend-call-bank-index
+                    target
+                    convention
+                    floats
+                    pos))
                 (compiler_abi.compiler-abi-gp-arg-register-id
                   (compiler-backend-target-abi target)
-                  (compiler-backend-call-bank-index target ints pos))))
+                  convention
+                  (compiler-backend-call-bank-index target convention ints pos))))
             (set! (array-ref stack-slots index) -1)))
         (if is-float
           (set! floats (+ floats 1))
@@ -40941,6 +41153,7 @@
 (define (compiler-backend-tail-call-args-parallel?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -40976,6 +41189,7 @@
         (compiler-backend-scalar-arg-plan
           type-segment-bases
           target
+          convention
           assignments
           args
           types
@@ -40992,6 +41206,7 @@
   [area : CompilerBackendStackArgArea]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [arg-ty : compiler_ast_types.AstType]
@@ -41004,6 +41219,7 @@
         out
         type-segment-bases
         target
+        convention
         assignments
         value
         arg-ty
@@ -41035,6 +41251,7 @@
   [area : CompilerBackendStackArgArea]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -41054,6 +41271,7 @@
         area
         type-segment-bases
         target
+        convention
         assignments
         args
         types
@@ -41069,6 +41287,7 @@
               area
               type-segment-bases
               target
+              convention
               assignments
               (compiler-backend-call-arg-at args index)
               (compiler-backend-call-arg-type-at type-segment-bases types index)
@@ -41083,6 +41302,7 @@
           area
           type-segment-bases
           target
+          convention
           assignments
           args
           types
@@ -41113,6 +41333,7 @@
   [area : CompilerBackendStackArgArea]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -41126,6 +41347,7 @@
       (compiler-backend-scalar-arg-plan
         type-segment-bases
         target
+        convention
         assignments
         args
         types
@@ -41153,6 +41375,7 @@
             (compiler-backend-stack-arg-area-slot
               area
               target
+              convention
               slot
               backend-state)
             "\n")))
@@ -41170,6 +41393,7 @@
         area
         type-segment-bases
         target
+        convention
         assignments
         args
         types
@@ -41182,6 +41406,7 @@
 (define (compiler-backend-emit-direct-tail-call-args-parallel
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : (& args compiler_ir_types.CompilerIrCallArgs)]
   [types : (& types compiler_ast_types.AstTypeList)]
@@ -41196,6 +41421,7 @@
           (IncomingStackArgArea)
           type-segment-bases
           target
+          convention
           assignments
           args
           types
@@ -41210,6 +41436,7 @@
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41233,6 +41460,7 @@
     (compiler-backend-call-args-gp-parallel-from?
       type-segment-bases
       target
+      convention
       (compiler-backend-global-shared-view args)
       types
       c-abi?
@@ -41244,11 +41472,13 @@
       assignments
       (compiler-backend-arg-moves-build-at
         target
+        convention
         (compiler-backend-global-shared-view args)
         int-idx
         position)
       (compiler-backend-arg-moves-build-at
         target
+        convention
         (compiler-backend-global-shared-view args)
         int-idx
         position)))
@@ -41259,6 +41489,7 @@
             assignments
             (compiler-backend-arg-moves-build-at
               target
+              convention
               (compiler-backend-global-shared-view args)
               int-idx
               position)
@@ -41274,6 +41505,7 @@
       (compiler-backend-call-args-gp-stack-first?
         type-segment-bases
         target
+        convention
         assignments
         (compiler-backend-global-shared-view args)
         types
@@ -41287,6 +41519,7 @@
         (OutgoingStackArgArea)
         type-segment-bases
         target
+        convention
         assignments
         (& args)
         (& types)
@@ -41299,6 +41532,7 @@
         out
         type-segment-bases
         target
+        convention
         assignments
         args
         types
@@ -41319,6 +41553,7 @@
 (define (compiler-backend-emit-call-args
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41343,6 +41578,7 @@
           (&mut seq)
           type-segment-bases
           target
+          convention
           assignments
           args
           types
@@ -41367,6 +41603,7 @@
   [type-segment-bases : i64]
   [override-var : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41393,6 +41630,7 @@
           out
           type-segment-bases
           target
+          convention
           assignments
           args
           types
@@ -41416,6 +41654,7 @@
   [type-segment-bases : i64]
   [override-var : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41439,6 +41678,7 @@
           type-segment-bases
           override-var
           target
+          convention
           assignments
           args
           types
@@ -41560,6 +41800,7 @@
 (define (compiler-backend-emit-direct-tail-call-args-from
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41598,6 +41839,7 @@
           float-idx)]
       (if (compiler-backend-stack-call-arg-for-banks?
         target
+        convention
         is-float
         int-idx
         float-idx
@@ -41619,6 +41861,7 @@
               (compiler-backend-emit-direct-tail-call-args-from
                 type-segment-bases
                 target
+                convention
                 assignments
                 args
                 types
@@ -41633,9 +41876,14 @@
         (match (if is-float
           (compiler-backend-target-float-arg-reg-for-banks
             target
+            convention
             float-idx
             position)
-          (compiler-backend-target-arg-reg-for-banks target int-idx position))
+          (compiler-backend-target-arg-reg-for-banks
+            target
+            convention
+            int-idx
+            position))
           [(Ok reg)
             (let
               [head
@@ -41657,6 +41905,7 @@
                   (compiler-backend-emit-direct-tail-call-args-from
                     type-segment-bases
                     target
+                    convention
                     assignments
                     args
                     types
@@ -41673,6 +41922,7 @@
 (define (compiler-backend-emit-direct-tail-call-args
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [types : compiler_ast_types.AstTypeList]
@@ -41681,6 +41931,7 @@
   (compiler-backend-emit-direct-tail-call-args-from
     type-segment-bases
     target
+    convention
     assignments
     args
     types
@@ -45044,6 +45295,8 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
     [extern-call-info : i64
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
@@ -45068,6 +45321,7 @@
       (compiler-backend-call-stack-arg-count
         type-segment-bases
         target
+        convention
         (compiler-backend-global-shared-view args)
         param-types
         c-abi?
@@ -45106,6 +45360,7 @@
               [(compiler-backend-tail-call-args-parallel?
                   type-segment-bases
                   target
+                  convention
                   assignments
                   (& args)
                   (& param-types)
@@ -45116,6 +45371,7 @@
                 (compiler-backend-emit-direct-tail-call-args-parallel
                   type-segment-bases
                   target
+                  convention
                   assignments
                   (& args)
                   (& param-types)
@@ -45124,6 +45380,7 @@
                 (compiler-backend-emit-call-args
                   type-segment-bases
                   target
+                  convention
                   assignments
                   args
                   param-types
@@ -45141,6 +45398,7 @@
                 (compiler-backend-emit-direct-tail-call-args
                   type-segment-bases
                   target
+                  convention
                   assignments
                   args
                   param-types
@@ -45160,6 +45418,7 @@
             (compiler-backend-emit-call-args
               type-segment-bases
               target
+              convention
               assignments
               args
               param-types
@@ -46034,7 +46293,7 @@
     cmovnzq .L_tl_null_arena(%rip), %rax
 "))]
     [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
-      (match (compiler-backend-target-arg-reg target 0)
+      (match (compiler-backend-target-arg-reg target (Platform) 0)
         [(Ok reg)
           (Ok
             (str_cat.str-cat
@@ -46093,6 +46352,7 @@
       type-segment-bases
       (compiler-backend-function-state-rax-forward-pending-var backend-state)
       target
+      (Platform)
       arg-assignments
       args
       param-types
@@ -46173,31 +46433,38 @@
     (string.eq name "tl_atomic_i64_fetch_add_ptr")
     (string.eq name "tl_atomic_i32_fetch_add_ptr")))
 
-(define (compiler-backend-atomic-ptr-reg [target : CompilerBackendTarget]) : String
+(define (compiler-backend-atomic-ptr-reg
+  [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]) : String
   (compiler_abi.compiler-abi-gp-arg-register
     (compiler-backend-target-abi target)
+    convention
     0))
 
 (define (compiler-backend-atomic-value-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [i32? : bool]) : String
-  (compiler-backend-atomic-arg-reg target 1 i32?))
+  (compiler-backend-atomic-arg-reg target convention 1 i32?))
 
 (define (compiler-backend-atomic-new-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [i32? : bool]) : String
-  (compiler-backend-atomic-arg-reg target 2 i32?))
+  (compiler-backend-atomic-arg-reg target convention 2 i32?))
 
 ;; An atomic builtin's operands arrive in the target ABI's integer argument
 ;; registers, narrowed to their 32-bit names for the i32 forms.
 (define (compiler-backend-atomic-arg-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [index : i64]
   [i32? : bool]) : String
   (let
     [reg : String
       (compiler_abi.compiler-abi-gp-arg-register
         (compiler-backend-target-abi target)
+        convention
         index)]
     (if i32?
       (compiler-backend-reg-part reg 4)
@@ -46215,12 +46482,14 @@
 
 (define (compiler-backend-atomic-inline-asm
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [name : String]) : String
   (let
     [i32? : bool (compiler-backend-atomic-i32-call? name)]
-    [ptr : String (compiler-backend-atomic-ptr-reg target)]
-    [value : String (compiler-backend-atomic-value-reg target i32?)]
-    [new-value : String (compiler-backend-atomic-new-reg target i32?)]
+    [ptr : String (compiler-backend-atomic-ptr-reg target convention)]
+    [value : String (compiler-backend-atomic-value-reg target convention i32?)]
+    [new-value : String
+      (compiler-backend-atomic-new-reg target convention i32?)]
     [rax : String (compiler-backend-atomic-rax i32?)]
     [suffix : String (compiler-backend-atomic-width-suffix i32?)]
     (cond
@@ -46280,11 +46549,12 @@
 
 (define (compiler-backend-volatile-inline-asm
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [name : String]) : String
   (let
     [i32? : bool (compiler-backend-volatile-i32-call? name)]
-    [ptr : String (compiler-backend-atomic-ptr-reg target)]
-    [value : String (compiler-backend-atomic-value-reg target i32?)]
+    [ptr : String (compiler-backend-atomic-ptr-reg target convention)]
+    [value : String (compiler-backend-atomic-value-reg target convention i32?)]
     [rax : String (compiler-backend-atomic-rax i32?)]
     [suffix : String (compiler-backend-atomic-width-suffix i32?)]
     (if (compiler-backend-volatile-op-load? name)
@@ -46305,10 +46575,11 @@
 
 (define (compiler-backend-inline-memory-call-asm
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [name : String]) : String
   (if (compiler-backend-atomic-call-name? name)
-    (compiler-backend-atomic-inline-asm target name)
-    (compiler-backend-volatile-inline-asm target name)))
+    (compiler-backend-atomic-inline-asm target convention name)
+    (compiler-backend-volatile-inline-asm target convention name)))
 
 (define (compiler-backend-emit-inline-memory-helper-function
   [target : CompilerBackendTarget]
@@ -46322,6 +46593,7 @@
     ":\n"
     (compiler-backend-inline-memory-call-asm
       target
+      (Platform)
       (compiler-backend-global-shared-view symbol))
     "    ret\n"
     (compiler-backend-emit-function-size-directive target symbol)))
@@ -46329,6 +46601,7 @@
 (define (compiler-backend-emit-inline-memory-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -46368,6 +46641,7 @@
       type-segment-bases
       (compiler-backend-function-state-rax-forward-pending-var backend-state)
       target
+      convention
       arg-assignments
       args
       param-types
@@ -46394,7 +46668,10 @@
               (str_cat.str-cat
                 (compiler-backend-emit-call-space-sub call-space)
                 args-asm
-                (compiler-backend-inline-memory-call-asm target inline-name)
+                (compiler-backend-inline-memory-call-asm
+                  target
+                  convention
+                  inline-name)
                 (compiler-backend-emit-call-space-add call-space)
                 result-store))]
           [(Err message) (compiler-backend-instr-error-from instr-diag message)])]
@@ -46421,6 +46698,8 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
     [fast-alloc-size : i64
       (compiler-backend-fast-alloc-size
         (compiler-backend-global-shared-view args))]
@@ -46499,6 +46778,7 @@
         (compiler-backend-emit-inline-memory-call-with-arg-assignments
           type-segment-bases
           target
+          convention
           assignments
           arg-assignments
           dst
@@ -46580,6 +46860,7 @@
             type-segment-bases
             effective-arg-override
             target
+            convention
             effective-arg-assignments
             args
             (compiler-backend-global-shared-view param-types)
@@ -47149,6 +47430,7 @@
         (compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Internal)
           assignments
           call-args
           param-types
@@ -47218,6 +47500,7 @@
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases
         target
+        (Internal)
         (compiler-backend-global-shared-view uniform-args)
         (compiler-backend-global-shared-view uniform-types)
         false
@@ -47235,6 +47518,7 @@
         (compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Internal)
           assignments
           uniform-args
           uniform-types
@@ -47339,6 +47623,7 @@
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases
         target
+        (Internal)
         (compiler-backend-global-shared-view uniform-args)
         (compiler-backend-global-shared-view uniform-types)
         false
@@ -47354,6 +47639,7 @@
         (compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Internal)
           assignments
           uniform-args
           uniform-types
@@ -54969,6 +55255,8 @@
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
@@ -54998,6 +55286,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
+      convention
       assignments
       args
       (compiler-backend-global-shared-view param-types)
@@ -55041,6 +55330,7 @@
                 args-asm
                 (compiler-backend-inline-memory-call-asm
                   target
+                  convention
                   inline-memory-name)
                 (compiler-backend-emit-call-space-add call-space)
                 (compiler-backend-return-tail
@@ -55176,6 +55466,7 @@
     (compiler-backend-call-stack-arg-count
       type-segment-bases
       target
+      (Internal)
       args
       types
       false
@@ -55199,6 +55490,7 @@
 
 (define (compiler-backend-indirect-call-callee-arg-overlap?
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
@@ -55214,9 +55506,9 @@
     ;; merely take this uncommon preservation path unnecessarily.
     (while (and
       (> (compiler-backend-call-args-count args) 0)
-      (< index (compiler-backend-call-register-count target))
+      (< index (compiler-backend-call-register-count target convention))
       (not overlap))
-      (match (compiler-backend-target-arg-reg target index)
+      (match (compiler-backend-target-arg-reg target convention index)
         [(Ok reg) (set! overlap (string.eq home reg))]
         [(Err _) unit])
       (set! index (+ index 1)))
@@ -55275,6 +55567,7 @@
       type-segment-bases
       effective-arg-override
       target
+      (Internal)
       effective-arg-assignments
       (compiler-backend-global-shared-view args)
       param-types
@@ -55292,7 +55585,7 @@
       vars
       backend-state)
       [(Ok args-asm)
-        (match (compiler-backend-target-arg-reg target 0)
+        (match (compiler-backend-target-arg-reg target (Internal) 0)
           [(Ok env-reg)
             (match (compiler-backend-emit-call-result-store
               type-segment-bases
@@ -55335,6 +55628,7 @@
                       [overlap : bool
                         (compiler-backend-indirect-call-callee-arg-overlap?
                           target
+                          (Internal)
                           assignments
                           (compiler-backend-global-shared-view func)
                           args
@@ -55473,6 +55767,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
+      (Internal)
       assignments
       args
       param-types
@@ -55496,7 +55791,7 @@
             (compiler-backend-global-shared-view clo-reg)
             backend-state)
             [(Ok func-asm)
-              (match (compiler-backend-target-arg-reg target 0)
+              (match (compiler-backend-target-arg-reg target (Internal) 0)
                 [(Ok env-reg)
                   (let
                     [target-addr : String
@@ -55633,6 +55928,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
+      (Platform)
       assignments
       args
       param-types
@@ -55737,6 +56033,7 @@
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases
         target
+        (Platform)
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         c-abi?
@@ -55749,6 +56046,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
+      (Platform)
       assignments
       args
       (compiler-backend-global-shared-view param-types)
@@ -55843,6 +56141,7 @@
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases
         target
+        (Platform)
         (compiler-backend-global-shared-view args)
         (compiler-backend-global-shared-view param-types)
         true
@@ -55853,6 +56152,7 @@
     (match (compiler-backend-emit-call-args
       type-segment-bases
       target
+      (Platform)
       assignments
       args
       param-types
@@ -61057,6 +61357,7 @@
               false
               (compiler-backend-stack-call-arg-for-banks?
                 target
+                (Internal)
                 is-float
                 int-idx
                 float-idx
@@ -61101,10 +61402,12 @@
                   (match (if is-float
                     (compiler-backend-target-float-arg-reg-for-banks
                       target
+                      (Internal)
                       float-idx
                       position)
                     (compiler-backend-target-arg-reg-for-banks
                       target
+                      (Internal)
                       int-idx
                       position))
                     [(Ok reg)
@@ -61319,6 +61622,7 @@
                   (compiler-backend-linux-group-register-banks-fit?
                     type-segment-bases
                     target
+                    (Internal)
                     program-index
                     (compiler-backend-global-shared-view ty)
                     int-idx
@@ -61343,6 +61647,7 @@
                 [w0-stack : bool
                   (compiler-backend-stack-call-arg-for-banks?
                     target
+                    (Internal)
                     w0-sse
                     int-idx
                     float-idx
@@ -61368,6 +61673,7 @@
                 [w1-stack : bool
                   (compiler-backend-stack-call-arg-for-banks?
                     target
+                    (Internal)
                     w1-sse
                     int1
                     float1
@@ -61486,6 +61792,7 @@
             [else
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
+                (Internal)
                 is-float
                 int-idx
                 float-idx
@@ -61555,10 +61862,12 @@
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg-for-banks
                     target
+                    (Internal)
                     float-idx
                     position)
                   (compiler-backend-target-arg-reg-for-banks
                     target
+                    (Internal)
                     int-idx
                     position))
                   [(Ok reg)
@@ -72999,10 +73308,11 @@
     [(CompilerBackendTarget.Linux)
       (compiler-backend-round-up-16
         (+
-          (compiler-backend-outgoing-shadow-space target)
+          (compiler-backend-outgoing-shadow-space target (Internal))
           (compiler-backend-linux-stack-arg-space
             type-segment-bases
             target
+            (Internal)
             args
             param-types
             program-index)))]
@@ -73011,7 +73321,7 @@
       ;; per forwarded argument so a register-group never overruns the area.
       (compiler-backend-round-up-16
         (+
-          (compiler-backend-outgoing-shadow-space target)
+          (compiler-backend-outgoing-shadow-space target (Internal))
           (compiler-backend-windows-words-stack-space
             (* 2 (compiler-backend-call-args-count args)))))]))
 
@@ -73085,6 +73395,7 @@
         (compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Internal)
           (compiler_regalloc.compiler-reg-assignment-table-empty)
           args
           (compiler-backend-global-shared-view param-types)
@@ -76233,53 +76544,65 @@
 ;; Windows x64 passes the first four integer/pointer args in rcx/rdx/r8/r9.
 (define (compiler-backend-target-arg-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [idx : i64]) : ResultBackendReg
   (compiler-backend-result-reg
     (compiler_abi.compiler-abi-gp-arg-register
       (compiler-backend-target-abi target)
+      convention
       idx)
     "backend: too many call args"))
 
 (define (compiler-backend-target-float-arg-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [idx : i64]) : ResultBackendReg
   (compiler-backend-result-reg
     (compiler_abi.compiler-abi-float-arg-register
       (compiler-backend-target-abi target)
+      convention
       idx)
     "backend: too many call args"))
 
 (define (compiler-backend-call-bank-index
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [bank-idx : i64]
   [position : i64]) : i64
   (if (compiler_abi.compiler-abi-arg-banks-independent?
-    (compiler-backend-target-abi target))
+    (compiler-backend-target-abi target)
+    convention)
     bank-idx
     position))
 
 (define (compiler-backend-target-arg-reg-for-banks
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [int-idx : i64]
   [position : i64]) : ResultBackendReg
   (compiler-backend-target-arg-reg
     target
-    (compiler-backend-call-bank-index target int-idx position)))
+    convention
+    (compiler-backend-call-bank-index target convention int-idx position)))
 
 (define (compiler-backend-target-float-arg-reg-for-banks
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [float-idx : i64]
   [position : i64]) : ResultBackendReg
   (compiler-backend-target-float-arg-reg
     target
-    (compiler-backend-call-bank-index target float-idx position)))
+    convention
+    (compiler-backend-call-bank-index target convention float-idx position)))
 
 ;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
 ;; Windows x64.
 (define (compiler-backend-outgoing-shadow-space
-  [target : CompilerBackendTarget]) : i64
+  [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]) : i64
   (compiler_abi.compiler-abi-outgoing-shadow-space
-    (compiler-backend-target-abi target)))
+    (compiler-backend-target-abi target)
+    convention))
 
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
   (match target
@@ -79028,38 +79351,45 @@ tl_shared_object_init:
 
 (define (compiler-backend-object-call-arg-reg
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [index : i64]) : String
-  (match (compiler-backend-target-arg-reg target index)
+  (match (compiler-backend-target-arg-reg target convention index)
     [(Ok reg) reg]
     [(Err _) "%rax"]))
 
 (define (compiler-backend-object-call-reg-count
-  [target : CompilerBackendTarget]) : i64
-  (compiler-backend-call-register-count target))
+  [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]) : i64
+  (compiler-backend-call-register-count target convention))
 
 (define (compiler-backend-object-call-stack-word-count
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]) : i64
   (let
     [count : i64 (compiler-backend-call-args-count args)]
-    [regs : i64 (compiler-backend-object-call-reg-count target)]
+    [regs : i64 (compiler-backend-object-call-reg-count target convention)]
     (if (> count regs)
       (- count regs)
       0)))
 
 (define (compiler-backend-object-call-space
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]) : i64
   (if (compiler-backend-object-stack-args? target)
     (compiler-backend-round-up-16
       (+
-        (compiler-backend-outgoing-shadow-space target)
-        (* 8 (compiler-backend-object-call-stack-word-count target args))))
+        (compiler-backend-outgoing-shadow-space target convention)
+        (*
+          8
+          (compiler-backend-object-call-stack-word-count target convention args))))
     0))
 
 (define (compiler-backend-object-call-stack-arg
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [site : String]
   [value : compiler_ir_types.CompilerIrValue]
   [stack-index : i64]
@@ -79072,11 +79402,12 @@ tl_shared_object_init:
       "%rax"
       program-index)
     (compiler-backend-object-store-rax-rsp-bytes
-      (compiler-backend-outgoing-stack-arg-offset target stack-index))))
+      (compiler-backend-outgoing-stack-arg-offset target convention stack-index))))
 
 (define (compiler-backend-object-call-arg-moves
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [site : String]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [index : i64]
@@ -79086,17 +79417,19 @@ tl_shared_object_init:
     (compiler-backend-call-args-count
       (compiler-backend-global-shared-view args)))
     parts
-    (if (>= index (compiler-backend-object-call-reg-count target))
+    (if (>= index (compiler-backend-object-call-reg-count target convention))
       (if (compiler-backend-object-stack-args? target)
         (compiler-backend-object-call-arg-moves
           (compiler-backend-object-call-stack-arg
             parts
             target
+            convention
             (compiler-backend-global-shared-view site)
             (compiler-backend-call-arg-at args index)
-            (- index (compiler-backend-object-call-reg-count target))
+            (- index (compiler-backend-object-call-reg-count target convention))
             program-index)
           target
+          convention
           site
           args
           (+ index 1)
@@ -79107,9 +79440,10 @@ tl_shared_object_init:
           parts
           (compiler-backend-global-shared-view site)
           (compiler-backend-call-arg-at args index)
-          (compiler-backend-object-call-arg-reg target index)
+          (compiler-backend-object-call-arg-reg target convention index)
           program-index)
         target
+        convention
         site
         args
         (+ index 1)
@@ -79118,6 +79452,7 @@ tl_shared_object_init:
 (define (compiler-backend-object-direct-call
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [site : String]
   [symbol : String]
   [args : compiler_ir_types.CompilerIrCallArgs]
@@ -79126,6 +79461,7 @@ tl_shared_object_init:
     [space : i64
       (compiler-backend-object-call-space
         target
+        convention
         (compiler-backend-global-shared-view args))]
     (compiler-backend-object-add-nonempty-bytes
       (object_target.compiler-backend-object-add-text
@@ -79135,6 +79471,7 @@ tl_shared_object_init:
               parts
               (compiler-backend-object-sub-rsp-bytes space))
             target
+            convention
             (compiler-backend-global-shared-view site)
             args
             0
@@ -79162,7 +79499,9 @@ tl_shared_object_init:
             params
             int-index
             (+ param-index 1))
-          (if (>= int-index (compiler-backend-object-call-reg-count target))
+          (if (>=
+            int-index
+            (compiler-backend-object-call-reg-count target (Internal)))
             (compiler-backend-object-param-spills-from
               (if (compiler-backend-object-stack-args? target)
                 (compiler-backend-object-store-reg-to-var
@@ -79173,7 +79512,9 @@ tl_shared_object_init:
                         target
                         (-
                           int-index
-                          (compiler-backend-object-call-reg-count target)))
+                          (compiler-backend-object-call-reg-count
+                            target
+                            (Internal))))
                       "%rax"))
                   var-id
                   "%rax")
@@ -79186,7 +79527,10 @@ tl_shared_object_init:
               (compiler-backend-object-store-reg-to-var
                 parts
                 var-id
-                (compiler-backend-object-call-arg-reg target int-index))
+                (compiler-backend-object-call-arg-reg
+                  target
+                  (Internal)
+                  int-index))
               target
               params
               (+ int-index 1)
@@ -79668,6 +80012,7 @@ tl_shared_object_init:
           (compiler-backend-object-direct-call
             parts
             target
+            (compiler_regalloc.compiler-reg-direct-call-convention name)
             function
             call-target
             args
@@ -79683,6 +80028,7 @@ tl_shared_object_init:
         [space : i64
           (compiler-backend-object-call-space
             target
+            (Platform)
             (compiler-backend-global-shared-view args))]
         (compiler-backend-object-store-reg-to-var
           (compiler-backend-object-add-nonempty-bytes
@@ -79693,6 +80039,7 @@ tl_shared_object_init:
                     parts
                     (compiler-backend-object-sub-rsp-bytes space))
                   target
+                  (Platform)
                   (compiler-backend-global-shared-view function)
                   args
                   0
@@ -79719,6 +80066,7 @@ tl_shared_object_init:
             (& base)
             program-index)
           target
+          (Platform)
           (compiler-backend-global-shared-view function)
           call-target
           args
@@ -79733,6 +80081,7 @@ tl_shared_object_init:
               (compiler-backend-object-call-arg-moves
                 parts
                 target
+                (compiler_regalloc.compiler-reg-direct-call-convention name)
                 (compiler-backend-global-shared-view function)
                 args
                 0

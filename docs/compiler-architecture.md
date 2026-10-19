@@ -187,6 +187,27 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Package function externs carry `AstExternAbi.TypeLisp` and use their dependency
+bodies' internal convention. Lowering applies the same physical parameter and
+result types, including floating register words and hidden result-pointer
+positions. These declarations do not enter native C aggregate or borrowed-Slice
+checks. Before releasing typecheck caches, the driver seeds the job-owned
+representation index from resolved nominal layouts, then merges IR evidence.
+Thus a two-word value supplied only by a dependency needs no local `Pack` to
+retain its width and register classes. Encoded structural transport types also
+contribute their group facts when they occur only in an extern signature.
+Conflicting IR evidence stays unknown; no typecheck-owned layout escapes.
+The Windows batch/COFF entry point captures the same index before retiring
+frontend layouts. Its optimizer and object-or-assembly fallback share the
+primary backend's retained index until package scope cleanup. Backend admission
+rejects a TypeLisp extern's nominal value signature unless its representation
+is known. Layout capture records one-word representations too. The IR builder
+protects missing TypeLisp extern facts before ordinary occurrences, native C
+externs or referents can infer one word; that fallback is insufficient. Missing or conflicting facts produce a
+diagnostic before either assembly or object emission. Physical structural
+transports retain their explicit signature encoding, and referents do not
+require by-value layout facts.
+
 Borrowed pattern bindings share one type/lowering contract:
 `tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
 shared reference, and otherwise retains a reference to the part. Lowering uses
@@ -542,6 +563,14 @@ releasing another job cannot change those cells, even while its arena is
 current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
+
+Function lowering forks the persistent type-environment store inside its
+existing scratch extent. Parameters, return/cleanup markers and local bindings
+append there while the immutable module tail stays borrowed. The inherited
+chain index detaches before a write. After IR, spans or an error escape,
+rewinding retires the store's address-keyed memos and diagnostic snapshot through
+the same helper used by function typechecking; no local environment reaches a
+later function.
 
 Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
 synchronous retirement authority: the exact lower owner's stable address and a
@@ -1091,6 +1120,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 `loop_carried_raw_read_snapshot` fixtures guard this boundary on both targets
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
+
+`lower-store-place` retains a selected array descriptor, index and inline
+field offset until the replacement value has been evaluated. The shared
+`lower-array-store-place` snapshot rules prevent later receiver/index writes
+from retargeting the store. `lower-store-destination-address` then checks the
+current length and uses the descriptor's current buffer. Struct and tuple
+projections add their `lower-inline-field-info` offsets without reading the
+element. A projection through a box or reference reads that indirection before
+the value runs, so its intermediate bounds checks remain eager. An inline
+fixed-array field of an element, as in
+`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
+array receiver: when `v` grows `a`, that store targets the buffer selected
+before the value ran (#9057). Borrow and `replace!` address selection
+continues to use `lower-mutable-place-address`.
 
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).

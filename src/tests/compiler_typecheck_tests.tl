@@ -576,8 +576,76 @@
       (cdiag.compiler-diagnostic-code-typecheck-type-mismatch)
       "typecheck")))
 
+(define (compiler-typecheck-clone-referent-tests-ok?) : bool
+  (let
+    [prefix : String
+      "(defenum Value (Empty) (Text String))
+(define (take [value : Value]) : unit unit)
+"]
+    [flows : (Array String 8)
+      (array
+        "(deref r)"
+        "(ann (deref r) : Value)"
+        "(begin 0 (deref r))"
+        "(if flag (deref r) (deref r))"
+        "(let [flag true] (deref r))"
+        "(match flag [true (deref r)] [false (deref r)])"
+        "(unsafe 0 (deref r))"
+        "(deref (if flag r r))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 8)]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat
+              (clone prefix)
+              "(define (copy [r : (& r Value)] [flag : bool]) : Value (clone "
+              (clone (array-ref flows index))
+              "))")))))
+    (and
+      ok
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (&mut r Value)]) : Value (clone (deref r)))"))
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value (deref r))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value
+  (clone (begin (take (deref r)) (deref r))))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value
+  (clone (let [value (deref r)] value)))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (clone [value : Value]) : Value value)
+(define (copy [r : (& r Value)]) : Value (clone (deref r)))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : (& r Value) (clone r))")
+        "typecheck: clone unsupported type (& r Value)"))))
+
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
+    (compiler-typecheck-clone-referent-tests-ok?)
     (clone_tests.clone-name-set-smoke-ok?)
     (clone_tests.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok?
@@ -1018,7 +1086,7 @@
                               (and
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view packet))
+                                    packet)
                                   24)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1041,7 +1109,7 @@
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view outer))
+                                    outer)
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1058,8 +1126,7 @@
                                     "tail")
                                   12)
                                 (=
-                                  (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view wide))
+                                  (tc_core.tc-inline-aggregate-layout-size wide)
                                   48)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1117,10 +1184,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Vec2"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        16)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1206,10 +1270,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Mixed"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        48)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 48)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1289,10 +1350,7 @@
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
     [(Ok layout)
       (and
-        (=
-          (tc_core.tc-inline-aggregate-layout-size
-            (tc_core.tc-global-shared-view layout))
-          want-size)
+        (= (tc_core.tc-inline-aggregate-layout-size layout) want-size)
         (=
           (tc_core.tc-inline-aggregate-layout-align
             (tc_core.tc-global-shared-view layout))
@@ -1812,8 +1870,7 @@
                             (compiler-typecheck-inline-field-id-at fields 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -1878,8 +1935,7 @@
                             (compiler-typecheck-inline-variant-id-at variants 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))

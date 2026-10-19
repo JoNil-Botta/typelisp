@@ -903,8 +903,7 @@
   `(let
     [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64)
-      (__tl_make-array i64 (cfg (any compile-profile test) 18 17))]
+    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 19)]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slots 0-10 hold the lazy macro substates and slot 11 is
@@ -913,7 +912,8 @@
       ;; slot 13 carries the combined source-name/structural-intern session,
       ;; slot 14 lazily owns the non-macro lazy-import table, and slots 15-16
       ;; own the nominal/type-name and clone families. Profile/test builds use
-      ;; slot 17 for the job-owned typecheck metrics view.
+      ;; slot 17 for the job-owned typecheck metrics view; slot 18 lazily owns
+      ;; the module declaration/import index in every build.
       (set! (array-ref macro-state-addresses 12) owner)
       (cfg
         (any compile-profile test)
@@ -1057,6 +1057,8 @@
   15)
 (define tc-macro-state-slot-clone : i64
   16)
+(define tc-macro-state-slot-module-decl-index : i64
+  18)
 (cfg
   (any compile-profile test)
   (define tc-macro-state-slot-profile-metrics : i64
@@ -2513,6 +2515,7 @@
 (define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
   (tc-job-state-reset-advisories! state)
   (tc-job-state-reset-derived-caches! state)
+  (tc-module-decl-index-reset! (tc-job-state-macro-state state))
   (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))
   (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))
   (tc-spmd-inline-helper-stack-reset-for-job! state))
@@ -2552,6 +2555,7 @@
       (macro-hygiene-env-storage-retire! state))
     ;; Empty-env construction in the preceding cache clears can lazily
     ;; recreate this owner. It must be the final typechecker operation.
+    (tc-module-decl-index-release! state)
     (tc-job-state-release-type-env-scoped-state! job)))
 
 ;; Scratch destruction is a lifetime boundary, not a generic cache reset.
@@ -19958,6 +19962,7 @@
       (tc-env-key-name-text-for-session session b))))
 
 (define (tc-imported-module-identity-ids?
+  [state : TcMacroState]
   [session : cis.InternStructuralSessionHandle]
   [decls : ast.AstDeclList]
   [current-module-id : i64]
@@ -19968,31 +19973,39 @@
   ;; (module, target) pair after every splice resets the answer cache, and bare
   ;; names reach this query on lookups qualified names answer from the symbol
   ;; table. The projection match loads the tag and only the fields an arm binds.
-  (let
-    [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
-    [slot : i64 (tc-module-decl-index-slot current-module-id)]
-    (if (< slot 0)
-      false
-      (let
-        [j : i64 (array-ref tc-module-import-index-starts slot)]
-        [end : i64 (array-ref tc-module-import-index-ends slot)]
-        [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-        [decl-offset : i64 decls.offset]
-        [found : bool false]
-        (while (and (not found) (< j end))
-          (match (array-ref
-            decl-slots
-            (+ decl-offset (array-ref tc-module-import-index-positions j)))
-            [(Import decl-meta (Spec _ _ expected _ _))
-              (match expected
-                [(Some target)
-                  (if (tc-module-identity-id-eq? session target target-id)
-                    (set! found true)
-                    unit)]
-                [(No) unit])]
-            [_ unit])
-          (+= j 1))
-        found))))
+  (unsafe
+    (let
+      [module-index : (MutPtr TcModuleDeclIndexStateData)
+        (tc-module-decl-index-state-ptr state)]
+      [_ensure : unit (tc-module-decl-index-ensure! state (& decls))]
+      [slot : i64
+        (tc-module-decl-index-slot
+          (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+          current-module-id)]
+      (if (< slot 0)
+        false
+        (let
+          [j : i64 (array-ref (deref module-index).import-starts slot)]
+          [end : i64 (array-ref (deref module-index).import-ends slot)]
+          [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+          [decl-offset : i64 decls.offset]
+          [found : bool false]
+          (while (and (not found) (< j end))
+            (match (array-ref
+              decl-slots
+              (+
+                decl-offset
+                (array-ref (deref module-index).import-positions j)))
+              [(Import decl-meta (Spec _ _ expected _ _))
+                (match expected
+                  [(Some target)
+                    (if (tc-module-identity-id-eq? session target target-id)
+                      (set! found true)
+                      unit)]
+                  [(No) unit])]
+              [_ unit])
+            (+= j 1))
+          found)))))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
   (let
@@ -20014,6 +20027,7 @@
                     current-module-id
                     target-id)
                   (tc-imported-module-identity-ids?
+                    (tc-context-macro-state ctx)
                     (tc-context-structural-session ctx)
                     (ast.ast-decl-list-box-shared-view decls-box)
                     current-module-id
@@ -20316,60 +20330,116 @@
       (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))))
 
 ;; --- per-epoch module -> decl-position index ----------------------------------
-;; tc-module-local-env-list and tc-decl-list-module-imports-stdlib-string? both
-;; filter the whole-program decl list down to one module by scanning every
-;; declaration and tracking (module NAME) markers, re-paying O(program) AstDecl
-;; copies per query. This CSR index maps module ids to program-order decl
-;; positions (module markers excluded); consumers keep their own per-decl match
-;; arms, so they process exactly the subsequence the full scan would have. The
-;; program view changes at in-pass splice rebuilds, so validity is stamped by
-;; (slots, len, offset, intern generation) and dropped by macro-alias-derived-
-;; cache-reset! (the same per-splice/per-program boundary as the alias caches,
-;; except splices that keep the flat program); a single-decl splice that
-;; preserves the list length also preserves every module's positions (memo
-;; markers never add or remove module markers), so the stamp is sufficient. Backing storage lives in a dedicated arena (the
-;; tc-hygiene-module-env-cache-arena idiom) because queries run while
-;; transient scratch arenas are active.
-(define tc-module-decl-index-ready : bool
-  false)
-(define tc-module-decl-index-decl-count : i64
-  -1)
-(define tc-module-decl-index-decl-offset : i64
-  -1)
-(define tc-module-decl-index-decl-slots : i64
-  0)
-(define tc-module-decl-index-generation : i64
-  -1)
-(define tc-module-decl-index-arena : i64
-  0)
-(define tc-module-decl-index-modules : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 16))
-(define tc-module-decl-index-starts : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
-(define tc-module-decl-index-ends : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
-(define tc-module-decl-index-positions : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
-(define tc-module-import-index-starts : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
-(define tc-module-import-index-ends : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
-(define tc-module-import-index-positions : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
+;; The job-owned header indexes module ids to program-order declaration and
+;; import positions, excluding module markers. Its payload owns only integer
+;; keys/positions, never borrowed declaration rows. A separate arena keeps it
+;; alive across transient query scratch and is retired with the owning job.
+;; The fast stamp includes the declaration view and the job's source-name
+;; table identity/generation. A splice invalidation retains the payload only
+;; when every recorded module/import shape still matches the current view;
+;; declaration changes that preserve that shape cannot change its positions.
+(defstruct TcModuleDeclIndexStateData
+  (ready bool)
+  (decl-count i64)
+  (decl-offset i64)
+  (decl-slots i64)
+  (intern-table-id i64)
+  (generation i64)
+  (arena i64)
+  (modules tc_i64_i64_map.Map)
+  (starts (__tl_dyn-array i64))
+  (ends (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64))
+  (import-starts (__tl_dyn-array i64))
+  (import-ends (__tl_dyn-array i64))
+  (import-positions (__tl_dyn-array i64))
+  (maybe-stale bool)
+  (seq (__tl_dyn-array i64)))
 
-;; Reset marks the index maybe-stale instead of destroying it. The macro
-;; expander resets these caches every round, but most rounds leave the
-;; module/import shape of the declaration list unchanged; ensure! revalidates
-;; the kept index against the recorded per-decl shape sequence and only
-;; rebuilds when the shape actually changed. The kept arena is destroyed by
-;; the next real rebuild, so no stale data survives a content change.
-(define tc-module-decl-index-maybe-stale : bool
-  false)
-(define tc-module-decl-index-seq : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
+(define (tc-module-decl-index-state-new) : TcModuleDeclIndexStateData
+  (TcModuleDeclIndexStateData
+    false
+    -1
+    -1
+    0
+    -1
+    -1
+    0
+    (tc_i64_i64_map.with-capacity 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    false
+    (__tl_make-array i64 0)))
 
-(define (tc-module-decl-index-reset!) : unit
-  (set! tc-module-decl-index-maybe-stale true))
+(define (tc-module-decl-index-state-initialize [state : TcMacroState]) : i64
+  (tc-macro-state-cell-initialize
+    state
+    TcModuleDeclIndexStateData
+    tc-macro-state-slot-module-decl-index
+    (tc-module-decl-index-state-new)))
+
+(define (tc-module-decl-index-state-address [state : TcMacroState]) : i64
+  (tc-macro-state-address-fast
+    state
+    tc-macro-state-slot-module-decl-index
+    tc-module-decl-index-state-initialize))
+
+(define (tc-module-decl-index-state-ptr [state : TcMacroState]) : (MutPtr
+    TcModuleDeclIndexStateData)
+  (tc-state-cell-ptr
+    (tc-module-decl-index-state-address state)
+    TcModuleDeclIndexStateData))
+
+;; Invalidation retains the index until its module/import shape changes.
+;; An idle job must not allocate an index merely to invalidate it.
+(define (tc-module-decl-index-reset! [state : TcMacroState]) : unit
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-module-decl-index)]
+    (when
+      (> address 0)
+      (unsafe
+        (set!
+          (deref (tc-state-cell-ptr address TcModuleDeclIndexStateData)).maybe-stale
+          true)))))
+
+(define (tc-module-decl-index-arena-for-state [state : TcMacroState]) : i64
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-module-decl-index)]
+    (if (> address 0)
+      (unsafe
+        (deref (tc-state-cell-view address TcModuleDeclIndexStateData)).arena)
+      0)))
+
+;; The fixed header belongs to the job. Clear every payload view there before
+;; destroying its independently retained arena; another job may be current.
+(define (tc-module-decl-index-release! [state : TcMacroState]) : unit
+  (let
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-module-decl-index)]
+    (when
+      (> address 0)
+      (let
+        [data : (MutPtr TcModuleDeclIndexStateData)
+          (tc-state-cell-ptr address TcModuleDeclIndexStateData)]
+        [storage : i64
+          (unsafe
+            (deref data).arena)]
+        (when
+          (> storage 0)
+          (in-arena
+            (arena.Arena (tc-macro-state-owner-arena state))
+            (tc-state-cell-write!
+              address
+              TcModuleDeclIndexStateData
+              (tc-module-decl-index-state-new)))
+          (unsafe
+            (arena.tl_arena_destroy storage)))))))
 
 ;; Shape code of one declaration as the index build reads it: a module marker
 ;; carries its module id (never negative), imports are -1, everything else -2.
@@ -20385,189 +20455,217 @@
         -1
         -2)]))
 
-(define (tc-module-decl-index-seq-matches? [decls : (& decls ast.AstDeclList)]) : bool
-  (let
-    [count : i64 decls.len]
-    (if (not (= (array-length tc-module-decl-index-seq) count))
-      false
-      (begin
-        (for [i (iterator.range 0 count)]
-          (let
-            [code : i64 (tc-module-decl-index-shape-code-at (& decls) i)]
-            (when
-              (or
-                (< code -2)
-                (not (= code (array-ref tc-module-decl-index-seq i))))
-              (return false))))
-        true))))
-
-(define (tc-module-decl-index-ensure! [decls : (& decls ast.AstDeclList)]) : unit
-  (when
-    (and
-      tc-module-decl-index-ready
-      (= tc-module-decl-index-decl-count decls.len)
-      (= tc-module-decl-index-decl-offset decls.offset)
-      (=
-        tc-module-decl-index-decl-slots
-        (macro-decl-list-slots-data-addr decls)))
-    (when
-      (and
-        (not tc-module-decl-index-maybe-stale)
-        (= tc-module-decl-index-generation (ci.intern-generation)))
-      (return unit))
-    ;; The kept index is valid whenever the module/import shape of the
-    ;; declaration list is unchanged: the index stores only per-module
-    ;; declaration and import positions, so in-place declaration rewrites
-    ;; that preserve the shape cannot change it.
-    (when
-      (tc-module-decl-index-seq-matches? decls)
-      (set! tc-module-decl-index-maybe-stale false)
-      (set! tc-module-decl-index-generation (ci.intern-generation))
-      (return unit)))
-  (let
-    [count : i64 decls.len]
-    [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [old-arena : i64 tc-module-decl-index-arena]
-    [_make-arena : unit
-      (set! tc-module-decl-index-arena (arena.tl_arena_make_small))]
-    [_switch : unit
-      (unsafe
-        (arena.tl_arena_set tc-module-decl-index-arena))]
-    [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
-    [module-count : i64 0]
-    [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [import-counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [import-starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [import-ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [import-positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [cur-module-id : i64 empty-module-id]
-    [running : i64 0]
-    [import-running : i64 0]
-    ;; Pass 1: assign a dense slot per module id and count its decls.
-    (for [i (iterator.range 0 count)]
-      (match (array-ref decl-slots (+ decl-offset i))
-        [(Module next-module) (set! cur-module-id next-module)]
-        [_
-          (let
-            [slot : i64
-              (let
-                [found-slot : i64
-                  (tc_i64_i64_map.get-value-or (& modules) cur-module-id -1)]
-                (if (>= found-slot 0)
-                  found-slot
-                  (let
-                    [new-slot : i64 module-count]
-                    (tc_i64_i64_map.insert-ref!
-                      (&mut modules)
-                      cur-module-id
-                      new-slot)
-                    (+= module-count 1)
-                    new-slot)))]
-            (set! (array-ref counts slot) (+ (array-ref counts slot) 1))
-            ;; Borrowed import test: the count needs one bit, not a row.
-            (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
-              (set!
-                (array-ref import-counts slot)
-                (+ (array-ref import-counts slot) 1))
-              unit))]))
-    ;; Prefix sums: starts fixed, ends double as fill cursors below.
-    (for [i (iterator.range 0 module-count)]
-      (set! (array-ref starts i) running)
-      (set! (array-ref ends i) running)
-      (set! (array-ref import-starts i) import-running)
-      (set! (array-ref import-ends i) import-running)
-      (+= running (array-ref counts i))
-      (+= import-running (array-ref import-counts i)))
-    ;; Pass 2: fill program-order positions per module slot.
-    (set! cur-module-id empty-module-id)
-    (for [i (iterator.range 0 count)]
-      (match (array-ref decl-slots (+ decl-offset i))
-        [(Module next-module) (set! cur-module-id next-module)]
-        [_
-          (let
-            [slot : i64
-              (tc_i64_i64_map.get-value-or (& modules) cur-module-id -1)]
-            (if (>= slot 0)
-              (let
-                [cursor : i64 (array-ref ends slot)]
-                (set! (array-ref positions cursor) i)
-                (set! (array-ref ends slot) (+ cursor 1))
-                (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
-                  (let
-                    [import-cursor : i64 (array-ref import-ends slot)]
-                    (set! (array-ref import-positions import-cursor) i)
-                    (set! (array-ref import-ends slot) (+ import-cursor 1)))
-                  unit))
-              unit))]))
-    ;; Record the per-decl shape sequence so a maybe-stale index can be
-    ;; revalidated without rebuilding.
+(define (tc-module-decl-index-seq-matches?
+  [index : (Ptr TcModuleDeclIndexStateData)]
+  [decls : (& decls ast.AstDeclList)]) : bool
+  (unsafe
     (let
-      [seq : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-      (for [i (iterator.range 0 count)]
-        (set!
-          (array-ref seq i)
-          (tc-module-decl-index-shape-code-at (& decls) i)))
-      (set! tc-module-decl-index-seq seq))
-    (set! tc-module-decl-index-modules modules)
-    (set! tc-module-decl-index-starts starts)
-    (set! tc-module-decl-index-ends ends)
-    (set! tc-module-decl-index-positions positions)
-    (set! tc-module-import-index-starts import-starts)
-    (set! tc-module-import-index-ends import-ends)
-    (set! tc-module-import-index-positions import-positions)
-    (set! tc-module-decl-index-decl-count count)
-    (set! tc-module-decl-index-decl-offset decl-offset)
-    (set!
-      tc-module-decl-index-decl-slots
-      (macro-decl-list-slots-data-addr decls))
-    (set! tc-module-decl-index-generation (ci.intern-generation))
-    (set! tc-module-decl-index-maybe-stale false)
-    ;; The stable arena root names the complete grown chain. The previous
-    ;; rebuild (kept alive across maybe-stale revalidation) is destroyed
-    ;; only now that every index global points into the fresh one.
+      [count : i64 decls.len]
+      (if (not (= (array-length (deref index).seq) count))
+        false
+        (begin
+          (for [i (iterator.range 0 count)]
+            (let
+              [code : i64 (tc-module-decl-index-shape-code-at (& decls) i)]
+              (when
+                (or (< code -2) (not (= code (array-ref (deref index).seq i))))
+                (return false))))
+          true)))))
+
+(define (tc-module-decl-index-ensure!
+  [state : TcMacroState]
+  [decls : (& decls ast.AstDeclList)]) : unit
+  (let
+    [module-index : (MutPtr TcModuleDeclIndexStateData)
+      (tc-module-decl-index-state-ptr state)]
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [generation : i64 (tc-macro-state-source-name-reset-generation state)]
     (unsafe
-      (arena.tl_arena_set prev-arena))
-    (if (= old-arena 0)
-      unit
-      (unsafe
-        (arena.tl_arena_destroy old-arena)))
-    (set! tc-module-decl-index-ready true)))
+      (when
+        (and
+          (deref module-index).ready
+          (= (deref module-index).decl-count decls.len)
+          (= (deref module-index).decl-offset decls.offset)
+          (=
+            (deref module-index).decl-slots
+            (macro-decl-list-slots-data-addr decls)))
+        (when
+          (and
+            (not (deref module-index).maybe-stale)
+            (= (deref module-index).intern-table-id table-id)
+            (= (deref module-index).generation generation))
+          (return unit))
+        ;; The kept index is valid whenever the module/import shape of the
+        ;; declaration list is unchanged: the index stores only per-module
+        ;; declaration and import positions, so in-place declaration rewrites
+        ;; that preserve the shape cannot change it.
+        (when
+          (tc-module-decl-index-seq-matches?
+            (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+            decls)
+          (set! (deref module-index).maybe-stale false)
+          (set! (deref module-index).intern-table-id table-id)
+          (set! (deref module-index).generation generation)
+          (return unit)))
+      (let
+        [count : i64 decls.len]
+        [decl-offset : i64 decls.offset]
+        [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+        [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+        [prev-arena : i64 (arena.tl_arena_current)]
+        [old-arena : i64 (deref module-index).arena]
+        [_make-arena : unit
+          (set! (deref module-index).arena (arena.tl_arena_make_small))]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set (deref module-index).arena))]
+        [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
+        [module-count : i64 0]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [import-counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [import-starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [import-ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [import-positions : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count 1))]
+        [cur-module-id : i64 empty-module-id]
+        [running : i64 0]
+        [import-running : i64 0]
+        ;; Pass 1: assign a dense slot per module id and count its decls.
+        (for [i (iterator.range 0 count)]
+          (match (array-ref decl-slots (+ decl-offset i))
+            [(Module next-module) (set! cur-module-id next-module)]
+            [_
+              (let
+                [slot : i64
+                  (let
+                    [found-slot : i64
+                      (tc_i64_i64_map.get-value-or (& modules) cur-module-id -1)]
+                    (if (>= found-slot 0)
+                      found-slot
+                      (let
+                        [new-slot : i64 module-count]
+                        (tc_i64_i64_map.insert-ref!
+                          (&mut modules)
+                          cur-module-id
+                          new-slot)
+                        (+= module-count 1)
+                        new-slot)))]
+                (set! (array-ref counts slot) (+ (array-ref counts slot) 1))
+                ;; Borrowed import test: the count needs one bit, not a row.
+                (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
+                  (set!
+                    (array-ref import-counts slot)
+                    (+ (array-ref import-counts slot) 1))
+                  unit))]))
+        ;; Prefix sums: starts fixed, ends double as fill cursors below.
+        (for [i (iterator.range 0 module-count)]
+          (set! (array-ref starts i) running)
+          (set! (array-ref ends i) running)
+          (set! (array-ref import-starts i) import-running)
+          (set! (array-ref import-ends i) import-running)
+          (+= running (array-ref counts i))
+          (+= import-running (array-ref import-counts i)))
+        ;; Pass 2: fill program-order positions per module slot.
+        (set! cur-module-id empty-module-id)
+        (for [i (iterator.range 0 count)]
+          (match (array-ref decl-slots (+ decl-offset i))
+            [(Module next-module) (set! cur-module-id next-module)]
+            [_
+              (let
+                [slot : i64
+                  (tc_i64_i64_map.get-value-or (& modules) cur-module-id -1)]
+                (if (>= slot 0)
+                  (let
+                    [cursor : i64 (array-ref ends slot)]
+                    (set! (array-ref positions cursor) i)
+                    (set! (array-ref ends slot) (+ cursor 1))
+                    (if (ast.ast-decl-list-unwrapped-import-at? (& decls) i)
+                      (let
+                        [import-cursor : i64 (array-ref import-ends slot)]
+                        (set! (array-ref import-positions import-cursor) i)
+                        (set! (array-ref import-ends slot) (+ import-cursor 1)))
+                      unit))
+                  unit))]))
+        ;; Record the per-decl shape sequence so a maybe-stale index can be
+        ;; revalidated without rebuilding.
+        (let
+          [seq : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          (for [i (iterator.range 0 count)]
+            (set!
+              (array-ref seq i)
+              (tc-module-decl-index-shape-code-at (& decls) i)))
+          (set! (deref module-index).seq seq))
+        (set! (deref module-index).modules modules)
+        (set! (deref module-index).starts starts)
+        (set! (deref module-index).ends ends)
+        (set! (deref module-index).positions positions)
+        (set! (deref module-index).import-starts import-starts)
+        (set! (deref module-index).import-ends import-ends)
+        (set! (deref module-index).import-positions import-positions)
+        (set! (deref module-index).decl-count count)
+        (set! (deref module-index).decl-offset decl-offset)
+        (set!
+          (deref module-index).decl-slots
+          (macro-decl-list-slots-data-addr decls))
+        (set! (deref module-index).intern-table-id table-id)
+        (set! (deref module-index).generation generation)
+        (set! (deref module-index).maybe-stale false)
+        ;; The stable arena root names the complete grown chain. The previous
+        ;; rebuild (kept alive across maybe-stale revalidation) is destroyed
+        ;; only now that every index global points into the fresh one.
+        (unsafe
+          (arena.tl_arena_set prev-arena))
+        (if (= old-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy old-arena)))
+        (set! (deref module-index).ready true)))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
-(define (tc-module-decl-index-slot [module-id : i64]) : i64
-  (tc_i64_i64_map.get-value-or (& tc-module-decl-index-modules) module-id -1))
+(define (tc-module-decl-index-slot
+  [index : (Ptr TcModuleDeclIndexStateData)]
+  [module-id : i64]) : i64
+  (unsafe
+    (let
+      [modules : tc_i64_i64_map.Map (deref index).modules]
+      (tc_i64_i64_map.get-value-or (& modules) module-id -1))))
 
 (define (tc-decl-list-module-imports-stdlib-string?
+  [state : TcMacroState]
   [decls : ast.AstDeclList]
   [target-module-id : i64]
   [current-module-id : i64]) : bool
-  (let
-    [_ensure : unit (tc-module-decl-index-ensure! decls)]
-    [_unused-module-id : i64 current-module-id]
-    [slot : i64 (tc-module-decl-index-slot target-module-id)]
-    (if (< slot 0)
-      false
-      (let
-        [j : i64 (array-ref tc-module-decl-index-starts slot)]
-        [end : i64 (array-ref tc-module-decl-index-ends slot)]
-        [found : bool false]
-        (while (and (not found) (< j end))
-          (match (array-ref
-            decls.slots
-            (+ decls.offset (array-ref tc-module-decl-index-positions j)))
-            [(Import decl-meta (Spec _ _ (Some import-module) _ _))
-              (if (tc-stdlib-string-module-name? (ci.intern-str import-module))
-                (set! found true)
-                unit)]
-            [_ unit])
-          (+= j 1))
-        found))))
+  (unsafe
+    (let
+      [module-index : (MutPtr TcModuleDeclIndexStateData)
+        (tc-module-decl-index-state-ptr state)]
+      [_ensure : unit (tc-module-decl-index-ensure! state decls)]
+      [_unused-module-id : i64 current-module-id]
+      [slot : i64
+        (tc-module-decl-index-slot
+          (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+          target-module-id)]
+      (if (< slot 0)
+        false
+        (let
+          [j : i64 (array-ref (deref module-index).starts slot)]
+          [end : i64 (array-ref (deref module-index).ends slot)]
+          [found : bool false]
+          (while (and (not found) (< j end))
+            (match (array-ref
+              decls.slots
+              (+ decls.offset (array-ref (deref module-index).positions j)))
+              [(Import decl-meta (Spec _ _ (Some import-module) _ _))
+                (if (tc-stdlib-string-module-name?
+                  (ci.intern-str import-module))
+                  (set! found true)
+                  unit)]
+              [_ unit])
+            (+= j 1))
+          found)))))
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (let
@@ -20576,6 +20674,7 @@
     (match program
       [(Program decls-box)
         (tc-decl-list-module-imports-stdlib-string?
+          (tc-context-macro-state ctx)
           (ast.ast-decl-list-box-shared-view decls-box)
           module-id
           cbi.compiler-builtin-id-fix-empty)])))
@@ -30836,23 +30935,25 @@
     [_ unit]))
 
 (define (tc-module-local-root-shadow-names-note!
+  [index : (Ptr TcModuleDeclIndexStateData)]
   [session : cis.InternStructuralSessionHandle]
   [decls : (& decls ast.AstDeclList)]
   [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
-  (let
-    [slot : i64 (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
-    (if (< slot 0)
-      unit
-      (let
-        [end : i64 (array-ref tc-module-decl-index-ends slot)]
-        (for [j
-          (iterator.range (array-ref tc-module-decl-index-starts slot) end)]
-          (tc-module-local-root-shadow-decl-note!
-            session
-            seen
-            (ast.ast-array-shared-view
-              decls.slots
-              (+ decls.offset (array-ref tc-module-decl-index-positions j)))))))))
+  (unsafe
+    (let
+      [slot : i64
+        (tc-module-decl-index-slot index cbi.compiler-builtin-id-fix-empty)]
+      (if (< slot 0)
+        unit
+        (let
+          [end : i64 (array-ref (deref index).ends slot)]
+          (for [j (iterator.range (array-ref (deref index).starts slot) end)]
+            (tc-module-local-root-shadow-decl-note!
+              session
+              seen
+              (ast.ast-array-shared-view
+                decls.slots
+                (+ decls.offset (array-ref (deref index).positions j))))))))))
 
 (define (tc-module-local-name-should-bind!
   [ctx : TcContext]
@@ -31064,54 +31165,64 @@
   [_ : String]
   [target-module-id : i64]
   [_module : String]) : ResultTcEnv
-  (let
-    [_ensure : unit (tc-module-decl-index-ensure! decls)]
-    [slot : i64 (tc-module-decl-index-slot target-module-id)]
-    [root-slot : i64
-      (tc-module-decl-index-slot cbi.compiler-builtin-id-fix-empty)]
-    (if (< slot 0)
-      (Ok env)
-      (let
-        [j : i64 (array-ref tc-module-decl-index-starts slot)]
-        [end : i64 (array-ref tc-module-decl-index-ends slot)]
-        [root-count : i64
-          (if (< root-slot 0)
-            0
-            (-
-              (array-ref tc-module-decl-index-ends root-slot)
-              (array-ref tc-module-decl-index-starts root-slot)))]
-        [cur-env : TcTypeEnv env]
-        [seen : tc_i64_i64_map.Map
-          (tc_i64_i64_map.with-capacity (+ (+ (- end j) root-count) 1))]
-        [_root-shadows : unit
-          (tc-module-local-root-shadow-names-note!
-            (tc-context-structural-session ctx)
-            decls
-            (&mut seen))]
-        [message : String ""]
-        [ok : bool true]
-        (while (and ok (< j end))
-          (let
-            [decl : ast.AstDecl
-              (tc-global-array-element-shared-view
-                decls.slots
-                (+ decls.offset (array-ref tc-module-decl-index-positions j)))]
-            (match (tc-global-shared-view decl)
-              [(Module _) unit]
-              [_
-                (match (tc-module-local-env-add-decl
-                  ctx
-                  cur-env
-                  (&mut seen)
-                  decl)
-                  [(Ok next-env) (set! cur-env next-env)]
-                  [(Err step-message)
-                    (set! message step-message)
-                    (set! ok false)])])
-            (+= j 1)))
-        (if ok
-          (Ok cur-env)
-          (Err message))))))
+  (unsafe
+    (let
+      [module-index : (MutPtr TcModuleDeclIndexStateData)
+        (tc-module-decl-index-state-ptr (tc-context-macro-state ctx))]
+      [_ensure : unit
+        (tc-module-decl-index-ensure! (tc-context-macro-state ctx) decls)]
+      [slot : i64
+        (tc-module-decl-index-slot
+          (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+          target-module-id)]
+      [root-slot : i64
+        (tc-module-decl-index-slot
+          (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+          cbi.compiler-builtin-id-fix-empty)]
+      (if (< slot 0)
+        (Ok env)
+        (let
+          [j : i64 (array-ref (deref module-index).starts slot)]
+          [end : i64 (array-ref (deref module-index).ends slot)]
+          [root-count : i64
+            (if (< root-slot 0)
+              0
+              (-
+                (array-ref (deref module-index).ends root-slot)
+                (array-ref (deref module-index).starts root-slot)))]
+          [cur-env : TcTypeEnv env]
+          [seen : tc_i64_i64_map.Map
+            (tc_i64_i64_map.with-capacity (+ (+ (- end j) root-count) 1))]
+          [_root-shadows : unit
+            (tc-module-local-root-shadow-names-note!
+              (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+              (tc-context-structural-session ctx)
+              decls
+              (&mut seen))]
+          [message : String ""]
+          [ok : bool true]
+          (while (and ok (< j end))
+            (let
+              [decl : ast.AstDecl
+                (tc-global-array-element-shared-view
+                  decls.slots
+                  (+ decls.offset (array-ref (deref module-index).positions j)))]
+              (match (tc-global-shared-view decl)
+                [(Module _) unit]
+                [_
+                  (match (tc-module-local-env-add-decl
+                    ctx
+                    cur-env
+                    (&mut seen)
+                    decl)
+                    [(Ok next-env) (set! cur-env next-env)]
+                    [(Err step-message)
+                      (set! message step-message)
+                      (set! ok false)])])
+              (+= j 1)))
+          (if ok
+            (Ok cur-env)
+            (Err message)))))))
 
 (define (tc-module-local-env-id
   [ctx : TcContext]
@@ -55655,42 +55766,51 @@
     (array-ref tc-bare-variant-index-names name-id)))
 
 (define (tc-bare-variant-visible-handle [ctx : TcContext] [name-id : i64]) : i64
-  (if (not (tc-bare-variant-declared-name? ctx name-id))
-    -1
-    (let
-      [module-id : i64 (tc-context-module-id ctx)]
-      [found : i64 (tc-bare-variant-module-entry module-id name-id)]
-      (match (tc-context-program ctx)
-        [(Program decls-box)
-          (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
-            [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
-            [slot : i64 (tc-module-decl-index-slot module-id)]
-            [j : i64
-              (if (< slot 0)
-                0
-                (array-ref tc-module-import-index-starts slot))]
-            [end : i64
-              (if (< slot 0)
-                0
-                (array-ref tc-module-import-index-ends slot))]
-            (while (and (< j end) (not (= found -2)))
-              (let
-                [target : i64
-                  (tc-bare-variant-star-target-at
-                    (& decls)
-                    (array-ref tc-module-import-index-positions j))]
-                [entry : i64
-                  (if (< target 0)
-                    -1
-                    (tc-bare-variant-module-entry target name-id))]
-                (cond
-                  [(= entry -1) unit]
-                  [(or (= found -1) (= found entry)) (set! found entry)]
-                  [else (set! found -2)])
-                (+= j 1)))
-            found)]))))
+  (unsafe
+    (if (not (tc-bare-variant-declared-name? ctx name-id))
+      -1
+      (let
+        [module-id : i64 (tc-context-module-id ctx)]
+        [found : i64 (tc-bare-variant-module-entry module-id name-id)]
+        (match (tc-context-program ctx)
+          [(Program decls-box)
+            (let
+              [decls : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view decls-box)]
+              [module-index : (MutPtr TcModuleDeclIndexStateData)
+                (tc-module-decl-index-state-ptr (tc-context-macro-state ctx))]
+              [_ensure : unit
+                (tc-module-decl-index-ensure!
+                  (tc-context-macro-state ctx)
+                  (& decls))]
+              [slot : i64
+                (tc-module-decl-index-slot
+                  (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+                  module-id)]
+              [j : i64
+                (if (< slot 0)
+                  0
+                  (array-ref (deref module-index).import-starts slot))]
+              [end : i64
+                (if (< slot 0)
+                  0
+                  (array-ref (deref module-index).import-ends slot))]
+              (while (and (< j end) (not (= found -2)))
+                (let
+                  [target : i64
+                    (tc-bare-variant-star-target-at
+                      (& decls)
+                      (array-ref (deref module-index).import-positions j))]
+                  [entry : i64
+                    (if (< target 0)
+                      -1
+                      (tc-bare-variant-module-entry target name-id))]
+                  (cond
+                    [(= entry -1) unit]
+                    [(or (= found -1) (= found entry)) (set! found entry)]
+                    [else (set! found -2)])
+                  (+= j 1)))
+              found)])))))
 
 ;; `out` extended with ` or Enum.V` when `variants` declares `name-id`.
 (define (tc-bare-variant-candidate-append
@@ -55721,91 +55841,103 @@
 
 ;; `A.V or B.V` over the enums of `module-id` that declare `name-id`.
 (define (tc-bare-variant-module-candidates
+  [index : (Ptr TcModuleDeclIndexStateData)]
   [session : cis.InternStructuralSessionHandle]
   [decls : (& decls ast.AstDeclList)]
   [module-id : i64]
   [name-id : i64]
   [prefix : String]) : String
-  (let
-    [slot : i64 (tc-module-decl-index-slot module-id)]
-    [end : i64
-      (if (< slot 0)
-        0
-        (array-ref tc-module-decl-index-ends slot))]
-    [out : String prefix]
-    (for [j
-      (iterator.range
+  (unsafe
+    (let
+      [slot : i64 (tc-module-decl-index-slot index module-id)]
+      [start : i64
         (if (< slot 0)
           0
-          (array-ref tc-module-decl-index-starts slot))
-        end)]
-      (match (ast.ast-decl-unwrapped
-        (&
-          (array-ref
-            decls.slots
-            (+ decls.offset (array-ref tc-module-decl-index-positions j)))))
-        [(or (DefEnum _ enum-name _ variants)
-             (DefEnumLifetimes _ enum-name _ _ variants))
-          (set!
-            out
-            (tc-bare-variant-candidate-append
-              session
+          (array-ref (deref index).starts slot))]
+      [end : i64
+        (if (< slot 0)
+          0
+          (array-ref (deref index).ends slot))]
+      [positions : (__tl_dyn-array i64) (deref index).positions]
+      [out : String prefix]
+      (for [j (iterator.range start end)]
+        (match (ast.ast-decl-unwrapped
+          (& (array-ref decls.slots (+ decls.offset (array-ref positions j)))))
+          [(or (DefEnum _ enum-name _ variants)
+               (DefEnumLifetimes _ enum-name _ _ variants))
+            (set!
               out
-              enum-name
-              (& variants)
-              name-id))]
-        [_ unit]))
-    out))
+              (tc-bare-variant-candidate-append
+                session
+                out
+                enum-name
+                (& variants)
+                name-id))]
+          [_ unit]))
+      out)))
 
 (define (tc-bare-variant-ambiguous-message [ctx : TcContext] [name-id : i64]) : String
-  (match (tc-context-program ctx)
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
-        [session : cis.InternStructuralSessionHandle
-          (tc-context-structural-session ctx)]
-        [module-id : i64 (tc-context-module-id ctx)]
-        [slot : i64 (tc-module-decl-index-slot module-id)]
-        [end : i64
-          (if (< slot 0)
-            0
-            (array-ref tc-module-import-index-ends slot))]
-        [candidates : String
-          (tc-bare-variant-module-candidates
-            session
-            (& decls)
-            module-id
-            name-id
-            "")]
-        (for [j
-          (iterator.range
+  (unsafe
+    (match (tc-context-program ctx)
+      [(Program decls-box)
+        (let
+          [decls : ast.AstDeclList
+            (ast.ast-decl-list-box-shared-view decls-box)]
+          [module-index : (MutPtr TcModuleDeclIndexStateData)
+            (tc-module-decl-index-state-ptr (tc-context-macro-state ctx))]
+          [_ensure : unit
+            (tc-module-decl-index-ensure!
+              (tc-context-macro-state ctx)
+              (& decls))]
+          [session : cis.InternStructuralSessionHandle
+            (tc-context-structural-session ctx)]
+          [module-id : i64 (tc-context-module-id ctx)]
+          [slot : i64
+            (tc-module-decl-index-slot
+              (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+              module-id)]
+          [start : i64
             (if (< slot 0)
               0
-              (array-ref tc-module-import-index-starts slot))
-            end)]
-          (let
-            [target : i64
-              (tc-bare-variant-star-target-at
-                (& decls)
-                (array-ref tc-module-import-index-positions j))]
-            (if (< target 0)
-              unit
-              (set!
-                candidates
-                (tc-bare-variant-module-candidates
-                  session
+              (array-ref (deref module-index).import-starts slot))]
+          [end : i64
+            (if (< slot 0)
+              0
+              (array-ref (deref module-index).import-ends slot))]
+          [import-positions : (__tl_dyn-array i64)
+            (deref module-index).import-positions]
+          [candidates : String
+            (tc-bare-variant-module-candidates
+              (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+              session
+              (& decls)
+              module-id
+              name-id
+              "")]
+          (for [j (iterator.range start end)]
+            (let
+              [target : i64
+                (tc-bare-variant-star-target-at
                   (& decls)
-                  target
-                  name-id
-                  candidates)))))
-        (tc-kind-message
-          (UnboundName)
-          (str_cat.str-cat
-            "typecheck: ambiguous variant `"
-            (ci.intern-str name-id)
-            "`; qualify as "
-            candidates)))]))
+                  (array-ref import-positions j))]
+              (if (< target 0)
+                unit
+                (set!
+                  candidates
+                  (tc-bare-variant-module-candidates
+                    (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+                    session
+                    (& decls)
+                    target
+                    name-id
+                    candidates)))))
+          (tc-kind-message
+            (UnboundName)
+            (str_cat.str-cat
+              "typecheck: ambiguous variant `"
+              (ci.intern-str name-id)
+              "`; qualify as "
+              candidates)))])))
 
 ;; Lexical storage (a let, parameter or lambda binding, hygiene-scoped by its
 ;; id) shadows every declaration, variants included.
@@ -92334,7 +92466,7 @@
         2
         "typecheck.macro.peak"
         "typecheck-module-index"
-        tc-module-decl-index-arena)
+        (tc-module-decl-index-arena-for-state state))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -102719,50 +102851,55 @@
         [(No) (No)])]))
 
 (define (macro-import-alias-target-from-wrapped-decl
-  [decl : ast.AstDecl]
+  [decl : (& decl ast.AstDecl)]
   [alias-id : i64]) : TcMaybeNameId
-  (match (ast.ast-decl-unwrapped (& decl))
+  (match (ast.ast-decl-unwrapped decl)
     [(Import decl-meta spec)
       (macro-import-alias-target-from-spec spec alias-id)]
     [_ (No)]))
 
 (define (macro-import-alias-target-ids
-  [decls : ast.AstDeclList]
+  [state : TcMacroState]
+  [decls : (& decls ast.AstDeclList)]
   [current-module-id : i64]
   [alias-id : i64]
   [_module-id : i64]) : TcMaybeNameId
-  (let
-    [_ensure : unit (tc-module-decl-index-ensure! decls)]
-    [slot : i64 (tc-module-decl-index-slot current-module-id)]
-    [decl-offset : i64 decls.offset]
-    [result : TcMaybeNameId (No)]
-    (if (< slot 0)
-      result
-      (let
-        [index : i64 (array-ref tc-module-import-index-starts slot)]
-        [end : i64 (array-ref tc-module-import-index-ends slot)]
-        [done : bool false]
-        (while (and (not done) (< index end))
-          (let
-            [position : i64 (array-ref tc-module-import-index-positions index)]
-            [target : TcMaybeNameId
-              (macro-import-alias-target-from-wrapped-decl
-                (tc-global-array-element-shared-view
-                  decls.slots
-                  (+ decl-offset position))
-                alias-id)]
-            (match target
-              [(Some target-id)
-                (if (= target-id alias-id)
-                  (match result
-                    [(No) (set! result (Some alias-id))]
-                    [_ unit])
-                  (begin
-                    (set! result (Some target-id))
-                    (set! done true)))]
-              [(No) unit])
-            (+= index 1)))
-        result))))
+  (unsafe
+    (let
+      [module-index : (MutPtr TcModuleDeclIndexStateData)
+        (tc-module-decl-index-state-ptr state)]
+      [_ensure : unit (tc-module-decl-index-ensure! state decls)]
+      [slot : i64
+        (tc-module-decl-index-slot
+          (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
+          current-module-id)]
+      [result : TcMaybeNameId (No)]
+      (if (< slot 0)
+        result
+        (let
+          [index : i64 (array-ref (deref module-index).import-starts slot)]
+          [end : i64 (array-ref (deref module-index).import-ends slot)]
+          [done : bool false]
+          (while (and (not done) (< index end))
+            (let
+              [position : i64
+                (array-ref (deref module-index).import-positions index)]
+              [target : TcMaybeNameId
+                (macro-import-alias-target-from-wrapped-decl
+                  (ast.ast-decl-list-ref-borrowed decls position)
+                  alias-id)]
+              (match target
+                [(Some target-id)
+                  (if (= target-id alias-id)
+                    (match result
+                      [(No) (set! result (Some alias-id))]
+                      [_ unit])
+                    (begin
+                      (set! result (Some target-id))
+                      (set! done true)))]
+                [(No) unit])
+              (+= index 1)))
+          result)))))
 
 ;; --- import-aware macro resolution caches -------------------------------------
 ;;
@@ -102956,7 +103093,7 @@
 ;; same per-program boundary that resets the CTFE-env and clone-able caches;
 ;; the intern generation gate additionally covers intern-reset! boundaries.
 (define (macro-alias-derived-cache-reset-for-state! [state : TcMacroState]) : unit
-  (tc-module-decl-index-reset!)
+  (tc-module-decl-index-reset! state)
   (macro-import-derived-cache-reset-for-state! state))
 
 ;; A splice that keeps the context's flat program keeps its module decl index:
@@ -103832,7 +103969,8 @@
             (Some target-id)]
           [(No)
             (match (macro-import-alias-target-ids
-              decls
+              state
+              (& decls)
               current-module-id
               qualifier-id
               cbi.compiler-builtin-id-fix-empty)
@@ -103865,7 +104003,8 @@
             (Some target-id)]
           [(No)
             (match (macro-import-alias-target-ids
-              decls
+              state
+              (& decls)
               current-module-id
               qualifier-id
               cbi.compiler-builtin-id-fix-empty)
@@ -118726,6 +118865,7 @@
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
       (macro-alias-derived-cache-reset-for-state! macro-state)
+      (tc-module-decl-index-release! macro-state)
       (if preserve-lazy-imports
         unit
         (tc-lazy-import-stubs-reset-for-job! job-state))

@@ -1048,13 +1048,6 @@
     [pass : String]
     [name : i64]
     [start-ms : i64]) : unit
-    (io.print-error
-      (str_cat.str-cat
-        "w3-8949-pass|" (compiler-opt-global-shared-view pass)
-        "|" (ir.compiler-ir-symbol-text name)
-        "|" (string.int->string (profile.alloc-total))
-        "|" (string.int->string (profile.alloc-live))
-        "|" (string.int->string (profile.compile-wide-peak-current)) "\n"))
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
       (cfg
@@ -1108,15 +1101,6 @@
   [body : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
-    [_probe-start : unit
-      (cfg compile-profile
-        (io.print-error
-          (str_cat.str-cat
-            "w3-8949-escape-enter|" ,_phase "|"
-            (compiler-opt-global-shared-view ,_name)
-            "|" (string.int->string (profile.alloc-total))
-            "|" (string.int->string (profile.alloc-live))
-            "|" (string.int->string (profile.compile-wide-peak-current)) "\n")))]
     [result ,body]
     (begin
       (cfg
@@ -10477,27 +10461,8 @@
                 (set! placed true)
                 (set! slot (bit-and (+ slot 1) mask))))))))))
 
-
-(defmacro (w3-8949-owner-note [tag : Expr] [size : Expr] [result-type : type] [body : Expr]) : Expr
-  `(cfg compile-profile
-    (let
-      [probe-start : i64 (profile.alloc-total)]
-      [probe-size : i64 ,size]
-      [probe-result : ,result-type ,body]
-      [probe-delta : i64 (- (profile.alloc-total) probe-start)]
-      (io.print-error
-        (str_cat.str-cat
-          "w3-8949-owner|" ,tag
-          "|" (string.int->string probe-size)
-          "|" (string.int->string probe-delta)
-          "|" (string.int->string (profile.alloc-live))
-          "|" (string.int->string (profile.compile-wide-peak-current)) "\n"))
-      probe-result)
-    ,body))
-
 (define (opt-cfg-index-build [blocks : (& ir.CompilerIrBlockList)]) : OptCfgIndex
-  (w3-8949-owner-note "index" (ir.compiler-ir-block-list-count blocks) OptCfgIndex
-    (let
+  (let
     [count : i64 (ir.compiler-ir-block-list-count blocks)]
     [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [dense-blocks : (__tl_dyn-array ir.CompilerIrBlock)
@@ -10551,7 +10516,7 @@
         reach-count
         rpo
         rpo-num
-        targets-known)))))
+        targets-known))))
 
 (define (opt-cfg-index-block-count [index : (& index OptCfgIndex)]) : i64
   (array-length index.labels))
@@ -11084,8 +11049,7 @@
   (doms OptDomInfo))
 
 (define (opt-cfg-context-build [blocks : ir.CompilerIrBlockList]) : OptCfgContext
-  (w3-8949-owner-note "context" (ir.compiler-ir-block-list-count blocks) OptCfgContext
-    (let
+  (let
     [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
     [pred-map : OptPredMap (OptPredMap (compiler-opt-global-shared-view index))]
     [reachable : OptLabelSet (opt-cfg-index-reachable-labels index)]
@@ -11094,7 +11058,7 @@
       (opt-cfg-dominators-with
         (compiler-opt-global-shared-view index)
         entry-label)]
-    (OptCfgContext index pred-map reachable entry-label doms))))
+    (OptCfgContext index pred-map reachable entry-label doms)))
 
 ;; A cheap placeholder context built from an empty CFG. Used only as the
 ;; sentinel paired with a function on the non-heavy pass path, where the threaded
@@ -17114,14 +17078,19 @@
       (opt-pred-map-lookup pred-map header)
       (None))))
 
+(defstruct OptNaturalLoopWork
+  (found (__tl_dyn-array i64))
+  (stack (__tl_dyn-array i64)))
+
 (define (opt-natural-loop-build
+  [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [pred-map : (& OptPredMap)]
   [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
   (if pred-map.index.labels-unique
-    (opt-natural-loop-build-by-id blocks pred-map reachable header latch)
+    (opt-natural-loop-build-by-id work blocks pred-map reachable header latch)
     (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
 
 ;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
@@ -17135,19 +17104,19 @@
 ;; member array is `marks` itself: both hold exactly the header, the latch and
 ;; every recorded block.
 (define (opt-natural-loop-build-by-id
+  [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [pred-map : (& OptPredMap)]
   [_reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
-  (w3-8949-owner-note "natural-loop-by-id" (opt-cfg-index-block-count pred-map.index) OptNaturalLoop
-    (let
+  (let
     [index : OptCfgIndex
       (owned_view.compiler-owned-reference-shared-view (& pred-map.index))]
     [count : i64 (opt-cfg-index-block-count index)]
     [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
-    [found : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [found : (&mut work (__tl_dyn-array i64)) (&mut work.found)]
+    [stack : (&mut work (__tl_dyn-array i64)) (&mut work.stack)]
     [found-count : i64 0]
     [top : i64 0]
     [header-id : i64 (- 0 1)]
@@ -17221,7 +17190,7 @@
               (& found)
               found-count
               n))
-          (opt-natural-loop-find-preheader-by-id index (& marks) header-id)))))))
+          (opt-natural-loop-find-preheader-by-id index (& marks) header-id))))))
 
 ;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
 ;; predecessor of the header that is reachable and outside the body, and the
@@ -17365,6 +17334,7 @@
 ;; index that walk consulted (the reachable set is built from this reachable
 ;; array).
 (define (opt-cfg-natural-loop-edges-csr
+  [work : (&mut work OptNaturalLoopWork)]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [pred-map : (& OptPredMap)]
@@ -17388,6 +17358,7 @@
           (opt_natural_loop_vec.push-ref!
             out
             (opt-natural-loop-build
+              work
               all-blocks
               pred-map
               reachable
@@ -17399,14 +17370,17 @@
 (define (opt-cfg-natural-loops-with-context
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]) : opt_natural_loop_vec.Vec
-  (w3-8949-owner-note "natural-loops" (opt-cfg-index-block-count context.index) opt_natural_loop_vec.Vec
-    (let
+  (let
     [context : OptCfgContext
       (owned_view.compiler-owned-reference-shared-view context)]
     [index : OptCfgIndex context.index]
     [seq : (& blocks (Slice ir.CompilerIrBlock))
       (ir.compiler-ir-block-list-view blocks)]
     [count : i64 (array-length seq)]
+    [work : OptNaturalLoopWork
+      (OptNaturalLoopWork
+        (__tl_make-array i64 (+ count 1))
+        (__tl_make-array i64 (+ count 1)))]
     [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
@@ -17415,6 +17389,7 @@
         (match (array-ref seq pos)
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
+              (&mut work)
               (& blocks)
               (& index)
               (& context.pred-map)
@@ -17426,7 +17401,7 @@
               (array-ref index.succs.offsets (+ pos 1))
               (&mut out))])
         unit))
-    out)))
+    out))
 
 (define (opt-cfg-natural-loops [blocks : (& blocks ir.CompilerIrBlockList)]) : opt_natural_loop_vec.Vec
   (let
@@ -18510,8 +18485,7 @@
 (define (opt-loop-rotation-blocks-once-result
   [pools : ast.AstNodePoolContext]
   [blocks : (& ir.CompilerIrBlockList)]) : OptLoopRotationCtxResult
-  (w3-8949-owner-note "rotation-round" (ir.compiler-ir-block-list-count blocks) OptLoopRotationCtxResult
-    (let
+  (let
     [context : OptCfgContext
       (opt-cfg-context-build
         (owned_view.compiler-owned-reference-shared-view blocks))]
@@ -18525,7 +18499,7 @@
       context
       loops
       (opt_natural_loop_vec.view loops))
-      [(Result next changed) (Result next changed context)]))))
+      [(Result next changed) (Result next changed context)])))
 
 (define (opt-loop-rotation-blocks-fixed-result
   [pools : ast.AstNodePoolContext]

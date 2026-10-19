@@ -529,6 +529,21 @@ desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
 
+Write disjointness uses the merged SPMD class of the receiver, index and
+value: a uniform index cannot authorize a parallel varying write. Array
+element writes and field or tuple-element writes share one destination
+proof, `tc-spmd-foreach-index`, applied to the nearest array element index of
+the place. Places rooted in an inline aggregate binding declared inside the
+gang are private (`tc-spmd-private-place-root`): a varying write there needs
+no proof and marks the owning binding varying, so its projections read back
+as varying lanes. Ordered scan bodies push a `ScanBody` sentinel above their
+index binding in the existing SPMD environment, and a helper called from the
+body receives it too. A uniform-index store of a varying value under that
+sentinel keeps scalar scan semantics; varying indexes still use the index
+proof. A domain index bound above the sentinel, as in a helper's `foreach`,
+ends the scan context. Masked accesses keep their canonical index rule
+regardless of the stored value's class.
+
 Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
@@ -1494,6 +1509,19 @@ in load reuse, transitive call summaries, trap detection and builtin seeds.
 Declarations that disagree on the link classify as unknown. Exported entries
 retain their function bodies' summaries. These private-global masks do not
 describe arbitrary memory writes.
+
+Each natural-loop collection owns one lazily sized traversal workspace for its
+id walks. A walk resets its stack and discovery counts and reads only the
+initialized prefixes. Returned loops own independent membership marks, labels
+and ordered block storage; no returned loop borrows the workspace. Empty,
+acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
+arrays.
+
+Empty work records initially read one immutable zero-length array descriptor;
+each record replaces both handles before its first element write. The work
+record itself is private, never a shallow view of shared mutable storage. The
+builder borrows its CFG index and moves its independent membership marks into
+the result after their last query.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a

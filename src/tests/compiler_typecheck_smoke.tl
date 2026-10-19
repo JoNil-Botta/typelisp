@@ -4878,7 +4878,7 @@
         [(Err _) false])]
     (tc_core.compiler-typecheck-reset-file-state!)
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool

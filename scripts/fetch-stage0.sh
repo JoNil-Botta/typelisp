@@ -176,11 +176,13 @@ immutable_main_release() {
         return 1
     }
     api="https://api.github.com/repos/$REPO"
+    stage0_cr=$(printf '\r')
     page=1
     while :; do
         curl -fsSL "$api/releases?per_page=100&page=$page" -o "$TMP_DIR/page.json" || return 1
         jq -e 'type == "array"' "$TMP_DIR/page.json" >/dev/null || return 1
         count=$(jq length "$TMP_DIR/page.json") || return 1
+        count=${count%"$stage0_cr"}
         jq -r --arg asset "$SINGLE_ASSET" '
         map(select(.draft == false and .prerelease == false and
             (.published_at | type == "string" and length > 0) and
@@ -191,6 +193,8 @@ immutable_main_release() {
         sort_by([.published_at, .tag_name]) | reverse[] | [.tag_name, .target_commitish] | @tsv
         ' "$TMP_DIR/page.json" > "$TMP_DIR/candidates" || return 1
         while read -r candidate_tag candidate_sha; do
+            # Native Windows jq leaves CR on the final TSV field.
+            candidate_sha=${candidate_sha%"$stage0_cr"}
             [ -n "$candidate_tag" ] || continue
             if ! compare_status=$(curl -fsSL -w '%{http_code}' "$api/compare/$candidate_tag...main" -o "$TMP_DIR/compare.json"); then
                 [ "$compare_status" != 404 ] || continue

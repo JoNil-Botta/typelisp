@@ -36,6 +36,22 @@ else
 fi
 MOCK_CURL
 chmod +x "$work/bin/curl"
+real_jq=$(command -v jq)
+cat > "$work/bin/jq" <<'MOCK_JQ'
+#!/usr/bin/env sh
+if [ "$FETCH_CRLF" = 1 ]; then
+    for argument do
+        case "$argument" in
+            length|*@tsv*)
+                "$FETCH_REAL_JQ" "$@" > "$FETCH_FIXTURE/jq-output" || exit "$?"
+                awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' "$FETCH_FIXTURE/jq-output"
+                exit ;;
+        esac
+    done
+fi
+exec "$FETCH_REAL_JQ" "$@"
+MOCK_JQ
+chmod +x "$work/bin/jq"
 cat > "$work/fetch.ps1" <<'MOCK_PS'
 param($Fetcher, $Tag, $Destination)
 function Invoke-WebRequest {
@@ -78,7 +94,9 @@ case "$(uname -s)" in
     *) if command -v pwsh >/dev/null 2>&1; then fetchers='sh ps1'; fi ;;
 esac
 for fetcher in $fetchers; do
-    for scenario in public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum no-sums explicit-tag explicit-no-sums case-variant alias-retry api-failure compare-failure moved-tag empty-asset; do
+    scenarios='public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum no-sums explicit-tag explicit-no-sums case-variant alias-retry api-failure compare-failure moved-tag empty-asset'
+    [ "$fetcher" != sh ] || scenarios="$scenarios crlf-candidates crlf-pagination"
+    for scenario in $scenarios; do
         out="$work/out-$fetcher-$scenario"
         mkdir "$out"
         case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) output=typelisp.exe ;; *) output=typelisp ;; esac
@@ -110,7 +128,7 @@ for fetcher in $fetchers; do
             alias-retry)
                 jq --arg api "$api" 'with_entries(if (.key|contains("/stage0-latest/")) and (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.firstStatus=404 else . end) | .[$api+"/releases?per_page=100&page=1"]={status:503}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
-            pagination)
+            pagination|crlf-pagination)
                 jq --arg api "$api" --argjson page "$page" '. + {($api+"/releases?per_page=100&page=1"):{status:200,body:([range(100)|{draft:true}]|tojson)},($api+"/releases?per_page=100&page=2"):{status:200,body:($page|tojson)}}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
             api-failure|compare-failure|dangling-tag)
@@ -135,16 +153,18 @@ for fetcher in $fetchers; do
         [ "$scenario" != case-variant ] || tag=STAGE0-LATEST
         attempts=1
         [ "$scenario" != alias-retry ] || attempts=2
+        force_crlf=0
+        case "$scenario" in crlf-*) force_crlf=1 ;; esac
         status=0
         if [ "$fetcher" = sh ]; then
-            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" FETCH_REAL_JQ="$real_jq" FETCH_CRLF="$force_crlf" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
                 sh "$ROOT/scripts/fetch-stage0.sh" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         else
             FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
                 pwsh -NoProfile -File "$work/fetch.ps1" "$ROOT/scripts/fetch-stage0.ps1" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         fi
         case "$scenario" in
-            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums|alias-retry)
+            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums|alias-retry|crlf-candidates|crlf-pagination)
                 if [ "$status" -ne 0 ] || ! cmp -s "$work/payload" "$out/$output"; then
                     cat "$work/result.log" >&2
                     echo "stage0 fetch $fetcher/$scenario failed" >&2

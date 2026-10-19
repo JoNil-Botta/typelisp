@@ -14349,9 +14349,9 @@
 ;; The same index syntax is selected twice, with two source origins and fresh
 ;; lexical binder generations. Outside a body check no type facts are recorded,
 ;; so every visit types the index's let initializer anew. The capture counted
-;; below classifies the outer receiver with one query (whether it is a slice
-;; reference) and then captures both occurrences; the exact count keeps that
-;; linear.
+;; below captures both occurrences with no query of its own (a slice element is
+;; a place like an array element, so no receiver is classified first); the
+;; exact count keeps that linear.
 (define (tc-selected-array-place-case? [mode : i64]) : bool
   (let
     [installed : ast.AstNodePoolContext
@@ -14509,7 +14509,7 @@
         ;; literal index (mode 3) never reaches the let.
         (=
           (- (tc_core.tc-let-binding-init-type-call-count-for-test) _before)
-          (cond [(= mode 2) 2] [(= mode 3) 0] [else 3]))
+          (cond [(= mode 2) 1] [(= mode 3) 0] [else 2]))
         true)]
     [rollback : bool
       (or

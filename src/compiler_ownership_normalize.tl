@@ -1494,14 +1494,7 @@
   (reserved-children (__tl_dyn-array i64))
   ;; The entry loan a reservation of a place behind a parameter reborrows, or -1.
   (reserved-parents (__tl_dyn-array i64))
-  ;; Whether the reservation activates a shared reborrow (a read-only receiver)
-  ;; rather than an exclusive one.
-  (reserved-shared (__tl_dyn-array bool))
   (reserved-count i64)
-  ;; Set while the walk reaches a read-only receiver operand (a slice element
-  ;; read): an implicit reborrow of a mutable-reference binder there is shared,
-  ;; as Rust's `Index::index(&*r)` is. `normalize-argument!` clears it.
-  (shared-receiver bool)
   ;; Occurrence-indexed tables, one cell per typed occurrence handle index (0
   ;; when absent): whether the occurrence was loaded, and 1 + the index of its
   ;; retained node. A node is found by its handle; a scan over every earlier
@@ -2580,12 +2573,6 @@
 ;; spawned thread's task (form 136).
 (define (normalize-builtin-moves-operands? [code : i64]) : bool
   (or (= code 129) (= code 135) (= code 136)))
-
-;; A builtin form that only reads through its receiver operand (operand 0): a
-;; slice element read (form 124). A mutable-reference receiver is reborrowed
-;; shared for it.
-(define (normalize-builtin-reads-receiver? [code : i64]) : bool
-  (= code 124))
 
 (define (normalize-value!
   [state : (&mut state NormalizeState)]
@@ -3987,8 +3974,6 @@
   [depth : i64]
   [call? : bool]) : NormalizeValueResult
   (let
-    [shared? : bool state.shared-receiver]
-    [_cleared : unit (set! state.shared-receiver false)]
     [reserve? : bool false]
     [binder : NormalizeBinderLookup
       (if call?
@@ -4019,7 +4004,7 @@
               [(!= (normalize-reference-kind (& state) place) 2)
                 (normalize-walk! state store lease id block depth)]
               [(normalize-direct-referent? (& state) place)
-                (normalize-reborrow! state store lease id place block shared?)]
+                (normalize-reborrow! state store lease id place block)]
               [else
                 (normalize-referent-reborrow!
                   state
@@ -4028,8 +4013,7 @@
                   id
                   found
                   place
-                  block
-                  shared?)]))]))))
+                  block)]))]))))
 
 ;; A reference parameter or a local reference initialized from one borrow:
 ;; its reborrows are children of that known loan.
@@ -4061,8 +4045,7 @@
   [id : typed.TypedOccurrenceId]
   [binder : typed.TypedBinderId]
   [place : i64]
-  [block : i64]
-  [shared? : bool]) : NormalizeValueResult
+  [block : i64]) : NormalizeValueResult
   (try (normalize-charge! state 1 1 0))
   (let
     [node : NormalizeNode (try (normalize-node! state store lease id))]
@@ -4093,8 +4076,7 @@
             (& node)
             (NormalizeValue referent-type referent.place active)
             referent.loan
-            referent.binder
-            shared?))]
+            referent.binder))]
       (try (normalize-retain-node! state node value.place))
       (NormalizeValueResult.Ok value))))
 
@@ -4147,8 +4129,7 @@
       node
       borrowed
       state.formed-loan
-      state.formed-binder
-      false)))
+      state.formed-binder)))
 
 ;; Reserve a two-phase mutable borrow of the formed place `borrowed`, reached
 ;; through `parent` (an entry, local or opaque referent loan, or -1) and the
@@ -4158,8 +4139,7 @@
   [node : (& node NormalizeNode)]
   [borrowed : NormalizeValue]
   [parent : i64]
-  [via : i64]
-  [shared? : bool]) : NormalizeValueResult
+  [via : i64]) : NormalizeValueResult
   (let
     [result : i64
       (try (normalize-local! state node.type false (& node.source)))]
@@ -4172,9 +4152,7 @@
         (< node.type (array-length state.type-references))
         (= (array-ref state.type-references node.type) 2))
       (return (NormalizeValueResult.Err (normalize-type-error))))
-    (unless
-      shared?
-      (try (normalize-exclusive-ok state parent borrowed.place (& node.source))))
+    (try (normalize-exclusive-ok state parent borrowed.place (& node.source)))
     (let
       ;; Behind an opaque referent the reference is read here (its own loans
       ;; are used) and the referent is reserved and activated like an owned
@@ -4220,8 +4198,7 @@
         result
         kept-source
         -1
-        reserve-parent
-        shared?))
+        reserve-parent))
     (NormalizeValueResult.Ok (NormalizeValue node.type result borrowed.block))))
 
 ;; Record a pending activation for the enclosing call.
@@ -4232,8 +4209,7 @@
   [result : i64]
   [source : own.OwnershipSource]
   [child : i64]
-  [parent : i64]
-  [shared? : bool]) : unit
+  [parent : i64]) : unit
   (if (< state.reserved-count (array-length state.reserved-loans))
     (begin
       (set! (array-ref state.reserved-loans state.reserved-count) loan)
@@ -4241,16 +4217,14 @@
       (set! (array-ref state.reserved-results state.reserved-count) result)
       (set! (array-ref state.reserved-sources state.reserved-count) source)
       (set! (array-ref state.reserved-children state.reserved-count) child)
-      (set! (array-ref state.reserved-parents state.reserved-count) parent)
-      (set! (array-ref state.reserved-shared state.reserved-count) shared?))
+      (set! (array-ref state.reserved-parents state.reserved-count) parent))
     (begin
       (normalize-push! state.reserved-loans loan)
       (normalize-push! state.reserved-places place)
       (normalize-push! state.reserved-results result)
       (__tl_array-push! state.reserved-sources source)
       (normalize-push! state.reserved-children child)
-      (normalize-push! state.reserved-parents parent)
-      (__tl_array-push! state.reserved-shared shared?)))
+      (normalize-push! state.reserved-parents parent)))
   (set! state.reserved-count (+ state.reserved-count 1)))
 
 ;; Activation: each reservation is used once more, then its exclusive loan is
@@ -4333,9 +4307,7 @@
               state
               (own.OwnershipLoan
                 (normalize-place-id (& state) place)
-                (if (array-ref state.reserved-shared index)
-                  own.OwnershipLoanKind.Shared
-                  own.OwnershipLoanKind.Exclusive)
+                own.OwnershipLoanKind.Exclusive
                 (normalize-loan-origin
                   (& state)
                   (array-ref state.reserved-parents index))
@@ -4387,8 +4359,7 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedOccurrenceId]
   [place : i64]
-  [block : i64]
-  [shared? : bool]) : NormalizeValueResult
+  [block : i64]) : NormalizeValueResult
   (try (normalize-charge! state 1 1 0))
   (let
     [node : NormalizeNode (try (normalize-node! state store lease id))]
@@ -4397,7 +4368,7 @@
         (try (normalize-block! state (& node.source)))
         block)]
     [value : NormalizeValue
-      (try (normalize-reborrow-emit! state (& node) place active shared?))]
+      (try (normalize-reborrow-emit! state (& node) place active))]
     (try (normalize-retain-node! state node value.place))
     (NormalizeValueResult.Ok value)))
 
@@ -4405,8 +4376,7 @@
   [state : (&mut state NormalizeState)]
   [node : (& node NormalizeNode)]
   [place : i64]
-  [active : i64]
-  [shared? : bool]) : NormalizeValueResult
+  [active : i64]) : NormalizeValueResult
   (let
     [loan : i64 state.loan-count]
     [loan-source : own.OwnershipSource
@@ -4427,9 +4397,7 @@
       state
       (own.OwnershipLoan
         (normalize-place-id (& state) place)
-        (if shared?
-          own.OwnershipLoanKind.Shared
-          own.OwnershipLoanKind.Exclusive)
+        own.OwnershipLoanKind.Exclusive
         (own.OwnershipLoanOrigin.Parent
           (own.OwnershipLoanId (typed.typed-body-copy (& state.body.id)) loan))
         loan-source))
@@ -4466,8 +4434,7 @@
         result
         kept-source
         loan
-        -1
-        shared?))
+        -1))
     (NormalizeValueResult.Ok (NormalizeValue node.type result active))))
 
 ;; A whole binder place evaluates nothing; its value is the binder's own place.
@@ -6414,8 +6381,7 @@
               (& target.node)
               (NormalizeValue target.borrowed.type target.borrowed.place arm)
               target.parent
-              target.via
-              false))]
+              target.via))]
         (try (normalize-activate-reservations! state reserved.block mark))
         (try
           (normalize-transfer!
@@ -6771,15 +6737,6 @@
                 (set! deferred (NormalizeMaybeDeferred.Some receiver))
                 formed)]
             [else
-              (set!
-                state.shared-receiver
-                (and
-                  (= index 0)
-                  (match (& node.operation)
-                    [(NormalizeOperation.Primitive
-                        (typed.TypedPrimitive.Builtin code _))
-                      (normalize-builtin-reads-receiver? code)]
-                    [_ false])))
               (try
                 (normalize-argument-in-context!
                   state
@@ -6902,8 +6859,7 @@
                   receiver.borrowed.place
                   active)
                 receiver.parent
-                receiver.via
-                false))]
+                receiver.via))]
           (try (normalize-retain-node! state receiver.node reserved.place))
           (set! (array-ref operands 0) reserved.place)
           (set! store-end state.loan-count)
@@ -12104,9 +12060,7 @@
           (__tl_make-array own.OwnershipSource 0)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (normalize-no-bools)
           0
-          false
           (__tl_make-array i64 occurrences)
           (__tl_make-array i64 occurrences)
           (__tl_make-array NormalizeNode 0)

@@ -776,6 +776,11 @@ tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_r
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Box i64)` out of a shared reference
 array_shared_element_move_reject|check-fail|tests/safety/array_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
 slice_shared_element_move_reject|check-fail|tests/safety/slice_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_shared_element_bind_move_reject|check-fail|tests/safety/slice_shared_element_bind_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_mut_element_move_reject|check-fail|tests/safety/slice_mut_element_move_reject.tl|-|cannot move a `String` out of a mutable reference
+slice_shared_element_match_move_reject|check-fail|tests/safety/slice_shared_element_match_move_reject.tl|-|cannot move a `MaybeText` out of a shared reference
+mir_view_array_literal_move_out_reject|check-fail|tests/safety/mir_view_array_literal_move_out_reject.tl|-|cannot move a `String` out of a shared reference
+mut_element_reborrow_argument_ok|check-ok|tests/safety/mut_element_reborrow_argument_ok.tl|-|-
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # A pattern matched through a shared reference binds Copy parts by value and a
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
@@ -1751,10 +1756,10 @@ variance_recursive_through_holder_invariant_reject|check-fail|tests/safety/varia
 variance_cfunc_parameter_reject|check-fail|tests/safety/variance_cfunc_parameter_reject.tl|-|contravariant lifetime parameter 1 of `S`
 mir_comptime_syntax_move_reject|check-fail|tests/safety/mir_comptime_syntax_move_reject.tl|tests/safety/mir_comptime_syntax_move_reject.tl:9:20|use of moved value `item`
 mir_comptime_syntax_match_ok|check-ok|tests/safety/mir_comptime_syntax_match_ok.tl|-|-
-mir_referent_match_move_out_reject|check-fail|tests/safety/mir_referent_match_move_out_reject.tl|tests/safety/mir_referent_match_move_out_reject.tl:15:6|cannot move non-Copy value through shared reference
-mir_referent_box_match_move_out_reject|check-fail|tests/safety/mir_referent_box_match_move_out_reject.tl|tests/safety/mir_referent_box_match_move_out_reject.tl:15:6|cannot move non-Copy value through shared reference
+mir_referent_match_move_out_reject|check-fail|tests/safety/mir_referent_match_move_out_reject.tl|tests/safety/mir_referent_match_move_out_reject.tl:15:28|cannot move a `String` out of a shared reference
+mir_referent_box_match_move_out_reject|check-fail|tests/safety/mir_referent_box_match_move_out_reject.tl|tests/safety/mir_referent_box_match_move_out_reject.tl:15:26|cannot move a `String` out of a shared reference
 mir_referent_match_test_ok|run-exit|tests/safety/mir_referent_match_test_ok.tl|42|-
-mir_referent_nested_match_move_out_reject|check-fail|tests/safety/mir_referent_nested_match_move_out_reject.tl|tests/safety/mir_referent_nested_match_move_out_reject.tl:18:10|cannot move non-Copy value through shared reference
+mir_referent_nested_match_move_out_reject|check-fail|tests/safety/mir_referent_nested_match_move_out_reject.tl|tests/safety/mir_referent_nested_match_move_out_reject.tl:18:32|cannot move a `String` out of a shared reference
 mir_box_bridge_duplicate_reject|check-fail|tests/safety/mir_box_bridge_duplicate_reject.tl|-|use of moved value `boxed`
 mir_box_bridge_shared_write_reject|check-fail|tests/safety/mir_box_bridge_shared_write_reject.tl|tests/safety/mir_box_bridge_shared_write_reject.tl:11:12|cannot mutably borrow `state.storage` behind a shared reference
 mir_extern_view_borrow_reject|check-fail|tests/safety/mir_extern_view_borrow_reject.tl|tests/safety/mir_extern_view_borrow_reject.tl:19:23|cannot move borrowed place `text`

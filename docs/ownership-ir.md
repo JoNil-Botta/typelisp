@@ -417,16 +417,34 @@ the write; any other read's loans live until the clone. A compound argument
 of a shared-reference formal is read the same way (the call borrows it), and
 an annotation is transparent to the place it names.
 
-An explicit read through a reference (`deref`, `array-ref`, `tuple-ref`) is
-the referent's own value, of its plain type `T`, while typing tags it
-`(in p T)`. Where `(in p T)` is expected (a result, an annotated binding, an
-`ann`, a parameter), the graph compares beneath the region tags
-(`tc-selected-contextual-result`): the value is that read under `p`, kept as
-its own occurrence and converted to the expected type as a widening is. A
-move-only read there is thus still a move out of the reference (E0208), and a
-Copy one a copy; a region tag on a primitive is dropped as on any Copy value,
-and a signature's region-tagged parameter or result is admitted on the same
-terms (a view, or its Copy value).
+An explicit read through a reference (`deref`, `array-ref` of an array or a
+slice, `tuple-ref`) is the referent's own value, of its plain type `T`, while
+typing tags it `(in p T)`: a slice element is the place `(deref s)[i]`, as an
+array element read through a reference is. Where `(in p T)` is expected (a
+result, an annotated binding, an `ann`, a parameter), the graph compares
+beneath the region tags (`tc-selected-contextual-result`): the value is that
+read under `p`, kept as its own occurrence and converted to the expected type
+as a widening is. A move-only read there is thus still a move out of the
+reference (E0208), and a Copy one a copy; a region tag on a primitive is
+dropped as on any Copy value, and a signature's region-tagged parameter or
+result is admitted on the same terms (a view, or its Copy value).
+
+A move out of borrowed content (E0208, Rust E0507) is decided in one place:
+`normalize-take-place!` rejects a take of a non-Copy place reached through a
+loan, however the place was formed. A view `(in p T)` (a field read through a
+reference, or a binder of one; non-Copy `T`, non-arena `p`) used where its
+owned `T` is expected (an argument or constructor field of type `T`, a result,
+an `if` or `match` joining into `T`, an element of an owned array) is a take
+of its referent (`tc-selected-place-acquire`, `tc-infer-selected-view-take`),
+so the graph rejects it as it rejects any other move out of a reference. A
+`let` whose annotation names the plain `T` binds the view itself when its
+region is visible there, as typing binds it; otherwise the binding needs the
+owned value, a take. Reads that only lend stay reads: `&`, `clone` and other
+builtin read operands, a field projection, an argument of a shared-reference
+formal. A `&mut` element passed where a `&mut` is expected is reborrowed
+(`&mut *p[i]`, Rust's reborrow coercion), not moved. A view the graph cannot
+take (a call's `(in p T)` result) that flows into an owned slot is a region
+escape (E0205), as on main.
 Computed Copy temporaries and unique Copy declaration writes use ordinary
 Assign in the core, allowing repeated execution without inventing a resource
 acquisition. Reads still require initialization on first entry and on every
@@ -1149,9 +1167,10 @@ is deliberate and has a regression twin:
   referent keeps its loans live until return
   (`mut_param_store_then_write_reject`,
   `mut_param_whole_store_then_write_reject`), replacing the normalizer's
-  former fail-closed refusal of such stores. A builtin that only reads its
-  receiver (form 124) reborrows a `&mut` slice as shared, so a disjoint element
-  update after it stays accepted (`slice_rest_element_update_ok`). Or-patterns
+  former fail-closed refusal of such stores. A slice element read through a
+  `&mut` slice is read through the reference's loan, as an array element is,
+  so a store that reads the element it updates stays accepted
+  (`slice_rest_element_update_ok`). Or-patterns
   with bindings are distributed over their alternatives, up to 256 rows,
   before normalization. `try` inside `with-arena` strips the arena tag of its
   propagated value.
@@ -1201,7 +1220,7 @@ implicit `f32` to `f64` widening now expect the rejections.
 | Raw arena authority (#8171): the `Arena` constructor and mutation of its `handle` field need `unsafe` through every route (helper, import alias, value position, macro, replace, borrow, parameter). | `arena_raw_constructor_reject`, `arena_raw_constructor_helper_reject`, `arena_raw_constructor_alias_reject`, `arena_raw_constructor_value_reject`, `arena_raw_constructor_macro_reject`, `arena_raw_field_write_reject`, `arena_raw_field_replace_reject`, `arena_raw_field_borrow_reject`, `arena_raw_field_parameter_reject` |
 | Moves into containers and constructors: a pushed, stored, boxed or constructed value (direct, macro-expanded, or a comptime `Expr`) is moved; a loop cannot store the same owner on every trip. | `mir_array_push_moved_reject`, `mir_array_set_moved_reject`, `mir_array_loop_store_reject`, `mir_box_construct_moved_reject`, `mir_macro_constructor_double_move_reject`, `mir_comptime_syntax_move_reject` |
 | Partial and match moves: a value with a moved field cannot be used whole; matching a field by value moves its payload (twice, or on the next loop trip); a loop flag does not reinitialize a moved cursor; a computed index may name a moved element. | `mir_field_partial_whole_reject`, `mir_match_field_twice_reject`, `match_field_payload_move_in_loop_reject`, `mir_match_loop_moved_reject`, `mir_array_literal_move_computed_read_reject`, `mir_array_literal_move_computed_store_reject` |
-| Moves out from behind references and out of elements (Rust E0507): a non-Copy element or payload reached through a shared reference, a Box view, a nested match or an `if` cannot be moved out; a computed-index element of an owned array cannot move; a by-value match of an element moves it. | `mir_element_move_through_ref_reject`, `mir_element_move_owned_param_reject`, `mir_element_match_reject`, `mir_view_if_move_out_reject`, `mir_referent_match_move_out_reject`, `mir_referent_box_match_move_out_reject`, `mir_referent_nested_match_move_out_reject`, `region_read_argument_move_reject`, `region_read_binding_move_reject`, `region_read_result_move_reject` |
+| Moves out from behind references and out of elements (Rust E0507): a non-Copy element or payload reached through a shared reference, a Box view, a nested match or an `if` cannot be moved out; a computed-index element of an owned array cannot move; a by-value match of an element moves it. A view used as an element of an owned array literal is taken out of its referent too (main accepted it and freed the String twice). | `mir_element_move_through_ref_reject`, `mir_element_move_owned_param_reject`, `mir_element_match_reject`, `mir_view_if_move_out_reject`, `mir_referent_match_move_out_reject`, `mir_referent_box_match_move_out_reject`, `mir_referent_nested_match_move_out_reject`, `region_read_argument_move_reject`, `region_read_binding_move_reject`, `region_read_result_move_reject`, `mir_view_array_literal_move_out_reject` |
 | Writes through shared references and views: an element or field write, a mutable borrow of a view binder, a binding of a match on a shared view, a `&mut program` payload bound through `&`, the `__tl-box-place` bridge and a control-flow store receiver reached through `&` are mutations through it. A field a call returns as `(in x T)` is a view read under `x`, so it is shared: through `&` main wrote the owner's element (exit 99), and through `&mut` main wrote a copy and lost the write. | `mir_array_field_set_through_shared_reject`, `mir_local_ref_field_set_shared_reject`, `mir_view_binder_write_reject`, `mir_view_binder_mut_borrow_reject`, `view_match_binder_shared_reject`, `program_mut_slot_shared_match_reject`, `mir_box_bridge_shared_write_reject`, `mir_store_receiver_through_shared_reject`, `mir_shared_mut_reference_field_set_reject`, `view_shared_field_set_reject`, `view_of_view_shared_reject`, `region_view_field_shared_write_reject`, `region_view_field_call_result_write_reject` |
 | Loan conflicts: an earlier argument's borrow lives until the call; one `&mut` cannot fill two mutable parameters; a view of a matched or projected part keeps its owner borrowed; a control-flow store receiver writes the place it selects (and that place must not be moved by the right-hand side); a mutable borrow of a register-resident local cannot outlive the call; a shared element borrow across a `&mut` reborrow of its slice; stores through call arguments, including into a binding assigned whole more than once, through a reference a call returned and through one an implicit reborrow made; a store through a `&mut` held in a box; a read of the owner while a written match binding still holds its path (Rust E0502). | `borrow_call_arg_nested_write_before_call_reject`, `mir_ref_nested_write_owned_reject`, `mir_ref_alias_mut_param_reject`, `mir_view_scrutinee_conflict_reject`, `mir_view_field_assign_reject`, `mir_store_receiver_shared_borrow_reject`, `mir_store_receiver_mut_borrow_reject`, `mir_store_receiver_moved_reject`, `mir_by_value_borrow_escape_reject`, `slice_element_borrow_with_mut_slice_reject`, `slice_element_borrow_with_mut_param_reject`, `call_store_contract_reject`, `reassigned_ref_call_store_reject`, `reassigned_array_call_store_reject`, `call_store_contract_returned_ref_reject`, `mir_reborrow_call_store_reject`, `mir_reborrow_param_call_store_reject`, `mir_box_holder_nested_store_reject`, `call_store_contract_holder_reject`, `mir_by_value_holder_call_store_then_write_reject`, `view_mut_owner_use_reject`, `view_match_binder_owner_use_reject` |
 | `program` is Rust's `'static`: a borrow of a local cannot stand in for a `program` parameter (E0597; main returned a dangling reference), a `&mut` reborrowed into a `program` region stays borrowed for the rest of the body (E0499; two holders aliased one `&mut`, a use after free through a view), and a reborrow of a holder's `&mut program` field is bounded by its path. | `program_param_borrow_escape_reject`, `program_mut_param_borrow_escape_reject`, `program_mut_reborrow_twice_reject`, `program_mut_holder_alias_reject`, `program_mut_holder_reborrow_escape_reject` |

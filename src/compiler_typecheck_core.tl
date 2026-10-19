@@ -4654,9 +4654,9 @@
               (tc-global-shared-view expected)
               (tc-selected-place-acquire
                 ctx
-                (tc-selected-expects-reference?
-                  ctx
-                  (tc-global-shared-view expected))
+                env
+                false
+                (tc-global-shared-view expected)
                 syntax
                 (tc-global-shared-view source)
                 (tc-selected-place-field
@@ -4678,9 +4678,9 @@
               (tc-global-shared-view expected)
               (tc-selected-place-acquire
                 ctx
-                (tc-selected-expects-reference?
-                  ctx
-                  (tc-global-shared-view expected))
+                env
+                false
+                (tc-global-shared-view expected)
                 syntax
                 (tc-global-shared-view source)
                 (tc-selected-place-field
@@ -4719,19 +4719,6 @@
           source
           sink)
         (cond
-          ;; A slice element is reached through the reference only.
-          [(tc-selected-slice-reference? ctx env receiver)
-            (tc-infer-selected-form
-              ctx
-              env
-              expr
-              (tc-selected-form-code-slice-element)
-              (tc-selected-ids2 receiver index)
-              (tc-selected-ids2 2 3)
-              syntax
-              expected
-              source
-              sink)]
           ;; A literal index into an array literal of views selects that
           ;; element: the others are evaluated and dropped, so only the selected
           ;; element's loans flow into the result (form 154).
@@ -9389,11 +9376,6 @@
                             (let
                               [index : i64 0]
                               [joined? : bool represented?]
-                              ;; An arm yielding a view of a move-only value (a
-                              ;; part bound from a referent) where the match
-                              ;; yields the owned value would move it out from
-                              ;; behind the reference, as a return would.
-                              [move-out : String ""]
                               (while (< index arms.len)
                                 (unless
                                   (or
@@ -9410,61 +9392,33 @@
                                         arm-types
                                         index)
                                       (tc-global-shared-view merged)))
-                                  (set! joined? false)
-                                  (when
-                                    (and
-                                      (= (string.string-length (& move-out)) 0)
-                                      (tc-selected-view-move-out?
-                                        ctx
-                                        env
-                                        (tc-global-shared-view merged)
-                                        (tc-global-array-element-shared-view
-                                          arm-types
-                                          index)))
-                                    (set!
-                                      move-out
-                                      (match (ast.ast-match-arm-list-get
-                                        (& arms)
-                                        index
-                                        (ast.ast-match-arm-fallback))
-                                        [(ast.AstMatchArm.Arm pattern body-id)
-                                          (tc-selected-view-move-out-error
-                                            ctx
-                                            env
-                                            body-id
-                                            (tc-global-shared-view merged)
-                                            0
-                                            (tc-pattern-add-bound-name-ids
-                                              pattern
-                                              TcNameIdList.Nil))]))))
+                                  (set! joined? false))
                                 (set! index (+ index 1)))
-                              (if (> (string.string-length (& move-out)) 0)
-                                (TcSelectedResult.Err move-out after)
-                                (cond
-                                  ;; The arms after a diverging scrutinee never
-                                  ;; run: the match is its scrutinee's evaluation,
-                                  ;; an exit (the arms are still typed).
-                                  [diverged?
-                                    (TcSelectedResult.Ok
-                                      merged
-                                      (TcSelectedOccurrence.Selected
-                                        (typed.TypedOccurrenceId
-                                          (typed.typed-handle-copy
-                                            (& (array-ref children 0).handle))))
-                                      after)]
-                                  [joined?
-                                    (tc-selected-publish-flow
-                                      (ResultTcType.Ok merged)
-                                      syntax
-                                      source
-                                      (typed.TypedOperation.Match (= mode 2))
-                                      children
-                                      after)]
-                                  [else
-                                    (TcSelectedResult.Ok
-                                      merged
-                                      TcSelectedOccurrence.Unrepresented
-                                      after)])))])])]))])])]))
+                              (cond
+                                ;; The arms after a diverging scrutinee never
+                                ;; run: the match is its scrutinee's evaluation,
+                                ;; an exit (the arms are still typed).
+                                [diverged?
+                                  (TcSelectedResult.Ok
+                                    merged
+                                    (TcSelectedOccurrence.Selected
+                                      (typed.TypedOccurrenceId
+                                        (typed.typed-handle-copy
+                                          (& (array-ref children 0).handle))))
+                                    after)]
+                                [joined?
+                                  (tc-selected-publish-flow
+                                    (ResultTcType.Ok merged)
+                                    syntax
+                                    source
+                                    (typed.TypedOperation.Match (= mode 2))
+                                    children
+                                    after)]
+                                [else
+                                  (TcSelectedResult.Ok
+                                    merged
+                                    TcSelectedOccurrence.Unrepresented
+                                    after)]))])])]))])])]))
 
 ;; --- In-arena (#8449) ---------------------------------------------------------
 ;;
@@ -13138,12 +13092,6 @@
 (define (tc-selected-form-code-with-escape) : i64
   128)
 
-;; `(array-ref view i)` of a slice reference: the reference (holding its
-;; loans) and the index; the result is the element (a Copy value, or a view
-;; holding the reference's loans).
-(define (tc-selected-form-code-slice-element) : i64
-  124)
-
 ;; `(set! (array-ref view i) value)` through a mutable slice reference: the
 ;; reference (reborrowed for the store), the index and the stored value.
 (define (tc-selected-form-code-slice-store) : i64
@@ -15053,7 +15001,9 @@
           [(>= (tc-selected-global-index ctx env name) 0)
             (tc-selected-place-acquire
               ctx
+              env
               reference?
+              ast.AstMaybeType.No
               syntax
               (ownership.ownership-source-copy (& source))
               (tc-selected-global-place-of
@@ -15533,6 +15483,98 @@
         (tc-selected-operand-place? ctx (tc-context-expr-get ctx expanded))]
       [_ false])))
 
+;; How a call argument meets a reference formal `want`: 1, a compound one read
+;; as `clone` reads its operand (`tc-infer-selected-read-operand`); 2, a
+;; move-only element read through a temporary (no auto-borrowed place), read
+;; the same way; 3, a `&mut` element where a `&mut` is expected, the implicit
+;; reborrow `&mut *(array-ref r i)` (Rust's reborrow coercion), not a move of
+;; the reference out of its place (a binder argument is reborrowed by the
+;; graph, `normalize-argument!`); 0, inferred as any other argument.
+(define (tc-selected-argument-route
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [want : (& want ast.AstType)]) : i64
+  (match want
+    [(ast.AstType.Ref _ _)
+      (cond
+        [(tc-selected-read-spine-form? ctx (tc-context-expr-get ctx arg-id)) 1]
+        [(and
+            (tc-selected-element-form? ctx (tc-context-expr-get ctx arg-id))
+            (match (tc-expr-id ctx env arg-id)
+              [(ResultTcType.Ok own) (not (tc-type-copyable? ctx own))]
+              [(ResultTcType.Err _) false]))
+          2]
+        [else 0])]
+    [(ast.AstType.MutRef _ _)
+      (if (and
+        (tc-selected-element-form? ctx (tc-context-expr-get ctx arg-id))
+        (match (tc-expr-id ctx env arg-id)
+          [(ResultTcType.Ok ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx ty))
+              [(ast.AstType.MutRef _ _) true]
+              [_ false])]
+          [(ResultTcType.Err _) false]))
+        3
+        0)]
+    [_ 0]))
+
+(define (tc-infer-selected-reborrow-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-place-id
+    ctx
+    env
+    arg-id
+    (tc-global-shared-view source)
+    sink)
+    [(TcSelectedPlaceResult.Err message next)
+      (TcSelectedResult.Err message next)]
+    [(TcSelectedPlaceResult.Ok ty place next)
+      (let
+        [referent : ast.AstType
+          (tc-selected-referent
+            ctx
+            (tc-type-strip-region
+              (tc-resolve-type ctx (tc-global-shared-view ty))))]
+        (match (tc-selected-place-project
+          (tc-global-shared-view referent)
+          referent
+          place
+          typed.TypedProjectionKind.Deref
+          (tc-global-shared-view source)
+          next)
+          [(TcSelectedPlaceResult.Err message after)
+            (TcSelectedResult.Err message after)]
+          [(TcSelectedPlaceResult.Ok _ derefed after)
+            (match derefed
+              [(TcSelectedPlace.Selected id indices)
+                (tc-selected-publish-borrow
+                  ty
+                  true
+                  id
+                  indices
+                  (typed.TypedSyntax.Source arg-id)
+                  source
+                  after)]
+              [(TcSelectedPlace.Unrepresented)
+                (tc-selected-unrepresented (ResultTcType.Ok ty) after)])]))]))
+
+;; An array or slice element read, through any expansion wrapper.
+(define (tc-selected-element-form? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan expr)
+    [(ast.AstExpr.ArrayRef _ _) true]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-element-form? ctx (tc-context-expr-get ctx expanded))]
+    [_ false]))
+
 (define (tc-infer-selected-operand
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15626,7 +15668,9 @@
                             [_ false]))
                           (tc-selected-place-acquire
                             ctx
+                            env
                             true
+                            ast.AstMaybeType.No
                             (typed.TypedSyntax.Source arg-id)
                             source
                             (TcSelectedPlaceResult.Ok
@@ -17213,34 +17257,65 @@
                                 (ResultTcType.Ok got)
                                 sink))])
                         ;; A shared-reference formal borrows its argument for
-                        ;; the call, so a compound one is read as `clone`
-                        ;; reads its operand (`tc-infer-selected-read`).
+                        ;; the call, so a compound one, or an element read
+                        ;; through a temporary (no auto-borrowed place), is
+                        ;; read as `clone` reads its operand
+                        ;; (`tc-infer-selected-read`).
                         (let
                           [arg-source : ownership.OwnershipSource
                             (tc-global-shared-view source)]
-                          (if (and
-                            represented?
-                            (match (& want)
-                              [(ast.AstType.Ref _ _) true]
-                              [_ false])
-                            (tc-selected-read-spine-form?
-                              ctx
-                              (tc-context-expr-get ctx arg-id)))
-                            (tc-infer-selected-read-operand
-                              ctx
-                              env
-                              arg-id
-                              arg-source
-                              sink)
-                            (tc-infer-selected-sequence-child
-                              ctx
-                              env
-                              arg-id
-                              (ast.AstMaybeType.Some
-                                (tc-global-shared-view want))
-                              arg-source
-                              represented?
-                              sink)))))])]))
+                          [route : i64
+                            (if represented?
+                              (tc-selected-argument-route
+                                ctx
+                                env
+                                arg-id
+                                (& want))
+                              0)]
+                          (cond
+                            [(= route 1)
+                              (tc-infer-selected-read-operand
+                                ctx
+                                env
+                                arg-id
+                                arg-source
+                                sink)]
+                            ;; A move-only element keeps its own type, as a
+                            ;; read spine's result does.
+                            [(= route 2)
+                              (match (tc-infer-selected-read-operand
+                                ctx
+                                env
+                                arg-id
+                                arg-source
+                                sink)
+                                [(TcSelectedResult.Ok ty occurrence next)
+                                  (TcSelectedResult.Ok
+                                    (match (tc-expr-id ctx env arg-id)
+                                      [(ResultTcType.Ok own)
+                                        (tc-selected-strip-regions own)]
+                                      [(ResultTcType.Err _) ty])
+                                    occurrence
+                                    next)]
+                                [(TcSelectedResult.Err message next)
+                                  (TcSelectedResult.Err message next)])]
+                            [(= route 3)
+                              (tc-infer-selected-reborrow-arg
+                                ctx
+                                env
+                                arg-id
+                                arg-source
+                                sink)]
+                            [else
+                              (tc-infer-selected-sequence-child
+                                ctx
+                                env
+                                arg-id
+                                (ast.AstMaybeType.Some
+                                  (tc-global-shared-view want))
+                                arg-source
+                                represented?
+                                sink)]))))])]))
             [(TcSelectedResult.Err message next)
               (TcSelectedArgsResult.Err message next)]
             [(TcSelectedResult.Ok got child next)
@@ -17279,24 +17354,9 @@
                     (not
                       (tc-type-contains-reference? (tc-global-shared-view got))))
                     (TcSelectedArgsResult.Err
-                      (let
-                        [moved : String
-                          (tc-move-out-of-reference-error
-                            ctx
-                            (tc-context-expr-bases ctx)
-                            env
-                            (tc-global-shared-view effective-arg)
-                            (tc-global-shared-view got)
-                            (match (& constructor)
-                              [(ast.AstMaybeType.Some _)
-                                "construct with an owned clone of it, or make the field a reference"]
-                              [(ast.AstMaybeType.No)
-                                "pass an owned clone, or make the parameter a reference and pass `(& ...)`"]))]
-                        (if (> (string.string-length moved) 0)
-                          moved
-                          (tc-region-call-arg-error
-                            (tc-context-expr-bases ctx)
-                            (tc-global-shared-view effective-arg))))
+                      (tc-region-call-arg-error
+                        (tc-context-expr-bases ctx)
+                        (tc-global-shared-view effective-arg))
                       next)
                     (let
                       [stored : ResultTcUnit
@@ -17954,6 +18014,59 @@
         [(ast.AstMaybeType.Some want)
           (tc-expr-with-expected-or-actual-id ctx env id want)])]))
 
+;; The referent of the view binder a name read `syntax` reads (of view type
+;; `actual`), taken.
+(define (tc-infer-selected-view-take
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [actual : ast.AstType]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match syntax
+    [(typed.TypedSyntax.Generated)
+      (tc-selected-unrepresented
+        (ResultTcType.Ok (tc-selected-strip-regions actual))
+        sink)]
+    [(typed.TypedSyntax.Source read)
+      (let
+        [owned : ast.AstType (tc-selected-strip-regions actual)]
+        (match (tc-infer-selected-place-id
+          ctx
+          env
+          read
+          (tc-global-shared-view source)
+          sink)
+          [(TcSelectedPlaceResult.Err message next)
+            (TcSelectedResult.Err message next)]
+          [(TcSelectedPlaceResult.Ok _ place next)
+            (match (tc-selected-place-project
+              (tc-global-shared-view owned)
+              (tc-global-shared-view owned)
+              place
+              typed.TypedProjectionKind.Deref
+              (tc-global-shared-view source)
+              next)
+              [(TcSelectedPlaceResult.Err message after)
+                (TcSelectedResult.Err message after)]
+              [(TcSelectedPlaceResult.Ok _ derefed after)
+                (match derefed
+                  [(TcSelectedPlace.Selected id indices)
+                    (tc-selected-place-read
+                      ctx
+                      owned
+                      id
+                      indices
+                      syntax
+                      source
+                      after)]
+                  [(TcSelectedPlace.Unrepresented)
+                    (tc-selected-unrepresented (ResultTcType.Ok owned) after)])])]))]))
+
 (define (tc-infer-selected-var
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -17991,6 +18104,25 @@
               [(TcBindingOrigin.Unrepresented) true]
               [_ false])
             (not (tc-name-local-bound-before-module-scan-id? env name)))]
+        ;; A view binder (a part bound by a match on a view, or a binding of
+        ;; one) used as the owned value it views takes its referent, as a view
+        ;; place does (`tc-selected-place-acquire`).
+        (when
+          (and
+            (match (& actual)
+              [(ast.AstType.Region _ _) true]
+              [_ false])
+            (not global?)
+            (match (tc-global-shared-view expected)
+              [(ast.AstMaybeType.Some want)
+                (tc-selected-view-move-out?
+                  ctx
+                  env
+                  want
+                  (tc-global-shared-view actual))]
+              [(ast.AstMaybeType.No) false]))
+          (return
+            (tc-infer-selected-view-take ctx env actual syntax source sink)))
         (match (match expected
           [(ast.AstMaybeType.No)
             (ResultTcType.Ok (tc-global-shared-view actual))]
@@ -18112,7 +18244,9 @@
                                 (>= (tc-selected-global-index ctx env name) 0))
                               (tc-selected-place-acquire
                                 ctx
+                                env
                                 reference?
+                                ast.AstMaybeType.No
                                 syntax
                                 (ownership.ownership-source-copy (& source))
                                 (tc-selected-global-place-of
@@ -19965,9 +20099,9 @@
             (tc-global-shared-view expected)
             (tc-selected-place-acquire
               ctx
-              (tc-selected-expects-reference?
-                ctx
-                (tc-global-shared-view expected))
+              env
+              false
+              (tc-global-shared-view expected)
               syntax
               (tc-global-shared-view source)
               (tc-selected-place-box
@@ -20008,6 +20142,29 @@
             expected
             source
             sink)]
+        ;; The referent of a computed reference is the place `*{e}` through a
+        ;; temporary holding the reference (`tc-selected-place-temporary`),
+        ;; read as the referent's own value: a move-only one taken there is a
+        ;; move out of the reference, which the graph rejects.
+        [(match (tc-expr-id ctx env receiver)
+            [(ResultTcType.Ok receiver-ty)
+              (tc-selected-deref-referent-ok? ctx receiver-ty)]
+            [(ResultTcType.Err _) false])
+          (tc-selected-contextual-result
+            ctx
+            env
+            (tc-global-shared-view expected)
+            (tc-selected-place-acquire
+              ctx
+              env
+              false
+              expected
+              syntax
+              (tc-global-shared-view source)
+              (tc-selected-place-box
+                ctx
+                (tc-global-shared-view source)
+                (tc-selected-place-temporary ctx env receiver source sink))))]
         [else
           (tc-selected-unrepresented
             (tc-infer-selected-legacy ctx env expr syntax expected)
@@ -20044,9 +20201,13 @@
 
 (define (tc-selected-place-acquire
   [ctx : TcContext]
+  [env : TcTypeEnv]
   ;; The place's value flows where a reference is expected (an argument for a
-  ;; reference parameter, a builtin's read operand).
-  [reference? : bool]
+  ;; reference parameter, a builtin's read operand), whether or not `expected`
+  ;; states it.
+  [lent? : bool]
+  ;; The type the value is used as, when the use states one.
+  [expected : ast.AstMaybeType]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [result : (TcSelectedPlaceResult store lease intern bind)]) : (TcSelectedResult
@@ -20054,76 +20215,101 @@
     lease
     intern
     bind)
-  (match result
-    [(TcSelectedPlaceResult.Err message sink)
-      (TcSelectedResult.Err message sink)]
-    [(TcSelectedPlaceResult.Ok type place sink)
-      (if (not (ownership.ownership-source-valid? (& source)))
-        (tc-selected-unrepresented (ResultTcType.Ok type) sink)
-        (match place
-          [(TcSelectedPlace.Unrepresented)
-            (tc-selected-unrepresented (ResultTcType.Ok type) sink)]
-          ;; A move-only aggregate read through a reference is a region-tagged
-          ;; view of the place, checked as a shared reborrow while the view is
-          ;; used; a Copy one is copied out.
-          [(TcSelectedPlace.Selected id indices)
-            (if (and
-              (match (& type)
-                [(ast.AstType.Region _ _) true]
-                [_ false])
-              (not (tc-type-copyable? ctx (tc-global-shared-view type))))
-              (match sink
-                [(TcSelectedSink.Capture store lease bindings)
-                  (match (tc-selected-arena-view-region
-                    ctx
-                    (typed.typed-arena-regions-copy (& store))
-                    (tc-global-shared-view type))
-                    ;; An arena region tag marks where the value is allocated,
-                    ;; not a borrow, and the graph erases it: such a place is
-                    ;; owned storage, borrowed where a reference is expected
-                    ;; (the expression keeps its value type) and otherwise
-                    ;; read as a value.
-                    [(TcSelectedMaybeRegion.Some region)
-                      (if reference?
-                        (match (tc-selected-publish-borrow
-                          (ast.ast-ty-ref region (& type))
-                          false
-                          id
-                          indices
-                          syntax
-                          source
-                          (TcSelectedSink.Capture store lease bindings))
-                          [(TcSelectedResult.Ok _ occurrence next)
-                            (TcSelectedResult.Ok type occurrence next)]
-                          [(TcSelectedResult.Err message next)
-                            (TcSelectedResult.Err message next)])
-                        (tc-selected-place-read
-                          ctx
-                          type
-                          id
-                          indices
-                          syntax
-                          source
-                          (TcSelectedSink.Capture store lease bindings)))]
-                    [(TcSelectedMaybeRegion.No)
-                      (tc-selected-publish-borrow
-                        type
-                        false
-                        id
-                        indices
-                        syntax
-                        source
-                        (TcSelectedSink.Capture store lease bindings))])]
-                [(TcSelectedSink.Query)
-                  (tc-selected-publish-borrow
-                    type
-                    false
-                    id
-                    indices
-                    syntax
-                    source
-                    TcSelectedSink.Query)])
-              (tc-selected-place-read ctx type id indices syntax source sink))]))]))
+  (let
+    [reference? : bool
+      (or
+        lent?
+        (tc-selected-expects-reference? ctx (tc-global-shared-view expected)))]
+    (match result
+      [(TcSelectedPlaceResult.Err message sink)
+        (TcSelectedResult.Err message sink)]
+      [(TcSelectedPlaceResult.Ok type place sink)
+        (if (not (ownership.ownership-source-valid? (& source)))
+          (tc-selected-unrepresented (ResultTcType.Ok type) sink)
+          (match place
+            [(TcSelectedPlace.Unrepresented)
+              (tc-selected-unrepresented (ResultTcType.Ok type) sink)]
+            ;; A move-only aggregate read through a reference is a region-tagged
+            ;; view of the place, checked as a shared reborrow while the view is
+            ;; used; a Copy one is copied out.
+            [(TcSelectedPlace.Selected id indices)
+              (if (and
+                (match (& type)
+                  [(ast.AstType.Region _ _) true]
+                  [_ false])
+                (not (tc-type-copyable? ctx (tc-global-shared-view type))))
+                (match sink
+                  [(TcSelectedSink.Capture store lease bindings)
+                    (match (tc-selected-arena-view-region
+                      ctx
+                      (typed.typed-arena-regions-copy (& store))
+                      (tc-global-shared-view type))
+                      ;; An arena region tag marks where the value is allocated,
+                      ;; not a borrow, and the graph erases it: such a place is
+                      ;; owned storage, borrowed where a reference is expected
+                      ;; (the expression keeps its value type) and otherwise
+                      ;; read as a value.
+                      [(TcSelectedMaybeRegion.Some region)
+                        (if reference?
+                          (match (tc-selected-publish-borrow
+                            (ast.ast-ty-ref region (& type))
+                            false
+                            id
+                            indices
+                            syntax
+                            source
+                            (TcSelectedSink.Capture store lease bindings))
+                            [(TcSelectedResult.Ok _ occurrence next)
+                              (TcSelectedResult.Ok type occurrence next)]
+                            [(TcSelectedResult.Err message next)
+                              (TcSelectedResult.Err message next)])
+                          (tc-selected-place-read
+                            ctx
+                            type
+                            id
+                            indices
+                            syntax
+                            source
+                            (TcSelectedSink.Capture store lease bindings)))]
+                      ;; A view used as the owned value it views (an argument
+                      ;; or field of its plain type, a result) takes that
+                      ;; value: the graph rejects the move out of the
+                      ;; reference it is read through (E0208, Rust E0507).
+                      [(TcSelectedMaybeRegion.No)
+                        (if (match expected
+                          [(ast.AstMaybeType.Some want)
+                            (tc-selected-view-move-out?
+                              ctx
+                              env
+                              want
+                              (tc-global-shared-view type))]
+                          [(ast.AstMaybeType.No) false])
+                          (tc-selected-place-read
+                            ctx
+                            (tc-selected-strip-regions type)
+                            id
+                            indices
+                            syntax
+                            source
+                            (TcSelectedSink.Capture store lease bindings))
+                          (tc-selected-publish-borrow
+                            type
+                            false
+                            id
+                            indices
+                            syntax
+                            source
+                            (TcSelectedSink.Capture store lease bindings)))])]
+                  [(TcSelectedSink.Query)
+                    (tc-selected-publish-borrow
+                      type
+                      false
+                      id
+                      indices
+                      syntax
+                      source
+                      TcSelectedSink.Query)])
+                (tc-selected-place-read ctx type id indices syntax source sink))]))])))
 
 ;; A place read as its value: a Copy place copied, any other moved.
 (define (tc-selected-place-read
@@ -20565,7 +20751,14 @@
           receiver
           (tc-global-shared-view source)
           sink))]
-    (tc-selected-place-acquire ctx false syntax source place)))
+    (tc-selected-place-acquire
+      ctx
+      env
+      false
+      ast.AstMaybeType.No
+      syntax
+      source
+      place)))
 
 ;; An integer literal index, through `ann` and `cast` as legacy reads it, or -1.
 (define (tc-selected-literal-index [ctx : TcContext] [index : ast.AstExpr]) : i64
@@ -20688,8 +20881,18 @@
               (match receiver
                 [(TcArrayReceiver container-type element)
                   (let
+                    ;; A slice's element read through the reference is the
+                    ;; referent's own value of its plain type, as an array's
+                    ;; is (`tc-array-readable-receiver` names the referent
+                    ;; array as the container, but the slice's reference).
                     [type : ast.AstType
-                      (tc-project-from-region-container container-type element)]
+                      (if (tc-selected-slice-container?
+                        ctx
+                        (tc-global-shared-view container))
+                        element
+                        (tc-project-from-region-container
+                          container-type
+                          element))]
                     (if owned
                       (tc-selected-array-project
                         type
@@ -20699,7 +20902,7 @@
                         source
                         sink)
                       ;; Through a reference, the element is projected from
-                      ;; the referent array.
+                      ;; the referent array or slice: the place `(deref r)[i]`.
                       (match (tc-selected-array-referent
                         ctx
                         (tc-global-shared-view container))
@@ -20726,6 +20929,17 @@
                             type
                             TcSelectedPlace.Unrepresented
                             sink)])))])])))]))
+
+;; Whether `container` is a reference to a slice.
+(define (tc-selected-slice-container?
+  [ctx : TcContext]
+  [container : ast.AstType]) : bool
+  (match (tc-selected-array-referent ctx container)
+    [(ast.AstMaybeType.Some referent)
+      (match (tc-type-strip-region referent)
+        [(ast.AstType.Slice _) true]
+        [_ false])]
+    [(ast.AstMaybeType.No) false]))
 
 ;; The array a reference receiver refers to, if any.
 (define (tc-selected-array-referent [ctx : TcContext] [container : ast.AstType]) : ast.AstMaybeType
@@ -20835,7 +21049,14 @@
         index
         (tc-global-shared-view source)
         sink)]
-    (tc-selected-place-acquire ctx false syntax source place)))
+    (tc-selected-place-acquire
+      ctx
+      env
+      false
+      ast.AstMaybeType.No
+      syntax
+      source
+      place)))
 
 ;; Core Slice subview calls are recognized as a small call-local operation,
 ;; rather than an additional AST node.  Keeping the classifier in one place
@@ -26283,217 +26504,6 @@
             (No))]
         [_ (No)])]
     [_ (No)]))
-
-;; How a by-value expression reads its value: 1 through a shared reference, 2
-;; through a mutable reference, 0 otherwise. Such a read is a `deref` of a
-;; reference value, or a field, tuple or element projection whose receiver
-;; is one or is itself reference-typed, which a projection dereferences
-;; implicitly. A dotted local field name reads its expansion (#8554).
-;; With `array-only`, only an element read from a fixed array or Slice reached
-;; through a reference counts, wherever it sits on the projection spine; a
-;; reference root seen only through fields, tuples or `deref` returns 0.
-(define (tc-reference-read-kind
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [expr : (& expr ast.AstExpr)]
-  [array-only : bool]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
-    [(BoxTake inner-box)
-      (tc-reference-receiver-kind ctx expr-bases env inner-box array-only)]
-    [(ArrayRef receiver-box _)
-      (let
-        [kind : i64
-          (tc-reference-receiver-kind ctx expr-bases env receiver-box false)]
-        (if (or (not array-only) (= kind 0))
-          kind
-          (match (tc-body-type-fact-expr-id
-            "move.array_element_reference"
-            ctx
-            env
-            receiver-box)
-            [(Ok receiver-ty)
-              (match (tc-array-readable-receiver ctx receiver-ty)
-                [(Ok (TcArrayReceiver container-ty _))
-                  (match (tc-type-strip-region
-                    (tc-resolve-type ctx container-ty))
-                    [(Array _ _) kind]
-                    ;; tc-array-readable-receiver keeps a referenced Slice's
-                    ;; reference as its container.
-                    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
-                      (match (tc-type-strip-region
-                        (tc-resolve-type
-                          ctx
-                          (tc-context-type-get ctx referent-ty)))
-                        [(Slice _) kind]
-                        [_ 0])]
-                    [_
-                      (tc-reference-read-kind
-                        ctx
-                        expr-bases
-                        env
-                        (&
-                          (ast.ast-expr-segment-bases-get
-                            expr-bases
-                            receiver-box))
-                        true)])]
-                [(Err _) kind])]
-            [(Err _) kind])))]
-    [(or (StructGet receiver-box _) (TupleRef receiver-box _))
-      (tc-reference-receiver-kind ctx expr-bases env receiver-box array-only)]
-    [(Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env name)
-          [(Ok virtual-id)
-            (tc-reference-read-kind
-              ctx
-              expr-bases
-              env
-              (& (ast.ast-expr-segment-bases-get expr-bases virtual-id))
-              array-only)]
-          [(Err _) 0])
-        0)]
-    [_ 0]))
-
-(define (tc-reference-receiver-kind
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [receiver-id : i64]
-  [array-only : bool]) : i64
-  (let
-    [receiver : ast.AstExpr
-      (ast.ast-expr-segment-bases-get expr-bases receiver-id)]
-    [named : i64
-      (if array-only
-        0
-        (tc-reference-value-kind ctx expr-bases env receiver-id))]
-    (if (> named 0)
-      named
-      (tc-reference-read-kind ctx expr-bases env (& receiver) array-only))))
-
-;; 1 for a shared reference value, 2 for a mutable one, else 0. A receiver may
-;; itself be a call or projection; its spelling does not confer ownership.
-(define (tc-reference-value-kind
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [expr-id : i64]) : i64
-  (let
-    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
-    (match (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
-      [(Var name) (tc-lookup-id env name)]
-      [_ (tc-body-type-fact-expr-id "move.reference_receiver" ctx env expr-id)])
-      [(Ok ty)
-        (match (tc-type-strip-region (tc-resolve-type ctx ty))
-          [(Ref _ _) 1]
-          [(MutRef _ _) 2]
-          [_ 0])]
-      [(Err _) 0])))
-
-;; A by-value use of a non-Copy value read through a reference would move it
-;; out of the reference. Escape checks report it for region-tagged reads, and
-;; the move check reports it for fixed-array and Slice element reads whatever
-;; their lifetime; both share this diagnostic (#8554, #8695).
-;; Returns "" when `expr` reads no non-Copy
-;; value through a reference; `help` names the fix for the use's position.
-(define (tc-move-out-of-reference-error
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
-  [ty : ast.AstType]
-  [help : String]) : String
-  (let
-    [kind : i64 (tc-reference-read-kind ctx expr-bases env (& expr) false)]
-    (if (or
-      (= kind 0)
-      (tc-type-copyable?
-        ctx
-        (tc-type-without-regions (tc-global-shared-view ty))))
-      ""
-      (tc-move-out-of-reference-message expr-bases expr ty kind help))))
-
-;; The E0208 for a by-value use of non-Copy `ty` read through a reference:
-;; `kind` 1 for a shared reference, 2 for a mutable one.
-(define (tc-move-out-of-reference-message
-  [expr-bases : i64]
-  [expr : ast.AstExpr]
-  [ty : ast.AstType]
-  [kind : i64]
-  [help : String]) : String
-  (let
-    [type-text : String (tc-type-render (tc-type-without-regions ty))]
-    [message : String
-      (str_cat.str-cat
-        (cdiag.compiler-diagnostic-typecheck-tag (MoveViolation))
-        "typecheck: cannot move a `"
-        (string.copy (& type-text))
-        "` out of a "
-        (if (= kind 2)
-          "mutable"
-          "shared")
-        " reference; `"
-        type-text
-        "` is not Copy")]
-    (match (tc-expr-maybe-span expr-bases expr)
-      [(Some span)
-        (tc-rich-error-one-secondary
-          span
-          message
-          help
-          span
-          "this reads the value through a reference")]
-      [(No) message])))
-
-;; The binding check of a `let` initializer, reporting a non-Copy value read
-;; through a reference as the move it would be (#8554).
-(define (tc-ensure-let-value-can-bind
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [init : ast.AstExpr]
-  [init-ty : ast.AstType]) : ResultTcUnit
-  (match (tc-ensure-reference-value-can-bind
-    env
-    (tc-global-shared-view init-ty))
-    [(Ok) Ok]
-    [(Err message)
-      (let
-        [moved : String
-          (tc-move-out-of-reference-error
-            ctx
-            (tc-context-expr-bases ctx)
-            env
-            init
-            init-ty
-            "bind a borrow `(& ...)` of it instead, or an owned clone")]
-        (Err
-          (if (> (string.string-length moved) 0)
-            moved
-            message)))]))
-
-;; The expression a body's value comes from: a `let` body's or `begin`'s last
-;; form, through any nesting.
-(define (tc-body-tail-expr [expr-bases : i64] [expr : ast.AstExpr]) : ast.AstExpr
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
-    [(Let let-box)
-      (match (ast.ast-let-box-shared-view let-box)
-        [(Let _ body-id)
-          (tc-body-tail-expr
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases body-id))])]
-    [(Begin items)
-      (if (> (ast.ast-expr-list-len (& items)) 0)
-        (tc-body-tail-expr
-          expr-bases
-          (ast.ast-expr-segment-bases-get
-            expr-bases
-            (ast.ast-expr-list-get
-              (& items)
-              (- (ast.ast-expr-list-len (& items)) 1)
-              0)))
-        expr)]
-    [_ expr]))
 
 ;; A direct array read through a reference rvalue can produce a region-tagged
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
@@ -52543,21 +52553,6 @@
         (tc-selected-aligned-type? ctx branch ty))]
     [(ResultTcType.Err _) true]))
 
-;; A branch view that the join would move out of its reference.
-(define (tc-selected-branch-move-out?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [branch : ast.AstType]
-  [joined : (& joined ResultTcType)]) : bool
-  (match joined
-    [(ResultTcType.Ok ty)
-      (tc-selected-view-move-out?
-        ctx
-        env
-        (owned_view.compiler-owned-reference-shared-view ty)
-        branch)]
-    [(ResultTcType.Err _) false]))
-
 ;; The type a branch of an `if` is checked against. Without a context type, a
 ;; numeric literal branch takes the other branch's type, as
 ;; `tc-merge-if-branch-types` retypes it (#8590): `(if c -1 n)` with `n : i64`
@@ -52702,38 +52697,6 @@
                           ctx
                           (tc-global-shared-view else-ty)
                           (tc-global-shared-view joined)))]
-                    (when
-                      (tc-selected-branch-move-out?
-                        ctx
-                        env
-                        (tc-global-shared-view then-ty)
-                        (& joined))
-                      (return
-                        (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error
-                            ctx
-                            env
-                            then-branch-id
-                            (tc-global-shared-view then-ty)
-                            0
-                            TcNameIdList.Nil)
-                          done)))
-                    (when
-                      (tc-selected-branch-move-out?
-                        ctx
-                        env
-                        (tc-global-shared-view else-ty)
-                        (& joined))
-                      (return
-                        (TcSelectedResult.Err
-                          (tc-selected-view-move-out-error
-                            ctx
-                            env
-                            else-branch-id
-                            (tc-global-shared-view else-ty)
-                            0
-                            TcNameIdList.Nil)
-                          done)))
                     (tc-selected-publish-if
                       joined
                       syntax
@@ -59689,24 +59652,9 @@
                         (tc-type-contains-reference?
                           (tc-global-shared-view got))))
                       (Err
-                        (let
-                          [moved : String
-                            (tc-move-out-of-reference-error
-                              ctx
-                              (tc-context-expr-bases ctx)
-                              env
-                              (tc-global-shared-view effective-arg)
-                              (tc-global-shared-view got)
-                              (match (& constructor-target)
-                                [(Some _)
-                                  "construct with an owned clone of it, or make the field a reference"]
-                                [(No)
-                                  "pass an owned clone, or make the parameter a reference and pass `(& ...)`"]))]
-                          (if (> (string.string-length moved) 0)
-                            moved
-                            (tc-region-call-arg-error
-                              (tc-context-expr-bases ctx)
-                              effective-arg))))
+                        (tc-region-call-arg-error
+                          (tc-context-expr-bases ctx)
+                          effective-arg))
                       (match (tc-global-shared-view constructor-target)
                         [(Some target)
                           (let
@@ -62611,10 +62559,8 @@
             (let
               [_
                 (try
-                  (tc-ensure-let-value-can-bind
-                    ctx
+                  (tc-ensure-reference-value-can-bind
                     env
-                    (tc-global-shared-view init)
                     (tc-global-shared-view init-ty)))]
               (tc-let-bindings-at
                 ctx
@@ -63694,6 +63640,105 @@
           consuming?
           (TcSelectedSink.Capture store lease selected)))]))
 
+;; Whether `expr` reads a field: a field projection of a name or of another
+;; field read, or a dotted name.
+(define (tc-selected-field-read-form? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan expr)
+    [(ast.AstExpr.Var name) (tc-selected-dotted-name? ctx name)]
+    [(ast.AstExpr.StructGet receiver _)
+      (let
+        [inner : ast.AstExpr (tc-context-expr-get ctx receiver)]
+        (match (ast.ast-expr-unspan inner)
+          [(ast.AstExpr.Var _) true]
+          [_ (tc-selected-field-read-form? ctx inner)]))]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-field-read-form? ctx (tc-context-expr-get ctx expanded))]
+    [_ false]))
+
+(define (tc-selected-dotted-name? [ctx : TcContext] [name : i64]) : bool
+  (>= (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name) 0))
+
+;; The type of a `let` initializer that may be a view: a field read, or under
+;; an annotation a view can meet (not a primitive or a reference) a name, whose
+;; binding type is read, not inferred.
+(define (tc-selected-let-init-view-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init-id : i64]
+  [maybe-want : ast.AstMaybeType]) : ResultTcType
+  (let
+    [init : ast.AstExpr (tc-context-expr-get ctx init-id)]
+    (match (ast.ast-expr-unspan init)
+      [(ast.AstExpr.StructGet _ _)
+        (if (tc-selected-field-read-form? ctx (tc-context-expr-get ctx init-id))
+          (tc-expr-id ctx env init-id)
+          (ResultTcType.Err ""))]
+      [(ast.AstExpr.Var name)
+        (if (tc-selected-dotted-name? ctx name)
+          (tc-expr-id ctx env init-id)
+          (match maybe-want
+            [(ast.AstMaybeType.Some want)
+              (if (let
+                [resolved : ast.AstType (tc-resolve-type ctx want)]
+                (or
+                  (tc-selected-primitive-type? (& resolved))
+                  (match (& resolved)
+                    [(ast.AstType.Ref _ _) true]
+                    [(ast.AstType.MutRef _ _) true]
+                    [(ast.AstType.Region _ _) true]
+                    [_ false])))
+                (ResultTcType.Err "")
+                (match (tc-var-binding-after-local-field-check-mode
+                  ctx
+                  env
+                  name
+                  (tc-hygiene-name-text-id-for-session
+                    (tc-context-structural-session ctx)
+                    name)
+                  false)
+                  [(ResultTcBinding.Ok actual _ _) (ResultTcType.Ok actual)]
+                  [_ (ResultTcType.Err "")]))]
+            [(ast.AstMaybeType.No) (ResultTcType.Err "")]))]
+      [_ (ResultTcType.Err "")])))
+
+;; What a `let` initializer is inferred against, under the annotation
+;; `maybe-want` if any. A view `(in p T)` (of an annotated `T`) stays a view when
+;; its regions are visible here, since the binding then takes the
+;; initializer's region (`tc-let-binding-apply`): it is not a use of the owned
+;; value. Otherwise the binding needs the owned value, which the view takes
+;; from its referent (`tc-selected-place-acquire`, `tc-infer-selected-var`).
+;; Only a field read or a name can be such a view; an unannotated name never
+;; holds one whose regions are not visible (its own binding needed them).
+(define (tc-selected-let-init-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init-id : i64]
+  [maybe-want : ast.AstMaybeType]) : ast.AstMaybeType
+  (match (tc-selected-let-init-view-type
+    ctx
+    env
+    init-id
+    (tc-global-shared-view maybe-want))
+    [(ResultTcType.Ok ty)
+      (if (tc-selected-view-move-out?
+        ctx
+        env
+        (tc-selected-strip-regions (tc-global-shared-view ty))
+        (tc-global-shared-view ty))
+        (cond
+          [(not
+              (tc-reference-lifetimes-visible?
+                env
+                (tc-type-collect-regions (tc-global-shared-view ty))))
+            (ast.AstMaybeType.Some (tc-selected-strip-regions ty))]
+          [(match (& maybe-want)
+              [(ast.AstMaybeType.Some _) true]
+              [(ast.AstMaybeType.No) false])
+            (ast.AstMaybeType.Some ty)]
+          [else maybe-want])
+        maybe-want)]
+    [(ResultTcType.Err _) maybe-want]))
+
 ;; `captures-move-only?`: the initializer is a lambda capturing a non-Copy
 ;; selected binder (see `tc-selected-lambda-captures-move-only?`).
 (define (tc-infer-selected-let-init-classified
@@ -63810,7 +63855,11 @@
                 ctx
                 env
                 init-id
-                (ast.AstMaybeType.Some resolved-want)
+                (tc-selected-let-init-expected
+                  ctx
+                  env
+                  init-id
+                  (ast.AstMaybeType.Some resolved-want))
                 source
                 sink)))]
         [(ast.AstMaybeType.No)
@@ -63866,7 +63915,11 @@
               ctx
               env
               init-id
-              ast.AstMaybeType.No
+              (tc-selected-let-init-expected
+                ctx
+                env
+                init-id
+                ast.AstMaybeType.No)
               source
               sink))]))))
 
@@ -64006,10 +64059,8 @@
       [(ResultTcUnit.Ok) unit])
     ;; A non-Copy value read through a reference is reported as the move it
     ;; would be (E0208), as main's let paths do (#8554).
-    (match (tc-ensure-let-value-can-bind
-      ctx
+    (match (tc-ensure-reference-value-can-bind
       env
-      (tc-global-shared-view init)
       (tc-global-shared-view init-ty))
       [(ResultTcUnit.Err message) (return (ResultTcLetBinding.Err message))]
       [(ResultTcUnit.Ok) unit])
@@ -64091,7 +64142,6 @@
   [name : i64]
   [binding-ty : ast.AstType]
   [init-ty : ast.AstType]
-  [init-id : i64]
   ;; A `with` binding: its cleanup runs on every exit of its scope.
   [with? : bool]
   ;; A move-aware `with` binding (as `for` binds a cleanup-owning item): its
@@ -64107,22 +64157,6 @@
     lease
     intern
     bind)
-  (when
-    (tc-selected-view-move-out?
-      ctx
-      env
-      (tc-global-shared-view binding-ty)
-      (tc-global-shared-view init-ty))
-    (return
-      (TcSelectedResult.Err
-        (tc-selected-view-move-out-error
-          ctx
-          env
-          init-id
-          (tc-global-shared-view init-ty)
-          1
-          TcNameIdList.Nil)
-        sink)))
   (match init
     [(TcSelectedOccurrence.Unrepresented)
       (TcSelectedResult.Ok
@@ -64786,7 +64820,6 @@
                                 (tc-global-shared-view init-ty)
                                 (tc-global-shared-view binding-ty))
                               init-ty
-                              init-box
                               true
                               move-aware?
                               (tc-selected-cleanup-callee-id
@@ -65014,7 +65047,6 @@
           source-name
           (tc-global-shared-view source-ty)
           (tc-global-shared-view source-ty)
-          source-id
           false
           true
           -1
@@ -65062,7 +65094,6 @@
                       index-name
                       ast.AstType.I64
                       ast.AstType.I64
-                      index-name-id
                       false
                       false
                       -1
@@ -65315,7 +65346,6 @@
                   binding-name
                   (tc-global-shared-view elem-ty)
                   (tc-global-shared-view elem-ty)
-                  binding-id
                   false
                   false
                   -1
@@ -65668,7 +65698,6 @@
                     name
                     binding-ty
                     init-ty
-                    init-id
                     false
                     false
                     -1
@@ -121176,10 +121205,12 @@
         true
         (tc-selected-region-marker? rest region))]))
 
-;; A region-tagged view of a move-only value read through a reference, flowing
-;; into an owned slot of its plain type: the value would move out from behind
-;; the reference (SPEC: moving a non-Copy value through either reference kind
-;; is rejected). Arena values keep the region subtype rule.
+;; A region-tagged view of a move-only value read through a reference, used
+;; where its owned value of the plain type is expected: the use takes the
+;; value from behind the reference, a move out of borrowed content that the
+;; ownership graph rejects (`normalize-take-place!`; SPEC: moving a non-Copy
+;; value through either reference kind is rejected). Arena values keep the
+;; region subtype rule.
 (define (tc-selected-view-move-out?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -121201,88 +121232,6 @@
             (tc-global-shared-view want))
           (not (tc-type-copyable? ctx (tc-global-shared-view want))))]
       [_ false])))
-
-;; BOUND plus the names the `let`s bind on the way from `expr` to its value
-;; through `let` bodies and `begin` tails: names that may shadow the ones the
-;; value reads.
-(define (tc-selected-tail-let-bound-name-ids
-  [expr-bases : i64]
-  [expr : ast.AstExpr]
-  [bound : TcNameIdList]) : TcNameIdList
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (tc-selected-tail-let-bound-name-ids
-            expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases body-box)
-            (tc-let-binding-list-add-bound-name-ids-at (& bindings) bound 0))])]
-    [(Begin items)
-      (if (> (ast.ast-expr-list-len (& items)) 0)
-        (tc-selected-tail-let-bound-name-ids
-          expr-bases
-          (ast.ast-expr-segment-bases-get
-            expr-bases
-            (ast.ast-expr-list-get
-              (& items)
-              (- (ast.ast-expr-list-len (& items)) 1)
-              0))
-          bound)
-        bound)]
-    [_ bound]))
-
-;; The move-out rejection for a view operand `expr-id` of type `ty` (see
-;; `tc-selected-view-move-out?`). A view is read through a reference, so this
-;; is always a move out of borrowed content (E0208, Rust E0507), worded as
-;; typing words it (#8554) whatever holds the value; `context` is the use
-;; (`tc-selected-move-out-reference-help`). The reference's kind is looked up
-;; in `env`, so that wording is used only when the read's root name is not
-;; rebound inside the operand: by a `let` on the way to its value, or by
-;; `shadowing` (an arm's pattern binders). Otherwise the generic E0208 is
-;; reported.
-(define (tc-selected-view-move-out-error
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr-id : i64]
-  [ty : ast.AstType]
-  [context : i64]
-  [shadowing : TcNameIdList]) : String
-  (let
-    [help : String (tc-selected-move-out-reference-help context)]
-    [expr-bases : i64 (tc-context-expr-bases ctx)]
-    [rebound : TcNameIdList
-      (tc-selected-tail-let-bound-name-ids
-        expr-bases
-        (tc-context-expr-get ctx expr-id)
-        shadowing)]
-    [env-names-read? : bool
-      (match (tc-move-root-projection-var-id
-        expr-bases
-        (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id)))
-        [(TcMaybeNameId.Some name)
-          (not (tc-name-id-list-contains rebound name))]
-        [(TcMaybeNameId.No) true])]
-    [moved : String
-      (if env-names-read?
-        (tc-move-out-of-reference-error
-          ctx
-          expr-bases
-          env
-          (tc-body-tail-expr expr-bases (tc-context-expr-get ctx expr-id))
-          ty
-          (string.copy (& help)))
-        "")]
-    (if (> (string.string-length (& moved)) 0)
-      moved
-      (let
-        [message : String
-          (tc-kind-message
-            (cdiag.CompilerTypecheckKind.MoveViolation)
-            "typecheck: cannot move non-Copy value through shared reference")]
-        (match (tc-expr-id-maybe-span expr-bases expr-id)
-          [(TcMaybeAstSourceSpan.Some span)
-            (tc-rich-error-with-help span message help)]
-          [(TcMaybeAstSourceSpan.No) message])))))
 
 ;; Type identity for the ownership graph. `tc-type-eq` ignores region tags,
 ;; but a region-tagged view and an owned value are different occurrences;
@@ -123518,25 +123467,12 @@
     "return value")
     [(ResultTcUnit.Ok) ResultTcUnit.Ok]
     [(ResultTcUnit.Err message)
-      (let
-        [moved : String
-          (tc-move-out-of-reference-error
-            ctx
-            (tc-context-expr-bases ctx)
-            env
-            (tc-body-tail-expr
-              (tc-context-expr-bases ctx)
-              (tc-global-shared-view body))
-            (tc-global-shared-view got)
-            "return an owned clone, or return a reference tied to a parameter's lifetime")]
-        (ResultTcUnit.Err
-          (if (> (string.string-length moved) 0)
-            moved
-            (tc-rich-escape-at-expr
-              (tc-context-expr-bases ctx)
-              body
-              message
-              "function return type rejects this escaping value"))))]))
+      (ResultTcUnit.Err
+        (tc-rich-escape-at-expr
+          (tc-context-expr-bases ctx)
+          body
+          message
+          "function return type rejects this escaping value"))]))
 
 ;; A body the selected producer could not represent: rejected (after its
 ;; return value's region check, which names the escaping value).
@@ -123822,21 +123758,15 @@
             (tc-body-type-facts-start-consuming! body-state)
             (match expect-result
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
-              ;; A view of a move-only value returned as an owned one.
+              ;; A view still returned as an owned value is no place the
+              ;; graph can take (a call's view result): its region escapes.
               [(ResultTcUnit.Ok)
                 (if (tc-selected-view-move-out?
                   ctx
                   comparison-env
                   (tc-global-shared-view resolved-ret)
                   (tc-global-shared-view got))
-                  (ResultTcUnit.Err
-                    (tc-selected-view-move-out-error
-                      ctx
-                      comparison-env
-                      body-box
-                      (tc-global-shared-view got)
-                      4
-                      TcNameIdList.Nil))
+                  (tc-selected-unrepresented-body ctx env resolved-ret got body)
                   (match (tc-selected-prepare-named-body
                     ctx
                     name

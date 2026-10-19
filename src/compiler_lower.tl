@@ -15393,18 +15393,22 @@
 (define (lower-state-leave-terminated-block! [state : LowerState]) : unit
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    [instrs : ir.CompilerIrInstrBuilder
-      (lower-box-field-shared-view data current-instrs)]
     (when
-      (and
-        (> instrs.len 0)
-        (ir.compiler-ir-instr-terminator?
-          (& (array-ref instrs.slots (- instrs.len 1)))))
+      (lower-instrs-terminated?
+        (& (__tl-project-field (__tl-box-place data) current-instrs)))
       (match (lower-state-fresh-label state "exit_dead")
         [(Label labeled label)
           (let
             [_opened : LowerState (lower-state-finish-block labeled label)]
             (__tl-project-set-field (__tl-box-place data) dead-blocks? true))]))))
+
+;; Whether the instructions emitted so far end in a terminator.
+(define (lower-instrs-terminated?
+  [instrs : (& instrs ir.CompilerIrInstrBuilder)]) : bool
+  (and
+    (> instrs.len 0)
+    (ir.compiler-ir-instr-terminator?
+      (& (array-ref instrs.slots (- instrs.len 1))))))
 
 (define (lower-state-emit [state : LowerState] [instr : ir.CompilerIrInstr]) : LowerState
   (lower-state-leave-terminated-block! state)
@@ -15581,7 +15585,7 @@
   [indexes : (& indexes lower_i64_i64_map.Map)]
   [reached : (& reached (__tl_dyn-array bool))]
   [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : ir.CompilerIrBlock
   (let
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr instrs.len)]
@@ -15627,7 +15631,7 @@
     [index : i64 0]
     [kept : i64 0]
     (while (< index count)
-      (match (lower-global-array-element-shared-view blocks.slots index)
+      (match (& (array-ref blocks.slots index))
         [(Block label _)
           (lower_i64_i64_map.insert-ref! (&mut indexes) label index)])
       (set! index (+ index 1)))
@@ -15638,15 +15642,13 @@
       (set! top 1))
     (while (> top 0)
       (set! top (- top 1))
-      (match (lower-global-array-element-shared-view
-        blocks.slots
-        (array-ref pending top))
+      (match (& (array-ref blocks.slots (array-ref pending top)))
         [(Block _ instrs)
           (let
             [at : i64 (array-ref pending top)]
             [step : i64 0]
             (while (< step instrs.len)
-              (match (lower-global-array-element-shared-view instrs.slots step)
+              (match (& (array-ref instrs.slots step))
                 [(Jump label)
                   (set!
                     top
@@ -15686,9 +15688,7 @@
                   (let
                     [slot : i64 0]
                     (while (< slot cases.len)
-                      (match (lower-global-array-element-shared-view
-                        cases.slots
-                        slot)
+                      (match (& (array-ref cases.slots slot))
                         [(Case _ label)
                           (set!
                             top
@@ -15728,7 +15728,7 @@
         (while (< index count)
           (when
             (array-ref reached index)
-            (match (lower-global-array-element-shared-view blocks.slots index)
+            (match (& (array-ref blocks.slots index))
               [(Block label instrs)
                 (ir.compiler-ir-block-builder-push!
                   (&mut out)

@@ -48952,13 +48952,13 @@
     (and (< offset (+ word-base 8)) (> (+ offset size) word-base))))
 
 (define (tc-inline-fields-word-register-class
-  [fields : TcInlineFieldLayoutList]
+  [fields : (& fields TcInlineFieldLayoutList)]
   [word-index : i64]
   [found : i64]) : i64
   (tc-inline-fields-word-register-class-at fields word-index found 0))
 
 (define (tc-inline-fields-word-register-class-at
-  [fields : TcInlineFieldLayoutList]
+  [fields : (& fields TcInlineFieldLayoutList)]
   [word-index : i64]
   [found : i64]
   [index : i64]) : i64
@@ -48997,11 +48997,9 @@
           (+ index 1))))))
 
 (define (tc-inline-fields-all-register-class?
-  [fields : TcInlineFieldLayoutList]) : bool
+  [fields : (& fields TcInlineFieldLayoutList)]) : bool
   (and
-    (<
-      (tc-inline-fields-word-register-class (tc-global-shared-view fields) 0 -1)
-      2)
+    (< (tc-inline-fields-word-register-class fields 0 -1) 2)
     (< (tc-inline-fields-word-register-class fields 1 -1) 2)))
 
 ;; True when every payload field of a variant is word-class -- so a 16-byte
@@ -49034,12 +49032,12 @@
   found)
 
 (define (tc-inline-enum-register-payload-class
-  [variants : TcInlineVariantLayoutList]
+  [variants : (& variants TcInlineVariantLayoutList)]
   [found : i64]) : i64
   (tc-inline-enum-register-payload-class-at variants found))
 
 (define (tc-inline-enum-register-payload-class-at
-  [variants : TcInlineVariantLayoutList]
+  [variants : (& variants TcInlineVariantLayoutList)]
   [found : i64]) : i64
   (for [index (iterator.range 0 (tc-inline-variant-layout-list-count variants))]
     (match (tc-inline-variant-layout-list-ref variants index)
@@ -49055,7 +49053,7 @@
   found)
 
 (define (tc-inline-enum-payloads-all-register-class?
-  [variants : TcInlineVariantLayoutList]) : bool
+  [variants : (& variants TcInlineVariantLayoutList)]) : bool
   (< (tc-inline-enum-register-payload-class variants -1) 2))
 
 (define (tc-inline-payload-layout-list-empty?
@@ -49208,7 +49206,8 @@
               payload-index))))))
   -1)
 
-(define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
+(define (tc-inline-aggregate-layout-size
+  [layout : (& layout TcInlineAggregateLayout)]) : i64
   (match layout
     [(Struct size _ _) size]
     [(Enum size _ _) size]))
@@ -50196,7 +50195,7 @@
               stack))]
         (Ok
           (TcLayoutInfo
-            (tc-inline-aggregate-layout-size (tc-global-shared-view layout))
+            (tc-inline-aggregate-layout-size layout)
             (tc-inline-aggregate-layout-align layout))))]))
 
 (define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : ast.AstType]) : ResultTcLayoutInfo
@@ -50532,8 +50531,7 @@
     name-id
     Nil)
     [(Ok layout)
-      (if (tc-inline-aggregate-layout-register-resident?
-        (tc-global-shared-view layout))
+      (if (tc-inline-aggregate-layout-register-resident? layout)
         (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
         0)]
     [(Err _) 0]))
@@ -50569,8 +50567,7 @@
               [(Ok layout)
                 (let
                   [words : i64
-                    (if (tc-inline-aggregate-layout-register-resident?
-                      (tc-global-shared-view layout))
+                    (if (tc-inline-aggregate-layout-register-resident? layout)
                       (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                       0)]
                   (set! (array-ref slots key) (+ words 1))
@@ -50595,7 +50592,7 @@
 ;; integration corpus are the canary that the compiler's own codegen does not
 ;; depend on the prior handle-identity behavior.
 (define (tc-inline-aggregate-layout-register-resident?
-  [layout : TcInlineAggregateLayout]) : bool
+  [layout : (& layout TcInlineAggregateLayout)]) : bool
   (match layout
     [(Struct size _ fields)
       ;; An integer-class struct of 1 word (8 B) or 2 words (16 B) whose
@@ -61764,9 +61761,11 @@
             (let
               [_
                 (try
-                  (tc-check-extern-native-signature
-                    ctx
-                    (tc-global-shared-view resolved)))]
+                  (if (ast.ast-extern-abi-c? (& abi))
+                    (tc-check-extern-native-signature
+                      ctx
+                      (tc-global-shared-view resolved))
+                    ResultTcUnit.Ok))]
               (if (and
                 (ast.ast-extern-abi-c? (& abi))
                 (or explicit-abi (ast.ast-extern-abi-c-varargs? (& abi))))
@@ -116411,6 +116410,13 @@
     (tc-chain-state-set! store (tc-chain-state-address env.store))
     (TcTypeEnv store env.head env.abi-pad)))
 
+;; A rewound function store invalidates address-keyed memos and any diagnostic
+;; snapshot naming its environment. Call only after the result has escaped.
+(define (tc-type-env-retire-function-store! [job-state : TcJobState]) : unit
+  (+= tc-type-env-store-epoch 1)
+  (tc-unbound-suggestion-snapshot-reset!)
+  (tc-nominal-owner-cache-reset-for-job! job-state))
+
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -116461,16 +116467,7 @@
           (arena.tl_arena_set scratch-head)
           (arena.tl_region_reset mark)
           (arena.tl_arena_set new-enclosing))
-        ;; The function store and its nodes were just rewound: retire
-        ;; every memo keyed by a store handle or node address, and the
-        ;; unbound-name snapshot, which names a function-local env and
-        ;; was consumed above.
-        (+= tc-type-env-store-epoch 1)
-        (tc-unbound-suggestion-snapshot-reset!)
-        ;; Single-entry name caches may hold strings allocated in the
-        ;; scratch that was just rewound; invalidate them before
-        ;; anything can compare against freed memory.
-        (tc-nominal-owner-cache-reset-for-job! (tc-context-job-state ctx))
+        (tc-type-env-retire-function-store! (tc-context-job-state ctx))
         escaped))))
 
 ;; Reusable scratch arena for per-declaration checks that are not function

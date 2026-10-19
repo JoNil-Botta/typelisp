@@ -1086,7 +1086,7 @@
                               (and
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view packet))
+                                    packet)
                                   24)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1109,7 +1109,7 @@
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view outer))
+                                    outer)
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1126,8 +1126,7 @@
                                     "tail")
                                   12)
                                 (=
-                                  (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view wide))
+                                  (tc_core.tc-inline-aggregate-layout-size wide)
                                   48)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1185,10 +1184,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Vec2"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        16)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1274,10 +1270,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Mixed"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        48)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 48)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1357,10 +1350,7 @@
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
     [(Ok layout)
       (and
-        (=
-          (tc_core.tc-inline-aggregate-layout-size
-            (tc_core.tc-global-shared-view layout))
-          want-size)
+        (= (tc_core.tc-inline-aggregate-layout-size layout) want-size)
         (=
           (tc_core.tc-inline-aggregate-layout-align
             (tc_core.tc-global-shared-view layout))
@@ -1880,8 +1870,7 @@
                             (compiler-typecheck-inline-field-id-at fields 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -1946,8 +1935,7 @@
                             (compiler-typecheck-inline-variant-id-at variants 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))

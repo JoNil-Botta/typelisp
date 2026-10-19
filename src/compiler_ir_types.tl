@@ -11958,3 +11958,13 @@
                     (string.int->string row.offset)
                     "\n"))))))))
     (text_buf.render buf)))
+
+;; The instructions that end a block: control never reaches an instruction
+;; after one, and a block that does not end in one falls through to the next.
+(define (compiler-ir-instr-terminator? [instr : (& instr CompilerIrInstr)]) : bool
+  (match instr
+    [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Return _)
+         (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
+         (TotalEnumSwitch _ _ _ _ _))
+      true]
+    [_ false]))

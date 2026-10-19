@@ -7,6 +7,18 @@ caller passes the original expression provenance rather than inventing a span
 for a helper call. Short-circuiting remains control flow, and eager operands
 consume the state returned by the preceding operand.
 
+Store families preserve `Never` from place formation and value evaluation,
+including through annotations and direct constructors. The actual flow type
+is independent of the expected storage type: an exit has no value to store.
+An argument collector stops at an exiting argument: no later argument,
+snapshot, call or writeback is emitted. Array-literal builders retain
+the same distinction when constructing values for a store. The lowerer test
+`compiler-lower-store-exits` checks that each emitted terminator ends its block.
+Box and tuple construction preserve the same flow. Expression consumers
+(bindings, scrutinees, projections, operators and conditions) check an
+operand's actual type for `Never` before using its value;
+`compiler-lower-operand-consumer-exits` covers them.
+
 Requested pointer-proof capture runs at the specialized, checked function
 boundary before expression dispatch erases pointer semantics. It uses the shared
 AST child IDs and existing type and symbol authorities; disabled lowering does

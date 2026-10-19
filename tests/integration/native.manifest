@@ -22,6 +22,7 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -114,6 +115,7 @@ array_qualified_macros|all|-|tests/integration/array_qualified_macros.tl|42|-|-|
 fixed_array_core_ops|all|-|tests/integration/fixed_array_core_ops.tl|42|-|-|-|-
 array_stride_24byte|all|-|tests/integration/array_stride_24byte.tl|42|-|-|-|-
 replace_fixed_array_elements|all|-|tests/integration/replace_fixed_array_elements.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
+array_reference_reads|all|0,1,2|tests/integration/array_reference_reads.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
 replace_places|all|-|tests/integration/replace_places.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/comptime.tl|-
 replace_large_values|all|-|tests/integration/replace_large_values.tl|42|-|-|stdlib/test.tl|-
 slice_whole_array|all|-|tests/integration/slice_whole_array.tl|42|-|-|-|-
@@ -1077,6 +1079,10 @@ indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|
 extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
 
+store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
+store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
 replace_place_paths|all|0,1,2|tests/integration/replace_place_paths.tl|42|-|-|-|-
 view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-

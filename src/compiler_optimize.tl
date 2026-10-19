@@ -17354,15 +17354,14 @@
       (opt-pred-map-lookup pred-map header)
       (None))))
 
-(define (opt-natural-loop-build
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [pred-map : (& OptPredMap)]
-  [reachable : OptLabelSet]
-  [header : i64]
-  [latch : i64]) : OptNaturalLoop
-  (if pred-map.index.labels-unique
-    (opt-natural-loop-build-by-id blocks pred-map reachable header latch)
-    (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
+(defstruct OptNaturalLoopWork
+  (found (__tl_dyn-array i64))
+  (stack (__tl_dyn-array i64)))
+
+;; Only the zero-length descriptors are shared. Every id walk replaces them
+;; before writing an element, so another collection never observes its scratch.
+(define opt-natural-loop-work-empty-slots : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 
 ;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
 ;; all distinct. There, a predecessor row's label set holds exactly the labels of
@@ -17374,84 +17373,87 @@
 ;; the header, the latch and the recorded ids in discovery order, and the body's
 ;; member array is `marks` itself: both hold exactly the header, the latch and
 ;; every recorded block.
-(define (opt-natural-loop-build-by-id
+(define (opt-natural-loop-build
+  [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [pred-map : (& OptPredMap)]
-  [_reachable : OptLabelSet]
+  [pred-map : (& pred-map OptPredMap)]
+  [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
-  (let
-    [index : OptCfgIndex
-      (owned_view.compiler-owned-reference-shared-view (& pred-map.index))]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
-    [found : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [found-count : i64 0]
-    [top : i64 0]
-    [header-id : i64 (- 0 1)]
-    [latch-id : i64 (- 0 1)]
-    (match (opt-cfg-index-id index header)
-      [(Some id)
-        (set! (array-ref marks id) true)
-        (set! header-id id)]
-      [(None) unit])
-    (match (opt-cfg-index-id index latch)
-      [(Some id)
-        (set! (array-ref marks id) true)
-        (set! latch-id id)]
-      [(None) unit])
-    ;; #M-E, as in the label walk: a self-loop expands no predecessors.
-    (when
-      (and (!= header latch) (>= latch-id 0))
-      (set! (array-ref stack 0) latch-id)
-      (set! top 1))
-    (while (> top 0)
-      (let
-        [w : i64 (array-ref stack (- top 1))]
-        [start : i64 (array-ref index.preds.offsets w)]
-        [edge : i64 (array-ref index.preds.offsets (+ w 1))]
-        (-= top 1)
-        (while (> edge start)
-          (let
-            [p : i64 (array-ref index.preds.edges (- edge 1))]
-            (when
-              (and (array-ref index.reachable p) (not (array-ref marks p)))
-              (set! (array-ref marks p) true)
-              (set! (array-ref found found-count) p)
-              (+= found-count 1)
-              (set! (array-ref stack top) p)
-              (+= top 1))
-            (-= edge 1)))))
+  (if pred-map.index.labels-unique
     (let
-      [seeds : i64
-        (if (= header latch)
-          1
-          2)]
-      [n : i64 (+ seeds found-count)]
-      [items : (__tl_dyn-array i64)
-        (__tl_make-array
-          i64
-          (+
-            (if (< n 4)
-              4
-              n)
-            1))]
-      (set! (array-ref items 0) n)
-      (set! (array-ref items 1) header)
-      (when (= seeds 2) (set! (array-ref items 2) latch))
-      (for [k (iterator.range 0 found-count)]
-        (set!
-          (array-ref items (+ seeds (+ k 1)))
-          (opt-cfg-index-label index (array-ref found k))))
+      [index : (& pred-map OptCfgIndex) (& pred-map.index)]
+      [count : i64 (opt-cfg-index-block-count index)]
+      [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      ;; Only the initialized prefixes are read. No returned loop retains these
+      ;; arrays: its membership, labels and ordered blocks own separate storage.
+      [_reserve : unit
+        (when
+          (< (array-length work.found) (+ count 1))
+          (set! work.found (__tl_make-array i64 (+ count 1)))
+          (set! work.stack (__tl_make-array i64 (+ count 1))))]
+      [found : (&mut work (__tl_dyn-array i64)) (&mut work.found)]
+      [stack : (&mut work (__tl_dyn-array i64)) (&mut work.stack)]
+      [found-count : i64 0]
+      [top : i64 0]
+      [header-id : i64 (- 0 1)]
+      [latch-id : i64 (- 0 1)]
+      (match (opt-cfg-index-id index header)
+        [(Some id)
+          (set! (array-ref marks id) true)
+          (set! header-id id)]
+        [(None) unit])
+      (match (opt-cfg-index-id index latch)
+        [(Some id)
+          (set! (array-ref marks id) true)
+          (set! latch-id id)]
+        [(None) unit])
+      ;; #M-E, as in the label walk: a self-loop expands no predecessors.
+      (when
+        (and (!= header latch) (>= latch-id 0))
+        (set! (array-ref stack 0) latch-id)
+        (set! top 1))
+      (while (> top 0)
+        (let
+          [w : i64 (array-ref stack (- top 1))]
+          [start : i64 (array-ref index.preds.offsets w)]
+          [edge : i64 (array-ref index.preds.offsets (+ w 1))]
+          (-= top 1)
+          (while (> edge start)
+            (let
+              [p : i64 (array-ref index.preds.edges (- edge 1))]
+              (when
+                (and (array-ref index.reachable p) (not (array-ref marks p)))
+                (set! (array-ref marks p) true)
+                (set! (array-ref found found-count) p)
+                (+= found-count 1)
+                (set! (array-ref stack top) p)
+                (+= top 1))
+              (-= edge 1)))))
       (let
-        [body-labels : OptLabelSet (Dense (opt-label-handle items) n)]
-        (Loop
-          header
-          latch
-          (OptLoopBody
-            body-labels
-            (compiler-opt-global-shared-view marks)
+        [seeds : i64
+          (if (= header latch)
+            1
+            2)]
+        [n : i64 (+ seeds found-count)]
+        [items : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (+
+              (if (< n 4)
+                4
+                n)
+              1))]
+        (set! (array-ref items 0) n)
+        (set! (array-ref items 1) header)
+        (when (= seeds 2) (set! (array-ref items 2) latch))
+        (for [k (iterator.range 0 found-count)]
+          (set!
+            (array-ref items (+ seeds (+ k 1)))
+            (opt-cfg-index-label index (array-ref found k))))
+        (let
+          [body-labels : OptLabelSet (Dense (opt-label-handle items) n)]
+          [body-blocks : ir.CompilerIrBlockList
             (opt-loop-body-blocks-by-id
               marks
               blocks
@@ -17459,8 +17461,15 @@
               latch-id
               (& found)
               found-count
-              n))
-          (opt-natural-loop-find-preheader-by-id index (& marks) header-id))))))
+              n)]
+          [preheader : OptLoopPreheader
+            (opt-natural-loop-find-preheader-by-id index (& marks) header-id)]
+          (Loop
+            header
+            latch
+            (OptLoopBody body-labels marks body-blocks)
+            preheader))))
+    (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
 
 ;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
 ;; predecessor of the header that is reachable and outside the body, and the
@@ -17604,6 +17613,7 @@
 ;; index that walk consulted (the reachable set is built from this reachable
 ;; array).
 (define (opt-cfg-natural-loop-edges-csr
+  [work : (&mut work OptNaturalLoopWork)]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [pred-map : (& OptPredMap)]
@@ -17627,6 +17637,7 @@
           (opt_natural_loop_vec.push-ref!
             out
             (opt-natural-loop-build
+              work
               all-blocks
               pred-map
               reachable
@@ -17646,13 +17657,18 @@
       (ir.compiler-ir-block-list-view blocks)]
     [count : i64 (array-length seq)]
     [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
+    [work : OptNaturalLoopWork
+      (OptNaturalLoopWork
+        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots)
+        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots))]
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
       (if (< pos (array-length index.reachable))
-        (match (array-ref seq pos)
+        (match (& (array-ref seq pos))
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
+              (&mut work)
               (& blocks)
               (& index)
               (& context.pred-map)

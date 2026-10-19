@@ -28,6 +28,7 @@
 (import compiler_profile_state as profile_state)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
+(import compiler_spmd_logical_gang as spmd_gang)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -1818,7 +1819,11 @@
   ;; Binding var -> how many store places captured into its home are pending
   ;; while their values are lowered (`lower-state-home-pinned?`).
   (pinned-homes lower_i64_i64_map.Map)
-  (spmd-sites LowerMaybeSpmdSites))
+  (spmd-sites LowerMaybeSpmdSites)
+  ;; Whether an instruction emitted after a terminator opened a block nothing
+  ;; branches to (`lower-state-leave-terminated-block!`): building the
+  ;; function's blocks then drops the unreachable ones.
+  (dead-blocks? bool))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1885,7 +1890,8 @@
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 4)
         (lower_i64_i64_map.with-capacity 4)
-        (No)))))
+        (No)
+        false))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -15379,7 +15385,29 @@
     (__tl-project-set-field (__tl-box-place data) next-lambda (+ next-lambda 1))
     (Name state lambda-id)))
 
+;; A terminator ends its block. What is lowered after one (the operands and
+;; consumers after a diverging `return`, `break` or `continue`) is emitted into
+;; a fresh block nothing branches to, as rustc's MIR builder continues in a new
+;; block after a diverging expression; `lower-state-build-blocks` drops the
+;; blocks control cannot reach, so none of it reaches a pass or a backend.
+(define (lower-state-leave-terminated-block! [state : LowerState]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [instrs : ir.CompilerIrInstrBuilder
+      (lower-box-field-shared-view data current-instrs)]
+    (when
+      (and
+        (> instrs.len 0)
+        (ir.compiler-ir-instr-terminator?
+          (& (array-ref instrs.slots (- instrs.len 1)))))
+      (match (lower-state-fresh-label state "exit_dead")
+        [(Label labeled label)
+          (let
+            [_opened : LowerState (lower-state-finish-block labeled label)]
+            (__tl-project-set-field (__tl-box-place data) dead-blocks? true))]))))
+
 (define (lower-state-emit [state : LowerState] [instr : ir.CompilerIrInstr]) : LowerState
+  (lower-state-leave-terminated-block! state)
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (ir.compiler-ir-instr-builder-push!
@@ -15410,6 +15438,7 @@
       (not (lower-state-current-decl-generated? state))
       (lower-runtime-abort-instr? (lower-global-shared-view instr))))
     (let
+      [_open : unit (lower-state-leave-terminated-block! state)]
       [data : (Box LowerStateData) (lower-state-box state)]
       [pools : ast.AstNodePoolContext
         (tc_core.tc-context-pools
@@ -15515,7 +15544,201 @@
     [next-blocks : ir.CompilerIrBlockBuilder
       (ir.CompilerIrBlockBuilder blocks.slots blocks.len)]
     (ir.compiler-ir-block-builder-push! (&mut next-blocks) current-block)
-    (ir.compiler-ir-block-builder-to-list next-blocks)))
+    (if (__tl-project-field (__tl-box-place data) dead-blocks?)
+      (ir.compiler-ir-block-builder-to-list
+        (lower-reachable-blocks next-blocks))
+      (ir.compiler-ir-block-builder-to-list next-blocks))))
+
+;; Marks the block labelled `label` reached and queues it, once; returns the
+;; new queue length.
+(define (lower-reach-label!
+  [indexes : (& indexes lower_i64_i64_map.Map)]
+  [reached : (&mut reached (__tl_dyn-array bool))]
+  [pending : (&mut pending (__tl_dyn-array i64))]
+  [top : i64]
+  [label : i64]) : i64
+  (let
+    [target : i64 (lower_i64_i64_map.get-value-or indexes label -1)]
+    (if (and (>= target 0) (not (array-ref reached target)))
+      (begin
+        (set! (array-ref reached target) true)
+        (set! (array-ref pending top) target)
+        (+ top 1))
+      top)))
+
+;; Whether a phi input's predecessor block is kept (a label that names no block
+;; of the function is kept as it is).
+(define (lower-label-kept?
+  [indexes : (& indexes lower_i64_i64_map.Map)]
+  [reached : (& reached (__tl_dyn-array bool))]
+  [label : i64]) : bool
+  (let
+    [target : i64 (lower_i64_i64_map.get-value-or indexes label -1)]
+    (or (< target 0) (array-ref reached target))))
+
+;; `block` with each phi's inputs from a dropped block removed.
+(define (lower-block-without-dropped-inputs
+  [indexes : (& indexes lower_i64_i64_map.Map)]
+  [reached : (& reached (__tl_dyn-array bool))]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
+  (let
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr instrs.len)]
+    [index : i64 0]
+    (while (< index instrs.len)
+      (set!
+        (array-ref out index)
+        (match (lower-global-array-element-shared-view instrs.slots index)
+          [(Phi dst inputs ty)
+            (let
+              [kept : (__tl_dyn-array ir.CompilerIrPhiInput)
+                (ir.compiler-ir-phi-input-storage inputs.len)]
+              [count : i64 0]
+              [at : i64 0]
+              (while (< at inputs.len)
+                (let
+                  [input : ir.CompilerIrPhiInput
+                    (lower-global-array-element-shared-view
+                      inputs.slots
+                      (+ inputs.start at))]
+                  (when
+                    (lower-label-kept? indexes reached input.label)
+                    (set! (array-ref kept count) input)
+                    (set! count (+ count 1))))
+                (set! at (+ at 1)))
+              (Phi dst (ir.compiler-ir-phi-input-seq-of kept 0 count) ty))]
+          [_ (lower-global-array-element-shared-view instrs.slots index)]))
+      (set! index (+ index 1)))
+    (Block label (ir.CompilerIrInstrSeq out instrs.len))))
+
+;; The blocks control reaches from the entry (the first), in order. A block's
+;; successors are its branch targets and, when it does not end in a
+;; terminator, the next block (`ir.compiler-ir-instr-terminator?`). A dropped
+;; block is never a phi's predecessor.
+(define (lower-reachable-blocks [blocks : ir.CompilerIrBlockBuilder]) : ir.CompilerIrBlockBuilder
+  (let
+    [count : i64 blocks.len]
+    [indexes : lower_i64_i64_map.Map
+      (lower_i64_i64_map.with-capacity (+ count 1))]
+    [reached : (__tl_dyn-array bool) (__tl_make-array bool (+ count 1))]
+    [pending : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [top : i64 0]
+    [index : i64 0]
+    [kept : i64 0]
+    (while (< index count)
+      (match (lower-global-array-element-shared-view blocks.slots index)
+        [(Block label _)
+          (lower_i64_i64_map.insert-ref! (&mut indexes) label index)])
+      (set! index (+ index 1)))
+    (when
+      (> count 0)
+      (set! (array-ref reached 0) true)
+      (set! (array-ref pending 0) 0)
+      (set! top 1))
+    (while (> top 0)
+      (set! top (- top 1))
+      (match (lower-global-array-element-shared-view
+        blocks.slots
+        (array-ref pending top))
+        [(Block _ instrs)
+          (let
+            [at : i64 (array-ref pending top)]
+            [step : i64 0]
+            (while (< step instrs.len)
+              (match (lower-global-array-element-shared-view instrs.slots step)
+                [(Jump label)
+                  (set!
+                    top
+                    (lower-reach-label!
+                      (& indexes)
+                      (&mut reached)
+                      (&mut pending)
+                      top
+                      label))]
+                [(or (Branch _ yes no) (TotalEnumBranch _ yes no))
+                  (set!
+                    top
+                    (lower-reach-label!
+                      (& indexes)
+                      (&mut reached)
+                      (&mut pending)
+                      top
+                      yes))
+                  (set!
+                    top
+                    (lower-reach-label!
+                      (& indexes)
+                      (&mut reached)
+                      (&mut pending)
+                      top
+                      no))]
+                [(or (Switch _ _ cases default)
+                     (TotalEnumSwitch _ _ cases default _))
+                  (set!
+                    top
+                    (lower-reach-label!
+                      (& indexes)
+                      (&mut reached)
+                      (&mut pending)
+                      top
+                      default))
+                  (let
+                    [slot : i64 0]
+                    (while (< slot cases.len)
+                      (match (lower-global-array-element-shared-view
+                        cases.slots
+                        slot)
+                        [(Case _ label)
+                          (set!
+                            top
+                            (lower-reach-label!
+                              (& indexes)
+                              (&mut reached)
+                              (&mut pending)
+                              top
+                              label))])
+                      (set! slot (+ slot 1))))]
+                [_ unit])
+              (set! step (+ step 1)))
+            (when
+              (and
+                (< (+ at 1) count)
+                (not (array-ref reached (+ at 1)))
+                (or
+                  (= instrs.len 0)
+                  (not
+                    (ir.compiler-ir-instr-terminator?
+                      (& (array-ref instrs.slots (- instrs.len 1)))))))
+              (set! (array-ref reached (+ at 1)) true)
+              (set! (array-ref pending top) (+ at 1))
+              (set! top (+ top 1))))]))
+    (set! index 0)
+    (while (< index count)
+      (when (array-ref reached index) (set! kept (+ kept 1)))
+      (set! index (+ index 1)))
+    (if (= kept count)
+      blocks
+      (let
+        [out : ir.CompilerIrBlockBuilder
+          (ir.CompilerIrBlockBuilder
+            (__tl_make-array ir.CompilerIrBlock kept)
+            0)]
+        (set! index 0)
+        (while (< index count)
+          (when
+            (array-ref reached index)
+            (match (lower-global-array-element-shared-view blocks.slots index)
+              [(Block label instrs)
+                (ir.compiler-ir-block-builder-push!
+                  (&mut out)
+                  (lower-block-without-dropped-inputs
+                    (& indexes)
+                    (& reached)
+                    label
+                    instrs))]))
+          (set! index (+ index 1)))
+        out))))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : ir.CompilerIrBlockList
   (lower-state-build-blocks state))
@@ -49238,17 +49461,12 @@
 (define (lower-simd-lanes-for-elem
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : i64
-  (let
-    [elem-bytes : i64
-      (match (tc_core.tc-type-without-regions ty)
-        [(or (I64) (U64) (F64)) 8]
-        [(or (F32) (I32) (U32)) 4]
-        [(or (I16) (U16)) 2]
-        [(or (I8) (U8)) 1]
-        [_ 0])]
-    (if (= elem-bytes 0)
-      0
-      (/ (lower-simd-vector-bytes mode) elem-bytes))))
+  (if (lower-mode-simd? mode)
+    (spmd_gang.compiler-spmd-native-lanes
+      (lower-spmd-numeric-backend mode)
+      (spmd_numeric.compiler-spmd-numeric-lane
+        (tc_core.tc-type-without-regions ty)))
+    0))
 
 (define (lower-expr-is-var?
   [ctx : tc_core.TcContext]

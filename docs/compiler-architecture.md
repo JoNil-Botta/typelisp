@@ -47,6 +47,17 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
+Fixed-array and Slice element reads through a reference are checked as
+transfers independently of region escape: matching lifetimes do not give a
+borrowed element an owner. The shared
+move walker distinguishes value transfers, projection-place reads and explicit
+result reads for borrows and canonical clone. Result reads follow conditional
+arms, let and match bodies, sequence tails and projection receivers. Conditions,
+initializers, scrutinees, sequence prefixes, indexes and stored/call/constructor
+values retain ordinary transfers; data-pointer operands are place reads. One
+callee classifier also drives clone's non-consuming AST adapter in the
+borrow-conflict walk, which forwards the read through the same forms. Receiver classification
+uses checked types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -366,6 +377,22 @@ stores from header loads. Dynamic and pending places evaluate the value first;
 a direct constructor builds into them through a deferred
 `LowerStoreDestination.Place`.
 
+Store lowering follows an operand's flow, not its contextual type: `Never`
+from a receiver, index or value ends the store there, before later operands,
+bounds checks, writes or packed-local refreshes, and annotations keep that
+flow. Call arguments, constructor fields and box, tuple and array literal
+elements end at an exiting operand the same way: later operands, snapshots,
+the call and its writebacks are never emitted, so an exit never becomes a
+store or a result. Let and `with` bindings stop before later initializers and
+the body (`LowerResourceBindings.Diverged`), and the exit itself cleans the
+earlier `with` resources. Match scrutinees, projections, `deref`, casts,
+unary and binary operands, `if` conditions and owned `for` sources return the
+exit as `Never` without dispatching on a missing value. Conditional exits
+leave the surviving path to commit. `compiler-lower-store-exits`,
+`compiler-lower-literal-constructor-exits` and
+`compiler-lower-operand-consumer-exits` check that no instruction follows a
+terminator in its block.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -445,6 +472,21 @@ the body, and local reads resolve through the existing value cache. Range
 proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
+
+`compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
+gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
+projection happens in the lowerer, so generic, Linux and Windows modes have
+identical geometry. Scalar admits width 1; AVX2/AVX-512 admit logical widths
+1, 4, 8, 16, 32 and 64. A plan is a value descriptor with indexed, ordered
+pieces, with no mutable collection or ambient state. Checked piece access
+covers each logical lane once, even when a view needs several physical vectors
+or occupies only a prefix of one. Each piece carries a mask span that maps its
+logical lanes to physical lanes starting at zero and clears unoccupied lanes.
+The checked `u64` reference projection accepts arbitrary active sets and rejects
+bits beyond the logical width without shifting by 64. All descriptor arithmetic
+follows width/count validation. Conversion (#7163) and tiled-coordinate (#7192)
+consumers use these pieces and spans for their IR mask transport; this geometry
+does not itself select instructions or change source admission or fallback.
 
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
@@ -555,6 +597,21 @@ drops the role, so neither can prove a row-major write. `lower-foreach2`
 desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
+
+Write disjointness uses the merged SPMD class of the receiver, index and
+value: a uniform index cannot authorize a parallel varying write. Array
+element writes and field or tuple-element writes share one destination
+proof, `tc-spmd-foreach-index`, applied to the nearest array element index of
+the place. Places rooted in an inline aggregate binding declared inside the
+gang are private (`tc-spmd-private-place-root`): a varying write there needs
+no proof and marks the owning binding varying, so its projections read back
+as varying lanes. Ordered scan bodies push a `ScanBody` sentinel above their
+index binding in the existing SPMD environment, and a helper called from the
+body receives it too. A uniform-index store of a varying value under that
+sentinel keeps scalar scan semantics; varying indexes still use the index
+proof. A domain index bound above the sentinel, as in a helper's `foreach`,
+ends the scan context. Masked accesses keep their canonical index rule
+regardless of the stored value's class.
 
 Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
@@ -1512,6 +1569,19 @@ in load reuse, transitive call summaries, trap detection and builtin seeds.
 Declarations that disagree on the link classify as unknown. Exported entries
 retain their function bodies' summaries. These private-global masks do not
 describe arbitrary memory writes.
+
+Each natural-loop collection owns one lazily sized traversal workspace for its
+id walks. A walk resets its stack and discovery counts and reads only the
+initialized prefixes. Returned loops own independent membership marks, labels
+and ordered block storage; no returned loop borrows the workspace. Empty,
+acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
+arrays.
+
+Empty work records initially read one immutable zero-length array descriptor;
+each record replaces both handles before its first element write. The work
+record itself is private, never a shallow view of shared mutable storage. The
+builder borrows its CFG index and moves its independent membership marks into
+the result after their last query.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a

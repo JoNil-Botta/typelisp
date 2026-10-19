@@ -1,6 +1,7 @@
 ;; End-to-end source fixtures use the same native inspector and coordinator as
 ;; the real gate. Deliberately invalid language inputs live in fixtures.json.
 (import boundary_core as boundary)
+(import fixture_policy)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.json)
@@ -19,26 +20,15 @@
     [io.OkIoUnit unit]
     [(io.ErrIoUnit error) (boundary.fail (io.error-message error))]))
 
-(define (policy-row [path : String] [role : String]) : json.Json
-  (json.JsonArray
-    (box
-      (json.list-cons
-        (json.JsonString (fs.path-normalize (& path)))
-        (json.list-cons
-          (json.JsonString role)
-          (json.list-cons
-            (json.JsonString "Explicit test classification.")
-            (json.list-empty)))))))
-
 (define (prelude-policy) : json.JsonSeq
   (json.list-cons
-    (policy-row "stdlib/runtime.tl" "support")
+    (fixture_policy.row "stdlib/runtime.tl" "support")
     (json.list-cons
-      (policy-row "stdlib/core_macros.tl" "support")
+      (fixture_policy.row "stdlib/core_macros.tl" "support")
       (json.list-cons
-        (policy-row "stdlib/clone.tl" "support")
+        (fixture_policy.row "stdlib/clone.tl" "support")
         (json.list-cons
-          (policy-row "stdlib/comptime.tl" "support")
+          (fixture_policy.row "stdlib/comptime.tl" "support")
           (json.list-empty))))))
 
 (define (run-case
@@ -75,7 +65,7 @@
             (string.eq (& mode) "missing")
             "unknown fixture file mode"))
         (if (> (string.string-length (& role)) 0)
-          (set! policy (json.list-cons (policy-row path role) policy))
+          (set! policy (json.list-cons (fixture_policy.row path role) policy))
           unit)
         (set! index (+ index 1))))
     (let

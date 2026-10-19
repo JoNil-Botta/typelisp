@@ -12229,11 +12229,12 @@
 (define (ast-declared-align-encodable? [align : i64]) : bool
   (or (= align 0) (ast-declared-align-valid? align)))
 
-;; Whether calls use the platform C convention. A package dependency's
-;; function still does until a TypeLisp-internal convention exists.
+;; Package functions keep the internal convention of their separately compiled
+;; bodies; only native externs use the platform C aggregate convention.
 (define (ast-extern-abi-c? [abi : (& AstExternAbi)]) : bool
   (match abi
-    [(or (C) (CVarargsOpen) (CVarargsTyped _) (TypeLisp)) true]))
+    [(or (C) (CVarargsOpen) (CVarargsTyped _)) true]
+    [(TypeLisp) false]))
 
 (define (ast-extern-abi-c-varargs? [abi : (& AstExternAbi)]) : bool
   (match abi

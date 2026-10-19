@@ -42161,3 +42161,176 @@ user_fn:
   (unless
     (compiler-backend-spmd-source-site-retention-ok?)
     (io.panic "backend remapping lost a source SPMD site or origin")))
+
+;; Evidence: -2 absent index, -1 absent entry, 0..3 word masks, 4/5
+;; conflicting class/width, 6 one word, 7 rebuilt without a source layout.
+;; Earlier native and pointer declarations cannot supply a by-value proof.
+(define (compiler-backend-package-layout-admission-ok?
+  [target : backend.CompilerBackendTarget]
+  [object : bool]
+  [as-result : bool]
+  [c-abi : bool]
+  [evidence : i64]) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [name : i64 (compiler-backend-test-symbol "package_layout_fixture")]
+    [nominal : i64 (compiler-backend-test-symbol "PackageLayoutPair")]
+    [c-name : i64 (compiler-backend-test-symbol "package_layout_native")]
+    [pointer-name : i64 (compiler-backend-test-symbol "package_layout_pointer")]
+    [signature : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons
+          (&
+            (if as-result
+              (I64)
+              (Struct nominal)))
+          (& (ast.ast-type-list-new)))
+        (&
+          (if as-result
+            (Struct nominal)
+            (I64))))]
+    [externs : ir.CompilerIrExternBuilder
+      (ir.compiler-ir-extern-builder-with-capacity 3)]
+    [_native : unit
+      (ir.compiler-ir-extern-builder-push!
+        (&mut externs)
+        (Extern
+          c-name
+          c-name
+          "package_layout_native"
+          (Struct nominal)
+          (C)
+          c-name
+          (ast.ast-extern-link-input-list-new)
+          false
+          (ir.CompilerIrReturnStorage.None)))]
+    [_pointer : unit
+      (ir.compiler-ir-extern-builder-push!
+        (&mut externs)
+        (Extern
+          pointer-name
+          pointer-name
+          "package_layout_pointer"
+          (ast.ast-ty-ptr (& (Struct nominal)))
+          (TypeLisp)
+          pointer-name
+          (ast.ast-extern-link-input-list-new)
+          false
+          (ir.CompilerIrReturnStorage.None)))]
+    [_value : unit
+      (ir.compiler-ir-extern-builder-push!
+        (&mut externs)
+        (Extern
+          name
+          name
+          "package_layout_fixture"
+          signature
+          (if c-abi
+            (C)
+            (TypeLisp))
+          name
+          (ast.ast-extern-link-input-list-new)
+          false
+          (ir.CompilerIrReturnStorage.None)))]
+    [program : ir.CompilerIrProgram
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
+        (ir.CompilerIrReturnStorageAuthority.None))]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [layouts : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-empty)]
+    [key : i64 (ast.ast-nominal-name-id-key nominal)]
+    (when
+      (and (>= evidence 0) (< evidence 7))
+      (set!
+        layouts
+        (if (= evidence 6)
+          (ir.compiler-ir-representation-index-merge-one-word layouts key)
+          (ir.compiler-ir-representation-index-merge-group
+            layouts
+            key
+            2
+            (if (< evidence 4)
+              evidence
+              0)))))
+    (when
+      (or (= evidence 4) (= evidence 5))
+      (set!
+        layouts
+        (ir.compiler-ir-representation-index-merge-group
+          layouts
+          key
+          (if (= evidence 4)
+            2
+            3)
+          1)))
+    (when
+      (= evidence 7)
+      (set!
+        layouts
+        (ir.compiler-ir-representation-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& program)
+          layouts)))
+    (when
+      (>= evidence -1)
+      (backend.compiler-backend-state-set-representations! state layouts))
+    (let
+      [diagnostic : String
+        (if object
+          (match (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            state
+            (ast.ast-node-pool-reader-type-segment-bases)
+            program
+            target
+            (Scalar)
+            (ir.compiler-source-spans-empty)
+            false
+            false
+            (profile_state.compiler-profile-state-new))
+            [(Ok _) ""]
+            [(Err diag)
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag))])
+          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            state
+            (ast.ast-node-pool-reader-type-segment-bases)
+            program
+            target
+            (Scalar)
+            (ir.compiler-source-spans-empty)
+            false
+            false
+            (profile_state.compiler-profile-state-new))
+            [(Ok _) ""]
+            [(Err diag)
+              (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))]
+      [reject : bool
+        (and
+          (not c-abi)
+          (or (< evidence 0) (= evidence 4) (= evidence 5) (= evidence 7)))]
+      (backend.compiler-backend-state-release-final-arenas! state)
+      (if reject
+        (string.contains
+          diagnostic
+          "missing or conflicting aggregate layout for TypeLisp extern package_layout_fixture")
+        (= (string.string-length diagnostic) 0)))))
+
+(test
+  backend-package-aggregate-layout-admission
+  (for [route (iterator.range 0 8)]
+    (for [evidence (iterator.range -2 8)]
+      (for [abi (iterator.range 0 2)]
+        (test.assert-true
+          (compiler-backend-package-layout-admission-ok?
+            (if (= (bit-and route 1) 0)
+              (Linux)
+              (Windows))
+            (not (= (bit-and route 2) 0))
+            (not (= (bit-and route 4) 0))
+            (= abi 1)
+            evidence)
+          "package aggregate admission lost a missing/conflicting rejection or a valid ABI")))))

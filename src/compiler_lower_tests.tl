@@ -28,6 +28,127 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-function-env-scratch
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [parent-name : i64 (ci.intern "function-env-parent")]
+    [missing : i64 (ci.intern "function-env-missing")]
+    [parent : tc_core.TcTypeEnv
+      (tc_core.tc-env-with-cache
+        (tc_core.tc-bind-id
+          (tc_core.tc-empty-env-with-job-state job)
+          parent-name
+          (I64)))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [names : lower.LowerNameCache (lower.lower-name-cache-from-env owner Nil)]
+    [types : lower.LowerTypeCache
+      (lower.lower-type-cache-from-env owner parent)]
+    [before : tc_core.TcTypeEnvStore
+      (tc_core.tc-type-env-store-read parent.store)]
+    [chain : i64 (tc_core.tc-chain-state-address parent.store)]
+    [counts : (Array i64 4) (array 0 3 80 1)]
+    (ast.ast-node-pool-context-install! pools)
+    (for [case-index (iterator.range 0 (array-length counts))]
+      (let
+        [count : i64 (array-ref counts case-index)]
+        [params : ast.AstParamList (ast.ast-param-list-with-capacity count)]
+        [first : i64 (ci.intern "function-env-local")]
+        [epoch : i64 tc_core.tc-type-env-store-epoch]
+        (for [index (iterator.range 0 count)]
+          (ast.ast-param-list-push
+            (&mut params)
+            (ast.ast-param-id
+              (if (= index 0)
+                first
+                (ci.intern
+                  (str_cat.str-cat
+                    "function-env-local-"
+                    (string.int->string index))))
+              (I64)
+              false)))
+        (match (lower.lower-function-escaping
+          ctx
+          parent
+          (clone types)
+          (ci.intern-generated-canonical-name "function-env-ok")
+          params
+          (I64)
+          (if (= count 0)
+            (Literal (ast.ast-lit-int 42))
+            (Var first))
+          (Known -1 0)
+          (ir.compiler-source-spans-empty)
+          (clone names)
+          (lower.CompilerLowerMode.Scalar))
+          [(Ok functions _)
+            (test.assert-true
+              (> (ir.compiler-ir-function-seq-count (& functions)) 0)
+              "escaped function remains readable after rewind")]
+          [(Err _) (test.assert-true false "function lowering succeeds")])
+        (test.assert-true
+          (> tc_core.tc-type-env-store-epoch epoch)
+          "function-store retirement invalidates address-keyed memos")
+        (let
+          [after : tc_core.TcTypeEnvStore
+            (tc_core.tc-type-env-store-read parent.store)]
+          (test.assert-true
+            (and
+              (= after.binding-len before.binding-len)
+              (= after.binding-capacity before.binding-capacity)
+              (= after.cache-len before.cache-len)
+              (= after.cache-capacity before.cache-capacity)
+              (= (tc_core.tc-chain-state-address parent.store) chain)
+              (match (tc_core.tc-lookup-id parent parent-name)
+                [(Ok (I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id parent first)
+                [(Err _) true]
+                [_ false]))
+            "lowering leaves the parent store, chain and bindings intact"))))
+    (match (lower.lower-function-escaping
+      ctx
+      parent
+      (clone types)
+      (ci.intern-generated-canonical-name "function-env-error")
+      (ast.ast-param-list-new)
+      (I64)
+      (Var missing)
+      (Known -1 0)
+      (ir.compiler-source-spans-empty)
+      names
+      (lower.CompilerLowerMode.Scalar))
+      [(Err diagnostic)
+        (test.assert-true
+          (>
+            (string.string-length
+              (cdiag.compiler-diagnostic-message (__tl-box-place diagnostic)))
+            0)
+          "error diagnostic survives the function rewind")]
+      [(Ok _ _) (test.assert-true false "missing variable rejects")])
+    (test.assert-true
+      (=
+        (tc_core.tc-type-env-store-read parent.store).binding-len
+        before.binding-len)
+      "an error also leaves the persistent parent untouched")
+    (lower.compiler-lower-arena-state-release!
+      (lower.compiler-lower-state-arenas owner))
+    (ast.ast-node-pool-context-install! saved)))
+
+(test
   compiler-lower-let-source-fact-fallback
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -1381,6 +1502,11 @@
 (defenum One (Only Holder))
 (defstruct W8 (a i64) (b i64) (c i64) (d i64) (e i64) (f i64) (g i64) (h i64))
 (defstruct Wide (w1 W8) (w2 W8) (w3 W8) (w4 W8) (w5 W8) (w6 W8) (w7 W8) (w8 W8) (w9 W8))
+(defstruct Group0 (a i64) (b i64))
+(defstruct Group1 (a f64) (b i64))
+(defstruct Group2 (a i64) (b f64))
+(defstruct Group3 (a f64) (b f64))
+(defstruct MixedWord (a i32) (b f32) (c i64))
 (define (main) : i64 0)")
 
 (define (lower-test-nominal-id
@@ -1420,12 +1546,37 @@
           (=
             (ir.compiler-ir-representation-index-stable-mask
               (&
-                (lower.lower-representation-index-stable-words
+                (lower.lower-representation-index-from-layouts
                   (ast.ast-node-pool-reader-type-segment-bases)
                   (tc_core.tc-context-job-state ctx)
                   (ir.compiler-ir-representation-index-empty)))
               (ast.ast-nominal-name-id-key name-id))
             want)]
+        [(Err _) false]))))
+
+(define (lower-test-layout-group
+  [ctx : tc_core.TcContext]
+  [program : (& program ast.AstProgram)]
+  [name : String]
+  [mask : i64]) : bool
+  (let
+    [name-id : i64 (lower-test-nominal-id program name)]
+    (and
+      (>= name-id 0)
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(Ok _)
+          (match (ir.compiler-ir-representation-index-kind
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (&
+              (lower.lower-representation-index-from-layouts
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (tc_core.tc-context-job-state ctx)
+                (ir.compiler-ir-representation-index-empty)))
+            (& (ast.AstType.Struct name-id)))
+            [(RegisterGroup words found-mask)
+              (and (= words 2) (= found-mask mask))]
+            [(KnownOneWord) (= mask -1)]
+            [_ false])]
         [(Err _) false]))))
 
 (define (compiler-lower-stable-word-masks-ok?) : bool
@@ -1452,7 +1603,13 @@
                   (lower-test-stable-mask ctx (& program) "Holder" 1)
                   (lower-test-stable-mask ctx (& program) "One" 3)
                   (lower-test-stable-mask ctx (& program) "W8" 255)
-                  (lower-test-stable-mask ctx (& program) "Wide" 0)))]
+                  (lower-test-stable-mask ctx (& program) "Wide" 0)
+                  (lower-test-layout-group ctx (& program) "Group0" 0)
+                  (lower-test-layout-group ctx (& program) "Group1" 1)
+                  (lower-test-layout-group ctx (& program) "Group2" 2)
+                  (lower-test-layout-group ctx (& program) "Group3" 3)
+                  (lower-test-layout-group ctx (& program) "MixedWord" -1)
+                  (lower-test-layout-group ctx (& program) "W8" -1)))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))

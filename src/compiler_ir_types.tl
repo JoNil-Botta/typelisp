@@ -11225,6 +11225,7 @@
 
 (define (compiler-ir-representation-collect-one-type-list-from
   [type-segment-bases : i64]
+  [require-layout : bool]
   [index : CompilerIrRepresentationIndex]
   [types : (& ast.AstTypeList)]
   [position : i64]) : CompilerIrRepresentationIndex
@@ -11232,8 +11233,10 @@
     index
     (compiler-ir-representation-collect-one-type-list-from
       type-segment-bases
+      require-layout
       (compiler-ir-representation-collect-one-type
         type-segment-bases
+        require-layout
         (& index)
         (&
           (ast.ast-type-segment-bases-get
@@ -11244,54 +11247,75 @@
 
 (define (compiler-ir-representation-collect-one-type-list
   [type-segment-bases : i64]
+  [require-layout : bool]
   [index : (& CompilerIrRepresentationIndex)]
   [types : (& ast.AstTypeList)]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-type-list-from
     type-segment-bases
+    require-layout
     (owned_view.compiler-owned-reference-shared-view index)
     types
     0))
 
 (define (compiler-ir-representation-collect-one-type
   [type-segment-bases : i64]
+  [require-layout : bool]
   [index : (& CompilerIrRepresentationIndex)]
   [ty : (& ast.AstType)]) : CompilerIrRepresentationIndex
   (let
+    [snapshot : CompilerIrRepresentationIndex
+      (owned_view.compiler-owned-reference-shared-view index)]
     [with-nominal : CompilerIrRepresentationIndex
       (match (ast.ast-aggregate-type-key type-segment-bases ty)
         [(Some key)
           (if (compiler-ir-representation-internal-transport?
             type-segment-bases
             ty)
-            (owned_view.compiler-owned-reference-shared-view index)
-            (compiler-ir-representation-index-merge-one-word
-              (owned_view.compiler-owned-reference-shared-view index)
-              key))]
-        [(None) (owned_view.compiler-owned-reference-shared-view index)])]
+            (compiler-ir-representation-collect-signature-type
+              type-segment-bases
+              snapshot
+              ty)
+            (if (and
+              require-layout
+              (not (ir_i64_i64_map.contains? (& index.word-counts) key)))
+              (compiler-ir-representation-index-merge-group snapshot key 0 0)
+              (compiler-ir-representation-index-merge-one-word snapshot key)))]
+        [(None) snapshot])]
     (match ty
       [(Func args ret)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
+          require-layout
           (&
             (compiler-ir-representation-collect-one-type-list
               type-segment-bases
+              require-layout
               (& with-nominal)
               (& (deref args))))
           (& (ast.ast-type-segment-bases-get type-segment-bases ret)))]
       [(Tuple items)
         (compiler-ir-representation-collect-one-type-list
           type-segment-bases
+          require-layout
           (& with-nominal)
           (& (deref items)))]
-      ;; Region was already transparently classified by the canonical-key
-      ;; query; recurse only to discover nested container types.
-      [(or (Array elem _) (DynArray elem) (Box elem) (Ref _ elem)
-           (MutRef _ elem) (Ptr elem) (MutPtr elem) (Region _ elem)
-           (Invalidate _ elem))
+      [(or (Region _ elem) (Invalidate _ elem))
         (compiler-ir-representation-collect-one-type
           type-segment-bases
+          require-layout
           (& with-nominal)
           (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
+      [(or (Array elem _) (DynArray elem) (Box elem) (Ref _ elem)
+           (MutRef _ elem) (Ptr elem) (MutPtr elem))
+        ;; A referent is not passed by value. The ordinary evidence pass can
+        ;; visit it only after all required extern layouts are protected.
+        (if require-layout
+          with-nominal
+          (compiler-ir-representation-collect-one-type
+            type-segment-bases
+            false
+            (& with-nominal)
+            (& (ast.ast-type-segment-bases-get type-segment-bases elem))))]
       [_ with-nominal])))
 
 (define (compiler-ir-representation-collect-one-param-seq-from
@@ -11307,6 +11331,7 @@
           type-segment-bases
           (compiler-ir-representation-collect-one-type
             type-segment-bases
+            false
             (& index)
             (& ty))
           params
@@ -11335,14 +11360,17 @@
          (Pack _ _ ty) (Word _ _ _ ty) (TailCallIndirect _ _ ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
+        false
         (& index)
         (& ty))]
     [(or (Cast _ _ from-ty to-ty) (Bitcast _ _ from-ty to-ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
+        false
         (&
           (compiler-ir-representation-collect-one-type
             type-segment-bases
+            false
             (& index)
             (& from-ty)))
         (& to-ty))]
@@ -11415,6 +11443,7 @@
         (&
           (compiler-ir-representation-collect-one-type
             type-segment-bases
+            false
             (&
               (compiler-ir-representation-collect-one-param-seq
                 type-segment-bases
@@ -11462,6 +11491,7 @@
           type-segment-bases
           (compiler-ir-representation-collect-one-type
             type-segment-bases
+            false
             (& index)
             (& ty))
           globals
@@ -11479,47 +11509,66 @@
 
 (define (compiler-ir-representation-collect-one-externs-from
   [type-segment-bases : i64]
+  [require-layout : bool]
   [index : CompilerIrRepresentationIndex]
   [externs : (& CompilerIrExternSeq)]
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position externs.len)
     index
     (match (compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ _ ty _ _ _ _ _)
+      [(Extern _ _ _ ty abi _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
-          (compiler-ir-representation-collect-one-type
-            type-segment-bases
-            (& index)
-            (& ty))
+          require-layout
+          (if (and
+            require-layout
+            (match abi
+              [(TypeLisp) false]
+              [_ true]))
+            index
+            (compiler-ir-representation-collect-one-type
+              type-segment-bases
+              require-layout
+              (& index)
+              (& ty)))
           externs
           (+ position 1))])))
 
 (define (compiler-ir-representation-collect-one-externs
   [type-segment-bases : i64]
+  [require-layout : bool]
   [index : (& CompilerIrRepresentationIndex)]
   [externs : (& CompilerIrExternSeq)]) : CompilerIrRepresentationIndex
   (compiler-ir-representation-collect-one-externs-from
     type-segment-bases
+    require-layout
     (owned_view.compiler-owned-reference-shared-view index)
     externs
     0))
 
 (define (compiler-ir-representation-index-build
   [type-segment-bases : i64]
-  [program : (& CompilerIrProgram)]) : CompilerIrRepresentationIndex
+  [program : (& CompilerIrProgram)]
+  [initial : CompilerIrRepresentationIndex]) : CompilerIrRepresentationIndex
   (match program
     [(Program globals functions externs _authority)
       (let
         ;; Group evidence is complete before positive one-word evidence is
         ;; admitted. Thus an ordinary occurrence of a real group can never
         ;; conflict with its Pack/signature, while genuinely contradictory
-        ;; group observations remain explicit Unknown.
+        ;; group observations remain explicit Unknown. TypeLisp externs require
+        ;; positive layout/signature evidence before ordinary occurrences can
+        ;; imply one word; a missing layout stays Unknown through that pass.
         [groups : CompilerIrRepresentationIndex
-          (compiler-ir-representation-collect-group-functions
+          (compiler-ir-representation-collect-one-externs
             type-segment-bases
-            (& (compiler-ir-representation-index-empty))
-            (& functions))]
+            true
+            (&
+              (compiler-ir-representation-collect-group-functions
+                type-segment-bases
+                (& initial)
+                (& functions)))
+            (& externs))]
         [storage : CompilerIrReturnStorageIndex
           (compiler-ir-return-storage-index-build
             type-segment-bases
@@ -11528,6 +11577,7 @@
         [representations : CompilerIrRepresentationIndex
           (compiler-ir-representation-collect-one-externs
             type-segment-bases
+            false
             (&
               (compiler-ir-representation-collect-one-functions
                 type-segment-bases
@@ -11544,11 +11594,14 @@
           representations.stable-word-masks
           storage))]))
 
+;; `initial` carries the layout-derived group facts lowering preserved before
+;; it retired the typecheck caches (#8532).
 (define (compiler-ir-representation-index-with-authority
   [pools : ast.AstNodePoolContext]
   [interns : (& interns ci.InternCompatState)]
   [target : i64]
-  [program : (& program CompilerIrProgram)]) : CompilerIrRepresentationIndex
+  [program : (& program CompilerIrProgram)]
+  [initial : CompilerIrRepresentationIndex]) : CompilerIrRepresentationIndex
   (match program
     [(CompilerIrProgram.Program _ functions externs authority)
       (let
@@ -11566,7 +11619,8 @@
           (if (= (string.string-length storage.problem) 0)
             (compiler-ir-representation-index-build
               (ast.ast-node-pool-context-type-segment-bases pools)
-              program)
+              program
+              initial)
             (compiler-ir-representation-index-empty))]
         (CompilerIrRepresentationIndex
           base.word-counts

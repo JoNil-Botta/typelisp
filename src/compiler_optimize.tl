@@ -11151,15 +11151,21 @@
   [context : OptCfgContext]) : OptFunctionRewriteResult
   (Result func context false))
 
-(define (opt-function-rewrite-commit
-  [func : ir.CompilerIrFunction]
-  [context : OptCfgContext]
-  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+;; What a rewrite plan commits to: nothing (the plan reports no change), the
+;; rewritten function with its fresh context, or the verifier's rejection.
+(defenum OptRewriteVerdict
+  (Unchanged)
+  (Kept ir.CompilerIrFunction OptCfgContext)
+  (Rejected String))
+
+(define (opt-function-rewrite-verdict
+  [func : (& ir.CompilerIrFunction)]
+  [plan : OptBlockRewriteResult]) : OptRewriteVerdict
   (match plan
     [(Result blocks frame changed?)
       (if (not changed?)
-        (opt-function-rewrite-unchanged func context)
-        (match (compiler-opt-global-shared-view func)
+        (Unchanged)
+        (match (owned_view.compiler-owned-reference-shared-view func)
           [(Function name params ret-ty _ _ function-abi)
             (let
               [next : ir.CompilerIrFunction
@@ -11172,13 +11178,87 @@
                   function-abi)]
               [next-context : OptCfgContext (opt-cfg-context-build blocks)]
               (match (opt-verify-function-with-context next next-context)
-                [(Ok) (Result next next-context true)]
-                [(Err _) (opt-function-rewrite-unchanged func context)]))]))]))
+                [(Ok) (Kept next next-context)]
+                [(Err reason) (Rejected reason)]))]))]))
+
+;; The commit for an input nothing has verified: a rejected rewrite falls back
+;; to the input.
+(define (opt-function-rewrite-commit
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+  (match (opt-function-rewrite-verdict (& func) plan)
+    [(Kept next next-context) (Result next next-context true)]
+    [_ (opt-function-rewrite-unchanged func context)]))
+
+;; #9013. A rewrite the verifier rejects although its input verifies is a bug in
+;; the pass that produced it, so it stops the compile as an internal error
+;; instead of silently keeping the input. The verifier still runs on every
+;; rewrite; only what a rejection means changes.
+(define (opt-rewrite-ice-message
+  [pass : String]
+  [func : (& ir.CompilerIrFunction)]
+  [reason : String]) : String
+  (str_cat.str-cat
+    "optimizer: internal error: pass `"
+    pass
+    "` rewrote verified function `"
+    (ir.compiler-ir-symbol-text (opt-function-name func))
+    "` into IR the verifier rejects: "
+    reason))
+
+;; The optimizer tests capture the internal error instead of aborting, so they
+;; can drive a deliberately broken rewrite through the real commit path. The
+;; hook exists only under `cfg test`; every other build panics directly.
+(cfg
+  test
+  (define opt-rewrite-ice-capture? : bool
+    false))
+(cfg
+  test
+  (define opt-rewrite-ice-captured : String
+    ""))
+
+(cfg
+  test
+  (define (opt-rewrite-ice-capture! [on? : bool]) : unit
+    (set! opt-rewrite-ice-capture? on?)
+    (set! opt-rewrite-ice-captured "")))
+
+(cfg
+  test
+  (define (opt-rewrite-ice-last) : String
+    (string.copy (& opt-rewrite-ice-captured))))
+
+(define (opt-rewrite-ice! [message : String]) : unit
+  (cfg
+    test
+    (if opt-rewrite-ice-capture?
+      (set! opt-rewrite-ice-captured message)
+      (io.panic message))
+    (io.panic message)))
+
+;; The commit for an input `opt-verify-gate` has just accepted: a rejected
+;; rewrite is an internal error naming the pass and the function.
+(define (opt-function-rewrite-commit-verified
+  [pass : String]
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+  (match (opt-function-rewrite-verdict (& func) plan)
+    [(Kept next next-context) (Result next next-context true)]
+    [(Rejected reason)
+      (opt-rewrite-ice! (opt-rewrite-ice-message pass (& func) reason))
+      (opt-function-rewrite-unchanged func context)]
+    [(Unchanged) (opt-function-rewrite-unchanged func context)]))
 
 ;; Static specialization keeps candidate and clone/fuel policy at each pass,
 ;; without closures or indirect calls. The rewrite runs only after admission
 ;; and verification. Mutable transforms must clone before editing their input.
+;; `pass` names the pass in the internal error a rejected rewrite raises: past
+;; the gate the input verifies, so the rejection is the pass's own bug.
 (defmacro (opt-branch-function-rewrite
+  [pass : Expr]
   [func : Expr]
   [context : Expr]
   [verified? : Expr]
@@ -11193,7 +11273,11 @@
         (compiler-opt-global-shared-view original)
         (compiler-opt-global-shared-view original-context))
         [(ResultCompilerOptimizeVerify.Ok)
-          (opt-function-rewrite-commit original original-context ,rewrite)]
+          (opt-function-rewrite-commit-verified
+            ,pass
+            original
+            original-context
+            ,rewrite)]
         [(ResultCompilerOptimizeVerify.Err _)
           (opt-function-rewrite-unchanged original original-context)])
       (opt-function-rewrite-unchanged original original-context))))
@@ -11211,12 +11295,13 @@
 ;; The loop passes' form: no candidate precheck, and the context is handed on
 ;; without the changed flag.
 (defmacro (opt-loop-function-rewrite
+  [pass : Expr]
   [func : Expr]
   [context : Expr]
   [verified? : Expr]
   [rewrite : Expr]) : Expr
   `(opt-function-rewrite-ctx-result
-    (opt-branch-function-rewrite ,func ,context ,verified? true ,rewrite)))
+    (opt-branch-function-rewrite ,pass ,func ,context ,verified? true ,rewrite)))
 
 (define (opt-function-rewrite-ctx-result [result : OptFunctionRewriteResult]) : OptFunctionCtxResult
   (match result
@@ -18376,10 +18461,14 @@
                     ;; post-pass verify, and hand it back for the next pass.
                     [next-context : OptCfgContext
                       (opt-cfg-context-build next-blocks)]
+                    ;; Past the gate the input verifies, so a rejection here is
+                    ;; an internal error (#9013).
                     (match (opt-verify-function-with-context next next-context)
                       [(Ok) (Result next next-context)]
-                      [(Err _)
+                      [(Err reason)
                         (opt-preheader-trace-verify-rejected!)
+                        (opt-rewrite-ice!
+                          (opt-rewrite-ice-message "preheaders" (& func) reason))
                         (Result func context)])))])]
           [(Err _)
             (opt-preheader-trace-entry-verify! context)
@@ -28796,6 +28885,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params _ frame blocks _)
       (opt-loop-function-rewrite
+        "licm"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -30532,6 +30622,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params _ frame blocks _)
       (opt-loop-function-rewrite
+        "licm_unswitch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -32587,6 +32678,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "induction"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -37627,7 +37719,7 @@
 
 ;; `context` must be valid for `func`'s blocks (its entry verify reuses it). The
 ;; rewrite changes the CFG, so a converted function gets a fresh context; a
-;; verifier rejection falls back to the byte-identical input.
+;; verifier rejection of the rewrite is an internal error (#9013).
 (define (opt-flag-exit-function-with-context-result
   [context : (& OptCfgContext)]
   [verified? : bool]
@@ -37635,6 +37727,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "flag_exit"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -38695,6 +38788,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "lftr"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -41553,6 +41647,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bool_branch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -42756,8 +42851,8 @@
             [(Result final _) (Result final true)])]))))
 
 ;; The edge retargeting and the phi repair mutate instruction sequences in
-;; place, so the pass works on a deep block/instruction clone and a rejected
-;; post-pass verify hands back the byte-for-byte input function.
+;; place, so the pass works on a deep block/instruction clone and leaves its
+;; input untouched.
 (define (opt-phi-cmp-fold-blocks
   [type-segment-bases : i64]
   [blocks : (& ir.CompilerIrBlockList)]
@@ -42850,6 +42945,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "phi_cmp_fold"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -43011,6 +43107,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bool_branch_chain"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -45034,6 +45131,7 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "thread_branch"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -65100,6 +65198,7 @@
         [entry-index : OptCfgIndex
           (owned_view.compiler-owned-reference-shared-view (& context.index))]
         (opt-loop-function-rewrite
+          "loop_call"
           (owned_view.compiler-owned-reference-shared-view func)
           (owned_view.compiler-owned-reference-shared-view context)
           verified?
@@ -88018,6 +88117,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "gep_offset"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -99174,6 +99274,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-branch-function-rewrite
+        "bounds_group"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?
@@ -99224,13 +99325,17 @@
 (define (opt-bg-function-rounds) : i64
   3)
 
-;; The pipeline entry skips the defensive entry verify: the body arrives
-;; straight out of `optimize-function-with-level-and-summaries-pass`, whose last
-;; rewriting passes each post-verify their own output, and this pass verifies
-;; what it produces before returning it either way. The prescan runs before the
-;; CFG context is built so a function with no candidate shape costs one linear
-;; instruction walk and nothing else.
-(define (opt-bg-function-verified-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+;; One round of the pipeline entry. The body arrives straight out of
+;; `optimize-function-with-level-and-summaries-pass`, which does not promise a
+;; verifying body: a function SSA construction could not rename stays unverified
+;; through every pass that refused it. So the first round's gate verifies the
+;; candidate (#9013); a later round's input is the rewrite the previous round
+;; committed, which its commit verified, so `verified?` skips that check. The
+;; prescan runs before the CFG context is built so a function with no candidate
+;; shape costs one linear instruction walk and nothing else.
+(define (opt-bg-function-verified-pass
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (if (not
     (let
       [blocks (opt-function-blocks func)]
@@ -99238,18 +99343,22 @@
     (Result func false)
     (match (opt-bg-function-changed-result
       (& (opt-cfg-context-build (opt-function-blocks func)))
-      true
+      verified?
       (& func))
       [(Result next _ changed) (Result next changed)])))
 
-(define (opt-bg-function-fixed [func : ir.CompilerIrFunction] [remaining : i64]) : ir.CompilerIrFunction
+(define (opt-bg-function-fixed
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]
+  [remaining : i64]) : ir.CompilerIrFunction
   (if (<= remaining 0)
     func
     (match (opt-bg-function-verified-pass
+      verified?
       (compiler-opt-global-shared-view func))
       [(Result next changed)
         (if changed
-          (opt-bg-function-fixed next (- remaining 1))
+          (opt-bg-function-fixed true next (- remaining 1))
           func)])))
 
 (define (opt-bg-function
@@ -99259,6 +99368,7 @@
     type-segment-bases
     "bounds_group"
     (opt-bg-function-fixed
+      false
       (owned_view.compiler-owned-reference-shared-view func)
       (opt-bg-function-rounds))))
 
@@ -100788,9 +100898,14 @@
     ;;
     ;; Verification is consolidated at the cluster head: one full verify of the
     ;; switch-form output, threaded through `verified?`, replaces each cluster
-    ;; pass's entry verify. Every mutating pass still post-verifies its own
-    ;; rewrite (falling back to its input on rejection), so a verified input
-    ;; stays verified across the chain.
+    ;; pass's entry verify. Every rewriting pass still post-verifies its own
+    ;; rewrite, so a verified input stays verified across the chain. Behind
+    ;; `opt-branch-function-rewrite` and in `preheaders` a rejection is an
+    ;; internal error naming the pass (#9013); the other passes keep their
+    ;; input. The in-place passes without a post-verify (dead_phi,
+    ;; store_owned_erase, bounds_dom_le, load_combine, the affine fold) must
+    ;; preserve verification: a break there surfaces as the next gated pass's
+    ;; internal error.
     [verified? : bool
       (opt-verify-ok?
         (&
@@ -101072,8 +101187,8 @@
     ;; slots stay consistent with the promoted blocks. It reuses the context
     ;; the post-LFTR LICM handed back: affine folding only rewrites
     ;; instructions, so that pass's output blocks preserve the same CFG. Its
-    ;; entry verify rides the loop-cluster verification: every pass in between
-    ;; post-verifies its own rewrite (falling back to its verified input), so a
+    ;; entry verify rides the loop-cluster verification: every rewriting pass
+    ;; in between post-verifies its own rewrite (see the cluster head), so a
     ;; verified cluster input arrives here still verified.
     [s
       (opt-stage
@@ -103148,86 +103263,124 @@
       (opt-release-optimizer-input-arena "optimizer-input" handle)
       (set! (array-ref release.chunks chunk) 0))))
 
+;; What `opt-optimizer-input-carry` hands the loop: its input sequence, or the
+;; name of a survivor that is not resident in the input arenas although its
+;; source may no longer be read.
+(defenum OptOptimizerInputCarry
+  (Carried ir.CompilerIrFunctionSeq)
+  (Unplaced String))
+
+;; The position of the first survivor in FUNCS that is not the body placed
+;; under its name, or -1.
+(define (opt-optimizer-input-first-unplaced
+  [input : (& input OptOptimizerInput)]
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]) : i64
+  (for [i (iterator.range 0 funcs.len)]
+    (unless
+      (opt-optimizer-input-placed?
+        input
+        (ir.compiler-ir-function-seq-borrow funcs i))
+      (return i)))
+  -1)
+
 ;; The loop's input sequence, resident in the input arenas. Every survivor the
-;; inline stage placed is used as is; any other survivor is copied into the
-;; carrier arena, so the loop never reads a body from the inline or lower-IR
-;; arenas. Builds the release schedule and releases the chunks no survivor is
-;; in.
+;; inline stage placed is used as is. The stage places every index body, so any
+;; other survivor still lives where it was produced: while that source is live
+;; it is copied into the carrier arena, so the loop never reads a body from the
+;; inline or lower-IR arenas; once SOURCE-RETIRED? says the source has retired,
+;; reading it would read freed storage, so the carry copies nothing and names
+;; the first such survivor instead. Builds the release schedule and releases
+;; the chunks no survivor is in.
 (define (opt-optimizer-input-carry
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
-  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (if (= input.arena 0)
-    funcs
-    (in-arena
-      (unsafe
-        (arena.Arena input.arena))
-      (let
-        [out : ir.CompilerIrFunctionSeq
-          (ir.compiler-ir-clone-function-seq-shell funcs)]
-        [chunk-count : i64 (array-length input.chunks)]
-        [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
-        [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
-        [i : i64 0]
-        (while (< i chunk-count)
-          (set! (array-ref chunks i) (array-ref input.chunks i))
-          (set! (array-ref last i) -1)
-          (+= i 1))
-        (set! i 0)
-        (while (< i out.len)
-          (let
-            [func : ir.CompilerIrFunction
-              (compiler-opt-global-array-element-shared-view out.slots i)]
-            (if (opt-optimizer-input-placed? input (& func))
-              (match (& func)
-                [(Function name _ _ _ _ _)
-                  (set!
-                    (array-ref
-                      last
-                      (opt_i64_i64_map.get-value-or
-                        (& input.placed-chunk)
-                        (ir.compiler-ir-symbol-id name)
-                        0))
-                    i)])
-              (set!
-                (array-ref out.slots i)
-                (ir.compiler-ir-clone-function pools (& func))))
-            (+= i 1)))
-        (let
-          [read-count : i64 0]
-          (set! i 0)
-          (while (< i chunk-count)
-            (if (< (array-ref last i) 0)
-              (unless
-                (= (array-ref chunks i) 0)
-                (opt-release-optimizer-input-arena
-                  "optimizer-input"
-                  (array-ref chunks i))
-                (set! (array-ref chunks i) 0))
-              (+= read-count 1))
-            (+= i 1))
-          (let
-            [order : (__tl_dyn-array i64) (__tl_make-array i64 read-count)]
-            [filled : i64 0]
-            ;; Insertion by `last`: chunk counts are a few dozen.
-            (set! i 0)
-            (while (< i chunk-count)
-              (unless
-                (< (array-ref last i) 0)
+  [funcs : ir.CompilerIrFunctionSeq]
+  [source-retired? : bool]) : OptOptimizerInputCarry
+  (let
+    [unplaced : i64
+      (if (and source-retired? (> input.arena 0))
+        (opt-optimizer-input-first-unplaced input (& funcs))
+        -1)]
+    (cond
+      [(= input.arena 0) (Carried funcs)]
+      [(>= unplaced 0)
+        (match (ir.compiler-ir-function-seq-borrow (& funcs) unplaced)
+          [(Function name _ _ _ _ _)
+            (Unplaced (ir.compiler-ir-symbol-text name))])]
+      [else
+        (Carried
+          (in-arena
+            (unsafe
+              (arena.Arena input.arena))
+            (let
+              [out : ir.CompilerIrFunctionSeq
+                (ir.compiler-ir-clone-function-seq-shell funcs)]
+              [chunk-count : i64 (array-length input.chunks)]
+              [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+              [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+              [i : i64 0]
+              (while (< i chunk-count)
+                (set! (array-ref chunks i) (array-ref input.chunks i))
+                (set! (array-ref last i) -1)
+                (+= i 1))
+              (set! i 0)
+              (while (< i out.len)
                 (let
-                  [at : i64 filled]
-                  (while (and
-                    (> at 0)
-                    (>
-                      (array-ref last (array-ref order (- at 1)))
-                      (array-ref last i)))
-                    (set! (array-ref order at) (array-ref order (- at 1)))
-                    (-= at 1))
-                  (set! (array-ref order at) i)
-                  (+= filled 1)))
-              (+= i 1))
-            (set! input.release (OptOptimizerInputRelease chunks last order))))
-        out))))
+                  [func : ir.CompilerIrFunction
+                    (compiler-opt-global-array-element-shared-view out.slots i)]
+                  (if (opt-optimizer-input-placed? input (& func))
+                    (match (& func)
+                      [(Function name _ _ _ _ _)
+                        (set!
+                          (array-ref
+                            last
+                            (opt_i64_i64_map.get-value-or
+                              (& input.placed-chunk)
+                              (ir.compiler-ir-symbol-id name)
+                              0))
+                          i)])
+                    (set!
+                      (array-ref out.slots i)
+                      (ir.compiler-ir-clone-function pools (& func))))
+                  (+= i 1)))
+              (let
+                [read-count : i64 0]
+                (set! i 0)
+                (while (< i chunk-count)
+                  (if (< (array-ref last i) 0)
+                    (unless
+                      (= (array-ref chunks i) 0)
+                      (opt-release-optimizer-input-arena
+                        "optimizer-input"
+                        (array-ref chunks i))
+                      (set! (array-ref chunks i) 0))
+                    (+= read-count 1))
+                  (+= i 1))
+                (let
+                  [order : (__tl_dyn-array i64)
+                    (__tl_make-array i64 read-count)]
+                  [filled : i64 0]
+                  ;; Insertion by `last`: chunk counts are a few dozen.
+                  (set! i 0)
+                  (while (< i chunk-count)
+                    (unless
+                      (< (array-ref last i) 0)
+                      (let
+                        [at : i64 filled]
+                        (while (and
+                          (> at 0)
+                          (>
+                            (array-ref last (array-ref order (- at 1)))
+                            (array-ref last i)))
+                          (set! (array-ref order at) (array-ref order (- at 1)))
+                          (-= at 1))
+                        (set! (array-ref order at) i)
+                        (+= filled 1)))
+                    (+= i 1))
+                  (set!
+                    input.release
+                    (OptOptimizerInputRelease chunks last order))))
+              out)))])))
 
 ;; Release every input chunk whose last reader is at or before loop position
 ;; POSITION, starting from `order[cursor]`, and return the next cursor.
@@ -125974,6 +126127,24 @@
                 (set!
                   (array-ref opt-inline-pred-renames 0)
                   (OptInlinePredRenameList.Nil)))]
+            ;; At level 2 the walk has placed every surviving body in the
+            ;; optimizer-input arena, and it reset its callee-cost memo and its
+            ;; synth, owned-state and pure-call tables on the way out. The prune
+            ;; and the carry below read only those placed bodies and the
+            ;; driver's globals, externs and spans, which live outside the
+            ;; lower-IR arena. So the source owner can retire here, before the
+            ;; carry and the inline arena's release, instead of after them; a
+            ;; survivor that is not a placed body is then an internal error. The
+            ;; synchronous authority and its owner must themselves remain
+            ;; outside the retired storage.
+            [source-retired? : bool
+              (and
+                (= level 2)
+                (match input-retirement
+                  [(Retain) false]
+                  [(Retire owner release-input)
+                    (release-input owner)
+                    true]))]
             (match inlined
               [(Program reachable-functions inline-arena-spans)
                 (begin
@@ -126004,25 +126175,24 @@
                     ;; The driver's globals, externs and spans live outside
                     ;; the lower-IR arena; only its function bodies retire.
                     [optimizer-functions : ir.CompilerIrFunctionSeq
-                      (opt-optimizer-input-carry
+                      (match (opt-optimizer-input-carry
                         pools
                         (&mut optimizer-input)
-                        pruned-functions)]
+                        pruned-functions
+                        source-retired?)
+                        [(Carried carried) carried]
+                        [(Unplaced name)
+                          (io.panic
+                            (str_cat.str-cat
+                              "optimizer: survivor "
+                              name
+                              " is not a placed optimizer-input body after its lower-IR source retired"))])]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
                         unit
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena))]
-                    ;; Every surviving body is now independent of the source
-                    ;; owner. The synchronous authority and its owner must
-                    ;; themselves remain outside the retired storage.
-                    [_retire-source-input : unit
-                      (when
-                        (= level 2)
-                        (match input-retirement
-                          [(Retain) unit]
-                          [(Retire owner release-input) (release-input owner)]))]
                     [summaries : OptProgramSummaries
                       (opt-build-program-summaries
                         type-segment-bases
@@ -126146,8 +126316,10 @@
                               (& inline-spans)
                               (& optimized))))))))]))))]))
 
-;; Optional authority to retire source function storage after the level-2
-;; carrier handoff. The callback is synchronous and does not own its context.
+;; Optional authority to retire source function storage at the end of the
+;; level-2 inline walk, once every surviving body is placed in the
+;; optimizer-input arena and before the carrier handoff. The callback is
+;; synchronous and does not own its context.
 (defenum OptInputRetirement
   (Retain)
   (Retire i64 (-> i64 unit)))
@@ -126198,7 +126370,8 @@
           pools
           request.interns
           -1
-          (& program)))
+          (& program)
+          (ir.compiler-ir-representation-index-empty)))
       request.input-retirement)))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools
@@ -127609,6 +127782,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-loop-function-rewrite
+        "scratch_reset"
         (owned_view.compiler-owned-reference-shared-view func)
         (owned_view.compiler-owned-reference-shared-view context)
         verified?

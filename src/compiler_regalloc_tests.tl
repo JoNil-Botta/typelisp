@@ -12734,7 +12734,8 @@
           pools
           interns
           0
-          (& (ir.CompilerIrProgram.Program globals functions externs authority)))])))
+          (& (ir.CompilerIrProgram.Program globals functions externs authority))
+          (ir.compiler-ir-representation-index-empty))])))
 
 (define (compiler-reg-sret-color-blocks
   [ordinary? : bool]

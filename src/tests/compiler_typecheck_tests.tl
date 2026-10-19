@@ -1163,7 +1163,7 @@
                               (and
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view packet))
+                                    packet)
                                   24)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1186,7 +1186,7 @@
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view outer))
+                                    outer)
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1203,8 +1203,7 @@
                                     "tail")
                                   12)
                                 (=
-                                  (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view wide))
+                                  (tc_core.tc-inline-aggregate-layout-size wide)
                                   48)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1262,10 +1261,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Vec2"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        16)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1351,10 +1347,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Mixed"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        48)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 48)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1434,10 +1427,7 @@
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
     [(Ok layout)
       (and
-        (=
-          (tc_core.tc-inline-aggregate-layout-size
-            (tc_core.tc-global-shared-view layout))
-          want-size)
+        (= (tc_core.tc-inline-aggregate-layout-size layout) want-size)
         (=
           (tc_core.tc-inline-aggregate-layout-align
             (tc_core.tc-global-shared-view layout))
@@ -1957,8 +1947,7 @@
                             (compiler-typecheck-inline-field-id-at fields 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -2023,8 +2012,7 @@
                             (compiler-typecheck-inline-variant-id-at variants 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -9573,6 +9561,57 @@
             "typecheck"))))
     ok))
 
+;; A `replace!` place or `&mut` reborrow that reaches a `&mut` through a shared
+;; reference, at any depth, writes through that shared reference.
+(define (compiler-typecheck-place-through-shared-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Holder (m (&mut program Pt)))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+"]
+    [valid : (Array String 3)
+      (array
+        "(define (probe [h : (&mut (Tuple (&mut Pt) i64))]) : i64 (let [old (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2))] old.x))"
+        "(define (probe [h : (&mut (&mut Pt))]) : i64 (let [old (replace! (deref (deref h)) (Pt \"z\" 2))] old.x))"
+        "(define (probe [h : (&mut Holder)]) : i64 (let [old (replace! (deref (deref h).m) (Pt \"z\" 2))] old.x))")]
+    [invalid : (Array String 12)
+      (array
+        "(define (probe [h : (& (Tuple (&mut Pt) i64))]) : Pt (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (&mut Pt))]) : Pt (replace! (deref (deref h)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Array (&mut Pt) 1))]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& Holder)]) : Pt (replace! (deref (deref h).m) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Box (Tuple (&mut Pt) i64)))]) : Pt (replace! (deref (tuple-ref (deref (deref h)) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Tuple (&mut Pt) i64))]) : i64 (replace! (deref (tuple-ref (deref h) 0)).x 5))"
+        "(define (probe [h : (& (&mut i64))]) : i64 (replace! (deref (deref h)) 5))"
+        "(define (probe [a : (& (Tuple (&mut Pt) i64))] [b : (& (Tuple (&mut Pt) i64))]) : i64 (let [o1 (replace! (deref (tuple-ref (deref a) 0)) (Pt \"a\" 1))] [o2 (replace! (deref (tuple-ref (deref b) 0)) (Pt \"b\" 2))] (+ o1.x o2.x)))
+(define (alias [m : (&mut m Pt)]) : i64 (let [t : (Tuple (&mut m Pt) i64) (tuple m 1)] (probe (& t) (& t))))"
+        "(define (probe [h : (&mut (& (&mut Pt)))]) : Pt (replace! (deref (deref (deref h))) (Pt \"z\" 2)))"
+        "(define (probe [h : (&mut (Array (& (&mut Pt)) 1))]) : Pt (replace! (deref (deref (array-ref (deref h) 0))) (Pt \"z\" 2)))"
+        "(define (probe [h : (&mut (& (&mut Pt)))]) : unit (bump (&mut (deref (deref (deref h))))))"
+        "(define (probe [h : (&mut (Array (& (&mut Pt)) 1))]) : unit (bump (&mut (deref (deref (array-ref (deref h) 0))))))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (let
+        [src : String
+          (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))]
+        (set!
+          ok
+          (and
+            ok
+            (compiler-typecheck-error-code-ok? (clone src) "E0207" "typecheck")
+            (compiler-typecheck-error-ok?
+              src
+              "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)")))))
+    ok))
+
 ;; `replace!` returns the place's own old value: box contents reached through
 ;; `&mut` (directly, through a field, nested) leave as owned values that may be
 ;; returned or replace another place, never as views of the reference. The
@@ -9710,6 +9749,7 @@
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
     (compiler-typecheck-place-read-receivers-ok?)
+    (compiler-typecheck-place-through-shared-ok?)
     (compiler-typecheck-replace-place-own-value-ok?)
     (compiler-typecheck-deref-reference-value-place-ok?)
     (compiler-typecheck-replace-shared-path-ok?)

@@ -272,7 +272,7 @@
         [borrowed : (& items i64) (& (array-ref items 0))]
         unit)
       (write-i64-ref exclusive))))"
-      "typecheck: cannot immutably borrow mutably borrowed place `items`")
+      "typecheck: cannot immutably borrow mutably borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(define (borrow-text [source : (& source str)]) : (& source str)
   source)
@@ -355,7 +355,7 @@
       [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       [first-item : (&mut bags i64) (&mut (array-ref bags.left 0))]
       (set! (array-ref whole-left 0) 1))))"
-      "typecheck: cannot mutably borrow borrowed place `bags.left`")
+      "typecheck: cannot mutably borrow borrowed place `bags.left[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(define (touch [slot : (&mut items i64)]) : unit unit)
 (define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
@@ -386,7 +386,7 @@
     (begin
       (set! (array-ref borrowed 0) 41)
       n)))"
-      "typecheck: cannot read mutably borrowed place `items`")
+      "typecheck: cannot read mutably borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(defstruct Bag
   (left (__tl_dyn-array i64))

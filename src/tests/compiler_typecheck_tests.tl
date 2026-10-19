@@ -9288,17 +9288,17 @@
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     (let [s : (&mut items i64) (&mut (array-ref items 0))] (set! (deref r) 1))))"
-      "typecheck: cannot mutably borrow borrowed place `items`")
+      "typecheck: cannot mutably borrow borrowed place `items[0]`")
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (& items i64) (& (array-ref items 0))]
     (let [s : (&mut items i64) (&mut (array-ref items 0))] (begin (deref r) unit))))"
-      "typecheck: cannot mutably borrow borrowed place `items`")
+      "typecheck: cannot mutably borrow borrowed place `items[0]`")
     (compiler-typecheck-error-ok?
       "(define (bad [items : (__tl_dyn-array i64)]) : unit
   (let [r : (&mut items i64) (&mut (array-ref items 0))]
     (let [s : (& items i64) (& (array-ref items 0))] (set! (deref r) 1))))"
-      "typecheck: cannot immutably borrow mutably borrowed place `items`")
+      "typecheck: cannot immutably borrow mutably borrowed place `items[0]`")
     (compiler-typecheck-error-ok?
       "(define (take2 [a : (&mut n i64)] [b : (&mut n i64)]) : unit unit)
 (define (bad [n : i64]) : unit
@@ -9516,7 +9516,7 @@
     (begin
       (if c (cleanup-file-handle h) unit)
       0)))")
-      "typecheck: cleanup obligation of `h` is discharged on only some paths at the end of its let scope")
+      "typecheck: cleanup obligation of `h` is discharged on only some paths through this branch")
     ;; A same-shaped function is not the declared disposer.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-let-obligation-source
@@ -11049,7 +11049,7 @@
       (break))
     (set! (array-ref items 0) 4)
     (read-refs refs)))")
-      "typecheck: cannot mutably borrow borrowed place `items`")
+      "typecheck: cannot mutably borrow borrowed place `items[0]`")
     ;; Accepted: a body-local borrow ended at the break, a stored borrow read
     ;; only through its holder, and breaks with no borrow live.
     (compiler-typecheck-ok?

@@ -122935,6 +122935,11 @@
   (let
     [where : String
       (cond
+        ;; The join where a discharging path meets one still holding the
+        ;; owner; the source is the holding path's.
+        [(= diagnostic.status 5) "through this branch"]
+        [(= diagnostic.status 6) "through this match"]
+        [(= diagnostic.status 7) "out of this loop"]
         [(= diagnostic.exit 1) "before this return"]
         [(= diagnostic.exit 2) "before this break leaves its loop"]
         [(= diagnostic.exit 3) "before this continue leaves its loop iteration"]
@@ -122961,7 +122966,7 @@
                 (str_cat.str-cat
                   "typecheck: invalidation obligation of `"
                   name
-                  (if (= diagnostic.status 1)
+                  (if (or (= diagnostic.status 1) (>= diagnostic.status 5))
                     "` is discharged on only some paths "
                     (str_cat.str-cat
                       "` (:invalidate "
@@ -122976,7 +122981,7 @@
                     [(= diagnostic.status 2)
                       "` is lost where it is moved without being discharged"]
                     [(= diagnostic.status 3) "` is only partly discharged "]
-                    [(= diagnostic.status 1)
+                    [(or (= diagnostic.status 1) (>= diagnostic.status 5))
                       "` is discharged on only some paths "]
                     [else "` is not discharged "])
                   (if (= diagnostic.status 2)

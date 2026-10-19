@@ -80,10 +80,13 @@
 ;; source terms: the owner
 ;; binder; what was found (0 not discharged, 1 discharged on only some paths,
 ;; 2 lost to a move that does not discharge it, 3 only partly discharged, 4 a
-;; `with` owner moved out); the exit (0 the end of its `let` scope, 1 a
-;; return, 2 a break, 3 a continue, 4 a `try` propagation, -1 none) and the
-;; exit's or the losing move's source. A `with` owner moved out (4) also
-;; carries the move that emptied it and the owner's binding.
+;; `with` owner moved out, 5-7 discharged on only some paths that first part
+;; at an `if` (or `and`, `or`), a `match` or a loop's exit); the exit (0 the
+;; end of its `let` scope, 1 a return, 2 a break, 3 a continue, 4 a `try`
+;; propagation, -1 none) and the exit's or the losing move's source, or for
+;; status 5-7 the source of the path still holding the owner
+;; (`normalize-obligation-join`). A `with` owner moved out (4) also carries
+;; the move that emptied it and the owner's binding.
 (defstruct OwnershipObligationDiagnostic
   (name i64)
   (status i64)
@@ -1600,16 +1603,6 @@
   ;; Parallel to `store-loans`: the literal element index a store writes
   ;; (`(set! (array-ref a 0) v)`), or -1; diagnostics name the element.
   (store-elements (__tl_dyn-array i64))
-  ;; The literal index of the fixed-array element place just formed, or -1.
-  (formed-element i64)
-  ;; Accesses of a literal fixed-array element (the access is to the whole
-  ;; array place): block, place and source position, and the element index a
-  ;; diagnostic names there (`items[0]`).
-  (element-blocks (__tl_dyn-array i64))
-  (element-places (__tl_dyn-array i64))
-  (element-lines (__tl_dyn-array i64))
-  (element-columns (__tl_dyn-array i64))
-  (element-values (__tl_dyn-array i64))
   ;; Parallel to `exit-blocks`: the atomic arena owner place a release check
   ;; guards (exits 6 and 7), or -1.
   (exit-arenas (__tl_dyn-array i64))
@@ -3460,6 +3453,400 @@
       (set! index (+ index 1)))
     index))
 
+;; --- Where an obligation's paths part (diagnostics only) --------------------
+;;
+;; An exit check finding its owner may still hold a value is explained at the
+;; join where the paths first disagree: the owner discharged on one incoming
+;; edge and held on another, as the legacy cleanup checker named it. The join
+;; is searched only for a rejected body, by replaying the core's own
+;; initialization transfer (`own.ownership-initialization-effects!`) to a
+;; fixed point and walking back from the failed check; the core's failure
+;; stays the verdict.
+;;
+;; The construct the paths part at (1 an `if`, `and` or `or`, 2 a `match`, 3
+;; a loop's exit) and the source of the path on which the owner is still held.
+(defstruct NormalizeJoin
+  (kind i64)
+  (source own.OwnershipSource))
+
+(defenum NormalizeJoinResult
+  (Some NormalizeJoin)
+  (No))
+
+;; The state of `place` at the end of each block (1 empty, 2 held, 3 either, 0
+;; a block the entry never reaches) under the core's initialization transfer
+;; from the core's entry state, joined to a fixed point; an empty array when
+;; the replay exhausts `limit`. A block is reached once its input row holds
+;; states (a reached place's state is never 0).
+(define (normalize-exit-states
+  [body : (& body own.OwnershipBody)]
+  [place : i64]
+  [limit : i64]) : (__tl_dyn-array i64)
+  (let
+    [blocks : i64 (array-length body.blocks)]
+    [words : i64 (own.ownership-state-words (array-length body.places))]
+    [index : own.OwnershipPlaceIndex (own.ownership-place-index body)]
+    [inputs : (__tl_dyn-array i64) (__tl_make-array i64 (* blocks words))]
+    [exits : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [row : (__tl_dyn-array i64) (__tl_make-array i64 words)]
+    [work : i64 0]
+    [changed? : bool true]
+    [block : i64 0]
+    [cell : i64 0]
+    (while (< cell (array-length body.places))
+      (own.ownership-state-put!
+        (&mut inputs)
+        (* body.entry.index words)
+        cell
+        (if (array-ref body.locals (array-ref body.places cell).local.index).parameter?
+          2
+          1))
+      (set! cell (+ cell 1)))
+    (while changed?
+      (set! changed? false)
+      (set! block 0)
+      (while (< block blocks)
+        (when
+          (!= (array-ref inputs (* block words)) 0)
+          (set! cell 0)
+          (while (< cell words)
+            (set!
+              (array-ref row cell)
+              (array-ref inputs (+ (* block words) cell)))
+            (set! cell (+ cell 1)))
+          (set! cell 0)
+          (while (<
+            cell
+            (array-length (array-ref body.blocks block).instructions))
+            (match (own.ownership-initialization-effects!
+              body
+              (& index)
+              (&mut row)
+              (& (array-ref (array-ref body.blocks block).instructions cell))
+              block
+              cell
+              (&mut work)
+              limit)
+              [(own.OwnershipResult.Ok) unit]
+              [(own.OwnershipResult.Err _) (return (__tl_make-array i64 0))])
+            (set! cell (+ cell 1)))
+          (set!
+            (array-ref exits block)
+            (own.ownership-state-get (& row) 0 place))
+          ;; Join the row into both successors' inputs, a word at a time.
+          (set! cell 0)
+          (while (< cell (* 2 words))
+            (let
+              [next : i64
+                (own.ownership-successor
+                  (& (array-ref body.blocks block).terminator)
+                  (/ cell words))]
+              [slot : i64 (+ (* next words) (% cell words))]
+              (when
+                (and
+                  (>= next 0)
+                  (!=
+                    (bit-or
+                      (array-ref inputs slot)
+                      (array-ref row (% cell words)))
+                    (array-ref inputs slot)))
+                (set!
+                  (array-ref inputs slot)
+                  (bit-or
+                    (array-ref inputs slot)
+                    (array-ref row (% cell words))))
+                (set! changed? true)))
+            (set! cell (+ cell 1))))
+        (set! block (+ block 1))))
+    exits))
+
+;; Whether block `from` may continue to block `to`.
+(define (normalize-edge?
+  [body : (& body own.OwnershipBody)]
+  [from : i64]
+  [to : i64]) : bool
+  (let
+    [term : (& body own.OwnershipTerminator)
+      (& (array-ref body.blocks from).terminator)]
+    (or
+      (= (own.ownership-successor term 0) to)
+      (= (own.ownership-successor term 1) to))))
+
+;; The block where the paths into `block` first part: walking back through a
+;; predecessor that may hold the place (`exits`) while there is one, the first
+;; block whose predecessors end with the place empty on some and held on
+;; others. -1 when the walk finds no such block.
+(define (normalize-parting-block
+  [body : (& body own.OwnershipBody)]
+  [exits : (& exits (__tl_dyn-array i64))]
+  [block : i64]) : i64
+  (let
+    [blocks : i64 (array-length body.blocks)]
+    [visited : (__tl_dyn-array bool) (__tl_make-array bool blocks)]
+    [current : i64 block]
+    [found : i64 -1]
+    (while (and
+      (= (array-length exits) blocks)
+      (< found 0)
+      (>= current 0)
+      (< current blocks)
+      (not (array-ref visited current)))
+      (let
+        [from : i64 0]
+        [empty? : bool false]
+        [held? : bool false]
+        [maybe : i64 -1]
+        (set! (array-ref visited current) true)
+        (while (< from blocks)
+          (let
+            [code : i64 (array-ref exits from)]
+            (when
+              (and (> code 0) (normalize-edge? body from current))
+              (cond
+                [(= code 1) (set! empty? true)]
+                [(= code 2) (set! held? true)]
+                [(< maybe 0) (set! maybe from)]
+                [else unit])))
+          (set! from (+ from 1)))
+        (cond
+          [(>= maybe 0) (set! current maybe)]
+          [(and empty? held?) (set! found current)]
+          [else (set! current -1)])))
+    found))
+
+;; The node retained for occurrence `id`, or -1.
+(define (normalize-retained-node
+  [state : (& state NormalizeState)]
+  [id : (& id typed.TypedOccurrenceId)]) : i64
+  (let
+    [slot : i64 id.handle.index]
+    [index : i64
+      (if (and (>= slot 0) (< slot (array-length state.retained-at)))
+        (- (array-ref state.retained-at slot) 1)
+        -1)]
+    (if (and
+      (>= index 0)
+      (< index (array-length state.nodes))
+      (typed.typed-handle-equal?
+        (& (array-ref state.nodes index).handle)
+        (& id.handle)))
+      index
+      -1)))
+
+;; The retained node of child `child` of retained node `node`, or -1.
+(define (normalize-retained-child
+  [state : (& state NormalizeState)]
+  [node : i64]
+  [child : i64]) : i64
+  (if (or
+    (< node 0)
+    (< child 0)
+    (>= child (array-length (array-ref state.nodes node).children)))
+    -1
+    (normalize-retained-node
+      state
+      (& (array-ref (array-ref state.nodes node).children child)))))
+
+;; Among children `first`.. of retained node `node`, the retained node whose
+;; value is place `value`: the child, or for arms (`arms?`) an arm's body (an
+;; arm and its pattern carry the `match`'s own source). -1 when none is.
+(define (normalize-child-with-value
+  [state : (& state NormalizeState)]
+  [node : i64]
+  [first : i64]
+  [value : i64]
+  [arms? : bool]) : i64
+  (let
+    [count : i64 (array-length (array-ref state.nodes node).children)]
+    [child : i64 first]
+    [found : i64 -1]
+    (while (and (< found 0) (< child count))
+      (let
+        [retained : i64 (normalize-retained-child state node child)]
+        [valued : i64
+          (if arms?
+            (normalize-retained-child state retained 1)
+            retained)]
+        (when
+          (and
+            (>= valued 0)
+            (= (array-ref state.nodes valued).result-place value))
+          (set! found valued)))
+      (set! child (+ child 1)))
+    found))
+
+;; Whether block `block` assigns place `place`.
+(define (normalize-assigns?
+  [body : (& body own.OwnershipBody)]
+  [block : i64]
+  [place : i64]) : bool
+  (let
+    [instructions : (& body (__tl_dyn-array own.OwnershipInstruction))
+      (& (array-ref body.blocks block).instructions)]
+    [at : i64 0]
+    (while (< at (array-length instructions))
+      (match (& (array-ref instructions at).operation)
+        [(own.OwnershipOperation.Assign target)
+          (when (= target.index place) (return true))]
+        [_ unit])
+      (set! at (+ at 1)))
+    false))
+
+;; The construct whose join block `block` is, and the source of the path its
+;; predecessor `held` ends: a loop's exit block assigns its `while`'s value
+;; (the path is the loop's); an `if`, `and`, `or` or `match` path ends by
+;; moving its value into the construct's result, so the last transfer on it
+;; names the arm. The construct's own source is the join's.
+(define (normalize-join-at
+  [state : (& state NormalizeState)]
+  [block : i64]
+  [held : i64]) : NormalizeJoinResult
+  (let
+    [body : (& state own.OwnershipBody) (& state.body)]
+    [line : i64 (array-ref body.blocks block).source.line]
+    [column : i64 (array-ref body.blocks block).source.column]
+    [instructions : (& state (__tl_dyn-array own.OwnershipInstruction))
+      (& (array-ref body.blocks held).instructions)]
+    [at : i64 (array-length instructions)]
+    [value : i64 -1]
+    [result : i64 -1]
+    [node : i64 0]
+    [kind : i64 0]
+    [path : i64 -1]
+    (while (and (< result 0) (> at 0))
+      (set! at (- at 1))
+      (match (& (array-ref instructions at).operation)
+        [(own.OwnershipOperation.Copy from to)
+          (set! value from.index)
+          (set! result to.index)]
+        [(own.OwnershipOperation.Move from to)
+          (set! value from.index)
+          (set! result to.index)]
+        [_ unit]))
+    (while (and (= kind 0) (< node (array-length state.nodes)))
+      (let
+        [candidate : (& state NormalizeNode) (& (array-ref state.nodes node))]
+        (when
+          (and
+            (= candidate.source.line line)
+            (= candidate.source.column column)
+            (>= candidate.result-place 0))
+          (match (& candidate.operation)
+            [(NormalizeOperation.While)
+              (when
+                (normalize-assigns? body block candidate.result-place)
+                (set! kind 3)
+                (set! path node))]
+            [(NormalizeOperation.If)
+              (when
+                (= candidate.result-place result)
+                (set! kind 1)
+                (set!
+                  path
+                  (normalize-child-with-value state node 1 value false)))]
+            [(NormalizeOperation.Binary op)
+              (when
+                (and
+                  (= candidate.result-place result)
+                  (match op
+                    [(ast.AstBinOp.And) true]
+                    [(ast.AstBinOp.Or) true]
+                    [_ false]))
+                (set! kind 1)
+                (set!
+                  path
+                  (normalize-child-with-value state node 0 value false)))]
+            [(NormalizeOperation.Match _)
+              (when
+                (= candidate.result-place result)
+                (set! kind 2)
+                (set! path (normalize-child-with-value state node 1 value true)))]
+            [_ unit])))
+      (set! node (+ node 1)))
+    (if (< path 0)
+      NormalizeJoinResult.No
+      (NormalizeJoinResult.Some
+        (NormalizeJoin
+          kind
+          (normalize-user-source (& (array-ref state.nodes path).source)))))))
+
+;; Field `field` (an integer) of the expansion frame starting at `start`
+;; (`tc-selected-expansion-framed` reads the same `|`-separated frames).
+(define (normalize-frame-field
+  [text : (& text str)]
+  [start : i64]
+  [field : i64]) : i64
+  (let
+    [count : i64 (string.string-length text)]
+    [at : i64 start]
+    [skipped : i64 0]
+    [value : i64 0]
+    [sign : i64 1]
+    (while (and (< skipped field) (< at count))
+      (when (= (string.string-ref text at) '|') (set! skipped (+ skipped 1)))
+      (set! at (+ at 1)))
+    (when
+      (and (< at count) (= (string.string-ref text at) '-'))
+      (set! sign -1)
+      (set! at (+ at 1)))
+    (while (and
+      (< at count)
+      (>= (cast (string.string-ref text at) : i64) 48)
+      (<= (cast (string.string-ref text at) : i64) 57))
+      (set!
+        value
+        (+ (* value 10) (- (cast (string.string-ref text at) : i64) 48)))
+      (set! at (+ at 1)))
+    (* sign value)))
+
+;; `source`, or for a node a macro's template generated (its expansion's
+;; innermost frame is not a caller's token, `-1`), the outermost invocation
+;; it came from: the last frame's call position, without the frames (they
+;; would place the template's own position in the macro's definition).
+(define (normalize-user-source [source : (& source own.OwnershipSource)]) : own.OwnershipSource
+  (let
+    [count : i64 (string.string-length (& source.expansion))]
+    [last : i64 (- count 2)]
+    (if (or (= count 0) (= (normalize-frame-field (& source.expansion) 0 0) -1))
+      (own.ownership-source-copy source)
+      (begin
+        (while (and
+          (>= last 0)
+          (!= (string.string-ref (& source.expansion) last) ';'))
+          (set! last (- last 1)))
+        (own.OwnershipSource
+          (own.ownership-text-copy (& source.path))
+          (normalize-frame-field (& source.expansion) (+ last 1) 1)
+          (normalize-frame-field (& source.expansion) (+ last 1) 2)
+          "")))))
+
+;; The join where the paths into a failed check of `place` in `block` first
+;; part, and the path still holding it there.
+(define (normalize-obligation-join
+  [state : (& state NormalizeState)]
+  [place : i64]
+  [block : i64]) : NormalizeJoinResult
+  (if (or
+    (> (array-length state.body.cleanups) 0)
+    (> (array-length state.body.obligations) 0))
+    NormalizeJoinResult.No
+    (let
+      [exits : (__tl_dyn-array i64)
+        (normalize-exit-states (& state.body) place state.limits.core.max-work)]
+      [join : i64 (normalize-parting-block (& state.body) (& exits) block)]
+      [held : i64 -1]
+      [from : i64 0]
+      (while (and (>= join 0) (< held 0) (< from (array-length exits)))
+        (when
+          (and
+            (= (array-ref exits from) 2)
+            (normalize-edge? (& state.body) from join))
+          (set! held from))
+        (set! from (+ from 1)))
+      (if (< held 0)
+        NormalizeJoinResult.No
+        (normalize-join-at state join held)))))
+
 ;; A failure at a recorded exit check, as the obligation it breaks.
 (define (normalize-obligation-diagnostic
   [state : (& state NormalizeState)]
@@ -3525,12 +3912,24 @@
                 "place that must be empty partly holds a value")
               3]
             [else 0])]
+        ;; A cleanup or `:invalidate` obligation (exits 0-5) only: arena
+        ;; release, overwrite and unheld checks keep their own wording.
+        [join : NormalizeJoinResult
+          (if (and (= status 1) (<= (array-ref state.exit-kinds found) 5))
+            (normalize-obligation-join state checked failure.block)
+            NormalizeJoinResult.No)]
         (NormalizeObligationDiagnosticResult.Some
           (OwnershipObligationDiagnostic
             (normalize-binder-name state (array-ref state.exit-owners found))
-            status
+            (match (& join)
+              [(NormalizeJoinResult.Some parted) (+ 4 parted.kind)]
+              [(NormalizeJoinResult.No) status])
             (array-ref state.exit-kinds found)
-            (own.ownership-source-copy (& failure.source))
+            (match (& join)
+              [(NormalizeJoinResult.Some parted)
+                (own.ownership-source-copy (& parted.source))]
+              [(NormalizeJoinResult.No)
+                (own.ownership-source-copy (& failure.source))])
             (normalize-binder-lifetime
               state
               (array-ref state.exit-owners found))
@@ -5130,15 +5529,6 @@
         (set! active value.block)
         (set! index (+ index 1))))
     (let
-      [literal : i64
-        (if (= (array-length node.children) 1)
-          (try
-            (normalize-literal-index!
-              state
-              store
-              lease
-              (normalize-child-id node 0)))
-          -1)]
       [_form : unit (set! state.form-block active)]
       [_fixed : unit (set! state.walk-fixed false)]
       [route : NormalizePlaceRoute
@@ -5154,11 +5544,6 @@
       (set! state.formed-indexed route.indexed)
       (set! state.formed-boxed route.boxed)
       (set! state.formed-fixed state.walk-fixed)
-      (set!
-        state.formed-element
-        (if (and route.indexed state.walk-fixed)
-          literal
-          -1))
       (NormalizeValueResult.Ok (NormalizeValue node.type route.place active)))))
 
 ;; Taking a place's value: an owned place copies or moves (a field moves out
@@ -5234,7 +5619,6 @@
     [indexed : bool state.formed-indexed]
     [boxed : bool state.formed-boxed]
     [fixed : bool state.formed-fixed]
-    [element : i64 state.formed-element]
     (unless
       (= formed.type node.type)
       (return (NormalizeValueResult.Err (normalize-type-error))))
@@ -5348,12 +5732,6 @@
                           (typed.typed-handle-copy (& occurrence.type.handle))))]
                     [(typed.TypedNodeResult.Err _) NormalizeMaybeType.No])
                   state.move-context)))))
-        (normalize-element-site!
-          state
-          formed.block
-          formed.place
-          (& node.source)
-          element)
         (if (< loan 0)
           (try
             (normalize-emit!
@@ -6026,7 +6404,6 @@
     ;; A place behind a reference parameter is reborrowed from its entry loan.
     [parent : i64 state.formed-loan]
     [via : i64 state.formed-binder]
-    [element : i64 state.formed-element]
     [kind : i64
       (if (< (array-length state.type-references) (+ node.type 1))
         0
@@ -6072,12 +6449,6 @@
           (normalize-push! state.view-loans parent))
         (normalize-push! state.view-loans loan)
         (normalize-view-site! state loan node.expression))
-      (normalize-element-site!
-        state
-        borrowed.block
-        borrowed.place
-        (& node.source)
-        element)
       (try
         (normalize-borrow-emit!
           state
@@ -6453,43 +6824,6 @@
             value
             -1))]
       [_ (NormalizeInt.Ok -1)])))
-
-;; Records an access of literal fixed-array element `element` (see
-;; `element-blocks`).
-(define (normalize-element-site!
-  [state : (&mut state NormalizeState)]
-  [block : i64]
-  [place : i64]
-  [source : (& source own.OwnershipSource)]
-  [element : i64]) : unit
-  (when
-    (>= element 0)
-    (begin
-      (normalize-push! state.element-blocks block)
-      (normalize-push! state.element-places place)
-      (normalize-push! state.element-lines source.line)
-      (normalize-push! state.element-columns source.column)
-      (normalize-push! state.element-values element))))
-
-;; The element an access at (block, place, source) names, or -1.
-(define (normalize-element-at
-  [state : (& state NormalizeState)]
-  [block : i64]
-  [place : i64]
-  [source : (& source own.OwnershipSource)]) : i64
-  (let
-    [index : i64 0]
-    [element : i64 -1]
-    (while (and (< element 0) (< index (array-length state.element-blocks)))
-      (when
-        (and
-          (= (array-ref state.element-blocks index) block)
-          (= (array-ref state.element-places index) place)
-          (= (array-ref state.element-lines index) source.line)
-          (= (array-ref state.element-columns index) source.column))
-        (set! element (array-ref state.element-values index)))
-      (set! index (+ index 1)))
-    element))
 
 ;; A field code naming array element `element` in a diagnostic path (see
 ;; `OwnershipMoveDiagnostic.fields`).
@@ -11323,24 +11657,126 @@
     [(own.OwnershipOperation.Move _ dest) (= dest.index place)]
     [_ false]))
 
-;; The element a loan failure at a store's borrow or reborrow names: the
-;; store's literal element, else the element the failing place selects.
-(define (normalize-failure-store-element
+;; The element a loan failure on `place` names, for the access `op` at
+;; `source`: a store's literal element (its borrow or reborrow), else the
+;; literal element the access selects (`normalize-literal-element-at`).
+(define (normalize-failure-element
   [state : (& state NormalizeState)]
-  [failure : (& failure own.OwnershipFailure)]
-  [loan : i64]) : i64
+  [place : i64]
+  [op : (& op own.OwnershipOperation)]
+  [source : (& source own.OwnershipSource)]) : i64
   (let
-    [stored : i64 (normalize-store-element state loan)]
+    [loan : i64 (own.ownership-loan-definition op)]
+    [stored : i64
+      (if (< loan 0)
+        -1
+        (normalize-store-element state loan))]
     (if (>= stored 0)
       stored
-      (normalize-element-at
-        state
-        failure.block
-        failure.place
-        (& failure.source)))))
+      (normalize-literal-element-at state place source))))
 
+;; The literal index an access at `source` selects in array place `place`,
+;; read off the occurrence formed there: a formed place (or the place a
+;; taken value or a borrow forms) that indexes `place` itself (not an exact
+;; element path) by a nonnegative integer literal. -1 otherwise. Searched
+;; only for a diagnostic.
+(define (normalize-literal-element-at
+  [state : (& state NormalizeState)]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : i64
+  (let
+    [node : i64 0]
+    [element : i64 -1]
+    (while (and (< element 0) (< node (array-length state.nodes)))
+      (let
+        [candidate : (& state NormalizeNode) (& (array-ref state.nodes node))]
+        [formed : i64
+          (if (and
+            (= candidate.source.line source.line)
+            (= candidate.source.column source.column))
+            (match (& candidate.operation)
+              [(NormalizeOperation.FormPlace _) node]
+              [(NormalizeOperation.TakePlace)
+                (normalize-retained-child state node 0)]
+              [(NormalizeOperation.Borrow _)
+                (normalize-retained-child state node 0)]
+              [_ -1])
+            -1)]
+        [literal : i64
+          (if (and
+            (>= formed 0)
+            (match (& (array-ref state.nodes formed).operation)
+              [(NormalizeOperation.FormPlace _) true]
+              [_ false])
+            (= (array-ref state.nodes formed).result-place place)
+            (= (array-length (array-ref state.nodes formed).children) 1)
+            (!=
+              (array-ref state.body.places place).type.index
+              (array-ref state.nodes formed).type))
+            (normalize-retained-child state formed 0)
+            -1)]
+        (when
+          (>= literal 0)
+          (match (& (array-ref state.nodes literal).operation)
+            [(NormalizeOperation.Literal (ast.AstLiteral.Int value _))
+              (when (>= value 0) (set! element value))]
+            [_ unit])))
+      (set! node (+ node 1)))
+    element))
+
+;; The instruction of `failure`'s block the conflicting access is: the
+;; failing one, unless that issues a direct loan of an opaque referent, issued
+;; just before the one access it spans (`normalize-issue-deferred!`): then
+;; that access, a read or write through the loan, a reborrow of it, or a
+;; store's borrow of its place.
+(define (normalize-failure-access
+  [state : (& state NormalizeState)]
+  [failure : (& failure own.OwnershipFailure)]) : i64
+  (let
+    [body : (& state own.OwnershipBody) (& state.body)]
+    [instructions : (& state (__tl_dyn-array own.OwnershipInstruction))
+      (& (array-ref body.blocks failure.block).instructions)]
+    [issued : i64
+      (own.ownership-loan-definition
+        (& (array-ref instructions failure.instruction).operation))]
+    [place : i64
+      (if (< issued 0)
+        -1
+        (array-ref body.loans issued).place.index)]
+    [at : i64 (+ failure.instruction 1)]
+    (when
+      (or
+        (< place 0)
+        (>= (own.ownership-loan-parent (& (array-ref body.loans issued))) 0)
+        (not (normalize-i64-member? (& state.opaque-places) place)))
+      (return failure.instruction))
+    (while (< at (array-length instructions))
+      (let
+        [op : (& state own.OwnershipOperation)
+          (& (array-ref instructions at).operation)]
+        [defined : i64 (own.ownership-loan-definition op)]
+        (when
+          (or
+            (and
+              (= (own.ownership-loan-used op) issued)
+              (match op
+                [(own.OwnershipOperation.AccessThrough _ _ _) true]
+                [_ false]))
+            (and
+              (>= defined 0)
+              (or
+                (=
+                  (own.ownership-loan-parent (& (array-ref body.loans defined)))
+                  issued)
+                (= (array-ref body.loans defined).place.index place))))
+          (return at)))
+      (set! at (+ at 1)))
+    failure.instruction))
+
+;; The diagnostic, and the source of the access it names (the failure is
+;; reported there).
 (defenum NormalizeBorrowDiagnosticResult
-  (Some OwnershipBorrowDiagnostic)
+  (Some OwnershipBorrowDiagnostic own.OwnershipSource)
   (No))
 
 (define (normalize-borrow-diagnostic
@@ -11368,38 +11804,32 @@
       name
       (normalize-binder-name state (normalize-place-root state failure.place)))
     (let
-      [read : i64
-        (normalize-access-kind
-          state
-          (&
-            (array-ref
-              (array-ref body.blocks failure.block).instructions
-              failure.instruction).operation)
-          failure.place)]
+      ;; The conflicting access, which an opaque-referent loan's issue only
+      ;; precedes (`normalize-failure-access`).
+      [at : i64 (normalize-failure-access state failure)]
+      [instructions : (& state (__tl_dyn-array own.OwnershipInstruction))
+        (& (array-ref body.blocks failure.block).instructions)]
+      [op : (& state own.OwnershipOperation)
+        (& (array-ref instructions at).operation)]
+      [source : (& state own.OwnershipSource)
+        (& (array-ref instructions at).source)]
+      [read : i64 (normalize-access-kind state op failure.place)]
       ;; The initialization read before a Copy destination's store reports
       ;; as the assignment it belongs to.
       [access : i64
         (if (and
           (= read 4)
-          (<
-            (+ failure.instruction 1)
-            (array-length (array-ref body.blocks failure.block).instructions))
+          (< (+ at 1) (array-length instructions))
           (normalize-stores-place?
-            (&
-              (array-ref
-                (array-ref body.blocks failure.block).instructions
-                (+ failure.instruction 1)).operation)
+            (& (array-ref instructions (+ at 1)).operation)
             failure.place))
           0
           read)]
       ;; An assignment a call made for a global it may assign (#7904).
       [effect : i64
-        (match (&
-          (array-ref
-            (array-ref body.blocks failure.block).instructions
-            failure.instruction).operation)
+        (match op
           [(own.OwnershipOperation.Assign _)
-            (normalize-global-effect-at state failure.place (& failure.source))]
+            (normalize-global-effect-at state failure.place source)]
           [_ -1])]
       (if (or (< name 0) (< access 0))
         NormalizeBorrowDiagnosticResult.No
@@ -11410,20 +11840,7 @@
               [fields : (__tl_dyn-array i64)
                 (normalize-place-fields state failure.place)]
               [element : i64
-                (match (&
-                  (array-ref
-                    (array-ref body.blocks failure.block).instructions
-                    failure.instruction).operation)
-                  [(own.OwnershipOperation.Borrow loan)
-                    (normalize-failure-store-element state failure loan.index)]
-                  [(own.OwnershipOperation.Reborrow loan)
-                    (normalize-failure-store-element state failure loan.index)]
-                  [_
-                    (normalize-element-at
-                      state
-                      failure.block
-                      failure.place
-                      (& failure.source))])]
+                (normalize-failure-element state failure.place op source)]
               (when
                 (>= element 0)
                 (normalize-push! fields (normalize-element-field element)))
@@ -11438,7 +11855,8 @@
               -1)
             (if (>= effect 0)
               (array-ref state.effect-globals effect)
-              -1)))))))
+              -1))
+          (own.ownership-source-copy source))))))
 
 (defenum NormalizeMoveDiagnosticResult
   (Some OwnershipMoveDiagnostic)
@@ -12118,12 +12536,6 @@
           (normalize-no-i64s)
           (__tl_make-array own.OwnershipSource 0)
           (normalize-no-i64s)
-          -1
-          (normalize-no-i64s)
-          (normalize-no-i64s)
-          (normalize-no-i64s)
-          (normalize-no-i64s)
-          (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
@@ -12273,7 +12685,12 @@
                     (OwnershipNormalizeFailure.Moved failure diagnostic)]
                   [(NormalizeMoveDiagnosticResult.No)
                     (match (normalize-borrow-diagnostic (& state) (& failure))
-                      [(NormalizeBorrowDiagnosticResult.Some diagnostic)
-                        (OwnershipNormalizeFailure.Borrowed failure diagnostic)]
+                      [(NormalizeBorrowDiagnosticResult.Some diagnostic source)
+                        (let
+                          [located : own.OwnershipFailure failure]
+                          (set! located.source source)
+                          (OwnershipNormalizeFailure.Borrowed
+                            located
+                            diagnostic))]
                       [(NormalizeBorrowDiagnosticResult.No)
                         (OwnershipNormalizeFailure.Core failure)])])]))]))))

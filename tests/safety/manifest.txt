@@ -148,7 +148,7 @@ slice_view_str_source_reject|check-fail|tests/safety/slice_view_str_source_rejec
 bytes_mut_view_shared_source_reject|check-fail|tests/safety/bytes_mut_view_shared_source_reject.tl|-|__tl_bytes-mut-view requires a mutable borrowed source
 bytes_mut_view_parent_child_reject|check-fail|tests/safety/bytes_mut_view_parent_child_reject.tl|-|cannot mutably borrow borrowed place `parent`
 bytes_view_escape_reject|check-fail|tests/safety/bytes_view_escape_reject.tl|-|returned reference lifetime must be tied to a parameter
-slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot immutably borrow mutably borrowed place `parent`
+slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot read mutably borrowed place `parent[0]`
 slice_view_parent_child_shared_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_shared_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_parent_child_mut_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_mut_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_nested_last_use_ok|run-exit|tests/safety/slice_view_nested_last_use_ok.tl|42|-
@@ -162,8 +162,8 @@ slice_split_at_mut_shared_reject|check-fail|tests/safety/slice_split_at_mut_shar
 slice_split_at_noninteger_reject|check-fail|tests/safety/slice_split_at_noninteger_reject.tl|-|argument 2 type mismatch: expected integer
 slice_split_at_arity_reject|check-fail|tests/safety/slice_split_at_arity_reject.tl|-|slice-split-at expected 2 arguments
 slice_split_at_source_live_reject|check-fail|tests/safety/slice_split_at_source_live_reject.tl|-|cannot read mutably borrowed place `items[0]`
-slice_split_at_parent_live_reject|check-fail|tests/safety/slice_split_at_parent_live_reject.tl|-|cannot immutably borrow mutably borrowed place `view`
-slice_split_at_child_parent_live_reject|check-fail|tests/safety/slice_split_at_child_parent_live_reject.tl|-|cannot immutably borrow mutably borrowed place `left`
+slice_split_at_parent_live_reject|check-fail|tests/safety/slice_split_at_parent_live_reject.tl|-|cannot read mutably borrowed place `view[0]`
+slice_split_at_child_parent_live_reject|check-fail|tests/safety/slice_split_at_child_parent_live_reject.tl|-|cannot read mutably borrowed place `left[0]`
 slice_split_at_escape_reject|check-fail|tests/safety/slice_split_at_escape_reject.tl|-|reference value would escape lexical scope
 slice_split_at_forge_reject|check-fail|tests/safety/slice_split_at_forge_reject.tl|-|cannot mutably borrow borrowed place `view`
 slice_split_at_tuple_forge_reject|check-fail|tests/safety/slice_split_at_tuple_forge_reject.tl|-|use of moved value `view`
@@ -219,13 +219,13 @@ removed_string_to_int_reject|check-fail|tests/safety/removed_string_to_int_rejec
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
-mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place `items`
+mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
-mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
+mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot mutably borrow borrowed place `bags.left[0]`
 mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 mut_to_immut_reborrow_return_live_reject|check-fail|tests/safety/mut_to_immut_reborrow_return_live_reject.tl|-|cannot assign to borrowed place
 mutable_reference_read_array_length_reject|check-fail|tests/safety/mutable_reference_read_array_length_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
-mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items`
+mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items[0]`
 mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_reference_read_struct_get_reject.tl|-|cannot move borrowed place `bag.left`
 global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
@@ -1073,7 +1073,7 @@ arena_invalidate_unannotated_forward_reject|check-fail|tests/safety/arena_invali
 arena_invalidate_result_tied_reject|check-fail|tests/safety/arena_invalidate_result_tied_reject.tl|-|an :invalidate call cannot return a value tied to the arena it destroys
 arena_invalidate_duplicate_argument_reject|check-fail|tests/safety/arena_invalidate_duplicate_argument_reject.tl|-|a call cannot invalidate the same arena through two arguments
 arena_invalidate_missing_destroy_reject|check-fail|tests/safety/arena_invalidate_missing_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
-arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
+arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths through this branch
 arena_invalidate_match_one_arm_reject|check-fail|tests/safety/arena_invalidate_match_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
 arena_invalidate_loop_reject|check-fail|tests/safety/arena_invalidate_loop_reject.tl|-|cannot move loop-carried owner value `owner`
 arena_invalidate_double_destroy_reject|check-fail|tests/safety/arena_invalidate_double_destroy_reject.tl|-|use of moved value `owner`
@@ -1206,10 +1206,10 @@ let_obligation_transfer_missing_reject|check-fail|tests/safety/let_obligation_tr
 let_obligation_return_reject|check-fail|tests/safety/let_obligation_return_reject.tl|-|cleanup obligation of `h` is not discharged before this return
 let_obligation_try_reject|check-fail|tests/safety/let_obligation_try_reject.tl|-|cleanup obligation of `h` is not discharged before this try can propagate an error
 let_obligation_break_reject|check-fail|tests/safety/let_obligation_break_reject.tl|-|cleanup obligation of `h` is not discharged before this break leaves its loop
-let_obligation_one_arm_reject|check-fail|tests/safety/let_obligation_one_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
-let_obligation_match_arm_reject|check-fail|tests/safety/let_obligation_match_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
+let_obligation_one_arm_reject|check-fail|tests/safety/let_obligation_one_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this branch
+let_obligation_match_arm_reject|check-fail|tests/safety/let_obligation_match_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this match
 let_obligation_and_reject|check-fail|tests/safety/let_obligation_and_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
-let_obligation_outer_loop_break_reject|check-fail|tests/safety/let_obligation_outer_loop_break_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
+let_obligation_outer_loop_break_reject|check-fail|tests/safety/let_obligation_outer_loop_break_reject.tl|-|cleanup obligation of `h` is discharged on only some paths out of this loop
 let_obligation_lost_call_reject|check-fail|tests/safety/let_obligation_lost_call_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
 let_obligation_lookalike_reject|check-fail|tests/safety/let_obligation_lookalike_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
 let_obligation_partial_reject|check-fail|tests/safety/let_obligation_partial_reject.tl|-|cleanup obligation of `p` is only partly discharged at the end of its let scope
@@ -1359,10 +1359,10 @@ loop_mut_borrow_exit_paths_ok|check-ok|tests/safety/loop_mut_borrow_exit_paths_o
 loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_return_ok.tl|-|-
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
-loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot mutably borrow borrowed place `items`
+loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
 loop_mut_borrow_operand_edges_ok|check-ok|tests/safety/loop_mut_borrow_operand_edges_ok.tl|-|-
 loop_mut_borrow_operand_break_reject|check-fail|tests/safety/loop_mut_borrow_operand_break_reject.tl|-|cannot assign to borrowed place `items[0]`
-loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot mutably borrow borrowed place `items`
+loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
 # A `try` operand keeps its own break, continue and return edges in the loop
 # move and borrow walkers.
 try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
@@ -1610,7 +1610,7 @@ mir_array_forms_ok|run-exit|tests/safety/mir_array_forms_ok.tl|42|-
 mir_array_push_moved_reject|check-fail|tests/safety/mir_array_push_moved_reject.tl|tests/safety/mir_array_push_moved_reject.tl:7:21|use of moved value `name`
 mir_array_set_moved_reject|check-fail|tests/safety/mir_array_set_moved_reject.tl|tests/safety/mir_array_set_moved_reject.tl:7:21|use of moved value `name`
 mir_array_loop_store_reject|check-fail|tests/safety/mir_array_loop_store_reject.tl|tests/safety/mir_array_loop_store_reject.tl:10:39|cannot move loop-carried owner value `value`
-mir_array_ref_while_mut_reject|check-fail|tests/safety/mir_array_ref_while_mut_reject.tl|tests/safety/mir_array_ref_while_mut_reject.tl:9:14|cannot read mutably borrowed place `items`
+mir_array_ref_while_mut_reject|check-fail|tests/safety/mir_array_ref_while_mut_reject.tl|tests/safety/mir_array_ref_while_mut_reject.tl:9:14|cannot read mutably borrowed place `items[0]`
 mir_array_field_set_through_shared_reject|check-fail|tests/safety/mir_array_field_set_through_shared_reject.tl|tests/safety/mir_array_field_set_through_shared_reject.tl:7:20|cannot mutably borrow `cache.ready` behind a shared reference
 mir_nll_dead_mut_borrow_ok|run-exit|tests/safety/mir_nll_dead_mut_borrow_ok.tl|42|-
 mir_nll_loop_if_join_reference_ok|run-exit|tests/safety/mir_nll_loop_if_join_reference_ok.tl|42|-
@@ -1658,7 +1658,7 @@ mir_deref_reference_ok|run-exit|tests/safety/mir_deref_reference_ok.tl|62|-
 mir_deref_borrow_conflict_reject|check-fail|tests/safety/mir_deref_borrow_conflict_reject.tl|tests/safety/mir_deref_borrow_conflict_reject.tl:10:13|cannot mutably borrow borrowed place `n`
 mir_temporary_projection_ok|run-exit|tests/safety/mir_temporary_projection_ok.tl|49|-
 mir_element_operand_ok|run-exit|tests/safety/mir_element_operand_ok.tl|42|-
-mir_element_operand_borrow_conflict_reject|check-fail|tests/safety/mir_element_operand_borrow_conflict_reject.tl|tests/safety/mir_element_operand_borrow_conflict_reject.tl:8:39|cannot immutably borrow mutably borrowed place `names`
+mir_element_operand_borrow_conflict_reject|check-fail|tests/safety/mir_element_operand_borrow_conflict_reject.tl|tests/safety/mir_element_operand_borrow_conflict_reject.tl:8:39|cannot immutably borrow mutably borrowed place `names[0]`
 mir_mut_borrow_through_shared_reject|check-fail|tests/safety/mir_mut_borrow_through_shared_reject.tl|tests/safety/mir_mut_borrow_through_shared_reject.tl:21:23|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
 mir_try_ok|run-exit|tests/safety/mir_try_ok.tl|42|-
 mir_try_moved_reject|check-fail|tests/safety/mir_try_moved_reject.tl|tests/safety/mir_try_moved_reject.tl:13:47|use of moved value `items`

@@ -58573,6 +58573,14 @@
               env
               inner
               (tc-global-shared-view expected-inner-ty)))]
+        [_
+          (try
+            (tc-expect-in-context
+              ctx
+              env
+              (tc-global-shared-view inner-ty)
+              (tc-global-shared-view expected-inner-ty)
+              "typecheck: box inner type mismatch"))]
         (Ok
           (tc-tag-active-region
             env

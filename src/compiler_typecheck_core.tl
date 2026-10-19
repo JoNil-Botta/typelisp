@@ -73480,17 +73480,21 @@
         [(MoveValueAccess) true]
         [_ false])
       (> (tc-reference-read-kind ctx expr-bases env (& expr) true) 0))
-    (let
-      [ty (try (tc-expr ctx env (tc-global-shared-view expr)))]
-      [message : String
-        (tc-move-out-of-reference-error
-          ctx
-          expr-bases
-          env
-          (tc-global-shared-view expr)
-          ty
-          (tc-move-out-of-deref-help))]
-      (when (> (string.string-length message) 0) (return (Err message)))))
+    ;; Body typing already accepted `expr`. Like the deref case below, a read
+    ;; this environment cannot retype (an SPMD lane binder) is left alone.
+    (match (tc-expr ctx env (tc-global-shared-view expr))
+      [(Ok ty)
+        (let
+          [message : String
+            (tc-move-out-of-reference-error
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view expr)
+              ty
+              (tc-move-out-of-deref-help))]
+          (when (> (string.string-length message) 0) (return (Err message))))]
+      [(Err _) unit]))
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     ;; Source/macro wrappers are removed above; keep their variants exhaustive.
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)

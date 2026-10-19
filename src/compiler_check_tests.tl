@@ -266,7 +266,15 @@
         (tuple
           "(Array String 2)"
           "i64"
-          "(begin (unsafe (string-data (array-ref p 0))) 0)"))]
+          "(begin (unsafe (string-data (array-ref p 0))) 0)")
+        (tuple
+          "(Array i64 2)"
+          "i64"
+          "(spmd-reduce sum ([i : i64 0 2]) 0 (array-ref p i))")
+        (tuple
+          "(Slice i64)"
+          "i64"
+          "(spmd-reduce sum ([i : i64 0 index]) 0 (array-ref p i))"))]
     (for [kind (iterator.range 0 2)]
       (let
         [reference : String

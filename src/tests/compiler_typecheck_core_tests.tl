@@ -6702,7 +6702,7 @@
     [decls : ast.AstDeclList (ast.ast-decl-list-new)]
     [import : ast.AstDecl
       (Import
-        (ast.ast-decl-meta-runtime-shared-view)
+        (ast.AstDeclMeta (box (Runtime 0)))
         (Spec
           (Module)
           "index-test"
@@ -6732,7 +6732,7 @@
   [expected : i64]) : bool
   (match (tc_core.macro-import-alias-target-ids
     state
-    (owned_view.compiler-owned-reference-shared-view decls)
+    decls
     module-id
     alias
     cbi.compiler-builtin-id-fix-empty)
@@ -6849,11 +6849,9 @@
         [grown : ast.AstDeclList
           (tc-module-index-test-decls module-a target-a alias-a 4096 true)]
         [window : ast.AstDeclList
-          (ast.AstDeclList
-            (owned_view.compiler-owned-reference-shared-view (& grown.slots))
-            1
-            (- grown.len 1)
-            false)]
+          (match (ast.ast-decl-list-step (& grown))
+            [(Cons _ tail) tail]
+            [(Nil) (ast.ast-decl-list-new)])]
         [empty : ast.AstDeclList (ast.ast-decl-list-new)]
         (tc_core.tc-module-decl-index-ensure! state-a (& grown))
         (unless

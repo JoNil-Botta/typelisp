@@ -102367,16 +102367,16 @@
         [(No) (No)])]))
 
 (define (macro-import-alias-target-from-wrapped-decl
-  [decl : ast.AstDecl]
+  [decl : (& decl ast.AstDecl)]
   [alias-id : i64]) : TcMaybeNameId
-  (match (ast.ast-decl-unwrapped (& decl))
+  (match (ast.ast-decl-unwrapped decl)
     [(Import decl-meta spec)
       (macro-import-alias-target-from-spec spec alias-id)]
     [_ (No)]))
 
 (define (macro-import-alias-target-ids
   [state : TcMacroState]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [current-module-id : i64]
   [alias-id : i64]
   [_module-id : i64]) : TcMaybeNameId
@@ -102389,7 +102389,6 @@
         (tc-module-decl-index-slot
           (ptr-cast module-index : (Ptr TcModuleDeclIndexStateData))
           current-module-id)]
-      [decl-offset : i64 decls.offset]
       [result : TcMaybeNameId (No)]
       (if (< slot 0)
         result
@@ -102403,9 +102402,7 @@
                 (array-ref (deref module-index).import-positions index)]
               [target : TcMaybeNameId
                 (macro-import-alias-target-from-wrapped-decl
-                  (tc-global-array-element-shared-view
-                    decls.slots
-                    (+ decl-offset position))
+                  (ast.ast-decl-list-ref-borrowed decls position)
                   alias-id)]
               (match target
                 [(Some target-id)
@@ -103489,7 +103486,7 @@
           [(No)
             (match (macro-import-alias-target-ids
               state
-              decls
+              (& decls)
               current-module-id
               qualifier-id
               cbi.compiler-builtin-id-fix-empty)
@@ -103523,7 +103520,7 @@
           [(No)
             (match (macro-import-alias-target-ids
               state
-              decls
+              (& decls)
               current-module-id
               qualifier-id
               cbi.compiler-builtin-id-fix-empty)

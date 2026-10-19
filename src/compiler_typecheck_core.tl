@@ -333,7 +333,10 @@
   (epoch i64)
   (type-pool-owner-id i64)
   (type-segment-bases i64)
-  (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry)))
+  (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
+  ;; The lanes of `tc-selected-holds-memo-bind!`, allocated in `owner-arena`
+  ;; on first use (0 until then); the arena retains them for the job.
+  (holds-memo-address i64))
 
 (defstruct TcTypeResolutionCacheState
   (address i64))
@@ -875,7 +878,8 @@
         1
         0
         0
-        (__tl_make-array TcLifetimeOutlivesMemoEntry 0)))
+        (__tl_make-array TcLifetimeOutlivesMemoEntry 0)
+        0))
     (TcTypeResolutionCacheState
       (cast
         (unsafe
@@ -2152,7 +2156,17 @@
     (unsafe
       (set! (deref data).epoch (+ (deref data).epoch 1))
       (set! (deref data).type-pool-owner-id 0)
-      (set! (deref data).type-segment-bases 0))))
+      (set! (deref data).type-segment-bases 0)
+      ;; A job reset also retires every `tc-selected-holds-memo-bind!` entry:
+      ;; a new generation (header word 0) matches none of them.
+      (when
+        (> (deref data).holds-memo-address 0)
+        (let
+          [generation : (MutPtr i64)
+            (int->ptr
+              (cast (deref data).holds-memo-address : u64)
+              : (MutPtr i64))]
+          (ptr-write! generation (+ (ptr-read generation) 1)))))))
 
 (define (tc-source-key-cache-state-reset! [state : TcSourceKeyCacheState]) : unit
   (set! (array-ref state.control 2) 0)
@@ -14260,16 +14274,12 @@
           ret))]
     [(TcMaybeString.No) false]))
 
-;; The shared builtin dispatch (`tc-call-builtin-name`) takes the ordinary
-;; path for this name, and the name is not an enum variant.
+;; The shared builtin dispatch (`tc-call-builtin-name`, whose answer is `info`)
+;; takes the ordinary path for this name, and the name is not an enum variant.
 (define (tc-selected-call-name-ordinary?
   [ctx : TcContext]
-  [env : TcTypeEnv]
-  [raw-name : i64]
-  [arg-count : i64]) : bool
-  (let
-    [info : TcCallBuiltinName (tc-call-builtin-name ctx env raw-name arg-count)]
-    (and (= info.arm 0) (not (tc-call-variant-name-id? ctx info.name-id)))))
+  [info : (& info TcCallBuiltinName)]) : bool
+  (and (= info.arm 0) (not (tc-call-variant-name-id? ctx info.name-id))))
 
 ;; The symbol index of the function definition or extern this callee name
 ;; denotes, or -1. Lexical storage shadows declarations exactly as for `set!`
@@ -14458,8 +14468,7 @@
         (if (tc-selected-holds-reference?
           ctx
           (tc-global-shared-view resolved)
-          true
-          TcNameIdList.Nil)
+          true)
           (tc-type-collect-reference-lifetimes-into resolved out)
           out)])))
 
@@ -14622,14 +14631,14 @@
 
 ;; A struct or enum variant constructor named directly (not shadowed). A
 ;; macro's hygienic global name denotes its definition module's declaration,
-;; which no local shadows.
+;; which no local shadows. `info` is the name's builtin dispatch
+;; (`tc-call-builtin-name`).
 (define (tc-selected-call-constructor?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [raw-name : i64]
-  [arg-count : i64]) : bool
+  [info : (& info TcCallBuiltinName)]) : bool
   (let
-    [info : TcCallBuiltinName (tc-call-builtin-name ctx env raw-name arg-count)]
     [hygienic? : bool
       (macro-hygiene-global-id? (tc-context-structural-session ctx) raw-name)]
     (and
@@ -14861,8 +14870,7 @@
                     (tc-selected-holds-reference?
                       ctx
                       (tc-resolve-type ctx (ast.ty-node-get ret-id))
-                      false
-                      TcNameIdList.Nil))
+                      false))
                   (match (tc-expr ctx env (tc-global-shared-view call))
                     [(ResultTcType.Err message)
                       (TcSelectedCallTarget.Err message)]
@@ -16400,110 +16408,128 @@
     [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
     (match (ast.ast-expr-unspan (& func))
       [(ast.AstExpr.Var raw-name)
-        (cond
-          [(or
-              (tc-selected-call-constructor? ctx env raw-name arg-count)
-              (tc-selected-call-variant-value? ctx env raw-name func-id))
-            (tc-selected-constructor-target ctx env call func-id arg-count)]
-          [(tc-selected-read-builtin-arm?
-              (tc-call-builtin-name ctx env raw-name arg-count).arm)
-            (TcSelectedCallTarget.Builtin
-              (tc-call-builtin-name ctx env raw-name arg-count).arm)]
-          [(let
-              [arm : i64 (tc-call-builtin-name ctx env raw-name arg-count).arm]
-              (and (>= arm 9) (<= arm 12)))
-            (TcSelectedCallTarget.ArenaForm
-              (tc-call-builtin-name ctx env raw-name arg-count).arm)]
-          [(= (tc-call-builtin-name ctx env raw-name arg-count).arm 4)
-            (TcSelectedCallTarget.SliceView
-              (tc-slice-call-mutable?
-                (tc-call-builtin-name ctx env raw-name arg-count).slice-call-kind))]
-          [(= (tc-call-builtin-name ctx env raw-name arg-count).arm 3)
-            (TcSelectedCallTarget.SliceSplit
-              (tc-slice-call-mutable?
-                (tc-call-builtin-name ctx env raw-name arg-count).slice-call-kind))]
-          [(not (tc-selected-call-name-ordinary? ctx env raw-name arg-count))
-            TcSelectedCallTarget.Legacy]
-          ;; The safe spawn takes one nullary task; the raw two-argument
-          ;; `thread.spawn` adapter is an ordinary (unsafe) call.
-          [(and (= arg-count 1) (tc-selected-safe-spawn-call? ctx env func-id))
-            TcSelectedCallTarget.Spawn]
-          [(< (tc-selected-call-declared-function ctx env raw-name) 0)
-            (tc-selected-indirect-target ctx env func-id)]
-          [(tc-selected-foreign-abi? ctx (tc-global-shared-view func))
-            (match (tc-call-target-expr-id ctx env func-id)
-              [(ResultTcType.Err message) (TcSelectedCallTarget.Err message)]
-              [(ResultTcType.Ok declared-ty)
-                (let
-                  [call-args : ast.AstExprList
-                    (tc-selected-call-args ctx (tc-global-shared-view call))]
-                  [fn-ty : ast.AstType
-                    (tc-selected-foreign-call-type
-                      ctx
-                      env
-                      (tc-global-shared-view func)
-                      declared-ty
-                      (& call-args))]
-                  (cond
-                    [(tc-selected-foreign-signature-ok?
-                        ctx
-                        (tc-global-shared-view fn-ty)
-                        arg-count)
-                      (TcSelectedCallTarget.Foreign
-                        (tc-selected-call-declared-function ctx env raw-name)
-                        fn-ty)]
-                    ;; An extern view constructor (`tl_str_view`): its result
-                    ;; borrows from its reference operands, as an ordinary
-                    ;; call's does through the signature's lifetimes.
-                    [(tc-selected-foreign-view-signature-ok?
-                        ctx
-                        (tc-global-shared-view fn-ty)
-                        arg-count)
-                      (TcSelectedCallTarget.Ordinary
-                        (tc-selected-call-declared-function ctx env raw-name)
-                        fn-ty
-                        (tc-call-region-args-allowed-for-func
+        ;; The builtin dispatch is a pure lookup of the name in this scope:
+        ;; every test below reads its one answer.
+        (let
+          [builtin : TcCallBuiltinName
+            (tc-call-builtin-name ctx env raw-name arg-count)]
+          (if (or
+            (tc-selected-call-constructor? ctx env raw-name (& builtin))
+            (tc-selected-call-variant-value? ctx env raw-name func-id))
+            (tc-selected-constructor-target ctx env call func-id arg-count)
+            (let
+              [arm : i64 builtin.arm]
+              (cond
+                [(tc-selected-read-builtin-arm? arm)
+                  (TcSelectedCallTarget.Builtin arm)]
+                [(and (>= arm 9) (<= arm 12))
+                  (TcSelectedCallTarget.ArenaForm arm)]
+                [(= arm 4)
+                  (TcSelectedCallTarget.SliceView
+                    (tc-slice-call-mutable? builtin.slice-call-kind))]
+                [(= arm 3)
+                  (TcSelectedCallTarget.SliceSplit
+                    (tc-slice-call-mutable? builtin.slice-call-kind))]
+                [(not (tc-selected-call-name-ordinary? ctx (& builtin)))
+                  TcSelectedCallTarget.Legacy]
+                ;; The safe spawn takes one nullary task; the raw two-argument
+                ;; `thread.spawn` adapter is an ordinary (unsafe) call.
+                [(and
+                    (= arg-count 1)
+                    (tc-selected-safe-spawn-call? ctx env func-id))
+                  TcSelectedCallTarget.Spawn]
+                ;; The definition or extern this name denotes, looked up once
+                ;; (-1: none, a call through a value).
+                [else
+                  (let
+                    [declared : i64
+                      (tc-selected-call-declared-function ctx env raw-name)]
+                    (cond
+                      [(< declared 0)
+                        (tc-selected-indirect-target ctx env func-id)]
+                      [(tc-selected-foreign-abi?
+                          ctx
+                          (tc-global-shared-view func))
+                        (match (tc-call-target-expr-id ctx env func-id)
+                          [(ResultTcType.Err message)
+                            (TcSelectedCallTarget.Err message)]
+                          [(ResultTcType.Ok declared-ty)
+                            (let
+                              [call-args : ast.AstExprList
+                                (tc-selected-call-args
+                                  ctx
+                                  (tc-global-shared-view call))]
+                              [fn-ty : ast.AstType
+                                (tc-selected-foreign-call-type
+                                  ctx
+                                  env
+                                  (tc-global-shared-view func)
+                                  declared-ty
+                                  (& call-args))]
+                              (cond
+                                [(tc-selected-foreign-signature-ok?
+                                    ctx
+                                    (tc-global-shared-view fn-ty)
+                                    arg-count)
+                                  (TcSelectedCallTarget.Foreign declared fn-ty)]
+                                ;; An extern view constructor (`tl_str_view`):
+                                ;; its result borrows from its reference
+                                ;; operands, as an ordinary call's does
+                                ;; through the signature's lifetimes.
+                                [(tc-selected-foreign-view-signature-ok?
+                                    ctx
+                                    (tc-global-shared-view fn-ty)
+                                    arg-count)
+                                  (TcSelectedCallTarget.Ordinary
+                                    declared
+                                    fn-ty
+                                    (tc-call-region-args-allowed-for-func
+                                      ctx
+                                      env
+                                      (tc-global-shared-view func)))]
+                                [else TcSelectedCallTarget.Legacy]))])]
+                      [else
+                        (match (tc-direct-lambda-check
                           ctx
                           env
-                          (tc-global-shared-view func)))]
-                    [else TcSelectedCallTarget.Legacy]))])]
-          [else
-            (match (tc-direct-lambda-check ctx env (tc-global-shared-view func))
-              [(TcDirectLambdaCheck.No)
-                (match (tc-call-target-expr-id ctx env func-id)
-                  [(ResultTcType.Err message)
-                    (TcSelectedCallTarget.Err message)]
-                  [(ResultTcType.Ok fn-ty)
-                    (match (tc-global-shared-view fn-ty)
-                      [(ast.AstType.Func params ret)
-                        (if (tc-selected-call-signature-ok?
-                          ctx
-                          env
-                          (tc-global-shared-view func)
-                          (ast.ast-type-list-box-shared-view params)
-                          (ast.ty-node-get ret))
-                          (TcSelectedCallTarget.Ordinary
-                            (tc-selected-call-declared-function
-                              ctx
-                              env
-                              raw-name)
-                            fn-ty
-                            (tc-call-region-args-allowed-for-func
-                              ctx
-                              env
-                              (tc-global-shared-view func)))
-                          TcSelectedCallTarget.Legacy)]
-                      ;; A declared C function pointer value (an extern
-                      ;; `CFunc` global) is called through its value.
-                      [_
-                        (match (tc-selected-c-function-signature
-                          ctx
-                          env
-                          (tc-global-shared-view fn-ty))
-                          [(ast.AstMaybeType.Some _)
-                            (tc-selected-indirect-target ctx env func-id)]
-                          [(ast.AstMaybeType.No) TcSelectedCallTarget.Legacy])])])]
-              [_ TcSelectedCallTarget.Legacy])])]
+                          (tc-global-shared-view func))
+                          [(TcDirectLambdaCheck.No)
+                            (match (tc-call-target-expr-id ctx env func-id)
+                              [(ResultTcType.Err message)
+                                (TcSelectedCallTarget.Err message)]
+                              [(ResultTcType.Ok fn-ty)
+                                (match (tc-global-shared-view fn-ty)
+                                  [(ast.AstType.Func params ret)
+                                    (if (tc-selected-call-signature-ok?
+                                      ctx
+                                      env
+                                      (tc-global-shared-view func)
+                                      (ast.ast-type-list-box-shared-view params)
+                                      (ast.ty-node-get ret))
+                                      (TcSelectedCallTarget.Ordinary
+                                        declared
+                                        fn-ty
+                                        (tc-call-region-args-allowed-for-func
+                                          ctx
+                                          env
+                                          (tc-global-shared-view func)))
+                                      TcSelectedCallTarget.Legacy)]
+                                  ;; A declared C function pointer value (an
+                                  ;; extern `CFunc` global) is called through
+                                  ;; its value.
+                                  [_
+                                    (match (tc-selected-c-function-signature
+                                      ctx
+                                      env
+                                      (tc-global-shared-view fn-ty))
+                                      [(ast.AstMaybeType.Some _)
+                                        (tc-selected-indirect-target
+                                          ctx
+                                          env
+                                          func-id)]
+                                      [(ast.AstMaybeType.No)
+                                        TcSelectedCallTarget.Legacy])])])]
+                          [_ TcSelectedCallTarget.Legacy])]))]))))]
       ;; A callee that is an expression (an immediately called lambda, a
       ;; function value read from a place) is a call through its value.
       [_ (tc-selected-indirect-target ctx env func-id)])))
@@ -119608,8 +119634,7 @@
           (tc-selected-holds-reference?
             ctx
             (tc-global-shared-view erased)
-            false
-            TcNameIdList.Nil))))))
+            false))))))
 
 ;; A reference whose referent is an ordinary value, borrowed text, a supported
 ;; reference or a value holding loans (no special owner): 1 shared, 2 mutable,
@@ -119773,14 +119798,262 @@
       [_ false])
     (not (tc-selected-type-contains-view? (tc-global-shared-view resolved)))))
 
+;; --- Reference holding of nominal declarations, memoized per job (#8449) ---
+;;
+;; Whether a struct or enum declaration holds a reference is a property of its
+;; fields and payloads as the asking context resolves them, and the selected
+;; walk asks it of every type it classifies, call signature it admits and
+;; constructor it checks. Each answer is kept in a direct-mapped table in the
+;; job's resolution cache. An entry is keyed by the declaration's name, kind
+;; and `mut?`, and by every word of the resolving context that is not the job
+;; itself (shared state, module, type module and program). The table belongs
+;; to one stamp of everything resolution and declaration lookup read: the
+;; type-name resolution generation (declarations, import aliases, module rows
+;; and lazy import stubs; `tc-top-env-resolution-inputs-changed!`), the
+;; installed intern table and its generation, the symbol and field maps' owner
+;; and revision (owners are never reused and every map mutation advances its
+;; revision), the declaration count, and the segment tables of the context's
+;; type pool and of the installed reader (`ast.ty-node-get`). When a
+;; stamp word moves, or the job's derived caches are reset
+;; (`tc-type-resolution-cache-state-reset!`), the table's generation advances
+;; and every entry is dead, so a live entry is what the walk would compute
+;; again. A collision only replaces an entry.
+(define tc-selected-holds-memo-capacity : i64
+  4096)
+(define tc-selected-holds-memo-header : i64
+  12)
+(define tc-selected-holds-memo-stride : i64
+  9)
+
+;; The job's memo, rebound to the current stamp: the address of its header,
+;; whose word 0 is the live generation (entries follow the header).
+(define (tc-selected-holds-memo-bind! [ctx : TcContext]) : i64
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    [resolution
+      (csym.compiler-resolution-lease-capture
+        (tc-context-symbols ctx)
+        (tc-context-registries ctx))]
+    [symbol-owner : i64 (cast resolution.symbol-revision.owner : i64)]
+    [symbol-revision : i64 (cast resolution.symbol-revision.revision : i64)]
+    [field-owner : i64 (cast resolution.field-revision.owner : i64)]
+    [field-revision : i64 (cast resolution.field-revision.revision : i64)]
+    [decls : i64 (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
+    [type-bases : i64 (tc-context-type-bases ctx)]
+    [reader-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [intern-owner : i64 (ci.intern-active-table-id)]
+    [intern-generation : i64 (ci.intern-generation)]
+    [address : u64
+      (unsafe
+        (when
+          (= (deref data).holds-memo-address 0)
+          (in-arena
+            (arena.Arena (deref data).owner-arena)
+            (let
+              [lanes : (__tl_dyn-array i64)
+                (__tl_make-array
+                  i64
+                  (+
+                    tc-selected-holds-memo-header
+                    (*
+                      tc-selected-holds-memo-capacity
+                      tc-selected-holds-memo-stride)))]
+              (set!
+                (deref data).holds-memo-address
+                (cast
+                  (ptr->int (ptr-cast (__tl_array-data lanes) : (Ptr i64)))
+                  : i64)))))
+        (cast (deref data).holds-memo-address : u64))]
+    [header : (Ptr i64)
+      (unsafe
+        (int->ptr address : (Ptr i64)))]
+    [writer : (MutPtr i64)
+      (unsafe
+        (int->ptr address : (MutPtr i64)))]
+    (unsafe
+      (unless
+        (and
+          ;; Word 1 marks a bound header.
+          (= (ptr-read (ptr-offset header 1)) 1)
+          (= (ptr-read (ptr-offset header 2)) tc-top-env-resolution-generation)
+          (= (ptr-read (ptr-offset header 3)) intern-owner)
+          (= (ptr-read (ptr-offset header 4)) intern-generation)
+          (= (ptr-read (ptr-offset header 5)) symbol-owner)
+          (= (ptr-read (ptr-offset header 6)) symbol-revision)
+          (= (ptr-read (ptr-offset header 7)) field-owner)
+          (= (ptr-read (ptr-offset header 8)) field-revision)
+          (= (ptr-read (ptr-offset header 9)) decls)
+          (= (ptr-read (ptr-offset header 10)) type-bases)
+          (= (ptr-read (ptr-offset header 11)) reader-bases))
+        (ptr-write! writer (+ (ptr-read header) 1))
+        (ptr-write! (ptr-offset writer 1) 1)
+        (ptr-write! (ptr-offset writer 2) tc-top-env-resolution-generation)
+        (ptr-write! (ptr-offset writer 3) intern-owner)
+        (ptr-write! (ptr-offset writer 4) intern-generation)
+        (ptr-write! (ptr-offset writer 5) symbol-owner)
+        (ptr-write! (ptr-offset writer 6) symbol-revision)
+        (ptr-write! (ptr-offset writer 7) field-owner)
+        (ptr-write! (ptr-offset writer 8) field-revision)
+        (ptr-write! (ptr-offset writer 9) decls)
+        (ptr-write! (ptr-offset writer 10) type-bases)
+        (ptr-write! (ptr-offset writer 11) reader-bases)))
+    (cast address : i64)))
+
+;; The entry offset (in words, from the header) of a declaration's slot.
+(define (tc-selected-holds-memo-entry
+  [ctx : TcContext]
+  [name : i64]
+  [flags : i64]) : i64
+  (let
+    [mixed : i64
+      (bit-xor
+        (bit-xor (* name 2654435761) (shr name 29))
+        (bit-xor
+          (* (+ ctx.module-id (* flags 7919)) 40503)
+          (* ctx.type-module-id 9973)))]
+    (+
+      tc-selected-holds-memo-header
+      (*
+        (bit-and
+          (bit-xor mixed (shr mixed 17))
+          (- tc-selected-holds-memo-capacity 1))
+        tc-selected-holds-memo-stride))))
+
+;; 1 or 0 for a live answer about declaration `name` (`flags`: 2 for an enum,
+;; plus 1 for `mut?`) under `ctx`, -1 when there is none.
+(define (tc-selected-holds-memo-get
+  [memo : i64]
+  [ctx : TcContext]
+  [name : i64]
+  [flags : i64]) : i64
+  (let
+    [header : (Ptr i64)
+      (unsafe
+        (int->ptr (cast memo : u64) : (Ptr i64)))]
+    [entry : (Ptr i64)
+      (unsafe
+        (ptr-offset header (tc-selected-holds-memo-entry ctx name flags)))]
+    (unsafe
+      (if (and
+        (= (ptr-read entry) (ptr-read header))
+        (= (ptr-read (ptr-offset entry 1)) name)
+        (= (ptr-read (ptr-offset entry 2)) flags)
+        (= (ptr-read (ptr-offset entry 3)) (cast ctx.shared : i64))
+        (= (ptr-read (ptr-offset entry 4)) ctx.module-id)
+        (= (ptr-read (ptr-offset entry 5)) ctx.type-module-id)
+        (= (ptr-read (ptr-offset entry 6)) (cast ctx.module : i64))
+        (= (ptr-read (ptr-offset entry 7)) (cast ctx.program-decls : i64)))
+        (ptr-read (ptr-offset entry 8))
+        -1))))
+
+(define (tc-selected-holds-memo-put!
+  [memo : i64]
+  [ctx : TcContext]
+  [name : i64]
+  [flags : i64]
+  [found : bool]) : unit
+  (let
+    [header : (Ptr i64)
+      (unsafe
+        (int->ptr (cast memo : u64) : (Ptr i64)))]
+    [entry : (MutPtr i64)
+      (unsafe
+        (ptr-offset
+          (int->ptr (cast memo : u64) : (MutPtr i64))
+          (tc-selected-holds-memo-entry ctx name flags)))]
+    (unsafe
+      (ptr-write! entry (ptr-read header))
+      (ptr-write! (ptr-offset entry 1) name)
+      (ptr-write! (ptr-offset entry 2) flags)
+      (ptr-write! (ptr-offset entry 3) (cast ctx.shared : i64))
+      (ptr-write! (ptr-offset entry 4) ctx.module-id)
+      (ptr-write! (ptr-offset entry 5) ctx.type-module-id)
+      (ptr-write! (ptr-offset entry 6) (cast ctx.module : i64))
+      (ptr-write! (ptr-offset entry 7) (cast ctx.program-decls : i64))
+      (ptr-write!
+        (ptr-offset entry 8)
+        (if found
+          1
+          0)))))
+
+;; One depth-first walk of `tc-selected-holds-reference?`. `stack` holds the
+;; declarations on the current path (the first `depth`), `low` the least stack
+;; position a cut has hit, and `names`/`flags` every declaration the walk has
+;; entered (the first `entered`), in order.
+(defstruct TcSelectedHoldsWalk
+  (memo i64)
+  (mut? bool)
+  (stack (__tl_dyn-array i64))
+  (depth i64)
+  (low i64)
+  (names (__tl_dyn-array i64))
+  (flags (__tl_dyn-array i64))
+  (entered i64))
+
+;; A copy of the first `used` words of `items` with room for `needed`.
+(define (tc-selected-holds-grown
+  [items : (& items (__tl_dyn-array i64))]
+  [used : i64]
+  [needed : i64]) : (__tl_dyn-array i64)
+  (let
+    [grown : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< (* 2 (array-length items)) needed)
+          (+ needed 16)
+          (* 2 (array-length items))))]
+    [index : i64 0]
+    (while (< index used)
+      (set! (array-ref grown index) (array-ref items index))
+      (set! index (+ index 1)))
+    grown))
+
+;; Room for one more declaration on the path and in the entered list.
+(define (tc-selected-holds-walk-reserve!
+  [walk : (&mut walk TcSelectedHoldsWalk)]) : unit
+  (when
+    (>= walk.depth (array-length walk.stack))
+    (set!
+      walk.stack
+      (tc-selected-holds-grown (& walk.stack) walk.depth (+ walk.depth 1))))
+  (when
+    (>= walk.entered (array-length walk.names))
+    (set!
+      walk.names
+      (tc-selected-holds-grown (& walk.names) walk.entered (+ walk.entered 1)))
+    (set!
+      walk.flags
+      (tc-selected-holds-grown (& walk.flags) walk.entered (+ walk.entered 1)))))
+
 ;; A reference (only a mutable one when `mut?`) anywhere in a value of this
 ;; type, through declared struct fields and variant payloads (a declaration
 ;; already being walked adds nothing new).
 (define (tc-selected-holds-reference?
   [ctx : TcContext]
   [ty : ast.AstType]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
+  [mut? : bool]) : bool
+  (let
+    ;; The lanes start as the shared empty array; the walk replaces each
+    ;; before its first write (`tc-selected-holds-walk-reserve!`).
+    [walk : TcSelectedHoldsWalk
+      (TcSelectedHoldsWalk
+        (tc-selected-holds-memo-bind! ctx)
+        mut?
+        (tc-global-shared-view tc-chain-empty-i64-array)
+        0
+        0
+        (tc-global-shared-view tc-chain-empty-i64-array)
+        (tc-global-shared-view tc-chain-empty-i64-array)
+        0)]
+    (tc-selected-holds-reference-in? ctx (&mut walk) ty)))
+
+(define (tc-selected-holds-reference-in?
+  [ctx : TcContext]
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [ty : ast.AstType]) : bool
   (match (tc-resolve-type ctx ty)
     [(ast.AstType.MutRef _ _) true]
     ;; A shared reference of the reserved `program` lifetime outlives every
@@ -119788,50 +120061,105 @@
     ;; referent holds).
     [(ast.AstType.Ref lifetime inner)
       (or
-        (and (not mut?) (not (tc-program-lifetime-id? lifetime)))
-        (tc-selected-holds-reference? ctx (ast.ty-node-get inner) mut? stack))]
+        (and (not walk.mut?) (not (tc-program-lifetime-id? lifetime)))
+        (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get inner)))]
     [(ast.AstType.Region _ inner)
-      (tc-selected-holds-reference? ctx (ast.ty-node-get inner) mut? stack)]
+      (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get inner))]
     [(ast.AstType.Box elem)
-      (tc-selected-holds-reference? ctx (ast.ty-node-get elem) mut? stack)]
+      (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get elem))]
     [(ast.AstType.Array elem _)
-      (tc-selected-holds-reference? ctx (ast.ty-node-get elem) mut? stack)]
+      (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get elem))]
     [(ast.AstType.DynArray elem)
-      (tc-selected-holds-reference? ctx (ast.ty-node-get elem) mut? stack)]
+      (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get elem))]
     [(ast.AstType.Tuple elems)
       (tc-selected-types-hold-reference?
         ctx
-        (ast.ast-type-list-box-shared-view elems)
-        mut?
-        stack)]
+        walk
+        (ast.ast-type-list-box-shared-view elems))]
     [(ast.AstType.StructArgs name _)
-      (tc-selected-struct-holds-reference? ctx name mut? stack)]
+      (tc-selected-nominal-holds-reference? ctx walk name false)]
     [(ast.AstType.Struct name)
-      (tc-selected-struct-holds-reference? ctx name mut? stack)]
+      (tc-selected-nominal-holds-reference? ctx walk name false)]
     [(ast.AstType.EnumArgs name _)
-      (tc-selected-enum-holds-reference? ctx name mut? stack)]
+      (tc-selected-nominal-holds-reference? ctx walk name true)]
     [(ast.AstType.Enum name)
-      (tc-selected-enum-holds-reference? ctx name mut? stack)]
+      (tc-selected-nominal-holds-reference? ctx walk name true)]
     [_ false]))
 
-(define (tc-selected-struct-holds-reference?
+;; The walk cuts a declaration already on the path, so from the root it
+;; decides whether a reference is reachable through fields and payloads. Below
+;; the root, a declaration's `false` is that reachability only when no cut in
+;; its sub-walk hit a declaration above it (a cut at itself or deeper hides
+;; nothing reachable from it); its `true` always is (a real path). An exact
+;; `false` also holds for every declaration its sub-walk entered, since each
+;; is reachable from it. Those answers are kept, and replacing a sub-walk by a
+;; kept answer leaves every enclosing answer as the walk would compute it.
+(define (tc-selected-nominal-holds-reference?
   [ctx : TcContext]
+  [walk : (&mut walk TcSelectedHoldsWalk)]
   [name : i64]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
-  (if (tc-name-id-list-contains stack name)
-    false
-    (tc-selected-struct-fields-hold-reference?
-      ctx
-      name
-      mut?
-      (tc-name-id-list-cons stack name))))
+  [enum? : bool]) : bool
+  (let
+    [depth : i64 walk.depth]
+    [position : i64 0]
+    [on-path : i64 -1]
+    (while (and (< on-path 0) (< position depth))
+      (when (= (array-ref walk.stack position) name) (set! on-path position))
+      (set! position (+ position 1)))
+    (if (>= on-path 0)
+      (begin
+        (when (< on-path walk.low) (set! walk.low on-path))
+        false)
+      (let
+        [flags : i64
+          (+
+            (if enum?
+              2
+              0)
+            (if walk.mut?
+              1
+              0))]
+        [known : i64 (tc-selected-holds-memo-get walk.memo ctx name flags)]
+        (if (>= known 0)
+          (= known 1)
+          (let
+            [outer-low : i64 walk.low]
+            [first : i64 walk.entered]
+            (tc-selected-holds-walk-reserve! walk)
+            (set! (array-ref walk.stack depth) name)
+            (set! walk.depth (+ depth 1))
+            (set! (array-ref walk.names first) name)
+            (set! (array-ref walk.flags first) flags)
+            (set! walk.entered (+ first 1))
+            (set! walk.low depth)
+            (let
+              [found : bool
+                (if enum?
+                  (tc-selected-enum-payloads-hold-reference? ctx walk name)
+                  (tc-selected-struct-fields-hold-reference? ctx walk name))]
+              (set! walk.depth depth)
+              (cond
+                [found
+                  (tc-selected-holds-memo-put! walk.memo ctx name flags true)]
+                [(>= walk.low depth)
+                  (let
+                    [index : i64 first]
+                    (while (< index walk.entered)
+                      (tc-selected-holds-memo-put!
+                        walk.memo
+                        ctx
+                        (array-ref walk.names index)
+                        (array-ref walk.flags index)
+                        false)
+                      (set! index (+ index 1))))]
+                [else unit])
+              (when (< outer-low walk.low) (set! walk.low outer-low))
+              found)))))))
 
 (define (tc-selected-struct-fields-hold-reference?
   [ctx : TcContext]
-  [name : i64]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [name : i64]) : bool
   (match (tc-struct-decl-id ctx name)
     [(ResultTcStructDecl.Ok decl)
       (match decl
@@ -119848,29 +120176,15 @@
                   [(ast.AstFieldDef.Def _ field-ty _)
                     (set!
                       found
-                      (tc-selected-holds-reference? ctx field-ty mut? stack))])
+                      (tc-selected-holds-reference-in? ctx walk field-ty))])
                 (set! index (+ index 1))))
             found)])]
     [(ResultTcStructDecl.Err _) true]))
 
-(define (tc-selected-enum-holds-reference?
-  [ctx : TcContext]
-  [name : i64]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
-  (if (tc-name-id-list-contains stack name)
-    false
-    (tc-selected-enum-payloads-hold-reference?
-      ctx
-      name
-      mut?
-      (tc-name-id-list-cons stack name))))
-
 (define (tc-selected-enum-payloads-hold-reference?
   [ctx : TcContext]
-  [name : i64]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [name : i64]) : bool
   (match (tc-enum-decl-id ctx name)
     [(ResultTcEnumDecl.Ok decl)
       (match decl
@@ -119887,28 +120201,26 @@
                   [(ast.AstVariantDef.Def _ payload _)
                     (set!
                       found
-                      (tc-selected-types-hold-reference? ctx payload mut? stack))])
+                      (tc-selected-types-hold-reference? ctx walk payload))])
                 (set! index (+ index 1))))
             found)])]
     [(ResultTcEnumDecl.Err _) true]))
 
 (define (tc-selected-types-hold-reference?
   [ctx : TcContext]
-  [types : ast.AstTypeList]
-  [mut? : bool]
-  [stack : TcNameIdList]) : bool
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [types : ast.AstTypeList]) : bool
   (let
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index (ast.ast-type-list-len (& types))))
       (set!
         found
-        (tc-selected-holds-reference?
+        (tc-selected-holds-reference-in?
           ctx
+          walk
           (ast.ty-node-get
-            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
-          mut?
-          stack))
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))))
       (set! index (+ index 1)))
     found))
 
@@ -120028,17 +120340,35 @@
     (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass))
   (representative-indices (__tl_dyn-array i64))
   (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))
-  (variances ownership_normalize.OwnershipNormalizeVariances))
+  (variances ownership_normalize.OwnershipNormalizeVariances)
+  ;; Where the representative scan may start for a type already looked up
+  ;; (`tc-selected-representative-noting!`): the first `memo-count` entries of
+  ;; `memo-types`/`memo-starts`, indexed by `memo-slots` (entry + 1, 0 empty).
+  (memo-types (__tl_dyn-array ast.AstType))
+  (memo-starts (__tl_dyn-array i64))
+  (memo-slots (__tl_dyn-array i64))
+  (memo-count i64))
 
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
-  (TcSelectedTypeTable
-    regions
-    (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
-    (__tl_make-array ast.AstType 0)
-    (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
-    (ownership_normalize.ownership-normalize-variances-empty)))
+  (let
+    [representatives : (__tl_dyn-array ast.AstType)
+      (__tl_make-array ast.AstType 0)]
+    ;; The note lanes start empty and are replaced before their first write
+    ;; (`tc-selected-representative-memo-grow!`), so they share empty arrays.
+    [memo-types : (__tl_dyn-array ast.AstType)
+      (tc-global-shared-view representatives)]
+    (TcSelectedTypeTable
+      regions
+      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+      representatives
+      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
+      (ownership_normalize.ownership-normalize-variances-empty)
+      memo-types
+      (tc-global-shared-view tc-chain-empty-i64-array)
+      (tc-global-shared-view tc-chain-empty-i64-array)
+      0)))
 
 ;; The ownership graph's type for a typechecker type: arena regions are erased
 ;; (`tc-selected-arena-erase`) and a region tag on a Copy value is dropped.
@@ -120401,8 +120731,25 @@
 (define (tc-selected-region-marker? [env : TcTypeEnv] [region : i64]) : bool
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
-    [(TcTypeEnvView.Cache _ _ _ rest _)
-      (tc-selected-region-marker? rest region)]
+    [(TcTypeEnvView.Cache cache-ptr _ partial rest below)
+      ;; A cache's `ids` hold the lifetime-marker key of every marker binding
+      ;; it covers whose type is a non-negative `Var` (`tc-env-cache-fill`,
+      ;; `tc-env-cache-fill-prefix`; never removed): the whole spine below it,
+      ;; or a partial layer's binds down to `below`. Without the key no bind it
+      ;; covers marks `region`, so the scan resumes past them.
+      (let
+        [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
+        [ids : tc_i64_i64_map.Map cache.ids]
+        (if (and
+          (>= region 0)
+          (not
+            (tc_i64_i64_map.contains?
+              (& ids)
+              (tc-env-cache-lifetime-marker-key region))))
+          (if partial
+            (tc-selected-region-marker? below region)
+            false)
+          (tc-selected-region-marker? rest region)))]
     [(TcTypeEnvView.Bind key ty rest)
       (if (and
         (= key (tc-region-marker-id))
@@ -120559,7 +120906,8 @@
     ;; Lifetime arguments and lifetimes inside elements do not change the
     ;; graph's view of a value (loans flow by origins, not lifetime names):
     ;; a lifetime-shortened value is the same value (legacy typing checks the
-    ;; variance).
+    ;; variance). A shape mismatch is `false`: `tc-type-eq` (pure) already
+    ;; answered it.
     [(ast.AstType.StructArgs name _)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120569,10 +120917,7 @@
             (tc-global-shared-view right))
           (match (tc-global-shared-view right)
             [(ast.AstType.StructArgs other _) (= name other)]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.EnumArgs name _)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120582,10 +120927,7 @@
             (tc-global-shared-view right))
           (match (tc-global-shared-view right)
             [(ast.AstType.EnumArgs other _) (= name other)]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Tuple elems)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120621,10 +120963,7 @@
                           (ast.ast-type-id-fallback)))))
                   (set! index (+ index 1)))
                 same?)]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Array elem count)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120639,10 +120978,7 @@
                 (tc-selected-same-type?
                   (ast.ty-node-get elem)
                   (ast.ty-node-get other)))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.DynArray elem)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120655,10 +120991,7 @@
               (tc-selected-same-type?
                 (ast.ty-node-get elem)
                 (ast.ty-node-get other))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Box elem)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120671,10 +121004,7 @@
               (tc-selected-same-type?
                 (ast.ty-node-get elem)
                 (ast.ty-node-get other))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Slice elem)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120687,10 +121017,7 @@
               (tc-selected-same-type?
                 (ast.ty-node-get elem)
                 (ast.ty-node-get other))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Ptr elem)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120703,10 +121030,7 @@
               (tc-selected-same-type?
                 (ast.ty-node-get elem)
                 (ast.ty-node-get other))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.MutPtr elem)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120719,10 +121043,7 @@
               (tc-selected-same-type?
                 (ast.ty-node-get elem)
                 (ast.ty-node-get other))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [(ast.AstType.Func params ret)
       (and
         (tc-selected-plain-type? (tc-global-shared-view right))
@@ -120739,10 +121060,7 @@
                 (tc-selected-same-type?
                   (ast.AstType.Tuple params)
                   (ast.AstType.Tuple other-params)))]
-            [_
-              (tc-type-eq
-                (tc-global-shared-view left)
-                (tc-global-shared-view right))])))]
+            [_ false])))]
     [_
       (match (& right)
         [(ast.AstType.Ref _ _) false]
@@ -120750,12 +121068,78 @@
         [(ast.AstType.Region _ _) false]
         [_ (tc-type-eq left right)])]))
 
+;; The first representative `tc-selected-same-type?` matches with `resolved`,
+;; or -1. Representatives are only ever appended, and the scan's answer is a
+;; function of the type's shallow value (its variant, payloads and child node
+;; ids; nodes never change), so a scan for a shallow-equal type may start where
+;; an earlier one ended (`tc-selected-representative-noting!`): every
+;; representative before that start failed to match it.
 (define (tc-selected-representative
   [table : (& table TcSelectedTypeTable)]
   [resolved : ast.AstType]) : i64
   (let
+    [capacity : i64 (array-length table.memo-slots)]
+    [entry : i64
+      (if (= capacity 0)
+        0
+        (array-ref
+          table.memo-slots
+          (tc-selected-representative-slot
+            table
+            (tc-global-shared-view resolved))))]
+    (tc-selected-representative-scan
+      table
+      (tc-global-shared-view resolved)
+      (if (= entry 0)
+        0
+        (array-ref table.memo-starts (- entry 1))))))
+
+;; `tc-selected-representative`, noting where its scan ended for `resolved`:
+;; at the match, or where `resolved` becomes the next representative.
+(define (tc-selected-representative-noting!
+  [table : (&mut table TcSelectedTypeTable)]
+  [resolved : ast.AstType]) : i64
+  (when
+    (>= (* (+ table.memo-count 1) 2) (array-length table.memo-slots))
+    (tc-selected-representative-memo-grow! table))
+  (let
+    [slot : i64
+      (tc-selected-representative-slot table (tc-global-shared-view resolved))]
+    [entry : i64 (array-ref table.memo-slots slot)]
+    [start : i64
+      (if (= entry 0)
+        0
+        (array-ref table.memo-starts (- entry 1)))]
+    [found : i64
+      (tc-selected-representative-scan
+        table
+        (tc-global-shared-view resolved)
+        start)]
+    [end : i64
+      (if (>= found 0)
+        found
+        (array-length table.representatives))]
+    (if (= entry 0)
+      (let
+        [index : i64 table.memo-count]
+        (set!
+          (array-ref table.memo-types index)
+          (tc-global-shared-view resolved))
+        (set! (array-ref table.memo-starts index) end)
+        (set! (array-ref table.memo-slots slot) (+ index 1))
+        (set! table.memo-count (+ index 1)))
+      (unless
+        (= end start)
+        (set! (array-ref table.memo-starts (- entry 1)) end)))
+    found))
+
+(define (tc-selected-representative-scan
+  [table : (& table TcSelectedTypeTable)]
+  [resolved : ast.AstType]
+  [start : i64]) : i64
+  (let
     [found : i64 -1]
-    [rep : i64 0]
+    [rep : i64 start]
     (while (and (< found 0) (< rep (array-length table.representatives)))
       (when
         (tc-selected-same-type?
@@ -120764,6 +121148,66 @@
         (set! found rep))
       (set! rep (+ rep 1)))
     found))
+
+(define (tc-selected-representative-hash-slot [ty : ast.AstType] [mask : i64]) : i64
+  (bit-and (* (ast.ty-node-hash-value (& ty)) 2654435761) mask))
+
+;; The index slot holding the entry of a type shallow-equal to `resolved`, or
+;; the empty slot where one goes (the index is never full).
+(define (tc-selected-representative-slot
+  [table : (& table TcSelectedTypeTable)]
+  [resolved : ast.AstType]) : i64
+  (let
+    [mask : i64 (- (array-length table.memo-slots) 1)]
+    [slot : i64
+      (tc-selected-representative-hash-slot
+        (tc-global-shared-view resolved)
+        mask)]
+    [done : bool false]
+    (while (not done)
+      (let
+        [entry : i64 (array-ref table.memo-slots slot)]
+        (if (or
+          (= entry 0)
+          (ast.ty-node-shallow-value-eq?
+            (tc-global-array-element-shared-view table.memo-types (- entry 1))
+            (tc-global-shared-view resolved)))
+          (set! done true)
+          (set! slot (bit-and (+ slot 1) mask)))))
+    slot))
+
+;; Doubles the note index (at most half full) and its entry lanes.
+(define (tc-selected-representative-memo-grow!
+  [table : (&mut table TcSelectedTypeTable)]) : unit
+  (let
+    [count : i64 table.memo-count]
+    [capacity : i64
+      (if (= (array-length table.memo-slots) 0)
+        64
+        (* (array-length table.memo-slots) 2))]
+    [mask : i64 (- capacity 1)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [types : (__tl_dyn-array ast.AstType)
+      (__tl_make-array ast.AstType capacity)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [slot : i64
+          (tc-selected-representative-hash-slot
+            (tc-global-array-element-shared-view table.memo-types index)
+            mask)]
+        (set!
+          (array-ref types index)
+          (tc-global-array-element-shared-view table.memo-types index))
+        (set! (array-ref starts index) (array-ref table.memo-starts index))
+        (while (not (= (array-ref slots slot) 0))
+          (set! slot (bit-and (+ slot 1) mask)))
+        (set! (array-ref slots slot) (+ index 1)))
+      (set! index (+ index 1)))
+    (set! table.memo-slots slots)
+    (set! table.memo-types types)
+    (set! table.memo-starts starts)))
 
 ;; The typed index of a type equal to `ty`; the store gains a record (to be
 ;; classified) only when the body has none. -1 when the store refuses it.
@@ -120800,17 +121244,26 @@
 ;; the classes are gathered in a buffer that doubles when full (a private
 ;; dynamic array copies its backing on every push, which would make this
 ;; quadratic in the body's size) and stored once at their exact length.
+;;
+;; With `variances?`, it also records in `table.variances` the declared
+;; variance of each lifetime parameter of every struct and enum the records'
+;; types name, as typing relates them (`tc-nominal-args-lifetime-variance-at`,
+;; Arena's brand invariant), in record order: the ownership graph relates a
+;; nominal type's lifetime arguments by it.
 (define (tc-selected-classify!
   [ctx : TcContext]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [table : (&mut table TcSelectedTypeTable)]) : unit
+  [table : (&mut table TcSelectedTypeTable)]
+  [variances? : bool]) : unit
   (let
     [count : i64 (array-length table.classes)]
+    ;; The store gains records only where a referent is indexed below.
+    [total : i64 (tc-selected-type-record-count store lease)]
     [cells : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
       (__tl_make-array
         ownership_normalize.OwnershipNormalizeTypeClass
-        (+ (tc-selected-type-record-count store lease) 1))]
+        (+ total 1))]
     [copied : i64 0]
     (while (< copied count)
       (set!
@@ -120822,20 +121275,30 @@
           (array-ref table.classes copied).referent
           (array-ref table.classes copied).cleanup?))
       (set! copied (+ copied 1)))
-    (while (< count (tc-selected-type-record-count store lease))
+    (while (< count total)
       (let
         [index : i64 count]
         [ty : ast.AstType
           (match (typed.typed-type-value-at! store lease index)
             [(typed.TypedTypeValueResult.Ok value) value]
             [(typed.TypedTypeValueResult.Err _) ast.AstType.Never])]
+        [_variances : unit
+          (when
+            variances?
+            (tc-selected-nominal-variances-in!
+              ctx
+              (tc-global-shared-view ty)
+              (&mut table.variances)
+              0))]
         [resolved : ast.AstType
           (tc-selected-canonical-type-in
             ctx
             (& table.arena-regions)
             (tc-resolve-type ctx (tc-global-shared-view ty)))]
         [found : i64
-          (tc-selected-representative table (tc-global-shared-view resolved))]
+          (tc-selected-representative-noting!
+            table
+            (tc-global-shared-view resolved))]
         (when
           (< found 0)
           (let
@@ -120874,6 +121337,10 @@
                       (tc-selected-type-index! ctx store lease table contents)]
                     [(ResultTcType.Err _) -1])]
                 [else -1])]
+            ;; Only an indexed referent can have added a record.
+            (when
+              (>= referent 0)
+              (set! total (tc-selected-type-record-count store lease)))
             (set! found (array-length table.representatives))
             (__tl_array-push!
               table.representative-classes
@@ -120938,7 +121405,7 @@
   (let
     [table : TcSelectedTypeTable
       (tc-selected-type-table-new (typed.typed-arena-regions-copy (& store)))]
-    (tc-selected-classify! ctx store lease (&mut table))
+    (tc-selected-classify! ctx store lease (&mut table) false)
     table.classes))
 
 ;; A struct's field types and name ids in declaration order, when each field's
@@ -121217,24 +121684,6 @@
         (ownership_normalize.OwnershipNormalizeProduct
           (__tl_make-array i64 0)
           (__tl_make-array i64 0))])))
-
-;; The declared variance of each lifetime parameter of every struct and enum
-;; the typed store's types name, as typing relates them
-;; (`tc-nominal-args-lifetime-variance-at`, Arena's brand invariant): the
-;; ownership graph relates a nominal type's lifetime arguments by it.
-(define (tc-selected-nominal-variances!
-  [ctx : TcContext]
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (tc-selected-type-record-count store lease))
-      (match (typed.typed-type-value-at! store lease index)
-        [(typed.TypedTypeValueResult.Ok value)
-          (tc-selected-nominal-variances-in! ctx value out 0)]
-        [(typed.TypedTypeValueResult.Err _) unit])
-      (set! index (+ index 1)))))
 
 ;; Records the nominal types `ty` names, to the normalizer's depth bound (a
 ;; deeper type's shape fails closed there).
@@ -121941,8 +122390,8 @@
         [(typed.TypedCountResult.Ok value) value]
         [(typed.TypedCountResult.Err _) 0])]
     [index : i64 0]
-    (tc-selected-classify! ctx store lease (&mut table))
-    (tc-selected-nominal-variances! ctx store lease (&mut table.variances))
+    ;; The store's every record, in order, with the variances its types name.
+    (tc-selected-classify! ctx store lease (&mut table) true)
     (while (< index count)
       (let
         ;; The container's typed index and the struct declaration (-1 for a
@@ -122040,7 +122489,7 @@
                           declaration)]
                       (set! (array-ref table.products referent-key) product))))))))
         (set! index (+ index 1))))
-    (tc-selected-classify! ctx store lease (&mut table))
+    (tc-selected-classify! ctx store lease (&mut table) false)
     table))
 
 (defenum TcSelectedMaybeProjection

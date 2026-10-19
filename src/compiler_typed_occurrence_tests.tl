@@ -16,14 +16,13 @@
   [owner : u64]) : (typed.TypedBodyLease intern-state)
   (let
     [_seed : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
-    (typed.TypedBodyLease
+    (typed.typed-body-lease
       (typed-test-body owner)
       (ast.ast-node-pool-context-capture-active)
       intern-state
       (typed-test-body (cast 4294967321 : u64))
       16
-      (typed.typed-resolution-unavailable intern-state)
-      true)))
+      (typed.typed-resolution-unavailable intern-state))))
 
 (define (typed-test-limits) : typed.TypedLimits
   (typed.TypedLimits 32 64 8 1000000))
@@ -34,12 +33,15 @@
   [registries : (& context symbols.CompilerRegistries)]
   [owner : u64]) : (typed.TypedBodyLease context)
   (let
-    [lease : (typed.TypedBodyLease context) (typed-test-lease state owner)]
-    (set!
-      lease.resolution-authority
+    [_seed : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    (typed.typed-body-lease
+      (typed-test-body owner)
+      (ast.ast-node-pool-context-capture-active)
+      state
+      (typed-test-body (cast 4294967321 : u64))
+      16
       (typed.TypedResolutionAuthority.Symbols
-        (symbols.compiler-resolution-lease-capture declarations registries)))
-    lease))
+        (symbols.compiler-resolution-lease-capture declarations registries)))))
 
 (define (typed-test-store [lease : (& lease (typed.TypedBodyLease intern))]) : typed.TypedStore
   (match (typed.typed-store-new lease (typed-test-limits))
@@ -471,7 +473,6 @@
         origin
         typed.TypedSyntax.Generated
         42)]
-    [saved-expr-pool : u64 lease.pools.expr-pool]
     [foreign : typed.TypedOccurrenceId
       (typed.TypedOccurrenceId
         (typed.TypedHandle
@@ -485,22 +486,31 @@
             [(typed.TypedError.Stale) true]
             [_ false])]
         [_ false])]
-    [_revision : unit
-      (set! lease.body.revision (+ lease.body.revision (cast 1 : u64)))]
-    ;; Deliberately invalidate the pool pointer too: rejecting the lease must
-    ;; happen before any canonical pool, type payload, or origin is accessed.
-    [_pool : unit (set! lease.pools.expr-pool (cast 1 : u64))]
+    ;; The body's next revision is another lease. Its pool pointer is
+    ;; deliberately invalid too: rejecting the lease must happen before any
+    ;; canonical pool, type payload, or origin is accessed.
+    [next : (typed.TypedBodyLease intern-state)
+      (typed.typed-body-lease
+        (own.OwnershipBodyId
+          lease.body.owner
+          lease.body.generation
+          (+ lease.body.revision (cast 1 : u64)))
+        (ast.AstNodePoolContext
+          (cast 1 : u64)
+          lease.pools.type-pool
+          lease.pools.owner-arena)
+        (& intern-state)
+        (typed-test-body (cast 4294967321 : u64))
+        16
+        (typed.typed-resolution-unavailable (& intern-state)))]
     [stale-lease : bool
-      (match (typed.typed-type-get! (&mut store) (& lease) type)
+      (match (typed.typed-type-get! (&mut store) (& next) type)
         [(typed.TypedTypeResult.Err error)
           (match error
             [(typed.TypedError.Lease) true]
             [_ false])]
         [_ false])]
     [_retire : unit (typed.typed-store-retire! (&mut store))]
-    [_restore : unit
-      (set! lease.body.revision (- lease.body.revision (cast 1 : u64)))]
-    [_restore-pool : unit (set! lease.pools.expr-pool saved-expr-pool)]
     [retired : bool
       (match (typed.typed-occurrence-get! (&mut store) (& lease) literal)
         [(typed.TypedNodeResult.Err error)
@@ -985,14 +995,13 @@
   [string-id : i64]) : TypedInternFixture
   (let
     [lease : (typed.TypedBodyLease state)
-      (typed.TypedBodyLease
+      (typed.typed-body-lease
         (typed-test-body (cast 41 : u64))
         pools
         state
         (typed-test-body (cast 4294967321 : u64))
         16
-        (typed.typed-resolution-unavailable state)
-        true)]
+        (typed.typed-resolution-unavailable state))]
     [store : typed.TypedStore (typed-test-store (& lease))]
     [origin : typed.TypedOriginId (typed-test-origin! (&mut store) (& lease))]
     [type : typed.TypedTypeId
@@ -1015,14 +1024,13 @@
   [pools : ast.AstNodePoolContext]) : bool
   (let
     [lease : (typed.TypedBodyLease state)
-      (typed.TypedBodyLease
+      (typed.typed-body-lease
         (typed-test-body (cast 41 : u64))
         pools
         state
         (typed-test-body (cast 4294967321 : u64))
         16
-        (typed.typed-resolution-unavailable state)
-        true)]
+        (typed.typed-resolution-unavailable state))]
     [id : typed.TypedOccurrenceId
       (typed.TypedOccurrenceId
         (typed.typed-handle-copy (& fixture.literal.handle)))]
@@ -1043,14 +1051,13 @@
   [pools : ast.AstNodePoolContext]) : bool
   (let
     [lease : (typed.TypedBodyLease state)
-      (typed.TypedBodyLease
+      (typed.typed-body-lease
         (typed-test-body (cast 41 : u64))
         pools
         state
         (typed-test-body (cast 4294967321 : u64))
         16
-        (typed.typed-resolution-unavailable state)
-        true)]
+        (typed.typed-resolution-unavailable state))]
     [id : typed.TypedTypeId
       (typed.TypedTypeId (typed.typed-handle-copy (& fixture.type.handle)))]
     (match (typed.typed-type-get! (&mut fixture.store) (& lease) id)
@@ -1243,6 +1250,18 @@
         [_ false])]
     [_ false]))
 
+;; Table extents are checked where a store enters a consumer, whatever its
+;; binding stamp says.
+(define (typed-test-admit-shape-error?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]) : bool
+  (match (typed.typed-store-admit! store lease)
+    [(typed.TypedResult.Err error)
+      (match error
+        [(typed.TypedError.Shape) true]
+        [_ false])]
+    [_ false]))
+
 (define (typed-test-malformed-storage?) : bool
   (let
     [intern-state : ci.InternCompatState
@@ -1296,33 +1315,49 @@
     [_restore : unit
       (set! (array-ref store.occurrences parent.handle.index).child-count 1)]
     [_table : unit (set! store.type-count (+ (array-length store.types) 1))]
-    [bad-table : bool
-      (match (typed.typed-type-get! (&mut store) (& lease) type)
-        [(typed.TypedTypeResult.Err error)
-          (match error
-            [(typed.TypedError.Shape) true]
-            [_ false])]
-        [_ false])]
+    [bad-table : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
     [_types : unit (set! store.type-count 1)]
     [_edges : unit (set! store.child-count (+ (array-length store.children) 1))]
-    [bad-edges : bool
-      (typed-test-child-shape-error? (&mut store) (& lease) parent)]
+    [bad-edges : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
     [_edge-restore : unit (set! store.child-count 1)]
+    [admitted : bool
+      (match (typed.typed-store-admit! (&mut store) (& lease))
+        [(typed.TypedResult.Ok _) true]
+        [_ false])]
     [valid : bool
       (match (typed.typed-child-get! (&mut store) (& lease) parent 0)
         [(typed.TypedChildResult.Ok id)
           (= id.handle.serial child.handle.serial)]
         [_ false])]
     [_work : unit (set! store.work -1)]
-    [bad-work : bool
-      (match (typed.typed-type-get! (&mut store) (& lease) type)
+    [bad-work : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
+    ;; Binding a different, structurally equal lease checks the shape too.
+    [rebound : (typed.TypedBodyLease intern-state)
+      (typed.typed-body-lease
+        lease.body
+        lease.pools
+        (& intern-state)
+        lease.resolutions
+        lease.resolution-count
+        (typed.typed-resolution-unavailable (& intern-state)))]
+    [bad-rebind : bool
+      (match (typed.typed-type-get! (&mut store) (& rebound) type)
         [(typed.TypedTypeResult.Err error)
           (match error
             [(typed.TypedError.Shape) true]
             [_ false])]
         [_ false])]
     (typed.typed-store-retire! (&mut store))
-    (and negative overflow overrun bad-table bad-edges valid bad-work)))
+    (and
+      negative
+      overflow
+      overrun
+      bad-table
+      bad-edges
+      admitted
+      valid
+      bad-work
+      bad-rebind)))
 
 (define (typed-test-place!
   [store : (&mut store typed.TypedStore)]
@@ -1760,6 +1795,185 @@
     (typed.typed-store-retire! (&mut store))
     (and read-only replacement wrong-owner exhaustion stale no-restamp)))
 
+(define (typed-test-type-error?
+  [result : (typed.TypedTypeResult store)]
+  [expected : typed.TypedError]) : bool
+  (match result
+    [(typed.TypedTypeResult.Err error)
+      (match error
+        [(typed.TypedError.Lease)
+          (match expected
+            [(typed.TypedError.Lease) true]
+            [_ false])]
+        [(typed.TypedError.Shape)
+          (match expected
+            [(typed.TypedError.Shape) true]
+            [_ false])]
+        [_ false])]
+    [(typed.TypedTypeResult.Ok _) false]))
+
+(define (typed-test-type-ok? [result : (typed.TypedTypeResult store)]) : bool
+  (match result
+    [(typed.TypedTypeResult.Ok _) true]
+    [(typed.TypedTypeResult.Err _) false]))
+
+;; A lease built without `typed.typed-body-lease` carries no serial.
+(define (typed-test-unsealed-lease
+  [state : (& context ci.InternCompatState)]
+  [declarations : (& context symbols.CompilerSymbols)]
+  [registries : (& context symbols.CompilerRegistries)]
+  [owner : u64]) : (typed.TypedBodyLease context)
+  (typed.TypedBodyLease
+    (typed-test-body owner)
+    (ast.ast-node-pool-context-capture-active)
+    state
+    (typed-test-body (cast 4294967321 : u64))
+    16
+    (typed.TypedResolutionAuthority.Symbols
+      (symbols.compiler-resolution-lease-capture declarations registries))
+    true
+    (cast 0 : u64)))
+
+;; Accesses recheck a store only after an event that can invalidate its full
+;; check. A different lease binds only after a full check, so one with another
+;; body, pool, declaration count or interner is rejected, and a structurally
+;; equal one is accepted; an unsealed lease never binds. Mutating a watched
+;; resolver map stales the lease; mutating an unrelated map costs only a full
+;; check.
+(define (typed-test-binding-events?) : bool
+  (let
+    [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [declarations : symbols.CompilerSymbols
+      (symbols.compiler-symbols-empty-with-decls 1)]
+    [registries : symbols.CompilerRegistries
+      (symbols.compiler-registries-empty)]
+    [lease : (typed.TypedBodyLease registries)
+      (typed-test-resolution-lease
+        (& state)
+        (& declarations)
+        (& registries)
+        (cast 89 : u64))]
+    [store : typed.TypedStore (typed-test-store (& lease))]
+    [id : typed.TypedTypeId
+      (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
+    [other-body : (typed.TypedBodyLease registries)
+      (typed-test-resolution-lease
+        (& state)
+        (& declarations)
+        (& registries)
+        (cast 97 : u64))]
+    [wrong-body : bool
+      (typed-test-type-error?
+        (typed.typed-type-get! (&mut store) (& other-body) id)
+        typed.TypedError.Lease)]
+    [other-pools : (typed.TypedBodyLease registries)
+      (typed.typed-body-lease
+        lease.body
+        (ast.AstNodePoolContext
+          lease.pools.expr-pool
+          (+ lease.pools.type-pool (cast 1 : u64))
+          lease.pools.owner-arena)
+        (& state)
+        lease.resolutions
+        16
+        (typed.TypedResolutionAuthority.Symbols
+          (symbols.compiler-resolution-lease-capture
+            (& declarations)
+            (& registries))))]
+    [wrong-pools : bool
+      (typed-test-type-error?
+        (typed.typed-type-get! (&mut store) (& other-pools) id)
+        typed.TypedError.Lease)]
+    [other-count : (typed.TypedBodyLease registries)
+      (typed.typed-body-lease
+        lease.body
+        lease.pools
+        (& state)
+        lease.resolutions
+        17
+        (typed.TypedResolutionAuthority.Symbols
+          (symbols.compiler-resolution-lease-capture
+            (& declarations)
+            (& registries))))]
+    [wrong-count : bool
+      (typed-test-type-error?
+        (typed.typed-type-get! (&mut store) (& other-count) id)
+        typed.TypedError.Lease)]
+    [other-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [other-interner : (typed.TypedBodyLease other-state)
+      (typed.typed-body-lease
+        lease.body
+        lease.pools
+        (& other-state)
+        lease.resolutions
+        16
+        (typed.TypedResolutionAuthority.Symbols
+          (symbols.compiler-resolution-lease-capture
+            (& declarations)
+            (& registries))))]
+    [wrong-interner : bool
+      (typed-test-type-error?
+        (typed.typed-type-get! (&mut store) (& other-interner) id)
+        typed.TypedError.Lease)]
+    [unsealed : (typed.TypedBodyLease registries)
+      (typed-test-unsealed-lease
+        (& state)
+        (& declarations)
+        (& registries)
+        (cast 89 : u64))]
+    [unsealed-rejected : bool
+      (and
+        (typed-test-type-error?
+          (typed.typed-type-get! (&mut store) (& unsealed) id)
+          typed.TypedError.Lease)
+        (match (typed.typed-store-new (& unsealed) (typed-test-limits))
+          [(typed.TypedStoreResult.Err error)
+            (match error
+              [(typed.TypedError.Lease) true]
+              [_ false])]
+          [(typed.TypedStoreResult.Ok _) false]))]
+    [twin : (typed.TypedBodyLease registries)
+      (typed.typed-body-lease
+        lease.body
+        lease.pools
+        (& state)
+        lease.resolutions
+        lease.resolution-count
+        (typed.TypedResolutionAuthority.Symbols
+          (symbols.compiler-resolution-lease-capture
+            (& declarations)
+            (& registries))))]
+    [twin-binds : bool
+      (and
+        (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& twin) id))
+        (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& lease) id)))]
+    [scratch : symbols.CompilerSymbolMap
+      (symbols.compiler-symbol-map-with-capacity 4)]
+    [_scratch : unit (symbols.compiler-symbol-map-put! (&mut scratch) 1 10)]
+    [unrelated : bool
+      (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& lease) id))]
+    [_field : symbols.CompilerRegistries
+      (symbols.compiler-registries-add-field-alias
+        (& registries)
+        0
+        (ci.intern "binding-owner")
+        (ci.intern "binding-field")
+        3)]
+    [field-stale : bool
+      (typed-test-type-error?
+        (typed.typed-type-get! (&mut store) (& lease) id)
+        typed.TypedError.Lease)]
+    (typed.typed-store-retire! (&mut store))
+    (and
+      wrong-body
+      wrong-pools
+      wrong-count
+      wrong-interner
+      unsealed-rejected
+      twin-binds
+      unrelated
+      field-stale)))
+
 (define (compiler-typed-occurrence-self-test) : i64
   (test.assert-true
     (typed-test-selected-occurrences?)
@@ -1797,4 +2011,7 @@
   (test.assert-true
     (typed-test-resolver-revisions?)
     "typed resolver: read stability, replacement, owner, exhaustion and no restamping")
+  (test.assert-true
+    (typed-test-binding-events?)
+    "typed lease binding: wrong leases, equal leases, unsealed leases and resolver events")
   42)

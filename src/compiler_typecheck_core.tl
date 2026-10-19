@@ -122383,7 +122383,7 @@
               (cast session.reset-generation : u64)
               revision)]
           [lease : (typed.TypedBodyLease intern)
-            (typed.TypedBodyLease
+            (typed.typed-body-lease
               body
               (tc-context-pools ctx-value)
               intern-state
@@ -122392,8 +122392,7 @@
               (typed.TypedResolutionAuthority.Symbols
                 (csym.compiler-resolution-lease-capture
                   (tc-context-symbols ctx)
-                  (tc-context-registries ctx)))
-              true)]
+                  (tc-context-registries ctx))))]
           (set! data.selected-revision revision)
           (tc-body-state-data-set! state data)
           (TcSelectedBodyLeaseResult.Ok lease))])))

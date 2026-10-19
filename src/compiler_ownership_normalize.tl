@@ -4192,8 +4192,13 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]) : NormalizeUnit
   (let
+    ;; The store enters the normalizer here, before any of its records is
+    ;; read: check it in full, its table shape included. Later accesses
+    ;; recheck only the events that can invalidate that check.
     [count : i64
-      (match (typed.typed-place-count! store lease)
+      (match (match (typed.typed-store-admit! store lease)
+        [(typed.TypedResult.Ok _) (typed.typed-place-count! store lease)]
+        [(typed.TypedResult.Err error) (typed.TypedCountResult.Err error)])
         [(typed.TypedCountResult.Ok value) value]
         [(typed.TypedCountResult.Err error)
           (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]

@@ -22,6 +22,10 @@
     context)
   TypedResolutionAuthority.None)
 
+;; A lease is a value fixed at construction. A different body, pool, interner
+;; or resolver is a different lease, built by `typed-body-lease` with a fresh
+;; serial; a store validates a lease in full before it first accepts that
+;; serial (`typed-lease-bind!`). Serials are never reused; zero never binds.
 (defstruct TypedBodyLease
   (:lifetimes intern)
   (body own.OwnershipBodyId)
@@ -30,7 +34,33 @@
   (resolutions own.OwnershipBodyId)
   (resolution-count i64)
   (resolution-authority (TypedResolutionAuthority intern))
-  (live? bool))
+  (live? bool)
+  (serial u64))
+
+(define typed-lease-next-serial : u64
+  (cast 1 : u64))
+
+(define (typed-body-lease
+  [body : own.OwnershipBodyId]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : (& intern ci.InternCompatState)]
+  [resolutions : own.OwnershipBodyId]
+  [resolution-count : i64]
+  [authority : (TypedResolutionAuthority intern)]) : (TypedBodyLease intern)
+  (let
+    [serial : u64 typed-lease-next-serial]
+    (if (= serial (cast 18446744073709551615 : u64))
+      (set! serial (cast 0 : u64))
+      (set! typed-lease-next-serial (+ serial (cast 1 : u64))))
+    (TypedBodyLease
+      body
+      pools
+      intern-state
+      resolutions
+      resolution-count
+      authority
+      true
+      serial)))
 
 (define (typed-resolution-authority-current?
   [authority : (& authority (TypedResolutionAuthority context))]) : bool
@@ -59,10 +89,25 @@
         lease.field-revision.owner
         lease.field-revision.revision)]))
 
-(define (typed-resolution-revision-equal?
-  [left : (& left symbols.CompilerSymbolMapRevision)]
-  [right : symbols.CompilerSymbolMapRevision]) : bool
-  (and (= left.owner right.owner) (= left.revision right.revision)))
+;; The store's pinned resolver stamps equal the lease's, and the lease's are
+;; current in the live maps (no authority pins zero stamps and is current).
+(define (typed-resolution-stamps-ok?
+  [store : (& store TypedStore)]
+  [authority : (& authority (TypedResolutionAuthority context))]) : bool
+  (match authority
+    [(TypedResolutionAuthority.None)
+      (and
+        (= store.resolution-symbol.owner (cast 0 : u64))
+        (= store.resolution-symbol.revision (cast 0 : u64))
+        (= store.resolution-field.owner (cast 0 : u64))
+        (= store.resolution-field.revision (cast 0 : u64)))]
+    [(TypedResolutionAuthority.Symbols lease)
+      (and
+        (= store.resolution-symbol.owner lease.symbol-revision.owner)
+        (= store.resolution-symbol.revision lease.symbol-revision.revision)
+        (= store.resolution-field.owner lease.field-revision.owner)
+        (= store.resolution-field.revision lease.field-revision.revision)
+        (symbols.compiler-resolution-lease-current? lease))]))
 
 ;; A serial is never rewound. Distinct typed wrappers prevent accidentally
 ;; passing a binder as a child, while serial checks reject cross-table forgery.
@@ -520,7 +565,13 @@
   ;; Regions this body allocates in (arena owners' and `in-arena` regions):
   ;; a region tag naming one marks an arena allocation, not a value read
   ;; through a reference of that lifetime.
-  (arena-regions (__tl_dyn-array i64)))
+  (arena-regions (__tl_dyn-array i64))
+  ;; The binding stamp (`typed-lease-bound?`): the serial of the lease last
+  ;; validated in full against this store, and the resolver-map and interner
+  ;; generation epochs that validation observed.
+  (lease-serial u64)
+  (symbol-epoch u64)
+  (intern-epoch i64))
 
 (defenum TypedStoreResult
   (Ok TypedStore)
@@ -570,7 +621,7 @@
   [store : (& store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
   [signature : (& signature TypedTypeId)]) : i64
-  (match (typed-type-ok store lease signature)
+  (match (typed-type-ok store signature)
     [(TypedResult.Err _) -1]
     [(TypedResult.Ok _)
       (match (& (array-ref store.types signature.handle.index).value)
@@ -647,6 +698,7 @@
     [(not
         (and
           lease.live?
+          (> lease.serial (cast 0 : u64))
           (typed-body-valid? (& lease.body))
           (typed-body-valid? (& lease.resolutions))
           (>= lease.resolution-count 0)
@@ -711,7 +763,11 @@
           0
           0
           0
-          (__tl_make-array i64 0)))]))
+          (__tl_make-array i64 0)
+          ;; Unbound: the first access binds the lease (`typed-lease-bind!`).
+          (cast 0 : u64)
+          (cast 0 : u64)
+          0))]))
 
 ;; Check scalar lease identity before looking at stored strings, canonical
 ;; types, or any pool cell. An active unrelated pool is never consulted.
@@ -721,6 +777,10 @@
 ;; Public checked consumers may receive malformed records. Validate every
 ;; logical table extent before a count can authorize an array access. This is
 ;; constant work and touches only the store's live array descriptors/scalars.
+;; This module's mutators establish the shape at open and preserve it, so it
+;; can only break by a write to the store's fields from outside: it is checked
+;; whenever a store binds a lease and where a store enters a consumer
+;; (`typed-store-admit!`), not on every access.
 (define (typed-store-shape-ok? [store : (& store TypedStore)]) : bool
   (and
     (>= store.work 0)
@@ -762,39 +822,108 @@
       (array-length store.attempts)
       store.limits.attempts)))
 
+;; The full check of a store against a lease: liveness, every identity the
+;; store pinned at open (body, resolutions and count, resolver stamps, pools,
+;; interner table and generation), the live resolver revisions, then shape.
+;; With `stamp-ok?`, a current binding stamp answers instead.
+(define (typed-store-validate
+  [store : (& store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [stamp-ok? : bool]) : TypedResult
+  (cond
+    [(and stamp-ok? (typed-lease-bound? store lease)) (TypedResult.Ok unit)]
+    [(not
+        (and
+          store.live?
+          lease.live?
+          (> lease.serial (cast 0 : u64))
+          (own.ownership-body-id-equal? (& store.body) (& lease.body))
+          (own.ownership-body-id-equal?
+            (& store.resolutions)
+            (& lease.resolutions))
+          (= store.resolution-count lease.resolution-count)
+          (typed-resolution-stamps-ok? store (& lease.resolution-authority))
+          (= store.expr-pool lease.pools.expr-pool)
+          (= store.type-pool lease.pools.type-pool)
+          (= store.pool-owner lease.pools.owner-arena)
+          (=
+            store.intern-table
+            (ci.intern-compat-state-table-id lease.intern-state))
+          (=
+            store.intern-generation
+            (ci.intern-compat-state-generation lease.intern-state))))
+      (TypedResult.Err TypedError.Lease)]
+    [(typed-store-shape-ok? store) (TypedResult.Ok unit)]
+    [else (TypedResult.Err TypedError.Shape)]))
+
+;; A full check's verdict holds until one of these events, so an access runs
+;; it again only after one:
+;; - The store retires: `live?`, read on every access.
+;; - A different lease is presented: its serial differs from the bound one.
+;;   Lease fields are fixed at construction (`typed-body-lease`), so the body,
+;;   resolutions, pools, interner table and liveness the check compared cannot
+;;   change under one serial.
+;; - A resolver map mutates or gets a new owner: every revision bump and owner
+;;   mint advances `symbols.compiler-symbol-map-epoch`, which therefore covers
+;;   what `compiler-resolution-lease-current?` reads from the live maps.
+;; - An interner generation is allocated: every reset of any table draws its
+;;   new generation from `ci.intern-next-generation`.
+;; - A write to the store's fields from outside this module breaks its shape:
+;;   the consumer boundary (`typed-store-admit!`) checks it again.
+(define (typed-lease-bound?
+  [store : (& store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : bool
+  (and
+    store.live?
+    (= store.lease-serial lease.serial)
+    (= store.symbol-epoch symbols.compiler-symbol-map-epoch)
+    (= store.intern-epoch ci.intern-next-generation)))
+
+;; A saturated resolver epoch is never recorded (a store stamped zero always
+;; runs the full check), so a later mutation cannot hide behind it.
+(define (typed-symbol-epoch-stamp) : u64
+  (if (= symbols.compiler-symbol-map-epoch (cast 18446744073709551615 : u64))
+    (cast 0 : u64)
+    symbols.compiler-symbol-map-epoch))
+
 (define (typed-lease-ok
   [store : (& store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]) : TypedResult
-  (if (and
-    store.live?
-    lease.live?
-    (own.ownership-body-id-equal? (& store.body) (& lease.body))
-    (own.ownership-body-id-equal? (& store.resolutions) (& lease.resolutions))
-    (= store.resolution-count lease.resolution-count)
-    (typed-resolution-revision-equal?
-      (& store.resolution-symbol)
-      (typed-resolution-symbol-revision (& lease.resolution-authority)))
-    (typed-resolution-revision-equal?
-      (& store.resolution-field)
-      (typed-resolution-field-revision (& lease.resolution-authority)))
-    (typed-resolution-authority-current? (& lease.resolution-authority))
-    (= store.expr-pool lease.pools.expr-pool)
-    (= store.type-pool lease.pools.type-pool)
-    (= store.pool-owner lease.pools.owner-arena)
-    (= store.intern-table (ci.intern-compat-state-table-id lease.intern-state))
-    (=
-      store.intern-generation
-      (ci.intern-compat-state-generation lease.intern-state)))
-    (if (typed-store-shape-ok? store)
-      (TypedResult.Ok unit)
-      (TypedResult.Err TypedError.Shape))
-    (TypedResult.Err TypedError.Lease)))
+  (typed-store-validate store lease true))
+
+(define (typed-lease-stamp!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : unit
+  (set! store.lease-serial lease.serial)
+  (set! store.symbol-epoch (typed-symbol-epoch-stamp))
+  (set! store.intern-epoch ci.intern-next-generation))
+
+;; Bind the presented lease: the full check unless the binding stamp is
+;; current, recording the stamp after a full check passes.
+(define (typed-lease-bind!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : TypedResult
+  (if (typed-lease-bound? (& store) lease)
+    (TypedResult.Ok unit)
+    (begin
+      (try (typed-store-validate (& store) lease false))
+      (typed-lease-stamp! store lease)
+      (TypedResult.Ok unit))))
+
+;; Where a store enters a consumer from its producer, check it in full,
+;; including its shape, whatever its binding stamp says.
+(define (typed-store-admit!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]) : TypedResult
+  (try (typed-store-validate (& store) lease false))
+  (typed-lease-stamp! store lease)
+  (TypedResult.Ok unit))
 
 (define (typed-charge!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
   [units : i64]) : TypedResult
-  (try (typed-lease-ok (& store) lease))
+  (try (typed-lease-bind! store lease))
   (cond
     [store.failed? (TypedResult.Err (typed-resource-error (& store.failure)))]
     [(or (< units 0) (> units (- store.limits.work store.work)))
@@ -1074,11 +1203,13 @@
     (< handle.index count)
     (> handle.serial 0)))
 
+;; Like the record checks below (`typed-origin-ok`, `typed-binder-ok`, ...),
+;; this runs inside an operation that bound its lease at entry
+;; (`typed-charge!`); no event can intervene before it, so it does not check
+;; the lease again.
 (define (typed-type-ok
   [store : (& store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
   [type : (& type TypedTypeId)]) : TypedResult
-  (try (typed-lease-ok store lease))
   (if (and
     (typed-handle-range? store (& type.handle) store.type-count)
     (= (array-ref store.types type.handle.index).serial type.handle.serial))
@@ -1229,7 +1360,8 @@
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
   [literal : (& literal ast.AstLiteral)]) : TypedResult
-  (try (typed-lease-ok (& store) lease))
+  ;; Reached only from `typed-occurrence-add!`, after its entry charge bound
+  ;; the lease, so the interner read below is the validated one.
   (match literal
     [(ast.AstLiteral.Int _ text)
       (typed-charge! store lease (string.string-length text))]
@@ -1294,7 +1426,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.binder-count))
   (try (typed-reserve-records! store lease (+ store.binder-count 1)))
-  (try (typed-type-ok (& store) lease (& type)))
+  (try (typed-type-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (match (& kind)
     [(TypedBinderKind.Global global)
@@ -1320,8 +1452,8 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.projection-count))
   (try (typed-reserve-records! store lease (+ store.projection-count 1)))
-  (try (typed-type-ok (& store) lease (& container)))
-  (try (typed-type-ok (& store) lease (& result)))
+  (try (typed-type-ok (& store) (& container)))
+  (try (typed-type-ok (& store) (& result)))
   (try (typed-origin-ok (& store) (& origin)))
   (unless
     (match (& kind)
@@ -1413,7 +1545,7 @@
     (when
       (> index-count store.limits.children)
       (try (typed-resource-fail! store TypedError.Budget)))
-    (try (typed-type-ok (& store) lease (& type)))
+    (try (typed-type-ok (& store) (& type)))
     (let
       [handle : TypedHandle (typed-fresh! store store.place-count)]
       (set!
@@ -1431,7 +1563,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.call-count))
   (try (typed-reserve-records! store lease (+ store.call-count 1)))
-  (try (typed-type-ok (& store) lease (& signature)))
+  (try (typed-type-ok (& store) (& signature)))
   (unless
     (and (>= argument-count 0) (<= argument-count store.limits.children))
     (return (TypedCallResult.Err TypedError.Shape)))
@@ -1648,7 +1780,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.occurrence-count))
   (try (typed-reserve-records! store lease (+ store.occurrence-count 1)))
-  (try (typed-type-ok (& store) lease (& type)))
+  (try (typed-type-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (try (typed-operation-payload-ok! store lease (& operation)))
   (match (& operation)
@@ -1809,10 +1941,7 @@
   (try (typed-charge! store lease 1))
   (try (typed-place-shape-ok (& store) (& id)))
   (try
-    (typed-type-ok
-      (& store)
-      lease
-      (& (array-ref store.places id.handle.index).type)))
+    (typed-type-ok (& store) (& (array-ref store.places id.handle.index).type)))
   (TypedPlaceView.Ok (& (array-ref store.places id.handle.index))))
 
 (define (typed-child-get!
@@ -1847,7 +1976,7 @@
   [lease : (& lease (TypedBodyLease intern))]
   [id : TypedTypeId]) : (TypedTypeResult store)
   (try (typed-charge! store lease 1))
-  (try (typed-type-ok (& store) lease (& id)))
+  (try (typed-type-ok (& store) (& id)))
   (TypedTypeResult.Ok (& (array-ref store.types id.handle.index).value)))
 
 ;; Revocation is unconditional and allocation-free, including after exhaustion.

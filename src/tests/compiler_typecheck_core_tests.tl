@@ -11518,14 +11518,13 @@
         (cast 1 : u64))]
     (set! data.selected-revision (cast 1 : u64))
     (tc_core.tc-body-state-data-set! state data)
-    (typed.TypedBodyLease
+    (typed.typed-body-lease
       body
       (tc_core.tc-context-pools ctx)
       intern-state
       body
       0
-      (typed.typed-resolution-unavailable intern-state)
-      true)))
+      (typed.typed-resolution-unavailable intern-state))))
 
 (define (tc-selected-test-store
   [lease : (& lease (typed.TypedBodyLease intern))]) : typed.TypedStore

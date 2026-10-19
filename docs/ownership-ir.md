@@ -1487,10 +1487,15 @@ now uses (see [Production cutover](#production-cutover-m5)).
 for that producer. Its caller-owned store retains canonical `AstType` values
 within an explicit body lease, including types synthesized without a pool ID.
 The lease pins the AST pools, a borrowed `InternCompatState`, and the resolver
-namespace. Access checks the full body owner/generation/revision, pool identity,
-and actual interner table/reset generation before touching leased payloads.
-One mutable owner controls the store; shallow copies with independent counters
-are outside its contract. Retire the store before any leased owner is retired.
+namespace. A lease is a value fixed at construction with a never-reused serial;
+a store checks the full body owner/generation/revision, pool identity, and
+actual interner table/reset generation before it first accepts a lease's
+serial, and before touching leased payloads. Later accesses repeat that check
+only after an event that can change its verdict: a different lease, a resolver
+map mutation or new map owner (`compiler-symbol-map-epoch`), or an interner
+generation allocation. One mutable owner controls the store; shallow copies
+with independent counters, and leases changed in place, are outside its
+contract. Retire the store before any leased owner is retired.
 
 Production resolver leases borrow the live canonical symbol and field-registry
 containers. Each symbol map has a nonreused full-width owner and a shared,
@@ -1516,7 +1521,8 @@ Production uses a growing store with small initial arrays. Every growth charges
 initialization and live-row movement before allocation, moves the live rows,
 and preserves their handles. Rollback retains capacity but refunds neither work
 nor serials. This avoids a source prewalk and maximum-sized arrays per function.
-Leased access also validates logical table extents against capacities and limits.
+The store's mutators keep logical table extents within capacities and limits;
+binding a lease, and a store's entry into the normalizer, validate them again.
 Child access rejects malformed spans using bounded subtraction before indexing;
 an overflow-sized or negative span produces a structural error rather than an
 array trap. Normalization can stay entirely behind the checked getter API.

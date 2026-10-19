@@ -121,6 +121,9 @@
           9223372036854775807)]
       [(= mode 13)
         (set! (array-ref store.occurrences root.handle.index).child-count 1)]
+      ;; A malformed table extent: rejected where the store enters the
+      ;; normalizer, before any record is read.
+      [(= mode 14) (set! store.type-count (+ (array-length store.types) 1))]
       [else unit])
     (match (norm.ownership-normalize!
       (&mut store)
@@ -167,7 +170,7 @@
             (match error
               [(typed.TypedError.Lease) (= mode 10)]
               [(typed.TypedError.Stale) (= mode 11)]
-              [(typed.TypedError.Shape) (= mode 12)]
+              [(typed.TypedError.Shape) (or (= mode 12) (= mode 14))]
               [_ false])]
           [_ false])])))
 
@@ -967,7 +970,7 @@
 (define (compiler-ownership-normalize-self-test) : i64
   (let
     [mode : i64 0]
-    (while (< mode 14)
+    (while (< mode 15)
       (begin
         (test.assert-true
           (normalize-test-primitive? mode)

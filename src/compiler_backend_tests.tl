@@ -19958,7 +19958,7 @@ f:
   (match result
     [(Err boxed)
       (let
-        [diag : (& diag cdiag.CompilerDiagnostic) (& (deref boxed))]
+        [diag : (& boxed cdiag.CompilerDiagnostic) (& (deref boxed))]
         ;; A boxed String shares the first message field's layout. Inspect
         ;; record metadata too, before accepting the transported reason.
         (and

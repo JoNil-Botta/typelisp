@@ -1531,3 +1531,7 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+call_lifetime_invariant_order_ok|run-exit|tests/safety/call_lifetime_invariant_order_ok.tl|42|-
+call_lifetime_invariant_value_first_escape_reject|check-fail|tests/safety/call_lifetime_invariant_value_first_escape_reject.tl|-|invariant
+call_lifetime_invariant_box_first_escape_reject|check-fail|tests/safety/call_lifetime_invariant_box_first_escape_reject.tl|-|invariant
+call_lifetime_distinct_invariants_reject|check-fail|tests/safety/call_lifetime_distinct_invariants_reject.tl|-|invariant

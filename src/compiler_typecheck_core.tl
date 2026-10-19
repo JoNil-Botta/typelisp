@@ -34440,12 +34440,40 @@
       (Ok subst)
       (Err (tc-call-lifetime-subst-mismatch-message)))))
 
+;; The substitution key that records FROM as fixed by an invariant occurrence.
+;; Lifetime ids are nonnegative. Complementing every bit maps their full domain
+;; into negative metadata keys, disjoint from applied lifetime substitutions.
+(define (tc-lifetime-subst-pin-key [from : i64]) : i64
+  (bit-xor from -1))
+
+(define (tc-lifetime-subst-pinned? [subst : TcLifetimeSubst] [from : i64]) : bool
+  (match (tc-lifetime-subst-lookup subst (tc-lifetime-subst-pin-key from))
+    [(Some _) true]
+    [(No) false]))
+
+;; SUBST binding FROM to TO, pinned there when VARIANCE is invariant.
+(define (tc-lifetime-subst-push-for-variance
+  [subst : TcLifetimeSubst]
+  [from : i64]
+  [to : i64]
+  [variance : TcVariance]) : TcLifetimeSubst
+  (match variance
+    [(TcVarianceInvariant)
+      (tc-lifetime-subst-push
+        (tc-lifetime-subst-push subst from to)
+        (tc-lifetime-subst-pin-key from)
+        to)]
+    [_ (tc-lifetime-subst-push subst from to)]))
+
 ;; Call inference follows the formal occurrence's structural variance. A
 ;; covariant occurrence contributes an upper bound and therefore keeps the
 ;; shortest comparable actual lifetime; a contravariant occurrence contributes
 ;; a lower bound and keeps the longest. Invariant occurrences must agree
-;; exactly. Shadowing is safe because substitution lookup returns the newest
-;; binding first, and the fully substituted call is validated afterwards.
+;; exactly; one that meets a longer bound from covariant occurrences fixes the
+;; binding, so covariant and invariant occurrences agree in either order (a
+;; contravariant bound before an invariant one still fails). Shadowing is safe
+;; because substitution lookup returns the newest binding first, and the fully
+;; substituted call is validated afterwards.
 (define (tc-lifetime-subst-bind-for-variance
   [env : TcTypeEnv]
   [subst : TcLifetimeSubst]
@@ -34454,25 +34482,38 @@
   [variance : TcVariance]) : ResultTcLifetimeSubst
   (match (tc-lifetime-subst-lookup subst from)
     [(Some existing)
-      (if (= existing to)
-        (Ok subst)
-        (match variance
-          [(TcVarianceBivariant) (Ok subst)]
-          [(TcVarianceCovariant)
-            (cond
-              [(tc-lifetime-outlives-lifetime-id? env existing to)
-                (Ok (tc-lifetime-subst-push subst from to))]
-              [(tc-lifetime-outlives-lifetime-id? env to existing) (Ok subst)]
-              [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-          [(TcVarianceContravariant)
-            (cond
-              [(tc-lifetime-outlives-lifetime-id? env existing to) (Ok subst)]
-              [(tc-lifetime-outlives-lifetime-id? env to existing)
-                (Ok (tc-lifetime-subst-push subst from to))]
-              [else (Err (tc-call-lifetime-subst-mismatch-message))])]
-          [(TcVarianceInvariant)
-            (Err (tc-call-lifetime-subst-mismatch-message))]))]
-    [(No) (Ok (tc-lifetime-subst-push subst from to))]))
+      (cond
+        [(= existing to)
+          (match variance
+            [(TcVarianceInvariant)
+              (if (tc-lifetime-subst-pinned? subst from)
+                (Ok subst)
+                (Ok
+                  (tc-lifetime-subst-push-for-variance subst from to variance)))]
+            [_ (Ok subst)])]
+        [else
+          (match variance
+            [(TcVarianceBivariant) (Ok subst)]
+            [(TcVarianceCovariant)
+              (cond
+                [(tc-lifetime-outlives-lifetime-id? env existing to)
+                  (Ok (tc-lifetime-subst-push subst from to))]
+                [(tc-lifetime-outlives-lifetime-id? env to existing) (Ok subst)]
+                [else (Err (tc-call-lifetime-subst-mismatch-message))])]
+            [(TcVarianceContravariant)
+              (cond
+                [(tc-lifetime-outlives-lifetime-id? env existing to) (Ok subst)]
+                [(tc-lifetime-outlives-lifetime-id? env to existing)
+                  (Ok (tc-lifetime-subst-push subst from to))]
+                [else (Err (tc-call-lifetime-subst-mismatch-message))])]
+            [(TcVarianceInvariant)
+              (if (and
+                (not (tc-lifetime-subst-pinned? subst from))
+                (tc-lifetime-outlives-lifetime-id? env existing to))
+                (Ok
+                  (tc-lifetime-subst-push-for-variance subst from to variance))
+                (Err (tc-call-lifetime-subst-mismatch-message)))])])]
+    [(No) (Ok (tc-lifetime-subst-push-for-variance subst from to variance))]))
 
 (define (tc-infer-call-lifetime-name
   [env : TcTypeEnv]

@@ -833,6 +833,8 @@ move_try_arm_after_join_reject|check-fail|tests/safety/move_try_arm_after_join_r
 # A diverging operand is an exit: a store whose value exits never takes its
 # place, and a `for` whose source exits never runs its loop (still typed).
 exit_slice_store_value_ok|run-exit|tests/safety/exit_slice_store_value_ok.tl|42|-
+exit_for_source_ok|run-exit|tests/safety/exit_for_source_ok.tl|42|-
+exit_for_source_body_typed_reject|check-fail|tests/safety/exit_for_source_body_typed_reject.tl|tests/safety/exit_for_source_body_typed_reject.tl:6:7|assignment type mismatch: expected i64, found String
 move_lambda_return_arm_after_join_reject|check-fail|tests/safety/move_lambda_return_arm_after_join_reject.tl|-|use of moved value `t`
 with_owner_move_in_returning_if_reject|check-fail|tests/safety/with_owner_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_move_in_returning_match_reject|check-fail|tests/safety/with_owner_move_in_returning_match_reject.tl|-|cleanup owner `h` moved before with scope exit

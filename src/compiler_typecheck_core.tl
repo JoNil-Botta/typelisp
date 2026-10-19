@@ -64885,6 +64885,14 @@
     (__tl_make-array typed.TypedOccurrenceId 0)
     sink))
 
+(define (tc-selected-ids-of1 [first : typed.TypedOccurrenceId]) : (__tl_dyn-array
+    typed.TypedOccurrenceId)
+  (let
+    [out : (__tl_dyn-array typed.TypedOccurrenceId)
+      (__tl_make-array typed.TypedOccurrenceId 0)]
+    (__tl_array-push! out first)
+    out))
+
 (define (tc-selected-ids-of2
   [first : typed.TypedOccurrenceId]
   [second : typed.TypedOccurrenceId]) : (__tl_dyn-array typed.TypedOccurrenceId)
@@ -65014,77 +65022,94 @@
           next)
           [(TcSelectedResult.Err message after)
             (TcSelectedResult.Err message after)]
-          [(TcSelectedResult.Ok _ moved after)
-            (match (tc-selected-publish-literal
-              ast.AstType.I64
-              (ast.ast-lit-int 0)
-              (tc-global-shared-view source)
-              after)
-              [(TcSelectedResult.Err message zeroed)
-                (TcSelectedResult.Err message zeroed)]
-              [(TcSelectedResult.Ok _ zero zeroed)
-                (let
-                  [index-env : TcTypeEnv
-                    (tc-bind-initialized-value-id
+          [(TcSelectedResult.Ok initialized-ty moved after)
+            ;; A diverging source is an exit: the index and the loop never
+            ;; run, so the `for` is its source's evaluation, as a `let`
+            ;; through a diverging initializer (`tc-infer-selected-let-at`).
+            ;; The whole form was typed above (`tc-infer-selected-legacy`).
+            (if (match initialized-ty
+              [(ast.AstType.Never) true]
+              [_ false])
+              (match moved
+                [(TcSelectedOccurrence.Selected moved-id)
+                  (tc-selected-publish-flow
+                    (ResultTcType.Ok ty)
+                    syntax
+                    source
+                    typed.TypedOperation.Sequence
+                    (tc-selected-ids-of1 moved-id)
+                    after)]
+                [_ (tc-selected-unrepresented (ResultTcType.Ok ty) after)])
+              (match (tc-selected-publish-literal
+                ast.AstType.I64
+                (ast.ast-lit-int 0)
+                (tc-global-shared-view source)
+                after)
+                [(TcSelectedResult.Err message zeroed)
+                  (TcSelectedResult.Err message zeroed)]
+                [(TcSelectedResult.Ok _ zero zeroed)
+                  (let
+                    [index-env : TcTypeEnv
+                      (tc-bind-initialized-value-id
+                        ctx
+                        source-env
+                        index-name
+                        ast.AstType.I64
+                        (tc-context-expr-get ctx index-name-id))]
+                    (match (tc-selected-let-initialize
                       ctx
-                      source-env
+                      index-env
                       index-name
                       ast.AstType.I64
-                      (tc-context-expr-get ctx index-name-id))]
-                  (match (tc-selected-let-initialize
-                    ctx
-                    index-env
-                    index-name
-                    ast.AstType.I64
-                    ast.AstType.I64
-                    index-name-id
-                    false
-                    false
-                    -1
-                    zero
-                    zeroed)
-                    [(TcSelectedResult.Err message indexed)
-                      (TcSelectedResult.Err message indexed)]
-                    [(TcSelectedResult.Ok _ started indexed)
-                      (match (tc-infer-selected-id
-                        ctx
-                        index-env
-                        body-id
-                        (ast.AstMaybeType.Some ast.AstType.Unit)
-                        (tc-global-shared-view source)
-                        indexed)
-                        [(TcSelectedResult.Err message done)
-                          (TcSelectedResult.Err message done)]
-                        [(TcSelectedResult.Ok _ body done)
-                          (match moved
-                            [(TcSelectedOccurrence.Selected moved-id)
-                              (match started
-                                [(TcSelectedOccurrence.Selected started-id)
-                                  (match body
-                                    [(TcSelectedOccurrence.Selected
-                                        body-occurrence)
-                                      (tc-selected-publish-flow
-                                        (ResultTcType.Ok ty)
-                                        syntax
-                                        source
-                                        typed.TypedOperation.Sequence
-                                        (tc-selected-ids-of3
-                                          moved-id
-                                          started-id
+                      ast.AstType.I64
+                      index-name-id
+                      false
+                      false
+                      -1
+                      zero
+                      zeroed)
+                      [(TcSelectedResult.Err message indexed)
+                        (TcSelectedResult.Err message indexed)]
+                      [(TcSelectedResult.Ok _ started indexed)
+                        (match (tc-infer-selected-id
+                          ctx
+                          index-env
+                          body-id
+                          (ast.AstMaybeType.Some ast.AstType.Unit)
+                          (tc-global-shared-view source)
+                          indexed)
+                          [(TcSelectedResult.Err message done)
+                            (TcSelectedResult.Err message done)]
+                          [(TcSelectedResult.Ok _ body done)
+                            (match moved
+                              [(TcSelectedOccurrence.Selected moved-id)
+                                (match started
+                                  [(TcSelectedOccurrence.Selected started-id)
+                                    (match body
+                                      [(TcSelectedOccurrence.Selected
                                           body-occurrence)
-                                        done)]
-                                    [_
-                                      (tc-selected-unrepresented
-                                        (ResultTcType.Ok ty)
-                                        done)])]
-                                [_
-                                  (tc-selected-unrepresented
-                                    (ResultTcType.Ok ty)
-                                    done)])]
-                            [_
-                              (tc-selected-unrepresented
-                                (ResultTcType.Ok ty)
-                                done)])])]))])]))]))
+                                        (tc-selected-publish-flow
+                                          (ResultTcType.Ok ty)
+                                          syntax
+                                          source
+                                          typed.TypedOperation.Sequence
+                                          (tc-selected-ids-of3
+                                            moved-id
+                                            started-id
+                                            body-occurrence)
+                                          done)]
+                                      [_
+                                        (tc-selected-unrepresented
+                                          (ResultTcType.Ok ty)
+                                          done)])]
+                                  [_
+                                    (tc-selected-unrepresented
+                                      (ResultTcType.Ok ty)
+                                      done)])]
+                              [_
+                                (tc-selected-unrepresented
+                                  (ResultTcType.Ok ty)
+                                  done)])])]))]))]))]))
 
 ;; `__tl_for-owned-step` inside the state's loop (lowered as
 ;; `(if (< index N) (let [item (array-ref source index)] (begin (set! index

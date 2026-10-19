@@ -781,6 +781,19 @@ slice_mut_element_move_reject|check-fail|tests/safety/slice_mut_element_move_rej
 slice_shared_element_match_move_reject|check-fail|tests/safety/slice_shared_element_match_move_reject.tl|-|cannot move a `MaybeText` out of a shared reference
 mir_view_array_literal_move_out_reject|check-fail|tests/safety/mir_view_array_literal_move_out_reject.tl|-|cannot move a `String` out of a shared reference
 mut_element_reborrow_argument_ok|check-ok|tests/safety/mut_element_reborrow_argument_ok.tl|-|-
+mut_field_reborrow_argument_ok|check-ok|tests/safety/mut_field_reborrow_argument_ok.tl|-|-
+# Programs main accepted that move out of a reference or alias a `&mut`: a
+# field read through `&` taken by an early return, a `cond` arm, a match
+# binder or an `if` initializer; a `&mut` read through `&` and passed as a
+# `&mut`; one `&mut` element passed twice to one call (#8449).
+view_early_return_move_out_reject|check-fail|tests/safety/view_early_return_move_out_reject.tl|tests/safety/view_early_return_move_out_reject.tl:14:21|cannot move a `String` out of a shared reference
+view_cond_move_out_reject|check-fail|tests/safety/view_cond_move_out_reject.tl|tests/safety/view_cond_move_out_reject.tl:14:12|cannot move a `String` out of a shared reference
+view_match_binder_move_out_reject|check-fail|tests/safety/view_match_binder_move_out_reject.tl|tests/safety/view_match_binder_move_out_reject.tl:14:8|cannot move a `String` out of a shared reference
+view_if_let_init_move_out_reject|check-fail|tests/safety/view_if_let_init_move_out_reject.tl|tests/safety/view_if_let_init_move_out_reject.tl:16:9|cannot move a `String` out of a shared reference
+mut_element_shared_array_reborrow_reject|check-fail|tests/safety/mut_element_shared_array_reborrow_reject.tl|tests/safety/mut_element_shared_array_reborrow_reject.tl:8:3|mutable borrow through a shared reference
+mut_element_shared_slice_reborrow_reject|check-fail|tests/safety/mut_element_shared_slice_reborrow_reject.tl|tests/safety/mut_element_shared_slice_reborrow_reject.tl:7:3|mutable borrow through a shared reference
+mut_field_shared_holder_reborrow_reject|check-fail|tests/safety/mut_field_shared_holder_reborrow_reject.tl|tests/safety/mut_field_shared_holder_reborrow_reject.tl:12:3|mutable borrow through a shared reference
+mut_element_twice_one_call_reject|check-fail|tests/safety/mut_element_twice_one_call_reject.tl|tests/safety/mut_element_twice_one_call_reject.tl:12:3|cannot mutably borrow borrowed place `p`
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # A pattern matched through a shared reference binds Copy parts by value and a
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`

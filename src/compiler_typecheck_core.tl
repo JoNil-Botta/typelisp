@@ -15486,10 +15486,11 @@
 ;; How a call argument meets a reference formal `want`: 1, a compound one read
 ;; as `clone` reads its operand (`tc-infer-selected-read-operand`); 2, a
 ;; move-only element read through a temporary (no auto-borrowed place), read
-;; the same way; 3, a `&mut` element where a `&mut` is expected, the implicit
-;; reborrow `&mut *(array-ref r i)` (Rust's reborrow coercion), not a move of
-;; the reference out of its place (a binder argument is reborrowed by the
-;; graph, `normalize-argument!`); 0, inferred as any other argument.
+;; the same way; 3, a `&mut` element or field where a `&mut` is expected, the
+;; implicit reborrow `&mut *(array-ref r i)` or `&mut *h.r` (Rust's reborrow
+;; coercion), not a move of the reference out of its place (a binder argument
+;; is reborrowed by the graph, `normalize-argument!`); 0, inferred as any other
+;; argument.
 (define (tc-selected-argument-route
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15508,7 +15509,9 @@
         [else 0])]
     [(ast.AstType.MutRef _ _)
       (if (and
-        (tc-selected-element-form? ctx (tc-context-expr-get ctx arg-id))
+        (or
+          (tc-selected-element-form? ctx (tc-context-expr-get ctx arg-id))
+          (tc-selected-field-read-form? ctx (tc-context-expr-get ctx arg-id)))
         (match (tc-expr-id ctx env arg-id)
           [(ResultTcType.Ok ty)
             (match (tc-type-strip-region (tc-resolve-type ctx ty))

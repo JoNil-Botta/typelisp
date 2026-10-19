@@ -7298,7 +7298,7 @@
 
 (cfg
   (any compile-profile test)
-  (define (compiler-tc-reinfer-profile-site-index [site : String]) : i64
+  (define (compiler-tc-reinfer-profile-site-index [site : (& str)]) : i64
     (cond
       [(string.eq site "move.call_func") 0]
       [(string.eq site "borrow.call_func") 1]
@@ -7365,7 +7365,7 @@
   (any compile-profile test)
   (define (compiler-tc-body-fact-profile-hit
     [state : TcJobState]
-    [site : String]) : unit
+    [site : (& str)]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
@@ -7379,7 +7379,7 @@
   (any compile-profile test)
   (define (compiler-tc-body-fact-profile-miss
     [state : TcJobState]
-    [site : String]) : unit
+    [site : (& str)]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
@@ -17856,7 +17856,7 @@
   [type-bases : i64]
   [types : (& ast.AstTypeList)]
   [out : TcNameIdList]) : TcNameIdList
-  (tc-signature-input-type-list-lifetimes-at type-bases (& types) 0 out))
+  (tc-signature-input-type-list-lifetimes-at type-bases types 0 out))
 
 (define (tc-signature-input-type-list-lifetimes-at
   [type-bases : i64]
@@ -18814,7 +18814,7 @@
 (define (tc-type-list-needs-resolution-for-state?
   [state : TcTypeResolutionCacheState]
   [types : (& ast.AstTypeList)]) : bool
-  (tc-type-list-needs-resolution-at-for-state? state (& types) 0))
+  (tc-type-list-needs-resolution-at-for-state? state types 0))
 
 (define (tc-type-list-needs-resolution-at-for-state?
   [state : TcTypeResolutionCacheState]
@@ -32666,17 +32666,13 @@
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-hit
-            (tc-context-job-state ctx)
-            (string.copy _site)))
+          (compiler-tc-body-fact-profile-hit (tc-context-job-state ctx) _site))
         (Hit ty))]
     [(Miss)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-miss
-            (tc-context-job-state ctx)
-            (string.copy _site)))
+          (compiler-tc-body-fact-profile-miss (tc-context-job-state ctx) _site))
         (Miss))]))
 
 (define (tc-body-type-fact-expr-id

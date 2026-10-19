@@ -118329,14 +118329,12 @@
                                   (tc-context-capture-active-pools! ctx)
                                   (Partial diag ctx top-env paths)]))])]
                       [(Err message)
-                        (match program
-                          [(Program decls-box)
+                        (match (& program)
+                          [(Program decls)
                             (Err
                               (cdiag.compiler-diagnostic-list-box-single
                                 (tc-top-env-error-diagnostic
-                                  (&
-                                    (ast.ast-decl-list-box-shared-view
-                                      decls-box))
+                                  decls
                                   (& paths)
                                   CompleteSelectedImports
                                   message)))])])]

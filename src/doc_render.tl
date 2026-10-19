@@ -3,6 +3,7 @@
 ;; The extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records, so this
 ;; renderer emits exactly the declarations present in the extracted model.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import doc_extract)
@@ -81,10 +82,9 @@
 ;; a URL fragment.
 (define (doc-render-anchor-field [text : (& text str)]) : String
   (let
-    [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String ""]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (string.string-ref text i)]
         (if (doc-render-anchor-char? c)
@@ -97,8 +97,7 @@
                 out
                 "_"
                 (doc-render-hex-digit (/ code 16))
-                (doc-render-hex-digit (% code 16))))))
-        (set! i (+ i 1))))
+                (doc-render-hex-digit (% code 16))))))))
     out))
 
 (define (doc-render-anchor [name : (& name str)]) : String
@@ -159,12 +158,10 @@
 
 (define (doc-render-escape-markdown [text : String]) : String
   (let
-    [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : String ""]
-    (while (< i n)
-      (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 n)]
+      (set! out (str_cat.str-cat out (doc-render-escape-one text i) "")))
     out))
 
 (define (doc-render-code-block [source : String]) : String

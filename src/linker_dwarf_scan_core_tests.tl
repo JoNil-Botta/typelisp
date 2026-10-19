@@ -2,6 +2,7 @@
 ;; corpus of tests/fixtures/dwarf (whose summaries match llvm-dwarfdump, see
 ;; scripts/analyze-dwarf-corpus.sh) and hand-assembled units for every
 ;; rejection and limit.
+(import stdlib.iterator)
 (import linker_dwarf_scan_core as dwarf)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -18,10 +19,8 @@
   [bytes : (& bytes (__tl_dyn-array u8))]) : unit
   (let
     [copy : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-    [index : i64 0]
-    (while (< index (array-length bytes))
-      (set! (array-ref copy index) (array-ref bytes index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length bytes))]
+      (set! (array-ref copy index) (array-ref bytes index)))
     (__tl_array-push!
       views
       (dwarf.LinkerDwarfView
@@ -1642,10 +1641,8 @@
     dwarf.LinkerDwarfView)
   (let
     [views : (__tl_dyn-array dwarf.LinkerDwarfView) first]
-    [index : i64 0]
-    (while (< index (array-length second))
-      (__tl_array-push! views (array-ref second index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length second))]
+      (__tl_array-push! views (array-ref second index)))
     views))
 
 ;: The views in reverse order.
@@ -1658,7 +1655,7 @@
     [index : i64 (- (array-length views) 1)]
     (while (>= index 0)
       (__tl_array-push! out (array-ref views index))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 ;: Scan with the default limits; a failure fails the test.
@@ -1684,12 +1681,10 @@
   [class : i64]) : i64
   (let
     [count : i64 0]
-    [index : i64 0]
-    (while (< index (array-length inventory.references))
+    (for [index (iterator.range 0 (array-length inventory.references))]
       (if (= (array-ref inventory.references index).class class)
-        (set! count (+ count 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= count 1)
+        unit))
     count))
 
 ;: `text` followed by ` key=value`.
@@ -1803,7 +1798,7 @@
             (= x.signature y.signature)
             (= x.dwo-id y.dwo-id)
             (= x.skeleton y.skeleton)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (set! index 0)
     (while (and same (< index (array-length a.references)))
       (let
@@ -1822,7 +1817,7 @@
             (= x.target-kind y.target-kind)
             (= x.value y.value)
             (= x.target y.target)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (set! index 0)
     (while (and same (< index (array-length a.ledger)))
       (set!
@@ -1836,7 +1831,7 @@
           (=
             (array-ref a.ledger index).reason
             (array-ref b.ledger index).reason)))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (test
@@ -1983,24 +1978,20 @@
       (dwarf-scan-ok (dwarf-fixture-gcc-dwarf4-o0-types 1) "v4 types")]
     [v5 : dwarf.LinkerDwarfInventory
       (dwarf-scan-ok (dwarf-fixture-gcc-dwarf5-o0-types 1) "v5 types")]
-    [index : i64 0]
     [v4-target : i64 -9]
     [v5-target : i64 -9]
-    (while (< index (array-length v4.references))
+    (for [index (iterator.range 0 (array-length v4.references))]
       (if (=
         (array-ref v4.references index).class
         dwarf.linker-dwarf-ref-signature)
         (set! v4-target (array-ref v4.references index).target)
-        unit)
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index (array-length v5.references))
+        unit))
+    (for [index (iterator.range 0 (array-length v5.references))]
       (if (=
         (array-ref v5.references index).class
         dwarf.linker-dwarf-ref-signature)
         (set! v5-target (array-ref v5.references index).target)
-        unit)
-      (set! index (+ index 1)))
+        unit))
     (test.assert-i64-eq
       (array-ref v4.units 0).unit-type
       2
@@ -2147,9 +2138,8 @@
 (define (dwarf-test-bytes [hex : (& hex str)]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 0)]
-    [index : i64 0]
     [high : i64 -1]
-    (while (< index (string.string-length hex))
+    (for [index (iterator.range 0 (string.string-length hex))]
       (let
         [digit : i64
           (dwarf-test-nibble (cast (string.string-ref hex index) : i64))]
@@ -2158,8 +2148,7 @@
           [(< high 0) (set! high digit)]
           [else
             (__tl_array-push! out (cast (+ (* high 16) digit) : u8))
-            (set! high -1)])
-        (set! index (+ index 1))))
+            (set! high -1)])))
     out))
 
 (define (dwarf-test-view!
@@ -2661,7 +2650,6 @@
         (dwarf-test-views (& dwarf-test-info) (& dwarf-test-abbrev))
         "unlimited").work]
     [measures : (__tl_dyn-array i64) (__tl_make-array i64 11)]
-    [field : i64 0]
     (set! (array-ref measures 0) 4)
     (set! (array-ref measures 1) 76)
     (set! (array-ref measures 2) 1)
@@ -2673,7 +2661,7 @@
     (set! (array-ref measures 8) 9)
     (set! (array-ref measures 9) 5)
     (set! (array-ref measures 10) work)
-    (while (< field 11)
+    (for [field (iterator.range 0 11)]
       (test.assert-true
         (dwarf-scans-within? (dwarf-limit field (array-ref measures field)))
         "a limit equal to the measure admits the unit")
@@ -2681,8 +2669,7 @@
         (not
           (dwarf-scans-within?
             (dwarf-limit field (- (array-ref measures field) 1))))
-        "one less rejects it")
-      (set! field (+ field 1)))
+        "one less rejects it"))
     ;; A four-byte DW_FORM_block1 constant is held to the same block limit.
     (let
       [info : String

@@ -1,4 +1,5 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
 (import stdlib.arena)
@@ -5736,7 +5737,7 @@
         (begin
           (set! found slot)
           (set! slot sources.count))
-        (set! slot (+ slot 1))))
+        (+= slot 1)))
     (if (>= found 0)
       found
       (begin
@@ -5749,8 +5750,7 @@
               (__tl_make-array
                 compiler_diagnostic.CompilerDiagnosticSource
                 capacity)]
-            [index : i64 0]
-            (while (< index sources.count)
+            (for [index (iterator.range 0 sources.count)]
               (set!
                 (array-ref paths index)
                 (owned_view.compiler-owned-array-element-shared-view
@@ -5760,8 +5760,7 @@
                 (array-ref texts index)
                 (owned_view.compiler-owned-array-element-shared-view
                   sources.sources
-                  index))
-              (set! index (+ index 1)))
+                  index)))
             (set! sources.paths paths)
             (set! sources.sources texts))
           unit)
@@ -5769,7 +5768,7 @@
           (array-ref sources.sources sources.count)
           (compiler-driver-diagnostic-source-read (& path)))
         (set! (array-ref sources.paths sources.count) path)
-        (set! sources.count (+ sources.count 1))
+        (+= sources.count 1)
         (- sources.count 1)))))
 
 ;; `compiler-driver-render-source-diagnostic` for one diagnostic of a batch,
@@ -5789,11 +5788,10 @@
 (define (compiler-driver-print-advisories
   [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]) : unit
   (let
-    [index : i64 0]
     [count : i64 (compiler_diagnostic.compiler-advisory-list-count advisories)]
     [sources : CompilerDriverDiagnosticSources
       (compiler-driver-diagnostic-sources-new)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [advisory : compiler_diagnostic.CompilerAdvisory
           (compiler_diagnostic.compiler-advisory-list-get advisories index)]
@@ -5802,8 +5800,7 @@
         (io.print-error
           (compiler-driver-render-source-diagnostic-from
             (&mut sources)
-            diagnostic))
-        (set! index (+ index 1))))))
+            diagnostic))))))
 
 (define (compiler-driver-write-result
   [_profile-state : profile_state.CompilerProfileState]

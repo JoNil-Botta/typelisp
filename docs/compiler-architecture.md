@@ -2005,6 +2005,40 @@ creating another session deliberately starts an independent consumer budget.
 All checks precede variable-size allocations, and no allocation scales with
 payload size during scanning or opening.
 
+`src/linker_ar_dialect_reader.tl` supplies the ordinary archive compatibility
+layer for #7038 and #8302. `read` takes the bytes, input/content identity,
+an explicit GNU/System V or little-/big-endian BSD dialect, and `ArchiveLimits`.
+The dialect is input policy, never inferred from the host or a path. GNU
+32-/64-bit index words are big-endian; BSD ranlib words follow the selected
+input byte order, including `__.SYMDEF_64`. Names resolve from short fields,
+GNU `/N` entries at `/LF` boundaries, or BSD `#1/N` prefixes with trailing NUL
+alignment bytes. The format layouts follow LLVM's
+[archive reader](https://llvm.org/doxygen/Archive_8cpp_source.html) and
+[writer](https://llvm.org/doxygen/ArchiveWriter_8cpp_source.html).
+
+The result keeps one resolved span record per physical container member and
+the original IDs. It marks resolved special members before calling the shared
+index mapper, and rejects duplicate or late special members. A symbol index,
+when present, is first; the GNU long-name table precedes ordinary members.
+Symbol hints retain index order and duplicates. Sorted BSD indexes are checked
+with lexicographic byte comparisons, without sorting the result. Every target must be an ordinary
+member's exact header offset. A hint is not a parsed symbol: #7038/#7099 must
+verify the target's actual symbols before committing it. The returned session
+retains the shared load-once state and remaining work budget; core `open!`
+returns the raw payload, while each resolved member's content span excludes a
+BSD name prefix. Names and content can be viewed directly in `directory.bytes`.
+
+The adapter adds `sizeof(ArMember)` per physical member and
+`sizeof(ArSymbolHint)` per hint to the container's retained-storage charge;
+it never copies input names or payloads. It charges 192 work units per raw-name
+classification, every visited name/index byte, and index-map comparisons.
+Bounds and division checks precede table multiplication and allocation.
+The single fixed error records input identity, physical member, index-entry
+ordinal, absolute field offset and the full offending unsigned value. Thin
+archives, object parsing, filesystem access and canonical-writer admission
+remain outside this reader. The fixture/oracle contract is documented in
+[`tests/fixtures/ar-dialects/README.md`](../tests/fixtures/ar-dialects/README.md).
+
 `src/linker_archive_output.tl` borrows a native Slice of encoder plans whose
 payload strings remain owned by the caller. It preflights the whole layout,
 field widths, limits and work before allocating output, then writes canonical

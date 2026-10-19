@@ -30,8 +30,9 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import build_run_core)
+(import compiler_target_cfg_core as target_cfg)
 (import compiler_allocation_profile as allocation_profile)
-(import compiler_cfg_core as cfg_core)
 (import compiler_backend as backend)
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
@@ -84,33 +85,6 @@
 (define compile-cli-trace-passes-requested : bool
   false)
 
-(define (compile-cli-cfg-names-to-env [names : (& names cli_svec.Vec)]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len names))
-      (set!
-        env
-        (cfg_core.compiler-cfg-enable env (& (cli_svec.get names index ""))))
-      (set! index (+ index 1)))
-    env))
-
-(define (compile-cli-cfg-names-to-env-with-intern-state
-  [names : (& names cli_svec.Vec)]
-  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len names))
-      (set!
-        env
-        (cfg_core.compiler-cfg-enable-with-intern-state
-          env
-          (& (cli_svec.get names index ""))
-          intern-state))
-      (set! index (+ index 1)))
-    env))
-
 (defenum CompileCliConfig
   (Config
     String
@@ -150,10 +124,6 @@
   (Batch CompileCliBatchConfig)
   (Error String))
 
-(defenum ResultCompileCliTarget
-  (Ok backend.CompilerBackendTarget)
-  (Err String))
-
 (define (compile-cli-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
 
@@ -190,122 +160,20 @@
 (define (compile-cli-default-ir-output [input-path : String]) : String
   (compile-cli-default-output-with-extension input-path ".ir"))
 
-(define (compile-cli-unknown-target [value : String]) : String
-  (str_cat.str-cat
-    "Error: unknown target '"
-    value
-    "'. Expected linux-x86_64 or windows-x86_64"))
-
-(define (compile-cli-target [value : String]) : ResultCompileCliTarget
-  (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (Ok (Linux))
-    (if (or
-      (string.eq value "windows-x86_64")
-      (string.eq value "windows_x86_64"))
-      (Ok (Windows))
-      (Err (compile-cli-unknown-target value)))))
-
-(define (compile-cli-invalid-opt-level [value : String]) : String
-  (str_cat.str-cat
-    "compile: invalid --opt-level "
-    value
-    "; expected 0, 1, or 2"))
-
-;; `--backend-mode` accepts scalar, avx2 and avx512.
-(defenum ResultCompileCliBackendMode
-  (Ok backend.CompilerBackendMode)
-  (Err String))
-
-(define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
-  (cond
-    [(string.eq value "scalar") (Ok (Scalar))]
-    [(string.eq value "avx2") (Ok (Avx2))]
-    [(string.eq value "avx512") (Ok (Avx512))]
-    [else
-      (Err
-        (str_cat.str-cat
-          "Error: unknown backend mode '"
-          value
-          "'. Expected scalar, avx2, or avx512"))]))
-
-;; Options `compile` and `compile --batch` share.
-(defstruct CompileCliOptions
-  (target backend.CompilerBackendTarget)
-  (has-target bool)
-  (stdlib-roots cli_svec.Vec)
-  (cfgs cli_svec.Vec)
-  (opt-level i64)
-  (has-opt-level bool)
-  (backend-mode backend.CompilerBackendMode))
-
-(define (compile-cli-options) : CompileCliOptions
-  (CompileCliOptions
-    (Linux)
-    false
-    (cli_svec.new)
-    (cli_svec.new)
-    (opt.compiler-optimize-default-level)
-    false
-    (Scalar)))
-
-;; Apply an option both compile modes accept. False when the current option
-;; is another one.
 (define (compile-cli-common-option!
-  [options : (&mut options CompileCliOptions)]
+  [options : (&mut options cli_option.CliCompileOptions)]
   [args : (&mut args cli_option.CliArgs)]) : bool
-  (cond
-    [(string.eq args.name "--stdlib-root")
-      (cli_svec.push-ref!
-        (&mut options.stdlib-roots)
-        (cli_option.cli-args-value args))
-      true]
-    [(string.eq args.name "--cfg")
-      (cli_svec.push-ref! (&mut options.cfgs) (cli_option.cli-args-value args))
-      true]
-    [(string.eq args.name "--target")
-      (if options.has-target
-        (cli_option.cli-args-fail!
-          args
-          "compile: --target was provided more than once")
-        (match (compile-cli-target (cli_option.cli-args-value args))
-          [(Ok parsed-target)
-            (set! options.target parsed-target)
-            (set! options.has-target true)]
-          [(Err message) (cli_option.cli-args-fail! args message)]))
-      true]
-    [(string.eq args.name "--opt-level")
-      (let
-        [value : String (cli_option.cli-args-value args)]
-        [level : i64 (cli_option.cli-option-opt-level (& value))]
-        (cond
-          [options.has-opt-level
-            (cli_option.cli-args-fail!
-              args
-              "compile: --opt-level was provided more than once")]
-          [(< level 0)
-            (cli_option.cli-args-fail!
-              args
-              (compile-cli-invalid-opt-level value))]
-          [else
-            (set! options.opt-level level)
-            (set! options.has-opt-level true)])
-        true)]
-    [(string.eq args.name "--debug")
-      (ir.compiler-debug-info-set-enabled! true)
-      true]
-    [(string.eq args.name "--backend-mode")
-      (match (compile-cli-backend-mode (cli_option.cli-args-value args))
-        [(Ok parsed-mode) (set! options.backend-mode parsed-mode)]
-        [(Err message) (cli_option.cli-args-fail! args message)])
-      true]
-    [(string.eq args.name "--profile-allocations")
-      (if compile-cli-allocation-profile-requested
-        (cli_option.cli-args-fail!
-          args
-          "compile: --profile-allocations was provided more than once")
-        (set! compile-cli-allocation-profile-requested true))
-      true]
-    [else false]))
+  (if (cli_option.cli-compile-option! options args)
+    true
+    (if (string.eq args.name "--profile-allocations")
+      (begin
+        (if compile-cli-allocation-profile-requested
+          (cli_option.cli-args-fail!
+            args
+            "compile: --profile-allocations was provided more than once")
+          (set! compile-cli-allocation-profile-requested true))
+        true)
+      false)))
 
 (define (compile-cli-unknown-argument! [args : (&mut args cli_option.CliArgs)]) : unit
   (if (cli_option.cli-flag? args.arg)
@@ -336,7 +204,10 @@
              --trace-passes"
             (+ input-idx 1)
             count)]
-        [options : CompileCliOptions (compile-cli-options)]
+        [options : cli_option.CliCompileOptions
+          (cli_option.cli-compile-options
+            (Linux)
+            (opt.compiler-optimize-default-level))]
         [output-path : String
           (compile-cli-default-output (string.copy (& input-path)))]
         [has-output : bool false]
@@ -399,6 +270,7 @@
                     "compile: --trace-passes was provided more than once")
                   (set! compile-cli-trace-passes-requested true))]
               [else (compile-cli-unknown-argument! (&mut args))])))
+        (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
         (cond
           [args.failed (Err args.error)]
           [(and emit-ir pic)
@@ -419,10 +291,10 @@
                 emit-ir
                 pic
                 options.has-target
-                options.target
+                (build_run_core.source-tool-backend-target options.target)
                 options.stdlib-roots
                 options.cfgs
-                options.backend-mode
+                (build_run_core.source-tool-backend-mode options.backend-mode)
                 options.opt-level))]))]))
 
 (define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
@@ -440,7 +312,10 @@
            -o --emit-ir --pic --no-entry --prefix-cache-stats --windows-coff-plan"
           (+ batch-path-idx 1)
           count)]
-      [options : CompileCliOptions (compile-cli-options)]
+      [options : cli_option.CliCompileOptions
+        (cli_option.cli-compile-options
+          (Linux)
+          (opt.compiler-optimize-default-level))]
       [prefix-cache-stats : bool false]
       [has-windows-coff-plan : bool false]
       [windows-coff-plan-path : String ""]
@@ -483,13 +358,16 @@
                   (set! has-windows-coff-plan true)
                   (set! args.next (+ args.next 1))])]
             [else (compile-cli-unknown-argument! (&mut args))])))
+      (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
       (cond
         [args.failed (Err args.error)]
         [(and
             has-windows-coff-plan
             (or
               (not options.has-target)
-              (not (backend.compiler-backend-target-windows? options.target))))
+              (not
+                (backend.compiler-backend-target-windows?
+                  (build_run_core.source-tool-backend-target options.target)))))
           (Err "compile: --windows-coff-plan requires --target windows-x86_64")]
         [(and
             has-windows-coff-plan
@@ -501,10 +379,10 @@
             (CompileCliBatchConfig.Config
               batch-path
               options.has-target
-              options.target
+              (build_run_core.source-tool-backend-target options.target)
               options.stdlib-roots
               options.cfgs
-              options.backend-mode
+              (build_run_core.source-tool-backend-mode options.backend-mode)
               options.opt-level
               prefix-cache-stats
               has-windows-coff-plan
@@ -659,7 +537,7 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (compiler_driver_core.compiler-driver-target-cfgs
                   target
-                  (compile-cli-cfg-names-to-env cfgs))
+                  (target_cfg.compiler-target-user-cfgs cfgs))
                 "typecheck-prefix-inline-compile")
               0)]
           [_preflight-end : unit
@@ -682,7 +560,7 @@
                 (compile-cli-shared-object-requested?))
               (let
                 [emit-cfgs : sym_i64_env.SymI64Env
-                  (compile-cli-cfg-names-to-env-with-intern-state
+                  (target_cfg.compiler-target-user-cfgs-with-intern-state
                     cfgs
                     (compiler_driver_core.compiler-driver-state-owned-interns-mut
                       (owned_view.compiler-owned-shared-view state)))]
@@ -930,7 +808,7 @@
             compile-cli-verify-ir-requested)
           (let
             [emit-cfgs : sym_i64_env.SymI64Env
-              (compile-cli-cfg-names-to-env-with-intern-state
+              (target_cfg.compiler-target-user-cfgs-with-intern-state
                 cfgs
                 (compiler_driver_core.compiler-driver-state-owned-interns-mut
                   (owned_view.compiler-owned-shared-view state)))]
@@ -1009,7 +887,7 @@
               (owned_view.compiler-owned-shared-view stdlib-roots)
               (compiler_driver_core.compiler-driver-target-cfgs
                 target
-                (compile-cli-cfg-names-to-env cfgs))
+                (target_cfg.compiler-target-user-cfgs cfgs))
               "typecheck-prefix-inline-compile-batch"))
           0)]
       ;; `compiler-load-default-session-use!` copies the active session wrapper

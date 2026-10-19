@@ -377,7 +377,7 @@ case bad-target
 run compile examples/hello.tl --target definitely-not-a-target -o "{{dir}}/bad-target.s"
 exit nonzero
 stdout empty
-stderr contains unknown target
+stderr contains invalid --target
 
 case check-stdlib-root
 file repo-stdlib/helper.tl

@@ -1046,3 +1046,52 @@ step selfhost-cli-work-queue-chooser-over-cap
 run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/over-cap-wait.json"
 stderr empty
 same "{{dir}}/over-cap.expected" "{{stdout}}"
+
+case common-build-source-cfg
+file selected.tl
+(define (answer) : i64 (cfg selected 42 17))
+(define (main) : i64 (answer))
+end-file
+run build "{{dir}}/selected.tl" -o "{{dir}}/selected{{exe}}" --cfg selected --cfg extra --cfg selected --opt-level 0
+stderr empty
+exec "{{dir}}/selected{{exe}}"
+exit 42
+run build "{{dir}}/selected.tl" -o "{{dir}}/selected{{exe}}" --opt-level 0
+stderr empty
+exec "{{dir}}/selected{{exe}}"
+exit 17
+
+# Cfg names survive worker argv, the discovery interner boundary, dependency
+# compilation, root compilation and repeated builds with different selections.
+case common-package-cfg
+file dep/typelisp.pkg
+(package (name "cfg_dep") (version "0.1.0") (kind staticlib))
+end-file
+file dep/src/lib.tl
+(define (answer) : i64 (cfg selected 40 10))
+end-file
+file root/typelisp.pkg
+(package
+  (name "cfg_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies (dep "../dep")))
+end-file
+file root/src/main.tl
+(import dep.src.lib as dep)
+(define (offset) : i64 (cfg selected 2 7))
+(define (main) : i64 (+ (dep.answer) (offset)))
+end-file
+run build --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --cfg extra --opt-level 0
+stderr empty
+exec "{{dir}}/root/target/release/cfg_root{{exe}}"
+exit 42
+run run --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --opt-level 0
+exit 42
+stderr empty
+run run --manifest-path "{{dir}}/root/typelisp.pkg" --opt-level 0
+exit 17
+stderr empty
+run run --manifest-path "{{dir}}/root/typelisp.pkg" --cfg selected --opt-level 0 -- --cfg runtime-only
+exit 42
+stderr empty

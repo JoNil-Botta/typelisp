@@ -3,7 +3,6 @@
 ;; Main-free, so the unified `main.tl` dispatcher runs the command without a
 ;; duplicate `main`.
 (import compiler_owned_view as owned_view)
-(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
@@ -38,42 +37,18 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "selfhost-check"
-        "--stdlib-root <dir> --cfg <name> --target <target> --manifest-path <file>"
+        "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2> --debug|-g|--backtrace --manifest-path <file>"
         start
         count)]
     [input-path : String ""]
     [has-input : bool false]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-    [target : target_cfg.CompilerTargetCfg
-      (target_cfg.compiler-target-cfg-default)]
-    [has-target : bool false]
-    [cfg-names : cli_svec.Vec (cli_svec.new)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--cfg")
-          (cli_svec.push-ref!
-            (&mut cfg-names)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (if has-target
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "selfhost-check: --target was provided more than once")
-            (match (target_cfg.compiler-target-cfg-parse
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-target)
-                (set! target parsed-target)
-                (set! has-target true)]
-              [(Err message)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (str_cat.str-cat "selfhost-check: " message))]))]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
             (cli_option.cli-args-fail!
@@ -97,9 +72,16 @@
       [args.failed (Err args.error)]
       [(and has-input has-manifest)
         (Err "selfhost-check: cannot combine input path with --manifest-path")]
-      [has-input (Ok (File input-path stdlib-roots target cfg-names))]
+      [has-input
+        (Ok (File input-path options.stdlib-roots options.target options.cfgs))]
       [else
-        (Ok (Package manifest-path has-manifest stdlib-roots target cfg-names))])))
+        (Ok
+          (Package
+            manifest-path
+            has-manifest
+            options.stdlib-roots
+            options.target
+            options.cfgs))])))
 
 (define (selfhost-check-print-passed) : i64
   (io.print-format "{}" "Type checking passed!\n")

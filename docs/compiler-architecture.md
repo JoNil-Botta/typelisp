@@ -2048,6 +2048,15 @@ table and the gates; read it before changing CI structure.
 `typelisp --help` lists the commands and the global and common options;
 `typelisp <command> --help` shows each command's options.
 
+`cli_option_core.tl` owns common compile-option parsing, singleton presence,
+repeatable root/cfg ordering and diagnostics. Commands supply their existing
+defaults and apply the parsed record; backend conversion never revalidates
+strings. Package workers serialize the same options, including cfg names.
+Names cross the package-discovery scratch/interner boundary as strings and are
+interned only after installing the child session; environments containing
+parent-session IDs cannot cross that boundary.
+
+
 `typelisp expand` and LSP `tl/expandMacro` share the query in
 `compiler_expand_query.tl`. It checks the source through the production
 pipeline, then walks checked `MacroExpansion` nodes to select the innermost

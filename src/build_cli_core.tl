@@ -24,6 +24,7 @@
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_backend as backend)
 (import compiler_ast_types as ast)
@@ -67,6 +68,7 @@
     bool
     i64
     BuildPackageLockPolicy
+    cli_svec.Vec
     cli_svec.Vec))
 
 (defenum ResultBuildConfig
@@ -82,15 +84,12 @@
     backend.CompilerBackendTarget
     backend.CompilerBackendMode
     cli_svec.Vec
+    cli_svec.Vec
     i64
     build_run_core.SourceToolLinkInputs))
 
 (defenum ResultBuildCliConfig
   (Ok BuildCliConfig)
-  (Err String))
-
-(defenum ResultBuildTarget
-  (Ok backend.CompilerBackendTarget)
   (Err String))
 
 ;; Complete outputs from one runtime preparation. Artifact finishing has no
@@ -303,6 +302,7 @@
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
   (stdlib-roots cli_svec.Vec)
+  (cfgs cli_svec.Vec)
   (resolved-deps load.CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
@@ -397,15 +397,6 @@
     "': "
     (compiler_diagnostic.compiler-diagnostic-message diag)))
 
-(define (build-unknown-target [value : String]) : String
-  (str_cat.str-cat "build: unknown target " value ""))
-
-(define (build-unknown-mode [value : String]) : String
-  (str_cat.str-cat "build: unknown backend mode " value ""))
-
-(define (build-unknown-opt-level [value : String]) : String
-  (str_cat.str-cat "build: unknown opt level '" value "'; expected 0, 1, or 2"))
-
 (define (build-unknown-profile [value : String]) : String
   (str_cat.str-cat
     "build: unknown profile '"
@@ -467,18 +458,9 @@
     [(Update) (build_run_core.source-tool-args-append args "--update-lock")]
     [(Default) args]))
 
-(define (build-parse-target [value : String]) : ResultBuildTarget
-  (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (Ok (Linux))
-    (if (or
-      (string.eq value "windows-x86_64")
-      (string.eq value "windows_x86_64"))
-      (Ok (Windows))
-      (Err (build-unknown-target value)))))
-
 ;; Options a package build accepts.
 (define (build-package-cli-options) : String
-  "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
    --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
    --profile <dev|release> --release --locked --update-lock")
 
@@ -490,50 +472,16 @@
     [has-output : bool false]
     [manifest : String ""]
     [has-manifest : bool false]
-    [target : String (build_run_core.source-tool-default-target-name)]
-    [has-target : bool false]
-    [mode : String "scalar"]
     [profile : BuildProfile (build-default-profile)]
     [has-profile : bool false]
-    [opt-level : i64 (build-package-default-opt-level)]
-    [has-opt-level : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
-    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options
+        (target_cfg.compiler-target-cfg-host)
+        (build-package-default-opt-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (match (build-parse-target (string.copy (& value)))
-              [(Ok _)
-                (set! target value)
-                (set! has-target true)]
-              [(Err _)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (build-unknown-target value))]))]
-        [(string.eq args.name "--opt-level")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            [level : i64 (cli_option.cli-option-opt-level (& value))]
-            (cond
-              [has-opt-level
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  "build: --opt-level was provided more than once")]
-              [(< level 0)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (build-unknown-opt-level value))]
-              [else
-                (set! opt-level level)
-                (set! has-opt-level true)]))]
-        [(string.eq args.name "--debug")
-          (ir.compiler-debug-info-set-enabled! true)]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
             (cli_option.cli-args-fail!
@@ -548,17 +496,6 @@
             (begin
               (set! manifest (cli_option.cli-args-value (& args)))
               (set! has-manifest true)))]
-        [(string.eq args.name "--backend-mode")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (match (build_run_core.source-tool-backend-mode
-              "build"
-              (string.copy (& value)))
-              [(Ok _) (set! mode value)]
-              [(Err _)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (build-unknown-mode value))]))]
         [(and
             has-profile
             (or
@@ -595,6 +532,7 @@
             (&mut args)
             "build: accepts only one source file")]
         [else (set! has-source true)]))
+    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]
       [(and has-source has-manifest)
@@ -606,16 +544,17 @@
           (Package
             manifest
             has-manifest
-            target
-            has-target
-            mode
+            (cli_option.cli-option-target-name options.target)
+            options.has-target
+            (cli_option.cli-option-backend-mode-name options.backend-mode)
             profile
-            has-opt-level
-            (if has-opt-level
-              opt-level
+            options.has-opt-level
+            (if options.has-opt-level
+              options.opt-level
               (build-profile-default-opt-level profile))
             lock-policy
-            stdlib-roots))])))
+            options.stdlib-roots
+            options.cfgs))])))
 
 ;; Parse the private `--package-worker` / `--package-doctest-worker` protocol.
 (define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
@@ -623,59 +562,26 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "build"
-        "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
          --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
          --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
         count)]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [target : backend.CompilerBackendTarget
-      (build_run_core.source-tool-default-target)]
-    [mode : backend.CompilerBackendMode (Scalar)]
     [profile : BuildProfile (build-default-profile)]
-    [opt-level : i64 (build-package-default-opt-level)]
-    [has-opt-level : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
-    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
     [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options
+        (target_cfg.compiler-target-cfg-host)
+        (build-package-default-opt-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (match (build_run_core.source-tool-target (string.copy (& value)))
-              [(Ok parsed-target) (set! target parsed-target)]
-              [(Err _)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (build-cli-unknown-target value))]))]
-        [(string.eq args.name "--opt-level")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            [level : i64 (cli_option.cli-option-opt-level (& value))]
-            (if (< level 0)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                (build-unknown-opt-level value))
-              (begin
-                (set! opt-level level)
-                (set! has-opt-level true))))]
-        [(string.eq args.name "--debug")
-          (ir.compiler-debug-info-set-enabled! true)]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (set! manifest-path (cli_option.cli-args-value (& args)))
           (set! has-manifest true)]
-        [(string.eq args.name "--backend-mode")
-          (match (build_run_core.source-tool-backend-mode
-            "build"
-            (cli_option.cli-args-value (& args)))
-            [(Ok parsed-mode) (set! mode parsed-mode)]
-            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
         ;; A profile also selects its default opt level unless --opt-level
         ;; already chose one.
         [(string.eq args.name "--profile")
@@ -683,15 +589,15 @@
             [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
             [(Ok parsed-profile)
               (unless
-                has-opt-level
+                options.has-opt-level
                 (set!
-                  opt-level
+                  options.opt-level
                   (build-profile-default-opt-level parsed-profile)))
               (set! profile parsed-profile)])]
         [(string.eq args.name "--release")
           (unless
-            has-opt-level
-            (set! opt-level (build-profile-default-opt-level (Release))))
+            options.has-opt-level
+            (set! options.opt-level (build-profile-default-opt-level (Release))))
           (set! profile (Release))]
         [(or
             (string.eq args.name "--locked")
@@ -728,6 +634,7 @@
           (cli_option.cli-args-fail-arg!
             (&mut args)
             "build: unexpected package worker argument ")]))
+    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]
       [has-manifest
@@ -735,12 +642,13 @@
           (BuildPackageWorkerConfig
             manifest-path
             has-manifest
-            target
-            mode
+            (build_run_core.source-tool-backend-target options.target)
+            (build_run_core.source-tool-backend-mode options.backend-mode)
             profile
-            opt-level
+            options.opt-level
             lock-policy
-            stdlib-roots
+            options.stdlib-roots
+            options.cfgs
             resolved-deps))]
       [else (Err "build: --package-worker requires --manifest-path")])))
 
@@ -2257,12 +2165,13 @@
 
 (define (build-package-compile-cfgs
   [target : backend.CompilerBackendTarget]
-  [root-compiler : bool]) : sym_i64_env.SymI64Env
+  [root-compiler : bool]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : sym_i64_env.SymI64Env
   (let
     [cfgs : sym_i64_env.SymI64Env
       (compiler_driver_core.compiler-driver-target-cfgs
         target
-        (compiler_parse_core.compiler-cfg-empty))]
+        (target_cfg.compiler-target-user-cfgs cfg-names))]
     (if root-compiler
       (compiler_parse_core.compiler-cfg-enable
         (compiler_parse_core.compiler-cfg-enable cfgs "compiler-build-identity")
@@ -5361,12 +5270,14 @@
   [entry-path : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
   (match (compiler_driver_core.compiler-driver-load-package-paths-with-runtime
     entry-path
     target
+    cfg-names
     (owned_view.compiler-owned-shared-view stdlib-roots)
     (owned_view.compiler-owned-shared-view manifest-dir)
     (owned_view.compiler-owned-shared-view deps)
@@ -5378,11 +5289,14 @@
       1]
     [(Ok paths)
       (doc_test.doc-test-report-status
-        (doc_test.doc-test-typecheck-package-paths-with-roots
+        (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
           (build-package-doctest-paths owner paths)
           stdlib-roots
           manifest-dir
-          deps))]))
+          deps
+          (compiler_driver_core.compiler-driver-target-cfgs
+            target
+            (target_cfg.compiler-target-user-cfgs cfg-names))))]))
 
 (define (build-inline-test-typecheck-package-sources
   [manifest-path : String]
@@ -5580,6 +5494,7 @@
     [mode : backend.CompilerBackendMode]
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
+    [cfg-names : (& cfg-names cli_svec.Vec)]
     [dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
@@ -5669,7 +5584,10 @@
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view name)
               (owned_view.compiler-owned-shared-view manifest.deps)
-              (build-package-compile-cfgs target compile-context.root-compiler))]
+              (build-package-compile-cfgs
+                target
+                compile-context.root-compiler
+                cfg-names))]
           [_reset-after-inline-tests : unit
             (if (= inline-test-status 0)
               (begin
@@ -5692,6 +5610,7 @@
                   (load.compiler-pkg-deps-list
                     (owned_view.compiler-owned-shared-view manifest.deps))
                   (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (& cfg-names)
                   (owned_view.compiler-owned-shared-view manifest-dir)
                   emit-entry)]
               [_reset-after-pre-emit-doctests : unit
@@ -5720,7 +5639,8 @@
                   emit-entry
                   (build-package-compile-cfgs
                     target
-                    compile-context.root-compiler)
+                    compile-context.root-compiler
+                    cfg-names)
                   announce)
                 pre-emit-doctest-status))
             inline-test-status))))))
@@ -5737,6 +5657,7 @@
     [_mode : backend.CompilerBackendMode]
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
+    [cfg-names : (& cfg-names cli_svec.Vec)]
     [_dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
@@ -5780,9 +5701,10 @@
     (build_run_core.source-tool-args-append args flag)
     value))
 
-(define (build-package-worker-append-stdlib-roots
+(define (build-package-worker-append-values
   [args : process.ProcessStringList]
-  [roots : (& roots cli_svec.Vec)]) : process.ProcessStringList
+  [roots : (& roots cli_svec.Vec)]
+  [flag : String]) : process.ProcessStringList
   (let
     [i : i64 0]
     [n : i64 (cli_svec.len (& roots))]
@@ -5792,7 +5714,7 @@
         out
         (build-package-worker-append-option
           out
-          "--stdlib-root"
+          (string.copy (& flag))
           (cli_svec.get (& roots) i "")))
       (set! i (+ i 1)))
     out))
@@ -5823,7 +5745,8 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
@@ -5859,7 +5782,10 @@
       (build-package-lock-policy-arg debug-args lock-policy)]
     [args8 : process.ProcessStringList
       (build-package-worker-append-resolved-deps args7 resolved-deps 0)]
-    (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
+    (build-package-worker-append-values
+      (build-package-worker-append-values args8 stdlib-roots "--stdlib-root")
+      cfg-names
+      "--cfg")))
 
 (define (build-package-worker-args
   [manifest-path : String]
@@ -5868,7 +5794,8 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
     manifest-path
@@ -5878,7 +5805,8 @@
     mode
     lock-policy
     (load.compiler-pkg-dep-list-empty)
-    stdlib-roots))
+    stdlib-roots
+    (& cfg-names)))
 
 (define (build-package-worker-command
   [manifest-path : String]
@@ -5887,7 +5815,8 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args
@@ -5897,7 +5826,8 @@
       profile
       mode
       lock-policy
-      stdlib-roots)))
+      stdlib-roots
+      (& cfg-names))))
 
 (define (build-package-doctest-worker-command
   [manifest-path : String]
@@ -5907,7 +5837,8 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
@@ -5919,7 +5850,8 @@
       mode
       lock-policy
       resolved-deps
-      stdlib-roots)))
+      stdlib-roots
+      (& cfg-names))))
 
 (define (build-package-worker-spawn-supported?) : bool
   (match (process.output
@@ -5941,6 +5873,7 @@
   [deps : load.CompilerPkgDeps]
   [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
   [emit-entry : bool]) : i64
   (match (process.output
@@ -5952,7 +5885,8 @@
       mode
       lock-policy
       resolved-deps
-      stdlib-roots))
+      stdlib-roots
+      (& cfg-names)))
     [(OkProcessOutput output)
       (build_run_core.source-tool-forward-output output)
       (process.output-status output)]
@@ -5969,6 +5903,7 @@
             entry-path
             target
             stdlib-roots
+            (& cfg-names)
             manifest-dir
             deps
             emit-entry))
@@ -6031,6 +5966,7 @@
                         config.mode
                         config.lock-policy
                         config.stdlib-roots
+                        (& config.cfgs)
                         (build_run_core.source-tool-link-inputs-empty)
                         (load.compiler-pkg-deps-list resolved-manifest.deps)
                         producer-identity
@@ -6090,6 +6026,7 @@
                       entry-path
                       config.target
                       config.stdlib-roots
+                      (& config.cfgs)
                       manifest-dir
                       resolved-manifest.deps
                       (build-package-kind-entry? kind)))]))]))]))
@@ -6161,7 +6098,8 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : ResultBuildPackageGraphWorker
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String
       (owned_view.compiler-owned-shared-view node.manifest-path)]
@@ -6181,7 +6119,8 @@
         profile
         mode
         lock-policy
-        stdlib-roots)]
+        stdlib-roots
+        (& cfg-names))]
     [_
       (try
         (build-package-validate-graph-node-checkout
@@ -6207,6 +6146,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [workers : BuildPackageGraphWorkerList]
   [index : i64]
   [count : i64]) : ResultBuildPackageSchedulePass
@@ -6238,6 +6178,7 @@
           mode
           lock-policy
           stdlib-roots
+          (& cfg-names)
           workers
           (+ index 1)
           count)
@@ -6251,7 +6192,8 @@
                 profile
                 mode
                 lock-policy
-                stdlib-roots))]
+                stdlib-roots
+                (& cfg-names)))]
           (build-string-index-map-put! (&mut scheduled) manifest-path 1)
           (build-package-schedule-pass-with
             nodes
@@ -6263,6 +6205,7 @@
             mode
             lock-policy
             stdlib-roots
+            (& cfg-names)
             (More worker (box workers))
             (+ index 1)
             count))))))
@@ -6276,7 +6219,8 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageSchedulePass
+  [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageSchedulePass
   (let
     [count : i64 (build-package-graph-node-vec-len nodes)]
     (build-package-schedule-pass-with
@@ -6289,6 +6233,7 @@
       mode
       lock-policy
       stdlib-roots
+      (& cfg-names)
       (Empty)
       0
       count)))
@@ -6427,6 +6372,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [announce : bool]
   [scheduled : build_string_i64_map.Map]
   [built : build_string_i64_map.Map]) : i64
@@ -6443,7 +6389,8 @@
       profile
       mode
       lock-policy
-      (owned_view.compiler-owned-shared-view stdlib-roots))
+      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (& cfg-names))
       [(Err message)
         (io.print-error message)
         1]
@@ -6464,6 +6411,7 @@
                 mode
                 lock-policy
                 stdlib-roots
+                (& cfg-names)
                 announce
                 pass.scheduled
                 next-built)]))])))
@@ -6476,7 +6424,8 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [announce : bool]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
     target
@@ -6485,6 +6434,7 @@
     mode
     lock-policy
     stdlib-roots
+    (& cfg-names)
     announce
     (build_string_i64_map.with-capacity 32)
     (build_string_i64_map.with-capacity 32)))
@@ -6497,6 +6447,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]) : i64
   (let
@@ -6527,6 +6478,7 @@
                 mode
                 lock-policy
                 (owned_view.compiler-owned-shared-view stdlib-roots)
+                (& cfg-names)
                 (build_run_core.source-tool-link-inputs-empty)
                 (load.compiler-pkg-deps-list manifest.deps)
                 (owned_view.compiler-owned-shared-view producer-identity)
@@ -6551,6 +6503,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]) : i64
   (if (and
@@ -6564,7 +6517,8 @@
       mode
       lock-policy
       announce
-      stdlib-roots)
+      stdlib-roots
+      (& cfg-names))
     (build-package-emit-graph-nodes-serial
       nodes
       target
@@ -6573,6 +6527,7 @@
       mode
       lock-policy
       stdlib-roots
+      (& cfg-names)
       producer-identity
       announce)))
 
@@ -6582,14 +6537,19 @@
   [has-output : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : cli_svec.Vec]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64
-      (doc_test.doc-test-typecheck-file-status
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view stdlib-roots))]
+      (doc_test.doc-test-report-status
+        (doc_test.doc-test-typecheck-file-with-roots-and-cfg
+          (owned_view.compiler-owned-shared-view source)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (compiler_driver_core.compiler-driver-target-cfgs
+            target
+            (target_cfg.compiler-target-user-cfgs (& cfg-names)))))]
     (if (= doctest-status 0)
       (let
         [inline-test-status : i64
@@ -6598,7 +6558,7 @@
             (owned_view.compiler-owned-shared-view stdlib-roots)
             (compiler_driver_core.compiler-driver-target-cfgs
               target
-              (compiler_parse_core.compiler-cfg-empty))
+              (target_cfg.compiler-target-user-cfgs (& cfg-names)))
             "typecheck-prefix-inline-build")]
         (if (= inline-test-status 0)
           (begin
@@ -6609,6 +6569,7 @@
               has-output
               target
               stdlib-roots
+              cfg-names
               opt-level
               mode
               link-inputs))
@@ -6625,9 +6586,10 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]) : i64
-  (match (build-parse-target target-text)
+  (match (build_run_core.source-tool-parse-target target-text)
     [(Err message)
       (io.print-error message)
       1]
@@ -6662,6 +6624,7 @@
                       mode
                       lock-policy
                       (owned_view.compiler-owned-shared-view stdlib-roots)
+                      (& cfg-names)
                       (owned_view.compiler-owned-shared-view producer-identity)
                       announce)]
                   (if (= dep-status 0)
@@ -6690,6 +6653,7 @@
                               mode
                               lock-policy
                               stdlib-roots
+                              (& cfg-names)
                               dep-link-inputs
                               (build-package-graph-catalog-deps
                                 nodes
@@ -6710,6 +6674,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]) : i64
   (build-package-dependency-catalog-finish
@@ -6723,6 +6688,7 @@
       mode
       lock-policy
       stdlib-roots
+      (& cfg-names)
       producer-identity
       announce)))
 
@@ -6735,9 +6701,10 @@
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [announce : bool]) : i64
-  (match (build_run_core.source-tool-backend-mode "build" mode)
+  (match (build_run_core.source-tool-parse-backend-mode mode)
     [(Err message)
       (io.print-error message)
       1]
@@ -6758,6 +6725,7 @@
             backend-mode
             lock-policy
             stdlib-roots
+            (& cfg-names)
             producer-identity
             announce)])]))
 
@@ -6770,6 +6738,7 @@
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]) : i64
   (build-package-from-path-announce
     manifest-path
@@ -6780,6 +6749,7 @@
     profile
     lock-policy
     stdlib-roots
+    (& cfg-names)
     producer-identity
     true))
 
@@ -6795,7 +6765,8 @@
         _
         opt-level
         lock-policy
-        stdlib-roots)
+        stdlib-roots
+        cfg-names)
       (let
         [resolved-manifest : load.CompilerLoadMaybePath
           (if has-manifest
@@ -6816,6 +6787,7 @@
               profile
               lock-policy
               stdlib-roots
+              (& cfg-names)
               producer-identity)]))]
     [_ 1]))
 
@@ -6824,7 +6796,8 @@
     [(Ok config)
       (match (owned_view.compiler-owned-shared-view config)
         [(Source) (build-source-direct-from idx (io.arg-count))]
-        [(Package _ _ _ _ _ _ _ _ _ _) (build-package config producer-identity)])]
+        [(Package _ _ _ _ _ _ _ _ _ _ _)
+          (build-package config producer-identity)])]
     [(Err message)
       (io.print-error message)
       1]))
@@ -6835,12 +6808,6 @@
     (if (string.eq (io.arg idx) "--manifest-path")
       true
       (build-args-contain-manifest? (+ idx 1) count))))
-
-(define (build-cli-unknown-target [value : String]) : String
-  (str_cat.str-cat "build: unknown target " value ""))
-
-(define (build-cli-unknown-opt-level [value : String]) : String
-  (str_cat.str-cat "build: unknown opt level " value "; expected 0, 1, or 2"))
 
 ;; Native link options only source builds accept.
 (define (build-link-cli-options) : String
@@ -6871,7 +6838,7 @@
       (cli_option.cli-args
         "build"
         (str_cat.str-cat
-          "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
            --debug|-g|--backtrace -o <exe> --backend-mode <mode>
            --manifest-path <file> --profile --release --locked --update-lock "
           (build-link-cli-options))
@@ -6881,39 +6848,15 @@
     [has-source : bool false]
     [output : String ""]
     [has-output : bool false]
-    [target : backend.CompilerBackendTarget
-      (build_run_core.source-tool-default-target)]
-    [mode : backend.CompilerBackendMode (Scalar)]
-    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-    [opt-level : i64 (opt.compiler-optimize-default-level)]
     [link-inputs : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options
+        (target_cfg.compiler-target-cfg-host)
+        (opt.compiler-optimize-default-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (match (build_run_core.source-tool-target (string.copy (& value)))
-              [(Ok parsed-target) (set! target parsed-target)]
-              [(Err _)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (build-cli-unknown-target value))]))]
-        [(string.eq args.name "--opt-level")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            [level : i64 (cli_option.cli-option-opt-level (& value))]
-            (if (< level 0)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                (build-cli-unknown-opt-level value))
-              (set! opt-level level)))]
-        [(string.eq args.name "--debug")
-          (ir.compiler-debug-info-set-enabled! true)]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
             (cli_option.cli-args-fail!
@@ -6922,12 +6865,6 @@
             (begin
               (set! output (cli_option.cli-args-value (& args)))
               (set! has-output true)))]
-        [(string.eq args.name "--backend-mode")
-          (match (build_run_core.source-tool-backend-mode
-            "build"
-            (cli_option.cli-args-value (& args)))
-            [(Ok parsed-mode) (set! mode parsed-mode)]
-            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
         [(string.eq args.name "--link-lib")
           (set!
             link-inputs
@@ -6968,6 +6905,7 @@
         [else
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
+    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]
       [has-source
@@ -6977,10 +6915,11 @@
             has-source
             output
             has-output
-            target
-            mode
-            stdlib-roots
-            opt-level
+            (build_run_core.source-tool-backend-target options.target)
+            (build_run_core.source-tool-backend-mode options.backend-mode)
+            options.stdlib-roots
+            options.cfgs
+            options.opt-level
             link-inputs))]
       [has-output (Err "build: -o requires a source file argument")]
       [else (Err "build: expected source path")])))
@@ -7000,6 +6939,7 @@
             target
             mode
             stdlib-roots
+            cfg-names
             opt-level
             link-inputs)
           (build-doctest-build-source
@@ -7008,6 +6948,7 @@
             has-output
             target
             stdlib-roots
+            cfg-names
             opt-level
             mode
             link-inputs)])]

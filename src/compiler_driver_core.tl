@@ -5143,6 +5143,7 @@
 (define (compiler-driver-load-package-paths-with-runtime
   [input-path : String]
   [target : compiler_backend.CompilerBackendTarget]
+  [cfg-names : (& cfg-names svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -5180,13 +5181,15 @@
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)]
         [_reset-analysis : unit (compiler-driver-reset-analysis-state!)]
         [result : ResultCompilerDriverPackagePaths
-          (match (compiler-driver-load-package-file-with-runtime
+          (match (compiler-driver-load-package-file-with-runtime-cfg
             input-path
-            target
             stdlib-roots
             manifest-dir
             deps
-            emit-entry)
+            emit-entry
+            (compiler-driver-target-cfgs
+              target
+              (target_cfg.compiler-target-user-cfgs cfg-names)))
             [(Ok _ paths _ _)
               (in-arena
                 home

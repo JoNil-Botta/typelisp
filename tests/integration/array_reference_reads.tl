@@ -1,4 +1,5 @@
-;; Observations of borrowed fixed-array places do not transfer their elements.
+;; Observations of borrowed fixed-array and Slice places do not transfer their
+;; elements.
 (import stdlib.string)
 (import stdlib.test)
 
@@ -39,6 +40,17 @@
 
 (define (replace-first [items : (&mut (Array String 2))]) : String
   (replace! (array-ref items 0) "new"))
+
+(define (slice-text-size [items : (& (Slice String))]) : i64
+  (+
+    (string.string-length (& (array-ref items 0)))
+    (string.string-length (array-ref items 1))))
+
+(define (slice-clone-first [items : (& (Slice String))]) : String
+  (clone (array-ref items 0)))
+
+(define (slice-replace-first [items : (&mut (Slice String))]) : String
+  (replace! (array-ref items 0) "slice"))
 
 (define (move-owned [items : (Array String 2)]) : String
   (array-ref items 0))
@@ -82,6 +94,14 @@
     [copied : String (clone-first (& texts))]
     [old : String (replace-first (&mut texts))]
     [moved : String (move-owned (array "x" "yy"))]
+    [words : (Array String 2) (array "ab" "cde")]
+    [_
+      (test.assert-i64-eq
+        (slice-text-size (slice-view words 0 2))
+        5
+        "Slice borrows observe")]
+    [slice-copy : String (slice-clone-first (slice-view words 0 2))]
+    [slice-old : String (slice-replace-first (slice-mut-view (&mut words) 0 2))]
     (test.assert-i64-eq
       (string.string-length (& copied))
       5
@@ -102,6 +122,16 @@
       (string.string-length (& moved))
       1
       "owned element can move")
+    (test.assert-i64-eq
+      (+
+        (string.string-length (& slice-copy))
+        (string.string-length (& slice-old)))
+      4
+      "Slice clone and replacement own their results")
+    (test.assert-i64-eq
+      (string.string-length (& (array-ref words 0)))
+      5
+      "Slice replacement installs its successor")
     (let
       [counter : (Array i64 2) (array 0 19)]
       [references (array (&mut (array-ref counter 0)))]

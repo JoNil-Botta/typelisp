@@ -40,7 +40,14 @@
       "(define (via [p : (&mut (Array String 2))]) : String
   (replace! (array-ref p 0) \"new\"))
 (define (main) : i64 42)")
-    "replacement owns the old value after installing its successor"))
+    "replacement owns the old value after installing its successor")
+  (test.assert-true
+    (compiler-check-source-ok?
+      "tests/slice_reference_replace.tl"
+      "(define (via [p : (&mut (Slice String))]) : String
+  (replace! (array-ref p 0) \"new\"))
+(define (main) : i64 42)")
+    "replacement moves an element out of a mutable Slice reference"))
 
 (cfg
   test
@@ -169,7 +176,25 @@
         (tuple
           "(Array (Array String 1) 1)"
           "String"
-          "(array-ref (let [q p] (array-ref q 0)) 0)"))]
+          "(array-ref (let [q p] (array-ref q 0)) 0)")
+        (tuple "(Slice String)" "i64" "(consume (array-ref p 0))")
+        (tuple "(Slice String)" "(in p String)" "(array-ref p index)")
+        (tuple
+          "(Array String 2)"
+          "(in p String)"
+          "(array-ref (slice-view p 0 2) 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(consume (array-ref (slice-view p 0 2) 1))")
+        (tuple
+          "(Array (Array String 1) 2)"
+          "(in p String)"
+          "(array-ref (array-ref (slice-view p 0 2) 0) 0)")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(begin (unsafe (string-data (if (= index 0) (array-ref p 0) (array-ref p 1)))) 0)"))]
     [good
       (array
         (tuple "(Array i64 2)" "i64" "(+ (array-ref p 0) (array-ref p 1))")
@@ -229,7 +254,19 @@
         (tuple
           "(Array (Box String) 1)"
           "String"
-          "(clone (deref (array-ref p 0)))"))]
+          "(clone (deref (array-ref p 0)))")
+        (tuple "(Slice i64)" "i64" "(array-ref p index)")
+        (tuple "(Slice String)" "i64" "(observe (array-ref p 0))")
+        (tuple "(Slice String)" "(& p str)" "(& (array-ref p 0))")
+        (tuple "(Slice String)" "String" "(clone (array-ref p index))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(observe (array-ref (slice-view p 0 2) 1))")
+        (tuple
+          "(Array String 2)"
+          "i64"
+          "(begin (unsafe (string-data (array-ref p 0))) 0)"))]
     (for [kind (iterator.range 0 2)]
       (let
         [reference : String

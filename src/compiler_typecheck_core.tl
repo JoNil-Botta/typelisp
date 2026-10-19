@@ -8067,6 +8067,9 @@
 ;; reference value, or a field, tuple or element projection whose receiver
 ;; is one or is itself reference-typed, which a projection dereferences
 ;; implicitly. A dotted local field name reads its expansion (#8554).
+;; With `array-only`, only an element read from a fixed array or Slice reached
+;; through a reference counts, wherever it sits on the projection spine; a
+;; reference root seen only through fields, tuples or `deref` returns 0.
 (define (tc-reference-read-kind
   [ctx : TcContext]
   [expr-bases : i64]
@@ -8083,7 +8086,7 @@
         (if (or (not array-only) (= kind 0))
           kind
           (match (tc-body-type-fact-expr-id
-            "move.fixed_array_reference"
+            "move.array_element_reference"
             ctx
             env
             receiver-box)
@@ -8093,6 +8096,15 @@
                   (match (tc-type-strip-region
                     (tc-resolve-type ctx container-ty))
                     [(Array _ _) kind]
+                    ;; tc-array-readable-receiver keeps a referenced Slice's
+                    ;; reference as its container.
+                    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
+                      (match (tc-type-strip-region
+                        (tc-resolve-type
+                          ctx
+                          (tc-context-type-get ctx referent-ty)))
+                        [(Slice _) kind]
+                        [_ 0])]
                     [_
                       (tc-reference-read-kind
                         ctx
@@ -8158,8 +8170,9 @@
       [(Err _) 0])))
 
 ;; A by-value use of a non-Copy value read through a reference would move it
-;; out of the reference, whether or not its inferred type has a region tag.
-;; Escape checks and consuming move positions share the diagnostic (#8554).
+;; out of the reference. Escape checks report it for region-tagged reads, and
+;; the move check reports it for fixed-array and Slice element reads whatever
+;; their lifetime; both share this diagnostic (#8554, #8695).
 ;; Returns "" when `expr` reads no non-Copy
 ;; value through a reference; `help` names the fix for the use's position.
 (define (tc-move-out-of-reference-error

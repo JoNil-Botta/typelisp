@@ -42,14 +42,16 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
-Fixed-array reference reads are checked as transfers independently of region
-escape: matching lifetimes do not give a borrowed element an owner. The shared
+Fixed-array and Slice element reads through a reference are checked as
+transfers independently of region escape: matching lifetimes do not give a
+borrowed element an owner. The shared
 move walker distinguishes value transfers, projection-place reads and explicit
 result reads for borrows and canonical clone. Result reads follow conditional
 arms, let and match bodies, sequence tails and projection receivers. Conditions,
 initializers, scrutinees, sequence prefixes, indexes and stored/call/constructor
-values retain ordinary transfers. One callee classifier also drives clone's
-non-consuming AST adapter in the borrow-conflict walk. Receiver classification
+values retain ordinary transfers; data-pointer operands are place reads. One
+callee classifier also drives clone's non-consuming AST adapter in the
+borrow-conflict walk, which forwards the read through the same forms. Receiver classification
 uses checked types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in

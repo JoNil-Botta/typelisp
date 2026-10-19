@@ -37240,7 +37240,9 @@
   (match loops
     [(slice) (Result blocks frame false)]
     [(slice loop & rest)
-      (match (opt-flag-exit-plan-loop
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        (match (opt-flag-exit-plan-loop
         (& blocks)
         context
         frame
@@ -37273,14 +37275,16 @@
             [(Result seeded seeded-frame converted?)
               (if converted?
                 (Result seeded seeded-frame true)
-                (opt-flag-exit-convert-loops
-                  blocks
-                  context
-                  frame
-                  uses
-                  raw-uses
-                  def-label
-                  rest))])])]))
+                (begin
+                  (unsafe (arena.tl_region_reset mark))
+                  (opt-flag-exit-convert-loops
+                    blocks
+                    context
+                    frame
+                    uses
+                    raw-uses
+                    def-label
+                    rest)))])]))]))
 
 ;; --- driver -------------------------------------------------------------------
 ;; --- the second prescan, once the loops are known -----------------------------

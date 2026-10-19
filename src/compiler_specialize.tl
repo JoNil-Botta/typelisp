@@ -3401,9 +3401,40 @@
       (str_cat.str-cat "conflicting generated item: " item))
     (str_cat.str-cat "generated identity: " key)))
 
+;; Normalization's reflections CTFE environment. Only two paths read it: the
+;; key of a generated declaration that carries no metadata key is evaluated by
+;; CTFE, and a declaration registered again under an existing key has its
+;; payload compared with the first one's. Both are rare, and the environment
+;; reflects the whole program into the pool base arena, so it is built on the
+;; first read instead of before the walk.
+(defstruct GenLazyCtfeEnv
+  (env (__tl_dyn-array ctfe.CtfeEnv))
+  (built (__tl_dyn-array bool)))
+
+(define (gen-lazy-ctfe-env-new) : GenLazyCtfeEnv
+  (GenLazyCtfeEnv
+    (__tl_make-array (ctfe.ctfe-env-empty))
+    (__tl_make-array false)))
+
+;: Build the environment over PROGRAM unless an earlier read already did;
+;; readers then borrow `(array-ref lazy.env 0)`.
+(define (gen-lazy-ctfe-env-force!
+  [owner : (& owner SpecOwnerContext)]
+  [lazy : (& lazy GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : unit
+  (unless
+    (array-ref lazy.built 0)
+    (set!
+      (array-ref lazy.env 0)
+      (spec-owner-ctfe-env
+        owner
+        (& (ctfe.ctfe-reflections-from-program program))))
+    (set! (array-ref lazy.built 0) true)))
+
 (define (gen-register-generated-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [env : (& env ctfe.CtfeEnv)]
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]
   [template : (& ast.AstDecl)]
   [module-id : i64]
   [item-id : i64]
@@ -3447,7 +3478,13 @@
               (owned_view.compiler-owned-reference-shared-view template))
             module-id))]
       [(Some existing)
-        (if (gen-decl-eq-with-owner owner env (& existing) template)
+        (if (begin
+          (gen-lazy-ctfe-env-force! owner env program)
+          (gen-decl-eq-with-owner
+            owner
+            (& (array-ref env.env 0))
+            (& existing)
+            template))
           (Ok (ast.ast-decl-list-new) registry module-id)
           (let
             [key : String
@@ -3473,10 +3510,17 @@
   [owner : (& owner SpecOwnerContext)]
   [meta-key : String]
   [args : (& args ast.AstExprList)]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenKey
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenKey
   (if (> (string.string-length meta-key) 0)
     (Ok meta-key (ctfe.ctfe-fuel-limit))
-    (gen-key-exprs-with-owner owner args env (ctfe.ctfe-fuel-limit))))
+    (begin
+      (gen-lazy-ctfe-env-force! owner env program)
+      (gen-key-exprs-with-owner
+        owner
+        args
+        (& (array-ref env.env 0))
+        (ctfe.ctfe-fuel-limit)))))
 
 (define (gen-decl-runtime-template [decl : (& ast.AstDecl)]) : ast.AstDecl
   ;; Strip generation provenance, not the aggregate's semantic marker flags.
@@ -3490,7 +3534,8 @@
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : (& GenRegistry)]
-  [env : (& env ctfe.CtfeEnv)]
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]
   [generator : String]
   [item : String]
   [args : (& ast.AstExprList)]
@@ -3538,11 +3583,13 @@
             owner
             (spec-place-shared-view meta-key)
             args
-            env)
+            env
+            program)
             [(Ok arg-key _)
               (gen-register-generated-decl-with-owner
                 owner
                 env
+                program
                 (& (gen-decl-runtime-template decl))
                 module-id
                 actual-id
@@ -3561,12 +3608,22 @@
                     item
                     meta-key)))])))]))
 
+;; The module a declaration that normalization keeps unchanged leaves current:
+;; a module marker names it. The normalization loops push every declaration
+;; for which `gen-decl-needs-normalize?` is false straight into their output
+;; instead of building a one-element list for it.
+(define (gen-kept-decl-module-id [decl : (& ast.AstDecl)] [module-id : i64]) : i64
+  (match decl
+    [(Module name) name]
+    [_ module-id]))
+
 (define (gen-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDecl
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDecl
   (match decl
     [(Module name) (Ok (gen-single-decl-list decl) registry name)]
     [_
@@ -3581,6 +3638,7 @@
               module-id
               (& registry)
               env
+              program
               generator
               item
               (& args)
@@ -3628,7 +3686,8 @@
   [decls : ast.AstDeclList]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDecls
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDecls
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [cursor : ast.AstDeclList decls]
@@ -3660,32 +3719,51 @@
               cur-module-id))
           (set! done true)]
         [(Cons decl rest)
-          (match (gen-rewrite-decl-with-owner
-            owner
-            (& decl)
-            cur-module-id
-            (spec-place-shared-view cur-registry)
-            env)
-            [(Ok rewritten-decls decl-registry decl-module)
-              (let
-                [out-start : i64 (ast.ast-decl-list-len (& out))]
-                [rewritten-count : i64
-                  (ast.ast-decl-list-len (& rewritten-decls))]
-                (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                  (&mut out-origins)
-                  out-start
-                  rewritten-count
-                  (parser.compiler-parse-decl-list-storage-key (& rest))
-                  (- rest.offset 1)
-                  (& decl)
-                  (!= rewritten-count 1))
-                (ast.ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                (set! cur-registry decl-registry)
-                (set! cur-module-id decl-module)
-                (set! cursor rest))]
-            [(Err diag)
-              (set! result (Err diag))
-              (set! done true)])]))
+          (if (not (gen-decl-needs-normalize? (& decl)))
+            (begin
+              (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                (&mut out-origins)
+                (ast.ast-decl-list-len (& out))
+                1
+                (parser.compiler-parse-decl-list-storage-key (& rest))
+                (- rest.offset 1)
+                (& decl)
+                false)
+              (set!
+                cur-module-id
+                (gen-kept-decl-module-id (& decl) cur-module-id))
+              (ast.ast-decl-list-push (&mut out) decl)
+              (set! cursor rest))
+            (match (gen-rewrite-decl-with-owner
+              owner
+              (& decl)
+              cur-module-id
+              (spec-place-shared-view cur-registry)
+              env
+              program)
+              [(Ok rewritten-decls decl-registry decl-module)
+                (let
+                  [out-start : i64 (ast.ast-decl-list-len (& out))]
+                  [rewritten-count : i64
+                    (ast.ast-decl-list-len (& rewritten-decls))]
+                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                    (&mut out-origins)
+                    out-start
+                    rewritten-count
+                    (parser.compiler-parse-decl-list-storage-key (& rest))
+                    (- rest.offset 1)
+                    (& decl)
+                    (!= rewritten-count 1))
+                  (ast.ast-decl-list-append-from
+                    (&mut out)
+                    (& rewritten-decls)
+                    0)
+                  (set! cur-registry decl-registry)
+                  (set! cur-module-id decl-module)
+                  (set! cursor rest))]
+              [(Err diag)
+                (set! result (Err diag))
+                (set! done true)]))]))
     result))
 
 (define (gen-rewrite-decls-with-paths-and-owner
@@ -3695,7 +3773,8 @@
   [fallback-path : String]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env ctfe.CtfeEnv)]) : ResultGenDeclsWithPaths
+  [env : (& env GenLazyCtfeEnv)]
+  [program : (& program ast.AstProgram)]) : ResultGenDeclsWithPaths
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-cursor : ast.AstDeclList decls]
@@ -3746,49 +3825,71 @@
                 (& path-cursor)
                 0
                 cbi.compiler-builtin-id-fix-empty)]
-            (match (gen-rewrite-decl-with-owner
-              owner
-              (& decl)
-              cur-module-id
-              (spec-place-shared-view cur-registry)
-              env)
-              [(Ok rewritten-decls decl-registry decl-module)
-                (let
-                  [out-start : i64 (ast.ast-decl-list-len (& out))]
-                  [rewritten-count : i64
-                    (ast.ast-decl-list-len (& rewritten-decls))]
-                  (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
-                    (&mut out-origins)
-                    out-start
-                    rewritten-count
-                    (parser.compiler-parse-decl-list-storage-key (& rest))
-                    (- rest.offset 1)
-                    (& decl)
-                    (!= rewritten-count 1))
-                  (ast.ast-decl-list-append-from
-                    (&mut out)
-                    (& rewritten-decls)
-                    0)
-                  (gen-path-list-push-for-decls
-                    (&mut out-paths)
-                    (& rewritten-decls)
-                    decl-path
-                    owner-id
-                    provenance-id
-                    0)
-                  (set! cur-registry decl-registry)
-                  (set! cur-module-id decl-module)
-                  (set! decl-cursor rest)
-                  (set! path-cursor (gen-path-list-tail (& path-cursor))))]
-              [(Err diag)
+            (if (not (gen-decl-needs-normalize? (& decl)))
+              (begin
+                (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                  (&mut out-origins)
+                  (ast.ast-decl-list-len (& out))
+                  1
+                  (parser.compiler-parse-decl-list-storage-key (& rest))
+                  (- rest.offset 1)
+                  (& decl)
+                  false)
                 (set!
-                  result
-                  (Err
-                    (box
-                      (cdiag.compiler-diagnostic-with-fallback-path
-                        (deref diag)
-                        decl-path))))
-                (set! done true)]))]))
+                  cur-module-id
+                  (gen-kept-decl-module-id (& decl) cur-module-id))
+                (ast.ast-decl-list-push (&mut out) decl)
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                  (&mut out-paths)
+                  decl-path
+                  owner-id
+                  provenance-id)
+                (set! decl-cursor rest)
+                (set! path-cursor (gen-path-list-tail (& path-cursor))))
+              (match (gen-rewrite-decl-with-owner
+                owner
+                (& decl)
+                cur-module-id
+                (spec-place-shared-view cur-registry)
+                env
+                program)
+                [(Ok rewritten-decls decl-registry decl-module)
+                  (let
+                    [out-start : i64 (ast.ast-decl-list-len (& out))]
+                    [rewritten-count : i64
+                      (ast.ast-decl-list-len (& rewritten-decls))]
+                    (parser.compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      (&mut out-origins)
+                      out-start
+                      rewritten-count
+                      (parser.compiler-parse-decl-list-storage-key (& rest))
+                      (- rest.offset 1)
+                      (& decl)
+                      (!= rewritten-count 1))
+                    (ast.ast-decl-list-append-from
+                      (&mut out)
+                      (& rewritten-decls)
+                      0)
+                    (gen-path-list-push-for-decls
+                      (&mut out-paths)
+                      (& rewritten-decls)
+                      decl-path
+                      owner-id
+                      provenance-id
+                      0)
+                    (set! cur-registry decl-registry)
+                    (set! cur-module-id decl-module)
+                    (set! decl-cursor rest)
+                    (set! path-cursor (gen-path-list-tail (& path-cursor))))]
+                [(Err diag)
+                  (set!
+                    result
+                    (Err
+                      (box
+                        (cdiag.compiler-diagnostic-with-fallback-path
+                          (deref diag)
+                          decl-path))))
+                  (set! done true)])))]))
     result))
 
 (define (gen-normalize-program-with-pools-and-intern-state
@@ -3798,16 +3899,14 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [env : ctfe.CtfeEnv
-          (spec-owner-ctfe-env
-            owner
-            (& (ctfe.ctfe-reflections-from-program program)))]
+        [env : GenLazyCtfeEnv (gen-lazy-ctfe-env-new)]
         (match (gen-rewrite-decls-with-owner
           owner
           decls
           -1
           (gen-registry-empty)
-          env)
+          (& env)
+          program)
           [(Ok rewritten _ _) (Ok (ast.ast-program rewritten))]
           [(Err diag) (Err diag)]))]))
 
@@ -3820,10 +3919,7 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [env : ctfe.CtfeEnv
-          (spec-owner-ctfe-env
-            owner
-            (& (ctfe.ctfe-reflections-from-program program)))]
+        [env : GenLazyCtfeEnv (gen-lazy-ctfe-env-new)]
         (match (gen-rewrite-decls-with-paths-and-owner
           owner
           decls
@@ -3831,7 +3927,8 @@
           fallback-path
           -1
           (gen-registry-empty)
-          env)
+          (& env)
+          program)
           [(Ok rewritten rewritten-paths _ _)
             (Ok (ast.ast-program rewritten) rewritten-paths)]
           [(Err diag) (Err diag)]))]))
@@ -6763,10 +6860,10 @@
               (ast.ast-place-shared-view decls))]
           [template-env : SpecTemplateEnv
             (spec-template-env-from-list (& templates))]
-          [ctfe-env : ctfe.CtfeEnv
-            (spec-owner-ctfe-env
-              owner
-              (& (ctfe.ctfe-reflections-from-program (& normalized))))]
+          ;; The reflections CTFE environment serves template rewriting only,
+          ;; so it is built there. Built eagerly, a program without templates
+          ;; kept a whole-program reflection table in its pool base arena
+          ;; through lowering.
           (if (= templates.len 0)
             (Ok normalized)
             (match (spec-rewrite-decls-with-owner
@@ -6777,7 +6874,9 @@
                 (State
                   (ast.ast-decl-list-new)
                   (spec_id_i64_map.with-capacity 64)
-                  ctfe-env
+                  (spec-owner-ctfe-env
+                    owner
+                    (& (ctfe.ctfe-reflections-from-program (& normalized))))
                   (spec-place-shared-view owner))))
               [(Ok rewritten _)
                 (spec-materialize-owner-generated-symbols! (&mut owner))
@@ -6813,10 +6912,8 @@
                   (ast.ast-place-shared-view decls))]
               [template-env : SpecTemplateEnv
                 (spec-template-env-from-list (& templates))]
-              [ctfe-env : ctfe.CtfeEnv
-                (spec-owner-ctfe-env
-                  owner
-                  (& (ctfe.ctfe-reflections-from-program (& normalized))))]
+              ;; As above: the reflections CTFE environment is built only when
+              ;; there are templates to rewrite.
               (if (= templates.len 0)
                 (Ok normalized normalized-paths)
                 (match (spec-rewrite-decls-with-paths-with-owner
@@ -6828,7 +6925,9 @@
                   (State
                     (ast.ast-decl-list-new)
                     (spec_id_i64_map.with-capacity 64)
-                    ctfe-env
+                    (spec-owner-ctfe-env
+                      owner
+                      (& (ctfe.ctfe-reflections-from-program (& normalized))))
                     (spec-place-shared-view owner)))
                   [(Ok rewritten rewritten-paths _)
                     (spec-materialize-owner-generated-symbols! (&mut owner))

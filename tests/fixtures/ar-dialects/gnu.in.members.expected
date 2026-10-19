@@ -1,0 +1,4 @@
+dup.o 0x112
+unusually-long-member-name.o 0x306
+dup.o 0x4da
+odd 0x6ce

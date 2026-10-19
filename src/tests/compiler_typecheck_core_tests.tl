@@ -6685,6 +6685,261 @@
       unit
       (io.panic "typecheck: job-owned thread-name kind smoke failed"))))
 
+(define (tc-module-index-test-decls
+  [module-id : i64]
+  [target : i64]
+  [alias : i64]
+  [padding : i64]
+  [wrapped? : bool]) : ast.AstDeclList
+  (let
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [import : ast.AstDecl
+      (Import
+        (ast.AstDeclMeta (box (Runtime 0)))
+        (Spec
+          (Module)
+          "index-test"
+          (Some target)
+          (Some alias)
+          (box (ast.ast-source-span 1 1 1 2))))]
+    (ast.ast-decl-list-push (&mut decls) (Module module-id))
+    (for [i (iterator.range 0 padding)]
+      (ast.ast-decl-list-push (&mut decls) (IncludeStr i "row")))
+    (ast.ast-decl-list-push
+      (&mut decls)
+      (if wrapped?
+        (Unsafe (box import))
+        import))
+    decls))
+
+(define (tc-module-index-test-data [state : tc_core.TcMacroState]) : tc_core.TcModuleDeclIndexStateData
+  (tc_core.tc-state-cell-read
+    (tc_core.tc-module-decl-index-state-address state)
+    tc_core.TcModuleDeclIndexStateData))
+
+(define (tc-module-index-test-alias?
+  [state : tc_core.TcMacroState]
+  [decls : (& decls ast.AstDeclList)]
+  [module-id : i64]
+  [alias : i64]
+  [expected : i64]) : bool
+  (match (tc_core.macro-import-alias-target-ids
+    state
+    decls
+    module-id
+    alias
+    cbi.compiler-builtin-id-fix-empty)
+    [(Some target) (= target expected)]
+    [(No) (< expected 0)]))
+
+(define (tc-module-index-state-isolation-self-test) : bool
+  (let
+    [owner-a : i64 (arena.tl_arena_make_small)]
+    [owner-b : i64 (arena.tl_arena_make_small)]
+    [job-a : tc_core.TcJobState
+      (in-arena (arena.Arena owner-a) (tc_core.tc-job-state-new))]
+    [job-b : tc_core.TcJobState
+      (in-arena (arena.Arena owner-b) (tc_core.tc-job-state-new))]
+    [state-a : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-a)]
+    [state-b : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-b)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [module-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "module-a")]
+    [module-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "module-b")]
+    [target-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "target-a")]
+    [target-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "target-b")]
+    [alias-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "alias-a")]
+    [alias-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "alias-b")]
+    [other-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "other-a")]
+    [decls-a : ast.AstDeclList
+      (tc-module-index-test-decls module-a target-a alias-a 2 false)]
+    [decls-b : ast.AstDeclList
+      (tc-module-index-test-decls module-b target-b alias-b 5 true)]
+    [ambient-table : i64 (ci.intern-active-table-id)]
+    [ambient-generation : i64 (ci.intern-generation)]
+    [ambient-arena : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    (tc_core.tc-macro-state-bind-source-names!
+      state-a
+      (ci.intern-source-name-session-handle-from-state intern-a))
+    (tc_core.tc-macro-state-bind-source-names!
+      state-b
+      (ci.intern-source-name-session-handle-from-state intern-b))
+    (tc_core.tc-module-decl-index-reset! state-a)
+    (tc_core.tc-module-decl-index-release! state-a)
+    (unless
+      (and
+        (= module-a module-b)
+        (= target-a target-b)
+        (= alias-a alias-b)
+        (= (tc_core.tc-module-decl-index-arena-for-state state-a) 0)
+        (=
+          (tc_core.tc-macro-state-slot-address
+            state-a
+            tc_core.tc-macro-state-slot-module-decl-index)
+          0))
+      (io.panic
+        "typecheck: module index idle job allocated or collision missing"))
+    (in-arena
+      (arena.Arena scratch)
+      (tc_core.tc-module-decl-index-ensure! state-a (& decls-a)))
+    (unsafe
+      (arena.tl_arena_destroy scratch))
+    (unless
+      (and
+        (= (arena.tl_arena_current) ambient-arena)
+        (tc-module-index-test-alias?
+          state-a
+          (& decls-a)
+          module-a
+          alias-a
+          target-a)
+        (tc-module-index-test-alias?
+          state-b
+          (& decls-b)
+          module-b
+          alias-b
+          target-b)
+        (tc-module-index-test-alias? state-a (& decls-a) module-a -99 -1))
+      (io.panic "typecheck: module index alias or scratch lifetime mismatch"))
+    (let
+      [a : tc_core.TcModuleDeclIndexStateData
+        (tc-module-index-test-data state-a)]
+      [b : tc_core.TcModuleDeclIndexStateData
+        (tc-module-index-test-data state-b)]
+      [arena-a : i64 a.arena]
+      [arena-b : i64 b.arena]
+      [generation-a : i64 a.generation]
+      (unless
+        (and
+          (!= arena-a arena-b)
+          (= (array-ref a.ends 0) 3)
+          (= (array-ref b.ends 0) 6)
+          (= (array-ref a.import-positions 0) 3)
+          (= (array-ref b.import-positions 0) 6)
+          (= a.intern-table-id (ci.intern-compat-state-table-id intern-a))
+          (= b.intern-table-id (ci.intern-compat-state-table-id intern-b)))
+        (io.panic "typecheck: module index independent payload or owner stamp"))
+      ;; A non-shape rewrite revalidates without rebuilding its payload.
+      (set! (array-ref decls-a.slots 1) (IncludeStr 100 "replacement"))
+      (tc_core.tc-module-decl-index-reset! state-a)
+      (tc_core.tc-module-decl-index-ensure! state-a (& decls-a))
+      (unless
+        (= (tc_core.tc-module-decl-index-arena-for-state state-a) arena-a)
+        (io.panic "typecheck: module index rebuilt an unchanged shape"))
+      ;; The same list address/length with a changed import must rebuild.
+      (set! (array-ref decls-a.slots 3) (IncludeStr 101 "no import"))
+      (tc_core.tc-module-decl-index-reset! state-a)
+      (tc_core.tc-module-decl-index-ensure! state-a (& decls-a))
+      (unless
+        (and
+          (!= (tc_core.tc-module-decl-index-arena-for-state state-a) arena-a)
+          (tc-module-index-test-alias? state-a (& decls-a) module-a alias-a -1)
+          (= (array-ref b.positions 5) 6)
+          (= (tc_core.tc-module-decl-index-arena-for-state state-b) arena-b))
+        (io.panic "typecheck: module index stale import or peer rebuild"))
+      (let
+        [grown : ast.AstDeclList
+          (tc-module-index-test-decls module-a target-a alias-a 4096 true)]
+        [window : ast.AstDeclList
+          (match (ast.ast-decl-list-step (& grown))
+            [(Cons _ tail) tail]
+            [(Nil) (ast.ast-decl-list-new)])]
+        [empty : ast.AstDeclList (ast.ast-decl-list-new)]
+        (tc_core.tc-module-decl-index-ensure! state-a (& grown))
+        (unless
+          (=
+            (array-ref (tc-module-index-test-data state-a).positions 4096)
+            4097)
+          (io.panic "typecheck: module index lost grown payload pages"))
+        (unless
+          (and
+            (tc-module-index-test-alias?
+              state-a
+              (& window)
+              cbi.compiler-builtin-id-fix-empty
+              alias-a
+              target-a)
+            (tc-module-index-test-alias? state-a (& window) module-a alias-a -1)
+            (tc-module-index-test-alias? state-a (& empty) module-a alias-a -1))
+          (io.panic "typecheck: module index offset or empty boundary"))
+        (tc_core.tc-module-decl-index-ensure! state-a (& grown))
+        (set! (array-ref grown.slots 0) (Module other-a))
+        (tc_core.tc-module-decl-index-reset! state-a)
+        (unless
+          (and
+            (tc-module-index-test-alias?
+              state-a
+              (& grown)
+              other-a
+              alias-a
+              target-a)
+            (tc-module-index-test-alias? state-a (& grown) module-a alias-a -1))
+          (io.panic "typecheck: module index same-length module rewrite"))
+        ;; The ambient interner stays installed while A's owner is reset.
+        (ci.intern-compat-state-reset! (&mut intern-a))
+        (tc_core.tc-macro-state-bind-source-names!
+          state-a
+          (ci.intern-source-name-session-handle-from-state intern-a))
+        (tc_core.tc-module-decl-index-ensure! state-a (& grown))
+        (let
+          [reset : tc_core.TcModuleDeclIndexStateData
+            (tc-module-index-test-data state-a)]
+          (unless
+            (and
+              (!= reset.generation generation-a)
+              (=
+                reset.generation
+                (tc_core.tc-macro-state-source-name-reset-generation state-a))
+              (=
+                reset.intern-table-id
+                (ci.intern-compat-state-table-id intern-a))
+              (= (ci.intern-active-table-id) ambient-table)
+              (= (ci.intern-generation) ambient-generation))
+            (io.panic
+              "typecheck: module index used the installed interner stamp"))))
+      (in-arena
+        (arena.Arena owner-b)
+        (tc_core.tc-job-state-retire-owned-storage! job-a)
+        (tc_core.tc-module-decl-index-release! state-a))
+      (let
+        [retired : tc_core.TcModuleDeclIndexStateData
+          (tc-module-index-test-data state-a)]
+        (unless
+          (and
+            (not retired.ready)
+            (= retired.arena 0)
+            (= (array-length retired.positions) 0)
+            (= (array-length retired.import-positions) 0)
+            (= (array-length retired.seq) 0))
+          (io.panic "typecheck: module index retained retired payload views")))
+      (unsafe
+        (arena.tl_arena_destroy owner-a))
+      (unless
+        (and
+          (= (arena.tl_arena_current) ambient-arena)
+          (= (array-ref b.positions 5) 6)
+          (= (tc_core.tc-module-decl-index-arena-for-state state-b) arena-b)
+          (tc-module-index-test-alias?
+            state-b
+            (& decls-b)
+            module-b
+            alias-b
+            target-b))
+        (io.panic "typecheck: retiring module index A changed B"))
+      (tc_core.tc-job-state-retire-owned-storage! job-b)
+      (unsafe
+        (arena.tl_arena_destroy owner-b))
+      true)))
+
+(cfg
+  test
+  (test
+    tc-module-index-job-owned
+    (unless
+      (tc-module-index-state-isolation-self-test)
+      (io.panic "typecheck: module index job ownership failed"))))
+
 (define (tc-nominal-clone-state-isolation-self-test) : bool
   (let
     [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]

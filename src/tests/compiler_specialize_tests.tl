@@ -1291,6 +1291,29 @@
           [(Err _) false]))]
     [(Err _) false]))
 
+;; Specialization builds its reflections CTFE environment only once the program
+;; has templates. A comptime String parameter fed by a type reflection still
+;; specializes through the path-carrying entry point that lowering uses.
+(define (compiler-specialize-lazy-ctfe-env-paths-ok?) : bool
+  (match (parser.parse-ast-source
+    "(defstruct Point (x i64))
+(define (tag-helper [comptime key : String] [x : i64]) : i64 x)
+(define (main) : i64 (tag-helper (type-key (type Point)) 7))")
+    [(Ok program)
+      (match (compiler-specialize-program-with-paths
+        program
+        (ast.ast-decl-path-list-new)
+        "lazy.tl")
+        [(Ok specialized _)
+          (let
+            [decls : ast.AstDeclList
+              (compiler-specialize-program-decls specialized)]
+            (spec.compiler-specialize-decl-list-defines?
+              decls
+              "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))]
+        [(Err _) false])]
+    [(Err _) false]))
+
 (define (compiler-generated-decl-expected-string-key) : String
   (spec.gen-full-key
     ""
@@ -1558,6 +1581,36 @@
             (string.eq
               (cdiag.compiler-diagnostic-path value)
               "generated/second.tl"))])]
+    [(Err _) false]))
+
+;; Normalization builds its reflections CTFE environment only on first read.
+;; This keyless pair reaches both readers through the path-carrying entry
+;; point that lowering uses: the CTFE-evaluated key of each declaration, and
+;; the payload comparison when the second registers under the first's key.
+(define (compiler-generated-decl-lazy-env-paths-reuse-ok?) : bool
+  (match (compiler-generated-decl-reuse-program)
+    [(Ok program)
+      (match (compiler-specialize-program-with-paths
+        program
+        (ast.ast-decl-root-path-cons
+          "generated/first.tl"
+          (ast.ast-decl-root-path-cons
+            "generated/second.tl"
+            (ast.ast-decl-path-list-new)))
+        "generated/fallback.tl")
+        [(Ok normalized out-paths)
+          (let
+            [decls : ast.AstDeclList
+              (compiler-specialize-program-decls normalized)]
+            (and
+              (=
+                (compiler-specialize-decl-list-count-visible decls "Box_String")
+                1)
+              (= (ast.ast-decl-path-list-len (& out-paths)) 1)
+              (string.eq
+                (ast.ast-decl-path-list-get (& out-paths) 0 "")
+                "generated/first.tl")))]
+        [(Err _) false])]
     [(Err _) false]))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
@@ -1859,12 +1912,14 @@
   (unless (compiler-specialize-resource-ok?) (return 0))
   (unless (compiler-specialize-boxed-tails-ok?) (return 0))
   (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
+  (unless (compiler-specialize-lazy-ctfe-env-paths-ok?) (return 0))
   (unless (compiler-generated-decl-reuse-ok?) (return 0))
   (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
   (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
   (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
   (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
   (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
+  (unless (compiler-generated-decl-lazy-env-paths-reuse-ok?) (return 0))
   (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
   (unless (compiler-generated-registry-map-ok?) (return 0))
   (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))

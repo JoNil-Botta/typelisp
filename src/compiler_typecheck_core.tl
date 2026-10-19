@@ -2731,7 +2731,12 @@
   ;; Inference/normalization has a separate checked per-body work budget; this
   ;; counter does not claim to account for unsupported legacy analysis.
   (selected-certificate-work i64)
-  (selected-retained-bytes i64))
+  (selected-retained-bytes i64)
+  ;; The module and expression of each view read or copied where a write
+  ;; through the view made it a mutable view (`mutable-views` of a normalized
+  ;; body): lowering binds it to the viewed storage.
+  (mutable-view-modules (__tl_dyn-array i64))
+  (mutable-view-exprs (__tl_dyn-array i64)))
 
 ;; Serialized identity allocation, not a registry of bodies or payloads.
 ;; Structural interner owners use a packed-key range and cannot supply this
@@ -20201,17 +20206,24 @@
                             source
                             sink)])])
                   (match (let
+                    ;; A view binder's fields are the viewed storage's
+                    ;; (`tc-selected-view-receiver`): the store writes through
+                    ;; the view, as every other write to a view's part does.
                     [receiver-place : (TcSelectedPlaceResult
                       store
                       lease
                       intern
                       bind)
-                      (tc-infer-selected-place-id
+                      (tc-selected-view-receiver
                         ctx
                         env
-                        receiver-id
-                        (tc-global-shared-view source)
-                        sink)]
+                        (ownership.ownership-source-copy (& source))
+                        (tc-infer-selected-place-id
+                          ctx
+                          env
+                          receiver-id
+                          (tc-global-shared-view source)
+                          sink))]
                     ;; A tuple element store names its element by index.
                     (if (ast.ast-tuple-set-field-id? field)
                       (tc-selected-place-tuple
@@ -21249,7 +21261,9 @@
         (tc_i64_i64_map.with-capacity 1)
         0
         0
-        0))
+        0
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)))
     (TcBodyState
       (cast
         (unsafe
@@ -64217,12 +64231,8 @@
             sink))]
       [_ unit])
     (match (tc-store-place-lifetime ctx env (tc-global-shared-view place))
-      [(ResultTcNameId.Err _)
-        (TcSelectedResult.Err
-          (tc-kind-message
-            (cdiag.CompilerTypecheckKind.Place)
-            "typecheck: replace! target must be a storage place")
-          sink)]
+      [(ResultTcNameId.Err message)
+        (TcSelectedResult.Err (tc-replace-storage-place-error message) sink)]
       [(ResultTcNameId.Ok _)
         (if (tc-active-cleanup-owner-place?
           ctx
@@ -75537,7 +75547,34 @@
             (tc-borrow-place-box-get ctx place))]
         [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _))
           (if (tc-borrow-place-form? expr-bases (& receiver))
-            (tc-borrow-place-with-access ctx expr-bases env mutable receiver)
+            (let
+              [place : TcBorrowPlace
+                (try
+                  (tc-borrow-place-with-access
+                    ctx
+                    expr-bases
+                    env
+                    mutable
+                    (clone receiver)))]
+              ;; A name or a field already names the referent of the reference
+              ;; it holds (`tc-borrow-place-var`, `tc-borrow-place-projected-
+              ;; type`); a dereference, element or box place holds the
+              ;; reference itself, so the deref steps through it, keeping the
+              ;; path's shared flag (a `&mut` behind a `&` stays shared).
+              (match (ast.ast-expr-unspan-with-segment-bases
+                expr-bases
+                (& receiver))
+                [(or (ast.AstExpr.BoxTake _) (ast.AstExpr.BoxGet _)
+                     (ast.AstExpr.ArrayRef _ _))
+                  (match place
+                    [(TcBorrowPlace lifetime held shared through-ref)
+                      (ResultTcBorrowPlace.Ok
+                        (tc-borrow-place-projected-type
+                          lifetime
+                          (tc-type-strip-region (tc-resolve-type ctx held))
+                          shared
+                          through-ref))])]
+                [_ (ResultTcBorrowPlace.Ok place)]))
             (tc-borrow-place-var -1 (tc-resolve-type ctx receiver-ty)))]
         [_
           (ResultTcBorrowPlace.Err
@@ -75731,6 +75768,25 @@
     [(Ok lifetime _) (ResultTcNameId.Ok lifetime)]
     [(Err message) (ResultTcNameId.Err message)]))
 
+;; A `&mut` held in storage that `holder` reaches through a shared reference
+;; grants only shared access (Rust's supporting prefixes, E0594/E0596): writing
+;; its referent is the `&mut` borrow rule's violation (#8694, #8696), whatever
+;; form writes. A holder that is a value is a temporary the write owns.
+(define (tc-held-mut-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [holder : (& holder ast.AstExpr)]) : ResultTcUnit
+  (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    (if (tc-borrow-place-form? expr-bases holder)
+      (match (tc-borrow-place ctx expr-bases env (clone (deref holder)))
+        [(ResultTcBorrowPlace.Ok (TcBorrowPlace _ _ through-shared _))
+          (if through-shared
+            (ResultTcUnit.Err (tc-borrow-through-shared-message))
+            ResultTcUnit.Ok)]
+        [(ResultTcBorrowPlace.Err _) ResultTcUnit.Ok])
+      ResultTcUnit.Ok)))
+
 (define (tc-store-place-target
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -75774,6 +75830,7 @@
         [_ (try (tc-box-set-inner-type ctx (tc-global-shared-view box-ty)))]
         (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
           [(MutRef lifetime referent)
+            (try (tc-held-mut-ok ctx env (& box-expr)))
             (tc-store-place-reference-target ctx lifetime referent)]
           [_ (tc-store-place-target ctx env box-expr)]))]
     [(BoxTake receiver-box)
@@ -75793,6 +75850,7 @@
                     (tc-global-shared-view receiver-ty)))]
               (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
                 [(MutRef lifetime referent)
+                  (try (tc-held-mut-ok ctx env (& receiver)))
                   (tc-store-place-reference-target ctx lifetime referent)]
                 [_ (tc-store-place-target ctx env receiver)]))]))]
     [_
@@ -75907,6 +75965,13 @@
           context
           "; reference value would escape lexical scope"))]))
 
+;; A `&mut` borrow of, or a write through, a place whose path passes through a
+;; shared reference (#8694, #8696): the one diagnostic every form reports.
+(define (tc-borrow-through-shared-message) : String
+  (tc-kind-message
+    (BorrowViolation)
+    "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)"))
+
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
@@ -75914,10 +75979,7 @@
   (match place
     [(TcBorrowPlace inferred referent-ty through-shared _)
       (if (and mutable through-shared)
-        (Err
-          (tc-kind-message
-            (BorrowViolation)
-            "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)"))
+        (Err (tc-borrow-through-shared-message))
         (match lifetime
           [(Inferred)
             (Ok
@@ -82515,9 +82577,16 @@
   [box-expr : ast.AstExpr]
   [value : ast.AstExpr]) : ResultTcType
   (let
-    [_ (try (tc-store-place-lifetime ctx env (tc-global-shared-view box-expr)))]
+    [box-ty (try (tc-expr ctx env (clone box-expr)))]
+    ;; The written place `(deref box)`: a box's contents in the box's own
+    ;; storage, a `&mut` referent through the reference wherever it is held
+    ;; (`tc-store-place-target`).
+    [target : ast.AstExpr
+      (tc-context-expr-get
+        ctx
+        (ast.ast-expr-box-get (ast.ast-node-push box-expr)))]
+    [_ (try (tc-store-place-lifetime ctx env (clone target)))]
     (let
-      [box-ty (try (tc-expr ctx env (tc-global-shared-view box-expr)))]
       [target-context : String
         (match (tc-type-strip-region
           (tc-resolve-type ctx (tc-global-shared-view box-ty)))
@@ -82553,9 +82622,7 @@
                 (tc-ensure-reference-value-can-store-in-place
                   ctx
                   env
-                  (tc-context-expr-get
-                    ctx
-                    (ast.ast-expr-box-get (ast.ast-node-push box-expr)))
+                  target
                   value-ty
                   target-context))]
             (Ok (Unit))))))))
@@ -83581,8 +83648,9 @@
 ;; a reference, a view tagged with the reference's lifetime
 ;; (`tc-deref-result-type`), and a box's contents projected from that view
 ;; would type `replace!`'s old value as borrowed from the reference rather
-;; than as the owned value it takes out. A plain name or any other value is
-;; the reference or box itself.
+;; than as the owned value it takes out. A plain name or any other value, or a
+;; receiver whose place type typing cannot give as a mutable place (a `&mut`
+;; reached through a `&`), is read as the reference or box itself.
 (define (tc-deref-place-receiver-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -83599,7 +83667,11 @@
            (ast.AstExpr.BoxTake _))
         true]
       [_ false])
-      (tc-replace-place-value-type-with-access ctx env mutable receiver)
+      ;; Whether the storage is writable is the ownership graph's verdict
+      ;; for the whole path (`normalize-exclusive-ok`), not this type's.
+      (match (tc-replace-place-value-type-with-access ctx env mutable receiver)
+        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+        [(ResultTcType.Err _) (tc-expr-id ctx env receiver-id)])
       (tc-expr-id ctx env receiver-id))))
 
 (define (tc-replace-type
@@ -83685,11 +83757,17 @@
                           replacement-ty
                           "replace! destination"))]
                     (Ok place-ty))))))))]
-    [(Err _)
-      (Err
-        (tc-kind-message
-          (Place)
-          "typecheck: replace! target must be a storage place"))]))
+    [(Err message) (Err (tc-replace-storage-place-error message))]))
+
+;; A `replace!` target that is no storage place, or that is reached only
+;; through a shared reference (E0215). A `&mut` reached through a shared
+;; reference keeps the `&mut` borrow rule's diagnostic (`tc-held-mut-ok`).
+(define (tc-replace-storage-place-error [message : String]) : String
+  (if (string.eq message (tc-borrow-through-shared-message))
+    message
+    (tc-kind-message
+      (Place)
+      "typecheck: replace! target must be a storage place")))
 
 (define (tc-array-push-receiver [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcArrayReceiver
   (match (tc-type-strip-region
@@ -121679,7 +121757,76 @@
 ;; value can conflict with a call's effect on a global (#7904), so only such
 ;; a body asks the global effect graph, and is normalized again with the
 ;; global writes its calls and cleanups make.
+;; A certified body's mutable views are noted for lowering
+;; (`tc-selected-mutable-view?`).
 (define (tc-selected-normalize-body
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [root : typed.TypedOccurrenceId]
+  [return-type : typed.TypedTypeId]
+  [limits : ownership_normalize.OwnershipNormalizeLimits]) : ownership_normalize.OwnershipNormalizeResult
+  (let
+    [result : ownership_normalize.OwnershipNormalizeResult
+      (tc-selected-normalize-body-passes
+        ctx
+        store
+        lease
+        root
+        return-type
+        limits)]
+    (match (& result)
+      [(ownership_normalize.OwnershipNormalizeResult.Ok output)
+        (when
+          (and
+            (> (array-length output.mutable-views) 0)
+            (tc-selected-lowering? (tc-context-body-state ctx)))
+          ;; Lowering reads them after this body's scratch arena is gone.
+          (in-arena
+            (unsafe
+              (arena.Arena
+                (tc-job-state-field (tc-context-job-state ctx) owner-arena i64)))
+            (let
+              [data : TcBodyStateData
+                (tc-body-state-data-value (tc-context-body-state ctx))]
+              [index : i64 0]
+              (while (< index (array-length output.mutable-views))
+                (begin
+                  (__tl_array-push!
+                    data.mutable-view-modules
+                    (tc-context-module-id ctx))
+                  (__tl_array-push!
+                    data.mutable-view-exprs
+                    (array-ref output.mutable-views index))
+                  (set! index (+ index 1))))
+              (tc-body-state-data-set! (tc-context-body-state ctx) data))))]
+      [_ unit])
+    result))
+
+;; Whether the source expression `expr-id` of the module being lowered reads
+;; or copies a mutable view: a view a write goes through, which shares the
+;; viewed storage (SPEC: views read through a reference).
+(define (tc-selected-mutable-view? [ctx : TcContext] [expr-id : i64]) : bool
+  (let
+    [data : (Ptr TcBodyStateData)
+      (tc-body-state-view (tc-context-body-state ctx))]
+    [module : i64 (tc-context-module-id ctx)]
+    [found : bool false]
+    [index : i64 0]
+    (unsafe
+      (while (and
+        (not found)
+        (>= expr-id 0)
+        (< index (array-length (deref data).mutable-view-exprs)))
+        (when
+          (and
+            (= (array-ref (deref data).mutable-view-exprs index) expr-id)
+            (= (array-ref (deref data).mutable-view-modules index) module))
+          (set! found true))
+        (set! index (+ index 1))))
+    found))
+
+(define (tc-selected-normalize-body-passes
   [ctx : TcContext]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
@@ -122168,6 +122315,9 @@
         "typecheck: cannot mutably borrow `"
         name
         "` behind a shared reference")]
+    ;; A `&mut` reached through a shared reference: the `&mut` borrow rule
+    ;; (`tc-borrow-place-result-type`), whatever form writes through it.
+    [(= access 7) (tc-borrow-through-shared-message)]
     [else (tc-borrow-check-read-message name)]))
 
 ;; A binder and field path as the legacy checkers render it (`h.items`,
@@ -122267,7 +122417,7 @@
           (ResultTcUnit.Err
             (tc-selected-expansion-framed
               (& core.source.expansion)
-              (if (= diagnostic.access 5)
+              (if (or (= diagnostic.access 5) (= diagnostic.access 7))
                 (tc-rich-error-one-secondary
                   (tc-selected-source-span (& core.source))
                   (tc-selected-borrow-message

@@ -46304,6 +46304,26 @@
     [(or (= left 1) (= right 1)) 1]
     [else 0]))
 
+;; Whether the initializer `init-id` (through spans and macro expansions)
+;; reads or copies a mutable view, a view the checker certified a write goes
+;; through (`tc-selected-mutable-view?`): it is the viewed storage itself.
+(define (lower-mutable-view-init? [ctx : tc_core.TcContext] [init-id : i64]) : bool
+  (let
+    [id : i64 init-id]
+    [found : bool false]
+    [steps : i64 0]
+    (while (and (not found) (>= id 0) (< steps 64))
+      (if (tc_core.tc-selected-mutable-view? ctx id)
+        (set! found true)
+        (set!
+          id
+          (match (lower-context-expr-get ctx id)
+            [(ast.AstExpr.Spanned inner _) inner]
+            [(ast.AstExpr.MacroExpansion expanded _ _) expanded]
+            [_ -1])))
+      (set! steps (+ steps 1)))
+    found))
+
 (define (lower-let-init
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -46311,6 +46331,7 @@
   [type-env : tc_core.TcTypeEnv]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]
+  [init-id : i64]
   [name : i64]
   ;; The binding's scope: the later bindings from `scope-index` on, then the
   ;; body (`body-id`, -1 when not known).
@@ -46428,6 +46449,12 @@
             (match (& init-value)
               [(ir.CompilerIrValue.Var id)
                 (cond
+                  ;; A mutable view is the viewed storage (SPEC: views read
+                  ;; through a reference): its writes must land there, so the
+                  ;; binding shares that storage and never owns it.
+                  [(lower-mutable-view-init? ctx init-id)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr init-state init-value init-ty))]
                   [(or
                       (let
                         [root : i64 (lower-state-storage-root init-state id)]
@@ -46520,6 +46547,7 @@
             type-env
             (lower-global-shared-view maybe-ty)
             (lower-global-shared-view init)
+            init-box
             name-id
             bindings
             (+ index 1)

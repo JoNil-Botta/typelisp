@@ -1836,10 +1836,20 @@ binder is a view too). A view cannot become an owned value of its plain type:
 an `if` or `match` join with an owned value, a `let` declared with the plain
 type, or a function result would move the value out from behind the reference,
 which section 3.4's `deref` rule rejects ("cannot move non-Copy value through
-shared reference"). Writing a view's elements or fields, or lending it with
-`(&mut ...)`, writes through the shared reference and is rejected ("cannot
-mutably borrow ... behind a shared reference"). The non-escaping subtype rule
-above concerns arena regions; it does not make a view writable or owned.
+shared reference"). A view keeps the references it was read through. Read
+through `&mut` references only, it is a *mutable view*: writing its elements
+or fields, `replace!` of its parts and lending it with `(&mut ...)` write the
+referent itself, and a view read through it, or a copy of it, is mutable too.
+A mutable view that is written holds its path exclusively while it is used, as
+a `&mut` reborrow does: using the owner, or another view of the same storage,
+before the view's last use is rejected ("cannot ... borrowed place"). A view
+that is never written stays a shared borrow. Read through any `&`, a view is
+shared: writing its elements or fields, or lending it with `(&mut ...)`, writes
+through the shared reference and is rejected ("cannot mutably borrow ...
+behind a shared reference", or "mutable borrow through a shared reference"
+when the write reaches a `&mut` through that `&`). The non-escaping subtype
+rule above concerns
+arena regions; it does not make a view writable or owned.
 
 **Confinement rule:** A region-tagged value may cross a function boundary only
 when the signature explicitly preserves its input-tied lifetime. For example,

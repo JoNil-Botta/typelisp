@@ -9753,15 +9753,16 @@
 
 ;; A place is writable only when every reference on its path is mutable (Rust's
 ;; supporting prefixes): a `&mut` reached through a `&` grants shared access,
-;; so `replace!` of its referent is rejected like `set!` and `&mut` (E0207),
-;; and accepted when the outer reference is `&mut`.
+;; so `replace!` and `set!` of its referent report the `&mut` borrow rule's
+;; diagnostic, as a `&mut` reborrow does, and are accepted when the outer
+;; reference is `&mut`.
 (define (compiler-typecheck-replace-shared-path-ok?) : bool
   (let
     [prefix : String
       "(defstruct Pt (name String) (x i64))
 (defstruct Holder (:lifetimes a) (r (&mut a Pt)) (n i64))
 "]
-    [shapes : (Array String 7)
+    [shapes : (Array String 9)
       (array
         "(Tuple (&mut a Pt) i64)) ]) : Pt (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2)))"
         "(&mut a Pt)) ]) : Pt (replace! (deref (deref h)) (Pt \"z\" 2)))"
@@ -9769,20 +9770,21 @@
         "(Holder a)) ]) : Pt (replace! (deref (deref h).r) (Pt \"z\" 2)))"
         "(Holder a)) ]) : String (replace! (deref h.r).name \"z\"))"
         "(Box (Tuple (&mut a Pt) i64))) ]) : Pt (replace! (deref (tuple-ref (deref (deref h)) 0)) (Pt \"z\" 2)))"
-        "(__tl_dyn-array (&mut a Pt))) ]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))")]
+        "(__tl_dyn-array (&mut a Pt))) ]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(Tuple (&mut a Pt) i64)) ]) : unit (set! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(&mut a Pt)) ]) : unit (set! (deref (deref h)).x 5))")]
     [ok : bool true]
     (for [index (iterator.range 0 (array-length shapes))]
       (set!
         ok
         (and
           ok
-          (compiler-typecheck-error-code-ok?
+          (compiler-typecheck-error-ok?
             (str_cat.str-cat
               (clone prefix)
               "(define (sneak [h : (& h "
               (clone (array-ref shapes index)))
-            "E0207"
-            "typecheck")
+            "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)")
           (compiler-typecheck-ok?
             (str_cat.str-cat
               (clone prefix)
@@ -9790,8 +9792,57 @@
               (clone (array-ref shapes index)))))))
     ok))
 
+;; A view's writability follows the references it was read through (SPEC:
+;; views read through a reference): through `&mut` only it is a mutable view,
+;; written in place, lent mutably and viewed again, whose loan is exclusive
+;; while it is used; through any `&` every write is a write through `&`.
+(define (compiler-typecheck-view-writability-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct In (b (Box String)) (n i64))
+(defstruct Mid (i In) (k i64))
+(defstruct Out (s In) (m Mid) (t i64))
+(define (look [p : (& p Out)]) : i64 p.t)
+(define (bump-in [q : (&mut q In)]) : unit (set! q.n (+ q.n 1)))
+"]
+    [valid : (Array String 7)
+      (array
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] (set! (deref v.b) \"zz\")))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] (let [_o (replace! v.b (box \"zz\"))] unit)))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] (set! v.n 7)))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] (bump-in (&mut v))))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.m] (let [u v.i] (set! u.n 9))))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] (let [w v] (set! w.n 8))))"
+        "(define (f [p : (&mut p Out)]) : i64 (let [v p.s] (set! v.n 1) (look p)))")]
+    [invalid : (Array String 5)
+      (array
+        "(define (f [p : (& p Out)]) : unit (let [v p.s] (set! v.n 7)))"
+        "(define (f [p : (& p Out)]) : unit (let [v p.s] (set! (deref v.b) \"zz\")))"
+        "(define (f [p : (& p Out)]) : unit (let [v p.m] (let [u v.i] (set! u.n 9))))"
+        "(define (f [p : (&mut p Out)]) : i64 (let [v p.s] (let [t (look p)] (set! v.n 7) t)))"
+        "(define (f [p : (&mut p Out)]) : unit (let [v p.s] [w p.s] (let [_r (& w)] (set! v.n 7) (bump-in (&mut w)))))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            "E0207"
+            "typecheck"))))
+    ok))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-view-writability-ok?)
     (compiler-typecheck-place-read-receivers-ok?)
     (compiler-typecheck-place-through-shared-ok?)
     (compiler-typecheck-replace-place-own-value-ok?)

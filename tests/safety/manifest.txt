@@ -1829,9 +1829,9 @@ mir_reborrow_param_call_store_reject|check-fail|tests/safety/mir_reborrow_param_
 mir_reborrow_holder_ok|run-exit|tests/safety/mir_reborrow_holder_ok.tl|42|-
 mir_closure_result_loan_reject|check-fail|tests/safety/mir_closure_result_loan_reject.tl|tests/safety/mir_closure_result_loan_reject.tl:15:11|cannot assign to borrowed place `p.l`
 mir_closure_result_loan_ok|run-exit|tests/safety/mir_closure_result_loan_ok.tl|42|-
-mir_shared_mut_reference_push_reject|check-fail|tests/safety/mir_shared_mut_reference_push_reject.tl|tests/safety/mir_shared_mut_reference_push_reject.tl:4:21|cannot mutably borrow `r` behind a shared reference
-mir_shared_mut_reference_field_push_reject|check-fail|tests/safety/mir_shared_mut_reference_field_push_reject.tl|tests/safety/mir_shared_mut_reference_field_push_reject.tl:8:21|cannot mutably borrow `h` behind a shared reference
-mir_shared_mut_reference_field_set_reject|check-fail|tests/safety/mir_shared_mut_reference_field_set_reject.tl|tests/safety/mir_shared_mut_reference_field_set_reject.tl:7:3|cannot mutably borrow `r.a` behind a shared reference
+mir_shared_mut_reference_push_reject|check-fail|tests/safety/mir_shared_mut_reference_push_reject.tl|tests/safety/mir_shared_mut_reference_push_reject.tl:4:21|mutable borrow through a shared reference
+mir_shared_mut_reference_field_push_reject|check-fail|tests/safety/mir_shared_mut_reference_field_push_reject.tl|tests/safety/mir_shared_mut_reference_field_push_reject.tl:8:21|mutable borrow through a shared reference
+mir_shared_mut_reference_field_set_reject|check-fail|tests/safety/mir_shared_mut_reference_field_set_reject.tl|tests/safety/mir_shared_mut_reference_field_set_reject.tl:7:3|mutable borrow through a shared reference
 mir_box_holder_move_out_reject|check-fail|tests/safety/mir_box_holder_move_out_reject.tl|tests/safety/mir_box_holder_move_out_reject.tl:9:23|cannot assign to borrowed place `xs`
 mir_box_holder_struct_move_out_reject|check-fail|tests/safety/mir_box_holder_struct_move_out_reject.tl|tests/safety/mir_box_holder_struct_move_out_reject.tl:12:23|cannot assign to borrowed place `xs`
 mir_box_holder_move_out_ok|run-exit|tests/safety/mir_box_holder_move_out_ok.tl|42|-
@@ -1932,14 +1932,26 @@ replace_place_through_inner_shared_reject|check-fail|tests/safety/replace_place_
 reborrow_through_inner_shared_array_reject|check-fail|tests/safety/reborrow_through_inner_shared_array_reject.tl|-|mutable borrow through a shared reference
 
 # replace! writes its place: a `&mut` reached through a shared reference is not
-# writable on any path (Rust E0594); the old value keeps an arena's brand; a
+# writable on any path (the `&mut` borrow rule, as main's
+# replace_place_through_shared_* rows); the old value keeps an arena's brand; a
 # computed reference's referent is reached through a temporary.
-replace_through_shared_tuple_reject|check-fail|tests/safety/replace_through_shared_tuple_reject.tl|-|set! deref requires mutable access
-replace_through_shared_ref_reject|check-fail|tests/safety/replace_through_shared_ref_reject.tl|-|set! deref requires mutable access
-replace_through_shared_array_reject|check-fail|tests/safety/replace_through_shared_array_reject.tl|-|cannot mutably borrow `h` behind a shared reference
-replace_through_shared_field_reject|check-fail|tests/safety/replace_through_shared_field_reject.tl|-|set! deref requires mutable access
-replace_through_shared_stored_field_reject|check-fail|tests/safety/replace_through_shared_stored_field_reject.tl|-|replace! requires mutable place access
-replace_through_shared_box_reject|check-fail|tests/safety/replace_through_shared_box_reject.tl|-|set! deref requires mutable access
-replace_through_shared_buffer_reject|check-fail|tests/safety/replace_through_shared_buffer_reject.tl|-|cannot mutably borrow `h` behind a shared reference
+replace_through_shared_field_reject|check-fail|tests/safety/replace_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+replace_through_shared_stored_field_reject|check-fail|tests/safety/replace_through_shared_stored_field_reject.tl|-|mutable borrow through a shared reference
+replace_through_shared_buffer_reject|check-fail|tests/safety/replace_through_shared_buffer_reject.tl|-|mutable borrow through a shared reference
+set_through_shared_mut_reject|check-fail|tests/safety/set_through_shared_mut_reject.tl|-|mutable borrow through a shared reference
+set_field_through_shared_mut_reject|check-fail|tests/safety/set_field_through_shared_mut_reject.tl|-|mutable borrow through a shared reference
 replace_arena_box_old_value_reject|check-fail|tests/safety/replace_arena_box_old_value_reject.tl|-|use of moved value `old`
 deref_computed_shared_reference_mut_reject|check-fail|tests/safety/deref_computed_shared_reference_mut_reject.tl|-|mutable borrow through a shared reference
+
+# A view's writability follows the references it was read through: through
+# `&mut` only it is a mutable view whose writes land in the referent and whose
+# loan is exclusive while it is used; through any `&` it stays shared.
+view_mut_replace_ok|run-exit|tests/safety/view_mut_replace_ok.tl|2|-
+view_mut_set_ok|run-exit|tests/safety/view_mut_set_ok.tl|2|-
+view_mut_field_ok|run-exit|tests/safety/view_mut_field_ok.tl|7|-
+view_mut_borrow_ok|run-exit|tests/safety/view_mut_borrow_ok.tl|2|-
+view_of_view_mut_ok|run-exit|tests/safety/view_of_view_mut_ok.tl|9|-
+view_mut_owner_use_reject|check-fail|tests/safety/view_mut_owner_use_reject.tl|-|cannot mutably borrow borrowed place `p`
+view_mut_second_view_reject|check-fail|tests/safety/view_mut_second_view_reject.tl|-|cannot mutably borrow borrowed place `p.s`
+view_shared_field_set_reject|check-fail|tests/safety/view_shared_field_set_reject.tl|-|cannot mutably borrow `p.s.n` behind a shared reference
+view_of_view_shared_reject|check-fail|tests/safety/view_of_view_shared_reject.tl|-|cannot mutably borrow `p.m.i.b` behind a shared reference

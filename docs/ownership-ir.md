@@ -76,7 +76,20 @@ trusted. `replace!` behind an opaque referent (a reference reached through
 another reference) reserves and activates the referent like a two-phase
 borrow and writes through the referent's loan, which is exclusive only when
 every reference on the path is mutable: a `&mut` behind a `&` is not
-writable (E0207, Rust E0594). A read through a
+writable (Rust E0594). Every write or mutable borrow reaching a `&mut`
+through a `&` reports the `&mut` borrow rule's E0207 "mutable borrow through
+a shared reference" (`normalize-exclusive-ok`, access kind 7, and typing's
+`tc-held-mut-ok` for a write target whose held `&mut` is reached through one);
+a write through a `&` itself keeps its own diagnostic. A view (a non-Copy value read by value
+through a reference) is a shared loan of the viewed place; the first write or
+mutable reborrow through it makes that loan, and every view loan it was read
+through, exclusive for its whole life when every reference on its path is
+`&mut` (`normalize-exclusive-ok`), and rejects the write otherwise. The
+expressions reading or copying such a mutable view are reported with the
+normalized body (`mutable-views`), and lowering binds them to the viewed
+storage instead of a copy. A borrowed match on a view still binds its
+patterns as opaque shared references, so a write through such a binder is
+rejected (E0207) even behind `&mut` (main accepts it). A read through a
 reference that may point to several places sees the loans of all of them, so
 writing a place only one of them borrows can be rejected while another is
 read (main rejects that too; Rust accepts it). A raw address
@@ -1080,7 +1093,8 @@ is deliberate and has a regression twin:
   - a `&mut` reached through a `&` took an exclusive loan on its referent.
     Through a shared loan every inner loan is shared, whatever the access, so
     a push, an element or field store, or a mutable borrow through it is
-    rejected (Rust E0596/E0594: `mir_shared_mut_reference_push_reject`,
+    rejected with the `&mut` borrow rule's "mutable borrow through a shared
+    reference" (Rust E0596/E0594: `mir_shared_mut_reference_push_reject`,
     `mir_shared_mut_reference_field_push_reject`,
     `mir_shared_mut_reference_field_set_reject`).
 - **Lowering and optimization of the forms the graph now accepts.** Main's

@@ -1079,3 +1079,4 @@ indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl
 
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
 replace_place_paths|all|0,1,2|tests/integration/replace_place_paths.tl|42|-|-|-|-
+view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-

@@ -218,9 +218,19 @@ diagnostic (E0207), not an incidental move error.
 box contents reached through `&mut` (directly, through a field, nested) as
 returned owned values, the referent of a computed reference held in a
 temporary, and the writability of every reference on the place's path, which
-rejects a `&mut` reached through `&` with E0207 for each container shape (the
-`replace_through_shared_*_reject` safety rows). The `replace_place_paths`
+rejects a `&mut` reached through `&` with E0207 "mutable borrow through a
+shared reference" for each container shape and for `set!` (main's
+`replace_place_through_*` rows, the `replace_through_shared_*` and
+`set_*through_shared_mut_reject` safety rows). The `replace_place_paths`
 native matrix runs the accepted shapes at opt0/1/2.
+
+A view's writability follows the references it was read through: the
+`view_mut_*_ok` safety rows pin main's exit values for writes, `replace!`, a
+mutable loan and a view of a view through `&mut`, the `view_*_reject` rows keep
+the owner and other views unusable while a mutable view is written and every
+write through a `&` path rejected, and the `view_mut_write` native matrix runs
+each write form, a copied view and a loop at opt0/1/2. The move-test table
+`compiler-typecheck-view-writability-ok?` checks both sides.
 
 ## Linux thread storage
 

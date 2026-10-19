@@ -1209,7 +1209,11 @@
   ;; The typed records of the global binders some loan borrows: only such a
   ;; global can conflict with a call's effect on it
   ;; (`OwnershipNormalizeGlobalWrites`).
-  (borrowed-globals (__tl_dyn-array i64)))
+  (borrowed-globals (__tl_dyn-array i64))
+  ;; The source expressions reading or copying a view a write went through
+  ;; (its loan is exclusive): such a view shares the viewed storage, so
+  ;; lowering binds it there instead of copying it.
+  (mutable-views (__tl_dyn-array i64)))
 
 (defstruct NormalizeState
   (body own.OwnershipBody)
@@ -1450,7 +1454,22 @@
   ;; selected (form 150), formed but not yet borrowed (see
   ;; `normalize-receiver-store!`), and how many such receivers are open.
   (receiver-targets (__tl_dyn-array NormalizeDeferredReceiver))
-  (receiver-depth i64))
+  (receiver-depth i64)
+  ;; The loans of views (shared borrows a by-value read through a reference
+  ;; makes, `normalize-borrow!`): each stays shared unless a write goes through
+  ;; it (`normalize-exclusive-ok`).
+  (view-loans (__tl_dyn-array i64))
+  ;; The expressions that read a view or copy one, with the view's loan: one
+  ;; whose loan ends exclusive is a mutable view (`mutable-views`).
+  (view-site-loans (__tl_dyn-array i64))
+  (view-site-exprs (__tl_dyn-array i64))
+  ;; Opaque-referent loans of a `&mut` reached through a shared loan: shared,
+  ;; and a write through one writes through that shared reference.
+  (downgraded-loans (__tl_dyn-array i64))
+  ;; Opaque-referent loans of a `&mut` reached through a view's loan, with that
+  ;; loan: a write through the referent writes through the view.
+  (opaque-route-loans (__tl_dyn-array i64))
+  (opaque-route-parents (__tl_dyn-array i64)))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -3549,7 +3568,11 @@
         (when
           (and (not assign?) (!= (normalize-reference-kind (& state) dest) 0))
           (let
-            [loan : i64 (normalize-direct-origin (& state) value.place)]
+            [direct : i64 (normalize-direct-origin (& state) value.place)]
+            [loan : i64
+              (if (>= direct 0)
+                direct
+                (normalize-local-referent-loan (& state) value.place))]
             (when
               (>= loan 0)
               (begin
@@ -3809,8 +3832,7 @@
       (return (NormalizeValueResult.Err (normalize-type-error))))
     (unless
       shared?
-      (try
-        (normalize-exclusive-ok (& state) parent borrowed.place (& node.source))))
+      (try (normalize-exclusive-ok state parent borrowed.place (& node.source))))
     (let
       ;; Behind an opaque referent the reference is read here (its own loans
       ;; are used) and the referent is reserved and activated like an owned
@@ -4357,9 +4379,7 @@
       (if (and
         (= reference-kind 2)
         (>= route.loan 0)
-        (not
-          (own.ownership-loan-exclusive?
-            (& (array-ref state.body.loans route.loan)))))
+        (not (normalize-writable-loan? (& state) route.loan)))
         1
         reference-kind)]
     (if (or (< state.form-block 0) (= kind 0) (< type 0))
@@ -4400,6 +4420,18 @@
               own.OwnershipLoanOrigin.Direct
               source))
           (__tl_array-push! state.deferred-loans loan)
+          (cond
+            [(and (= reference-kind 2) (= kind 1))
+              (__tl_array-push! state.downgraded-loans loan)]
+            [(and
+              (= kind 2)
+              (>= route.loan 0)
+              (not
+                (own.ownership-loan-exclusive?
+                  (& (array-ref state.body.loans route.loan)))))
+              (__tl_array-push! state.opaque-route-loans loan)
+              (__tl_array-push! state.opaque-route-parents route.loan)]
+            [else unit])
           ;; A reference behind another reference is read through that
           ;; reference's loan here (its own loans are used at this read);
           ;; accesses then use the outer reference binder.
@@ -4442,6 +4474,66 @@
         (set! found (array-ref state.local-referent-loans index)))
       (set! index (- index 1)))
     found))
+
+;; A copy `dest` of the reference or view `source` (copied by `expression`)
+;; refers to its referent through the same loan (`local-referents`), so a
+;; copied mutable view stays one.
+(define (normalize-note-copied-referent!
+  [state : (&mut state NormalizeState)]
+  [source : i64]
+  [dest : i64]
+  [type : i64]
+  [expression : i64]) : unit
+  (let
+    [referent : i64 (normalize-local-referent-loan (& state) source)]
+    (when
+      (and (>= referent 0) (normalize-copy-type? (& state) type))
+      (begin
+        (__tl_array-push! state.local-referents dest)
+        (__tl_array-push! state.local-referent-loans referent)
+        (when
+          (normalize-view-loan? (& state) referent)
+          (normalize-view-site! state referent expression))))))
+
+;; The source expression id of `node`'s occurrence, or -1 (generated).
+(define (normalize-node-expression!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [node : (& node NormalizeNode)]) : i64
+  (match (typed.typed-occurrence-get!
+    store
+    lease
+    (typed.TypedOccurrenceId (typed.typed-handle-copy (& node.handle))))
+    [(typed.TypedNodeResult.Ok occurrence)
+      (match (& occurrence.syntax)
+        [(typed.TypedSyntax.Source id) id]
+        [(typed.TypedSyntax.Generated) -1])]
+    [(typed.TypedNodeResult.Err _) -1]))
+
+(define (normalize-view-site!
+  [state : (&mut state NormalizeState)]
+  [loan : i64]
+  [expression : i64]) : unit
+  (when
+    (>= expression 0)
+    (begin
+      (__tl_array-push! state.view-site-loans loan)
+      (__tl_array-push! state.view-site-exprs expression))))
+
+;; The expressions of the view sites whose loan a write made exclusive.
+(define (normalize-mutable-views [state : (& state NormalizeState)]) : (__tl_dyn-array
+    i64)
+  (let
+    [views : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 0]
+    (while (< index (array-length state.view-site-loans))
+      (when
+        (own.ownership-loan-exclusive?
+          (&
+            (array-ref state.body.loans (array-ref state.view-site-loans index))))
+        (__tl_array-push! views (array-ref state.view-site-exprs index)))
+      (set! index (+ index 1)))
+    views))
 
 ;; The single loan noted directly on a reference value's place, or -1.
 (define (normalize-direct-origin
@@ -4863,6 +4955,12 @@
             formed.place
             dest
             (& node.source)))
+        (normalize-note-copied-referent!
+          state
+          formed.place
+          dest
+          node.type
+          (normalize-node-expression! store lease node))
         (when
           (and
             (= (normalize-binder-owner (& state) formed.place) 1)
@@ -5078,8 +5176,7 @@
       (begin
         ;; Typing checks only the innermost reference: a `&mut` reached
         ;; through a `&` writes through a shared loan.
-        (try
-          (normalize-exclusive-ok (& state) loan formed.place (& node.source)))
+        (try (normalize-exclusive-ok state loan formed.place (& node.source)))
         (try
           (normalize-emit!
             state
@@ -5282,8 +5379,7 @@
           (NormalizeValueResult.Ok
             (NormalizeValue node.type result value.block)))]
       [else
-        (try
-          (normalize-exclusive-ok (& state) loan formed.place (& node.source)))
+        (try (normalize-exclusive-ok state loan formed.place (& node.source)))
         (when
           (>= binder 0)
           (try
@@ -5437,37 +5533,164 @@
           (own.OwnershipLoanId (typed.typed-body-copy (& state.body.id)) loan))
         source))))
 
-;; A mutable borrow of a place behind a shared reference parameter would
-;; grant exclusive authority the parameter does not have (Rust E0596). Access
-;; kind 5 names it; the parameter's declaration is the labelled origin.
-(define (normalize-exclusive-ok
+;; Whether typed type record `type` is a view: a region-tagged value read
+;; through a reference (an arena's tag is erased before a borrow is typed).
+(define (normalize-view-type!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [type : i64]) : NormalizeBool
+  (if (< type 0)
+    (NormalizeBool.Ok false)
+    (match (typed.typed-type-value-at! store lease type)
+      [(typed.TypedTypeValueResult.Ok value)
+        (NormalizeBool.Ok
+          (match value
+            [(ast.AstType.Region _ _) true]
+            [_ false]))]
+      [(typed.TypedTypeValueResult.Err error)
+        (NormalizeBool.Err (OwnershipNormalizeFailure.Typed error))])))
+
+;; Whether `loan` is a view's loan (`normalize-borrow!`).
+(define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index (array-length state.view-loans)))
+      (when (= (array-ref state.view-loans index) loan) (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+;; The loan a write through `loan` would also go through: a view's parent
+;; (the reference it was read through), or the view an opaque referent's
+;; `&mut` was read out of; -1 when there is none.
+(define (normalize-write-parent [state : (& state NormalizeState)] [loan : i64]) : i64
+  (if (normalize-view-loan? state loan)
+    (match (& (array-ref state.body.loans loan).origin)
+      [(own.OwnershipLoanOrigin.Parent parent) parent.index]
+      [(own.OwnershipLoanOrigin.Direct) -1])
+    (let
+      [index : i64 0]
+      [found : i64 -1]
+      (while (and (< found 0) (< index (array-length state.opaque-route-loans)))
+        (when
+          (= (array-ref state.opaque-route-loans index) loan)
+          (set! found (array-ref state.opaque-route-parents index)))
+        (set! index (+ index 1)))
+      found)))
+
+;; The first loan on the path of a write through `loan` that cannot be
+;; written, or -1 (-1 itself names an owned place). A place is writable only
+;; when every reference on its path is mutable (Rust's supporting prefixes),
+;; and a view keeps the path it was read through: an exclusive loan is
+;; writable when what it was reached through is, a view's shared loan when its
+;; parent is (it is a mutable view), and any other shared loan is not.
+(define (normalize-unwritable-loan
   [state : (& state NormalizeState)]
+  [loan : i64]) : i64
+  (cond
+    [(< loan 0) -1]
+    [(or
+        (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
+        (normalize-view-loan? state loan))
+      (normalize-unwritable-loan state (normalize-write-parent state loan))]
+    [else loan]))
+
+(define (normalize-writable-loan?
+  [state : (& state NormalizeState)]
+  [loan : i64]) : bool
+  (< (normalize-unwritable-loan state loan) 0))
+
+;; A write through the writable loan `loan` makes it and every view loan it
+;; was reached through exclusive for their whole lives, as Rust's `&mut`
+;; reborrow of the viewed path is: a use of that path, or of another view of
+;; it, while the view is still used then conflicts with it.
+(define (normalize-view-loan-exclusive!
+  [state : (&mut state NormalizeState)]
+  [loan : i64]) : unit
+  (when
+    (>= loan 0)
+    (let
+      [next : i64 (normalize-write-parent (& state) loan)]
+      (when
+        (not
+          (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan))))
+        (let
+          [origin : own.OwnershipLoanOrigin
+            (match (& (array-ref state.body.loans loan).origin)
+              [(own.OwnershipLoanOrigin.Parent parent)
+                (own.OwnershipLoanOrigin.Parent
+                  (own.OwnershipLoanId
+                    (typed.typed-body-copy (& parent.body))
+                    parent.index))]
+              [(own.OwnershipLoanOrigin.Direct) own.OwnershipLoanOrigin.Direct])]
+          (set!
+            (array-ref state.body.loans loan)
+            (own.OwnershipLoan
+              (normalize-place-id
+                (& state)
+                (array-ref state.body.loans loan).place.index)
+              own.OwnershipLoanKind.Exclusive
+              origin
+              (own.ownership-source-copy
+                (& (array-ref state.body.loans loan).source))))))
+      (normalize-view-loan-exclusive! state next))))
+
+(define (normalize-downgraded-loan?
+  [state : (& state NormalizeState)]
+  [loan : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index (array-length state.downgraded-loans)))
+      (when (= (array-ref state.downgraded-loans index) loan) (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+;; A mutable borrow or write of a place behind a shared reference would grant
+;; exclusive authority that reference does not have (Rust E0596/E0594). Access
+;; kind 5 names a shared reference's referent, the shared reference the
+;; labelled origin; kind 7 a `&mut` reached through a shared reference, which
+;; is that same `&mut` borrow rule (E0207). A mutable view's loan becomes
+;; exclusive here.
+(define (normalize-exclusive-ok
+  [state : (&mut state NormalizeState)]
   [parent : i64]
   [place : i64]
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
-  (if (or
-    (< parent 0)
-    (own.ownership-loan-exclusive? (& (array-ref state.body.loans parent))))
-    (NormalizeUnit.Ok unit)
-    (NormalizeUnit.Err
-      (OwnershipNormalizeFailure.Borrowed
-        (own.OwnershipFailure
-          own.OwnershipFailureKind.Loan
-          -1
-          -1
-          place
-          -1
-          parent
-          (own.ownership-source-copy source)
-          "mutable borrow through a shared reference")
-        (OwnershipBorrowDiagnostic
-          (normalize-binder-name state (normalize-place-root state place))
-          (normalize-place-fields state place)
-          5
-          (own.ownership-source-copy
-            (& (array-ref state.body.loans parent).source))
-          -1
-          -1)))))
+  (let
+    [blocked : i64 (normalize-unwritable-loan (& state) parent)]
+    (if (< blocked 0)
+      (begin
+        (normalize-view-loan-exclusive! state parent)
+        (NormalizeUnit.Ok unit))
+      (let
+        [through-mut? : bool (normalize-downgraded-loan? (& state) blocked)]
+        (NormalizeUnit.Err
+          (OwnershipNormalizeFailure.Borrowed
+            (own.OwnershipFailure
+              own.OwnershipFailureKind.Loan
+              -1
+              -1
+              place
+              -1
+              parent
+              (own.ownership-source-copy source)
+              "mutable borrow through a shared reference")
+            (OwnershipBorrowDiagnostic
+              (normalize-binder-name state (normalize-place-root state place))
+              (normalize-place-fields state place)
+              (if through-mut?
+                7
+                5)
+              (own.ownership-source-copy
+                (&
+                  (array-ref
+                    state.body.loans
+                    (if through-mut?
+                      blocked
+                      parent)).source))
+              -1
+              -1)))))))
 
 (define (normalize-borrow!
   [state : (&mut state NormalizeState)]
@@ -5504,8 +5727,7 @@
       (return (NormalizeValueResult.Err (normalize-type-error))))
     (when
       mutable?
-      (try
-        (normalize-exclusive-ok (& state) parent borrowed.place (& node.source))))
+      (try (normalize-exclusive-ok state parent borrowed.place (& node.source))))
     (let
       [loan : i64 state.loan-count]
       ;; The loan is attributed to the borrowed place (the formed child).
@@ -5523,6 +5745,23 @@
             own.OwnershipLoanKind.Shared)
           (normalize-loan-origin (& state) parent)
           loan-source))
+      ;; A view (a shared borrow typed as a region-tagged value read through a
+      ;; reference) may be written later (`normalize-exclusive-ok`). So may
+      ;; the opaque referent it reads when the path to it is all `&mut`: that
+      ;; loan is issued shared here, for the view's read.
+      (when
+        (and (not mutable?) (try (normalize-view-type! store lease node.typed)))
+        (when
+          (and
+            (normalize-deferred-loan? (& state) parent)
+            (own.ownership-loan-exclusive?
+              (& (array-ref state.body.loans parent))))
+          (__tl_array-push! state.view-loans parent))
+        (__tl_array-push! state.view-loans loan)
+        (normalize-view-site!
+          state
+          loan
+          (normalize-node-expression! store lease node)))
       (normalize-element-site!
         state
         borrowed.block
@@ -7047,6 +7286,12 @@
             [dest : i64
               (try (normalize-local! state type false (& node.source)))]
             (try (normalize-transfer! state block source dest (& node.source)))
+            (normalize-note-copied-referent!
+              state
+              source
+              dest
+              type
+              (normalize-node-expression! store lease node))
             (when
               (and
                 (= (normalize-binder-owner (& state) source) 1)
@@ -11186,7 +11431,13 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array NormalizeDeferredReceiver 0)
-          0)]
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0))]
       [_keys : unit
         (while (<
           (array-length state.type-keys)
@@ -11281,6 +11532,8 @@
                   (return (OwnershipNormalizeResult.Err failure))])]
             [borrowed-globals : (__tl_dyn-array i64)
               (normalize-borrowed-globals (& state))]
+            [mutable-views : (__tl_dyn-array i64)
+              (normalize-mutable-views (& state))]
             (OwnershipNormalizeResult.Ok
               (OwnershipNormalizedBody
                 state.body
@@ -11292,7 +11545,8 @@
                 state.work
                 state.bytes
                 deferred
-                borrowed-globals)))]
+                borrowed-globals
+                mutable-views)))]
         ;; The core's own bounds and unsupported shapes are this route's
         ;; limits, not the program's: such a body is unsupported here.
         [(own.OwnershipResult.Err failure)

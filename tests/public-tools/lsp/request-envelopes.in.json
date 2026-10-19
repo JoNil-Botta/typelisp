@@ -1,0 +1,20 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl","languageId":"typelisp","version":7,"text":"(define (main) : i32 42)\n"}}},
+  {"jsonrpc":"1.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl","version":99},"contentChanges":[{"text":"(define (changed) : i32 7)\n"}]}},
+  {"jsonrpc":"2.0","id":2,"method":42},
+  {"jsonrpc":"2.0","id":3},
+  {"jsonrpc":"2.0","id":true,"method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl"}}},
+  {"jsonrpc":"2.0","id":4,"result":null},
+  {"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"Unknown client request"}},
+  {"jsonrpc":"2.0","method":"unknown/notification"},
+  {"jsonrpc":"2.0","id":6,"method":"unknown/request"},
+  {"id":7,"method":"shutdown"},
+  {"jsonrpc":"1.0","id":"bad-version","method":"tl/read","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl"},"name":"main"}},
+  {"jsonrpc":"2.0","id":8,"method":"tl/read","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl"},"name":"main"}},
+  {"jsonrpc":"2.0","id":9,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl","version":8},"contentChanges":[{"text":"(define (main) : i32 43)\n"}]}},
+  {"jsonrpc":"2.0","id":10,"method":"tl/read","params":{"textDocument":{"uri":"${{TMP_URI}}/envelopes.tl"},"name":"main"}},
+  {"jsonrpc":"2.0","id":11,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

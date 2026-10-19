@@ -418,7 +418,7 @@
     (match (typed.typed-charge! store lease 1)
       [(typed.TypedResult.Ok _)
         (NormalizeInt.Ok
-          (- (array-ref state.type-results (* 2 id.handle.index)) 1))]
+          (- (array-ref state.type-results.cells (* 2 id.handle.index)) 1))]
       [(typed.TypedResult.Err error)
         (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])
     (match (normalize-type-fetch! state store lease id)
@@ -445,10 +445,10 @@
   [id : (& id typed.TypedTypeId)]) : bool
   (and
     (>= id.handle.index 0)
-    (< (+ (* 2 id.handle.index) 1) (array-length state.type-results))
-    (> (array-ref state.type-results (* 2 id.handle.index)) 0)
+    (< (+ (* 2 id.handle.index) 1) (array-length state.type-results.cells))
+    (> (array-ref state.type-results.cells (* 2 id.handle.index)) 0)
     (=
-      (array-ref state.type-results (+ (* 2 id.handle.index) 1))
+      (array-ref state.type-results.cells (+ (* 2 id.handle.index) 1))
       (cast id.handle.serial : i64))
     (= id.handle.body.owner state.body.id.owner)
     (= id.handle.body.generation state.body.id.generation)
@@ -469,28 +469,38 @@
       (&mut state.type-results)
       (+ (* 2 id.handle.index) 1)
       (cast id.handle.serial : i64))
-    (set! (array-ref state.type-results (* 2 id.handle.index)) (+ code 1)))
+    (set! (array-ref state.type-results.cells (* 2 id.handle.index)) (+ code 1)))
   (NormalizeInt.Ok code))
 
+;; A growable table of i64 cells. It grows by storing a new array into its
+;; field, never through a `&mut` of the array itself: the published stage0
+;; drops that store (main's whole-array store through a reference), and the
+;; bootstrap's first stage is compiled by it. A push copies the whole array,
+;; so growing by pushes is quadratic.
+(defstruct NormalizeTable
+  (cells (__tl_dyn-array i64)))
+
 ;; Cell `index` of a growable table, 0 past its end.
-(define (normalize-table-ref
-  [cells : (& cells (__tl_dyn-array i64))]
-  [index : i64]) : i64
-  (if (and (>= index 0) (< index (array-length cells)))
-    (array-ref cells index)
+(define (normalize-table-ref [table : (& table NormalizeTable)] [index : i64]) : i64
+  (if (and (>= index 0) (< index (array-length table.cells)))
+    (array-ref table.cells index)
     0))
 
-;; Set cell `index` (not negative) of a growable table; new cells are 0. The
-;; table grows by pushes, never by storing a whole new array through `cells`:
-;; the published stage0 drops such a store (main's whole-array store through a
-;; reference), and the bootstrap's first stage is compiled by it.
+;; Set cell `index` (not negative) of a growable table; new cells are 0.
 (define (normalize-table-set!
-  [cells : (&mut cells (__tl_dyn-array i64))]
+  [table : (&mut table NormalizeTable)]
   [index : i64]
   [value : i64]) : unit
-  (while (>= index (array-length cells))
-    (__tl_array-push! cells 0))
-  (set! (array-ref cells index) value))
+  (when
+    (>= index (array-length table.cells))
+    (let
+      [grown : (__tl_dyn-array i64) (__tl_make-array i64 (+ 8 (* 2 index)))]
+      [at : i64 0]
+      (while (< at (array-length table.cells))
+        (set! (array-ref grown at) (array-ref table.cells at))
+        (set! at (+ at 1)))
+      (set! table.cells grown)))
+  (set! (array-ref table.cells index) value))
 
 ;; The field types of a product body type (empty for any other kind).
 (define (normalize-product-fields
@@ -1569,12 +1579,12 @@
   (opaque-route-parents (__tl_dyn-array i64))
   ;; 1 + the index of the binder of each typed binder handle index, and of
   ;; each place (0 when absent): a binder is found without a scan.
-  (binder-slots (__tl_dyn-array i64))
-  (binder-places (__tl_dyn-array i64))
+  (binder-slots NormalizeTable)
+  (binder-places NormalizeTable)
   ;; Per typed type record index `i`: cell `2i` holds 1 + the body type
   ;; `normalize-type!` gave it (0 when not yet given), and cell `2i + 1` the
   ;; record's serial then.
-  (type-results (__tl_dyn-array i64)))
+  (type-results NormalizeTable))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -11766,9 +11776,9 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
-          (normalize-no-i64s)
-          (normalize-no-i64s)
-          (normalize-no-i64s))]
+          (NormalizeTable (normalize-no-i64s))
+          (NormalizeTable (normalize-no-i64s))
+          (NormalizeTable (normalize-no-i64s)))]
       [_keys : unit
         (while (<
           (array-length state.type-keys)

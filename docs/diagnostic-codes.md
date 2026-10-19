@@ -73,7 +73,7 @@ fuel exhaustion from the status value.
 | E0504 | `macro-expand-produced-node`, `macro-expand-node-with-fire-decision`, `macro-expand-expr` depth guards |
 | E0505 | `ctfe-eval-comptime-error-call` after its String argument succeeds; native `compiler-comptime-host-callback-diagnostic-from-value` |
 | E0506 | CTFE literal, variable, call, unary/binary, cast, local mutation, aggregate/array/string indexing, syntax construction/quotation, reflection and unsupported expression failures; native request/result/status failures other than fuel exhaustion |
-| E0507 | `compiler-ctfe-eval` and `ctfe-eval-dotted-var-source` fuel guards; native `macro-stdlib-tlci-native-cookie` fuel-exhausted status |
+| E0507 | `compiler-ctfe-eval` and `ctfe-eval-dotted-var-source` fuel guards; native `macro-try-stdlib-tlci-native-resolved` fuel-exhausted status |
 
 The existing E0218 compile-time value/constraint rules and E0202 arity rules
 are unchanged. A genuine parse/typecheck/load error encountered while

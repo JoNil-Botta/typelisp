@@ -4581,6 +4581,10 @@
   (ForeachCoordinate i64 i64 i64 i64)
   (CompactIndex)
   (CompactSlot)
+  ;; A sentinel above an ordered scan body's bindings (and a helper's, when
+  ;; the scan body calls it): iterations run in scalar order, so a varying
+  ;; write there needs no disjoint destination.
+  (ScanBody)
   ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
   ;; bindings the walker pushes. A barrier opens a foreach-active body; an
   ;; opening starts a lane-value operand. Sentinels carry a name no source
@@ -28599,6 +28603,24 @@
     [(ActiveBarrier) true]
     [_ false]))
 
+(define (tc-spmd-env-in-scan-body-from? [bindings : u64] [index : i64]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (match binding.role
+        [(ScanBody) true]
+        [(or (ForeachIndex) (ForeachCoordinate _ _ _ _) (CompactIndex)
+             (CompactSlot))
+          false]
+        [_ (tc-spmd-env-in-scan-body-from? bindings (- index 1))]))))
+
+;; True inside an ordered scan body or a helper it calls. The scan pushes its
+;; sentinel above its own index binding, so a parallel domain entered below it
+;; (a helper's `foreach`) binds a domain index above the sentinel and ends it.
+(define (tc-spmd-env-in-scan-body? [env : TcSpmdEnv]) : bool
+  (tc-spmd-env-in-scan-body-from? env.bindings (- (tc-spmd-env-len env) 1)))
+
 ;; A value bound inside the gang that is not a scalar lane value may carry
 ;; per-lane state the SPMD class does not see: a closure can capture varying
 ;; values, and a tuple, struct, array or reference can hold such a closure. A
@@ -43159,13 +43181,19 @@
                 args-class)
               (if (tc-spmd-varying? args-class)
                 (let
+                  ;; A helper called from an ordered scan body runs in its
+                  ;; scalar iteration order too.
+                  [body-spmd-env : TcSpmdEnv
+                    (if (tc-spmd-env-in-scan-body? spmd-env)
+                      (tc-spmd-env-push-sentinel helper-spmd-env ScanBody)
+                      helper-spmd-env)]
                   [body-info
                     (try
                       (tc-spmd-inline-helper-body
                         helper-ctx
                         expr-bases
                         helper-env
-                        helper-spmd-env
+                        body-spmd-env
                         name-id
                         body))]
                   (match body-info
@@ -43950,6 +43978,122 @@
           (tc-kind-message
             (Spmd)
             "typecheck: rank-2 foreach array element destination indexes must be row-major with stable uniform offsets: base + (y - y0) * (x1 - x0) + (x - x0) over the coordinates and the header's inner bounds"))])))
+
+;; True when TY is an aggregate stored inline in its binding: a fixed array,
+;; tuple or struct value. A reference, slice, dynamic array or box instead
+;; reaches storage outside the binding.
+(define (tc-spmd-inline-aggregate-type? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(or (Array _ _) (Tuple _) (Struct _) (StructArgs _ _)) true]
+    [_ false]))
+
+;; The binding that owns PLACE when PLACE is an aggregate private to the
+;; running logical instance, else -1. Private storage is an inline aggregate
+;; binding declared inside the gang (a body `let`, or a helper's local or
+;; by-value parameter), or an array element, field or tuple element held
+;; inline in one. Each instance has its own copy, so a varying write there
+;; needs no disjoint destination; it makes the owning binding varying.
+(define (tc-spmd-private-place-root
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [place : (& place ast.AstExpr)]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases place)
+    [(Var name)
+      (cond
+        [(tc-dotted-place-name-id? ctx env name)
+          (match (tc-dotted-local-field-expr-id-after-check
+            (tc-context-structural-session ctx)
+            name)
+            [(Ok virtual-id)
+              (let
+                [field : ast.AstExpr
+                  (ast.ast-expr-segment-bases-get expr-bases virtual-id)]
+                (tc-spmd-private-place-root
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  (& field)))]
+            [(Err _) -1])]
+        [else
+          (match (tc-spmd-env-lookup-id spmd-env name)
+            [(Found ty _ (Local) _)
+              (if (tc-spmd-inline-aggregate-type? ctx ty)
+                name
+                -1)]
+            [_ -1])])]
+    [(or (ArrayRef receiver-box _) (StructGet receiver-box _)
+         (TupleRef receiver-box _))
+      (let
+        [receiver : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
+        [root : i64
+          (tc-spmd-private-place-root ctx expr-bases env spmd-env (& receiver))]
+        (if (< root 0)
+          -1
+          (match (tc-expr
+            ctx
+            env
+            (ast.ast-expr-unspan-with-segment-bases expr-bases place))
+            [(Ok ty)
+              (if (tc-spmd-inline-aggregate-type? ctx ty)
+                root
+                -1)]
+            [(Err _) -1])))]
+    [_ -1]))
+
+;; True when EXPR reads a varying aggregate out of private storage: the value
+;; belongs to the instance and its own projections yield its varying lanes.
+(define (tc-spmd-private-aggregate-read?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : (& expr ast.AstExpr)]
+  [class : TcSpmdClass]) : bool
+  (and
+    (tc-spmd-varying? class)
+    (>= (tc-spmd-private-place-root ctx expr-bases env spmd-env expr) 0)))
+
+;; A varying write into private storage makes the binding owning it varying,
+;; so reads through that binding are varying too.
+(define (tc-spmd-private-write-env [env : TcSpmdEnv] [root : i64]) : TcSpmdEnv
+  (if (< root 0)
+    env
+    (tc-spmd-env-set-local-class-id env root Varying)))
+
+;; A varying field or tuple-element write into shared storage is disjoint
+;; only through an array element: the destination-index proof applies to the
+;; nearest element index under RECEIVER. Any other root, such as a binding
+;; declared outside the gang, is one location every instance writes.
+(define (tc-spmd-field-write-destination
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [receiver : ast.AstExpr]) : ResultTcUnit
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& receiver))
+    [(or (StructGet inner-box _) (TupleRef inner-box _))
+      (tc-spmd-field-write-destination
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ArrayRef _ index-box)
+      (tc-spmd-foreach-index
+        ctx
+        expr-bases
+        env
+        spmd-env
+        (ast.ast-expr-segment-bases-get expr-bases index-box))]
+    [_
+      (Err
+        (tc-kind-message
+          (Spmd)
+          "typecheck: foreach cannot set binding declared outside foreach"))]))
 
 (define (tc-spmd-masked-if-uniform-offset
   [ctx : TcContext]
@@ -45012,7 +45156,9 @@
         Local
         ForeachIndex)]
     [body-spmd-env : TcSpmdEnv
-      (tc-spmd-env-bind-id index-spmd-env prefix-id prefix-ty Varying Local)]
+      (tc-spmd-env-push-sentinel
+        (tc-spmd-env-bind-id index-spmd-env prefix-id prefix-ty Varying Local)
+        ScanBody)]
     [result : ResultTcUnit Ok]
     [_
       (try
@@ -45976,12 +46122,25 @@
             expr-ty))
         (match (tc-spmd-env-lookup-id spmd-env name)
           [(Found _ class _ _)
-            (if (tc-spmd-env-hidden-id? spmd-env name)
-              (Err
-                (if (tc-spmd-varying? class)
-                  (tc-spmd-active-hidden-message name)
-                  (tc-spmd-active-hidden-opaque-message name)))
-              (tc-spmd-finish-ctx ctx expr-ty class spmd-env))]
+            (cond
+              [(tc-spmd-env-hidden-id? spmd-env name)
+                (Err
+                  (if (tc-spmd-varying? class)
+                    (tc-spmd-active-hidden-message name)
+                    (tc-spmd-active-hidden-opaque-message name)))]
+              ;; A private aggregate turns varying after a varying write into
+              ;; it (tc-spmd-private-write-env). Reading it keeps that class:
+              ;; projections yield varying lanes, a `let` copy stays private,
+              ;; and positions without varying aggregate support reject it.
+              [(tc-spmd-private-aggregate-read?
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  (& expr)
+                  class)
+                (Ok (TcSpmdExprInfo expr-ty class spmd-env))]
+              [else (tc-spmd-finish-ctx ctx expr-ty class spmd-env)])]
           [(Missing) (tc-spmd-finish-ctx ctx expr-ty Uniform spmd-env)]))]
     [(or (Ann inner-box _) (Cast inner-box _))
       (let
@@ -46084,11 +46243,35 @@
                 (try (tc-spmd-expr ctx expr-bases env array-env index))]
               (match index-info
                 [(TcSpmdExprInfo _ index-class index-env)
-                  (tc-spmd-finish-lane
-                    ctx
-                    expr-ty
-                    (tc-spmd-merge-class array-class index-class)
-                    index-env)]))]))]
+                  (let
+                    [class : TcSpmdClass
+                      (tc-spmd-merge-class array-class index-class)]
+                    (if (tc-spmd-private-aggregate-read?
+                      ctx
+                      expr-bases
+                      env
+                      index-env
+                      (& expr)
+                      class)
+                      (Ok (TcSpmdExprInfo expr-ty class index-env))
+                      (tc-spmd-finish-lane ctx expr-ty class index-env)))]))]))]
+    [(or (StructGet receiver-box _) (TupleRef receiver-box _))
+      (let
+        [receiver : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
+        [receiver-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env receiver))]
+        (match receiver-info
+          [(TcSpmdExprInfo _ class receiver-env)
+            (if (tc-spmd-private-aggregate-read?
+              ctx
+              expr-bases
+              env
+              receiver-env
+              (& expr)
+              class)
+              (Ok (TcSpmdExprInfo expr-ty class receiver-env))
+              (tc-spmd-finish expr-ty class receiver-env))]))]
     [(ArraySet array-box index-box value-box)
       (let
         [array : ast.AstExpr
@@ -46113,16 +46296,6 @@
               (match index-info
                 [(TcSpmdExprInfo _ index-class index-env)
                   (let
-                    [_
-                      (try
-                        (if (tc-spmd-varying? index-class)
-                          (tc-spmd-foreach-index
-                            ctx
-                            expr-bases
-                            env
-                            array-env
-                            index)
-                          ResultTcUnit.Ok))]
                     [value-info
                       (try
                         (tc-spmd-array-value-expr
@@ -46139,6 +46312,40 @@
                             (tc-spmd-merge-class
                               array-class
                               (tc-spmd-merge-class index-class value-class))]
+                          [private-root : i64
+                            (if (tc-spmd-varying? write-class)
+                              (let
+                                [place : ast.AstExpr
+                                  (ast.ast-expr-segment-bases-get
+                                    expr-bases
+                                    array-box)]
+                                (tc-spmd-private-place-root
+                                  ctx
+                                  expr-bases
+                                  env
+                                  array-env
+                                  (& place)))
+                              -1)]
+                          ;; A varying write needs a disjoint destination
+                          ;; unless it stays in private storage or an ordered
+                          ;; scan body performs it.
+                          [_
+                            (try
+                              (if (or
+                                (tc-spmd-varying? index-class)
+                                (and
+                                  (tc-spmd-varying? write-class)
+                                  (< private-root 0)
+                                  (not (tc-spmd-env-in-scan-body? array-env))))
+                                (tc-spmd-foreach-index
+                                  ctx
+                                  expr-bases
+                                  env
+                                  array-env
+                                  index)
+                                ResultTcUnit.Ok))]
+                          [result-env : TcSpmdEnv
+                            (tc-spmd-private-write-env value-env private-root)]
                           (match (tc-type-strip-region array-ty)
                             [(Array elem-ty _)
                               (if (and
@@ -46154,7 +46361,7 @@
                                     (tc-type-render
                                       (tc-type-strip-region
                                         (ast.ty-node-get elem-ty)))))
-                                (tc-spmd-finish expr-ty Uniform value-env))]
+                                (tc-spmd-finish expr-ty Uniform result-env))]
                             [(DynArray elem-ty)
                               (if (and
                                 (tc-spmd-varying? write-class)
@@ -46169,8 +46376,8 @@
                                     (tc-type-render
                                       (tc-type-strip-region
                                         (ast.ty-node-get elem-ty)))))
-                                (tc-spmd-finish expr-ty Uniform value-env))]
-                            [_ (tc-spmd-finish expr-ty Uniform value-env)]))]))]))]))]
+                                (tc-spmd-finish expr-ty Uniform result-env))]
+                            [_ (tc-spmd-finish expr-ty Uniform result-env)]))]))]))]))]
     [(ArrayTake _ _ _)
       (Err
         (tc-kind-message
@@ -46199,6 +46406,35 @@
                       (try (tc-struct-set-field-type-id ctx receiver-ty field))]
                     [write-class : TcSpmdClass
                       (tc-spmd-merge-class receiver-class value-class)]
+                    [private-root : i64
+                      (if (tc-spmd-varying? write-class)
+                        (let
+                          [place : ast.AstExpr
+                            (ast.ast-expr-segment-bases-get
+                              expr-bases
+                              receiver-box)]
+                          (tc-spmd-private-place-root
+                            ctx
+                            expr-bases
+                            env
+                            receiver-env
+                            (& place)))
+                        -1)]
+                    [_
+                      (try
+                        (if (and
+                          (tc-spmd-varying? write-class)
+                          (< private-root 0)
+                          (not (tc-spmd-env-in-scan-body? receiver-env)))
+                          (tc-spmd-field-write-destination
+                            ctx
+                            expr-bases
+                            env
+                            receiver-env
+                            (ast.ast-expr-segment-bases-get
+                              expr-bases
+                              receiver-box))
+                          ResultTcUnit.Ok))]
                     (if (and
                       (tc-spmd-varying? write-class)
                       (not
@@ -46210,7 +46446,10 @@
                           (cdiag.compiler-diagnostic-typecheck-tag (Spmd))
                           "typecheck: foreach varying struct field type is not supported: "
                           (tc-type-render (tc-type-strip-region field-ty))))
-                      (tc-spmd-finish expr-ty Uniform value-env)))]))]))]
+                      (tc-spmd-finish
+                        expr-ty
+                        Uniform
+                        (tc-spmd-private-write-env value-env private-root))))]))]))]
     [(ArrayPush array-box value-box)
       (let
         [array : ast.AstExpr

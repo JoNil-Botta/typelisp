@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`array_lifetime_join.tl` runs both reference orders, all six permutations of
+three lifetimes with a later common local target, nested tuples, contextual
+integers, singleton/equal literals, scoped allocations and element effects at
+opt0/1/2 on both hosts. The safety twins keep unrelated/invariant elements,
+local escapes and arena-backed elements rejected in both orders.
+`tc-array-join-allocation-tags` checks nested structural tag preservation and
+keeps invariant referents exact.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,

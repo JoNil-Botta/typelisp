@@ -1531,3 +1531,12 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Inference can shorten array lifetimes but must retain all element obligations.
+array_join_unrelated_reject|check-fail|tests/safety/array_join_unrelated_reject.tl|-|array elements must have same type
+array_join_unrelated_reversed_reject|check-fail|tests/safety/array_join_unrelated_reversed_reject.tl|-|array elements must have same type
+array_join_invariant_reject|check-fail|tests/safety/array_join_invariant_reject.tl|-|array elements must have same type
+array_join_local_escape_reject|check-fail|tests/safety/array_join_local_escape_reject.tl|-|reference value would escape lexical scope
+array_join_local_escape_reversed_reject|check-fail|tests/safety/array_join_local_escape_reversed_reject.tl|-|reference value would escape lexical scope
+array_join_arena_last_reject|check-fail|tests/safety/array_join_arena_last_reject.tl|-|region-tagged value cannot escape with-arena
+array_join_arena_first_reject|check-fail|tests/safety/array_join_arena_first_reject.tl|-|region-tagged value cannot escape with-arena

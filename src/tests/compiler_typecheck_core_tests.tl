@@ -33,6 +33,68 @@
 (import lex as lexer)
 (import compiler_owned_view as owned_view)
 
+(cfg
+  test
+  (define (tc-array-join-tag-shape [shape : i64] [owner : i64]) : ast.AstType
+    (let
+      [value : ast.AstType
+        (if (< owner 0)
+          (I64)
+          (ast.ast-ty-region owner (& (I64))))]
+      (match shape
+        [0 value]
+        [1
+          (ast.ast-ty-tuple
+            (ast.ast-type-cons (& value) (& (ast.ast-type-list-new))))]
+        [2 (ast.ast-ty-array (& value) 2)]
+        [3 (ast.ast-ty-ref 0 (& value))]
+        [4 (ast.ast-ty-mut-ref 0 (& value))]
+        [5 (ast.ast-ty-mut-ptr (& value))]
+        [6 (ast.ast-ty-func (ast.ast-type-list-new) (& value))]
+        [_
+          (ast.ast-ty-func
+            (ast.ast-type-cons (& value) (& (ast.ast-type-list-new)))
+            (& (I64)))]))))
+
+(test
+  tc-array-join-allocation-tags
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [outer : i64 (ci.intern "array-join-outer")]
+    [inner : i64 (ci.intern "array-join-inner")]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) outer (I64))
+        inner
+        (I64))]
+    (for [shape (iterator.range 0 8)]
+      (let
+        [source : ast.AstType (tc-array-join-tag-shape shape outer)]
+        [short : ast.AstType (tc-array-join-tag-shape shape inner)]
+        [plain : ast.AstType (tc-array-join-tag-shape shape -1)]
+        (test.assert-true
+          (tc_core.tc-array-element-regions-preserved?
+            env
+            (tc_core.tc-global-shared-view source)
+            (tc_core.tc-global-shared-view source))
+          "equal allocation tags survive every structural shape")
+        (test.assert-true
+          (not
+            (tc_core.tc-array-element-regions-preserved?
+              env
+              (tc_core.tc-global-shared-view plain)
+              (tc_core.tc-global-shared-view source)))
+          "an array join never erases a nested allocation tag")
+        (test.assert-true
+          (=
+            (tc_core.tc-array-element-regions-preserved? env short source)
+            (not (or (= shape 4) (= shape 5))))
+          "allocation tags shorten only through covariant storage")))
+    (ast.ast-node-pool-context-install! saved)))
+
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
 ;; lint-allow: unused-import

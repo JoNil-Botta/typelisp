@@ -28748,31 +28748,152 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcUnit
+  [elem-ty : ast.AstType]) : ResultTcType
   (tc-check-array-rest-at ctx env (& exprs) elem-ty))
+
+(define (tc-array-element-region-ids-preserved?
+  [env : TcTypeEnv]
+  [expected : i64]
+  [actual : i64]) : bool
+  (tc-array-element-regions-preserved?
+    env
+    (ast.ty-node-get expected)
+    (ast.ty-node-get actual)))
+
+;; Ordinary coercion may erase allocation tags because its caller retains the
+;; actual type. An inferred array has one element type, so it must retain every
+;; element's tags in their structural positions. Invariant referents stay exact.
+(define (tc-array-element-regions-preserved?
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (if (not (tc-type-contains-region-tag? (tc-global-shared-view actual)))
+    true
+    (match (tc-global-shared-view expected)
+      [(Region required inner)
+        (match (tc-global-shared-view actual)
+          [(Region source value)
+            (and
+              (tc-lifetime-outlives-lifetime-id? env source required)
+              (tc-array-element-region-ids-preserved? env inner value))]
+          [_
+            (tc-array-element-regions-preserved?
+              env
+              (ast.ty-node-get inner)
+              actual)])]
+      [_
+        (match (tc-global-shared-view actual)
+          [(Region _ _) false]
+          [(Ref _ value)
+            (match (tc-global-shared-view expected)
+              [(Ref _ inner)
+                (tc-array-element-region-ids-preserved? env inner value)]
+              [_ false])]
+          [(MutRef _ value)
+            (match (tc-global-shared-view expected)
+              [(MutRef _ inner)
+                (ast.ast-type-eq?
+                  (ast.ty-node-get inner)
+                  (ast.ty-node-get value))]
+              [_ false])]
+          [(MutPtr _) (ast.ast-type-eq? expected actual)]
+          [_
+            (ast.ast-type-children-eq?
+              (tc-global-shared-view expected)
+              (tc-global-shared-view actual)
+              tc-array-element-region-ids-preserved?
+              env)])])))
+
+(define (tc-array-element-type-coercible?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (or
+    (tc-never-type? (tc-global-shared-view actual))
+    (and
+      (tc-array-element-regions-preserved?
+        env
+        (tc-global-shared-view expected)
+        (tc-global-shared-view actual))
+      (tc-type-coercible-core? ctx env expected actual))))
 
 (define (tc-check-array-rest-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (for [index (iterator.range 0 exprs.len)]
-    (let
-      [ty
-        (try
-          (tc-expr-with-expected-or-actual-id
+  [elem-ty : ast.AstType]) : ResultTcType
+  (let
+    [candidate : ast.AstType (tc-global-shared-view elem-ty)]
+    [tagged : bool
+      (tc-type-contains-region-tag? (tc-global-shared-view elem-ty))]
+    [different : ast.AstTypeList (ast.ast-type-list-new)]
+    (for [index (iterator.range 0 exprs.len)]
+      (let
+        [ty
+          (try
+            (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              (ast.ast-expr-list-get exprs index 0)
+              (tc-global-shared-view elem-ty)))]
+        ;; Equal elements share the first representative, including its tags;
+        ;; wide homogeneous literals need no per-element type-list storage.
+        (unless
+          (and
+            (tc-type-eq
+              (tc-global-shared-view elem-ty)
+              (tc-global-shared-view ty))
+            (if tagged
+              (ast.ast-type-eq?
+                (tc-global-shared-view elem-ty)
+                (tc-global-shared-view ty))
+              (not (tc-type-contains-region-tag? (tc-global-shared-view ty)))))
+          (ast.ast-type-list-push
+            (&mut different)
+            (ast.ast-node-pool-reader-type-push (& ty)))
+          (when
+            (tc-array-element-type-coercible?
+              ctx
+              env
+              (tc-global-shared-view ty)
+              (tc-global-shared-view candidate))
+            (set! candidate ty)))))
+    ;; An unrelated early pair can acquire a common actual target later. Only
+    ;; the final candidate must accept every retained type; no edge is guessed.
+    (unless
+      (tc-array-element-type-coercible?
+        ctx
+        env
+        (tc-global-shared-view candidate)
+        (tc-global-shared-view elem-ty))
+      (return
+        (Err
+          (tc-type-mismatch-message
+            elem-ty
+            candidate
+            "typecheck: array elements must have same type"))))
+    (for [index (iterator.range 0 (ast.ast-type-list-len (& different)))]
+      (let
+        [ty
+          (ast.ty-node-get
+            (ast.ast-type-list-get
+              (& different)
+              index
+              (ast.ast-type-id-fallback)))]
+        (unless
+          (tc-array-element-type-coercible?
             ctx
             env
-            (ast.ast-expr-list-get exprs index 0)
-            (tc-global-shared-view elem-ty)))]
-      [_
-        (try
-          (tc-expect
-            ty
-            (tc-global-shared-view elem-ty)
-            "typecheck: array elements must have same type"))]
-      unit))
-  Ok)
+            (tc-global-shared-view candidate)
+            (tc-global-shared-view ty))
+          (return
+            (Err
+              (tc-type-mismatch-message
+                ty
+                candidate
+                "typecheck: array elements must have same type"))))))
+    (Ok candidate)))
 
 (define (tc-signature-lifetime-type-list-collect-into
   [types : ast.AstTypeList]
@@ -31643,14 +31764,14 @@
               env
               (tc-global-shared-view first-ty)))]
         (let
-          [_
+          [elem-ty
             (try
               (tc-check-array-rest
                 ctx
                 env
                 rest
                 (tc-global-shared-view first-ty)))]
-          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& first-ty)))))))))
+          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem-ty)))))))))
 
 (define (tc-expr-dyn-array-literal-with-expected-or-actual
   [ctx : TcContext]
@@ -60761,14 +60882,14 @@
             [rest : ast.AstExprList
               (ast.ast-expr-list-tail-from-ref (& exprs) 1)]
             [first-ty (try (tc-expr-id ctx env first))]
-            [_
+            [elem-ty
               (try
                 (tc-check-array-rest
                   ctx
                   env
                   rest
                   (tc-global-shared-view first-ty)))]
-            (Ok (ast.ast-ty-array (& first-ty) (tc-expr-list-len exprs))))))]
+            (Ok (ast.ast-ty-array (& elem-ty) (tc-expr-list-len exprs))))))]
     [(DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(FixedMakeArray elem-ty-id len-box)
       (tc-fixed-make-array-expr

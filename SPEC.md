@@ -2572,6 +2572,16 @@ flows. A successful coercion exposes the required shorter static type while
 retaining allocation-owner metadata needed by the escape checker. It inserts no
 runtime instruction and does not alter the value representation.
 
+An inferred array literal may also shorten lifetimes to an element type
+inferred from one of its actual elements. Every element must coerce to that
+final type; unrelated earlier elements may share a later element's shorter
+lifetime. Inference does not invent an outlives relation or synthesize a third
+element type. It preserves structural allocation-owner tags, including nested
+tags and invariant referents, and rejects when no actual candidate proves all
+these conditions. Equal element types retain contextual literal typing.
+Elements still evaluate exactly once in source order. An empty literal without
+an expected element type remains an inference error.
+
 Call lifetime substitution gathers constraints from every structural occurrence
 of a formal lifetime. Repeated covariant occurrences choose the shortest actual
 lifetime whose ordering is proven, contravariant occurrences choose the longest,

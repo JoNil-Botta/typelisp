@@ -10,6 +10,9 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_cfg_core as cfg_core)
+(cfg
+  compiler-dependency-audit
+  (import compiler_dependency_trace as dependency_trace))
 (import compiler_module_name as module_name)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
@@ -2887,7 +2890,13 @@
   [predicate : reader.SpannedSexpr]) : ResultCompilerCfg
   (match (reader.spanned-sexpr-view predicate)
     [(Sym name _)
-      (Ok (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name)))]
+      (begin
+        (cfg
+          compiler-dependency-audit
+          (dependency_trace.compiler-dependency-trace
+            "cfg"
+            (compiler-parse-dispatch-syntax-id-text dispatch name)))
+        (Ok (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name))))]
     [(List (slice (Sym op _) & predicates) _)
       (cond
         [(= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe "all"))

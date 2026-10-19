@@ -212,7 +212,7 @@
 
 (define (doc-site-language-guides) : doc_site_guides.Vec
   (let
-    [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 8)]
+    [guides : doc_site_guides.Vec (doc_site_guides.with-capacity 11)]
     (doc_site_guides.push-ref!
       (&mut guides)
       (GuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview"))
@@ -257,10 +257,31 @@
     (doc_site_guides.push-ref!
       (&mut guides)
       (GuidePage
-        "Compiler Architecture and CLI"
+        "Compiler Architecture"
         "docs/compiler-architecture.md"
         "compiler-architecture.html"
-        "Compiler architecture and CLI"))
+        "Compiler architecture"))
+    (doc_site_guides.push-ref!
+      (&mut guides)
+      (GuidePage
+        "Compiler Invariants and CLI"
+        "docs/compiler-invariants.md"
+        "compiler-invariants.html"
+        "Compiler invariants and CLI"))
+    (doc_site_guides.push-ref!
+      (&mut guides)
+      (GuidePage
+        "Core IR Dependencies"
+        "docs/compiler-core-ir-dependencies.md"
+        "compiler-core-ir-dependencies.html"
+        "Core IR dependencies"))
+    (doc_site_guides.push-ref!
+      (&mut guides)
+      (GuidePage
+        "Compiler State and Reusable Facts"
+        "docs/compiler-state-and-facts.md"
+        "compiler-state-and-facts.html"
+        "Compiler state and reusable facts"))
     guides))
 
 (define (doc-site-stdlib-api-tree) : DocSiteApiTree
@@ -1565,7 +1586,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       (doc-site-vector-core-growth-order?)
       "doc-site: canonical vector core growth/order mismatch")
     (doc-site-require
-      (= (doc-site-guide-page-list-count language-guides) 8)
+      (= (doc-site-guide-page-list-count language-guides) 11)
       "doc-site: language guide inventory mismatch")
     (doc-site-require
       (string.eq

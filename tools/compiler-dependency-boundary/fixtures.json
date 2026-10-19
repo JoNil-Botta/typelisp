@@ -1,0 +1,520 @@
+[
+  [
+    "allowed-alias",
+    "pass",
+    "core IR dependency boundary passed",
+    [
+      [
+        "root.tl",
+        "(import helper as alternate)\n(define answer : i64 alternate.value)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(define value : i64 42)\n",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "allowed-cycle",
+    "pass",
+    "core IR dependency boundary passed",
+    [
+      [
+        "root.tl",
+        "(import helper)\n(define answer : i64 42)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(import root)\n",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "direct-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(import consumer)\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "indirect-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(import helper)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(import consumer)\n",
+        "support",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "cycle-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(import helper)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(import root)\n(import consumer)\n",
+        "support",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "renamed-unclassified",
+    "fail",
+    "unclassified resolved source",
+    [
+      [
+        "root.tl",
+        "(import renamed)\n",
+        "core",
+        "write"
+      ],
+      [
+        "renamed.tl",
+        "",
+        "",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "stale-unreachable",
+    "fail",
+    "stale unreachable policy source",
+    [
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ],
+      [
+        "stale.tl",
+        "",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "stale-missing",
+    "fail",
+    "stale policy path",
+    [
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ],
+      [
+        "missing.tl",
+        "",
+        "support",
+        "missing"
+      ]
+    ]
+  ],
+  [
+    "duplicate-policy",
+    "fail",
+    "duplicate policy path",
+    [
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ],
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "unknown-policy-role",
+    "fail",
+    "unknown policy role",
+    [
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "",
+        "backend",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "unresolved-import",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(import definitely_missing_boundary_fixture)\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "generated-empty-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Module\n  `(begin (module generated.boundary) (import consumer)))\n(import (make-dependency) as generated)\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "generated-decls-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Decls\n  `(begin (import consumer)))\n(make-dependency)\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "positive-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(cfg boundary-feature (import consumer))\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "negative-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(cfg (not boundary-feature) (import consumer))\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "nested-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(cfg boundary-a (cfg (all boundary-b (not boundary-c)) (import consumer)))\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "windows-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(cfg windows (import consumer))\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "generated-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Module\n  `(begin (module generated.boundary) (cfg generated-feature (import consumer))))\n(import (make-dependency) as generated)\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "computed-cfg-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Decls\n  (let [flag : Expr (expr-var (string-append \"computed-\" \"feature\"))]\n    (expr-call (expr-var \"cfg\")\n      (expr-list-cons flag\n        (expr-list-cons '(import consumer) (expr-list-empty))))))\n(make-dependency)\n",
+        "core",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "target-exclusive-aliases",
+    "pass",
+    "core IR dependency boundary passed",
+    [
+      [
+        "root.tl",
+        "(cfg linux (import first as dep))\n(cfg windows (import second as dep))\n",
+        "core",
+        "write"
+      ],
+      [
+        "first.tl",
+        "(define first-value : i64 1)\n",
+        "support",
+        "write"
+      ],
+      [
+        "second.tl",
+        "(define second-value : i64 2)\n",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "ambiguous-source-import",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(import first as dep)\n(import second as dep)\n",
+        "core",
+        "write"
+      ],
+      [
+        "first.tl",
+        "",
+        "support",
+        "write"
+      ],
+      [
+        "second.tl",
+        "",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "ambiguous-generated-import",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Decls\n  `(begin (import first as dep) (import second as dep)))\n(make-dependency)\n",
+        "core",
+        "write"
+      ],
+      [
+        "first.tl",
+        "",
+        "support",
+        "write"
+      ],
+      [
+        "second.tl",
+        "",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "unresolved-generated-import",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Decls\n  `(begin (import nonexistent_generated_boundary_dependency)))\n(make-dependency)\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "missing-generated-selected-item",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(defmacro (make-dependency) : Decls\n  `(begin (import helper.nonexistent as value)))\n(make-dependency)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "",
+        "support",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "lazy-indirect-forbidden",
+    "fail",
+    "forbidden resolved source",
+    [
+      [
+        "root.tl",
+        "(import helper as unused)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(module helper)\n(import consumer as unused)\n(define (answer) : i64 42)\n",
+        "support",
+        "write"
+      ],
+      [
+        "consumer.tl",
+        "(module consumer)\n(define (value) : i64 1)\n",
+        "forbidden",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "lazy-indirect-unresolved",
+    "fail",
+    "canonical frontend processing failed",
+    [
+      [
+        "root.tl",
+        "(import helper as unused)\n",
+        "core",
+        "write"
+      ],
+      [
+        "helper.tl",
+        "(module helper)\n(import definitely_missing_boundary_fixture as unused)\n(define (answer) : i64 42)\n",
+        "support",
+        "write"
+      ]
+    ]
+  ]
+]

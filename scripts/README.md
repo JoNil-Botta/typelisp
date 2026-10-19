@@ -48,6 +48,7 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
+| Check the shared IR dependency boundary | `verify-core-ir-dependencies.sh` (canonical resolved closure, explicit module policy, source and fact-stream fixtures; bounded on both hosts) |
 | Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog), `check-compiler-state-schema.sh` (packed compiler state stays behind its schema's typed accessors), `check-shared-view-count.sh` (the `*-shared-view` call count may only fall, against `shared-view-baseline.tsv`; it also reports, without gating, the count weighted by the call sites of the function or macro that holds each view, with thin wrappers transparent so a copy weighs the same inside an accessor or at its call sites) |
 | Check public CLI behavior | `verify-public-tools.sh`, `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |

@@ -986,4 +986,8 @@ indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|
 extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
 
+store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
+store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-

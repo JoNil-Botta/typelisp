@@ -185,6 +185,35 @@ The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
 sub-word integer and floating fields, and move-only boxed field values.
 
+## Store and constructor exits
+
+`store_operand_exits.tl` and `store_constructor_exits.tl` run at opt0/1/2 on
+both hosts. They cover scalar, aggregate, field, tuple, box, reference, raw
+pointer, global and array stores; return, break and continue; skipped bounds
+checks and later constructor arguments; zero-sized values; and conditional
+fallthrough. `compiler-lower-store-exits` inspects unoptimized blocks for any
+instruction after a terminator, including annotation, replacement, constructor,
+direct/indirect call, C ABI and syscall paths. The paired safety cases retain
+canonical rejection of immutable receivers, wrong return types and invalid
+unreachable tails.
+
+`literal_constructor_exits.tl` runs at opt0/1/2 on both hosts. It checks Box and
+tuple return/break/continue, nested and zero-sized elements, skipped later
+effects and conditional fallthrough. `compiler-lower-literal-constructor-exits`
+also rejects unoptimized instructions after a terminator. The paired safety
+fixtures keep invalid returns and unreachable tuple elements type-checked.
+
+`exit_operand_consumers.tl` runs at opt0/1/2 on both hosts. Exiting
+constructors, annotations and scalar operands feed let and `with` bindings,
+match scrutinees, field/tuple/array projections, `deref`, casts, unary and
+binary operators, `if` conditions and owned `for` sources in tail and value
+position, and inside loops whose opt2 form must keep no code after a
+`continue`. It also checks evaluation order and exactly-once cleanup.
+`compiler-lower-operand-consumer-exits` rejects unoptimized instructions after
+a terminator for the same consumers; `let_exit_unreachable_type_reject.tl`
+and `cast_exit_unsupported_reject.tl` keep bindings and conversions after an
+exit type-checked.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a

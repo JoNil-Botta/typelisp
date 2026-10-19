@@ -1899,3 +1899,22 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Reference place reads preserve mutability, aliasing and consuming operands.
+replace_place_shared_reject|check-fail|tests/safety/replace_place_shared_reject.tl|-|replace! target must be a storage place
+replace_place_double_mut_reject|check-fail|tests/safety/replace_place_double_mut_reject.tl|-|E0207
+replace_place_prefix_move_reject|check-fail|tests/safety/replace_place_prefix_move_reject.tl|-|E0208
+replace_place_nested_move_reject|check-fail|tests/safety/replace_place_nested_move_reject.tl|-|E0208
+
+# replace! writes its place: a `&mut` reached through a shared reference is not
+# writable on any path (Rust E0594); the old value keeps an arena's brand; a
+# computed reference's referent is reached through a temporary.
+replace_through_shared_tuple_reject|check-fail|tests/safety/replace_through_shared_tuple_reject.tl|-|set! deref requires mutable access
+replace_through_shared_ref_reject|check-fail|tests/safety/replace_through_shared_ref_reject.tl|-|set! deref requires mutable access
+replace_through_shared_array_reject|check-fail|tests/safety/replace_through_shared_array_reject.tl|-|cannot mutably borrow `h` behind a shared reference
+replace_through_shared_field_reject|check-fail|tests/safety/replace_through_shared_field_reject.tl|-|set! deref requires mutable access
+replace_through_shared_stored_field_reject|check-fail|tests/safety/replace_through_shared_stored_field_reject.tl|-|replace! requires mutable place access
+replace_through_shared_box_reject|check-fail|tests/safety/replace_through_shared_box_reject.tl|-|set! deref requires mutable access
+replace_through_shared_buffer_reject|check-fail|tests/safety/replace_through_shared_buffer_reject.tl|-|cannot mutably borrow `h` behind a shared reference
+replace_arena_box_old_value_reject|check-fail|tests/safety/replace_arena_box_old_value_reject.tl|-|use of moved value `old`
+deref_computed_shared_reference_mut_reject|check-fail|tests/safety/deref_computed_shared_reference_mut_reject.tl|-|mutable borrow through a shared reference

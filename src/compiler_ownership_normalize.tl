@@ -5107,6 +5107,12 @@
 ;; the result and the replacement moves in. An element of an owned array is a
 ;; write of the whole array; behind a reference the write goes through its
 ;; loan (a shared one rejects it), and the old value is fresh.
+;; Behind an opaque referent (a reference reached through another reference)
+;; the referent is reserved and activated directly, as a two-phase borrow of
+;; it is (`normalize-reserve-place!`), so the replacement may read it through
+;; the same reference; the write then issues the referent's own loan, which is
+;; exclusive only when every reference on the path is mutable
+;; (`normalize-opaque-referent-of!`): a `&mut` behind a `&` is not writable.
 (define (normalize-replace-place!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -5134,13 +5140,10 @@
           (NormalizeValueResult.Err
             (OwnershipNormalizeFailure.Structural
               "ownership normalization: diverging place formation"))))]
-    [_opaque : unit
-      (when
-        (normalize-deferred-loan? (& state) loan)
-        (return
-          (NormalizeValueResult.Err
-            (OwnershipNormalizeFailure.Unsupported
-              "ownership normalization: replace behind an opaque referent"))))]
+    [reserve-parent : i64
+      (if (normalize-deferred-loan? (& state) loan)
+        -1
+        loan)]
     [_global : unit
       (when
         (and
@@ -5165,14 +5168,14 @@
           (own.OwnershipLoan
             (normalize-place-id (& state) formed.place)
             own.OwnershipLoanKind.Shared
-            (normalize-loan-origin (& state) loan)
+            (normalize-loan-origin (& state) reserve-parent)
             reservation-source))
         (try
           (normalize-borrow-emit!
             state
             formed.block
             reservation
-            loan
+            reserve-parent
             binder
             (& node.source))))]
     [value : NormalizeValue
@@ -5208,14 +5211,14 @@
         (own.OwnershipLoan
           (normalize-place-id (& state) formed.place)
           own.OwnershipLoanKind.Exclusive
-          (normalize-loan-origin (& state) loan)
+          (normalize-loan-origin (& state) reserve-parent)
           activation-source))
       (try
         (normalize-borrow-emit!
           state
           value.block
           activation
-          loan
+          reserve-parent
           binder
           (& node.source))))
     (cond

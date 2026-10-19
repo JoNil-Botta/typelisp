@@ -19585,8 +19585,36 @@
           (tc-selected-error error)
           (TcSelectedSink.Capture store lease bindings))])))
 
+;; The own type of a selected place, or `fallback` for an unrepresented one.
+(define (tc-selected-place-own-type!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [place : (& place TcSelectedPlace)]
+  [fallback : (& fallback ast.AstType)]) : ast.AstType
+  (match place
+    [(TcSelectedPlace.Selected id _)
+      (let
+        [type-index : i64
+          (match (typed.typed-place-get!
+            store
+            lease
+            (typed.TypedPlaceId (typed.typed-handle-copy (& id.handle))))
+            [(typed.TypedPlaceView.Ok row) row.type.handle.index]
+            [(typed.TypedPlaceView.Err _) -1])]
+        (if (< type-index 0)
+          (clone (deref fallback))
+          (match (typed.typed-type-value-at! store lease type-index)
+            [(typed.TypedTypeValueResult.Ok value) value]
+            [(typed.TypedTypeValueResult.Err _) (clone (deref fallback))])))]
+    [(TcSelectedPlace.Unrepresented) (clone (deref fallback))]))
+
 ;; `(deref box)` as a place: the contents of an owned box, or the referent of
-;; a supported reference.
+;; a supported reference. A place's own type follows its parent place's own
+;; type, never the type a by-value read of the parent reports: a box reached
+;; through a reference reads as a view tagged with that reference's lifetime,
+;; but its contents are the referent's own storage, which `replace!` takes out
+;; and `set!` fills as an owned value. A tag of the box's own type (an arena
+;; box) stays on its contents.
 (define (tc-selected-place-box
   [ctx : TcContext]
   [source : ownership.OwnershipSource]
@@ -19607,13 +19635,32 @@
               (tc-project-from-region-container
                 (tc-global-shared-view type)
                 (ast.ty-node-get inner))]
-            (tc-selected-place-project
-              (tc-global-shared-view contents)
-              contents
-              place
-              typed.TypedProjectionKind.Deref
-              source
-              next))]
+            (match next
+              [(TcSelectedSink.Capture store lease bindings)
+                (let
+                  [owned : ast.AstType
+                    (tc-project-from-region-container
+                      (tc-selected-place-own-type!
+                        store
+                        lease
+                        (& place)
+                        (& type))
+                      (ast.ty-node-get inner))]
+                  (tc-selected-place-project
+                    contents
+                    owned
+                    place
+                    typed.TypedProjectionKind.Deref
+                    source
+                    (TcSelectedSink.Capture store lease bindings)))]
+              [(TcSelectedSink.Query)
+                (tc-selected-place-project
+                  (tc-global-shared-view contents)
+                  contents
+                  place
+                  typed.TypedProjectionKind.Deref
+                  source
+                  TcSelectedSink.Query)]))]
         [_
           (match (tc-deref-result-type ctx (tc-global-shared-view type))
             [(ResultTcType.Ok contents)
@@ -64082,7 +64129,10 @@
 ;;
 ;; Mirrors `tc-replace-type`: the place is formed first, then the replacement is
 ;; inferred once against the place's value type; the occurrence replaces the
-;; formed place's value and yields the old one.
+;; formed place's value and yields the old one. That value is the place's own,
+;; never a view of a reference on its path: `replace!` writes the place
+;; exclusively and the old value leaves it owned, so the occurrence, its
+;; replacement and its result have the formed place's own type.
 (define (tc-infer-selected-replace
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -64155,34 +64205,94 @@
                   [(TcSelectedPlaceResult.Err message next)
                     (TcSelectedResult.Err message next)]
                   [(TcSelectedPlaceResult.Ok _ formed next)
-                    (match (tc-infer-selected-id
-                      ctx
-                      env
-                      replacement-id
-                      (ast.AstMaybeType.Some (tc-global-shared-view place-ty))
-                      (tc-global-shared-view source)
-                      next)
-                      [(TcSelectedResult.Err message after)
-                        (TcSelectedResult.Err message after)]
-                      [(TcSelectedResult.Ok replacement-ty value after)
-                        (match (tc-replace-replacement-ok
+                    (match next
+                      [(TcSelectedSink.Capture store lease bindings)
+                        (let
+                          [own-ty : ast.AstType
+                            (tc-selected-place-own-type!
+                              store
+                              lease
+                              (& formed)
+                              (& place-ty))]
+                          (tc-infer-selected-replace-value
+                            ctx
+                            env
+                            place
+                            place-ty
+                            own-ty
+                            replacement-id
+                            syntax
+                            source
+                            formed
+                            (TcSelectedSink.Capture store lease bindings)))]
+                      [(TcSelectedSink.Query)
+                        (tc-infer-selected-replace-value
                           ctx
                           env
                           place
-                          (tc-global-shared-view place-ty)
-                          replacement-ty
-                          replacement-id)
-                          [(ResultTcUnit.Err message)
-                            (TcSelectedResult.Err message after)]
-                          [(ResultTcUnit.Ok)
-                            (tc-selected-place-assign
-                              (ResultTcType.Ok place-ty)
-                              true
-                              syntax
-                              source
-                              formed
-                              value
-                              after)])])]))]))])))
+                          (clone place-ty)
+                          place-ty
+                          replacement-id
+                          syntax
+                          source
+                          formed
+                          TcSelectedSink.Query)])]))]))])))
+
+;; The replacement of `replace!` into the formed place of own type `own-ty`
+;; (`place-ty` is its typing): inferred against that type, checked as
+;; `tc-replace-type` checks it, then moved in. A replacement of another graph
+;; type (a view read through a reference) is not the place's value and keeps
+;; the unrepresented route.
+(define (tc-infer-selected-replace-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]
+  [place-ty : ast.AstType]
+  [own-ty : ast.AstType]
+  [replacement-id : i64]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [formed : TcSelectedPlace]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-id
+    ctx
+    env
+    replacement-id
+    (ast.AstMaybeType.Some (clone own-ty))
+    (ownership.ownership-source-copy (& source))
+    sink)
+    [(TcSelectedResult.Err message after) (TcSelectedResult.Err message after)]
+    [(TcSelectedResult.Ok replacement-ty value after)
+      (let
+        [moved-in? : bool
+          (or
+            (match (& replacement-ty)
+              [(ast.AstType.Never) true]
+              [_ false])
+            (tc-selected-same-type? (clone own-ty) (clone replacement-ty)))]
+        (match (tc-replace-replacement-ok
+          ctx
+          env
+          place
+          place-ty
+          replacement-ty
+          replacement-id)
+          [(ResultTcUnit.Err message) (TcSelectedResult.Err message after)]
+          [(ResultTcUnit.Ok)
+            (if moved-in?
+              (tc-selected-place-assign
+                (ResultTcType.Ok own-ty)
+                true
+                syntax
+                source
+                formed
+                value
+                after)
+              (tc-selected-unrepresented (ResultTcType.Ok own-ty) after))]))]))
 
 ;; The replacement checks of `tc-replace-type` after its inference.
 (define (tc-replace-replacement-ok
@@ -75334,6 +75444,23 @@
               (BorrowViolation)
               "typecheck: deref borrow requires Box place"))])]))
 
+;; A form that names storage for `tc-borrow-place-with-access`: a name or a
+;; projection of a place.
+(define (tc-borrow-place-form? [expr-bases : i64] [expr : (& expr ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(or (ast.AstExpr.Var _) (ast.AstExpr.StructGet _ _)
+         (ast.AstExpr.TupleRef _ _) (ast.AstExpr.ArrayRef _ _)
+         (ast.AstExpr.BoxGet _) (ast.AstExpr.BoxTake _))
+      true]
+    [_ false]))
+
+;; `(deref receiver)` as a borrowed place. A box's contents are part of the
+;; box place. A reference's referent is reached through the reference: a place
+;; receiver is reborrowed along its path, and any other receiver is a value
+;; held in a temporary, as Rust holds `&mut *{ e }` (the selected place does
+;; the same, `tc-selected-place-temporary`): the referent is borrowed for the
+;; reference's own lifetime, shared when the reference is, and the receiver's
+;; own effects (a move in a `begin` prefix) stay checked.
 (define (tc-borrow-place-deref
   [ctx : TcContext]
   [expr-bases : i64]
@@ -75342,7 +75469,7 @@
   [receiver : ast.AstExpr]) : ResultTcBorrowPlace
   (match (tc-expr ctx env (tc-global-shared-view receiver))
     [(ResultTcType.Ok receiver-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+      (match (tc-type-strip-region (tc-resolve-type ctx (clone receiver-ty)))
         [(ast.AstType.Box _)
           (let
             [place : TcBorrowPlace
@@ -75354,10 +75481,10 @@
                   mutable
                   receiver))]
             (tc-borrow-place-box-get ctx place))]
-        [(ast.AstType.Ref _ _)
-          (tc-borrow-place-with-access ctx expr-bases env mutable receiver)]
-        [(ast.AstType.MutRef _ _)
-          (tc-borrow-place-with-access ctx expr-bases env mutable receiver)]
+        [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _))
+          (if (tc-borrow-place-form? expr-bases (& receiver))
+            (tc-borrow-place-with-access ctx expr-bases env mutable receiver)
+            (tc-borrow-place-var -1 (tc-resolve-type ctx receiver-ty)))]
         [_
           (ResultTcBorrowPlace.Err
             (tc-kind-message
@@ -75513,12 +75640,24 @@
           [box-ty (try (tc-expr ctx env box-expr))]
           [_ (try (tc-box-set-inner-type ctx box-ty))]
           Ok))]
+    ;; A receiver that is no place is a value held in a temporary
+    ;; (`tc-borrow-place-deref`): only a reference's referent is borrowed
+    ;; through one, so it need not be storage itself.
     [(BoxTake receiver-box)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         [_
-          (try
-            (tc-store-place-lifetime ctx env (tc-global-shared-view receiver)))]
+          (when
+            (tc-borrow-place-form?
+              (tc-context-expr-segment-bases ctx)
+              (& receiver))
+            (begin
+              (try
+                (tc-store-place-lifetime
+                  ctx
+                  env
+                  (tc-global-shared-view receiver)))
+              unit))]
         (let
           [receiver-ty (try (tc-expr ctx env receiver))]
           [_ (try (tc-box-set-inner-type ctx receiver-ty))]
@@ -83372,14 +83511,42 @@
               [(TcArrayReceiver _ elem-ty) (ResultTcType.Ok elem-ty)]))
           (ResultTcType.Err "typecheck: replace! array index must be integer")))]
     [(ast.AstExpr.BoxGet receiver-box)
-      (let
-        [receiver-ty : ast.AstType (try (tc-expr-id ctx env receiver-box))]
-        (tc-box-set-inner-type ctx receiver-ty))]
+      (tc-box-set-inner-type
+        ctx
+        (try (tc-deref-place-receiver-type ctx env mutable receiver-box)))]
     [(ast.AstExpr.BoxTake receiver-box)
-      (let
-        [receiver-ty : ast.AstType (try (tc-expr-id ctx env receiver-box))]
-        (tc-box-set-inner-type ctx receiver-ty))]
+      (tc-box-set-inner-type
+        ctx
+        (try (tc-deref-place-receiver-type ctx env mutable receiver-box)))]
     [_ (ResultTcType.Err "typecheck: replace! target must be a mutable place")]))
+
+;; The type of the storage `(deref receiver)` dereferences, as a place's value
+;; type follows its parent place's (`tc-selected-place-box`). A projection
+;; receiver (a field, element or dereference, or a dotted field name) names
+;; storage of its own place type. Reading it by value instead reports, through
+;; a reference, a view tagged with the reference's lifetime
+;; (`tc-deref-result-type`), and a box's contents projected from that view
+;; would type `replace!`'s old value as borrowed from the reference rather
+;; than as the owned value it takes out. A plain name or any other value is
+;; the reference or box itself.
+(define (tc-deref-place-receiver-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [mutable : bool]
+  [receiver-id : i64]) : ResultTcType
+  (let
+    [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-id)]
+    (if (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-segment-bases ctx)
+      (& receiver))
+      [(ast.AstExpr.Var name) (tc-dotted-place-name-id? ctx env name)]
+      [(or (ast.AstExpr.StructGet _ _) (ast.AstExpr.TupleRef _ _)
+           (ast.AstExpr.ArrayRef _ _) (ast.AstExpr.BoxGet _)
+           (ast.AstExpr.BoxTake _))
+        true]
+      [_ false])
+      (tc-replace-place-value-type-with-access ctx env mutable receiver)
+      (tc-expr-id ctx env receiver-id))))
 
 (define (tc-replace-type
   [ctx : TcContext]

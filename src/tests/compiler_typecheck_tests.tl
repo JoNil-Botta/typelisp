@@ -9515,8 +9515,204 @@
     (begin (cleanup-file-handle p.a) 0)))")
       "typecheck: cleanup obligation of `p` is only partly discharged at the end of its let scope")))
 
+(define (compiler-typecheck-place-read-receivers-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Outer (pt Pt))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+(define (two [a : (&mut a Pt)] [b : (&mut b Pt)]) : unit unit)
+(define (take [p : Pt]) : unit unit)
+"]
+    [valid : (Array String 6)
+      (array
+        "(define (probe [p : (&mut p Pt)]) : i64 (let [old (replace! (deref p) (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Outer)]) : i64 (let [old (replace! (deref p).pt (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Pt)]) : i64 (bump (&mut (deref p))) (deref p).x)"
+        "(define (probe [p : (& p (Box i64))]) : i64 (deref (deref p)))"
+        "(define (probe [p : (Box (Box String))]) : String (deref (deref p)))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [invalid : (Array String 9)
+      (array
+        "(define (probe [p : (& p Pt)]) : Pt (replace! (deref p) (Pt \"z\" 2)))"
+        "(define (probe [p : (& p Pt)]) : unit (bump (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (two (&mut (deref p)) (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : Pt (deref p))"
+        "(define (probe [p : (&mut p Pt)]) : unit (bump (&mut (deref (begin (take (deref p)) p)))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (Box (Box String))]) : String (let [old (deref (deref p))] (deref (deref p))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [codes : (Array String 9)
+      (array
+        "E0215"
+        "E0207"
+        "E0207"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0215")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
+;; `replace!` returns the place's own old value: box contents reached through
+;; `&mut` (directly, through a field, nested) leave as owned values that may be
+;; returned or replace another place, never as views of the reference. The
+;; place is still written exclusively, and the old value is moved like any
+;; owned value.
+(define (compiler-typecheck-replace-place-own-value-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct S (b (Box String)) (n i64))
+(defstruct W (s String))
+"]
+    [valid : (Array String 6)
+      (array
+        "(define (probe [p : (&mut p (Box String))]) : String (replace! (deref (deref p)) \"z\"))"
+        "(define (probe [p : (&mut p (Box W))]) : W (replace! (deref (deref p)) (W \"z\")))"
+        "(define (probe [p : (&mut p (Box (Box i64)))]) : (Box i64) (replace! (deref (deref p)) (box 5)))"
+        "(define (probe [p : (&mut p S)]) : String (replace! (deref p.b) \"z\"))"
+        "(define (probe [p : (&mut p S)]) : String (replace! (deref (deref p).b) \"z\"))"
+        "(define (probe [p : (&mut p S)] [q : (&mut q S)]) : unit (let [_old (replace! (deref p.b) (replace! (deref q.b) \"x\"))] unit))")]
+    [invalid : (Array String 4)
+      (array
+        "(define (probe [p : (& p S)]) : String (replace! (deref p.b) \"z\"))"
+        "(define (probe [p : (&mut p (Box String))]) : String (replace! (deref (deref p)) (deref (deref p))))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (replace! (deref (deref p)) (replace! (deref (deref p)) \"y\"))] unit))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [old (replace! (deref (deref p)) \"z\")] (let [_k old] (let [_j old] unit))))")]
+    [codes : (Array String 4) (array "E0207" "E0208" "E0207" "E0208")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
+;; `(deref e)` of a computed reference `e` is a place through a temporary
+;; holding the reference (Rust's `&mut *{ e }`): it may be borrowed, written
+;; and replaced through as the reference allows, and `e`'s own effects stay
+;; checked (a prefix that moves the referent, a reference moved into the
+;; temporary).
+(define (compiler-typecheck-deref-reference-value-place-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+(define (look [p : (& p Pt)]) : i64 p.x)
+(define (take [_v : Pt]) : unit unit)
+(define (two [a : (&mut a Pt)] [b : (&mut b Pt)]) : unit unit)
+(define (get [p : (&mut p Pt)]) : (&mut p Pt) p)
+(define (view [p : (& p Pt)]) : (& p Pt) p)
+"]
+    [valid : (Array String 5)
+      (array
+        "(define (probe [p : (&mut p Pt)]) : unit (bump (&mut (deref (get p)))))"
+        "(define (probe [p : (&mut p Pt)]) : i64 (look (& (deref (get p)))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (let [r (&mut (deref (get p)))] (bump r)))"
+        "(define (probe [p : (&mut p Pt)]) : i64 (bump (&mut (deref (get p)))) (deref p).x)"
+        "(define (probe [p : (&mut p Pt)]) : Pt (replace! (deref (get p)) (Pt \"z\" 1)))")]
+    [invalid : (Array String 5)
+      (array
+        "(define (probe [p : (&mut p Pt)]) : i64 (look (& (deref (begin (take (deref p)) p)))))"
+        "(define (probe [p : (& p Pt)]) : unit (bump (&mut (deref (view p)))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (bump (&mut (deref (let [_t (take (deref p))] p)))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (two (&mut (deref (begin p))) (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : Pt (deref (begin p)))")]
+    [codes : (Array String 5) (array "E0208" "E0207" "E0208" "E0208" "E0208")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
+;; A place is writable only when every reference on its path is mutable (Rust's
+;; supporting prefixes): a `&mut` reached through a `&` grants shared access,
+;; so `replace!` of its referent is rejected like `set!` and `&mut` (E0207),
+;; and accepted when the outer reference is `&mut`.
+(define (compiler-typecheck-replace-shared-path-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Holder (:lifetimes a) (r (&mut a Pt)) (n i64))
+"]
+    [shapes : (Array String 7)
+      (array
+        "(Tuple (&mut a Pt) i64)) ]) : Pt (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(&mut a Pt)) ]) : Pt (replace! (deref (deref h)) (Pt \"z\" 2)))"
+        "(Array (&mut a Pt) 1)) ]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(Holder a)) ]) : Pt (replace! (deref (deref h).r) (Pt \"z\" 2)))"
+        "(Holder a)) ]) : String (replace! (deref h.r).name \"z\"))"
+        "(Box (Tuple (&mut a Pt) i64))) ]) : Pt (replace! (deref (tuple-ref (deref (deref h)) 0)) (Pt \"z\" 2)))"
+        "(__tl_dyn-array (&mut a Pt))) ]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length shapes))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat
+              (clone prefix)
+              "(define (sneak [h : (& h "
+              (clone (array-ref shapes index)))
+            "E0207"
+            "typecheck")
+          (compiler-typecheck-ok?
+            (str_cat.str-cat
+              (clone prefix)
+              "(define (sneak [h : (&mut h "
+              (clone (array-ref shapes index)))))))
+    ok))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-place-read-receivers-ok?)
+    (compiler-typecheck-replace-place-own-value-ok?)
+    (compiler-typecheck-deref-reference-value-place-ok?)
+    (compiler-typecheck-replace-shared-path-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-use-after-move-source)
       "typecheck: use of moved value `s`")

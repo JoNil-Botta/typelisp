@@ -72,7 +72,11 @@ the holder kills in loan liveness (below): a read can demand every loan its
 root may ever hold, and a holder overwritten only through a field write or a
 reference keeps its demands. A dereference or reborrow of a reference joined
 from several loans is not represented and is rejected with E0211, never
-trusted, and so is `replace!` behind an opaque referent. A read through a
+trusted. `replace!` behind an opaque referent (a reference reached through
+another reference) reserves and activates the referent like a two-phase
+borrow and writes through the referent's loan, which is exclusive only when
+every reference on the path is mutable: a `&mut` behind a `&` is not
+writable (E0207, Rust E0594). A read through a
 reference that may point to several places sees the loans of all of them, so
 writing a place only one of them borrows can be rejected while another is
 read (main rejects that too; Rust accepts it). A raw address

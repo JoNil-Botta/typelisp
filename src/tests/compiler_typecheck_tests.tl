@@ -665,9 +665,64 @@
           "(define (copy [r : (& r Value)]) : (& r Value) (clone r))")
         "typecheck: clone unsupported type (& r Value)"))))
 
+;; The ownership graph's clone read (SPEC 7.6): owned places in the read's
+;; result positions stay usable, a projection's receiver is read where it
+;; lies (retained by value when an index after it can write a root it may
+;; select), a value among the results is held in a temporary, and the rest of
+;; the operand keeps its ordinary moves.
+(define (compiler-typecheck-clone-read-tests-ok?) : bool
+  (let
+    [prefix : String
+      "(defenum Value (Empty) (Text String))
+(defstruct Holder (cell Value))
+(define (take [value : Value]) : unit unit)
+(define (taken? [value : Value]) : bool true)
+"]
+    (and
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [a : Value] [b : Value] [flag : bool]) : Value
+  (let [copy (clone (match flag [true (if flag a b)] [false (begin 0 b)]))]
+    (take a)
+    (take b)
+    copy))"))
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [h : (& h Holder)] [a : (& a (Array Value 2))] [flag : bool]) : Value
+  (begin
+    (take (clone (if flag (deref h) (deref h)).cell))
+    (clone (array-ref (if flag (deref a) (deref a)) 0))))"))
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)] [flag : bool]) : Value
+  (clone (if flag (deref r) (Value.Empty))))"))
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
+  (let [copy (clone (array-ref (if flag a b) 0))]
+    (take (array-ref a 0))
+    (take (array-ref b 0))
+    copy))"))
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
+  (clone (array-ref (if flag a b) (begin (set! a (array (Value.Empty))) 0))))"))
+      (compiler-typecheck-error-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [a : Value] [b : Value]) : Value
+  (let [copy (clone (if (taken? a) b b))] (take a) copy))")
+        "typecheck: use of moved value `a`"))))
+
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
     (compiler-typecheck-clone-referent-tests-ok?)
+    (compiler-typecheck-clone-read-tests-ok?)
     (clone_tests.clone-name-set-smoke-ok?)
     (clone_tests.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok?

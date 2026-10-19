@@ -3382,7 +3382,10 @@
   ;; `tc-selected-receiver-tails!`): each expression id (-1 once inferred)
   ;; and whether it names a place outside its receiver.
   (receiver-tails (__tl_dyn-array i64))
-  (receiver-places (__tl_dyn-array bool)))
+  (receiver-places (__tl_dyn-array bool))
+  ;; The forms a `clone` operand reads through (see `tc-infer-selected-read`),
+  ;; by expression id, while the operand is inferred.
+  (read-spines (__tl_dyn-array i64)))
 
 ;; A foreign module value's binder and the legacy write diagnostic around the
 ;; operation it names (`tc-move-foreign-global-write-message`).
@@ -3406,7 +3409,8 @@
     (__tl_make-array TcSelectedForeignGlobal 0)
     ""
     (__tl_make-array i64 0)
-    (__tl_make-array bool 0)))
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 0)))
 
 ;; A selected inference capability is linear: every result, including an error,
 ;; returns it to the caller. Query clients cannot publish executable records.
@@ -3793,6 +3797,89 @@
       (typed.TypedOccurrenceId
         (typed.typed-handle-copy (& (array-ref children index).handle))))))
 
+;; Whether `syntax` names a form a `clone` operand reads through
+;; (`tc-infer-selected-read`).
+(define (tc-selected-read-spine-syntax?
+  [bindings : (& bindings TcSelectedBindings)]
+  [syntax : (& syntax typed.TypedSyntax)]) : bool
+  (match syntax
+    [(typed.TypedSyntax.Source id)
+      (let
+        [index : i64 0]
+        [found? : bool false]
+        (while (and (not found?) (< index (array-length bindings.read-spines)))
+          (set! found? (= (array-ref bindings.read-spines index) id))
+          (set! index (+ index 1)))
+        found?)]
+    [(typed.TypedSyntax.Generated) false]))
+
+(defenum TcSelectedMaybeTypeId
+  (Found typed.TypedTypeId)
+  (No)
+  (Err typed.TypedError))
+
+;; Occurrence `id`'s own type, or No when it diverges (Never).
+(define (tc-selected-occurrence-live-type!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [id : typed.TypedOccurrenceId]) : TcSelectedMaybeTypeId
+  (let
+    [type : typed.TypedTypeId
+      (match (typed.typed-occurrence-get! store lease id)
+        [(typed.TypedNodeResult.Err error)
+          (return (TcSelectedMaybeTypeId.Err error))]
+        [(typed.TypedNodeResult.Ok node)
+          (typed.TypedTypeId (typed.typed-handle-copy (& node.type.handle)))])]
+    (match (typed.typed-type-get!
+      store
+      lease
+      (typed.TypedTypeId (typed.typed-handle-copy (& type.handle))))
+      [(typed.TypedTypeResult.Err error) (TcSelectedMaybeTypeId.Err error)]
+      [(typed.TypedTypeResult.Ok value)
+        (match value
+          [(ast.AstType.Never) TcSelectedMaybeTypeId.No]
+          [_ (TcSelectedMaybeTypeId.Found type)])])))
+
+;; The type a form a `clone` operand reads through publishes
+;; (`tc-infer-selected-read`): its result's, which is the read of the place
+;; (or temporary) its result child names. The result children are an `if`'s
+;; branches, a match's arm bodies and a sequence's last form; the first that
+;; does not diverge decides. `ty`, the form's inferred type, when none does.
+(define (tc-selected-read-result-type-id!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [operation : (& operation typed.TypedOperation)]
+  [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]
+  [ty : ast.AstType]) : typed.TypedTypeIdResult
+  (let
+    [count : i64 (array-length children)]
+    [index : i64
+      (match operation
+        [(typed.TypedOperation.If) 1]
+        [(typed.TypedOperation.Match _) 1]
+        [(typed.TypedOperation.Sequence) (- count 1)]
+        [_ count])]
+    (while (and (>= index 0) (< index count))
+      (let
+        [child : typed.TypedOccurrenceId
+          (typed.TypedOccurrenceId
+            (typed.typed-handle-copy (& (array-ref children index).handle)))]
+        [result : typed.TypedOccurrenceId
+          (match operation
+            [(typed.TypedOperation.Match _)
+              (match (typed.typed-child-get! store lease child 1)
+                [(typed.TypedChildResult.Ok body) body]
+                [(typed.TypedChildResult.Err error)
+                  (return (typed.TypedTypeIdResult.Err error))])]
+            [_ child])]
+        (match (tc-selected-occurrence-live-type! store lease result)
+          [(TcSelectedMaybeTypeId.Found type)
+            (return (typed.TypedTypeIdResult.Ok type))]
+          [(TcSelectedMaybeTypeId.Err error)
+            (return (typed.TypedTypeIdResult.Err error))]
+          [(TcSelectedMaybeTypeId.No) (set! index (+ index 1))])))
+    (typed.typed-type-add! store lease ty)))
+
 ;; An occurrence published with its intrinsic result (`tc-selected-publish`
 ;; derives it for every form).
 (define (tc-selected-publish-flow
@@ -3861,12 +3948,21 @@
                   [(TcSelectedBoolResult.Err error)
                     (typed.TypedTypeIdResult.Err error)]
                   [(TcSelectedBoolResult.Ok never?)
-                    (typed.typed-type-add!
-                      store
-                      lease
-                      (if never?
-                        ast.AstType.Never
-                        (tc-global-shared-view ty)))])
+                    (if (and
+                      (not never?)
+                      (tc-selected-read-spine-syntax? (& bindings) (& syntax)))
+                      (tc-selected-read-result-type-id!
+                        store
+                        lease
+                        (& operation)
+                        (& children)
+                        (tc-global-shared-view ty))
+                      (typed.typed-type-add!
+                        store
+                        lease
+                        (if never?
+                          ast.AstType.Never
+                          (tc-global-shared-view ty))))])
                   [(typed.TypedTypeIdResult.Err error)
                     (TcSelectedResult.Err
                       (tc-selected-error error)
@@ -4206,9 +4302,10 @@
                       macro-name-id
                       span)))]
               [result : (TcSelectedResult store lease intern bind)
-                (match (tc-infer-selected-id
+                (match (tc-infer-selected-result-id
                   ctx
                   env
+                  (& syntax)
                   expanded
                   expected
                   (tc-selected-expansion-source
@@ -4281,9 +4378,10 @@
                     message)
                   next)])]
           [_
-            (match (tc-infer-selected-id
+            (match (tc-infer-selected-result-id
               ctx
               env
+              (& syntax)
               inner-id
               expected
               (ownership.OwnershipSource
@@ -5307,7 +5405,14 @@
         source
         sink)]
     [(ast.AstExpr.MacroExpansion expanded _ _)
-      (tc-infer-selected-id ctx env expanded expected source sink)]
+      (tc-infer-selected-result-id
+        ctx
+        env
+        (& syntax)
+        expanded
+        expected
+        source
+        sink)]
     [(ast.AstExpr.Match match-box)
       (tc-infer-selected-match
         ctx
@@ -5700,9 +5805,10 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-id
+  (match (tc-infer-selected-result-id
     ctx
     env
+    (& syntax)
     inner-id
     ast.AstMaybeType.No
     (tc-global-shared-view source)
@@ -7951,6 +8057,8 @@
   [arm-types : (__tl_dyn-array ast.AstType)]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [represented? : bool]
+  ;; The match's own syntax: its arm bodies are its result children.
+  [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedArmsResult
     store
@@ -8088,6 +8196,7 @@
                 body-id
                 arm-env
                 saved
+                (tc-global-shared-view syntax)
                 source
                 next)]
             [(TcSelectedPatternOutcome.Built id next)
@@ -8108,6 +8217,7 @@
                 body-id
                 arm-env
                 saved
+                (tc-global-shared-view syntax)
                 source
                 next)]))])))
 
@@ -8137,6 +8247,7 @@
   [body-id : i64]
   [arm-env : TcTypeEnv]
   [saved : TcTypeEnvScopedRuntimeSave]
+  [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedArmsResult
     store
@@ -8146,9 +8257,10 @@
   (let
     [observed? : bool (tc-semantic-capture-observed? ctx (& sink))]
     [body : (TcSelectedResult store lease intern bind)
-      (tc-infer-selected-sequence-child
+      (tc-infer-selected-result-child
         ctx
         arm-env
+        (& syntax)
         body-id
         (tc-global-shared-view expected)
         (tc-global-shared-view source)
@@ -8228,6 +8340,7 @@
                       arm-types
                       children
                       false
+                      (tc-global-shared-view syntax)
                       source
                       after)]
                   [(TcSelectedArmOutcome.Built id after)
@@ -8246,6 +8359,7 @@
                       arm-types
                       children
                       represented?
+                      (tc-global-shared-view syntax)
                       source
                       after)]))]))])))
 
@@ -9139,6 +9253,7 @@
                       arm-types
                       children
                       (and (> arms.len 0) (not diverged?))
+                      (tc-global-shared-view syntax)
                       (tc-global-shared-view source)
                       next)
                       [(TcSelectedArmsResult.Err message after)
@@ -9443,9 +9558,10 @@
   (let
     [want-ty : ast.AstType
       (tc-resolve-type ctx (tc-context-type-get ctx ty-id))]
-    (match (tc-infer-selected-id
+    (match (tc-infer-selected-result-id
       ctx
       env
+      (& syntax)
       inner-id
       (ast.AstMaybeType.Some (tc-global-shared-view want-ty))
       source
@@ -14882,14 +14998,21 @@
             TcSelectedOccurrence.Unrepresented
             TcSelectedSink.Query)]
         [(TcSelectedSink.Capture store lease bindings)
-          (match (tc-infer-selected-builtin-operands
-            ctx
-            env
-            args
-            0
-            (__tl_make-array typed.TypedOccurrenceId args.len)
-            (tc-global-shared-view source)
-            (TcSelectedSink.Capture store lease bindings))
+          (match (if (and (= arm 23) (= args.len 1))
+            (tc-infer-selected-clone-operands
+              ctx
+              env
+              args
+              (tc-global-shared-view source)
+              (TcSelectedSink.Capture store lease bindings))
+            (tc-infer-selected-builtin-operands
+              ctx
+              env
+              args
+              0
+              (__tl_make-array typed.TypedOccurrenceId args.len)
+              (tc-global-shared-view source)
+              (TcSelectedSink.Capture store lease bindings)))
             [(TcSelectedArgsResult.Err message next)
               (TcSelectedResult.Err message next)]
             [(TcSelectedArgsResult.Ok children represented? next)
@@ -14903,6 +15026,35 @@
                   children
                   next)
                 (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next))])])]))
+
+;; The compiler-special `clone`'s one operand, read (`tc-infer-selected-read`).
+(define (tc-infer-selected-clone-operands
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedArgsResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-clone-operand
+    ctx
+    env
+    (ast.ast-expr-list-get args 0 0)
+    source
+    sink)
+    [(TcSelectedResult.Err message next)
+      (TcSelectedArgsResult.Err message next)]
+    [(TcSelectedResult.Ok _ occurrence next)
+      (match occurrence
+        [(TcSelectedOccurrence.Selected child)
+          (TcSelectedArgsResult.Ok (__tl_make-array child) true next)]
+        [(TcSelectedOccurrence.Unrepresented)
+          (TcSelectedArgsResult.Ok
+            (__tl_make-array typed.TypedOccurrenceId 1)
+            false
+            next)])]))
 
 (define (tc-infer-selected-builtin-operands
   [ctx : TcContext]
@@ -15399,6 +15551,619 @@
         source
         true
         sink))))
+
+;; --- Clone reads (SPEC 7.6) ---------------------------------------------------
+;;
+;; The compiler-special `(clone value)` reads its operand without moving it.
+;; The read reaches the operand's result positions: through annotation, `cast`
+;; and expansion wrappers, both `if` branches, every match arm body, the `let`
+;; body, the last form of a `begin` or `unsafe` block, and the receivers of
+;; `deref`, field, tuple and array projections. A move-only place in such a
+;; position is lent shared for the read (Rust's `&place`) instead of moved;
+;; any other move-only value there is held in a temporary lent the same way.
+;; A form the read reaches through therefore yields that reference, which
+;; `clone` reads through, as it reads a place operand directly. Everything
+;; else in the operand (conditions, scrutinees, initializers, earlier forms,
+;; indices, arguments) is inferred as anywhere else. The forms read through are
+;; registered by expression id while the operand is inferred; each one's result
+;; sites call `tc-infer-selected-result-id`, and its occurrence is published
+;; with the type of its result (`tc-selected-read-result-type-id!`). The
+;; inferred types stay the expressions' own.
+;;
+;; The forms a read reaches through to their results:
+(define (tc-selected-read-spine-form? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan (& expr))
+    [(ast.AstExpr.If _ _ _) true]
+    [(ast.AstExpr.Match _) true]
+    [(ast.AstExpr.Let _) true]
+    [(ast.AstExpr.Begin _) true]
+    [(ast.AstExpr.Unsafe _) true]
+    [(ast.AstExpr.Ann _ _) true]
+    [(ast.AstExpr.Cast _ _) true]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-read-spine-form? ctx (tc-context-expr-get ctx expanded))]
+    [_ false]))
+
+;; Register `id` as a form the read reaches through.
+(define (tc-selected-read-spine-push
+  [sink : (TcSelectedSink store lease intern bind)]
+  [id : i64]) : (TcSelectedSink store lease intern bind)
+  (match sink
+    [(TcSelectedSink.Query) TcSelectedSink.Query]
+    [(TcSelectedSink.Capture store lease bindings)
+      (__tl_array-push! bindings.read-spines id)
+      (TcSelectedSink.Capture store lease bindings)]))
+
+;; Retire the forms registered from `mark`.
+(define (tc-selected-read-spine-pop
+  [sink : (TcSelectedSink store lease intern bind)]
+  [mark : i64]) : (TcSelectedSink store lease intern bind)
+  (match sink
+    [(TcSelectedSink.Query) TcSelectedSink.Query]
+    [(TcSelectedSink.Capture store lease bindings)
+      (if (= mark 0)
+        (set! bindings.read-spines (__tl_make-array i64 0))
+        (let
+          [index : i64 mark]
+          (while (< index (array-length bindings.read-spines))
+            (set! (array-ref bindings.read-spines index) -1)
+            (set! index (+ index 1)))))
+      (TcSelectedSink.Capture store lease bindings)]))
+
+;; Whether `syntax` names a form the read reaches through (1) or not (0).
+(define (tc-selected-sink-read-spine
+  [sink : (TcSelectedSink store lease intern bind)]
+  [syntax : (& syntax typed.TypedSyntax)]) : (TcSelectedCounted
+    store
+    lease
+    intern
+    bind)
+  (match sink
+    [(TcSelectedSink.Query) (TcSelectedCounted.Counted 0 TcSelectedSink.Query)]
+    [(TcSelectedSink.Capture store lease bindings)
+      (TcSelectedCounted.Counted
+        (if (tc-selected-read-spine-syntax? (& bindings) syntax)
+          1
+          0)
+        (TcSelectedSink.Capture store lease bindings))]))
+
+;; The operand of the compiler-special `clone`: read, never moved.
+(define (tc-infer-selected-clone-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [counted : (TcSelectedCounted store lease intern bind)
+      (match sink
+        [(TcSelectedSink.Query)
+          (TcSelectedCounted.Counted 0 TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (TcSelectedCounted.Counted
+            (array-length bindings.read-spines)
+            (TcSelectedSink.Capture store lease bindings))])]
+    [mark : i64 (tc-selected-counted-value (& counted))]
+    [sink : (TcSelectedSink store lease intern bind)
+      (tc-selected-counted-sink counted)]
+    (match (if (tc-selected-read-spine-form?
+      ctx
+      (tc-context-expr-get ctx arg-id))
+      (tc-infer-selected-read ctx env arg-id ast.AstMaybeType.No source sink)
+      (tc-infer-selected-operand
+        ctx
+        env
+        arg-id
+        source
+        (tc-selected-read-receiver-push ctx env arg-id sink)))
+      [(TcSelectedResult.Ok ty occurrence next)
+        (TcSelectedResult.Ok
+          ty
+          occurrence
+          (tc-selected-read-spine-pop next mark))]
+      [(TcSelectedResult.Err message next)
+        (TcSelectedResult.Err message (tc-selected-read-spine-pop next mark))])))
+
+;; A form's result child `id`: read when the form itself is read through,
+;; otherwise inferred as anywhere else.
+(define (tc-infer-selected-result-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [syntax : (& syntax typed.TypedSyntax)]
+  [id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-selected-sink-read-spine sink syntax)
+    [(TcSelectedCounted.Counted read? next)
+      (if (= read? 1)
+        (tc-infer-selected-read ctx env id expected source next)
+        (tc-infer-selected-id ctx env id expected source next))]))
+
+;; `tc-infer-selected-sequence-child` for a form's result child.
+(define (tc-infer-selected-result-child
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [syntax : (& syntax typed.TypedSyntax)]
+  [id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [represented? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (if represented?
+    (tc-infer-selected-result-id ctx env syntax id expected source sink)
+    (tc-infer-selected-sequence-child ctx env id expected source false sink)))
+
+;; A result position of a `clone` operand: a form the read reaches through is
+;; registered and inferred (its own result sites read in turn); any other
+;; expression is a read tail.
+(define (tc-infer-selected-read
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (if (tc-selected-read-spine-form? ctx (tc-context-expr-get ctx id))
+    (tc-infer-selected-id
+      ctx
+      env
+      id
+      expected
+      source
+      (tc-selected-read-spine-push sink id))
+    (tc-infer-selected-read-tail ctx env id expected source sink)))
+
+;; A read tail. A Copy or diverging value is inferred as anywhere else. A
+;; move-only place is lent for the read as a read builtin's operand is
+;; (`tc-infer-selected-operand`); when it projects out of a form the read
+;; reaches through, that receiver is read too. Any other move-only value is
+;; held in a temporary lent the same way. The result keeps the type the
+;; expression infers to anywhere else; its occurrence is the reference.
+(define (tc-infer-selected-read-tail
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-selected-project
+    (tc-infer-selected-id
+      ctx
+      env
+      id
+      (tc-global-shared-view expected)
+      (tc-global-shared-view source)
+      TcSelectedSink.Query))
+    [(ResultTcType.Err _)
+      (tc-infer-selected-id ctx env id expected source sink)]
+    [(ResultTcType.Ok ty)
+      (cond
+        [(or
+            (tc-type-copyable? ctx (tc-global-shared-view ty))
+            (match (& ty)
+              [(ast.AstType.Never) true]
+              [_ false]))
+          (tc-infer-selected-id ctx env id expected source sink)]
+        [(tc-selected-operand-place? ctx (tc-context-expr-get ctx id))
+          (tc-selected-read-result
+            ty
+            (tc-infer-selected-operand
+              ctx
+              env
+              id
+              source
+              (tc-selected-read-receiver-push ctx env id sink)))]
+        [else
+          (tc-selected-read-result
+            (tc-global-shared-view ty)
+            (tc-infer-selected-read-value ctx env id expected source sink))])]))
+
+;; A read's result: the expression's own type `ty` over the reference
+;; occurrence.
+(define (tc-selected-read-result
+  [ty : ast.AstType]
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Err message sink) (TcSelectedResult.Err message sink)]
+    [(TcSelectedResult.Ok _ occurrence sink)
+      (TcSelectedResult.Ok ty occurrence sink)]))
+
+;; A move-only value in a read position: held in a temporary, which is lent
+;; for the read.
+(define (tc-infer-selected-read-value
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [id : i64]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-id
+    ctx
+    env
+    id
+    expected
+    (tc-global-shared-view source)
+    sink)
+    [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
+    [(TcSelectedResult.Ok ty occurrence next)
+      (match occurrence
+        [(TcSelectedOccurrence.Unrepresented)
+          (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)]
+        [(TcSelectedOccurrence.Selected value)
+          (match next
+            [(TcSelectedSink.Query)
+              (tc-selected-unrepresented
+                (ResultTcType.Ok ty)
+                TcSelectedSink.Query)]
+            [(TcSelectedSink.Capture store lease bindings)
+              (if (not
+                (tc-selected-temporary-type? ctx env (tc-global-shared-view ty)))
+                (tc-selected-unrepresented
+                  (ResultTcType.Ok ty)
+                  (TcSelectedSink.Capture store lease bindings))
+                (match (tc-selected-temporary-place!
+                  (tc-global-shared-view ty)
+                  value
+                  (tc-global-shared-view source)
+                  store
+                  lease
+                  bindings)
+                  [(TcSelectedPlaceResult.Err message after)
+                    (TcSelectedResult.Err message after)]
+                  [(TcSelectedPlaceResult.Ok _ place after)
+                    (match place
+                      [(TcSelectedPlace.Selected place-id indices)
+                        (tc-selected-publish-borrow
+                          (ast.ast-ty-ref 0 (& ty))
+                          false
+                          place-id
+                          indices
+                          (typed.TypedSyntax.Source id)
+                          source
+                          after)]
+                      [(TcSelectedPlace.Unrepresented)
+                        (tc-selected-unrepresented (ResultTcType.Ok ty) after)])]))])])]))
+
+;; The receiver a projection chain `id` starts from when that receiver is not
+;; a place (`tc-infer-selected-receiver-place` holds it in a temporary), or -1.
+(define (tc-selected-projection-base [ctx : TcContext] [id : i64]) : i64
+  (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx id)))
+    [(ast.AstExpr.StructGet receiver _)
+      (tc-selected-projection-receiver-base ctx receiver)]
+    [(ast.AstExpr.TupleRef receiver _)
+      (tc-selected-projection-receiver-base ctx receiver)]
+    [(ast.AstExpr.ArrayRef receiver _)
+      (tc-selected-projection-receiver-base ctx receiver)]
+    [(ast.AstExpr.BoxGet receiver)
+      (tc-selected-projection-receiver-base ctx receiver)]
+    [(ast.AstExpr.BoxTake receiver)
+      (tc-selected-projection-receiver-base ctx receiver)]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-projection-base ctx expanded)]
+    [_ -1]))
+
+(define (tc-selected-projection-receiver-base
+  [ctx : TcContext]
+  [receiver : i64]) : i64
+  (if (tc-selected-place-form? ctx (tc-context-expr-get ctx receiver))
+    (tc-selected-projection-base ctx receiver)
+    receiver))
+
+;; A read of projection `id` reads its receiver too: a move-only receiver that
+;; is a form the read reaches through is registered, so its temporary holds
+;; the read reference (`tc-selected-place-temporary`). A receiver that an
+;; index evaluated after it can write is retained by value instead, as the
+;; lowering retains an operand a later operand can write (its snapshot rule):
+;; the clone then reads the value the receiver selected before that write.
+(define (tc-selected-read-receiver-push
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [id : i64]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedSink
+    store
+    lease
+    intern
+    bind)
+  (let
+    [base : i64 (tc-selected-projection-base ctx id)]
+    (if (and
+      (>= base 0)
+      (tc-selected-read-spine-form? ctx (tc-context-expr-get ctx base))
+      (match (tc-expr-id ctx env base)
+        [(ResultTcType.Ok ty) (not (tc-type-copyable? ctx ty))]
+        [(ResultTcType.Err _) false])
+      (not (tc-selected-receiver-written? ctx env id base)))
+      (tc-selected-read-spine-push sink base)
+      sink)))
+
+;; Whether an index of projection chain `id`, evaluated after its receiver
+;; `base`, can write a root `base` may select (`tc-selected-read-roots!`).
+(define (tc-selected-receiver-written?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [id : i64]
+  [base : i64]) : bool
+  (let
+    [roots : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [indices : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [budget : i64 4096]
+    [written? : bool false]
+    [index : i64 0]
+    (tc-selected-read-roots! ctx base (&mut roots))
+    (tc-selected-chain-indices! ctx id base (&mut indices))
+    (while (and (not written?) (< index (array-length indices)))
+      (let
+        [root : i64 0]
+        (while (and (not written?) (< root (array-length roots)))
+          (set!
+            written?
+            (tc-selected-writes-root?
+              ctx
+              env
+              (array-ref indices index)
+              (array-ref roots root)
+              (>= (tc-selected-global-index ctx env (array-ref roots root)) 0)
+              (&mut budget)))
+          (set! root (+ root 1))))
+      (set! index (+ index 1)))
+    written?))
+
+;; The roots of the places a form the read reaches through may select: the
+;; variables its result tails project from inline (fields, tuple components
+;; and array elements). A tail read through a reference or box, or a value,
+;; selects no root.
+(define (tc-selected-read-roots!
+  [ctx : TcContext]
+  [id : i64]
+  [roots : (&mut roots (__tl_dyn-array i64))]) : unit
+  (match (tc-context-expr-get ctx id)
+    [(ast.AstExpr.Spanned inner _) (tc-selected-read-roots! ctx inner roots)]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-read-roots! ctx expanded roots)]
+    [(ast.AstExpr.Ann inner _) (tc-selected-read-roots! ctx inner roots)]
+    [(ast.AstExpr.Cast inner _) (tc-selected-read-roots! ctx inner roots)]
+    [(ast.AstExpr.If _ then-id else-id)
+      (tc-selected-read-roots! ctx then-id roots)
+      (tc-selected-read-roots! ctx else-id roots)]
+    [(ast.AstExpr.Let let-box)
+      (match (ast.ast-let-box-shared-view let-box)
+        [(ast.AstLet.Let _ body) (tc-selected-read-roots! ctx body roots)])]
+    [(ast.AstExpr.Begin items)
+      (when
+        (> items.len 0)
+        (tc-selected-read-roots!
+          ctx
+          (ast.ast-expr-list-get (& items) (- items.len 1) 0)
+          roots))]
+    [(ast.AstExpr.Unsafe items)
+      (when
+        (> items.len 0)
+        (tc-selected-read-roots!
+          ctx
+          (ast.ast-expr-list-get (& items) (- items.len 1) 0)
+          roots))]
+    [(ast.AstExpr.Match match-box)
+      (match (ast.ast-match-box-shared-view match-box)
+        [(ast.AstMatch.Match _ arms)
+          (let
+            [index : i64 0]
+            (while (< index arms.len)
+              (match (ast.ast-match-arm-list-get
+                (& arms)
+                index
+                (ast.ast-match-arm-fallback))
+                [(ast.AstMatchArm.Arm _ body)
+                  (tc-selected-read-roots! ctx body roots)])
+              (set! index (+ index 1))))])]
+    [(ast.AstExpr.StructGet receiver _)
+      (tc-selected-read-roots! ctx receiver roots)]
+    [(ast.AstExpr.TupleRef receiver _)
+      (tc-selected-read-roots! ctx receiver roots)]
+    [(ast.AstExpr.ArrayRef receiver _)
+      (tc-selected-read-roots! ctx receiver roots)]
+    [(ast.AstExpr.Var name) (__tl_array-push! roots name)]
+    [_ unit]))
+
+;; The indices of projection chain `id` above its receiver `base`, which are
+;; evaluated after the receiver.
+(define (tc-selected-chain-indices!
+  [ctx : TcContext]
+  [id : i64]
+  [base : i64]
+  [indices : (&mut indices (__tl_dyn-array i64))]) : unit
+  (when
+    (!= id base)
+    (match (tc-context-expr-get ctx id)
+      [(ast.AstExpr.Spanned inner _)
+        (tc-selected-chain-indices! ctx inner base indices)]
+      [(ast.AstExpr.MacroExpansion expanded _ _)
+        (tc-selected-chain-indices! ctx expanded base indices)]
+      [(ast.AstExpr.StructGet receiver _)
+        (tc-selected-chain-indices! ctx receiver base indices)]
+      [(ast.AstExpr.TupleRef receiver _)
+        (tc-selected-chain-indices! ctx receiver base indices)]
+      [(ast.AstExpr.BoxGet receiver)
+        (tc-selected-chain-indices! ctx receiver base indices)]
+      [(ast.AstExpr.BoxTake receiver)
+        (tc-selected-chain-indices! ctx receiver base indices)]
+      [(ast.AstExpr.ArrayRef receiver index)
+        (__tl_array-push! indices index)
+        (tc-selected-chain-indices! ctx receiver base indices)]
+      [_ unit])))
+
+;; Whether evaluating `expr-id` can write the variable `root`, the lowering's
+;; snapshot proof (`lower-snapshot-writes-root?`): safe code changes a local
+;; only by naming it in a writing position (`set!`, `replace!`, a store, push,
+;; take or `box-set` into a place rooted at it, `(&mut ...)` of such a place,
+;; `ptr-addr-of`); a read of it changes nothing. A call may write a module
+;; value (`global?`). Unscannable forms, and running out of `budget`, answer
+;; that it may.
+(define (tc-selected-writes-root?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [root : i64]
+  [global? : bool]
+  [budget : (&mut budget i64)]) : bool
+  (cond
+    [(< expr-id 0) false]
+    [(<= (deref budget) 0) true]
+    [else
+      (set! (deref budget) (- (deref budget) 1))
+      (let
+        [expr : ast.AstExpr (tc-context-expr-get ctx expr-id)]
+        (match (& expr)
+          [(ast.AstExpr.Var _) false]
+          [(ast.AstExpr.Set name value)
+            (or
+              (tc-selected-name-may-denote-root? ctx env name root)
+              (tc-selected-writes-root? ctx env value root global? budget))]
+          [(or (ast.AstExpr.Replace place-box _)
+               (ast.AstExpr.StructSet place-box _ _)
+               (ast.AstExpr.ArraySet place-box _ _)
+               (ast.AstExpr.ArrayTake place-box _ _)
+               (ast.AstExpr.ArrayPush place-box _)
+               (ast.AstExpr.BoxSet place-box _) (ast.AstExpr.BoxTake place-box)
+               (ast.AstExpr.PtrAddrOf place-box))
+            (or
+              (tc-selected-place-roots-at? ctx env place-box root)
+              (tc-selected-writes-root-children?
+                ctx
+                env
+                (ast.ast-expr-child-ids (tc-global-shared-view expr))
+                0
+                root
+                global?
+                budget))]
+          [(ast.AstExpr.Borrow mutable? _ place-box)
+            (or
+              (and
+                mutable?
+                (tc-selected-place-roots-at? ctx env place-box root))
+              (tc-selected-writes-root? ctx env place-box root global? budget))]
+          [(ast.AstExpr.Call _ _)
+            (or
+              global?
+              (tc-selected-writes-root-children?
+                ctx
+                env
+                (ast.ast-expr-child-ids (tc-global-shared-view expr))
+                0
+                root
+                global?
+                budget))]
+          ;; Forms that bind or update state through payload fields other
+          ;; than expression children are not decomposed.
+          [(ast.AstExpr.Foreach _) true]
+          [(ast.AstExpr.SpmdReduce _) true]
+          [(ast.AstExpr.SpmdScan _) true]
+          [(ast.AstExpr.SpmdCompact _) true]
+          [(ast.AstExpr.WithResource _) true]
+          [(ast.AstExpr.ForOwnedState _) true]
+          [(ast.AstExpr.ForOwnedStep _) true]
+          [_
+            (tc-selected-writes-root-children?
+              ctx
+              env
+              (ast.ast-expr-child-ids (tc-global-shared-view expr))
+              0
+              root
+              global?
+              budget)]))]))
+
+(define (tc-selected-writes-root-children?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [children : ast.AstExprList]
+  [index : i64]
+  [root : i64]
+  [global? : bool]
+  [budget : (&mut budget i64)]) : bool
+  (if (>= index children.len)
+    false
+    (or
+      (tc-selected-writes-root?
+        ctx
+        env
+        (ast.ast-expr-list-get (& children) index -1)
+        root
+        global?
+        budget)
+      (tc-selected-writes-root-children?
+        ctx
+        env
+        children
+        (+ index 1)
+        root
+        global?
+        budget))))
+
+;; Whether the place at `place-box` is storage of `root` (a name that may
+;; denote it, through inline projections).
+(define (tc-selected-place-roots-at?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place-box : i64]
+  [root : i64]) : bool
+  (match (tc-context-expr-get ctx place-box)
+    [(or (ast.AstExpr.Spanned inner-box _) (ast.AstExpr.Ann inner-box _)
+         (ast.AstExpr.Cast inner-box _) (ast.AstExpr.StructGet inner-box _)
+         (ast.AstExpr.TupleRef inner-box _) (ast.AstExpr.ArrayRef inner-box _))
+      (tc-selected-place-roots-at? ctx env inner-box root)]
+    [(ast.AstExpr.Var name)
+      (tc-selected-name-may-denote-root? ctx env name root)]
+    [_ false]))
+
+;; Whether `name` can denote the variable `root`: the same identity, or a
+;; dotted local-field spelling whose leading segment may be `root`. Structural
+;; (hygienic) identities are not decomposed and conservatively match.
+(define (tc-selected-name-may-denote-root?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [root : i64]) : bool
+  (if (= name root)
+    true
+    (let
+      [capacity : i64 (ci.intern-capacity)]
+      (if (and (>= name 0) (< name capacity))
+        (and
+          (tc-dotted-local-field-name-id? env name)
+          (or
+            (not (and (>= root 0) (< root capacity)))
+            (= (ci.intern-leading-dot-id name) root)))
+        (>=
+          (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
+          0)))))
 
 ;; An extern function: a fixed parameter list, or a C variadic one whose call
 ;; is checked against its signature expanded to the call's arity
@@ -18587,59 +19352,140 @@
         (tc-expr-id ctx env id)
         TcSelectedSink.Query)]
     [(TcSelectedSink.Capture store lease bindings)
-      (match (tc-infer-selected-id
-        ctx
-        env
-        id
-        ast.AstMaybeType.No
-        (tc-global-shared-view source)
-        (TcSelectedSink.Capture store lease bindings))
-        [(TcSelectedResult.Err message next)
-          (TcSelectedPlaceResult.Err message next)]
-        [(TcSelectedResult.Ok ty occurrence next)
-          (match occurrence
-            [(TcSelectedOccurrence.Unrepresented)
-              (TcSelectedPlaceResult.Ok ty TcSelectedPlace.Unrepresented next)]
-            [(TcSelectedOccurrence.Selected value)
-              (if (let
-                ;; A value allocated in an arena (inside `in-arena`) is held
-                ;; like any other: the arena's region tag aside.
-                [held : ast.AstType
-                  (tc-resolve-type
-                    ctx
-                    (tc-selected-strip-arena-tags
+      (let
+        ;; A receiver a `clone` operand reads through
+        ;; (`tc-selected-read-receiver-push`).
+        [read? : bool
+          (tc-selected-read-spine-syntax?
+            (& bindings)
+            (& (typed.TypedSyntax.Source id)))]
+        (match (tc-infer-selected-id
+          ctx
+          env
+          id
+          ast.AstMaybeType.No
+          (tc-global-shared-view source)
+          (TcSelectedSink.Capture store lease bindings))
+          [(TcSelectedResult.Err message next)
+            (TcSelectedPlaceResult.Err message next)]
+          [(TcSelectedResult.Ok ty occurrence next)
+            (match occurrence
+              [(TcSelectedOccurrence.Unrepresented)
+                (TcSelectedPlaceResult.Ok ty TcSelectedPlace.Unrepresented next)]
+              [(TcSelectedOccurrence.Selected value)
+                (cond
+                  [read?
+                    (tc-selected-read-receiver-place
                       ctx
                       env
-                      (tc-global-shared-view ty)))]
-                (or
-                  (tc-selected-value-type-supported?
-                    ctx
-                    (tc-global-shared-view held))
-                  (>
-                    (tc-selected-reference-kind
-                      ctx
-                      (tc-global-shared-view held))
-                    0)
-                  ;; An aggregate holding references (a call's array or tuple
-                  ;; of views): the temporary holds the value's loans, as a
-                  ;; local of that type does.
-                  (tc-selected-holding-type? ctx (tc-global-shared-view held))
-                  (tc-selected-loan-array? ctx (tc-global-shared-view held))))
-                (match next
-                  [(TcSelectedSink.Capture store lease bindings)
-                    (tc-selected-temporary-place!
                       ty
                       value
                       source
-                      store
-                      lease
-                      bindings)]
-                  [(TcSelectedSink.Query)
+                      next)]
+                  [(tc-selected-temporary-type?
+                      ctx
+                      env
+                      (tc-global-shared-view ty))
+                    (match next
+                      [(TcSelectedSink.Capture store lease bindings)
+                        (tc-selected-temporary-place!
+                          ty
+                          value
+                          source
+                          store
+                          lease
+                          bindings)]
+                      [(TcSelectedSink.Query)
+                        (TcSelectedPlaceResult.Ok
+                          ty
+                          TcSelectedPlace.Unrepresented
+                          TcSelectedSink.Query)])]
+                  [else
                     (TcSelectedPlaceResult.Ok
                       ty
                       TcSelectedPlace.Unrepresented
-                      TcSelectedSink.Query)])
-                (TcSelectedPlaceResult.Ok ty TcSelectedPlace.Unrepresented next))])])]))
+                      next)])])]))]))
+
+;; A value a temporary can hold.
+(define (tc-selected-temporary-type?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]) : bool
+  (let
+    ;; A value allocated in an arena (inside `in-arena`) is held like any
+    ;; other: the arena's region tag aside.
+    [held : ast.AstType
+      (tc-resolve-type ctx (tc-selected-strip-arena-tags ctx env ty))]
+    (or
+      (tc-selected-value-type-supported? ctx (tc-global-shared-view held))
+      (> (tc-selected-reference-kind ctx (tc-global-shared-view held)) 0)
+      ;; An aggregate holding references (a call's array or tuple of views):
+      ;; the temporary holds the value's loans, as a local of that type does.
+      (tc-selected-holding-type? ctx (tc-global-shared-view held))
+      (tc-selected-loan-array? ctx (tc-global-shared-view held)))))
+
+;; A projection receiver a `clone` operand reads through: its occurrence is the
+;; read reference (`tc-infer-selected-read`), held in a temporary and projected
+;; through to the receiver's value of type `ty`, so the receiver's parts are
+;; read where they lie. A receiver that yields its value (a Copy one, or one
+;; that diverges) is held as any value is.
+(define (tc-selected-read-receiver-place
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [value : typed.TypedOccurrenceId]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedPlaceResult
+    store
+    lease
+    intern
+    bind)
+  (match sink
+    [(TcSelectedSink.Query)
+      (TcSelectedPlaceResult.Ok
+        ty
+        TcSelectedPlace.Unrepresented
+        TcSelectedSink.Query)]
+    [(TcSelectedSink.Capture store lease bindings)
+      (let
+        [published : ast.AstType
+          (tc-selected-occurrence-type! store lease (& value))]
+        (match (& published)
+          [(ast.AstType.Ref _ _)
+            (match (tc-selected-temporary-place!
+              (tc-global-shared-view published)
+              value
+              (tc-global-shared-view source)
+              store
+              lease
+              bindings)
+              [(TcSelectedPlaceResult.Err message after)
+                (TcSelectedPlaceResult.Err message after)]
+              [(TcSelectedPlaceResult.Ok _ place after)
+                (match (tc-selected-place-project
+                  (tc-global-shared-view ty)
+                  (tc-global-shared-view ty)
+                  place
+                  typed.TypedProjectionKind.Deref
+                  source
+                  after)
+                  [(TcSelectedPlaceResult.Err message projected)
+                    (TcSelectedPlaceResult.Err message projected)]
+                  [(TcSelectedPlaceResult.Ok _ derefed projected)
+                    (TcSelectedPlaceResult.Ok ty derefed projected)])])]
+          [_
+            (if (tc-selected-temporary-type? ctx env (tc-global-shared-view ty))
+              (tc-selected-temporary-place!
+                ty
+                value
+                source
+                store
+                lease
+                bindings)
+              (TcSelectedPlaceResult.Ok
+                ty
+                TcSelectedPlace.Unrepresented
+                (TcSelectedSink.Capture store lease bindings)))]))]))
 
 (define (tc-selected-temporary-place!
   [ty : ast.AstType]
@@ -51466,9 +52312,10 @@
         "typecheck: if condition must be bool")
         [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
         [(ResultTcUnit.Ok)
-          (match (tc-infer-selected-id
+          (match (tc-infer-selected-result-id
             ctx
             env
+            (& syntax)
             then-branch-id
             (tc-selected-if-branch-expected
               ctx
@@ -51481,9 +52328,10 @@
             [(TcSelectedResult.Err message ready)
               (TcSelectedResult.Err message ready)]
             [(TcSelectedResult.Ok then-ty then-occurrence ready)
-              (match (tc-infer-selected-id
+              (match (tc-infer-selected-result-id
                 ctx
                 env
+                (& syntax)
                 else-branch-id
                 (tc-selected-if-branch-expected
                   ctx
@@ -51836,14 +52684,24 @@
         (if last?
           (tc-global-shared-view expected)
           ast.AstMaybeType.No)]
-      (match (tc-infer-selected-sequence-child
-        ctx
-        env
-        (ast.ast-expr-list-get exprs index 0)
-        want
-        (tc-global-shared-view source)
-        represented?
-        sink)
+      (match (if last?
+        (tc-infer-selected-result-child
+          ctx
+          env
+          (& syntax)
+          (ast.ast-expr-list-get exprs index 0)
+          want
+          (tc-global-shared-view source)
+          represented?
+          sink)
+        (tc-infer-selected-sequence-child
+          ctx
+          env
+          (ast.ast-expr-list-get exprs index 0)
+          want
+          (tc-global-shared-view source)
+          represented?
+          sink))
         [(TcSelectedResult.Err message next)
           (TcSelectedResult.Err message next)]
         [(TcSelectedResult.Ok ty child next)
@@ -64307,9 +65165,10 @@
     intern
     bind)
   (if (>= index (ast.ast-let-binding-list-len bindings))
-    (match (tc-infer-selected-sequence-child
+    (match (tc-infer-selected-result-child
       ctx
       env
+      (& syntax)
       body-id
       expected
       (tc-global-shared-view source)

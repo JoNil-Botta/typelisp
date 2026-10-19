@@ -441,6 +441,8 @@ arena_sanitizer_partial_page_poison|all|0,1,2|tests/integration/arena_sanitizer.
 arena_sanitizer_repeated_rewind|all|0,1,2|tests/integration/arena_sanitizer.tl|42|-|5|-|stage-stdlib
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
 clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
+clone_read_receiver_retained|all|0,1,2|tests/integration/clone_read_receiver_retained.tl|7|-|-|-|-
+clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl|42|-|-|-|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-

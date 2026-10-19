@@ -368,6 +368,25 @@ reaches, performs nothing and yields an exit value; reservations the earlier
 operands made are never activated. An exit leaves no normal edge, so no
 cleanup obligation is checked on it; `return`, `break` and `continue` remain
 checked exits.
+
+The compiler-special `(clone value)` reads its operand without moving it
+(SPEC 7.6), one rule in the producer (`tc-infer-selected-read`): the read
+reaches the operand's result positions (annotation, `cast` and expansion
+wrappers, both `if` branches, every match arm body, the `let` body, the last
+form of a `begin` or `unsafe` block, and the receivers of `deref`, field,
+tuple and array projections). A move-only place there is lent shared, as a
+place operand of `clone` always was, and any other move-only value there is
+held in a temporary lent the same way; a Copy or diverging one is evaluated
+as usual. A form the read reaches through therefore yields that shared
+reference and publishes its type (the checked type stays the value's), and a
+projection out of such a form projects through the reference held in its
+receiver temporary, so the parts are read where they lie. `clone` reads
+through the reference. Conditions, scrutinees, initializers, earlier forms,
+indices and arguments keep their ordinary moves. A projection receiver that
+an index evaluated after it can write (a variable the receiver may select,
+named in a writing position, the lowering's snapshot rule) is retained by
+value instead of lent, so the clone copies what the receiver selected before
+the write; any other read's loans live until the clone.
 Computed Copy temporaries and unique Copy declaration writes use ordinary
 Assign in the core, allowing repeated execution without inventing a resource
 acquisition. Reads still require initialization on first entry and on every

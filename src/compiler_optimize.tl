@@ -113815,7 +113815,8 @@
     ;; reach stamps, callee-cost memo), has fixed capacity (checked tier), or
     ;; holds scalars (owned state); the memo's function views point at index
     ;; bodies, which live in the optimizer-input or stage arena, both of which
-    ;; outlive the walk. The per-walk caller globals are unpublished below
+    ;; outlive the walk, or in a lowered-IR chunk, whose release clears the
+    ;; memo first (#9059). The per-walk caller globals are unpublished below
     ;; before each rewind.
     [scratch : arena.Arena (arena.make)]
     (for [index-pos (iterator.range 0 slot-count)]
@@ -113850,7 +113851,11 @@
                 (compiler-opt-global-shared-view current-spans)
                 (& next-spans)))])
         (opt-inline-caller-walk-unpublish!)
-        (arena.rewind-safe! phase)))
+        (arena.rewind-safe! phase)
+        ;; The slot's caller phase is complete: its body is placed and
+        ;; published, its spans escaped and its scratch rewound. Only now may
+        ;; its source chunk be released (#9059).
+        (opt-inline-input-slot-placed! slot)))
     (arena.destroy-safe! scratch)
     current-spans))
 
@@ -113869,6 +113874,10 @@
       (opt-inline-tiny-leaf-program-functions-with-spans (& functions) spans)
       (Program functions spans))
     (let
+      ;; The input's names by lower-sequence position, read before any stage
+      ;; below rewrites a body (progressive retirement, #9059).
+      [input-names : (__tl_dyn-array i64)
+        (opt-inline-input-names (& functions))]
       [devirt : ir.CompilerIrFunctionSeq
         (opt-pure-call-inline-memory-install!
           pools
@@ -113877,6 +113886,8 @@
             (opt-tailrec-function-seq!
               (opt-devirt-known-function-seq functions))))]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
+      [_input-chunks : bool
+        (opt-inline-input-chunks-begin! (& input-names) (& index))]
       [_loop-calls : unit
         (opt-loop-call-cache-index! (compiler-opt-global-shared-view index))]
       [graph : OptCallGraph (opt-callgraph-build index)]
@@ -123886,7 +123897,8 @@
   [level : i64]
   [profile-state : profile_state.CompilerProfileState]
   [representations : ir.CompilerIrRepresentationIndex]
-  [input-retirement : OptInputRetirement]) : CompilerOptimizedProgram
+  [input-retirement : OptInputRetirement]
+  [input-chunk-bounds : (__tl_dyn-array i64)]) : CompilerOptimizedProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs)
       (if (= level 0)
@@ -123931,6 +123943,12 @@
                 carrier
                 (opt-function-seq-count (& functions)))]
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
+            [_arm-input-chunks : unit
+              (when
+                (= level 2)
+                (opt-inline-input-chunks-arm!
+                  input-retirement
+                  input-chunk-bounds))]
             [inlined : OptInlineSpanProgram
               (opt-inline-program-functions-with-spans
                 pools
@@ -123942,6 +123960,7 @@
             [_leave-inline-arena : unit
               (unsafe
                 (arena.tl_arena_set enclosing))]
+            [_disarm-input-chunks : unit (opt-inline-input-chunks-disarm!)]
             ;; The inline stage rebinds its two module-level tables on the way
             ;; out, and it does so while its own arena is current. Rebind them
             ;; again here so neither global names storage inside the arena this
@@ -123967,7 +123986,7 @@
                 (= level 2)
                 (match input-retirement
                   [(Retain) false]
-                  [(Retire owner release-input)
+                  [(Retire owner release-input _)
                     (release-input owner)
                     true]))]
             (match inlined
@@ -124128,7 +124147,150 @@
 ;; synchronous and does not own its context.
 (defenum OptInputRetirement
   (Retain)
-  (Retire i64 (-> i64 unit)))
+  (Retire i64 (-> i64 unit) (-> i64 i64 unit)))
+
+;; Progressive level-2 retirement (#9059). The request's chunk bounds are plain
+;; lower-sequence positions: chunk K holds input functions [bounds[K],
+;; bounds[K + 1]). The inline stage checks them against its actual input before
+;; any release and tags each index slot with its chunk; `pending` counts each
+;; chunk's originals not placed yet. All of it lives in the inline stage's
+;; arena and is cleared when the stage ends.
+(define opt-inline-input-retirement : (__tl_dyn-array OptInputRetirement)
+  (__tl_make-array (OptInputRetirement.Retain)))
+(define opt-inline-input-chunk-bounds : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-inline-input-chunk-tags : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-inline-input-chunk-pending : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-inline-input-chunks-active? : bool
+  false)
+
+;; Arm the stage with this run's authority and chunk bounds; level 2 only.
+(define (opt-inline-input-chunks-arm!
+  [retirement : OptInputRetirement]
+  [bounds : (__tl_dyn-array i64)]) : unit
+  (set! (array-ref opt-inline-input-retirement 0) retirement)
+  (set! opt-inline-input-chunk-bounds bounds)
+  (set! opt-inline-input-chunks-active? false))
+
+;; Forget the stage's authority, bounds and tags. Runs after the inline arena is
+;; left, so the emptied globals never name storage in that arena.
+(define (opt-inline-input-chunks-disarm!) : unit
+  (set! (array-ref opt-inline-input-retirement 0) (OptInputRetirement.Retain))
+  (set! opt-inline-input-chunk-bounds (__tl_make-array i64 0))
+  (set! opt-inline-input-chunk-tags (__tl_make-array i64 0))
+  (set! opt-inline-input-chunk-pending (__tl_make-array i64 0))
+  (set! opt-inline-input-chunks-active? false))
+
+;: Whether this stage may release source chunks at all: an authority that
+;; takes chunk releases and at least one chunk.
+(define (opt-inline-input-chunks-armed?) : bool
+  (and
+    (>= (array-length opt-inline-input-chunk-bounds) 2)
+    (match (array-ref opt-inline-input-retirement 0)
+      [(Retain) false]
+      [(Retire _ _ _) true])))
+
+;: The input functions' names by lower-sequence position, read before any
+;; stage rewrites a body; empty unless chunk release is armed.
+(define (opt-inline-input-names
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : (__tl_dyn-array i64)
+  (if (not (opt-inline-input-chunks-armed?))
+    (__tl_make-array i64 0)
+    (let
+      [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+      (for [i (iterator.range 0 functions.len)]
+        (match (& (array-ref functions.slots i))
+          [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+      names)))
+
+;: Validate the armed bounds against the stage's actual input and, when they
+;; hold, tag every slot and count every chunk. Position I must be index slot I
+;; (devirtualization, tailrec and the retained snapshot keep length and order),
+;; the bounds must start at 0, rise strictly and end at the input count, and
+;; every slot must keep its input name. Anything else leaves release disabled:
+;; the whole-owner retirement after the walk still runs.
+(define (opt-inline-input-chunks-begin!
+  [names : (& names (__tl_dyn-array i64))]
+  [index : (& index OptFunctionIndex)]) : bool
+  (let
+    [chunks : i64 (- (array-length opt-inline-input-chunk-bounds) 1)]
+    [count : i64 (array-length names)]
+    [valid : bool
+      (and
+        (opt-inline-input-chunks-armed?)
+        (= (array-ref opt-inline-input-chunk-bounds 0) 0)
+        (= (array-ref opt-inline-input-chunk-bounds chunks) count)
+        (= (opt-function-index-count index) count))]
+    (for [k (iterator.range 0 chunks)]
+      (unless
+        (<
+          (array-ref opt-inline-input-chunk-bounds k)
+          (array-ref opt-inline-input-chunk-bounds (+ k 1)))
+        (set! valid false)))
+    (when
+      valid
+      (for [slot (iterator.range 0 count)]
+        (match (& (array-ref index.values slot))
+          [(Function name _ _ _ _ _)
+            (unless (= name (array-ref names slot)) (set! valid false))])))
+    (when
+      valid
+      (let
+        [tags : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [pending : (__tl_dyn-array i64) (__tl_make-array i64 chunks)]
+        (for [k (iterator.range 0 chunks)]
+          (set!
+            (array-ref pending k)
+            (-
+              (array-ref opt-inline-input-chunk-bounds (+ k 1))
+              (array-ref opt-inline-input-chunk-bounds k)))
+          (for [slot
+            (iterator.range
+              (array-ref opt-inline-input-chunk-bounds k)
+              (array-ref opt-inline-input-chunk-bounds (+ k 1)))]
+            (set! (array-ref tags slot) k)))
+        (set! opt-inline-input-chunk-tags tags)
+        (set! opt-inline-input-chunk-pending pending)
+        (set! opt-inline-input-chunks-active? true)))
+    valid))
+
+;: Consume SLOT's tag after its complete caller phase. Returns -1 for a
+;; placement outside the tagged slots or a second placement of one slot, 1 when
+;; it released its chunk, 0 otherwise (or when release is not active). The
+;; callee-cost memo is cleared before every release: its retained views may name
+;; bodies in the chunk, so it must not be read after the chunk is gone.
+(define (opt-inline-input-slot-placed-status [slot : i64]) : i64
+  (if (not opt-inline-input-chunks-active?)
+    0
+    (if (or
+      (< slot 0)
+      (>= slot (array-length opt-inline-input-chunk-tags))
+      (< (array-ref opt-inline-input-chunk-tags slot) 0))
+      -1
+      (let
+        [chunk : i64 (array-ref opt-inline-input-chunk-tags slot)]
+        (set! (array-ref opt-inline-input-chunk-tags slot) -1)
+        (set!
+          (array-ref opt-inline-input-chunk-pending chunk)
+          (- (array-ref opt-inline-input-chunk-pending chunk) 1))
+        (if (> (array-ref opt-inline-input-chunk-pending chunk) 0)
+          0
+          (begin
+            (opt-inline-callee-cost-reset!)
+            (match (array-ref opt-inline-input-retirement 0)
+              [(Retain) unit]
+              [(Retire owner _ release-chunk) (release-chunk owner chunk)])
+            1))))))
+
+;; The walk's report after a slot's caller phase: an invalid placement is an
+;; internal error, raised before anything else is released.
+(define (opt-inline-input-slot-placed! [slot : i64]) : unit
+  (when
+    (< (opt-inline-input-slot-placed-status slot) 0)
+    (io.panic
+      "optimize: inline walk placed a slot twice or outside its input chunks")))
 
 ;; One optimizer run: the pools the program's types live in, the level, the
 ;; job's compile-profile state, and the program's representation index when the
@@ -124140,7 +124302,10 @@
   (profile-state profile_state.CompilerProfileState)
   (representations? bool)
   (representations ir.CompilerIrRepresentationIndex)
-  (input-retirement OptInputRetirement))
+  (input-retirement OptInputRetirement)
+  ;; Lower-sequence chunk bounds for progressive level-2 retirement; empty
+  ;; keeps whole-owner retirement only.
+  (input-chunk-bounds (__tl_dyn-array i64)))
 
 ;; A run with a fresh profile state and the program's own representation index.
 (define (optimize-request [pools : ast.AstNodePoolContext] [level : i64]) : OptimizeRequest
@@ -124150,7 +124315,8 @@
     (profile_state.compiler-profile-state-new)
     false
     (ir.compiler-ir-representation-index-empty)
-    (OptInputRetirement.Retain)))
+    (OptInputRetirement.Retain)
+    (__tl_make-array i64 0)))
 
 (define (optimize-program
   [program : ir.CompilerIrProgram]
@@ -124173,7 +124339,8 @@
           type-segment-bases
           (& program)
           (ir.compiler-ir-representation-index-empty)))
-      request.input-retirement)))
+      request.input-retirement
+      request.input-chunk-bounds)))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools
 ;; call it.

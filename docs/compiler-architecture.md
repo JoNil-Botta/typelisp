@@ -634,6 +634,22 @@ does not import the lowerer or select an ambient job. Its callback context stays
 outside the retired arena; calls without authority retain their source storage.
 At opt1 the original IR ends after optimizer copy-out; at opt0 it lasts through
 the final IR consumer. Later driver cleanup remains idempotent.
+
+Level 2 also releases the original IR progressively during the inline walk. The
+driver sets the lowering request's chunk policy before lowering, so only opt2
+lowering deep-clones function bodies into chunk arenas, rotating at a byte budget
+between complete clones; the owner's existing arena keeps the escaped
+sequences' shells and slot arrays, and a chunk owns no other chunk's shells,
+metadata or bodies. The request carries the chunks' plain lower-sequence bounds
+and a second synchronous callback that releases one exact chunk of the exact
+owner. Before any release the inline stage checks the bounds against its
+actual input (full coverage, index slot `i` is input position `i`, unchanged
+names) and tags slots in its own arena; after a slot's complete caller phase it
+consumes the tag, and when a chunk's last original is placed it clears the
+callee-cost memo and releases that chunk. A malformed bound releases nothing,
+and a duplicate or out-of-range placement is an internal error. Whole
+retirement after the walk, error cleanup and later driver cleanup still release
+every remaining chunk and the shell arena, idempotently.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;

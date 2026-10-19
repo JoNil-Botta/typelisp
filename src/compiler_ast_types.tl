@@ -2,6 +2,8 @@
 ;;
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
+;; Pooled IDs and source views retain their owner's lifetime and identity;
+;; see docs/compiler-state-and-facts.md before changing shared accessors.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)

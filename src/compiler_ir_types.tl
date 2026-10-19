@@ -2,6 +2,8 @@
 ;;
 ;; Functions contain blocks, blocks contain typed instructions, and
 ;; instructions use explicit vars/values.
+;; The supporting closure stays independent of its consuming compiler layers;
+;; see docs/compiler-core-ir-dependencies.md and its required dependency guard.
 (import stdlib.iterator)
 (import stdlib.string)
 (import compiler_intern as ci)

@@ -1,0 +1,172 @@
+[
+  [
+    "src/compiler_ast_types.tl",
+    "support",
+    "Canonical source types and pooled node representation used by IR."
+  ],
+  [
+    "src/compiler_builtin_ids.tl",
+    "support",
+    "Reset-aware compiler builtin identities."
+  ],
+  [
+    "src/compiler_intern.tl",
+    "support",
+    "Source and structural identity sessions used by IR and AST."
+  ],
+  [
+    "src/compiler_intern_state.tl",
+    "support",
+    "Source and structural identity sessions used by IR and AST."
+  ],
+  [
+    "src/compiler_ir_types.tl",
+    "core",
+    "Canonical shared IR representation."
+  ],
+  [
+    "src/compiler_owned_view.tl",
+    "support",
+    "Existing compiler shallow-view compatibility helpers."
+  ],
+  [
+    "src/compiler_profile_counters.tl",
+    "support",
+    "Declarative counter macros used by intern identities under compile-profile/test; no optimizer, emitter or driver dependency."
+  ],
+  [
+    "stdlib/arena.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/byte_buf.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/clone.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/comptime.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/core_macros.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/dense_list.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/eq.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/format.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/format_writer_core.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/hash.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/hashmap.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/io.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/io_core.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/iterator.tl",
+    "support",
+    "Scalar range iteration used by the shared IR and AST representations."
+  ],
+  [
+    "stdlib/math.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/runtime.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/str_cat.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/str_cat_runtime.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/string.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/test.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/text_buf.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "stdlib/text_buf_family.tl",
+    "support",
+    "Standard-library implementation or implicit runtime/macro prelude reached by the core IR closure."
+  ],
+  [
+    "src/compiler_optimize.tl",
+    "forbidden",
+    "Consumer implementation must depend on shared IR, never the reverse."
+  ],
+  [
+    "src/compiler_backend.tl",
+    "forbidden",
+    "Consumer implementation must depend on shared IR, never the reverse."
+  ],
+  [
+    "src/compiler_driver_core.tl",
+    "forbidden",
+    "Consumer implementation must depend on shared IR, never the reverse."
+  ],
+  [
+    "src/main.tl",
+    "forbidden",
+    "Consumer implementation must depend on shared IR, never the reverse."
+  ],
+  [
+    "src/lsp_frame_core.tl",
+    "forbidden",
+    "LSP protocol and compiler-session consumer must not be imported by shared IR."
+  ]
+]

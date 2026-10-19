@@ -2005,6 +2005,16 @@ Linux environment.
 
 ## Checklist for new coverage
 
+The required `stage2-core-ir-dependency-boundary` gate runs
+[`verify-core-ir-dependencies.sh`](../scripts/verify-core-ir-dependencies.sh)
+with the converged compiler. It compiles the canonical frontend inspector with
+`compiler-dependency-audit`, runs source and fact-stream fixtures, then checks
+the complete shared IR closure across the supported target/cfg space. See the
+[boundary decision](../docs/compiler-core-ir-dependencies.md) for authority,
+scope, policy maintenance and diagnostic-cfg retirement. Extend its table-driven
+fixtures for new dependency forms; retain the bounded resource report and
+measure full gate cost when changing discovery or orchestration.
+
 New behavior gets TypeLisp-owned coverage (see the implementation-language rule
 in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):
 

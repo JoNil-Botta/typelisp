@@ -4,6 +4,9 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import compiler_parse_core as parser)
+(cfg
+  compiler-dependency-audit
+  (import compiler_dependency_trace as dependency_trace))
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
@@ -6203,6 +6206,11 @@
 (define (compiler-load-session-state-record-surface-summary!
   [state : (& state CompilerLoadSessionState)]
   [summary : (& CompilerLoadSurfaceSummary)]) : unit
+  (cfg
+    compiler-dependency-audit
+    (dependency_trace.compiler-dependency-trace
+      "source"
+      (string.copy (& summary.source-path))))
   (if (compiler-load-surface-summary-source-active?
     (& (compiler-load-session-state-surface-summaries state))
     summary.source-path-id)

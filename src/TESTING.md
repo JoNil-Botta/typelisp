@@ -19,6 +19,14 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
+with colliding numeric names while a decoy interner remains installed. It keeps
+an earlier job's payload readable through peer invalidation, shape rebuilds and
+retirement, and covers wrapped imports, empty/offset views, payload growth and
+owner-generation changes. The runnable typechecker smoke includes the same
+probe; driver cleanup coverage verifies post-lowering release uses its supplied
+job and preserves the other index.
+
 `compiler-lower-function-env-scratch` lowers several functions against one
 persistent module environment, including binding-store growth and a rejected
 function. It checks parent bindings and cache metadata after each scratch

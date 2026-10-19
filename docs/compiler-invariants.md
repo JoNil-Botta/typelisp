@@ -695,6 +695,15 @@ state, then destroys the session and transport arenas, so no transport field
 stays globally reachable after its owner is gone. The LSP frame smoke covers
 reset and reinstall after the input was consumed and both outputs written.
 
+Parsed LSP messages pass envelope admission before any stateful dispatch.
+Requests require the exact JSON-RPC version, a string method and a valid ID
+type when present; invalid envelopes emit `-32600` without entering document
+or analysis handlers. Valid client responses are ignored, while a valid
+notification still reaches its handler without receiving a response. Field
+inspection borrows the parsed JSON owner; it neither clones request payloads
+nor retains references beyond dispatch. Method parameter validation remains
+separate from this envelope boundary.
+
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
 function's rewound scratch with the parent's head and capabilities, and the
@@ -1076,15 +1085,24 @@ A global's IR initializer takes one of three forms:
   - The direct-object encoder has no static-array record, so such programs
     take the assembly path.
 
-Mutable typecheck caches, indexes and traversal state belong to the compiler
-job's `TcJobState`, never to process-wide cells, so resetting or destroying one
-job cannot disturb another. Persistent lifetime-outlives answers use lazy fixed
+Migrated mutable typecheck caches, indexes and traversal state belong to the
+compiler job's `TcJobState`, so resetting or destroying one job cannot disturb
+another's migrated state. Persistent lifetime-outlives answers use lazy fixed
 storage in the job's existing type-resolution cache. Entries retain scalar
 store/head and lifetime identities only; store retirement epochs, structural
 session owner/reset generation, installed intern owner/generation and the job's
 reset epoch
 reject stale or reused identities. Allocation always selects the job owner
 arena, including when a function scratch arena is current.
+
+The module declaration/import index has a lazy typed header in that job's
+state directory and an independently retained payload arena containing only
+integer module keys, shape codes and declaration positions. Its stamp uses the
+owning source-name table identity/reset generation, never the installed
+interner. Splice invalidation revalidates an unchanged module/import shape;
+file-result cleanup and terminal retirement clear all header views before
+destroying the payload. A different job or scratch arena may be current during
+allocation or cleanup without becoming the owner.
 
 A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are

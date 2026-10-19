@@ -1,5 +1,19 @@
 # Selfhost compiler testing
 
+`linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
+and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
+The internal test runs no external tools. It checks duplicate/empty/byte names,
+ordered duplicate symbol hints, BSD sorted and extended index names, both BSD
+byte orders, odd payloads and internal alignment padding. Every byte offset of
+the GNU fixture is tried as an index target; only ordinary member headers pass.
+Every incomplete structure in six small 32-/64-bit index layouts is rejected,
+including repacked payload truncations with otherwise valid target offsets;
+the signature-only empty archive remains valid.
+Keep the exact-limit/one-below cases for all `ArchiveLimits` resources, unsigned
+overflow diagnostics, malformed names/tables, special ordering and stable
+input/revision identities. Run the suite with a fresh compiler at opt0/1/2;
+the complete inline suite runs the same cases on Linux and Windows.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,

@@ -1,0 +1,18 @@
+Archive map
+alpha in dup.o
+shared in dup.o
+beta in unusually-long-member-name.o
+gamma in dup.o
+shared in dup.o
+
+
+dup.o:
+0000000000000000 T alpha
+0000000000000000 T shared
+
+unusually-long-member-name.o:
+0000000000000000 T beta
+
+dup.o:
+0000000000000000 T gamma
+0000000000000000 T shared

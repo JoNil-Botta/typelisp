@@ -19882,6 +19882,131 @@ f:
   (reg-homes
     "%0=%vec6 %1=%vec7 %2=spill:-64 %3=%vec8 %4=spill:-128 %5=%k1 %6=%k2 %7=spill:-8 %8=%k3 %9=spill:-16"))
 
+(define (compiler-backend-simd-copy-error [kind : i64] [failure : i64]) : backend.ResultCompilerBackend
+  (let
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes "%0=%rax %1=%vec6 %2=%vec7 %3=%k1 %4=%k2")]
+    [source-home : i64
+      (if (= kind 2)
+        3
+        1)]
+    [destination-home : i64
+      (if (= kind 2)
+        4
+        2)]
+    [wrong-home : i64
+      (if (= kind 2)
+        1
+        3)]
+    [source : ir.CompilerIrValue
+      (match failure
+        [0 (Var 0)]
+        [2 (Var wrong-home)]
+        [4 (I64 0)]
+        [_ (Var source-home)])]
+    [destination : i64
+      (match failure
+        [1 0]
+        [3 wrong-home]
+        [_ destination-home])]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (if (= kind 2)
+      (backend.compiler-backend-emit-avx512-mask-copy
+        assignments
+        destination
+        source
+        8
+        state)
+      (backend.compiler-backend-emit-vector-copy
+        assignments
+        destination
+        source
+        (if (= kind 0)
+          "ymm"
+          "zmm")
+        (I64)
+        state))))
+
+(define (compiler-backend-simd-copy-error-message [kind : i64] [failure : i64]) : String
+  (let
+    [role : String
+      (if (or (= failure 1) (= failure 3))
+        "copy destination"
+        "copy source")]
+    (if (= failure 4)
+      (str_cat.str-cat
+        (match kind
+          [0 "backend: unsupported AVX2 vector "]
+          [1 "backend: unsupported AVX-512 vector "]
+          [_ "backend: unsupported AVX-512 mask "])
+        role)
+      (str_cat.str-cat
+        (if (= kind 2)
+          "backend: mask register home unavailable for "
+          "backend: vector register home unavailable for ")
+        role
+        "; unsupported spill, call, or ABI lifetime"))))
+
+(define (compiler-backend-copy-diagnostic-matches?
+  [result : backend.ResultCompilerBackend]
+  [message : String]
+  [path : String]
+  [line : i64]
+  [col : i64]) : bool
+  (match result
+    [(Err boxed)
+      (let
+        [diag : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-box-shared-view boxed)]
+        ;; A boxed String shares the first message field's layout. Inspect
+        ;; record metadata too, before accepting the transported reason.
+        (and
+          (= (cdiag.compiler-diagnostic-line (& diag)) line)
+          (= (cdiag.compiler-diagnostic-col (& diag)) col)
+          (string.eq (cdiag.compiler-diagnostic-path (& diag)) path)
+          (string.eq
+            (cdiag.compiler-diagnostic-level-render
+              (cdiag.compiler-diagnostic-level (& diag)))
+            "error")
+          (string.eq (cdiag.compiler-diagnostic-code-or-empty (& diag)) "")
+          (string.eq (cdiag.compiler-diagnostic-message (& diag)) message)))]
+    [_ false]))
+
+(define (compiler-backend-simd-copy-diagnostics-ok?) : bool
+  (for [kind (iterator.range 0 3)]
+    (for [failure (iterator.range 0 5)]
+      (let
+        [message : String
+          (compiler-backend-simd-copy-error-message kind failure)]
+        [record-ok : bool
+          (compiler-backend-copy-diagnostic-matches?
+            (compiler-backend-simd-copy-error kind failure)
+            (owned_view.compiler-owned-shared-view message)
+            ""
+            1
+            1)]
+        (unless
+          (and
+            record-ok
+            (compiler-backend-copy-diagnostic-matches?
+              (backend.compiler-backend-with-instr-diagnostic
+                (compiler-backend-simd-copy-error kind failure)
+                (cdiag.compiler-diagnostic-simple "copy.tl" 23 7 "instruction"))
+              message
+              "copy.tl"
+              23
+              7))
+          (return false)))))
+  true)
+
+(test
+  backend-simd-copy-diagnostics
+  (test.assert-true
+    (compiler-backend-simd-copy-diagnostics-ok?)
+    "SIMD copy errors retain complete records, reasons and instruction spans"))
+
 (define (compiler-backend-vector-copy-emits?
   [dst : i64]
   [src : i64]

@@ -7552,8 +7552,15 @@
                       elem-ty
                       dst-reg
                       backend-state)))]
-              [(Err message) (Err (box message))])])]
-      [(Err message) (Err (box message))])))
+              [(Err message)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      message)))])])]
+      [(Err message)
+        (Err
+          (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-avx512-mask-copy
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -7602,8 +7609,15 @@
                       lanes
                       dst-reg
                       backend-state)))]
-              [(Err message) (Err (box message))])])]
-      [(Err message) (Err (box message))])))
+              [(Err message)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      message)))])])]
+      [(Err message)
+        (Err
+          (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-avx512-vector-binop-mnemonic
   [op : (& op compiler_ir_types.CompilerIrBinOp)]

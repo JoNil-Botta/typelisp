@@ -1,5 +1,15 @@
 # Selfhost compiler testing
 
+`backend-simd-copy-diagnostics` forces source and destination register-class
+errors and non-variable sources for YMM, ZMM and mask copies. It checks the
+diagnostic record's metadata as well as its message, then checks instruction
+span transport. A boxed string can share the first field's message layout, so
+message-only assertions do not establish a valid diagnostic carrier. Existing
+register/spill assembly cases remain separate success controls.
+`compiler_backend_copy_diagnostics_smoke.tl` runs the same fifteen error cases
+and their instruction transport at opt0/1/2 on both hosts. It tests the emitter's
+diagnostics without requiring the host to execute SIMD instructions.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,

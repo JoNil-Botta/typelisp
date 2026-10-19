@@ -42815,18 +42815,19 @@
 ;; A store reserves an object, not an obsolete dynamic-array buffer address.
 ;; Projection offsets and indexes are captured before the RHS. Only a dynamic
 ;; descriptor's backing pointer and live extent are read again at commit.
-;; The bounds check of an array assignment's final element. A projection
-;; checks its index when it is evaluated; the final element of `set!` checks
-;; after the value's effects, when the store resolves its address (SPEC 5.10).
-;; Only that final place carries one: projecting or merging such a place is an
-;; internal error, never a dropped check.
+;; The bounds check an element step still owes. Every element step leaves its
+;; check pending (SPEC 5.10). Inline field and tuple projections read no element
+;; bytes, so they carry it to the store, which checks after the value's effects
+;; when it resolves the address. A step that reads the element first (an
+;; indirection, an element step into an inline array, a branch join) checks it
+;; then, before the value (`lower-store-place-check-now`).
 (defenum LowerPendingBounds
   (None)
   ;; The index as an unsigned bounds operand, and the length it must stay below.
   (Check ir.CompilerIrValue ir.CompilerIrValue)
-  ;; A dynamic element: the index as evaluated, and its type. When the store
-  ;; resolves the live buffer it normalizes the index and checks it against
-  ;; the array's current length; the place's own index is a placeholder.
+  ;; A dynamic element: the index as evaluated, and its type, checked against
+  ;; the array's current length. While the place is the element itself
+  ;; (`element?`), its own index is a placeholder normalized where it is used.
   (Current ir.CompilerIrValue ast.AstType))
 
 (defstruct LowerStorePlace
@@ -42921,96 +42922,151 @@
     [(LowerExpr.Expr addressed pointer _)
       (LowerExpr.Expr addressed pointer place.ty)]))
 
-(define (lower-store-place-dynamic-address
+;; Checks a dynamic place's element against its descriptor's current length:
+;; the index as evaluated while its check is pending, else the normalized
+;; index. Typed descriptor words, as `lower-array-element-addr` reads them: the
+;; optimizer's descriptor facts tell these header loads apart from element
+;; stores, so a loop can keep the length and buffer in registers.
+(define (lower-store-place-dynamic-check
   [ctx : tc_core.TcContext]
   [state : LowerState]
-  [place : LowerStorePlace]
-  [origin : ast.AstExpr]) : LowerExpr
-  ;; Typed descriptor words, as `lower-array-element-addr` reads them: the
-  ;; optimizer's descriptor facts tell these header loads apart from element
-  ;; stores, so a loop can keep the length and buffer in registers.
+  [place : (& place LowerStorePlace)]
+  [origin : ast.AstExpr]) : LowerState
   (match (lower-emit-gep
     state
-    (lower-global-shared-view place.base)
+    (clone place.base)
     (ir.CompilerIrValue.I64 1)
     (ast.AstType.I64))
     [(LowerExpr.Expr length-addressed length-ptr _)
       (match (lower-emit-load length-addressed length-ptr (ast.AstType.I64))
         [(LowerExpr.Expr loaded length _)
-          (match (lower-emit-gep
-            (lower-state-record-latest-bounds-check-at-expr
+          (lower-state-record-latest-bounds-check-at-expr
+            ctx
+            (lower-emit-bounds-check
+              loaded
+              (match (& place.pending)
+                [(LowerPendingBounds.Current evaluated _)
+                  (clone (deref evaluated))]
+                [_ (clone place.index)])
+              length)
+            origin)])]))
+
+(define (lower-store-place-dynamic-address
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [place : LowerStorePlace]
+  [origin : ast.AstExpr]) : LowerExpr
+  (match (lower-emit-gep
+    (lower-store-place-dynamic-check ctx state (& place) origin)
+    (clone place.base)
+    (ir.CompilerIrValue.I64 0)
+    (ast.AstType.I64))
+    [(LowerExpr.Expr buffer-addressed buffer-ptr _)
+      (match (lower-emit-load buffer-addressed buffer-ptr (ast.AstType.U64))
+        [(LowerExpr.Expr resolved buffer _)
+          (match (if place.element?
+            (lower-emit-elem-addr-gep
               ctx
-              (lower-emit-bounds-check
-                loaded
-                (match (lower-global-shared-view place.pending)
-                  [(LowerPendingBounds.Current evaluated _) evaluated]
-                  [_ (lower-global-shared-view place.index)])
-                length)
-              origin)
-            (lower-global-shared-view place.base)
-            (ir.CompilerIrValue.I64 0)
-            (ast.AstType.I64))
-            [(LowerExpr.Expr buffer-addressed buffer-ptr _)
-              (match (lower-emit-load
-                buffer-addressed
-                buffer-ptr
-                (ast.AstType.U64))
-                [(LowerExpr.Expr resolved buffer _)
-                  (match (if place.element?
-                    (lower-emit-elem-addr-gep
-                      ctx
-                      resolved
-                      buffer
-                      (lower-global-shared-view place.index)
-                      (lower-global-shared-view place.ty))
-                    (lower-emit-gep
-                      resolved
-                      buffer
-                      place.offset
-                      (ast.AstType.U8)))
-                    [(LowerExpr.Expr addressed pointer _)
-                      (LowerExpr.Expr addressed pointer place.ty)])])])])]))
+              resolved
+              buffer
+              place.index
+              (clone place.ty))
+            (lower-emit-gep resolved buffer place.offset (ast.AstType.U8)))
+            [(LowerExpr.Expr addressed pointer _)
+              (LowerExpr.Expr addressed pointer place.ty)])])]))
 
 (define (lower-store-place-pending? [place : (& place LowerStorePlace)]) : bool
   (match (& place.pending)
     [(LowerPendingBounds.None) false]
     [(or (LowerPendingBounds.Check _ _) (LowerPendingBounds.Current _ _)) true]))
 
-;; Every store resolves its place here, so a final element's deferred bounds
-;; check runs after the value's effects and before any address of it exists.
+;; The i64 index of `place`. An element place owing a dynamic check holds a
+;; placeholder (`LowerPendingBounds.Current`): its evaluated index is
+;; normalized here, where it is first used.
+(define (lower-store-place-element-index
+  [state : LowerState]
+  [place : (& place LowerStorePlace)]) : LowerExpr
+  (match (& place.pending)
+    [(LowerPendingBounds.Current evaluated evaluated-ty)
+      (if place.element?
+        (lower-emit-cast
+          state
+          (clone (deref evaluated))
+          (clone (deref evaluated-ty))
+          (ast.AstType.I64))
+        (LowerExpr.Expr state (clone place.index) (ast.AstType.I64)))]
+    [_ (LowerExpr.Expr state (clone place.index) (ast.AstType.I64))]))
+
+;; Every store resolves its place here, so the bounds check its element step
+;; owes runs after the value's effects and before any address of the element
+;; exists. A dynamic place checks the live length as it resolves its buffer.
 (define (lower-store-place-address
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [place : LowerStorePlace]
   [origin : ast.AstExpr]) : LowerExpr
-  (match (lower-global-shared-view place.pending)
-    [(LowerPendingBounds.None)
-      (lower-store-place-resolve-address ctx state place origin)]
-    [(LowerPendingBounds.Check index length)
+  (match (lower-store-place-element-index state (& place))
+    [(LowerExpr.Expr indexed index _)
       (lower-store-place-resolve-address
         ctx
+        (match (& place.pending)
+          [(LowerPendingBounds.Check bound length)
+            (lower-state-record-latest-bounds-check-at-expr
+              ctx
+              (lower-emit-bounds-check
+                indexed
+                (clone (deref bound))
+                (clone (deref length)))
+              (lower-global-shared-view origin))]
+          [_ indexed])
+        (LowerStorePlace
+          place.dynamic?
+          place.dynamic-when
+          place.base
+          index
+          place.offset
+          place.ty
+          place.element?
+          place.pending)
+        origin)]))
+
+;; Runs the bounds check `place` owes now, before the value: an element step
+;; into it, an indirection or a branch join reads the selected element, so it
+;; must be in range first (SPEC 5.10). A dynamic place still resolves its
+;; buffer at the store, which checks the live length again.
+(define (lower-store-place-check-now
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [place : LowerStorePlace]
+  [origin : ast.AstExpr]) : ResultLowerStorePlace
+  (match (lower-store-place-materialize
+    ctx
+    (match (& place.pending)
+      [(LowerPendingBounds.None) state]
+      [(LowerPendingBounds.Check bound length)
         (lower-state-record-latest-bounds-check-at-expr
           ctx
-          (lower-emit-bounds-check state index length)
-          (lower-global-shared-view origin))
-        place
-        origin)]
-    [(LowerPendingBounds.Current evaluated evaluated-ty)
-      (match (lower-emit-cast state evaluated evaluated-ty (ast.AstType.I64))
-        [(LowerExpr.Expr casted normalized _)
-          (lower-store-place-resolve-address
-            ctx
-            casted
-            (LowerStorePlace
-              place.dynamic?
-              place.dynamic-when
-              place.base
-              normalized
-              place.offset
-              place.ty
-              place.element?
-              place.pending)
-            origin)])]))
+          (lower-emit-bounds-check
+            state
+            (clone (deref bound))
+            (clone (deref length)))
+          origin)]
+      [(LowerPendingBounds.Current _ _)
+        (lower-store-place-dynamic-check ctx state (& place) origin)])
+    place)
+    [(ResultLowerStorePlace.Ok checked settled)
+      (ResultLowerStorePlace.Ok
+        checked
+        (LowerStorePlace
+          settled.dynamic?
+          settled.dynamic-when
+          settled.base
+          settled.index
+          settled.offset
+          settled.ty
+          settled.element?
+          (LowerPendingBounds.None)))]
+    [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)]))
 
 (define (lower-store-place-resolve-address
   [ctx : tc_core.TcContext]
@@ -43083,24 +43139,26 @@
   [place : LowerStorePlace]) : ResultLowerStorePlace
   (if (not place.element?)
     (ResultLowerStorePlace.Ok state place)
-    (match (lower-emit-binop
-      state
-      ir.CompilerIrBinOp.Mul
-      (lower-global-shared-view place.index)
-      (ir.CompilerIrValue.I64 (lower-type-size ctx place.ty))
-      (ast.AstType.I64))
-      [(LowerExpr.Expr scaled offset _)
-        (ResultLowerStorePlace.Ok
-          scaled
-          (LowerStorePlace
-            place.dynamic?
-            place.dynamic-when
-            place.base
-            place.index
-            offset
-            place.ty
-            false
-            place.pending))])))
+    (match (lower-store-place-element-index state (& place))
+      [(LowerExpr.Expr indexed index _)
+        (match (lower-emit-binop
+          indexed
+          ir.CompilerIrBinOp.Mul
+          (clone index)
+          (ir.CompilerIrValue.I64 (lower-type-size ctx place.ty))
+          (ast.AstType.I64))
+          [(LowerExpr.Expr scaled offset _)
+            (ResultLowerStorePlace.Ok
+              scaled
+              (LowerStorePlace
+                place.dynamic?
+                place.dynamic-when
+                place.base
+                index
+                offset
+                place.ty
+                false
+                place.pending))])])))
 
 ;; Two constant offsets add to a constant: a field path below a fixed root
 ;; keeps a constant GEP displacement instead of `gep base, (add 0, k)`. The
@@ -43134,36 +43192,30 @@
         offset
         (ast.AstType.I64))]))
 
+;; An inline projection reads no element bytes, so the projected place keeps
+;; the bounds check its element step owes (SPEC 5.10).
 (define (lower-store-place-project
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [place : LowerStorePlace]
   [offset : ir.CompilerIrValue]
   [ty : ast.AstType]) : ResultLowerStorePlace
-  (if (lower-store-place-pending? (& place))
-    (ResultLowerStorePlace.Err
-      (box
-        (lower-diagnostic
-          "lower: a final element's bounds check cannot be projected")))
-    (match (lower-store-place-materialize ctx state place)
-      [(ResultLowerStorePlace.Ok ready base-place)
-        (match (lower-store-place-offset-add
-          ready
-          (lower-global-shared-view base-place.offset)
-          offset)
-          [(LowerExpr.Expr projected total _)
-            (ResultLowerStorePlace.Ok
-              projected
-              (LowerStorePlace
-                base-place.dynamic?
-                base-place.dynamic-when
-                base-place.base
-                base-place.index
-                total
-                ty
-                false
-                (LowerPendingBounds.None)))])]
-      [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)])))
+  (match (lower-store-place-materialize ctx state place)
+    [(ResultLowerStorePlace.Ok ready base-place)
+      (match (lower-store-place-offset-add ready base-place.offset offset)
+        [(LowerExpr.Expr projected total _)
+          (ResultLowerStorePlace.Ok
+            projected
+            (LowerStorePlace
+              base-place.dynamic?
+              base-place.dynamic-when
+              base-place.base
+              base-place.index
+              total
+              ty
+              false
+              base-place.pending))])]
+    [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)]))
 
 ;; A fixed-array element selected directly at a non-dynamic root: the element
 ;; offset is the whole offset, so keep the typed index for scaled addressing.
@@ -43385,8 +43437,6 @@
   [arr-id : i64]
   [index-id : i64]
   [origin : ast.AstExpr]
-  ;; The element is the assignment's whole place, not a projection of it.
-  [final? : bool]
   ;; The expression id that runs after the place (the value), or -1.
   [later : i64]) : ResultLowerStorePlace
   (let
@@ -43402,9 +43452,11 @@
       arr-id
       index-id
       origin
-      final?
       later)))
 
+;; An element step evaluates its receiver and index now and leaves its bounds
+;; check pending (`LowerPendingBounds`): the store runs it after the value
+;; unless a later step reads the element first (SPEC 5.10).
 (define (lower-capture-array-store-place-of
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -43415,7 +43467,6 @@
   [arr-id : i64]
   [index-id : i64]
   [origin : ast.AstExpr]
-  [final? : bool]
   [later : i64]) : ResultLowerStorePlace
   (let
     [first-var : i64 (lower-state-next-var state)]
@@ -43485,62 +43536,23 @@
                           later)
                           [(ResultLowerExpr.Ok
                               (LowerExpr.Expr indexed idx idx-ty))
-                            (let
-                              [elem-ty : ast.AstType
+                            ;; The snapshot itself is the base: it keeps its
+                            ;; array type for the store's descriptor reads. The
+                            ;; index is normalized and checked against the
+                            ;; current length where the element is resolved
+                            ;; (`LowerPendingBounds.Current`).
+                            (ResultLowerStorePlace.Ok
+                              indexed
+                              (LowerStorePlace
+                                true
+                                (ir.CompilerIrValue.Bool true)
+                                descriptor
+                                (ir.CompilerIrValue.I64 0)
+                                (ir.CompilerIrValue.I64 0)
                                 (tc_core.tc-type-without-regions
-                                  (tc_core.tc-context-type-get ctx elem))]
-                              ;; A projected element is read now, so it is checked
-                              ;; now. The store re-checks against the current
-                              ;; length when it resolves the live buffer, which is
-                              ;; the final element's only check (SPEC 5.10).
-                              [checked : LowerState
-                                (if final?
-                                  indexed
-                                  (match (lower-array-element-addr
-                                    ctx
-                                    indexed
-                                    (lower-global-shared-view descriptor)
-                                    (lower-global-shared-view idx)
-                                    (lower-global-shared-view idx-ty)
-                                    (lower-global-shared-view elem-ty))
-                                    [(LowerExpr.Expr addressed _ _)
-                                      (lower-state-record-latest-bounds-check-at-expr
-                                        ctx
-                                        addressed
-                                        origin)]))]
-                              ;; The snapshot itself is the base: it keeps its
-                              ;; array type for the store's descriptor reads. A
-                              ;; final element normalizes and checks its index at
-                              ;; the store, after the value (`LowerPendingBounds.Current`).
-                              (if final?
-                                (ResultLowerStorePlace.Ok
-                                  checked
-                                  (LowerStorePlace
-                                    true
-                                    (ir.CompilerIrValue.Bool true)
-                                    descriptor
-                                    (ir.CompilerIrValue.I64 0)
-                                    (ir.CompilerIrValue.I64 0)
-                                    elem-ty
-                                    true
-                                    (LowerPendingBounds.Current idx idx-ty)))
-                                (match (lower-emit-cast
-                                  checked
-                                  idx
-                                  idx-ty
-                                  (ast.AstType.I64))
-                                  [(LowerExpr.Expr casted normalized-index _)
-                                    (ResultLowerStorePlace.Ok
-                                      casted
-                                      (LowerStorePlace
-                                        true
-                                        (ir.CompilerIrValue.Bool true)
-                                        descriptor
-                                        normalized-index
-                                        (ir.CompilerIrValue.I64 0)
-                                        elem-ty
-                                        true
-                                        (LowerPendingBounds.None)))])))]
+                                  (tc_core.tc-context-type-get ctx elem))
+                                true
+                                (LowerPendingBounds.Current idx idx-ty)))]
                           [(ResultLowerExpr.Err error)
                             (ResultLowerStorePlace.Err error)])]
                       [(ResultLowerExpr.Err error)
@@ -43577,80 +43589,54 @@
                     captured
                     root
                     (lower-global-shared-view origin))
-                    [(ResultLowerStorePlace.Ok rooted place)
-                      (if (tc_core.tc-never-type?
-                        (lower-global-shared-view place.ty))
-                        (ResultLowerStorePlace.Ok rooted place)
-                        (match (lower-store-index
-                          ctx
-                          rooted
-                          env
-                          type-env
-                          index-id
-                          later)
-                          [(ResultLowerExpr.Ok
-                              (LowerExpr.Expr indexed idx idx-ty))
-                            (let
-                              [elem-ty : ast.AstType
-                                (tc_core.tc-type-without-regions
-                                  (tc_core.tc-context-type-get ctx elem))]
-                              (if final?
-                                (lower-store-place-final-element
+                    ;; This step reads its receiver element, so that element
+                    ;; is checked now, before the index runs.
+                    [(ResultLowerStorePlace.Ok rooted receiver)
+                      (match (lower-store-place-check-now
+                        ctx
+                        rooted
+                        receiver
+                        origin)
+                        [(ResultLowerStorePlace.Ok checked place)
+                          (if (tc_core.tc-never-type?
+                            (lower-global-shared-view place.ty))
+                            (ResultLowerStorePlace.Ok checked place)
+                            (match (lower-store-index
+                              ctx
+                              checked
+                              env
+                              type-env
+                              index-id
+                              later)
+                              [(ResultLowerExpr.Ok
+                                  (LowerExpr.Expr indexed idx idx-ty))
+                                (lower-store-place-element
                                   ctx
                                   indexed
                                   place
                                   idx
                                   idx-ty
                                   (ir.CompilerIrValue.I64 count)
-                                  elem-ty)
-                                (match (lower-emit-bounds-operand
-                                  indexed
-                                  (lower-global-shared-view idx)
-                                  (lower-global-shared-view idx-ty))
-                                  [(LowerExpr.Expr converted unsigned-index _)
-                                    (match (lower-emit-cast
-                                      (lower-state-record-latest-bounds-check-at-expr
-                                        ctx
-                                        (lower-emit-bounds-check
-                                          converted
-                                          unsigned-index
-                                          (ir.CompilerIrValue.I64 count))
-                                        origin)
-                                      idx
-                                      idx-ty
-                                      (ast.AstType.I64))
-                                      [(LowerExpr.Expr casted signed-index _)
-                                        (lower-store-place-fixed-element
-                                          ctx
-                                          casted
-                                          place
-                                          signed-index
-                                          elem-ty)])])))]
-                          [(ResultLowerExpr.Err error)
-                            (ResultLowerStorePlace.Err error)]))]
+                                  (tc_core.tc-type-without-regions
+                                    (tc_core.tc-context-type-get ctx elem)))]
+                              [(ResultLowerExpr.Err error)
+                                (ResultLowerStorePlace.Err error)]))]
+                        [(ResultLowerStorePlace.Err error)
+                          (ResultLowerStorePlace.Err error)])]
                     [(ResultLowerStorePlace.Err error)
                       (ResultLowerStorePlace.Err error)])]
                 [(ResultLowerStorePlace.Err error)
                   (ResultLowerStorePlace.Err error)])]
             [(ast.AstType.Slice elem)
-              (if final?
-                (lower-capture-final-slice-store-place
-                  ctx
-                  state
-                  env
-                  type-env
-                  arr
-                  index-id
-                  later
-                  elem)
-                (lower-capture-array-element-store-place
-                  ctx
-                  state
-                  env
-                  type-env
-                  arr
-                  index
-                  origin))]
+              (lower-capture-slice-store-place
+                ctx
+                state
+                env
+                type-env
+                arr
+                index-id
+                later
+                elem)]
             [_
               (lower-capture-array-element-store-place
                 ctx
@@ -43685,8 +43671,9 @@
     [(ResultLowerExpr.Err error) (ResultLowerStorePlace.Err error)]))
 
 ;; Element `index` of the array at `place`, of fixed or captured `length`,
-;; owing its bounds check to the store (SPEC 5.10).
-(define (lower-store-place-final-element
+;; owing its bounds check (SPEC 5.10). Its receiver `place` was checked when
+;; it was evaluated, so it owes none.
+(define (lower-store-place-element
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [place : LowerStorePlace]
@@ -43694,38 +43681,42 @@
   [index-ty : ast.AstType]
   [length : ir.CompilerIrValue]
   [elem-ty : ast.AstType]) : ResultLowerStorePlace
-  (match (lower-emit-bounds-operand
-    state
-    (lower-global-shared-view index)
-    (lower-global-shared-view index-ty))
-    [(LowerExpr.Expr converted unsigned-index _)
-      (match (lower-emit-cast converted index index-ty (ast.AstType.I64))
-        [(LowerExpr.Expr casted signed-index _)
-          (match (lower-store-place-fixed-element
-            ctx
-            casted
-            place
-            signed-index
-            elem-ty)
-            [(ResultLowerStorePlace.Ok selected element)
-              (ResultLowerStorePlace.Ok
-                selected
-                (LowerStorePlace
-                  element.dynamic?
-                  element.dynamic-when
-                  element.base
-                  element.index
-                  element.offset
-                  element.ty
-                  element.element?
-                  (LowerPendingBounds.Check unsigned-index length)))]
-            [(ResultLowerStorePlace.Err error)
-              (ResultLowerStorePlace.Err error)])])]))
+  (if (lower-store-place-pending? (& place))
+    (ResultLowerStorePlace.Err
+      (box
+        (lower-diagnostic
+          "lower: an element's receiver still owes its bounds check")))
+    (match (lower-emit-bounds-operand
+      state
+      (lower-global-shared-view index)
+      (lower-global-shared-view index-ty))
+      [(LowerExpr.Expr converted unsigned-index _)
+        (match (lower-emit-cast converted index index-ty (ast.AstType.I64))
+          [(LowerExpr.Expr casted signed-index _)
+            (match (lower-store-place-fixed-element
+              ctx
+              casted
+              place
+              signed-index
+              elem-ty)
+              [(ResultLowerStorePlace.Ok selected element)
+                (ResultLowerStorePlace.Ok
+                  selected
+                  (LowerStorePlace
+                    element.dynamic?
+                    element.dynamic-when
+                    element.base
+                    element.index
+                    element.offset
+                    element.ty
+                    element.element?
+                    (LowerPendingBounds.Check unsigned-index length)))]
+              [(ResultLowerStorePlace.Err error)
+                (ResultLowerStorePlace.Err error)])])])))
 
-;; The final element of an assignment through a slice. The slice's data
-;; pointer and length are read before the index runs, so rebinding the slice
-;; cannot retarget the store.
-(define (lower-capture-final-slice-store-place
+;; An element of a slice. The slice's data pointer and length are read before
+;; the index runs, so rebinding the slice cannot retarget the store.
+(define (lower-capture-slice-store-place
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -43752,7 +43743,7 @@
                 [(LowerExpr.Expr s2 length _)
                   (match (lower-store-index ctx s2 env type-env index-id later)
                     [(ResultLowerExpr.Ok (LowerExpr.Expr indexed idx idx-ty))
-                      (lower-store-place-final-element
+                      (lower-store-place-element
                         ctx
                         indexed
                         ;; The data buffer as a root place: only its address
@@ -43787,9 +43778,7 @@
     (lower-store-place-pending? (& left))
     (lower-store-place-pending? (& right)))
     (ResultLowerStorePlace.Err
-      (box
-        (lower-diagnostic
-          "lower: a final element's bounds check cannot be merged")))
+      (box (lower-diagnostic "lower: a pending bounds check cannot be merged")))
     (lower-store-place-merge-checked state left left-label right right-label)))
 
 (define (lower-store-place-merge-checked
@@ -43854,8 +43843,8 @@
   [right-label : i64]
   [merge-label : i64]
   [origin : ast.AstExpr]) : ResultLowerStorePlace
-  ;; Each branch materializes an element place's byte offset in its own block,
-  ;; before its jump, so the merge phis receive defined offsets.
+  ;; Each branch checks its element and materializes its byte offset in its
+  ;; own block, before its jump: the merge phis join only defined addresses.
   (match (lower-capture-store-place
     ctx
     state
@@ -43865,7 +43854,11 @@
     (lower-global-shared-view origin))
     [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)]
     [(ResultLowerStorePlace.Ok left-captured left-element)
-      (match (lower-store-place-materialize ctx left-captured left-element)
+      (match (lower-store-place-check-now
+        ctx
+        left-captured
+        left-element
+        (clone origin))
         [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)]
         [(ResultLowerStorePlace.Ok left-state left-place)
           (let
@@ -43883,14 +43876,15 @@
               env
               type-env
               right
-              origin)
+              (clone origin))
               [(ResultLowerStorePlace.Err error)
                 (ResultLowerStorePlace.Err error)]
               [(ResultLowerStorePlace.Ok right-captured right-element)
-                (match (lower-store-place-materialize
+                (match (lower-store-place-check-now
                   ctx
                   right-captured
-                  right-element)
+                  right-element
+                  origin)
                   [(ResultLowerStorePlace.Err error)
                     (ResultLowerStorePlace.Err error)]
                   [(ResultLowerStorePlace.Ok right-state right-place)
@@ -44004,12 +43998,14 @@
   (Value)
   (Place LowerPlaceVars))
 
+;; An arm publishes an address: it checks its element first, in its own block.
 (define (lower-publish-store-place
   [ctx : tc_core.TcContext]
   [captured : LowerState]
   [element : LowerStorePlace]
-  [vars : LowerPlaceVars]) : ResultLowerExpr
-  (match (lower-store-place-materialize ctx captured element)
+  [vars : LowerPlaceVars]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-store-place-check-now ctx captured element origin)
     [(ResultLowerStorePlace.Err error) (ResultLowerExpr.Err error)]
     [(ResultLowerStorePlace.Ok state place)
       (if (tc_core.tc-never-type? (lower-global-shared-view place.ty))
@@ -44060,7 +44056,12 @@
         0
         (ast.AstExpr.Begin (lower-global-shared-view body)))
         [(ResultLowerStorePlace.Ok captured place)
-          (lower-publish-store-place ctx captured place vars)]
+          (lower-publish-store-place
+            ctx
+            captured
+            place
+            vars
+            (ast.AstExpr.Begin body))]
         [(ResultLowerStorePlace.Err error) (ResultLowerExpr.Err error)])]))
 
 (define (lower-capture-store-scoped-mode
@@ -44331,7 +44332,6 @@
         arr
         index
         origin
-        false
         -1)]
     [(ast.AstExpr.BoxGet _)
       (match (lower-mutable-place-address ctx state env type-env place origin)
@@ -44564,7 +44564,7 @@
     [(tc_core.tc-never-type? (lower-global-shared-view place.ty))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state ir.CompilerIrValue.Unit (ast.AstType.Never)))]
-    ;; A dynamic place resolves its live buffer, and a final element its
+    ;; A dynamic place resolves its live buffer, and an element step its pending
     ;; bounds check, only after the value's effects (SPEC 5.10).
     [(or place.dynamic? (lower-store-place-pending? (& place)))
       (lower-store-expr-into-deferred-place-result
@@ -44634,7 +44634,7 @@
         array-slot?)]))
 
 ;; Construction must finish before a deferred place resolves: its operands may
-;; grow or shorten the reserved array, and a final element's bounds check
+;; grow or shorten the reserved array, and a pending bounds check
 ;; follows them. A direct constructor keeps the destination deferred until
 ;; its operands are evaluated and then builds in place, without an aggregate
 ;; copy. Any other value is evaluated first and stored after.
@@ -45506,7 +45506,6 @@
     arr-box
     index-box
     (lower-context-expr-get ctx index-box)
-    true
     value-box)
     [(ResultLowerStorePlace.Ok captured place)
       (lower-store-expr-into-receiver-place-result
@@ -68334,13 +68333,14 @@
         env
         type-env
         (lower-global-shared-view body)
-        body)
+        (clone body))
         [(ResultLowerStorePlace.Ok captured place)
           (match (lower-publish-store-place
             ctx
             captured
             place
-            (lower-global-shared-view vars))
+            (lower-global-shared-view vars)
+            body)
             [(ResultLowerExpr.Ok (LowerExpr.Expr body-state _ ty))
               (let
                 [exits? : bool (tc_core.tc-never-type? ty)]

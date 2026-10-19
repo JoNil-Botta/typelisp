@@ -346,19 +346,25 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
-The final element of an array assignment is a `LowerStorePlace` that owes its
+Every element step of a store place is a `LowerStorePlace` that owes its
 bounds check (`LowerPendingBounds`): a fixed array or slice element carries its
-index and length, and a dynamic element re-checks the current length when the
-store resolves the live buffer. `lower-store-place-address` is the one place
-that emits the pending check, after the value and before any address of the
-element exists. Projected and merged places are intermediate, so they check
-when evaluated; projecting or merging a place that still owes a check is an
-internal error rather than a dropped check. A dynamic place's base is the
-typed descriptor snapshot, and its length and buffer reads are the typed
-descriptor words that `lower-array-element-addr` uses, so the optimizer keeps
-distinguishing element stores from header loads. Dynamic and pending places
-evaluate the value first; a direct constructor builds into them through a
-deferred `LowerStoreDestination.Place`.
+index and length, and a dynamic element checks the current length when the
+store resolves the live buffer. Inline field and tuple projections
+(`lower-store-place-project`) read no element bytes, so they carry the pending
+check: `(set! (array-ref a i).f v)` checks `i` after `v`, as
+`(set! (array-ref a i) v)` does. `lower-store-place-address` emits it at the
+store, after the value and before any address of the element exists. A step
+that reads the element first runs it then, through
+`lower-store-place-check-now`: an indirection through a reference field, an
+element step into an inline array (`set_intermediate_bounds_before_value_trap`)
+and a branch arm publishing its place. An element step whose receiver still
+owes a check, and a merge of such places, are internal errors rather than
+dropped checks. A dynamic place's base is the typed descriptor snapshot, and
+its length and buffer reads are the typed descriptor words that
+`lower-array-element-addr` uses, so the optimizer keeps distinguishing element
+stores from header loads. Dynamic and pending places evaluate the value first;
+a direct constructor builds into them through a deferred
+`LowerStoreDestination.Place`.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -1123,19 +1129,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
-`lower-store-place` retains a selected array descriptor, index and inline
-field offset until the replacement value has been evaluated. The shared
-`lower-array-store-place` snapshot rules prevent later receiver/index writes
-from retargeting the store. `lower-store-destination-address` then checks the
-current length and uses the descriptor's current buffer. Struct and tuple
-projections add their `lower-inline-field-info` offsets without reading the
-element. A projection through a box or reference reads that indirection before
-the value runs, so its intermediate bounds checks remain eager. An inline
-fixed-array field of an element, as in
-`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
-array receiver: when `v` grows `a`, that store targets the buffer selected
-before the value ran (#9057). Borrow and `replace!` address selection
-continues to use `lower-mutable-place-address`.
+A field or tuple store into an array element (#8932) retains the selected
+array descriptor, index and inline field offset until the replacement value
+has been evaluated (`lower-capture-array-store-place`). The snapshot rules of
+`lower-store-index` and the descriptor capture prevent later receiver/index
+writes from retargeting the store. `lower-store-place-address` then checks the
+current length and uses the descriptor's current buffer. A projection through
+a box or reference reads that indirection before the value runs, so its
+intermediate bounds checks remain eager. An inline fixed-array field of a
+dynamic-array element, as in `(set! (array-ref (array-ref a i).cells j) v)`,
+keeps `a`'s descriptor as its root: indexing `cells` checks `i` before `v`,
+and the store checks `i` against the live length again and addresses the
+buffer current after `v`, so growth of `a` in `v` does not strand the store in
+the old buffer (#9057). Borrow and `replace!` address selection continues to
+use `lower-mutable-place-address`.
 
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).

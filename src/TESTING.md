@@ -17,7 +17,13 @@ growth for register and memory-class elements, nested struct/tuple projections,
 one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
 safety rows keep final bounds checks after the value's effects and reject
 immutable receivers; intermediate projection traps remain independently pinned
-by `set_intermediate_bounds_before_value_trap.tl`.
+by `set_intermediate_bounds_before_value_trap.tl`. The fixed-array and slice
+`set_*_field_value_before_bounds_trap.tl` rows hold every array kind to the
+same final check, and `compiler-lower-projected-store-checks` keeps a dynamic
+element's field store at one check. `inline_array_field_store_growth.tl` covers
+stores through an inline array field of a dynamic-array element after growth
+(#9057), and `set_inline_array_bounds_before_value_trap.tl` the element check
+that indexing its inline array needs before the value.
 
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an

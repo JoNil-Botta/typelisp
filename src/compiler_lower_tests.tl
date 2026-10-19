@@ -7007,9 +7007,9 @@
         (> (lower-test-count functions "put" (Bounds)) 0))]
     [_ false]))
 
-;; Dynamic writes retain a pre-RHS reservation check and a post-RHS live-extent
-;; check. Fixed storage needs only the reservation check. The native place
-;; fixture independently checks relocation and single evaluation semantics.
+;; A final element store owes one check, after the value: a dynamic array
+;; checks its live extent, fixed storage its length. The native place fixture
+;; independently checks relocation and single evaluation semantics.
 (define (compiler-lower-store-place-checks-ok?) : bool
   (and
     (match (lower-test-functions
@@ -7030,6 +7030,27 @@
   (test.assert-true
     (compiler-lower-store-place-checks-ok?)
     "a final element store checks once, after the value: a dynamic array against its current length"))
+
+;; Field and tuple projections read no element bytes, so an element followed
+;; only by them owes the store's single check, after the value (SPEC 5.10).
+(define (compiler-lower-projected-store-checks-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(defstruct Pair (a i64) (b i64))
+(define (put [a : (__tl_dyn-array Pair)] [i : i64] [v : i64]) : unit (set! (array-ref a i).b v))
+(define (put-slot [a : (__tl_dyn-array (Tuple i64 Pair))] [i : i64] [v : i64]) : unit (set! (tuple-ref (array-ref a i) 1).a v))
+(define (main) : i64 0)"))
+    [(LowerTestFunctions.Some functions)
+      (and
+        (= (lower-test-count functions "put" (LowerTestInstr.Bounds)) 1)
+        (= (lower-test-count functions "put-slot" (LowerTestInstr.Bounds)) 1))]
+    [_ false]))
+
+(test
+  compiler-lower-projected-store-checks
+  (test.assert-true
+    (compiler-lower-projected-store-checks-ok?)
+    "a field of a dynamic element checks once, after the value, against its current length"))
 
 (define (compiler-lower-array-take-shape-ok?) : bool
   (match (lower-test-functions

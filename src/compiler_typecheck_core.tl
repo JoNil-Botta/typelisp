@@ -666,7 +666,8 @@
   ;; One job-owned non-fatal channel is shared with lowering and codegen by
   ;; the compiler driver. Its payload arena remains lazy for ordinary jobs.
   (advisory-sink cdiag.CompilerAdvisorySink)
-  (semantic-observer TcSemanticObserver))
+  (semantic-observer TcSemanticObserver)
+  (parser-control i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -941,7 +942,8 @@
           0
           0
           (cdiag.compiler-advisory-sink-new)
-          (TcSemanticObserver 0)))
+          (TcSemanticObserver 0)
+          0))
       (TcJobState
         (cast
           (unsafe
@@ -2882,6 +2884,19 @@
     ctx
     env
     (ExpressionEnter expression)))
+
+(define (tc-job-state-parser-control [state : TcJobState]) : i64
+  (tc-job-state-field state parser-control i64))
+
+(define (tc-job-state-set-parser-control! [state : TcJobState] [control : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr state.address : (MutPtr u8))
+          (comptime (offset-of (type TcJobStateData) parser-control)))
+        : (MutPtr i64))
+      control)))
 
 (define (tc-job-state-semantic-observer [state : TcJobState]) : TcSemanticObserver
   (tc-job-state-field state semantic-observer TcSemanticObserver))

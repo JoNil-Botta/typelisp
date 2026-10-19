@@ -157,6 +157,14 @@ instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
+The parser origin-column tests exercise all thirteen kinds, compact-span
+boundaries and exact overflow after i64-to-i32 conversion, full-width name IDs
+and alias keys/slots, segment and directory growth, retained handles, suffix
+rollback, detached directory transfer, alias precedence and the 64-step depth
+bound. They also check independent jobs, failed/inactive nested modules and
+ordinary reader builder growth/reset. The load and semantic-index smokes cover
+cached file reuse and source-arena retirement on the production paths.
+
 ## Loader diagnostic codes
 
 The `loader-error-codes` public CLI case checks source-facing loader failures

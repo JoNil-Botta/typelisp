@@ -49653,6 +49653,265 @@
       [nested? 3]
       [else 42])))
 
+(define (opt-natural-loop-work-test-blocks [count : i64] [cyclic? : bool]) : ir.CompilerIrBlockList
+  (let
+    [text : String "entry:\n jump h0\n"]
+    (for [id (iterator.range 0 count)]
+      (set!
+        text
+        (str_cat.str-cat
+          text
+          "h"
+          (string.int->string id)
+          ":\n "
+          (if (and (= (+ id 1) count) (not cyclic?))
+            "return 0"
+            (str_cat.str-cat
+              "jump h"
+              (string.int->string
+                (if (= (+ id 1) count)
+                  0
+                  (+ id 1)))))
+          "\n")))
+    (irt.blocks text)))
+
+(define (opt-natural-loop-test-same?
+  [index : (& index opt.OptCfgIndex)]
+  [left : (& left opt.OptNaturalLoop)]
+  [right : (& right opt.OptNaturalLoop)]) : bool
+  (let
+    [left-labels : opt.OptLabelSet (opt.opt-natural-loop-body left)]
+    [right-labels : opt.OptLabelSet (opt.opt-natural-loop-body right)]
+    [left-blocks : ir.CompilerIrBlockList
+      (opt.opt-natural-loop-body-blocks left)]
+    [right-blocks : ir.CompilerIrBlockList
+      (opt.opt-natural-loop-body-blocks right)]
+    [left-seq (ir.compiler-ir-block-list-view left-blocks)]
+    [right-seq (ir.compiler-ir-block-list-view right-blocks)]
+    [same : bool
+      (and
+        (=
+          (opt.opt-natural-loop-header left)
+          (opt.opt-natural-loop-header right))
+        (= (opt.opt-natural-loop-latch left) (opt.opt-natural-loop-latch right))
+        (= (opt.opt-label-count left-labels) (opt.opt-label-count right-labels))
+        (= (array-length left-seq) (array-length right-seq))
+        (match (opt.opt-natural-loop-preheader left)
+          [(No)
+            (match (opt.opt-natural-loop-preheader right)
+              [(No) true]
+              [_ false])]
+          [(Some label)
+            (match (opt.opt-natural-loop-preheader right)
+              [(Some other) (= label other)]
+              [_ false])]))]
+    (when
+      same
+      (for [id (iterator.range 0 (opt.opt-label-count left-labels))]
+        (when
+          (!=
+            (opt.opt-label-ref left-labels id)
+            (opt.opt-label-ref right-labels id))
+          (set! same false)))
+      (for [id (iterator.range 0 (array-length left-seq))]
+        (match (array-ref left-seq id)
+          [(Block label _)
+            (match (array-ref right-seq id)
+              [(Block other _) (when (!= label other) (set! same false))])]))
+      (for [id (iterator.range -1 (+ (array-length index.labels) 1))]
+        (when
+          (!=
+            (opt.opt-natural-loop-body-contains-id? left id)
+            (opt.opt-natural-loop-body-contains-id? right id))
+          (set! same false))))
+    same))
+
+(test
+  natural-loop-workspace-retains-independent-loops
+  (let
+    [work : opt.OptNaturalLoopWork
+      (opt.OptNaturalLoopWork (__tl_make-array i64 0) (__tl_make-array i64 0))]
+    [large : ir.CompilerIrBlockList (opt-natural-loop-work-test-blocks 40 true)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view large))]
+    [header : i64 (ir.compiler-ir-label "h0")]
+    [latch : i64 (ir.compiler-ir-label "h39")]
+    [kept : opt.OptNaturalLoop
+      (opt.opt-natural-loop-build
+        (&mut work)
+        large
+        context.pred-map
+        context.reachable
+        header
+        latch)]
+    [expected : opt.OptNaturalLoop
+      (opt.opt-natural-loop-build-by-label
+        large
+        context.pred-map
+        context.reachable
+        header
+        latch)]
+    [found-address : u64
+      (unsafe
+        (ptr->int (__tl_array-data work.found)))]
+    [stack-address : u64
+      (unsafe
+        (ptr->int (__tl_array-data work.stack)))]
+    [small : ir.CompilerIrBlockList (opt-natural-loop-nested-blocks)]
+    [small-context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view small))]
+    (test.assert-i64-eq
+      (opt.opt-label-count (opt.opt-natural-loop-body kept))
+      40
+      "exercise the full-scan body path before smaller walks reuse its buffers")
+    (for [round (iterator.range 0 5)]
+      (for [id (iterator.range 0 (array-length work.found))]
+        (set! (array-ref work.found id) -999)
+        (set! (array-ref work.stack id) -999))
+      (let
+        [next-header : i64
+          (ir.compiler-ir-label
+            (cond [(= round 0) "outer"] [(= round 4) "missing"] [else "inner"]))]
+        [next-latch : i64
+          (ir.compiler-ir-label
+            (cond
+              [(= round 0) "outer-latch"]
+              [(= round 1) "inner-body"]
+              [(= round 2) "inner"]
+              [(= round 4) "inner-body"]
+              [else "missing"]))]
+        [next : opt.OptNaturalLoop
+          (opt.opt-natural-loop-build
+            (&mut work)
+            small
+            small-context.pred-map
+            small-context.reachable
+            next-header
+            next-latch)]
+        [oracle : opt.OptNaturalLoop
+          (opt.opt-natural-loop-build-by-label
+            small
+            small-context.pred-map
+            small-context.reachable
+            next-header
+            next-latch)]
+        (test.assert-true
+          (opt-natural-loop-test-same? small-context.index next oracle)
+          "nested, self and missing-latch walks read only their initialized prefixes")))
+    (test.assert-true
+      (and
+        (=
+          found-address
+          (unsafe
+            (ptr->int (__tl_array-data work.found))))
+        (=
+          stack-address
+          (unsafe
+            (ptr->int (__tl_array-data work.stack)))))
+      "later walks reuse both existing buffers")
+    (test.assert-true
+      (opt-natural-loop-test-same? context.index kept expected)
+      "later walks and poisoned scratch cannot mutate an earlier loop")))
+
+(test
+  natural-loop-workspace-collection-shapes
+  (let
+    [sources
+      (array
+        ""
+        "entry:\n return 0"
+        "entry:\n jump loop\nloop:\n jump loop"
+        "entry:\n branch true, left, right\nleft:\n jump left\nright:\n jump right"
+        "entry:\n return 0\ndead:\n jump dead"
+        "entry:\n jump missing"
+        "entry:\n jump loop\nloop:\n jump loop\nloop:\n return 0")]
+    [counts : (Array i64 7) (array 0 0 1 2 0 0 1)]
+    (for [id (iterator.range 0 (array-length sources))]
+      (let
+        [blocks : ir.CompilerIrBlockList
+          (irt.blocks
+            (opt.compiler-opt-global-array-element-shared-view sources id))]
+        [context : opt.OptCfgContext
+          (opt.opt-cfg-context-build
+            (opt.compiler-opt-global-shared-view blocks))]
+        [loops : opt_natural_loop_vec.Vec
+          (opt.opt-cfg-natural-loops-with-context
+            (opt.compiler-opt-global-shared-view blocks)
+            context)]
+        [seq (opt_natural_loop_vec.view loops)]
+        [work : opt.OptNaturalLoopWork
+          (opt.OptNaturalLoopWork
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0))]
+        (test.assert-i64-eq
+          (array-length seq)
+          (array-ref counts id)
+          "empty, acyclic, self, sibling, unreachable and malformed CFG loop counts")
+        (for [pos (iterator.range 0 (array-length seq))]
+          (let
+            [loop : (& loops opt.OptNaturalLoop) (& (array-ref seq pos))]
+            [header : i64 (opt.opt-natural-loop-header loop)]
+            [latch : i64 (opt.opt-natural-loop-latch loop)]
+            [oracle : opt.OptNaturalLoop
+              (opt.opt-natural-loop-build-by-label
+                blocks
+                context.pred-map
+                context.reachable
+                header
+                latch)]
+            [direct : opt.OptNaturalLoop
+              (opt.opt-natural-loop-build
+                (&mut work)
+                blocks
+                context.pred-map
+                context.reachable
+                header
+                latch)]
+            (test.assert-true
+              (opt-natural-loop-test-same? context.index loop oracle)
+              "collection preserves discovery, block order, membership and preheaders")
+            (test.assert-true
+              (opt-natural-loop-test-same? context.index direct oracle)
+              "direct builder agrees with the fallback")))
+        (when
+          (not context.index.labels-unique)
+          (test.assert-i64-eq
+            (array-length work.found)
+            0
+            "duplicate-label fallback never sizes the id workspace")
+          (test.assert-i64-eq
+            (array-length work.stack)
+            0
+            "duplicate-label fallback never sizes the stack"))))))
+
+(cfg
+  test
+  (define (opt-natural-loop-test-collection-bytes
+    [blocks : (& blocks ir.CompilerIrBlockList)]
+    [context : (& context opt.OptCfgContext)]) : i64
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [start : i64
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)]
+      [_loops : opt_natural_loop_vec.Vec
+        (opt.opt-cfg-natural-loops-with-context
+          (owned_view.compiler-owned-reference-shared-view blocks)
+          context)]
+      (-
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)
+        start))))
+
+(test
+  natural-loop-workspace-is-lazy
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (opt-natural-loop-work-test-blocks 1024 false)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
+    (test.assert-true
+      (< (opt-natural-loop-test-collection-bytes blocks context) 1024)
+      "an acyclic collection allocates no CFG-sized traversal buffers")))
+
 (define (compiler-optimize-natural-loop-self-test) : i64
   (let
     [single-index : opt.OptCfgIndex

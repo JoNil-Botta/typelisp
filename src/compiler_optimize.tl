@@ -17078,14 +17078,19 @@
       (opt-pred-map-lookup pred-map header)
       (None))))
 
+(defstruct OptNaturalLoopWork
+  (found (__tl_dyn-array i64))
+  (stack (__tl_dyn-array i64)))
+
 (define (opt-natural-loop-build
+  [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [pred-map : (& OptPredMap)]
   [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
   (if pred-map.index.labels-unique
-    (opt-natural-loop-build-by-id blocks pred-map reachable header latch)
+    (opt-natural-loop-build-by-id work blocks pred-map reachable header latch)
     (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
 
 ;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
@@ -17099,6 +17104,7 @@
 ;; member array is `marks` itself: both hold exactly the header, the latch and
 ;; every recorded block.
 (define (opt-natural-loop-build-by-id
+  [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [pred-map : (& OptPredMap)]
   [_reachable : OptLabelSet]
@@ -17109,8 +17115,15 @@
       (owned_view.compiler-owned-reference-shared-view (& pred-map.index))]
     [count : i64 (opt-cfg-index-block-count index)]
     [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
-    [found : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    ;; Only the initialized prefixes are read. No returned loop retains these
+    ;; arrays: its membership, labels and ordered blocks own separate storage.
+    [_reserve : unit
+      (when
+        (< (array-length work.found) (+ count 1))
+        (set! work.found (__tl_make-array i64 (+ count 1)))
+        (set! work.stack (__tl_make-array i64 (+ count 1))))]
+    [found : (&mut work (__tl_dyn-array i64)) (&mut work.found)]
+    [stack : (&mut work (__tl_dyn-array i64)) (&mut work.stack)]
     [found-count : i64 0]
     [top : i64 0]
     [header-id : i64 (- 0 1)]
@@ -17328,6 +17341,7 @@
 ;; index that walk consulted (the reachable set is built from this reachable
 ;; array).
 (define (opt-cfg-natural-loop-edges-csr
+  [work : (&mut work OptNaturalLoopWork)]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [pred-map : (& OptPredMap)]
@@ -17351,6 +17365,7 @@
           (opt_natural_loop_vec.push-ref!
             out
             (opt-natural-loop-build
+              work
               all-blocks
               pred-map
               reachable
@@ -17370,6 +17385,8 @@
       (ir.compiler-ir-block-list-view blocks)]
     [count : i64 (array-length seq)]
     [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
+    [work : OptNaturalLoopWork
+      (OptNaturalLoopWork (__tl_make-array i64 0) (__tl_make-array i64 0))]
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
@@ -17377,6 +17394,7 @@
         (match (array-ref seq pos)
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
+              (&mut work)
               (& blocks)
               (& index)
               (& context.pred-map)

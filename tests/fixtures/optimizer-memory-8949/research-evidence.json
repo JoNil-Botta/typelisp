@@ -1,0 +1,941 @@
+{
+  "schemaVersion": 1,
+  "scope": "Research controls only; no full compiler/CI/bootstrap/performance acceptance. C is the minimal composed prototype; C2-extra is excluded from the implementation scope.",
+  "baseHead": "c6f2110464bd14a312a1f3c062924dff4200cd69",
+  "baseTree": "059a36d8dbde58c6f2c6ea68e2ff850100ab873f",
+  "host": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+  "processTreeCapBytes": 6442450944,
+  "metricsNote": "Observed memory.peak readings, sampled compiler VmHWM and schema-v1 wrapper telemetry are different metrics. Cgroup reading can miss a final increment. Internal allocation counters are separate and nested owner totals overlap; never sum them as live memory. Loaded-host times are not a speedup claim.",
+  "sourceCommits": {
+    "diagnostic": "b91afcd35e68332dc348f18cbada928a2eb9a685",
+    "A": "defbb291fee8fe39b1ad872e559cb84f6fad257c",
+    "B": "f654c5ade8b5ad5cca8cc08fa24d4bdd1ab1057b",
+    "C": "d74c57f8e1db500d9c07e829c0773d031bcfc431",
+    "C2-extra": "38c8beb2a08885cb4e408a634cd1fb645eec5ca8"
+  },
+  "compilers": {
+    "normalCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-9090-closure-lifetime-ownership/compiler",
+    "normalCompilerSHA256": "c5623b9ca2f9331cb14156e7ffe469170519e0b95367fb9c918181b0541adda1",
+    "profileCompiler": "/home/jonathan/.herdr/worktrees/typelisp/6/target/exp/w6-review-8828/20261019-0755/base-official/profile/compile_profile",
+    "profileCompilerSHA256": "1d2a34bb36ea0475ea458c4e6dcf125b4c3afc83948936f3fc6898d116cf0a02",
+    "diagnosticCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-compiler",
+    "diagnosticCompilerSHA256": "3824ef196f25e68de30e10b8981a8f84bd8d61b4c9709e92ca396f5f174abd37",
+    "ownerCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-v4-compiler",
+    "ownerCompilerSHA256": "f04f6cfb7513767ada5925e1a96ac7577d4d0cc646d56574234b984f145fca92",
+    "prototypeACompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-a-compiler",
+    "prototypeACompilerSHA256": "47f50a6592130ede5bb6321ae35edc7084fb11b31cd1febd03c5a097cc139e8c",
+    "prototypeBCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-b-compiler",
+    "prototypeBCompilerSHA256": "7aab1277d972c222ac1dccad428451ea6b20bd5484b9785557559480eedabf69",
+    "prototypeBProfileCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-b-profile-compiler",
+    "prototypeBProfileCompilerSHA256": "6effb3dd3c5d8f2bc477181e0e8a17b4333735be3aeefc8a7e57948bed81ad0e",
+    "prototypeCCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-c-compiler",
+    "prototypeCCompilerSHA256": "d2e5d230bfdbf784259f986ed7adba1e6d2d60c7156c50ef00d0a892679d67a0",
+    "prototypeC2Compiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-c2-compiler",
+    "prototypeC2CompilerSHA256": "38aba0f058b98ffa247792752d7d847fd3a9b5122d93a961e7c2da46f4472a29",
+    "prototypeC2ProfileCompiler": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototype-c2-profile-compiler",
+    "prototypeC2ProfileCompilerSHA256": "8b3b88748ac0eb715266d158569e427f1e8ef29d40149060f0d1e479ae6fd456"
+  },
+  "sources": [
+    {
+      "calls": 32,
+      "source": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/inputs/32.tl",
+      "original": "/home/jonathan/.herdr/worktrees/typelisp/4/target/exp/w4-issue-7291/forcing-scale/32.tl",
+      "bytes": 992,
+      "sha256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4"
+    },
+    {
+      "calls": 128,
+      "source": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/inputs/128.tl",
+      "original": "/home/jonathan/.herdr/worktrees/typelisp/4/target/exp/w4-issue-7291/forcing-scale/128.tl",
+      "bytes": 2912,
+      "sha256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038"
+    },
+    {
+      "calls": 512,
+      "source": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/inputs/512.tl",
+      "original": "/home/jonathan/.herdr/worktrees/typelisp/4/target/exp/w4-issue-7291/forcing-scale/512.tl",
+      "bytes": 10592,
+      "sha256": "cbef9994bc2743a04b64bce109dbe187a8645741447d2e2b19b4638b0836a41d"
+    },
+    {
+      "calls": 128,
+      "variant": "direct",
+      "source": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/inputs/direct-128.tl",
+      "bytes": 21655,
+      "sha256": "e7e2e9ffb922bfe691d0658d70ec4ae2632c8e28f8f9ef973eed5201ed2f4099"
+    },
+    {
+      "calls": 128,
+      "variant": "split",
+      "source": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/inputs/split-128.tl",
+      "bytes": 3448,
+      "sha256": "b43ba4e68b7e68d87d03e361dce53dc089b62e16b2cca4af2d336ea627f74ec9"
+    }
+  ],
+  "runs": [
+    {
+      "mode": "diagnostic",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "3824ef196f25e68de30e10b8981a8f84bd8d61b4c9709e92ca396f5f174abd37",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.444289319915697,
+      "observedCompilerRSSPeak": 2486255616,
+      "observedCompilerHWM": 2500333568,
+      "observedCgroupPeak": 2508898304,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-128/run.json"
+    },
+    {
+      "mode": "diagnostic",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "3824ef196f25e68de30e10b8981a8f84bd8d61b4c9709e92ca396f5f174abd37",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.14524479396641254,
+      "observedCompilerRSSPeak": 192090112,
+      "observedCompilerHWM": 213794816,
+      "observedCgroupPeak": 217419776,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-32/run.json"
+    },
+    {
+      "mode": "normal",
+      "calls": 128,
+      "compilerSHA256": "c5623b9ca2f9331cb14156e7ffe469170519e0b95367fb9c918181b0541adda1",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.7865662688855082,
+      "observedCompilerRSSPeak": 2541785088,
+      "observedCompilerHWM": 2543665152,
+      "observedCgroupPeak": 2552578048,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/normal-128/run.json"
+    },
+    {
+      "mode": "normal",
+      "calls": 32,
+      "compilerSHA256": "c5623b9ca2f9331cb14156e7ffe469170519e0b95367fb9c918181b0541adda1",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.24864042294211686,
+      "observedCompilerRSSPeak": 207511552,
+      "observedCompilerHWM": 213323776,
+      "observedCgroupPeak": 226152448,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/normal-32/run.json"
+    },
+    {
+      "mode": "owner",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "f04f6cfb7513767ada5925e1a96ac7577d4d0cc646d56574234b984f145fca92",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.5642396658658981,
+      "observedCompilerRSSPeak": 2581360640,
+      "observedCompilerHWM": 2581377024,
+      "observedCgroupPeak": 2640535552,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/owner-128/run.json"
+    },
+    {
+      "mode": "profile",
+      "calls": 128,
+      "compilerSHA256": "1d2a34bb36ea0475ea458c4e6dcf125b4c3afc83948936f3fc6898d116cf0a02",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.901912186993286,
+      "observedCompilerRSSPeak": 2539401216,
+      "observedCompilerHWM": 2549977088,
+      "observedCgroupPeak": 2558713856,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/profile-128/run.json"
+    },
+    {
+      "mode": "profile",
+      "calls": 32,
+      "compilerSHA256": "1d2a34bb36ea0475ea458c4e6dcf125b4c3afc83948936f3fc6898d116cf0a02",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.23301441897638142,
+      "observedCompilerRSSPeak": 207888384,
+      "observedCompilerHWM": 214040576,
+      "observedCgroupPeak": 224444416,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/profile-32/run.json"
+    },
+    {
+      "mode": "profile",
+      "calls": 128,
+      "variant": "direct",
+      "optLevel": 2,
+      "compilerSHA256": "1d2a34bb36ea0475ea458c4e6dcf125b4c3afc83948936f3fc6898d116cf0a02",
+      "sourceSHA256": "e7e2e9ffb922bfe691d0658d70ec4ae2632c8e28f8f9ef973eed5201ed2f4099",
+      "exit": 0,
+      "seconds": 1.6866448828950524,
+      "observedCompilerRSSPeak": 2512068608,
+      "observedCompilerHWM": 2513424384,
+      "observedCgroupPeak": 2521452544,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/profile-direct-128/run.json"
+    },
+    {
+      "mode": "profile",
+      "calls": 128,
+      "variant": "split",
+      "optLevel": 2,
+      "compilerSHA256": "1d2a34bb36ea0475ea458c4e6dcf125b4c3afc83948936f3fc6898d116cf0a02",
+      "sourceSHA256": "b43ba4e68b7e68d87d03e361dce53dc089b62e16b2cca4af2d336ea627f74ec9",
+      "exit": 0,
+      "seconds": 0.5049174088053405,
+      "observedCompilerRSSPeak": 212959232,
+      "observedCompilerHWM": 215662592,
+      "observedCgroupPeak": 217743360,
+      "assemblySHA256": "b0af562cf3ac3c988dd0a04b4a2f3fd4e99eaed371cd0ca59ebdc0d5fe1b1a27",
+      "assemblyBytes": 749261,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/profile-split-128/run.json"
+    },
+    {
+      "mode": "prototypeA",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "47f50a6592130ede5bb6321ae35edc7084fb11b31cd1febd03c5a097cc139e8c",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.729862370993942,
+      "observedCompilerRSSPeak": 1519648768,
+      "observedCompilerHWM": 1523892224,
+      "observedCgroupPeak": 1528102912,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeA-128/run.json"
+    },
+    {
+      "mode": "prototypeA",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "47f50a6592130ede5bb6321ae35edc7084fb11b31cd1febd03c5a097cc139e8c",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.24233025312423706,
+      "observedCompilerRSSPeak": 177451008,
+      "observedCompilerHWM": 177451008,
+      "observedCgroupPeak": 178597888,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeA-32/run.json"
+    },
+    {
+      "mode": "prototypeB",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "7aab1277d972c222ac1dccad428451ea6b20bd5484b9785557559480eedabf69",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.397550649009645,
+      "observedCompilerRSSPeak": 1118711808,
+      "observedCompilerHWM": 1134886912,
+      "observedCgroupPeak": 1149648896,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeB-128/run.json"
+    },
+    {
+      "mode": "prototypeB",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "7aab1277d972c222ac1dccad428451ea6b20bd5484b9785557559480eedabf69",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.19693007902242243,
+      "observedCompilerRSSPeak": 143958016,
+      "observedCompilerHWM": 159072256,
+      "observedCgroupPeak": 160739328,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeB-32/run.json"
+    },
+    {
+      "mode": "prototypeBProfile",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "6effb3dd3c5d8f2bc477181e0e8a17b4333735be3aeefc8a7e57948bed81ad0e",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 2.517736795125529,
+      "observedCompilerRSSPeak": 1135939584,
+      "observedCompilerHWM": 1137213440,
+      "observedCgroupPeak": 1142104064,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeBProfile-128/run.json"
+    },
+    {
+      "mode": "prototypeC",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "d2e5d230bfdbf784259f986ed7adba1e6d2d60c7156c50ef00d0a892679d67a0",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.7174323359504342,
+      "observedCompilerRSSPeak": 1097162752,
+      "observedCompilerHWM": 1101131776,
+      "observedCgroupPeak": 1104908288,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC-128/run.json"
+    },
+    {
+      "mode": "prototypeC",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "d2e5d230bfdbf784259f986ed7adba1e6d2d60c7156c50ef00d0a892679d67a0",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.19591786689125001,
+      "observedCompilerRSSPeak": 163971072,
+      "observedCompilerHWM": 166588416,
+      "observedCgroupPeak": 168161280,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC-32/run.json"
+    },
+    {
+      "mode": "prototypeC",
+      "calls": 512,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "d2e5d230bfdbf784259f986ed7adba1e6d2d60c7156c50ef00d0a892679d67a0",
+      "sourceSHA256": "cbef9994bc2743a04b64bce109dbe187a8645741447d2e2b19b4638b0836a41d",
+      "exit": 0,
+      "seconds": 15.6044899050612,
+      "observedCompilerRSSPeak": 5914587136,
+      "observedCompilerHWM": 5917343744,
+      "observedCgroupPeak": 5932175360,
+      "assemblySHA256": "da1f33e02caf340a44b62d717ea874696d3cbcb9184148f29940b87aeeb41046",
+      "assemblyBytes": 2656453,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC-512/run.json"
+    },
+    {
+      "mode": "prototypeC2",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "38aba0f058b98ffa247792752d7d847fd3a9b5122d93a961e7c2da46f4472a29",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.5076497260015458,
+      "observedCompilerRSSPeak": 1085595648,
+      "observedCompilerHWM": 1094176768,
+      "observedCgroupPeak": 1097555968,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/run.json"
+    },
+    {
+      "mode": "prototypeC2",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "38aba0f058b98ffa247792752d7d847fd3a9b5122d93a961e7c2da46f4472a29",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.2962778410874307,
+      "observedCompilerRSSPeak": 156745728,
+      "observedCompilerHWM": 158093312,
+      "observedCgroupPeak": 158957568,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/run.json"
+    },
+    {
+      "mode": "prototypeC2",
+      "calls": 512,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "38aba0f058b98ffa247792752d7d847fd3a9b5122d93a961e7c2da46f4472a29",
+      "sourceSHA256": "cbef9994bc2743a04b64bce109dbe187a8645741447d2e2b19b4638b0836a41d",
+      "exit": 0,
+      "seconds": 18.332062950124964,
+      "observedCompilerRSSPeak": 5960359936,
+      "observedCompilerHWM": 5961388032,
+      "observedCgroupPeak": 5977780224,
+      "assemblySHA256": "da1f33e02caf340a44b62d717ea874696d3cbcb9184148f29940b87aeeb41046",
+      "assemblyBytes": 2656453,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/run.json"
+    },
+    {
+      "mode": "prototypeC2Profile",
+      "calls": 128,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "8b3b88748ac0eb715266d158569e427f1e8ef29d40149060f0d1e479ae6fd456",
+      "sourceSHA256": "71051703574a2e9592b355f4cbe80ca6a2b9181af432ec799db97f8871fe4038",
+      "exit": 0,
+      "seconds": 1.5235516461543739,
+      "observedCompilerRSSPeak": 1105092608,
+      "observedCompilerHWM": 1109434368,
+      "observedCgroupPeak": 1113587712,
+      "assemblySHA256": "fd8d8d6522d1235476cea3c09b3177a532778872bb3c216fe1c59e39af2ec603",
+      "assemblyBytes": 700272,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2Profile-128/run.json"
+    },
+    {
+      "mode": "prototypeC2Profile",
+      "calls": 32,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "8b3b88748ac0eb715266d158569e427f1e8ef29d40149060f0d1e479ae6fd456",
+      "sourceSHA256": "813088ed810eee09f161e997f1a29908ac468f4c804e7e5ebae943f0a12155e4",
+      "exit": 0,
+      "seconds": 0.20782125205732882,
+      "observedCompilerRSSPeak": 151822336,
+      "observedCompilerHWM": 153944064,
+      "observedCgroupPeak": 156061696,
+      "assemblySHA256": "5ec4483984a3333c4a073eeb2671c5cf57201537f6c4d4766faaac8c919b3393",
+      "assemblyBytes": 220431,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2Profile-32/run.json"
+    },
+    {
+      "mode": "prototypeC2Profile",
+      "calls": 512,
+      "variant": "macro",
+      "optLevel": 2,
+      "compilerSHA256": "8b3b88748ac0eb715266d158569e427f1e8ef29d40149060f0d1e479ae6fd456",
+      "sourceSHA256": "cbef9994bc2743a04b64bce109dbe187a8645741447d2e2b19b4638b0836a41d",
+      "exit": 0,
+      "seconds": 20.790704282931983,
+      "observedCompilerRSSPeak": 5914103808,
+      "observedCompilerHWM": 5925896192,
+      "observedCgroupPeak": 5942775808,
+      "assemblySHA256": "da1f33e02caf340a44b62d717ea874696d3cbcb9184148f29940b87aeeb41046",
+      "assemblyBytes": 2656453,
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2Profile-512/run.json"
+    }
+  ],
+  "failures": [
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-build-v3-ready.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "command-failure",
+      "exit_code": "1",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "705941504",
+      "wall_ms": "2620"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-build-v3.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "command-failure",
+      "exit_code": "2",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "9017754",
+      "wall_ms": "220"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/diagnostic-build.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "command-failure",
+      "exit_code": "1",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "953155584",
+      "wall_ms": "9390"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/failed-v1-prototype-a-build.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "command-failure",
+      "exit_code": "1",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "659030016",
+      "wall_ms": "3490"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/failed-v1-prototype-c2-build.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "command-failure",
+      "exit_code": "1",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "672242074",
+      "wall_ms": "3310"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/normal-512.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "memory-limit",
+      "exit_code": "137",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "6442450944",
+      "wall_ms": "3370"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeB-512.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "memory-limit",
+      "exit_code": "137",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "6442450944",
+      "wall_ms": "19550"
+    },
+    {
+      "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeBProfile-512.memory",
+      "schema_version": "1",
+      "host": "linux",
+      "backend": "systemd-user-cgroup",
+      "reason": "memory-limit",
+      "exit_code": "137",
+      "limit_bytes": "6442450944",
+      "peak_memory_bytes": "6442450944",
+      "wall_ms": "25610"
+    }
+  ],
+  "profilePhases": {
+    "diagnostic-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 5,
+        "allocBytes": 10653328,
+        "liveDeltaBytes": 9289336,
+        "peakDeltaBytes": 10114752
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 1242,
+        "allocBytes": 3075971640,
+        "liveDeltaBytes": -1676216,
+        "peakDeltaBytes": 3066831368
+      },
+      {
+        "phase": "total",
+        "milliseconds": 1435,
+        "allocBytes": 3292853080,
+        "liveDeltaBytes": 13942672,
+        "peakDeltaBytes": 3080125736
+      }
+    ],
+    "diagnostic-32": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 3,
+        "allocBytes": 10471896,
+        "liveDeltaBytes": 9252712,
+        "peakDeltaBytes": 10078120
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 94,
+        "allocBytes": 195050888,
+        "liveDeltaBytes": -440720,
+        "peakDeltaBytes": 188489832
+      },
+      {
+        "phase": "total",
+        "milliseconds": 135,
+        "allocBytes": 277905496,
+        "liveDeltaBytes": 11436416,
+        "peakDeltaBytes": 199124104
+      }
+    ],
+    "owner-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 7,
+        "allocBytes": 10653328,
+        "liveDeltaBytes": 9289336,
+        "peakDeltaBytes": 10114752
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 1363,
+        "allocBytes": 3111852688,
+        "liveDeltaBytes": -1675984,
+        "peakDeltaBytes": 3102354360
+      },
+      {
+        "phase": "total",
+        "milliseconds": 1547,
+        "allocBytes": 3328758904,
+        "liveDeltaBytes": 13942888,
+        "peakDeltaBytes": 3115648728
+      }
+    ],
+    "profile-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 5,
+        "allocBytes": 10653328,
+        "liveDeltaBytes": 9289336,
+        "peakDeltaBytes": 10114752
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 1652,
+        "allocBytes": 3075414160,
+        "liveDeltaBytes": -1687864,
+        "peakDeltaBytes": 3066793600
+      },
+      {
+        "phase": "total",
+        "milliseconds": 1884,
+        "allocBytes": 3292295816,
+        "liveDeltaBytes": 13931024,
+        "peakDeltaBytes": 3080087968
+      }
+    ],
+    "profile-32": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 6,
+        "allocBytes": 10471896,
+        "liveDeltaBytes": 9252712,
+        "peakDeltaBytes": 10078120
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 152,
+        "allocBytes": 194496736,
+        "liveDeltaBytes": -451760,
+        "peakDeltaBytes": 188454320
+      },
+      {
+        "phase": "total",
+        "milliseconds": 217,
+        "allocBytes": 277351144,
+        "liveDeltaBytes": 11425368,
+        "peakDeltaBytes": 199088592
+      }
+    ],
+    "profile-direct-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 5,
+        "allocBytes": 10166376,
+        "liveDeltaBytes": 9007768,
+        "peakDeltaBytes": 9826312
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 1450,
+        "allocBytes": 3075397984,
+        "liveDeltaBytes": -1703624,
+        "peakDeltaBytes": 3066777824
+      },
+      {
+        "phase": "total",
+        "milliseconds": 1673,
+        "allocBytes": 3287653680,
+        "liveDeltaBytes": 13885856,
+        "peakDeltaBytes": 3080042776
+      }
+    ],
+    "profile-split-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 4,
+        "allocBytes": 10672240,
+        "liveDeltaBytes": 9294744,
+        "peakDeltaBytes": 10123584
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 390,
+        "allocBytes": 762508288,
+        "liveDeltaBytes": -1762160,
+        "peakDeltaBytes": 187508864
+      },
+      {
+        "phase": "total",
+        "milliseconds": 497,
+        "allocBytes": 935428384,
+        "liveDeltaBytes": 13826040,
+        "peakDeltaBytes": 200709264
+      }
+    ],
+    "prototypeBProfile-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 7,
+        "allocBytes": 10653328,
+        "liveDeltaBytes": 9289336,
+        "peakDeltaBytes": 10114752
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 2122,
+        "allocBytes": 2083164848,
+        "liveDeltaBytes": -1675784,
+        "peakDeltaBytes": 1181831880
+      },
+      {
+        "phase": "total",
+        "milliseconds": 2498,
+        "allocBytes": 2300048032,
+        "liveDeltaBytes": 13943120,
+        "peakDeltaBytes": 1195126248
+      }
+    ],
+    "prototypeC2Profile-128": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 5,
+        "allocBytes": 10653328,
+        "liveDeltaBytes": 9289336,
+        "peakDeltaBytes": 10114752
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 1256,
+        "allocBytes": 2083162712,
+        "liveDeltaBytes": -1676408,
+        "peakDeltaBytes": 1063860456
+      },
+      {
+        "phase": "total",
+        "milliseconds": 1508,
+        "allocBytes": 2300045896,
+        "liveDeltaBytes": 13942496,
+        "peakDeltaBytes": 1077154824
+      }
+    ],
+    "prototypeC2Profile-32": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 5,
+        "allocBytes": 10471896,
+        "liveDeltaBytes": 9252712,
+        "peakDeltaBytes": 10078120
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 126,
+        "allocBytes": 188595600,
+        "liveDeltaBytes": -440096,
+        "peakDeltaBytes": 121859160
+      },
+      {
+        "phase": "total",
+        "milliseconds": 195,
+        "allocBytes": 271063344,
+        "liveDeltaBytes": 11437056,
+        "peakDeltaBytes": 132493432
+      }
+    ],
+    "prototypeC2Profile-512": [
+      {
+        "phase": "lower.macro_expand",
+        "milliseconds": 9,
+        "allocBytes": 11362536,
+        "liveDeltaBytes": 9419440,
+        "peakDeltaBytes": 10244856
+      },
+      {
+        "phase": "optimize.functions",
+        "milliseconds": 18215,
+        "allocBytes": 26783782648,
+        "liveDeltaBytes": -6397888,
+        "peakDeltaBytes": 5889455840
+      },
+      {
+        "phase": "total",
+        "milliseconds": 20773,
+        "allocBytes": 28532625656,
+        "liveDeltaBytes": 22756352,
+        "peakDeltaBytes": 5913440792
+      }
+    ]
+  },
+  "ownerCensus": {
+    "scope": "main; allocation categories overlap by nesting, not disjoint/livepeak",
+    "counts": {
+      "index": 491,
+      "context": 480,
+      "natural-loop-by-id": 116647,
+      "natural-loops": 472,
+      "rotation-round": 386
+    },
+    "allocations": {
+      "index": 62483408,
+      "context": 81421376,
+      "natural-loop-by-id": 1614383664,
+      "natural-loops": 1683084248,
+      "rotation-round": 1587278176
+    },
+    "sumBlockCounts": {
+      "index": 370890,
+      "context": 361803,
+      "natural-loop-by-id": 93127838,
+      "natural-loops": 362464,
+      "rotation-round": 307406
+    },
+    "foundAndStackPayloadModelBytes": 1491911760,
+    "assemblyMatchesNormal": true
+  },
+  "sourceVariants": [
+    {
+      "name": "diagnostic-v4-source.tl",
+      "sha256": "c3dbd179ff21c1e81339345d1c7b126ec0302284de57727ed624d3f454c0a55f"
+    },
+    {
+      "name": "prototype-a-source.tl",
+      "sha256": "4cd0a8cc970b1238c9f40c4905aee661c9e1e3bb1f43933d399017f35f456570"
+    },
+    {
+      "name": "prototype-b-source.tl",
+      "sha256": "4475cb575851673a22d7015e1a1ff062fe65472330565da4b26fe2f8a4878e8d"
+    },
+    {
+      "name": "prototype-c-source.tl",
+      "sha256": "7ad0cd9f9f6f6629fd98da4152e8621a957f2b6aedd5f8c7b69304c0437730e0"
+    },
+    {
+      "name": "prototype-c2-source.tl",
+      "sha256": "dfa557745cfe03832baebea729bf4f5c390193ec5331bdb5b06b84630cd65a3e"
+    },
+    {
+      "name": "prototype-c2-profile-source.tl",
+      "sha256": "731401b5b315180684234e7f916bd7de699e1d15cc09aa9416c2622d8159539d"
+    }
+  ],
+  "nativeProof": {
+    "receipt": "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/native-check.json",
+    "results": [
+      {
+        "calls": 32,
+        "argv": [
+          "as",
+          "--64",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/out.o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/out.s"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 32,
+        "argv": [
+          "ld",
+          "-e",
+          "_tl_start",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/out",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/out.o"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 32,
+        "argv": [
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-32/out"
+        ],
+        "exit": 42,
+        "expected": 42
+      },
+      {
+        "calls": 128,
+        "argv": [
+          "as",
+          "--64",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/out.o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/out.s"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 128,
+        "argv": [
+          "ld",
+          "-e",
+          "_tl_start",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/out",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/out.o"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 128,
+        "argv": [
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-128/out"
+        ],
+        "exit": 42,
+        "expected": 42
+      },
+      {
+        "calls": 512,
+        "argv": [
+          "as",
+          "--64",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/out.o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/out.s"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 512,
+        "argv": [
+          "ld",
+          "-e",
+          "_tl_start",
+          "-o",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/out",
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/out.o"
+        ],
+        "exit": 0,
+        "expected": 0
+      },
+      {
+        "calls": 512,
+        "argv": [
+          "/home/jonathan/.herdr/worktrees/typelisp/3/target/exp/w3-8949-expr-macro-memory/prototypeC2-512/out"
+        ],
+        "exit": 42,
+        "expected": 42
+      }
+    ],
+    "appliesTo": "C2 native programs are byte-identical assembly to minimal C for all three sizes; all return 42. No repeat compile/run was needed."
+  },
+  "excludedExperiment": "C2 adds flag-exit accepted-round recycling and two operand-view changes. It is not required: minimal C completes 512 and emits byte-identical assembly. Do not include C2 machinery in the implementation issues without a new named witness.",
+  "proposedHeadOptimizerSourceSHA256": "271daf57b5c8b506ad76a957ff6efdde366f4ea10007d3264c304252c2f4c555"
+}

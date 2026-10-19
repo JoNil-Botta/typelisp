@@ -1048,6 +1048,13 @@
     [pass : String]
     [name : i64]
     [start-ms : i64]) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "w3-8949-pass|" (compiler-opt-global-shared-view pass)
+        "|" (ir.compiler-ir-symbol-text name)
+        "|" (string.int->string (profile.alloc-total))
+        "|" (string.int->string (profile.alloc-live))
+        "|" (string.int->string (profile.compile-wide-peak-current)) "\n"))
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
       (cfg
@@ -1101,6 +1108,15 @@
   [body : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
+    [_probe-start : unit
+      (cfg compile-profile
+        (io.print-error
+          (str_cat.str-cat
+            "w3-8949-escape-enter|" ,_phase "|"
+            (compiler-opt-global-shared-view ,_name)
+            "|" (string.int->string (profile.alloc-total))
+            "|" (string.int->string (profile.alloc-live))
+            "|" (string.int->string (profile.compile-wide-peak-current)) "\n")))]
     [result ,body]
     (begin
       (cfg
@@ -34452,7 +34468,7 @@
       [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
       (when
         (opt-label-contains keys input.label)
-        (return (Some (owned_view.compiler-owned-reference-shared-view (& input.value)))))))
+        (return (Some (clone input.value))))))
   (No))
 
 (define (opt-flag-exit-keyed-any-closure?
@@ -37084,7 +37100,7 @@
             def-label)
             (begin
               (set! outside-count (+ outside-count 1))
-              (set! kept (owned_view.compiler-owned-reference-shared-view (& input.value))))
+              (set! kept (clone input.value)))
             (return (No))))))
     (if (and (= outside-count 1) (= inside-count 1))
       (Some kept seed-var)
@@ -37418,40 +37434,6 @@
 ;; One conversion per round, then a fresh context: the rewrite changes the CFG,
 ;; so the loop set and the dominance facts have to be rebuilt before the next
 ;; loop is considered. Fuel-bounded by the block count.
-(define (opt-flag-exit-later-rounds-result
-  [blocks : ir.CompilerIrBlockList]
-  [frame : i64]
-  [remaining : i64]
-  [any-changed : bool]) : OptFlagExitPassResult
-  (let
-    [regions : OptRoundRegions (opt-round-regions-new)]
-    [current : ir.CompilerIrBlockList blocks]
-    [current-frame : i64 frame]
-    [left : i64 remaining]
-    (while (> left 0)
-      (opt-round-regions-enter-work! (& regions))
-      (match (opt-flag-exit-blocks-once-with-context
-        (compiler-opt-global-shared-view current)
-        (& (opt-cfg-context-build (compiler-opt-global-shared-view current)))
-        current-frame)
-        [(Result next next-frame changed)
-          (if changed
-            (begin
-              (opt-round-regions-enter-next-home! (&mut regions))
-              (set! current (opt-round-copy-blocks (& next)))
-              (opt-round-regions-commit! (&mut regions))
-              (set! current-frame next-frame)
-              (-= left 1))
-            (set! left 0))]))
-    (opt-round-regions-enter-outer! (& regions))
-    (let
-      [out : ir.CompilerIrBlockList
-        (if (opt-round-regions-held? (& regions))
-          (opt-round-copy-blocks (& current))
-          current)]
-      (opt-round-regions-leave! (& regions))
-      (Result out current-frame any-changed))))
-
 (define (opt-flag-exit-blocks-fixed-result
   [blocks : ir.CompilerIrBlockList]
   [context : (& OptCfgContext)]
@@ -37469,11 +37451,13 @@
         frame))
       [(Result next next-frame changed)
         (if changed
-          (opt-flag-exit-later-rounds-result
+          (opt-flag-exit-blocks-fixed-result
             next
+            context
             next-frame
             (- remaining 1)
-            true)
+            true
+            false)
           (Result next next-frame any-changed))])))
 
 ;; `context` must be valid for `func`'s blocks (its entry verify reuses it). The
@@ -56962,7 +56946,7 @@
                       (>= from 0)
                       (not (opt-dom-info-dominates-id? doms id from)))
                       (opt-flag-facts-value facts from input.value)
-                      (owned_view.compiler-owned-reference-shared-view (& input.value)))]
+                      (owned_view.compiler-owned-shared-view input.value))]
                   (if (opt-value-eq (& value) (& input.value))
                     unit
                     (set! hit true))

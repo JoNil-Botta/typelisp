@@ -42,6 +42,17 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
+Fixed-array and Slice element reads through a reference are checked as
+transfers independently of region escape: matching lifetimes do not give a
+borrowed element an owner. The shared
+move walker distinguishes value transfers, projection-place reads and explicit
+result reads for borrows and canonical clone. Result reads follow conditional
+arms, let and match bodies, sequence tails and projection receivers. Conditions,
+initializers, scrutinees, sequence prefixes, indexes and stored/call/constructor
+values retain ordinary transfers; data-pointer operands are place reads. One
+callee classifier also drives clone's non-consuming AST adapter in the
+borrow-conflict walk, which forwards the read through the same forms. Receiver classification
+uses checked types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -339,6 +350,27 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
+Store lowering uses the operand's actual flow type independently of its
+contextual value type. `Never` from a receiver, index or value stops evaluation
+before further operands, bounds checks, writes or packed-local refreshes.
+Annotations preserve that flow. Argument collectors carry an explicit `Exit`
+state, which callers propagate without snapshots, remaining arguments, calls
+or writebacks. Direct constructors and array-literal builders return their
+flow type so an exit cannot become a successful store through a state-only
+result. Box and tuple literals preserve the same flow before allocation,
+stores, later elements or result materialization. Tuple element builders carry
+that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
+path available to commit.
+
+An exiting constructor or annotation reports `Never` with no value, so every
+consumer of an operand follows the same rule. Let and `with` bindings stop
+before later initializers and the body (`ResultLowerLetBindings` and
+`LowerResourceBindings` carry an `Exit` state). Match scrutinees, field, tuple
+and array projections, `deref`, casts, unary and binary operands, `if`
+conditions and owned `for` sources return the exit's state as `Never` instead
+of dispatching on the missing value. The exit itself cleans earlier `with`
+resources.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -418,6 +450,21 @@ the body, and local reads resolve through the existing value cache. Range
 proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
+
+`compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
+gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
+projection happens in the lowerer, so generic, Linux and Windows modes have
+identical geometry. Scalar admits width 1; AVX2/AVX-512 admit logical widths
+1, 4, 8, 16, 32 and 64. A plan is a value descriptor with indexed, ordered
+pieces, with no mutable collection or ambient state. Checked piece access
+covers each logical lane once, even when a view needs several physical vectors
+or occupies only a prefix of one. Each piece carries a mask span that maps its
+logical lanes to physical lanes starting at zero and clears unoccupied lanes.
+The checked `u64` reference projection accepts arbitrary active sets and rejects
+bits beyond the logical width without shifting by 64. All descriptor arithmetic
+follows width/count validation. Conversion (#7163) and tiled-coordinate (#7192)
+consumers use these pieces and spans for their IR mask transport; this geometry
+does not itself select instructions or change source admission or fallback.
 
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
@@ -528,6 +575,21 @@ drops the role, so neither can prove a row-major write. `lower-foreach2`
 desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
+
+Write disjointness uses the merged SPMD class of the receiver, index and
+value: a uniform index cannot authorize a parallel varying write. Array
+element writes and field or tuple-element writes share one destination
+proof, `tc-spmd-foreach-index`, applied to the nearest array element index of
+the place. Places rooted in an inline aggregate binding declared inside the
+gang are private (`tc-spmd-private-place-root`): a varying write there needs
+no proof and marks the owning binding varying, so its projections read back
+as varying lanes. Ordered scan bodies push a `ScanBody` sentinel above their
+index binding in the existing SPMD environment, and a helper called from the
+body receives it too. A uniform-index store of a varying value under that
+sentinel keeps scalar scan semantics; varying indexes still use the index
+proof. A domain index bound above the sentinel, as in a helper's `foreach`,
+ends the scan context. Masked accesses keep their canonical index rule
+regardless of the stored value's class.
 
 Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
@@ -735,6 +797,27 @@ rebuilds and reset isolation. During one declaration walk, the poisoned-name
 list only appends; cached module environments bind its new suffix only when
 both source environments retain their store, head and scoped-state capability.
 The `tc-poison-module-env-cache-identity-and-suffix` test guards that identity.
+
+Semantic occurrence runs belong to `CompilerParseState`, paired with its
+interner, and survive file scratch teardown and cached loader reuse. Its lazy
+arena stores fixed 1024-entry segments: separate i64 written-name and packed
+span columns, a u8 kind column, and a run directory. The shared AST span encoder
+retains signed i32 start lines, u12 columns and line deltas through 254;
+exceptional spans use exact i32 overflow records. Conversion from reader i64
+coordinates happens before packing, with the same casts as the run accessor.
+Names, declaration keys, slots and alias ranges retain their full i64 width.
+Run directory entries retain a reader boundary for precedence against unchanged
+reader aliases and a serial for stale-handle checks. Compaction updates those
+boundaries; detached declarations share immutable occurrence ranges and retire
+scratch declaration keys. A failed parse rolls back only its appended entries;
+serials do not rewind. Reset invalidates handles before destroying the payload
+arena. Driver file cleanup retains the owner while session caches remain live.
+Production registration and lookup carry the parser capability through cfgs,
+`TypecheckRequest` and `TcJobState`; returned runs retain that capability and
+generation. Named standalone adapters use the existing default parser state.
+The load lifetime ledger's `reader-origin-storage` includes both the reader and
+semantic owner; allocation-profile snapshots expose them individually, including
+segment directories, overflow storage and retained slack.
 
 Lexer tokens are scan scratch. Their geometric growth replaces dedicated
 storage after moving the live prefix, then retires the superseded owner and
@@ -1504,6 +1587,19 @@ Declarations that disagree on the link classify as unknown. Exported entries
 retain their function bodies' summaries. These private-global masks do not
 describe arbitrary memory writes.
 
+Each natural-loop collection owns one lazily sized traversal workspace for its
+id walks. A walk resets its stack and discovery counts and reads only the
+initialized prefixes. Returned loops own independent membership marks, labels
+and ordered block storage; no returned loop borrows the workspace. Empty,
+acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
+arrays.
+
+Empty work records initially read one immutable zero-length array descriptor;
+each record replaces both handles before its first element write. The work
+record itself is private, never a shallow view of shared mutable storage. The
+builder borrows its CFG index and moves its independent membership marks into
+the result after their last query.
+
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
@@ -1748,7 +1844,13 @@ whose parsed declarations still contain a module-scope generator
 (`compiler-load-module-has-pending-generator?`) is deferred rather than
 rejected, and each macro-expansion pass skips binding such a selection until a
 later pass has produced it. A module without generators has its final
-declarations at load time, so its missing items keep failing immediately. Errors use the marker's physical
+declarations at load time, so its missing items keep failing immediately. When
+an already-seen module reaches alias binding without a complete load-time
+check, a failed top-environment build reuses this path-aware validator to
+recover the selected import's canonical diagnostic. Macro setup permits pending
+generator exports; final typechecking requires complete exports. Recovery runs
+only on failure and adds no namespace scan to successful environment builds.
+Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.
@@ -1911,6 +2013,40 @@ comparison. Consumers use one session per archive input for load-once behavior;
 creating another session deliberately starts an independent consumer budget.
 All checks precede variable-size allocations, and no allocation scales with
 payload size during scanning or opening.
+
+`src/linker_ar_dialect_reader.tl` supplies the ordinary archive compatibility
+layer for #7038 and #8302. `read` takes the bytes, input/content identity,
+an explicit GNU/System V or little-/big-endian BSD dialect, and `ArchiveLimits`.
+The dialect is input policy, never inferred from the host or a path. GNU
+32-/64-bit index words are big-endian; BSD ranlib words follow the selected
+input byte order, including `__.SYMDEF_64`. Names resolve from short fields,
+GNU `/N` entries at `/LF` boundaries, or BSD `#1/N` prefixes with trailing NUL
+alignment bytes. The format layouts follow LLVM's
+[archive reader](https://llvm.org/doxygen/Archive_8cpp_source.html) and
+[writer](https://llvm.org/doxygen/ArchiveWriter_8cpp_source.html).
+
+The result keeps one resolved span record per physical container member and
+the original IDs. It marks resolved special members before calling the shared
+index mapper, and rejects duplicate or late special members. A symbol index,
+when present, is first; the GNU long-name table precedes ordinary members.
+Symbol hints retain index order and duplicates. Sorted BSD indexes are checked
+with lexicographic byte comparisons, without sorting the result. Every target must be an ordinary
+member's exact header offset. A hint is not a parsed symbol: #7038/#7099 must
+verify the target's actual symbols before committing it. The returned session
+retains the shared load-once state and remaining work budget; core `open!`
+returns the raw payload, while each resolved member's content span excludes a
+BSD name prefix. Names and content can be viewed directly in `directory.bytes`.
+
+The adapter adds `sizeof(ArMember)` per physical member and
+`sizeof(ArSymbolHint)` per hint to the container's retained-storage charge;
+it never copies input names or payloads. It charges 192 work units per raw-name
+classification, every visited name/index byte, and index-map comparisons.
+Bounds and division checks precede table multiplication and allocation.
+The single fixed error records input identity, physical member, index-entry
+ordinal, absolute field offset and the full offending unsigned value. Thin
+archives, object parsing, filesystem access and canonical-writer admission
+remain outside this reader. The fixture/oracle contract is documented in
+[`tests/fixtures/ar-dialects/README.md`](../tests/fixtures/ar-dialects/README.md).
 
 `src/linker_archive_output.tl` borrows a native Slice of encoder plans whose
 payload strings remain owned by the caller. It preflights the whole layout,

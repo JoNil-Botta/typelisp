@@ -28,6 +28,37 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-native-lane-table
+  (let
+    [types : (Array ast.AstType 13)
+      (array
+        (I8)
+        (U8)
+        (I16)
+        (U16)
+        (I32)
+        (U32)
+        (I64)
+        (U64)
+        (F32)
+        (F64)
+        (Bool)
+        (Char)
+        (Unit))]
+    [avx2 : (Array i64 13) (array 32 32 16 16 8 8 4 4 8 4 0 0 0)]
+    [abis : (Array lower.LowerModeAbi 3) (array (None) (Linux) (Windows))]
+    [simds : (Array lower.LowerModeSimd 3) (array (Scalar) (Avx2) (Avx512))]
+    (for [abi (iterator.range 0 3)]
+      (for [simd (iterator.range 0 3)]
+        (for [index (iterator.range 0 13)]
+          (test.assert-i64-eq
+            (lower.lower-simd-lanes-for-elem
+              (lower.lower-mode-of (array-ref abis abi) (array-ref simds simd))
+              (clone (array-ref types index)))
+            (* simd (array-ref avx2 index))
+            "shared geometry preserves all previous OS/backend lane choices"))))))
+
+(test
   compiler-lower-function-env-scratch
   (let
     [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
@@ -16760,3 +16791,150 @@
           (= (lower-test-function-call-count functions "rebound" "tl_alloc") 0))]
       [_ false])
     "pure fields keep the packed path; effectful receivers guard their real frame home"))
+
+;; A terminator must end its block before later passes can move dead effects.
+(define (lower-test-block-exits?
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
+  (match blocks
+    [(slice) true]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (for [index (iterator.range 0 (- instrs.len 1))]
+            (when
+              (optimize.opt-cfg-terminator-instr?
+                (& (array-ref instrs.slots index)))
+              (return false)))])
+      (lower-test-block-exits? rest)]))
+
+;; Lowers `source` and checks every block of function `name`; a lowering
+;; failure prints `label` with its diagnostic.
+(define (lower-test-source-blocks-exit?
+  [source : String]
+  [name : String]
+  [label : String]) : bool
+  (match (lower.lower-compiler-source source)
+    [(Ok (Program _ functions _) _ owner)
+      (let
+        [valid : bool
+          (match (lower-test-function-seq-find functions name)
+            [(Some (Function _ _ _ _ blocks _))
+              (lower-test-block-exits? (ir.compiler-ir-block-list-view blocks))]
+            [_ false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas owner))
+        valid)]
+    [(Err diagnostic)
+      (io.println
+        "{}: {}"
+        label
+        (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
+      false]))
+
+(test
+  compiler-lower-store-exits
+  (let
+    [bodies : (Array String 26)
+      (array
+        "(let [n : i64 1] (set! n (return 42)) 1)"
+        "(let [p : Pair (Pair 1 2)] (set! p (return 42)) 1)"
+        "(let [p : Pair (Pair 1 2)] (set! p.a (begin (set! p.b 20) (return 42))) 1)"
+        "(let [p : (Tuple i64 i64) (tuple 1 2)] (set! (tuple-ref p 0) (return 42)) 1)"
+        "(let [p : (Box i64) (box 1)] (set! (deref p) (return 42)) 1)"
+        "(let [p : (Array i64 1) (array 1)] (set! (array-ref p 0) (return 42)) 1)"
+        "(let [p : (Array i64 1) (array 1)] (set! (array-ref p (ann (return 42) : i64)) 7) 1)"
+        "(let [p : Pair (Pair 1 2)] (replace! p.a (return 42)) 1)"
+        "(let [n : i64 1] [p : (MutPtr i64) (unsafe (ptr-addr-of n))] (unsafe (ptr-write! p (return 42))) 1)"
+        "(let [n : i64 2] [i : i64 0] (while (< i 3) (set! i (+ i 1)) (set! n (begin (set! n (+ n 10)) (continue))) (set! n 0)) (+ n 1))"
+        "(let [p : Pair (Pair 1 2)] [a : (Array i64 1) (array 3)] (while true (set! (array-ref a 0) (begin (set! p.b (+ p.b 6)) (break))) (set! p.b 0)) (+ p.a (+ p.b (array-ref a 0))))"
+        "(let [p : Holder (Holder (Wide 1 2 3))] (set! p.wide (Wide 1 (return 42) 3)) 1)"
+        "(let [p : Wide (Wide 1 2 3)] (set! p (return 42)) 1)"
+        "(let [p : Zero (Zero unit)] (set! p.z (return 42)) 1)"
+        "(let [p : Zero (Zero unit)] (set! p (return 42)) 1)"
+        "(set! (array-ref (ann (return 42) : (Array i64 1)) 0) 7) 1"
+        "(unsafe (ptr-write! (ann (return 42) : (MutPtr i64)) 7)) 1"
+        "(let [p : (Array i64 1) (array 1)] (replace! (array-ref p (ann (return 42) : i64)) 7) 1)"
+        "(let [p : (Array Wide 1) (array (Wide 1 2 3))] (set! (array-ref p 0) (Wide 1 (return 42) 3)) 1)"
+        "(let [p : Choice (Full (Wide 1 2 3))] (set! p (Full (Wide 1 (return 42) 3))) 1)"
+        "(let [p : (Array i64 2) (array 1 2)] (set! p (array 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (add 1 (return 42))) 1)"
+        "(let [n : i64 1] [m : i64 2] (set! n (use-ref (&mut m) (return 42))) 1)"
+        "(let [n : i64 1] [f : (-> i64 i64 i64) add] (set! n (f 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (c-add 1 (return 42))) 1)"
+        "(let [n : i64 1] (set! n (unsafe (syscall 39 (ann (return 42) : i64)))) 1)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defstruct Holder (wide Wide)) (defstruct Zero (z unit)) (defenum Choice (Full Wide) (Blank)) (define (add [a : i64] [b : i64]) : i64 (+ a b)) (define (use-ref [p : (&mut p i64)] [v : i64]) : i64 (+ (deref p) v)) (extern (c-add [a : i64] [b : i64]) : i64 (:symbol \"c_add\")) (define (main) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        [label : String
+          (str_cat.str-cat
+            "store exit must terminate its block, case "
+            (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit? source "main" (clone label))
+          label)))))
+
+(test
+  compiler-lower-literal-constructor-exits
+  (let
+    [sources : (Array String 8)
+      (array
+        "(define (probe) : (Box i64) (box (return (box 42))))"
+        "(define (probe) : (Tuple i64 i64) (tuple 1 (return (tuple 20 22))))"
+        "(define (probe) : (Tuple unit i64) (tuple unit (return (tuple unit 42))))"
+        "(define (probe) : unit (tuple unit (return unit)) unit)"
+        "(define (probe) : (Box (Box i64)) (box (box (return (box (box 42))))))"
+        "(define (probe) : (Tuple (Tuple i64 i64) i64) (tuple (tuple 1 (return (tuple (tuple 10 20) 12))) 99))"
+        "(define (probe [leave : bool]) : (Box i64) (box (if leave (return (box 42)) 7)))"
+        "(define (probe) : i64 (let [i : i64 0] [n : i64 2] (while (< i 3) (set! i (+ i 1)) (begin (tuple (begin (set! n (+ n 10)) (continue)) 99) unit)) (+ n 1)))")]
+    (for [index (iterator.range 0 (array-length sources))]
+      (let
+        [label : String
+          (str_cat.str-cat "literal exit case " (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit?
+            (clone (array-ref sources index))
+            "probe"
+            (clone label))
+          label)))))
+
+(test
+  compiler-lower-operand-consumer-exits
+  (let
+    [bodies : (Array String 18)
+      (array
+        "(let [p : Pair (Pair 1 (return 42))] [q : i64 9] (+ p.a q))"
+        "(let [p (Pair 1 (return 42))] p.a)"
+        "(let [p : Pair (ann (return 42) : Pair)] p.a)"
+        "(let [p : Pair (if c (Pair 1 (return 42)) (return 7))] p.a)"
+        "(match (Pair 1 (return 42)) [(Pair a _) a])"
+        "(+ 1 (match (Full (Wide 1 (return 42) 3)) [(Full w) w.a] [(Blank) 0]))"
+        "(+ (Pair 1 (return 42)).a 9)"
+        "(neg (Wide 1 (return 42) 3).b)"
+        "(tuple-ref (tuple (ann 1 : i64) (return 42)) 0)"
+        "(array-ref (array (ann 1 : i64) (return 42)) 0)"
+        "(let [a : (Array i64 1) (array 1)] (array-ref a (return 42)))"
+        "(deref (box (return 42)))"
+        "(if (= (Pair 1 (return 42)).a 1) 2 3)"
+        "(match (tuple (ann 1 : i64) (return 42)) [(tuple a _) a])"
+        "(cast (ann (return 42) : i32) : i64)"
+        "(cast (cast (Wide 1 (return 42) 3).c : f64) : i64)"
+        "(with ([held (Pair 5 0) drop-pair] [next (Pair 1 (return 42)) drop-pair]) held.a)"
+        "(let [n : i64 2] [i : i64 0] (while (< i 3) (set! i (+ i 1)) (let [x : i64 (+ 1 (begin (set! n (+ n 10)) (continue)))] (set! n x))) n)")]
+    (for [index (iterator.range 0 (array-length bodies))]
+      (let
+        [source : String
+          (str_cat.str-cat
+            "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defenum Choice (Full Wide) (Blank)) (define (drop-pair [p : Pair]) : unit unit) (define (probe [c : bool]) : i64 "
+            (clone (array-ref bodies index))
+            ")")]
+        [label : String
+          (str_cat.str-cat
+            "operand consumer exit case "
+            (string.int->string index))]
+        (test.assert-true
+          (lower-test-source-blocks-exit? source "probe" (clone label))
+          label)))))

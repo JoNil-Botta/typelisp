@@ -134,6 +134,7 @@ tests/spmd/foreach_bound_extremes.tl
 tests/spmd/foreach_2d_row_major.tl
 tests/spmd/foreach_2d_native.tl
 tests/spmd/uniform_zip_i64.tl
+tests/integration/spmd_uniform_index_write.tl
 tests/spmd/multi_output_i64.tl
 tests/spmd/store_alias_i64.tl
 tests/spmd/native_slice_surface_i64.tl

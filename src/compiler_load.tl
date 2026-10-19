@@ -132,7 +132,7 @@
   (lexer.spanned-token-buffer-release!))
 
 ;; Whole-program uncached handoff: release pure scan storage and transfer the
-;; compact declaration/member/semantic-origin prefix out of the reader arena
+;; compact declaration/member-origin prefix out of the reader arena
 ;; whose capacity was sized by the largest transient source form.  Source text,
 ;; token rows and reader builders are not part of this graph;
 ;; the stable row ids and by-value spans are the only data later diagnostics,
@@ -5950,11 +5950,16 @@
                     (str_cat.str-cat collision.name "' is declared here"))))]
             [(None) diag]))))))
 
+(defenum CompilerLoadSelectedImportPolicy
+  (ImportCollisionsOnly)
+  (PendingSelectedImports)
+  (CompleteSelectedImports))
+
 (define (compiler-load-check-unqualified-imports
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]
-  [require-selected-items : bool]) : ResultCompilerLoadAliasCheck
+  [selected-policy : CompilerLoadSelectedImportPolicy]) : ResultCompilerLoadAliasCheck
   (let
     [state : CompilerLoadUnqualifiedImportState
       (CompilerLoadUnqualifiedImportState
@@ -5999,13 +6004,20 @@
               (Some alias)
               span))
             (when
-              (and
-                require-selected-items
-                (not
-                  (compiler-load-selected-item-present?
-                    (ModuleItem source-item)
-                    (Some source-module)
-                    decls)))
+              (match selected-policy
+                [(ImportCollisionsOnly) false]
+                [(PendingSelectedImports)
+                  (not
+                    (compiler-load-selected-item-present-or-pending?
+                      (ModuleItem source-item)
+                      (Some source-module)
+                      decls))]
+                [(CompleteSelectedImports)
+                  (not
+                    (compiler-load-selected-item-present?
+                      (ModuleItem source-item)
+                      (Some source-module)
+                      decls))])
               (return
                 (Err
                   (box
@@ -6043,13 +6055,21 @@
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]) : ResultCompilerLoadAliasCheck
-  (compiler-load-check-unqualified-imports fallback-path decls paths false))
+  (compiler-load-check-unqualified-imports
+    fallback-path
+    decls
+    paths
+    ImportCollisionsOnly))
 
 (define (compiler-load-check-expanded-unqualified-imports
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& ast.AstDeclPathList)]) : ResultCompilerLoadAliasCheck
-  (compiler-load-check-unqualified-imports fallback-path decls paths true))
+  (compiler-load-check-unqualified-imports
+    fallback-path
+    decls
+    paths
+    CompleteSelectedImports))
 
 (define (compiler-load-session-state-surface-summary-owner-arena
   [state : (& state CompilerLoadSessionState)]) : i64
@@ -10527,16 +10547,16 @@
 ;; source text, parser scratch, and superseded temporary pool arrays are all
 ;; released before import traversal continues to the next file.
 (define (compiler-load-propagate-compacted-decl-origins!
+  [origin-storage : i64]
   [source : (& ast.AstDeclList)]
   [dest : (& ast.AstDeclList)]
-  [records-start : i64]
-  [records-end : i64]) : unit
+  [range : parser.CompilerParseOriginCopyRange]) : unit
   (parser.compiler-parse-decl-origin-copy-direct-records!
+    origin-storage
     source
     dest
     0
-    records-start
-    records-end)
+    range)
   ;; Index cursors rather than two `ast-decl-list-step` walks in lockstep.
   ;; Each step copied a 104 B row and wrote a 144 B result -- twice per
   ;; declaration here -- to answer a tag question; only the `ModuleBody` arm
@@ -10562,27 +10582,27 @@
           (match (array-ref dest-slots (+ dest-offset index))
             [(ModuleBody _ dest-body-box)
               (compiler-load-propagate-compacted-decl-origins!
+                origin-storage
                 (& (deref source-body-box))
                 (& (deref dest-body-box))
-                records-start
-                records-end)]
+                range)]
             [_ unit])]
         [_ unit]))))
 
 (define (compiler-load-propagate-compacted-program-origins!
+  [origin-storage : i64]
   [source : (& ast.AstProgram)]
   [dest : (& ast.AstProgram)]
-  [records-start : i64]
-  [records-end : i64]) : unit
+  [range : parser.CompilerParseOriginCopyRange]) : unit
   (match source
     [(Program source-decls-box)
       (match dest
         [(Program dest-decls-box)
           (compiler-load-propagate-compacted-decl-origins!
+            origin-storage
             (& (deref source-decls-box))
             (& (deref dest-decls-box))
-            records-start
-            records-end)])]))
+            range)])]))
 
 (define (compiler-load-parse-file-diagnostic-detached-with-pools
   [load-state : CompilerLoadSessionState]
@@ -10618,6 +10638,11 @@
         expr-capacity
         type-capacity
         scratch-root)]
+    [origin-storage : i64
+      (parser.compiler-parse-origin-storage
+        (parser.compiler-parse-control-from-cfg cfgs))]
+    [origin-mark : parser.CompilerParseOriginCheckpoint
+      (parser.compiler-parse-origin-checkpoint origin-storage)]
     [records-start : i64 (reader.sp-node-pool-len)]
     [parsed : parser.ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
@@ -10634,14 +10659,22 @@
           [(AstProgramCompaction out-program _)
             (let
               [records-end : i64 (reader.sp-node-pool-len)]
+              [source-runs-end : i64
+                (parser.compiler-parse-origin-word origin-storage 3)]
               [_origins : unit
                 (compiler-load-propagate-compacted-program-origins!
+                  origin-storage
                   (& program)
                   (& out-program)
-                  records-start
-                  records-end)]
+                  (parser.CompilerParseOriginCopyRange
+                    records-start
+                    records-end
+                    origin-mark.runs
+                    source-runs-end
+                    true))]
               [_compact-origin-records : unit
                 (parser.compiler-parse-member-records-compact!
+                  origin-storage
                   records-start
                   records-end)]
               [_restore-caller : unit
@@ -10660,6 +10693,7 @@
           [stable-diag : (Box cdiag.CompilerDiagnostic)
             (box (cdiag.compiler-diagnostic-copy (deref diag)))]
           [out : parser.ResultAstProgramDiagnostic (Err stable-diag)]
+          (parser.compiler-parse-origin-rollback! origin-storage origin-mark)
           (reader.sp-node-pool-truncate! records-start)
           (ast.ast-node-pool-context-destroy-storage! scratch-pools)
           (unsafe

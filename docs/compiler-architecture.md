@@ -1495,6 +1495,19 @@ Declarations that disagree on the link classify as unknown. Exported entries
 retain their function bodies' summaries. These private-global masks do not
 describe arbitrary memory writes.
 
+Each natural-loop collection owns one lazily sized traversal workspace for its
+id walks. A walk resets its stack and discovery counts and reads only the
+initialized prefixes. Returned loops own independent membership marks, labels
+and ordered block storage; no returned loop borrows the workspace. Empty,
+acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
+arrays.
+
+Empty work records initially read one immutable zero-length array descriptor;
+each record replaces both handles before its first element write. The work
+record itself is private, never a shallow view of shared mutable storage. The
+builder borrows its CFG index and moves its independent membership marks into
+the result after their last query.
+
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through

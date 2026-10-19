@@ -18330,7 +18330,7 @@
         [(Block _ instrs) (opt-loop-rotation-final-jump-to? (& instrs) target)])]))
 
 (define (opt-loop-rotation-replace-final-jump
-  [pools : ast.AstNodePoolContext]
+  [_pools : ast.AstNodePoolContext]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [guard : (& guard ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
   (let
@@ -18344,9 +18344,10 @@
     (for [index (iterator.range 0 guard-count)]
       (set!
         (array-ref slots (+ prefix-count index))
-        (ir.compiler-ir-clone-instr
-          pools
-          (ir.compiler-ir-instr-seq-ref guard index))))
+        (opt-region-clone-instr
+          (& (__tl_make-array ir.CompilerIrValue 0))
+          (& (Keep))
+          (ir.compiler-ir-instr-seq-borrow guard index))))
     (ir.CompilerIrInstrSeq slots (+ prefix-count guard-count))))
 
 (define (opt-loop-rotation-rewrite-block
@@ -18501,6 +18502,42 @@
       (opt_natural_loop_vec.view loops))
       [(Result next changed) (Result next changed context)])))
 
+(define (opt-loop-rotation-later-rounds-result
+  [pools : ast.AstNodePoolContext]
+  [blocks : ir.CompilerIrBlockList]
+  [remaining : i64]) : OptBlockCtxResult
+  (let
+    [regions : OptRoundRegions (opt-round-regions-new)]
+    [current : ir.CompilerIrBlockList blocks]
+    [left : i64 remaining]
+    [running? : bool true]
+    [valid? : bool false]
+    (while (and (> left 0) running?)
+      (opt-round-regions-enter-work! (& regions))
+      (match (opt-loop-rotation-blocks-once-result pools (& current))
+        [(Result next changed _)
+          (if changed
+            (begin
+              (opt-round-regions-enter-next-home! (&mut regions))
+              (set! current (opt-round-copy-blocks (& next)))
+              (opt-round-regions-commit! (&mut regions))
+              (-= left 1))
+            (begin
+              (set! valid? true)
+              (set! running? false)))]))
+    (opt-round-regions-enter-outer! (& regions))
+    (let
+      [result : ir.CompilerIrBlockList
+        (if (opt-round-regions-held? (& regions))
+          (opt-round-copy-blocks (& current))
+          current)]
+      [context : OptCfgContext
+        (if valid?
+          (opt-cfg-context-build (compiler-opt-global-shared-view result))
+          (opt-cfg-context-empty))]
+      (opt-round-regions-leave! (& regions))
+      (Result result context valid?))))
+
 (define (opt-loop-rotation-blocks-fixed-result
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
@@ -18510,9 +18547,7 @@
     (match (opt-loop-rotation-blocks-once-result pools (& blocks))
       [(Result next changed context)
         (if changed
-          (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
-          ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
-          ;; when it reports no change, so `context` is valid for `next`.
+          (opt-loop-rotation-later-rounds-result pools next (- remaining 1))
           (Result next context true))])))
 
 (define (opt-loop-rotation-blocks-result
@@ -20256,9 +20291,13 @@
   (match loops
     [(slice) (No)]
     [(slice loop & rest)
-      (match (opt-rotate-ssa-loop-verified regions homed? func context loop)
-        [(Some next next-context) (Some next next-context)]
-        [(No) (opt-rotate-ssa-loops regions homed? func context rest)])]))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        (match (opt-rotate-ssa-loop-verified regions homed? func context loop)
+          [(Some next next-context) (Some next next-context)]
+          [(No)
+            (unsafe (arena.tl_region_reset mark))
+            (opt-rotate-ssa-loops regions homed? func context rest)]))]))
 
 ;; One round: the first verified rotation among FUNC's natural loops.
 (define (opt-rotate-ssa-round

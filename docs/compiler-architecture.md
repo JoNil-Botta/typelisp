@@ -42,6 +42,17 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
+Fixed-array and Slice element reads through a reference are checked as
+transfers independently of region escape: matching lifetimes do not give a
+borrowed element an owner. The shared
+move walker distinguishes value transfers, projection-place reads and explicit
+result reads for borrows and canonical clone. Result reads follow conditional
+arms, let and match bodies, sequence tails and projection receivers. Conditions,
+initializers, scrutinees, sequence prefixes, indexes and stored/call/constructor
+values retain ordinary transfers; data-pointer operands are place reads. One
+callee classifier also drives clone's non-consuming AST adapter in the
+borrow-conflict walk, which forwards the read through the same forms. Receiver classification
+uses checked types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -466,6 +477,21 @@ the body, and local reads resolve through the existing value cache. Range
 proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
+
+`compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
+gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
+projection happens in the lowerer, so generic, Linux and Windows modes have
+identical geometry. Scalar admits width 1; AVX2/AVX-512 admit logical widths
+1, 4, 8, 16, 32 and 64. A plan is a value descriptor with indexed, ordered
+pieces, with no mutable collection or ambient state. Checked piece access
+covers each logical lane once, even when a view needs several physical vectors
+or occupies only a prefix of one. Each piece carries a mask span that maps its
+logical lanes to physical lanes starting at zero and clears unoccupied lanes.
+The checked `u64` reference projection accepts arbitrary active sets and rejects
+bits beyond the logical width without shifting by 64. All descriptor arithmetic
+follows width/count validation. Conversion (#7163) and tiled-coordinate (#7192)
+consumers use these pieces and spans for their IR mask transport; this geometry
+does not itself select instructions or change source admission or fallback.
 
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
@@ -1815,7 +1841,13 @@ whose parsed declarations still contain a module-scope generator
 (`compiler-load-module-has-pending-generator?`) is deferred rather than
 rejected, and each macro-expansion pass skips binding such a selection until a
 later pass has produced it. A module without generators has its final
-declarations at load time, so its missing items keep failing immediately. Errors use the marker's physical
+declarations at load time, so its missing items keep failing immediately. When
+an already-seen module reaches alias binding without a complete load-time
+check, a failed top-environment build reuses this path-aware validator to
+recover the selected import's canonical diagnostic. Macro setup permits pending
+generator exports; final typechecking requires complete exports. Recovery runs
+only on failure and adds no namespace scan to successful environment builds.
+Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.

@@ -1,6 +1,7 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
@@ -80312,3 +80313,14 @@ return 0" true)
               (ir.compiler-ir-label "body__bce_fast"))
             -1
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
+
+(test
+  natural-loop-workspace-empty-sentinel-is-immutable
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-natural-loop-nested-blocks)]
+    [_loops : opt_natural_loop_vec.Vec (opt.opt-cfg-natural-loops blocks)]
+    (test.assert-i64-eq
+      (array-length opt-natural-loop-work-empty-slots)
+      0
+      "collection-local descriptor replacement leaves the shared empty slots unchanged")
+    unit))

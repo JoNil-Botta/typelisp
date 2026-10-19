@@ -17082,6 +17082,11 @@
   (found (__tl_dyn-array i64))
   (stack (__tl_dyn-array i64)))
 
+;; Only the zero-length descriptors are shared. Every id walk replaces them
+;; before writing an element, so another collection never observes its scratch.
+(define opt-natural-loop-work-empty-slots : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
 ;; `opt-natural-loop-build-by-label` on block ids, for an index whose labels are
 ;; all distinct. There, a predecessor row's label set holds exactly the labels of
 ;; the row's ids in CSR order, and `opt-natural-loop-collect-add-preds` visits it
@@ -17095,14 +17100,13 @@
 (define (opt-natural-loop-build
   [work : (&mut work OptNaturalLoopWork)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [pred-map : (& OptPredMap)]
+  [pred-map : (& pred-map OptPredMap)]
   [reachable : OptLabelSet]
   [header : i64]
   [latch : i64]) : OptNaturalLoop
   (if pred-map.index.labels-unique
     (let
-      [index : OptCfgIndex
-        (owned_view.compiler-owned-reference-shared-view (& pred-map.index))]
+      [index : (& pred-map OptCfgIndex) (& pred-map.index)]
       [count : i64 (opt-cfg-index-block-count index)]
       [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
       ;; Only the initialized prefixes are read. No returned loop retains these
@@ -17173,21 +17177,22 @@
             (opt-cfg-index-label index (array-ref found k))))
         (let
           [body-labels : OptLabelSet (Dense (opt-label-handle items) n)]
+          [body-blocks : ir.CompilerIrBlockList
+            (opt-loop-body-blocks-by-id
+              marks
+              blocks
+              header-id
+              latch-id
+              (& found)
+              found-count
+              n)]
+          [preheader : OptLoopPreheader
+            (opt-natural-loop-find-preheader-by-id index (& marks) header-id)]
           (Loop
             header
             latch
-            (OptLoopBody
-              body-labels
-              (compiler-opt-global-shared-view marks)
-              (opt-loop-body-blocks-by-id
-                marks
-                blocks
-                header-id
-                latch-id
-                (& found)
-                found-count
-                n))
-            (opt-natural-loop-find-preheader-by-id index (& marks) header-id)))))
+            (OptLoopBody body-labels marks body-blocks)
+            preheader))))
     (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
 
 ;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
@@ -17377,7 +17382,9 @@
     [count : i64 (array-length seq)]
     [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
     [work : OptNaturalLoopWork
-      (OptNaturalLoopWork (__tl_make-array i64 0) (__tl_make-array i64 0))]
+      (OptNaturalLoopWork
+        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots)
+        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots))]
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
